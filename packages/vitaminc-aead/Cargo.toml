@@ -1,0 +1,18 @@
+[package]
+name = "vitaminc-aead"
+documentation.workspace = true
+version.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+vitaminc-protected = { version = "0.1.0-pre", path = "../protected" }
+vitaminc-random = { version = "0.1.0-pre", path = "../random" }
+
+bytes = { version = "^1", features = ["serde"] }
+serde.workspace = true
