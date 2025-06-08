@@ -4,11 +4,7 @@ pub trait Decrypt: Sized {
     type Encrypted;
 
     // FIXME: Reverse the order of the key and encrypted parameters
-    fn decrypt<C>(
-        encrypted: Self::Encrypted,
-        key: &C::Key,
-        cipher: &C,
-    ) -> Result<Self, C::Error>
+    fn decrypt<C>(encrypted: Self::Encrypted, key: &C::Key, cipher: &C) -> Result<Self, C::Error>
     where
         C: Cipher,
     {

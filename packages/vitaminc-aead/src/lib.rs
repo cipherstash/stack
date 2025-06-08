@@ -12,11 +12,10 @@ pub use aad::{Aad, IntoAad};
 #[doc(inline)]
 pub use cipher::Cipher;
 #[doc(inline)]
-pub use ciphertext::{LocalCipherText, CipherTextBuilder};
+pub use ciphertext::{CipherTextBuilder, LocalCipherText};
 #[doc(inline)]
 pub use decrypt::Decrypt;
 #[doc(inline)]
 pub use encrypt::Encrypt;
 #[doc(inline)]
 pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
-

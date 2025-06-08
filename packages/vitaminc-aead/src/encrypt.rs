@@ -1,5 +1,5 @@
-use vitaminc_protected::{Controlled, Protected};
 use crate::{aad::IntoAad, cipher::Cipher, Decrypt, LocalCipherText};
+use vitaminc_protected::{Controlled, Protected};
 
 pub trait Encrypt: Sized {
     type Encrypted;
@@ -111,15 +111,16 @@ where
         C: Cipher,
         A: IntoAad<'a>,
     {
-        let inner = <Protected<T> as Controlled>::Inner::decrypt_with_aad(encrypted, key, cipher, aad)?;
+        let inner =
+            <Protected<T> as Controlled>::Inner::decrypt_with_aad(encrypted, key, cipher, aad)?;
         Ok(Protected::init_from_inner(inner))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::Decrypt;
     use super::*;
+    use crate::Decrypt;
 
     struct Foo {
         sensitive: String,
@@ -165,12 +166,10 @@ mod tests {
             C: Cipher,
             A: IntoAad<'a>,
         {
-            String::decrypt_with_aad(encrypted.sensitive, key, cipher, aad)
-                .map(|sensitive| Foo {
-                    sensitive,
-                    public: encrypted.public,
-                })
+            String::decrypt_with_aad(encrypted.sensitive, key, cipher, aad).map(|sensitive| Foo {
+                sensitive,
+                public: encrypted.public,
+            })
         }
     }
-
 }

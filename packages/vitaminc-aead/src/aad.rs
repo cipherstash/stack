@@ -7,7 +7,10 @@ impl<'a> Aad<'a> {
         Aad(Cow::Borrowed(&[]))
     }
 
-    pub fn new_owned<I>(aad: I) -> Self where I: IntoIterator<Item = u8> {
+    pub fn new_owned<I>(aad: I) -> Self
+    where
+        I: IntoIterator<Item = u8>,
+    {
         // Collect the iterator into a Vec<u8>
         let aad: Vec<u8> = aad.into_iter().collect();
         // Convert the Vec<u8> into a Cow<[u8]>
@@ -98,14 +101,16 @@ impl<'a> IntoAad<'a> for u64 {
     }
 }
 
-impl<'a, A, B> IntoAad<'a> for (A, B) where A: IntoAad<'a>, B: IntoAad<'a> {
+impl<'a, A, B> IntoAad<'a> for (A, B)
+where
+    A: IntoAad<'a>,
+    B: IntoAad<'a>,
+{
     fn into_aad(self) -> Aad<'a> {
         let (a, b) = self;
         let mut a = a.into_aad();
         let b = b.into_aad();
-        let iter = b.0
-            .iter()
-            .cloned();
+        let iter = b.0.iter().cloned();
         a.extend(iter);
         a
     }
