@@ -101,6 +101,18 @@ impl<'a> IntoAad<'a> for u64 {
     }
 }
 
+impl<'a, T> IntoAad<'a> for Option<T>
+where
+    T: IntoAad<'a>,
+{
+    fn into_aad(self) -> Aad<'a> {
+        match self {
+            Some(value) => value.into_aad(),
+            None => Aad::empty(),
+        }
+    }
+}
+
 impl<'a, A, B> IntoAad<'a> for (A, B)
 where
     A: IntoAad<'a>,
