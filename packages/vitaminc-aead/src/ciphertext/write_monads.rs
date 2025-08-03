@@ -4,11 +4,12 @@ use bytes::BytesMut;
 use vitaminc_protected::{Controlled, Protected};
 
 // TODO: Add an optional header
+#[derive(Default)]
 pub struct CipherTextBuilder();
 
 impl CipherTextBuilder {
     pub fn new() -> Self {
-        Self()
+        Default::default()
     }
 
     pub fn append_nonce<const N: usize>(self, nonce: Nonce<N>) -> NonceWritten<N> {
@@ -58,7 +59,7 @@ impl<const N: usize, E> EncryptedWithTag<N, E> {
         let inner = self.bytes?.risky_unwrap();
         let mut bytes = BytesMut::with_capacity(N + inner.len());
         bytes.extend(self.nonce.into_inner());
-        bytes.extend(inner.into_iter());
+        bytes.extend(inner);
         Ok(LocalCipherText(bytes.freeze()))
     }
 }
