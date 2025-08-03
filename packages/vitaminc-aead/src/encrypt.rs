@@ -1,10 +1,10 @@
-use crate::{aad::IntoAad, cipher::Cipher, Decrypt, LocalCipherText};
+use crate::{aad::IntoAad, cipher::{Cipher, Unspecified}, Decrypt, LocalCipherText};
 use vitaminc_protected::{Controlled, Protected};
 
 pub trait Encrypt: Sized {
     type Encrypted;
 
-    fn encrypt<C>(self, key: &C::Key, cipher: &C) -> Result<Self::Encrypted, C::Error>
+    fn encrypt<C>(self, key: &C::Key, cipher: &C) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
     {
@@ -16,7 +16,7 @@ pub trait Encrypt: Sized {
         key: &C::Key,
         cipher: &C,
         aad: A,
-    ) -> Result<Self::Encrypted, C::Error>
+    ) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>;
@@ -30,7 +30,7 @@ impl Encrypt for Vec<u8> {
         key: &C::Key,
         cipher: &C,
         aad: A,
-    ) -> Result<Self::Encrypted, C::Error>
+    ) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -47,7 +47,7 @@ impl Encrypt for String {
         key: &C::Key,
         cipher: &C,
         aad: A,
-    ) -> Result<Self::Encrypted, C::Error>
+    ) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -64,7 +64,7 @@ impl<const N: usize> Encrypt for [u8; N] {
         key: &C::Key,
         cipher: &C,
         aad: A,
-    ) -> Result<Self::Encrypted, C::Error>
+    ) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -85,7 +85,7 @@ where
         key: &C::Key,
         cipher: &C,
         aad: A,
-    ) -> Result<Self::Encrypted, C::Error>
+    ) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -106,7 +106,7 @@ where
         key: &C::Key,
         cipher: &C,
         aad: A,
-    ) -> Result<Self, C::Error>
+    ) -> Result<Self, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -140,7 +140,7 @@ mod tests {
             key: &C::Key,
             cipher: &C,
             aad: A,
-        ) -> Result<Self::Encrypted, C::Error>
+        ) -> Result<Self::Encrypted, Unspecified>
         where
             C: Cipher,
             A: IntoAad<'a>,
@@ -161,7 +161,7 @@ mod tests {
             key: &C::Key,
             cipher: &C,
             aad: A,
-        ) -> Result<Self, C::Error>
+        ) -> Result<Self, Unspecified>
         where
             C: Cipher,
             A: IntoAad<'a>,

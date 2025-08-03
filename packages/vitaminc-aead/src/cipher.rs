@@ -1,7 +1,12 @@
 use crate::{aad::IntoAad, LocalCipherText};
 
+/// An error that provides no information about the failure.
+/// It is crucial when returning an error from a cipher operation
+/// that does not reveal any details about the failure as this can lead to side channel attacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unspecified;
+
 pub trait Cipher {
-    type Error;
     type Key;
 
     fn encrypt_bytes<'a, A>(
@@ -9,7 +14,7 @@ pub trait Cipher {
         plaintext: Vec<u8>,
         key: &Self::Key,
         aad: A,
-    ) -> Result<LocalCipherText, Self::Error>
+    ) -> Result<LocalCipherText, Unspecified>
     where
         A: IntoAad<'a>;
 
@@ -18,7 +23,7 @@ pub trait Cipher {
         plaintext: [u8; N],
         key: &Self::Key,
         aad: A,
-    ) -> Result<LocalCipherText, Self::Error>
+    ) -> Result<LocalCipherText, Unspecified>
     where
         A: IntoAad<'a>;
 
@@ -27,7 +32,7 @@ pub trait Cipher {
         ciphertext: LocalCipherText,
         key: &Self::Key,
         aad: A,
-    ) -> Result<Vec<u8>, Self::Error>
+    ) -> Result<Vec<u8>, Unspecified>
     where
         A: IntoAad<'a>;
 
@@ -36,7 +41,7 @@ pub trait Cipher {
         ciphertext: LocalCipherText,
         key: &Self::Key,
         aad: A,
-    ) -> Result<[u8; N], Self::Error>
+    ) -> Result<[u8; N], Unspecified>
     where
         A: IntoAad<'a>;
 }

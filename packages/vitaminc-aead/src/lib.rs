@@ -10,7 +10,7 @@ mod nonce;
 #[doc(inline)]
 pub use aad::{Aad, IntoAad};
 #[doc(inline)]
-pub use cipher::Cipher;
+pub use cipher::{Cipher, Unspecified};
 #[doc(inline)]
 pub use ciphertext::{CipherTextBuilder, LocalCipherText};
 #[doc(inline)]

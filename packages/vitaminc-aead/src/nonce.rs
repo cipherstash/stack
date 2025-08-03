@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use vitaminc_random::{Generatable, SafeRand, SeedableRng};
+use crate::Unspecified;
 
 // TODO: Add a ValidNonceSize trait to ensure that the nonce size is valid for the cipher
 
@@ -25,9 +26,8 @@ impl<const N: usize> Nonce<N> {
 // TODO: Make this a trait that can be implemented for a cipher rather than an associated type on the Cipher
 // That way we can have multiple implementations of the same cipher with different nonce generation strategies
 pub trait NonceGenerator<const N: usize> {
-    // TODO: Allow an argument to be passed to the init method or make it a separate trait entirely
     fn init() -> Self;
-    fn generate(&self) -> Nonce<N>;
+    fn generate(&self) -> Result<Nonce<N>, Unspecified>;
 }
 
 pub struct RandomNonceGenerator<const N: usize>(RefCell<SafeRand>);
@@ -38,9 +38,8 @@ impl<const N: usize> NonceGenerator<N> for RandomNonceGenerator<N> {
         Self(RefCell::new(rng))
     }
 
-    fn generate(&self) -> Nonce<N> {
+    fn generate(&self) -> Result<Nonce<N>, Unspecified> {
         let mut rng = self.0.borrow_mut();
-        // FIXME: Should we panic if the nonce generation fails?
-        Nonce(Generatable::random(&mut rng).unwrap())
+        Generatable::random(&mut rng).map_err(|_| Unspecified).map(Nonce::new)
     }
 }
