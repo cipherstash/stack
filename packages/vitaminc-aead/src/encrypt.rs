@@ -16,26 +16,17 @@ pub trait Encrypt: Sized {
         self.encrypt_with_aad(cipher, ())
     }
 
-    fn encrypt_with_aad<'a, C, A>(
-        self,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
         Self: 'a;
-
 }
 
 impl Encrypt for Vec<u8> {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(
-        self,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -47,11 +38,7 @@ impl Encrypt for Vec<u8> {
 impl Encrypt for String {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(
-        self,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -63,11 +50,7 @@ impl Encrypt for String {
 impl Encrypt for &str {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(
-        self,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -104,11 +87,7 @@ where
 {
     type Encrypted = <<Protected<T> as Controlled>::Inner as Encrypt>::Encrypted;
 
-    fn encrypt_with_aad<'a, C, A>(
-        self,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,

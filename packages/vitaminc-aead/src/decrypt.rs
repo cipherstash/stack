@@ -1,6 +1,6 @@
+use crate::{aad::IntoAad, cipher::Unspecified, Cipher, LocalCipherText};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
-use crate::{aad::IntoAad, cipher::Unspecified, Cipher, LocalCipherText};
 
 pub trait Decrypt: Sized {
     type Encrypted;
@@ -93,8 +93,7 @@ where
         C: Cipher,
         A: IntoAad<'a>,
     {
-        let inner =
-            <Protected<T> as Controlled>::Inner::decrypt_with_aad(encrypted, cipher, aad)?;
+        let inner = <Protected<T> as Controlled>::Inner::decrypt_with_aad(encrypted, cipher, aad)?;
         Ok(Protected::init_from_inner(inner))
     }
 }
