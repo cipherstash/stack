@@ -4,6 +4,7 @@ use crate::{
     Decrypt, LocalCipherText,
 };
 use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 pub trait Encrypt: Sized {
     type Encrypted;
@@ -23,7 +24,9 @@ pub trait Encrypt: Sized {
     ) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
-        A: IntoAad<'a>;
+        A: IntoAad<'a>,
+        Self: 'a;
+
 }
 
 impl Encrypt for Vec<u8> {
@@ -39,7 +42,7 @@ impl Encrypt for Vec<u8> {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes(self, key, aad)
+        cipher.encrypt_vec(self, key, aad)
     }
 }
 
@@ -56,11 +59,11 @@ impl Encrypt for String {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes(self.into_bytes(), key, aad)
+        cipher.encrypt_vec(self.into_bytes(), key, aad)
     }
 }
 
-impl<const N: usize> Encrypt for [u8; N] {
+impl Encrypt for &str {
     type Encrypted = LocalCipherText;
 
     fn encrypt_with_aad<'a, C, A>(
@@ -72,8 +75,30 @@ impl<const N: usize> Encrypt for [u8; N] {
     where
         C: Cipher,
         A: IntoAad<'a>,
+        Self: 'a,
     {
-        cipher.encrypt_array(self, key, aad)
+        cipher.encrypt_slice(self.as_bytes(), key, aad)
+    }
+}
+
+impl<const N: usize> Encrypt for [u8; N] {
+    type Encrypted = LocalCipherText;
+
+    fn encrypt_with_aad<'a, C, A>(
+        mut self,
+        key: &C::Key,
+        cipher: &C,
+        aad: A,
+    ) -> Result<Self::Encrypted, Unspecified>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        let bytes = self.to_vec();
+        let result = cipher.encrypt_vec(bytes, key, aad);
+        // `to_vec` copies the bytes, do we must zeroize the original
+        self.zeroize();
+        result
     }
 }
 
@@ -93,6 +118,7 @@ where
     where
         C: Cipher,
         A: IntoAad<'a>,
+        Self: 'a,
     {
         self.risky_unwrap().encrypt_with_aad(key, cipher, aad)
     }

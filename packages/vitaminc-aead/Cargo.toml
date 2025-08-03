@@ -15,4 +15,5 @@ vitaminc-protected = { version = "0.1.0-pre", path = "../protected" }
 vitaminc-random = { version = "0.1.0-pre", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
-serde.workspace = true
+serde = { workspace = true }
+zeroize = { workspace = true }
