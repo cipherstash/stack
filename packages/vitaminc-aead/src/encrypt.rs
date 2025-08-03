@@ -1,7 +1,7 @@
 use crate::{
     aad::IntoAad,
     cipher::{Cipher, Unspecified},
-    Decrypt, LocalCipherText,
+    LocalCipherText,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
@@ -9,16 +9,15 @@ use zeroize::Zeroize;
 pub trait Encrypt: Sized {
     type Encrypted;
 
-    fn encrypt<C>(self, key: &C::Key, cipher: &C) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt<C>(self, cipher: &C) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
     {
-        self.encrypt_with_aad(key, cipher, ())
+        self.encrypt_with_aad(cipher, ())
     }
 
     fn encrypt_with_aad<'a, C, A>(
         self,
-        key: &C::Key,
         cipher: &C,
         aad: A,
     ) -> Result<Self::Encrypted, Unspecified>
@@ -34,7 +33,6 @@ impl Encrypt for Vec<u8> {
 
     fn encrypt_with_aad<'a, C, A>(
         self,
-        key: &C::Key,
         cipher: &C,
         aad: A,
     ) -> Result<Self::Encrypted, Unspecified>
@@ -42,7 +40,7 @@ impl Encrypt for Vec<u8> {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_vec(self, key, aad)
+        cipher.encrypt_vec(self, aad)
     }
 }
 
@@ -51,7 +49,6 @@ impl Encrypt for String {
 
     fn encrypt_with_aad<'a, C, A>(
         self,
-        key: &C::Key,
         cipher: &C,
         aad: A,
     ) -> Result<Self::Encrypted, Unspecified>
@@ -59,7 +56,7 @@ impl Encrypt for String {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_vec(self.into_bytes(), key, aad)
+        cipher.encrypt_vec(self.into_bytes(), aad)
     }
 }
 
@@ -68,7 +65,6 @@ impl Encrypt for &str {
 
     fn encrypt_with_aad<'a, C, A>(
         self,
-        key: &C::Key,
         cipher: &C,
         aad: A,
     ) -> Result<Self::Encrypted, Unspecified>
@@ -77,7 +73,7 @@ impl Encrypt for &str {
         A: IntoAad<'a>,
         Self: 'a,
     {
-        cipher.encrypt_slice(self.as_bytes(), key, aad)
+        cipher.encrypt_slice(self.as_bytes(), aad)
     }
 }
 
@@ -86,7 +82,6 @@ impl<const N: usize> Encrypt for [u8; N] {
 
     fn encrypt_with_aad<'a, C, A>(
         mut self,
-        key: &C::Key,
         cipher: &C,
         aad: A,
     ) -> Result<Self::Encrypted, Unspecified>
@@ -95,7 +90,7 @@ impl<const N: usize> Encrypt for [u8; N] {
         A: IntoAad<'a>,
     {
         let bytes = self.to_vec();
-        let result = cipher.encrypt_vec(bytes, key, aad);
+        let result = cipher.encrypt_vec(bytes, aad);
         // `to_vec` copies the bytes, do we must zeroize the original
         self.zeroize();
         result
@@ -111,7 +106,6 @@ where
 
     fn encrypt_with_aad<'a, C, A>(
         self,
-        key: &C::Key,
         cipher: &C,
         aad: A,
     ) -> Result<Self::Encrypted, Unspecified>
@@ -120,30 +114,7 @@ where
         A: IntoAad<'a>,
         Self: 'a,
     {
-        self.risky_unwrap().encrypt_with_aad(key, cipher, aad)
-    }
-}
-
-impl<T> Decrypt for Protected<T>
-where
-    Self: Controlled,
-    <Protected<T> as Controlled>::Inner: Decrypt,
-{
-    type Encrypted = <<Protected<T> as Controlled>::Inner as Decrypt>::Encrypted;
-
-    fn decrypt_with_aad<'a, C, A>(
-        encrypted: Self::Encrypted,
-        key: &C::Key,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self, Unspecified>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        let inner =
-            <Protected<T> as Controlled>::Inner::decrypt_with_aad(encrypted, key, cipher, aad)?;
-        Ok(Protected::init_from_inner(inner))
+        self.risky_unwrap().encrypt_with_aad(cipher, aad)
     }
 }
 
@@ -167,7 +138,6 @@ mod tests {
 
         fn encrypt_with_aad<'a, C, A>(
             self,
-            key: &C::Key,
             cipher: &C,
             aad: A,
         ) -> Result<Self::Encrypted, Unspecified>
@@ -175,7 +145,7 @@ mod tests {
             C: Cipher,
             A: IntoAad<'a>,
         {
-            let sensitive = self.sensitive.encrypt_with_aad(key, cipher, aad)?;
+            let sensitive = self.sensitive.encrypt_with_aad(cipher, aad)?;
             Ok(EncryptedFoo {
                 sensitive,
                 public: self.public,
@@ -188,7 +158,6 @@ mod tests {
 
         fn decrypt_with_aad<'a, C, A>(
             encrypted: Self::Encrypted,
-            key: &C::Key,
             cipher: &C,
             aad: A,
         ) -> Result<Self, Unspecified>
@@ -196,7 +165,7 @@ mod tests {
             C: Cipher,
             A: IntoAad<'a>,
         {
-            String::decrypt_with_aad(encrypted.sensitive, key, cipher, aad).map(|sensitive| Foo {
+            String::decrypt_with_aad(encrypted.sensitive, cipher, aad).map(|sensitive| Foo {
                 sensitive,
                 public: encrypted.public,
             })

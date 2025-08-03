@@ -7,12 +7,9 @@ use crate::{aad::IntoAad, LocalCipherText};
 pub struct Unspecified;
 
 pub trait Cipher {
-    type Key;
-
     fn encrypt_slice<'a, A>(
         &self,
         plaintext: &'a [u8],
-        key: &Self::Key,
         aad: A,
     ) -> Result<LocalCipherText, Unspecified>
     where
@@ -21,7 +18,6 @@ pub trait Cipher {
     fn encrypt_vec<'a, A>(
         &self,
         plaintext: Vec<u8>,
-        key: &Self::Key,
         aad: A,
     ) -> Result<LocalCipherText, Unspecified>
     where
@@ -30,7 +26,6 @@ pub trait Cipher {
     fn decrypt_vec<'a, A>(
         &self,
         ciphertext: LocalCipherText,
-        key: &Self::Key,
         aad: A,
     ) -> Result<Vec<u8>, Unspecified>
     where
