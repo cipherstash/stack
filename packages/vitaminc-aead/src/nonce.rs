@@ -1,6 +1,6 @@
+use crate::Unspecified;
 use std::cell::RefCell;
 use vitaminc_random::{Generatable, SafeRand, SeedableRng};
-use crate::Unspecified;
 
 // TODO: Add a ValidNonceSize trait to ensure that the nonce size is valid for the cipher
 
@@ -40,6 +40,8 @@ impl<const N: usize> NonceGenerator<N> for RandomNonceGenerator<N> {
 
     fn generate(&self) -> Result<Nonce<N>, Unspecified> {
         let mut rng = self.0.borrow_mut();
-        Generatable::random(&mut rng).map_err(|_| Unspecified).map(Nonce::new)
+        Generatable::random(&mut rng)
+            .map_err(|_| Unspecified)
+            .map(Nonce::new)
     }
 }

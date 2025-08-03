@@ -1,4 +1,8 @@
-use crate::{aad::IntoAad, cipher::{Cipher, Unspecified}, Decrypt, LocalCipherText};
+use crate::{
+    aad::IntoAad,
+    cipher::{Cipher, Unspecified},
+    Decrypt, LocalCipherText,
+};
 use vitaminc_protected::{Controlled, Protected};
 
 pub trait Encrypt: Sized {
