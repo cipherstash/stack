@@ -6,6 +6,14 @@ use crate::{aad::IntoAad, LocalCipherText};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unspecified;
 
+impl std::fmt::Display for Unspecified {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unspecified error")
+    }
+}
+
+impl std::error::Error for Unspecified {}
+
 pub trait Cipher {
     fn encrypt_slice<'a, A>(
         &self,
