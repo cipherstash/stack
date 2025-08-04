@@ -3,7 +3,6 @@ use crate::Nonce;
 use bytes::BytesMut;
 use vitaminc_protected::{Controlled, Protected};
 
-// TODO: Add an optional header
 #[derive(Default)]
 pub struct CipherTextBuilder();
 
