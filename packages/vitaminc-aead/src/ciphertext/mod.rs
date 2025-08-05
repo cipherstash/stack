@@ -92,39 +92,4 @@ mod tests {
 
         Ok(())
     }
-    /*
-    #[test]
-    fn test_ciphertext_builder_with_extend() {
-        let nonce = Nonce([1u8; 12]);
-        let encrypted: Vec<u8> = vec![2u8; 10];
-        let mut builder = CipherTextBuilder::<12, 16>::new(10)
-            .append_nonce(&nonce);
-
-        builder.extend(encrypted);
-        let ciphertext = builder.append_tag(&[3u8; 16]).build();
-
-        assert_eq!(ciphertext.0.len(), 38);
-        assert_eq!(&ciphertext.0[..12], &[1u8; 12]);
-        assert_eq!(&ciphertext.0[12..22], &[2u8; 10]);
-        assert_eq!(&ciphertext.0[22..], &[3u8; 16]);
-    }
-
-    #[test]
-    fn test_ciphertext_builder_with_ciphertext_mut() {
-        let nonce = Nonce([1u8; 12]);
-        let plaintext: Protected<Vec<u8>> = Protected::new(vec![0u8; 10]);
-        let encrypted: Vec<u8> = vec![2u8; 10];
-        let mut builder = CipherTextBuilder::<12, 16>::new(10)
-            .append_nonce(&nonce)
-            .append_target_plaintext(plaintext);
-
-        let ciphertext = builder.ciphertext_mut().unwrap();
-        ciphertext.copy_from_slice(&encrypted);
-        let ciphertext = builder.append_tag(&[3u8; 16]).build();
-
-        assert_eq!(ciphertext.0.len(), 38);
-        assert_eq!(&ciphertext.0[..12], &[1u8; 12]);
-        assert_eq!(&ciphertext.0[12..22], &[2u8; 10]);
-        assert_eq!(&ciphertext.0[22..], &[3u8; 16]);
-    }*/
 }
