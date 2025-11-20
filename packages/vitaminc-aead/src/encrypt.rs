@@ -97,6 +97,8 @@ where
     }
 }
 
+// FIXME: check with @coderdan if this should be converted to a static assertion that it simply *compiles*
+#[allow(dead_code)]
 #[cfg(test)]
 mod tests {
     use super::*;
