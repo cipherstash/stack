@@ -1,6 +1,7 @@
 [package]
 name = "vitaminc-aead"
-documentation.workspace = true
+description = "Authenticated Encryption with Associated Data (AEAD) primitives. Part of the Vitamin-C cryptographic suite."
+documentation = "https://docs.rs/vitaminc-aead"
 version.workspace = true
 repository.workspace = true
 authors.workspace = true
