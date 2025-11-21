@@ -120,22 +120,31 @@ fn decrypt_data<C: Cipher>(
 Many types can be used as AAD through the [`IntoAad`] trait:
 
 ```rust
-use vitaminc_aead::Encrypt;
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+use vitaminc_aead::{Encrypt, Cipher};
+use vitaminc_encrypt::{Key, Aes256Cipher};
+use vitaminc_protected::Protected;
+use vitaminc_random::{Generatable, SafeRand, SeedableRng};
+
+let key = Key::random(&mut SafeRand::from_entropy())?;
+let cipher = Aes256Cipher::new(&key)?;
 
 // Use a string as AAD
-data.encrypt_with_aad(cipher, "user_id:123")?;
+"my-secret".encrypt_with_aad(&cipher, "user_id:123")?;
 
 // Use a byte slice as AAD
-data.encrypt_with_aad(cipher, b"metadata")?;
+"my-secret".encrypt_with_aad(&cipher, &b"metadata"[..])?;
 
 // Use a u64 as AAD
-data.encrypt_with_aad(cipher, 42u64)?;
+"my-secret".encrypt_with_aad(&cipher, 42u64)?;
 
 // Use a tuple to combine multiple AAD values
-data.encrypt_with_aad(cipher, ("user_id", "session_token"))?;
+"my-secret".encrypt_with_aad(&cipher, ("user_id", "session_token"))?;
 
 // Use no AAD
-data.encrypt_with_aad(cipher, ())?;
+"my-secret".encrypt_with_aad(&cipher, ())?;
+# Ok(())
+# }
 ```
 
 ### Working with Protected Types
@@ -143,11 +152,20 @@ data.encrypt_with_aad(cipher, ())?;
 The crate integrates with `vitaminc-protected` to handle sensitive data safely:
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+use vitaminc_aead::{Encrypt, Cipher};
+use vitaminc_encrypt::{Key, Aes256Cipher};
 use vitaminc_protected::Protected;
-use vitaminc_aead::Encrypt;
+use vitaminc_random::{Generatable, SafeRand, SeedableRng};
+
+let key = Key::random(&mut SafeRand::from_entropy())?;
+let cipher = Aes256Cipher::new(&key)?;
 
 let sensitive_data = Protected::new([1, 2, 3, 4, 5]);
-let encrypted = sensitive_data.encrypt(cipher)?;
+
+let encrypted = sensitive_data.encrypt(&cipher)?;
+# Ok(())
+# }
 ```
 
 ### Custom Types
@@ -215,11 +233,14 @@ impl Decrypt for User {
 The crate provides nonce generation utilities for AEAD operations:
 
 ```rust
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use vitaminc_aead::{NonceGenerator, RandomNonceGenerator};
 
 // Create a random nonce generator for 12-byte nonces
 let generator = RandomNonceGenerator::<12>::init();
 let nonce = generator.generate()?;
+# Ok(())
+# }
 ```
 
 ## Security Considerations
