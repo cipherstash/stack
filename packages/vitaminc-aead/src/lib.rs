@@ -3,6 +3,7 @@
 mod aad;
 mod cipher;
 mod ciphertext;
+mod context;
 mod decrypt;
 mod encrypt;
 mod nonce;
@@ -13,6 +14,8 @@ pub use aad::{Aad, IntoAad};
 pub use cipher::{Cipher, Unspecified};
 #[doc(inline)]
 pub use ciphertext::{CipherTextBuilder, LocalCipherText};
+#[doc(inline)]
+pub use context::ContextTag;
 #[doc(inline)]
 pub use decrypt::Decrypt;
 #[doc(inline)]

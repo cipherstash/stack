@@ -6,7 +6,7 @@ use crate::{
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
-pub trait Encrypt: Sized {
+pub trait Encrypt<'a>: Sized + 'a {
     type Encrypted;
 
     fn encrypt<C>(self, cipher: &C) -> Result<Self::Encrypted, Unspecified>
@@ -16,17 +16,16 @@ pub trait Encrypt: Sized {
         self.encrypt_with_aad(cipher, ())
     }
 
-    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
-        A: IntoAad<'a>,
-        Self: 'a;
+        A: IntoAad<'a>;
 }
 
-impl Encrypt for Vec<u8> {
+impl<'a> Encrypt<'a> for Vec<u8> {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -35,10 +34,10 @@ impl Encrypt for Vec<u8> {
     }
 }
 
-impl Encrypt for String {
+impl<'a> Encrypt<'a> for String {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -47,23 +46,22 @@ impl Encrypt for String {
     }
 }
 
-impl Encrypt for &str {
+impl<'a> Encrypt<'a> for &'a str {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
-        Self: 'a,
     {
         cipher.encrypt_slice(self.as_bytes(), aad)
     }
 }
 
-impl<const N: usize> Encrypt for [u8; N] {
+impl<'a, const N: usize> Encrypt<'a> for [u8; N] {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<'a, C, A>(
+    fn encrypt_with_aad<C, A>(
         mut self,
         cipher: &C,
         aad: A,
@@ -80,18 +78,17 @@ impl<const N: usize> Encrypt for [u8; N] {
     }
 }
 
-impl<T> Encrypt for Protected<T>
+impl<'a, T> Encrypt<'a> for Protected<T>
 where
-    Self: Controlled,
-    <Protected<T> as Controlled>::Inner: Encrypt,
+    Self: Controlled + 'a,
+    <Protected<T> as Controlled>::Inner: Encrypt<'a>,
 {
-    type Encrypted = <<Protected<T> as Controlled>::Inner as Encrypt>::Encrypted;
+    type Encrypted = <<Protected<T> as Controlled>::Inner as Encrypt<'a>>::Encrypted;
 
-    fn encrypt_with_aad<'a, C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
-        Self: 'a,
     {
         self.risky_unwrap().encrypt_with_aad(cipher, aad)
     }
@@ -114,10 +111,10 @@ mod tests {
         public: String,
     }
 
-    impl Encrypt for Foo {
+    impl<'a> Encrypt<'a> for Foo {
         type Encrypted = EncryptedFoo;
 
-        fn encrypt_with_aad<'a, C, A>(
+        fn encrypt_with_aad<C, A>(
             self,
             cipher: &C,
             aad: A,

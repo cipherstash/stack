@@ -187,10 +187,10 @@ struct EncryptedUser {
     password_hash: LocalCipherText,  // Only encrypt the password hash
 }
 
-impl Encrypt for User {
+impl<'a> Encrypt<'a> for User {
     type Encrypted = EncryptedUser;
 
-    fn encrypt_with_aad<'a, C, A>(
+    fn encrypt_with_aad<C, A>(
         self,
         cipher: &C,
         aad: A,
