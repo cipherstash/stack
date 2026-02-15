@@ -32,6 +32,7 @@ fn to_napi_error(err: AuthError) -> napi::Error {
 // TokenResult — plain data object
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 #[napi(object)]
 pub struct TokenResult {
     /// The OAuth access token.
@@ -46,6 +47,7 @@ pub struct TokenResult {
 // DeviceCodeResult — class with methods
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 #[napi]
 pub struct DeviceCodeResult {
     /// The short code the user must enter to authorize this device.
@@ -157,6 +159,260 @@ pub async fn begin_device_code_flow(
     let strategy = DeviceCodeStrategy::new(region, client_id).map_err(to_napi_error)?;
     let pending = strategy.begin().await.map_err(to_napi_error)?;
     Ok(DeviceCodeResult::from_pending(pending))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use cts_common::Region;
+    use mocktail::prelude::*;
+
+    // --- Mock response builders (mirrors cts-auth/src/device_code.rs) ---
+
+    fn device_code_json() -> serde_json::Value {
+        serde_json::json!({
+            "device_code": "test_device_code",
+            "user_code": "ABCD-EFGH",
+            "verification_uri": "http://example.com/activate",
+            "verification_uri_complete": "http://example.com/activate?user_code=ABCD-EFGH",
+            "expires_in": 900
+        })
+    }
+
+    fn token_json() -> serde_json::Value {
+        serde_json::json!({
+            "access_token": "test_access_token_value",
+            "token_type": "Bearer",
+            "expires_in": 3600
+        })
+    }
+
+    fn error_json(error: &str) -> serde_json::Value {
+        serde_json::json!({
+            "error": error,
+            "error_description": format!("{error} occurred")
+        })
+    }
+
+    fn mock_code_endpoint(mocks: &mut MockSet) {
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/device/code");
+            then.json(device_code_json());
+        });
+    }
+
+    async fn start_server(mocks: MockSet) -> MockServer {
+        let server = MockServer::new_http("cts-auth-node-test").with_mocks(mocks);
+        server.start().await.unwrap();
+        server
+    }
+
+    /// Create a `DeviceCodeResult` by running the real `DeviceCodeStrategy`
+    /// against a mock server, then wrapping the `PendingDeviceCode`.
+    async fn begin_result(server: &MockServer) -> DeviceCodeResult {
+        let strategy =
+            DeviceCodeStrategy::new(Region::aws("ap-southeast-2").unwrap(), "test-client")
+                .unwrap()
+                .with_base_url(server.url(""))
+                .unwrap();
+        let pending = strategy.begin().await.unwrap();
+        DeviceCodeResult::from_pending(pending)
+    }
+
+    // ---- Error mapping (no mock server needed) ----
+
+    #[test]
+    fn test_error_code_mapping() {
+        assert_eq!(error_code(&AuthError::AccessDenied), "ACCESS_DENIED");
+        assert_eq!(error_code(&AuthError::ExpiredToken), "EXPIRED_TOKEN");
+        assert_eq!(error_code(&AuthError::InvalidGrant), "INVALID_GRANT");
+        assert_eq!(error_code(&AuthError::InvalidClient), "INVALID_CLIENT");
+        assert_eq!(
+            error_code(&AuthError::InvalidUrl(
+                "http://[".parse::<url::Url>().unwrap_err()
+            )),
+            "INVALID_URL"
+        );
+        assert_eq!(
+            error_code(&AuthError::Region(Region::new("invalid").unwrap_err())),
+            "INVALID_REGION"
+        );
+        assert_eq!(
+            error_code(&AuthError::Server("test".to_string())),
+            "SERVER_ERROR"
+        );
+    }
+
+    #[test]
+    fn test_napi_error_format() {
+        let err = to_napi_error(AuthError::AccessDenied);
+        assert!(
+            err.reason.starts_with("ACCESS_DENIED: "),
+            "expected 'ACCESS_DENIED: ...' but got: {}",
+            err.reason
+        );
+
+        let err = to_napi_error(AuthError::Server("something broke".to_string()));
+        assert!(
+            err.reason.starts_with("SERVER_ERROR: "),
+            "expected 'SERVER_ERROR: ...' but got: {}",
+            err.reason
+        );
+    }
+
+    // ---- Getters (mock server needed to create a real PendingDeviceCode) ----
+
+    #[tokio::test]
+    async fn test_getters() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        let server = start_server(mocks).await;
+
+        let result = begin_result(&server).await;
+
+        assert_eq!(result.user_code(), "ABCD-EFGH");
+        assert_eq!(result.verification_uri(), "http://example.com/activate");
+        assert_eq!(
+            result.verification_uri_complete(),
+            "http://example.com/activate?user_code=ABCD-EFGH"
+        );
+        assert_eq!(result.expires_in(), 900.0);
+    }
+
+    // ---- Full flow with mock server ----
+    //
+    // `start_paused = true` creates a tokio runtime where the internal clock
+    // is paused. Timer operations like `tokio::time::sleep` advance the clock
+    // instantly instead of waiting in real-time. This matters because
+    // `poll_for_token` sleeps 5 seconds between each poll — without paused
+    // time these tests would take 5+ real seconds each. I/O (HTTP requests
+    // to the mock server) still works normally.
+
+    #[tokio::test(start_paused = true)]
+    async fn test_poll_for_token_success() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/device/token");
+            then.json(token_json());
+        });
+        let server = start_server(mocks).await;
+
+        let result = begin_result(&server).await;
+        let token = result.poll_for_token().await.unwrap();
+
+        assert_eq!(token.access_token, "test_access_token_value");
+        assert_eq!(token.token_type, "Bearer");
+        assert_eq!(token.expires_in, 3600.0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_poll_for_token_error_propagation() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/device/token");
+            then.bad_request().json(error_json("access_denied"));
+        });
+        let server = start_server(mocks).await;
+
+        let result = begin_result(&server).await;
+        let err = result.poll_for_token().await.unwrap_err();
+
+        assert!(
+            err.reason.contains("ACCESS_DENIED: "),
+            "expected ACCESS_DENIED error, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_poll_for_token_expired() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/device/token");
+            then.bad_request().json(error_json("expired_token"));
+        });
+        let server = start_server(mocks).await;
+
+        let result = begin_result(&server).await;
+        let err = result.poll_for_token().await.unwrap_err();
+
+        assert!(
+            err.reason.contains("EXPIRED_TOKEN: "),
+            "expected EXPIRED_TOKEN error, got: {}",
+            err.reason
+        );
+    }
+
+    // ---- Consumed handle semantics ----
+
+    #[tokio::test(start_paused = true)]
+    async fn test_poll_for_token_already_consumed() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/device/token");
+            then.json(token_json());
+        });
+        let server = start_server(mocks).await;
+
+        let result = begin_result(&server).await;
+        // First call succeeds — consumes the handle
+        result.poll_for_token().await.unwrap();
+        // Second call should fail — handle already consumed
+        let err = result.poll_for_token().await.unwrap_err();
+
+        assert!(
+            err.reason.contains("already been consumed"),
+            "expected 'already been consumed' error, got: {}",
+            err.reason
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_open_in_browser_after_consumed() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/device/token");
+            then.json(token_json());
+        });
+        let server = start_server(mocks).await;
+
+        let result = begin_result(&server).await;
+        // Consume the handle
+        result.poll_for_token().await.unwrap();
+        // open_in_browser should fail — handle consumed
+        let err = result.open_in_browser().unwrap_err();
+
+        assert!(
+            err.reason.contains("already been consumed"),
+            "expected 'already been consumed' error, got: {}",
+            err.reason
+        );
+    }
+
+    // ---- Top-level function error handling ----
+
+    #[tokio::test]
+    async fn test_begin_invalid_region() {
+        let err = begin_device_code_flow("not-a-region".to_string(), "test-client".to_string())
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.reason.contains("INVALID_REGION: "),
+            "expected INVALID_REGION error, got: {}",
+            err.reason
+        );
+    }
 }
 
 /// Variant of `beginDeviceCodeFlow` that targets a custom auth server URL.
