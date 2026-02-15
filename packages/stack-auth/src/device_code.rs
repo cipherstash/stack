@@ -4,17 +4,51 @@ use url::Url;
 
 use crate::{AuthError, SecretToken, Token};
 
-/// Drives the RFC 8628 device authorization flow against CTS-hosted endpoints.
+/// Authenticates with CipherStash using the
+/// [device code flow (RFC 8628)](https://datatracker.ietf.org/doc/html/rfc8628).
+///
+/// This is the primary entry point for CLI and browserless authentication.
+/// Create a strategy with [`DeviceCodeStrategy::new`], then call
+/// [`begin`](DeviceCodeStrategy::begin) to start the flow.
+///
+/// # Example
+///
+/// ```
+/// use stack_auth::DeviceCodeStrategy;
+/// use cts_common::Region;
+///
+/// let region = Region::aws("ap-southeast-2").unwrap();
+/// let strategy = DeviceCodeStrategy::new(region, "my-client-id").unwrap();
+/// ```
 pub struct DeviceCodeStrategy {
     base_url: Url,
     client_id: String,
 }
 
-/// The result of initiating a device code flow.
+/// A device code flow that is waiting for the user to authorize.
 ///
-/// Contains the user-facing codes and URIs needed to complete authorization,
-/// and provides [`poll_for_token`](PendingDeviceCode::poll_for_token) to
-/// exchange the device code for an access token once the user has authorized.
+/// Returned by [`DeviceCodeStrategy::begin`]. Display the
+/// [`user_code`](Self::user_code) and
+/// [`verification_uri_complete`](Self::verification_uri_complete) to the user
+/// (or call [`open_in_browser`](Self::open_in_browser)), then call
+/// [`poll_for_token`](Self::poll_for_token) to wait for authorization.
+///
+/// # Example
+///
+/// ```no_run
+/// # use stack_auth::DeviceCodeStrategy;
+/// # use cts_common::Region;
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// # let strategy = DeviceCodeStrategy::new(Region::aws("ap-southeast-2")?, "cli")?;
+/// let pending = strategy.begin().await?;
+///
+/// println!("Go to: {}", pending.verification_uri_complete());
+/// println!("Enter code: {}", pending.user_code());
+///
+/// let token = pending.poll_for_token().await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct PendingDeviceCode {
     token_url: Url,
@@ -54,7 +88,18 @@ impl PendingDeviceCode {
         open::that(&self.verification_uri_complete).is_ok()
     }
 
-    /// Poll the token endpoint until the user authorizes (or the code expires).
+    /// Poll the auth server until the user authorizes (or the code expires).
+    ///
+    /// This method consumes `self` and blocks asynchronously, polling at a
+    /// server-controlled interval (starting at 5 seconds). It returns a
+    /// [`Token`] on success.
+    ///
+    /// # Errors
+    ///
+    /// - [`AuthError::AccessDenied`] — the user rejected the request.
+    /// - [`AuthError::ExpiredToken`] — the device code expired before the user
+    ///   authorized.
+    /// - [`AuthError::Request`] — a network error occurred while polling.
     pub async fn poll_for_token(self) -> Result<Token, AuthError> {
         let client = reqwest::Client::new();
         let mut interval = tokio::time::Duration::from_secs(5);
@@ -126,6 +171,21 @@ fn ensure_trailing_slash(mut url: Url) -> Url {
 }
 
 impl DeviceCodeStrategy {
+    /// Create a new strategy for the given CipherStash region and OAuth client ID.
+    ///
+    /// The auth endpoint is resolved automatically via service discovery.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use stack_auth::DeviceCodeStrategy;
+    /// use cts_common::Region;
+    ///
+    /// let strategy = DeviceCodeStrategy::new(
+    ///     Region::aws("ap-southeast-2").unwrap(),
+    ///     "my-client-id",
+    /// ).unwrap();
+    /// ```
     pub fn new(region: Region, client_id: impl Into<String>) -> Result<Self, AuthError> {
         let base_url = CtsServiceDiscovery::endpoint(region)?;
         Ok(Self {
@@ -147,13 +207,17 @@ impl DeviceCodeStrategy {
         Ok(self)
     }
 
-    /// Initiate the device code flow.
+    /// Start the device code flow.
     ///
-    /// Posts to the device code endpoint and returns a [`PendingDeviceCode`]
-    /// containing the user code and verification URIs. The caller can then
-    /// display these to the user and call
-    /// [`poll_for_token`](PendingDeviceCode::poll_for_token) to complete the
-    /// flow.
+    /// Requests a device code from the CipherStash auth server and returns a
+    /// [`PendingDeviceCode`] with the user-facing codes and URIs. Show these
+    /// to the user, then call [`PendingDeviceCode::poll_for_token`] to wait
+    /// for authorization.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidClient`] if the client ID is not recognized,
+    /// or [`AuthError::Request`] if the server is unreachable.
     pub async fn begin(&self) -> Result<PendingDeviceCode, AuthError> {
         let client = reqwest::Client::new();
 
