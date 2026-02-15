@@ -30,7 +30,7 @@
 //!   ──► final_aad = PAE(extra_aad, PAE("a", "b"))
 //! ```
 
-use crate::{Cipher, Encrypt, IntoAad, Unspecified};
+use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 
 /// A wrapper that pairs a plaintext value with additional authenticated data (AAD).
 ///
@@ -56,8 +56,8 @@ use crate::{Cipher, Encrypt, IntoAad, Unspecified};
 /// let tagged = ContextTag::new("secret message", "user:42");
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
 ///
-/// // To decrypt, supply the same AAD tuple used during encryption: (extra_aad, tag)
-/// let plaintext: String = String::decrypt_with_aad(ciphertext, &cipher, ((), "user:42"))
+/// // To decrypt, supply the same tag
+/// let plaintext: String = ContextTag::decrypt(ciphertext, &cipher, "user:42")
 ///     .expect("decryption failed");
 /// assert_eq!(plaintext, "secret message");
 /// ```
@@ -79,11 +79,12 @@ use crate::{Cipher, Encrypt, IntoAad, Unspecified};
 ///     .encrypt_with_aad(&cipher, "row:99")
 ///     .expect("encryption failed");
 ///
-/// // Decrypt with the combined AAD: ("row:99", "table:users")
-/// let plaintext: String = String::decrypt_with_aad(
+/// // Decrypt with the same tag and extra AAD
+/// let plaintext: String = ContextTag::decrypt_with_aad(
 ///     ciphertext,
 ///     &cipher,
-///     ("row:99", "table:users"),
+///     "table:users",
+///     "row:99",
 /// )
 /// .expect("decryption failed");
 /// assert_eq!(plaintext, "secret");
@@ -104,7 +105,7 @@ use crate::{Cipher, Encrypt, IntoAad, Unspecified};
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
 ///
 /// // Wrong context — decryption must fail
-/// let result = String::decrypt_with_aad(ciphertext, &cipher, ((), "user:99"));
+/// let result: Result<String, _> = ContextTag::decrypt(ciphertext, &cipher, "user:99");
 /// assert!(result.is_err());
 /// ```
 ///
@@ -174,11 +175,11 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
     ///
-    /// // Decrypt with the same AAD: (extra_aad, (tag, refinement))
-    /// let plaintext: String = String::decrypt_with_aad(
+    /// // Decrypt with the same refined tag
+    /// let plaintext: String = ContextTag::decrypt(
     ///     ciphertext,
     ///     &cipher,
-    ///     ((), ("table:users", "column:email")),
+    ///     ("table:users", "column:email"),
     /// )
     /// .expect("decryption failed");
     /// assert_eq!(plaintext, "secret");
@@ -199,11 +200,11 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
     ///
-    /// // The AAD is ((), (("a", "b"), "c")), PAE-encoded recursively
-    /// let plaintext: String = String::decrypt_with_aad(
+    /// // Decrypt with the same nested tag
+    /// let plaintext: String = ContextTag::decrypt(
     ///     ciphertext,
     ///     &cipher,
-    ///     ((), (("a", "b"), "c")),
+    ///     (("a", "b"), "c"),
     /// )
     /// .expect("decryption failed");
     /// assert_eq!(plaintext, "data");
@@ -234,6 +235,87 @@ impl<'a, Tag: IntoAad<'a> + 'a, T: Encrypt<'a>> Encrypt<'a> for ContextTag<Tag, 
     {
         let ContextTag { inner, aad } = self;
         inner.encrypt_with_aad(cipher, (extra_aad, aad))
+    }
+}
+
+impl<Tag> ContextTag<Tag, ()> {
+    /// Decrypts a ciphertext using the given tag as context AAD.
+    ///
+    /// This is the symmetric counterpart to [`ContextTag::encrypt`](Encrypt::encrypt).
+    /// The tag is automatically wrapped as `((), tag)` to match the AAD used during
+    /// encryption.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
+    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    ///
+    /// let key = Key::from([0u8; 32]);
+    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    ///
+    /// let tagged = ContextTag::new("secret message", "user:42");
+    /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
+    ///
+    /// let plaintext: String = ContextTag::decrypt(ciphertext, &cipher, "user:42")
+    ///     .expect("decryption failed");
+    /// assert_eq!(plaintext, "secret message");
+    /// ```
+    pub fn decrypt<'a, T, C>(
+        encrypted: T::Encrypted,
+        cipher: &C,
+        tag: Tag,
+    ) -> Result<T, Unspecified>
+    where
+        T: Decrypt,
+        C: Cipher,
+        Tag: IntoAad<'a>,
+    {
+        Self::decrypt_with_aad(encrypted, cipher, tag, ())
+    }
+
+    /// Decrypts a ciphertext using extra AAD combined with the tag.
+    ///
+    /// This is the symmetric counterpart to
+    /// [`ContextTag::encrypt_with_aad`](Encrypt::encrypt_with_aad).
+    /// The final AAD is `(extra_aad, tag)`, matching what was used during encryption.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
+    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    ///
+    /// let key = Key::from([0u8; 32]);
+    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    ///
+    /// let tagged = ContextTag::new("secret", "table:users");
+    /// let ciphertext = tagged
+    ///     .encrypt_with_aad(&cipher, "row:99")
+    ///     .expect("encryption failed");
+    ///
+    /// let plaintext: String = ContextTag::decrypt_with_aad(
+    ///     ciphertext,
+    ///     &cipher,
+    ///     "table:users",
+    ///     "row:99",
+    /// )
+    /// .expect("decryption failed");
+    /// assert_eq!(plaintext, "secret");
+    /// ```
+    pub fn decrypt_with_aad<'a, T, C, A>(
+        encrypted: T::Encrypted,
+        cipher: &C,
+        tag: Tag,
+        extra_aad: A,
+    ) -> Result<T, Unspecified>
+    where
+        T: Decrypt,
+        C: Cipher,
+        Tag: IntoAad<'a>,
+        A: IntoAad<'a>,
+    {
+        T::decrypt_with_aad(encrypted, cipher, (extra_aad, tag))
     }
 }
 
