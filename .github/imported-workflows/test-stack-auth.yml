@@ -1,0 +1,63 @@
+name: "Run stack-auth tests"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - packages/stack-auth/**
+      - .github/workflows/test-stack-auth.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - packages/stack-auth/**
+      - .github/workflows/test-stack-auth.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -l {0}
+
+env:
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  NEXTEST_PROFILE: ci
+
+jobs:
+  test-stack-auth:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fix permissions on target directory
+        run: |
+          mkdir -p ./target
+          sudo chown -R "$(id -u):$(id -g)" ./target
+
+      - name: test-unit
+        run: mise run test:unit
+
+      - name: test-integration-stack-auth
+        run: mise run test:integration:stack-auth
+
+      - uses: ./.github/actions/send-slack-notification
+        with:
+          channel: engineering
+          webhook_url: ${{ secrets.SLACK_NOTIFICATION_WEBHOOK_URL }}
