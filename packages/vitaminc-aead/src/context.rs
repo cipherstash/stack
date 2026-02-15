@@ -126,8 +126,8 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
 /// ```
 pub struct ContextTag<Tag, T> {
-    pub inner: T,
-    pub aad: Tag,
+    inner: T,
+    aad: Tag,
 }
 
 impl<Tag, T> ContextTag<Tag, T> {
