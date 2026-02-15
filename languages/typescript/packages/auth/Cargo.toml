@@ -1,0 +1,29 @@
+[package]
+name = "stack-auth-node"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+stack-auth = { path = "..", features = ["specta"] }
+cts-common = { path = "../../cts-common", default-features = false }
+napi = { version = "2", features = ["async", "tokio_rt"] }
+napi-derive = "2"
+regex = "1"
+specta = { version = "1", features = ["typescript"] }
+syn = { version = "2", features = ["full", "parsing"] }
+url = { version = "2", optional = true }
+
+[build-dependencies]
+napi-build = "2"
+
+[features]
+test-utils = ["stack-auth/test-utils", "dep:url"]
+
+[[bin]]
+name = "generate-types"
+path = "src/generate_types.rs"
+
+[workspace]
