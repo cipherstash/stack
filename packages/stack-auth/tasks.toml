@@ -1,0 +1,7 @@
+["test:integration:stack-auth"]
+description = "Run stack-auth Node.js integration tests"
+dir = "{{config_root}}/packages/stack-auth/node"
+run = [
+  "npm install",
+  "npm test",
+]
