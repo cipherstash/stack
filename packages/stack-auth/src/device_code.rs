@@ -1,23 +1,14 @@
 use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
 use serde::{Deserialize, Serialize};
 use url::Url;
-use vitaminc::protected::OpaqueDebug;
-use zeroize::ZeroizeOnDrop;
 
-use crate::{AuthError, AuthStrategy, Token};
+use crate::{AuthError, SecretToken, Token};
 
 /// Drives the RFC 8628 device authorization flow against CTS-hosted endpoints.
 pub struct DeviceCodeStrategy {
     base_url: Url,
     client_id: String,
 }
-
-/// A device code secret received from the authorization server.
-///
-/// This is a bearer secret until exchanged for a token, so it is zeroized on
-/// drop and its `Debug` output is redacted.
-#[derive(OpaqueDebug, ZeroizeOnDrop)]
-struct DeviceCode(String);
 
 /// The result of initiating a device code flow.
 ///
@@ -28,7 +19,7 @@ struct DeviceCode(String);
 pub struct PendingDeviceCode {
     token_url: Url,
     client_id: String,
-    device_code: DeviceCode,
+    device_code: SecretToken,
     user_code: String,
     verification_uri: String,
     verification_uri_complete: String,
@@ -125,11 +116,20 @@ impl PendingDeviceCode {
     }
 }
 
+/// Ensure a URL has a trailing slash so that `Url::join` with relative paths
+/// appends to the path rather than replacing the last segment.
+fn ensure_trailing_slash(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url
+}
+
 impl DeviceCodeStrategy {
     pub fn new(region: Region, client_id: impl Into<String>) -> Result<Self, AuthError> {
         let base_url = CtsServiceDiscovery::endpoint(region)?;
         Ok(Self {
-            base_url,
+            base_url: ensure_trailing_slash(base_url),
             client_id: client_id.into(),
         })
     }
@@ -143,7 +143,7 @@ impl DeviceCodeStrategy {
         U: TryInto<Url>,
         U::Error: Into<AuthError>,
     {
-        self.base_url = base_url.try_into().map_err(Into::into)?;
+        self.base_url = ensure_trailing_slash(base_url.try_into().map_err(Into::into)?);
         Ok(self)
     }
 
@@ -157,7 +157,7 @@ impl DeviceCodeStrategy {
     pub async fn begin(&self) -> Result<PendingDeviceCode, AuthError> {
         let client = reqwest::Client::new();
 
-        let code_url = self.base_url.join("/oauth/device/code")?;
+        let code_url = self.base_url.join("oauth/device/code")?;
 
         tracing::debug!(url = %code_url, client_id = %self.client_id, "requesting device code");
 
@@ -180,7 +180,7 @@ impl DeviceCodeStrategy {
 
         let code: DeviceCodeResponse = code_resp.json().await?;
 
-        let token_url = self.base_url.join("/oauth/device/token")?;
+        let token_url = self.base_url.join("oauth/device/token")?;
 
         tracing::debug!(
             user_code = %code.user_code,
@@ -191,7 +191,7 @@ impl DeviceCodeStrategy {
         Ok(PendingDeviceCode {
             token_url,
             client_id: self.client_id.clone(),
-            device_code: DeviceCode(code.device_code),
+            device_code: code.device_code,
             user_code: code.user_code,
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
@@ -202,7 +202,7 @@ impl DeviceCodeStrategy {
 
 #[derive(Deserialize)]
 struct DeviceCodeResponse {
-    device_code: String,
+    device_code: SecretToken,
     user_code: String,
     verification_uri: String,
     verification_uri_complete: String,
@@ -211,7 +211,7 @@ struct DeviceCodeResponse {
 
 #[derive(Deserialize)]
 struct TokenResponse {
-    access_token: String,
+    access_token: SecretToken,
     token_type: String,
     expires_in: u64,
 }
@@ -235,16 +235,7 @@ struct TokenRequest<'a> {
     grant_type: &'a str,
 }
 
-impl AuthStrategy for DeviceCodeStrategy {
-    async fn authenticate(self) -> Result<Token, AuthError> {
-        let pending = self.begin().await?;
-        pending.open_in_browser();
-        pending.poll_for_token().await
-    }
-}
-
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use cts_common::Region;
@@ -362,7 +353,7 @@ mod tests {
 
         let token = begin_pending(&server).await.poll_for_token().await.unwrap();
 
-        assert_eq!(token.access_token(), "test_access_token_value");
+        assert_eq!(token.access_token().0, "test_access_token_value");
         assert_eq!(token.token_type(), "Bearer");
         assert_eq!(token.expires_in(), 3600);
     }
@@ -487,7 +478,7 @@ mod tests {
         });
 
         let token = result.unwrap();
-        assert_eq!(token.access_token(), "test_access_token_value");
+        assert_eq!(token.access_token().0, "test_access_token_value");
     }
 
     #[tokio::test(start_paused = true)]
@@ -513,7 +504,7 @@ mod tests {
         });
 
         let token = result.unwrap();
-        assert_eq!(token.access_token(), "test_access_token_value");
+        assert_eq!(token.access_token().0, "test_access_token_value");
     }
 
     /// Proves that `slow_down` increases the poll interval: with a short
@@ -545,5 +536,60 @@ mod tests {
         let err = pending.poll_for_token().await.unwrap_err();
 
         assert!(matches!(err, AuthError::ExpiredToken));
+    }
+
+    // ---- ensure_trailing_slash / URL join tests ----
+
+    #[test]
+    fn test_ensure_trailing_slash_adds_slash() {
+        let url = Url::parse("http://localhost:3001").unwrap();
+        let result = ensure_trailing_slash(url);
+        assert_eq!(result.as_str(), "http://localhost:3001/");
+    }
+
+    #[test]
+    fn test_ensure_trailing_slash_preserves_existing() {
+        let url = Url::parse("http://localhost:3001/").unwrap();
+        let result = ensure_trailing_slash(url);
+        assert_eq!(result.as_str(), "http://localhost:3001/");
+    }
+
+    #[test]
+    fn test_ensure_trailing_slash_with_path() {
+        let url = Url::parse("http://localhost:3001/api/v1").unwrap();
+        let result = ensure_trailing_slash(url);
+        assert_eq!(result.as_str(), "http://localhost:3001/api/v1/");
+    }
+
+    #[test]
+    fn test_relative_join_preserves_base_path() {
+        let base = ensure_trailing_slash(Url::parse("http://localhost:3001/api/v1").unwrap());
+        let joined = base.join("oauth/device/code").unwrap();
+        assert_eq!(
+            joined.as_str(),
+            "http://localhost:3001/api/v1/oauth/device/code"
+        );
+    }
+
+    #[test]
+    fn test_relative_join_on_root_url() {
+        let base = ensure_trailing_slash(Url::parse("http://localhost:3001").unwrap());
+        let joined = base.join("oauth/device/code").unwrap();
+        assert_eq!(joined.as_str(), "http://localhost:3001/oauth/device/code");
+    }
+
+    #[tokio::test]
+    async fn test_pending_device_code_debug_does_not_leak() {
+        let mut mocks = MockSet::new();
+        mock_code_endpoint(&mut mocks);
+        let server = start_server(mocks).await;
+
+        let pending = begin_pending(&server).await;
+        let debug = format!("{:?}", pending);
+
+        assert!(
+            !debug.contains("test_device_code"),
+            "PendingDeviceCode Debug should not contain the device code, got: {debug}"
+        );
     }
 }

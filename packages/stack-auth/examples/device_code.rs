@@ -1,5 +1,5 @@
-use stack_auth::DeviceCodeStrategy;
 use cts_common::Region;
+use stack_auth::DeviceCodeStrategy;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Token type: {}", token.token_type());
     println!("Expires in: {}s", token.expires_in());
-    println!("Access token: {}...", &token.access_token()[..20]);
+    println!("Access token: {:?}", token.access_token());
 
     Ok(())
 }
