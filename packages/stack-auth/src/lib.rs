@@ -84,13 +84,11 @@ pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
 /// You cannot construct a `SecretToken` directly — it is returned by the
 /// authentication flow via [`Token::access_token`].
 #[derive(OpaqueDebug, ZeroizeOnDrop, serde::Deserialize)]
-#[cfg_attr(feature = "specta", derive(serde::Serialize, specta::Type))]
 #[serde(transparent)]
 pub struct SecretToken(String);
 
 impl SecretToken {
     /// Expose the inner token string for FFI boundaries.
-    #[cfg(feature = "specta")]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -101,9 +99,6 @@ impl SecretToken {
 /// The token contains a [`SecretToken`] (the bearer credential), a token type
 /// (typically `"Bearer"`), and an expiry time in seconds.
 #[derive(Debug)]
-#[cfg_attr(feature = "specta", derive(serde::Serialize, specta::Type))]
-#[cfg_attr(feature = "specta", serde(rename_all = "camelCase"))]
-#[cfg_attr(feature = "specta", specta(rename = "TokenResult"))]
 pub struct Token {
     access_token: SecretToken,
     token_type: String,

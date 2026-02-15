@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "Inflector"
-version = "0.11.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe438c63458706e03479442743baae6c88256498e6431708f6dfc520a26515d3"
-
-[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -82,7 +76,7 @@ checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -344,42 +338,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
 dependencies = [
  "quote",
- "syn 2.0.115",
-]
-
-[[package]]
-name = "cts-auth"
-version = "0.1.0"
-dependencies = [
- "cts-common",
- "open",
- "reqwest",
- "serde",
- "specta",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "url",
- "vitaminc",
- "zeroize",
-]
-
-[[package]]
-name = "cts-auth-node"
-version = "0.1.0"
-dependencies = [
- "cts-auth",
- "cts-common",
- "mocktail",
- "napi",
- "napi-build",
- "napi-derive",
- "regex",
- "serde_json",
- "specta",
- "syn 2.0.115",
- "tokio",
- "url",
+ "syn",
 ]
 
 [[package]]
@@ -426,7 +385,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rustc_version",
- "syn 2.0.115",
+ "syn",
  "unicode-xid",
 ]
 
@@ -448,16 +407,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
-]
-
-[[package]]
-name = "document-features"
-version = "0.2.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
-dependencies = [
- "litrs",
+ "syn",
 ]
 
 [[package]]
@@ -484,7 +434,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -608,7 +558,7 @@ checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1012,12 +962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indoc"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa799dd5ed20a7e349f3b4639aa80d74549c81716d9ec4f994c9b5815598306"
-
-[[package]]
 name = "ipconfig"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1072,9 +1016,9 @@ checksum = "7655c9839580ee829dfacba1d1278c2b7883e50a277ff7541299489d6bdfdc45"
 
 [[package]]
 name = "itertools"
-version = "0.10.5"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -1140,12 +1084,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
-name = "litrs"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1199,7 +1137,7 @@ checksum = "db5b29714e950dbb20d5e6f74f9dcec4edbcc1067bb7f8ed198c097b8c1a818b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1296,7 +1234,7 @@ dependencies = [
  "napi-derive-backend",
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1311,7 +1249,7 @@ dependencies = [
  "quote",
  "regex",
  "semver",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1407,12 +1345,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
 name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1467,7 +1399,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1499,17 +1431,7 @@ dependencies = [
  "itertools",
  "proc-macro2",
  "quote",
- "syn 2.0.115",
-]
-
-[[package]]
-name = "protected-derive"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1897,7 +1819,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -1986,40 +1908,41 @@ dependencies = [
 ]
 
 [[package]]
-name = "specta"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2240c3aa020aa61d2c569087d213baafbb212f4ceb9de9dd162376ea6aa0fe3"
-dependencies = [
- "document-features",
- "indoc",
- "once_cell",
- "paste",
- "serde",
- "serde_json",
- "specta-macros",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "specta-macros"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4605306321c356e03873b8ee71d7592a5e7c508add325c3ed0677c16fdf1bcfb"
-dependencies = [
- "Inflector",
- "itertools",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "termcolor",
-]
-
-[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "stack-auth"
+version = "0.1.0"
+dependencies = [
+ "cts-common",
+ "open",
+ "reqwest",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "url",
+ "vitaminc",
+ "zeroize",
+]
+
+[[package]]
+name = "stack-auth-node"
+version = "0.1.0"
+dependencies = [
+ "cts-common",
+ "mocktail",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "serde_json",
+ "stack-auth",
+ "tokio",
+ "url",
+]
 
 [[package]]
 name = "subtle"
@@ -2050,17 +1973,6 @@ checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
 
 [[package]]
 name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
-
-[[package]]
-name = "syn"
 version = "2.0.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e614ed320ac28113fa64972c4262d5dbc89deacdfd00c34a3e4cea073243c12"
@@ -2087,7 +1999,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -2101,15 +2013,6 @@ name = "tap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
-
-[[package]]
-name = "termcolor"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
-dependencies = [
- "winapi-util",
-]
 
 [[package]]
 name = "terminal_size"
@@ -2157,7 +2060,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -2168,7 +2071,7 @@ checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -2221,7 +2124,7 @@ checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -2328,7 +2231,7 @@ checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -2439,7 +2342,7 @@ checksum = "6d79d08d92ab8af4c5e8a6da20c47ae3f61a0f1dabc1997cdf2d082b757ca08b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
  "url",
  "uuid",
 ]
@@ -2466,8 +2369,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vitaminc"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
 dependencies = [
  "vitaminc-encrypt",
  "vitaminc-protected",
@@ -2477,8 +2380,8 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-aead"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
 dependencies = [
  "bytes",
  "serde",
@@ -2489,8 +2392,8 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-encrypt"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
 dependencies = [
  "aws-lc-rs",
  "vitaminc-aead",
@@ -2501,35 +2404,56 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-protected"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
 dependencies = [
  "bitvec",
  "digest",
  "opaque-debug",
- "protected-derive",
  "serde",
  "serde_bytes",
  "subtle",
+ "vitaminc-protected-derive",
  "zeroize",
 ]
 
 [[package]]
+name = "vitaminc-protected-derive"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "vitaminc-random"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
 dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "thiserror 1.0.69",
  "vitaminc-protected",
+ "vitaminc-random-derives",
  "zeroize",
 ]
 
 [[package]]
+name = "vitaminc-random-derives"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "vitaminc-traits"
-version = "0.1.0-pre2"
-source = "git+https://github.com/cipherstash/vitaminc?branch=timing-safe-eq#5edd32e990dff79c765adeecf1cd9ac9d2945a71"
+version = "0.1.0-pre4"
+source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2620,7 +2544,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
  "wasm-bindgen-shared",
 ]
 
@@ -2714,15 +2638,6 @@ name = "widestring"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
-
-[[package]]
-name = "winapi-util"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
-dependencies = [
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "windows-link"
@@ -2992,7 +2907,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn 2.0.115",
+ "syn",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -3008,7 +2923,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -3084,7 +2999,7 @@ checksum = "b659052874eb698efe5b9e8cf382204678a0086ebf46982b79d6ca3182927e5d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
  "synstructure",
 ]
 
@@ -3105,7 +3020,7 @@ checksum = "4122cd3169e94605190e77839c9a40d40ed048d305bfdc146e7df40ab0f3e517"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -3125,7 +3040,7 @@ checksum = "d71e5d6e06ab090c67b5e44993ec16b72dcbaabc526db883a360057678b48502"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
  "synstructure",
 ]
 
@@ -3146,7 +3061,7 @@ checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]
@@ -3179,7 +3094,7 @@ checksum = "eadce39539ca5cb3985590102671f2567e659fca9666581ad3411d59207951f3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.115",
+ "syn",
 ]
 
 [[package]]

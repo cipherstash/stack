@@ -11,8 +11,7 @@
     "build": "napi build --release",
     "build:debug": "napi build",
     "build:test": "napi build --features test-utils",
-    "test": "npm run build:test && vitest run",
-    "generate-types": "cargo run --bin generate-types"
+    "test": "npm run build:test && vitest run"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",

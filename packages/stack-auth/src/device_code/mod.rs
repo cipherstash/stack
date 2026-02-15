@@ -151,15 +151,9 @@ impl DeviceCodeStrategy {
 /// # }
 /// ```
 #[derive(Debug)]
-#[cfg_attr(feature = "specta", derive(serde::Serialize, specta::Type))]
-#[cfg_attr(feature = "specta", serde(rename_all = "camelCase"))]
-#[cfg_attr(feature = "specta", specta(rename = "DeviceCodeResult"))]
 pub struct PendingDeviceCode {
-    #[cfg_attr(feature = "specta", serde(skip))]
     token_url: Url,
-    #[cfg_attr(feature = "specta", serde(skip))]
     client_id: String,
-    #[cfg_attr(feature = "specta", serde(skip))]
     device_code: DeviceCode,
     /// The short code the user must enter to authorize this device.
     user_code: String,

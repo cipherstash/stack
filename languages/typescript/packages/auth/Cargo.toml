@@ -7,13 +7,10 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-stack-auth = { path = "..", features = ["specta"] }
+stack-auth = { path = ".." }
 cts-common = { path = "../../cts-common", default-features = false }
 napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
-regex = "1"
-specta = { version = "1", features = ["typescript"] }
-syn = { version = "2", features = ["full", "parsing"] }
 url = { version = "2", optional = true }
 mocktail = { version = "0.3.0", optional = true }
 serde_json = { version = "1", optional = true }
@@ -30,9 +27,5 @@ napi-build = "2"
 
 [features]
 test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:serde_json"]
-
-[[bin]]
-name = "generate-types"
-path = "src/generate_types.rs"
 
 [workspace]
