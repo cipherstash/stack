@@ -1,6 +1,6 @@
 use crate::Unspecified;
 use std::cell::RefCell;
-use vitaminc_random::{Generatable, SafeRand, SeedableRng};
+use vitaminc_random::{Generatable, SafeRand};
 
 /// Represents a nonce used in AEAD encryption of `N` bytes length.
 pub struct Nonce<const N: usize>([u8; N]);
