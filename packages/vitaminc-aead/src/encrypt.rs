@@ -61,11 +61,7 @@ impl<'a> Encrypt<'a> for &'a str {
 impl<'a, const N: usize> Encrypt<'a> for [u8; N] {
     type Encrypted = LocalCipherText;
 
-    fn encrypt_with_aad<C, A>(
-        mut self,
-        cipher: &C,
-        aad: A,
-    ) -> Result<Self::Encrypted, Unspecified>
+    fn encrypt_with_aad<C, A>(mut self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
     where
         C: Cipher,
         A: IntoAad<'a>,
@@ -114,11 +110,7 @@ mod tests {
     impl<'a> Encrypt<'a> for Foo {
         type Encrypted = EncryptedFoo;
 
-        fn encrypt_with_aad<C, A>(
-            self,
-            cipher: &C,
-            aad: A,
-        ) -> Result<Self::Encrypted, Unspecified>
+        fn encrypt_with_aad<C, A>(self, cipher: &C, aad: A) -> Result<Self::Encrypted, Unspecified>
         where
             C: Cipher,
             A: IntoAad<'a>,

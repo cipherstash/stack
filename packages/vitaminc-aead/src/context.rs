@@ -9,22 +9,25 @@
 //! to a ciphertext so that decryption fails unless the same context is provided. Because the tag
 //! is part of the type, it is impossible to forget to include it during encryption.
 //!
-//! # AAD concatenation order
+//! # AAD encoding
 //!
-//! When encrypting a `ContextTag`, the final AAD is formed by concatenating any extra AAD passed
-//! at the call site **followed by** the embedded tag:
+//! When encrypting a `ContextTag`, the final AAD is formed by PAE-encoding the extra AAD
+//! with the embedded tag:
 //!
 //! ```text
-//! final_aad = extra_aad || tag
+//! final_aad = PAE(extra_aad, tag)
 //! ```
 //!
-//! With [`refine`](ContextTag::refine), the tag itself is a nested tuple whose elements are
-//! concatenated left-to-right:
+//! PAE (Pre-Authentication Encoding) prefixes each piece with its length, preventing
+//! canonicalization attacks where different inputs could produce identical byte strings.
+//!
+//! With [`refine`](ContextTag::refine), the tag itself is a nested tuple that is
+//! recursively PAE-encoded:
 //!
 //! ```text
 //! ContextTag::new(data, "a").refine("b")
 //!   ──► tag = ("a", "b")
-//!   ──► final_aad = extra_aad || "a" || "b"
+//!   ──► final_aad = PAE(extra_aad, PAE("a", "b"))
 //! ```
 
 use crate::{Cipher, Encrypt, IntoAad, Unspecified};
@@ -53,8 +56,8 @@ use crate::{Cipher, Encrypt, IntoAad, Unspecified};
 /// let tagged = ContextTag::new("secret message", "user:42");
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
 ///
-/// // To decrypt, supply the same tag as AAD
-/// let plaintext: String = String::decrypt_with_aad(ciphertext, &cipher, "user:42")
+/// // To decrypt, supply the same AAD tuple used during encryption: (extra_aad, tag)
+/// let plaintext: String = String::decrypt_with_aad(ciphertext, &cipher, ((), "user:42"))
 ///     .expect("decryption failed");
 /// assert_eq!(plaintext, "secret message");
 /// ```
@@ -101,7 +104,7 @@ use crate::{Cipher, Encrypt, IntoAad, Unspecified};
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
 ///
 /// // Wrong context — decryption must fail
-/// let result = String::decrypt_with_aad(ciphertext, &cipher, "user:99");
+/// let result = String::decrypt_with_aad(ciphertext, &cipher, ((), "user:99"));
 /// assert!(result.is_err());
 /// ```
 ///
@@ -153,7 +156,7 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// This is useful for building hierarchical context such as
     /// `("table:users", "column:email")`. The original and refined tags are
-    /// concatenated (in order) when converted to AAD bytes.
+    /// PAE-encoded when converted to AAD bytes.
     ///
     /// `refine` can be chained multiple times to build deeper hierarchies.
     ///
@@ -171,11 +174,11 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
     ///
-    /// // Decrypt with the same hierarchical AAD
+    /// // Decrypt with the same AAD: (extra_aad, (tag, refinement))
     /// let plaintext: String = String::decrypt_with_aad(
     ///     ciphertext,
     ///     &cipher,
-    ///     ("table:users", "column:email"),
+    ///     ((), ("table:users", "column:email")),
     /// )
     /// .expect("decryption failed");
     /// assert_eq!(plaintext, "secret");
@@ -196,12 +199,11 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
     ///
-    /// // The AAD is the nested tuple (("a", "b"), "c") which
-    /// // concatenates to "a" || "b" || "c"
+    /// // The AAD is ((), (("a", "b"), "c")), PAE-encoded recursively
     /// let plaintext: String = String::decrypt_with_aad(
     ///     ciphertext,
     ///     &cipher,
-    ///     (("a", "b"), "c"),
+    ///     ((), (("a", "b"), "c")),
     /// )
     /// .expect("decryption failed");
     /// assert_eq!(plaintext, "data");
@@ -219,8 +221,8 @@ impl<'a, Tag: IntoAad<'a> + 'a, T: Encrypt<'a>> Encrypt<'a> for ContextTag<Tag, 
 
     /// Encrypts the inner value, combining `extra_aad` with the embedded tag.
     ///
-    /// The final AAD is `(extra_aad, tag)`, which concatenates the byte
-    /// representations of `extra_aad` followed by `tag`.
+    /// The final AAD is `(extra_aad, tag)`, which is PAE-encoded to produce
+    /// an unambiguous byte representation.
     fn encrypt_with_aad<C, A>(
         self,
         cipher: &C,
@@ -238,7 +240,7 @@ impl<'a, Tag: IntoAad<'a> + 'a, T: Encrypt<'a>> Encrypt<'a> for ContextTag<Tag, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::LocalCipherText;
+    use crate::{Aad, LocalCipherText};
     use std::cell::RefCell;
 
     struct MockCipher {
@@ -304,7 +306,8 @@ mod tests {
 
         let ciphertext = result.expect("encryption should succeed");
         assert_eq!(ciphertext.as_ref(), &plaintext);
-        assert_eq!(cipher.captured_aad(), b"extratag_aad");
+        let expected = Aad::pae(&[b"extra", b"tag_aad"]);
+        assert_eq!(cipher.captured_aad(), expected.as_bytes());
     }
 
     #[test]
@@ -316,15 +319,15 @@ mod tests {
             .encrypt_with_aad(&cipher, "extra")
             .expect("encryption should succeed");
 
-        // The tuple (extra_aad, tag_aad) concatenates the bytes
-        assert_eq!(cipher.captured_aad(), b"extratag");
+        // The tuple (extra_aad, tag_aad) is PAE-encoded
+        let expected = Aad::pae(&[b"extra", b"tag"]);
+        assert_eq!(cipher.captured_aad(), expected.as_bytes());
     }
 
     #[test]
     fn test_refine_combines_aad() {
         let plaintext = vec![1u8, 2, 3];
-        let context_tag = ContextTag::new(plaintext.clone(), "first")
-            .refine("second");
+        let context_tag = ContextTag::new(plaintext.clone(), "first").refine("second");
 
         let cipher = MockCipher::new();
         let ciphertext = context_tag
@@ -332,7 +335,9 @@ mod tests {
             .expect("encryption should succeed");
 
         assert_eq!(ciphertext.as_ref(), &plaintext);
-        // extra + (first, second) => "extra" + "first" + "second"
-        assert_eq!(cipher.captured_aad(), b"extrafirstsecond");
+        // extra + (first, second) => PAE(extra, PAE(first, second))
+        let inner = Aad::pae(&[b"first", b"second"]);
+        let expected = Aad::pae(&[b"extra", inner.as_bytes()]);
+        assert_eq!(cipher.captured_aad(), expected.as_bytes());
     }
 }
