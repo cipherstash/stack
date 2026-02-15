@@ -32,7 +32,6 @@ pub struct DeviceCodeStrategy {
     client_id: String,
 }
 
-
 impl DeviceCodeStrategy {
     /// Create a new strategy for the given CipherStash region and OAuth client ID.
     ///
@@ -215,8 +214,6 @@ impl PendingDeviceCode {
         );
 
         loop {
-            tokio::time::sleep(interval).await;
-
             if tokio::time::Instant::now() >= deadline {
                 tracing::debug!("device code expired while polling");
                 return Err(AuthError::ExpiredToken);
@@ -246,12 +243,10 @@ impl PendingDeviceCode {
             match err.error.as_str() {
                 "authorization_pending" => {
                     tracing::debug!("authorization pending, retrying");
-                    continue;
                 }
                 "slow_down" => {
                     interval += tokio::time::Duration::from_secs(5);
                     tracing::debug!(interval_secs = interval.as_secs(), "slowing down");
-                    continue;
                 }
                 "expired_token" => return Err(AuthError::ExpiredToken),
                 "access_denied" => return Err(AuthError::AccessDenied),
@@ -259,6 +254,8 @@ impl PendingDeviceCode {
                 "invalid_client" => return Err(AuthError::InvalidClient),
                 _ => return Err(AuthError::Server(err.error_description)),
             }
+
+            tokio::time::sleep(interval).await;
         }
     }
 }
