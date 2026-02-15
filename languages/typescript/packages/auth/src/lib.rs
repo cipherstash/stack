@@ -5,6 +5,9 @@ use cts_common::Region;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+#[cfg(feature = "test-utils")]
+mod mock_auth_server;
+
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
@@ -172,7 +175,7 @@ mod tests {
     use cts_common::Region;
     use mocktail::prelude::*;
 
-    // --- Mock response builders (mirrors cts-auth/src/device_code.rs) ---
+    // --- Mock response builders (mirrors stack-auth/src/device_code.rs) ---
 
     fn device_code_json() -> serde_json::Value {
         serde_json::json!({
@@ -207,7 +210,7 @@ mod tests {
     }
 
     async fn start_server(mocks: MockSet) -> MockServer {
-        let server = MockServer::new_http("cts-auth-node-test").with_mocks(mocks);
+        let server = MockServer::new_http("stack-auth-node-test").with_mocks(mocks);
         server.start().await.unwrap();
         server
     }

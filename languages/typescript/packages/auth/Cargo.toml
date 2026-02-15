@@ -15,9 +15,11 @@ regex = "1"
 specta = { version = "1", features = ["typescript"] }
 syn = { version = "2", features = ["full", "parsing"] }
 url = { version = "2", optional = true }
+mocktail = { version = "0.3.0", optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
-cts-auth = { path = "..", features = ["test-utils"] }
+stack-auth = { path = "..", features = ["test-utils"] }
 mocktail = "0.3.0"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
@@ -27,7 +29,7 @@ url = "2"
 napi-build = "2"
 
 [features]
-test-utils = ["stack-auth/test-utils", "dep:url"]
+test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:serde_json"]
 
 [[bin]]
 name = "generate-types"
