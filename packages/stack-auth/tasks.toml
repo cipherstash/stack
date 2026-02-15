@@ -2,6 +2,6 @@
 description = "Run stack-auth Node.js integration tests"
 dir = "{{config_root}}/packages/stack-auth/node"
 run = [
-  "npm install",
+  "npm ci",
   "npm test",
 ]
