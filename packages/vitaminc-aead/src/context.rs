@@ -47,8 +47,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 /// Encrypt a value with a context tag, then decrypt by providing the same AAD:
 ///
 /// ```
-/// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-/// use vitaminc_aead::test_utils::TestCipher;
+/// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+/// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+/// use vitaminc::aead::test_utils::TestCipher;
 ///
 /// let cipher = TestCipher;
 ///
@@ -67,8 +68,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 /// to the tag. Both must be provided for decryption to succeed:
 ///
 /// ```
-/// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-/// use vitaminc_aead::test_utils::TestCipher;
+/// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+/// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+/// use vitaminc::aead::test_utils::TestCipher;
 ///
 /// let cipher = TestCipher;
 ///
@@ -93,8 +95,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 /// If the AAD does not match what was used during encryption, decryption fails:
 ///
 /// ```
-/// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-/// use vitaminc_aead::test_utils::TestCipher;
+/// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+/// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+/// use vitaminc::aead::test_utils::TestCipher;
 ///
 /// let cipher = TestCipher;
 ///
@@ -112,8 +115,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 /// can accept borrowed tags like `&str` without requiring higher-ranked trait bounds:
 ///
 /// ```
-/// use vitaminc_aead::{ContextTag, Encrypt};
-/// use vitaminc_aead::test_utils::TestCipher;
+/// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+/// use vitaminc::aead::{ContextTag, Encrypt};
+/// use vitaminc::aead::test_utils::TestCipher;
 ///
 /// let cipher = TestCipher;
 ///
@@ -135,8 +139,9 @@ impl<Tag, T> ContextTag<Tag, T> {
     /// # Example
     ///
     /// ```
-    /// use vitaminc_aead::{ContextTag, Encrypt};
-    /// use vitaminc_aead::test_utils::TestCipher;
+    /// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+    /// use vitaminc::aead::{ContextTag, Encrypt};
+    /// use vitaminc::aead::test_utils::TestCipher;
     ///
     /// let cipher = TestCipher;
     ///
@@ -159,8 +164,9 @@ impl<Tag, T> ContextTag<Tag, T> {
     /// # Example
     ///
     /// ```
-    /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_aead::test_utils::TestCipher;
+    /// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+    /// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+    /// use vitaminc::aead::test_utils::TestCipher;
     ///
     /// let cipher = TestCipher;
     ///
@@ -182,8 +188,9 @@ impl<Tag, T> ContextTag<Tag, T> {
     /// # Chaining multiple refinements
     ///
     /// ```
-    /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_aead::test_utils::TestCipher;
+    /// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+    /// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+    /// use vitaminc::aead::test_utils::TestCipher;
     ///
     /// let cipher = TestCipher;
     ///
@@ -241,8 +248,9 @@ impl<Tag> ContextTag<Tag, ()> {
     /// # Example
     ///
     /// ```
-    /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_aead::test_utils::TestCipher;
+    /// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+    /// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+    /// use vitaminc::aead::test_utils::TestCipher;
     ///
     /// let cipher = TestCipher;
     ///
@@ -275,8 +283,9 @@ impl<Tag> ContextTag<Tag, ()> {
     /// # Example
     ///
     /// ```
-    /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_aead::test_utils::TestCipher;
+    /// # mod vitaminc { pub mod aead { pub use vitaminc_aead::*; } }
+    /// use vitaminc::aead::{ContextTag, Encrypt, Decrypt};
+    /// use vitaminc::aead::test_utils::TestCipher;
     ///
     /// let cipher = TestCipher;
     ///
