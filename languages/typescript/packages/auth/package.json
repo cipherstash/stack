@@ -1,5 +1,5 @@
 {
-  "name": "@cipherstash/stack-auth",
+  "name": "@cipherstash/auth",
   "version": "0.1.0",
   "private": true,
   "main": "index.js",
