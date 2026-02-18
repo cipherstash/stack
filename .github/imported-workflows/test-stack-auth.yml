@@ -52,7 +52,7 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" ./target
 
       - name: test-unit
-        run: mise run test:unit
+        run: mise x --env test -- cargo nextest run -p stack-auth --all-features
 
       - name: test-integration-stack-auth
         run: mise run test:integration:stack-auth
