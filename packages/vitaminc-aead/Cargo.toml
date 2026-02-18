@@ -12,14 +12,14 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-vitaminc-protected = { version = "0.1.0-pre", path = "../protected" }
-vitaminc-random = { version = "0.1.0-pre", path = "../random" }
+vitaminc-protected = { version = "0.1.0-pre4.1", path = "../protected" }
+vitaminc-random = { version = "0.1.0-pre4.1", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-vitaminc-encrypt = { version = "0.1.0-pre", path = "../encrypt" } # Used only in doctests
+vitaminc-encrypt = { version = "0.1.0-pre4.1", path = "../encrypt" } # Used only in doctests
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
