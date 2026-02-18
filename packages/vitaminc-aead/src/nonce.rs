@@ -24,16 +24,18 @@ impl<const N: usize> Nonce<N> {
 // TODO: Make this a trait that can be implemented for a cipher rather than an associated type on the Cipher
 // That way we can have multiple implementations of the same cipher with different nonce generation strategies
 pub trait NonceGenerator<const N: usize> {
-    fn init() -> Self;
+    fn init() -> Result<Self, Unspecified>
+    where
+        Self: Sized;
     fn generate(&self) -> Result<Nonce<N>, Unspecified>;
 }
 
 pub struct RandomNonceGenerator<const N: usize>(RefCell<SafeRand>);
 
 impl<const N: usize> NonceGenerator<N> for RandomNonceGenerator<N> {
-    fn init() -> Self {
-        let rng = SafeRand::from_entropy();
-        Self(RefCell::new(rng))
+    fn init() -> Result<Self, Unspecified> {
+        let rng = SafeRand::from_entropy().map_err(|_| Unspecified)?;
+        Ok(Self(RefCell::new(rng)))
     }
 
     fn generate(&self) -> Result<Nonce<N>, Unspecified> {

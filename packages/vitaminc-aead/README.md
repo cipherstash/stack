@@ -126,7 +126,7 @@ use vitaminc_encrypt::{Key, Aes256Cipher};
 use vitaminc_protected::Protected;
 use vitaminc_random::{Generatable, SafeRand, SeedableRng};
 
-let key = Key::random(&mut SafeRand::from_entropy())?;
+let key = Key::random(&mut SafeRand::from_entropy()?)?;
 let cipher = Aes256Cipher::new(&key)?;
 
 // Use a string as AAD
@@ -158,7 +158,7 @@ use vitaminc_encrypt::{Key, Aes256Cipher};
 use vitaminc_protected::Protected;
 use vitaminc_random::{Generatable, SafeRand, SeedableRng};
 
-let key = Key::random(&mut SafeRand::from_entropy())?;
+let key = Key::random(&mut SafeRand::from_entropy()?)?;
 let cipher = Aes256Cipher::new(&key)?;
 
 let sensitive_data = Protected::new([1, 2, 3, 4, 5]);
@@ -237,7 +237,7 @@ The crate provides nonce generation utilities for AEAD operations:
 use vitaminc_aead::{NonceGenerator, RandomNonceGenerator};
 
 // Create a random nonce generator for 12-byte nonces
-let generator = RandomNonceGenerator::<12>::init();
+let generator = RandomNonceGenerator::<12>::init()?;
 let nonce = generator.generate()?;
 # Ok(())
 # }
