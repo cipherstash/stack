@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+
+### Fixes
+
+- update codebase for rand 0.9 breaking changes
+
+### Miscellaneous
+
+- bump quickcheck from 1.0.3 to 1.1.0
+
 ### Added
 
 - `Encrypt` and `Decrypt` traits with lifetime at the trait level (`Encrypt<'a>`)
