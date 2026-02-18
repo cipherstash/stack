@@ -14,6 +14,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Miscellaneous
 
 - bump quickcheck from 1.0.3 to 1.1.0
+- release v0.1.0-pre4.1
+
+
+### Fixes
+
+- update codebase for rand 0.9 breaking changes
+
+### Miscellaneous
+
+- bump quickcheck from 1.0.3 to 1.1.0
 
 ### Added
 
