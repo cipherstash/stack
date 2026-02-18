@@ -703,7 +703,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.2",
+ "rand",
  "ring",
  "thiserror 2.0.18",
  "tinyvec",
@@ -725,7 +725,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot",
- "rand 0.9.2",
+ "rand",
  "resolv-conf",
  "smallvec",
  "thiserror 2.0.18",
@@ -1175,7 +1175,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "prost",
- "rand 0.9.2",
+ "rand",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1463,7 +1463,7 @@ dependencies = [
  "bytes",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.2",
+ "rand",
  "ring",
  "rustc-hash",
  "rustls",
@@ -1512,33 +1512,12 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
-dependencies = [
- "libc",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
-]
-
-[[package]]
-name = "rand"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
- "rand_chacha 0.9.0",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
+ "rand_chacha",
+ "rand_core",
 ]
 
 [[package]]
@@ -1548,16 +1527,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
 dependencies = [
  "ppv-lite86",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
-dependencies = [
- "getrandom 0.2.17",
+ "rand_core",
 ]
 
 [[package]]
@@ -2355,7 +2325,7 @@ checksum = "b672338555252d43fd2240c714dc444b8c6fb0a5c5335e65a07bba7742735ddb"
 dependencies = [
  "getrandom 0.4.1",
  "js-sys",
- "rand 0.9.2",
+ "rand",
  "serde_core",
  "sha1_smol",
  "wasm-bindgen",
@@ -2370,7 +2340,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vitaminc"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "vitaminc-encrypt",
  "vitaminc-protected",
@@ -2381,7 +2351,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-aead"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "bytes",
  "serde",
@@ -2393,7 +2363,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-encrypt"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "aws-lc-rs",
  "vitaminc-aead",
@@ -2405,7 +2375,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-protected"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "bitvec",
  "digest",
@@ -2420,7 +2390,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-protected-derive"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2430,11 +2400,11 @@ dependencies = [
 [[package]]
 name = "vitaminc-random"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "thiserror 1.0.69",
+ "rand",
+ "rand_chacha",
+ "thiserror 2.0.18",
  "vitaminc-protected",
  "vitaminc-random-derives",
  "zeroize",
@@ -2443,7 +2413,7 @@ dependencies = [
 [[package]]
 name = "vitaminc-random-derives"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2453,13 +2423,13 @@ dependencies = [
 [[package]]
 name = "vitaminc-traits"
 version = "0.1.0-pre4"
-source = "git+https://github.com/cipherstash/vitaminc?branch=fix%2Fopaque-debug-unused-results#bb6387850102619a0ce2d2050adecbed6543cf88"
+source = "git+https://github.com/cipherstash/vitaminc?rev=4327afd#4327afd37b2991508ed0e2e160aebe84538d234c"
 dependencies = [
  "anyhow",
  "bytes",
  "rmp-serde",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "vitaminc-protected",
  "vitaminc-random",
  "zeroize",
