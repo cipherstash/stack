@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import type { MockAuthServer as MockAuthServerType } from "../test-utils";
 import type {
   DeviceCodeResult,
-  TokenResult,
+  AuthResult,
   AuthError,
 } from "../index";
 
@@ -88,14 +88,14 @@ describe("device code flow (TypeScript / vitest)", () => {
       expect(result.expiresIn).toBe(900);
     });
 
-    it("pollForToken resolves with token on success", async () => {
+    it("pollForToken resolves with auth metadata on success", async () => {
       server.mockTokenEndpoint();
       const result = await beginFlow();
-      const token: TokenResult = await result.pollForToken();
+      const auth: AuthResult = await result.pollForToken();
 
-      expect(token.accessToken).toBe("test_access_token_value");
-      expect(token.tokenType).toBe("Bearer");
-      expect(token.expiresIn).toBe(3600);
+      expect(auth.expiresAt).toBeGreaterThan(0);
+      expect(auth.expiresIn).toBeGreaterThanOrEqual(3598);
+      expect(auth.expiresIn).toBeLessThanOrEqual(3600);
     });
 
     it("pollForToken rejects on second call (consumed handle)", async () => {

@@ -35,14 +35,16 @@ fn to_napi_error(err: AuthError) -> napi::Error {
 // TokenResult — plain data object
 // ---------------------------------------------------------------------------
 
+/// Metadata returned after a successful device code authentication.
+///
+/// The actual token is never exposed to JavaScript — it is saved directly
+/// to `~/.cipherstash/auth.json` by the Rust layer.
 #[derive(Debug)]
 #[napi(object)]
-pub struct TokenResult {
-    /// The OAuth access token.
-    pub access_token: String,
-    /// Token type, typically `"Bearer"`.
-    pub token_type: String,
-    /// Number of seconds before the token expires.
+pub struct AuthResult {
+    /// Absolute epoch timestamp (seconds) when the token expires.
+    pub expires_at: f64,
+    /// Number of seconds before the token expires (computed at time of return).
     pub expires_in: f64,
 }
 
@@ -93,7 +95,7 @@ impl DeviceCodeResult {
     /// If you need to open the browser, call `openInBrowser` *before*
     /// `pollForToken`.
     #[napi]
-    pub async fn poll_for_token(&self) -> Result<TokenResult> {
+    pub async fn poll_for_token(&self) -> Result<AuthResult> {
         let pending = self
             .pending
             .lock()
@@ -108,9 +110,8 @@ impl DeviceCodeResult {
 
         let token = pending.poll_for_token().await.map_err(to_napi_error)?;
 
-        Ok(TokenResult {
-            access_token: token.access_token().as_str().to_string(),
-            token_type: token.token_type().to_string(),
+        Ok(AuthResult {
+            expires_at: token.expires_at() as f64,
             expires_in: token.expires_in() as f64,
         })
     }
@@ -309,9 +310,8 @@ mod tests {
         let result = begin_result(&server).await;
         let token = result.poll_for_token().await.unwrap();
 
-        assert_eq!(token.access_token, "test_access_token_value");
-        assert_eq!(token.token_type, "Bearer");
-        assert_eq!(token.expires_in, 3600.0);
+        assert!(token.expires_in >= 3598.0 && token.expires_in <= 3600.0);
+        assert!(token.expires_at > 0.0);
     }
 
     #[tokio::test(start_paused = true)]
