@@ -120,14 +120,10 @@ fn decrypt_data<C: Cipher>(
 Many types can be used as AAD through the [`IntoAad`] trait:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use vitaminc_aead::{Encrypt, Cipher};
-use vitaminc_encrypt::{Key, Aes256Cipher};
-use vitaminc_protected::Protected;
-use vitaminc_random::{Generatable, SafeRand, SeedableRng};
+use vitaminc_aead::test_utils::TestCipher;
 
-let key = Key::random(&mut SafeRand::from_entropy()?)?;
-let cipher = Aes256Cipher::new(&key)?;
+let cipher = TestCipher;
 
 // Use a string as AAD
 "my-secret".encrypt_with_aad(&cipher, "user_id:123")?;
@@ -143,8 +139,7 @@ let cipher = Aes256Cipher::new(&key)?;
 
 // Use no AAD
 "my-secret".encrypt_with_aad(&cipher, ())?;
-# Ok(())
-# }
+# Ok::<(), vitaminc_aead::Unspecified>(())
 ```
 
 ### Working with Protected Types
@@ -152,20 +147,16 @@ let cipher = Aes256Cipher::new(&key)?;
 The crate integrates with `vitaminc-protected` to handle sensitive data safely:
 
 ```rust
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
 use vitaminc_aead::{Encrypt, Cipher};
-use vitaminc_encrypt::{Key, Aes256Cipher};
+use vitaminc_aead::test_utils::TestCipher;
 use vitaminc_protected::Protected;
-use vitaminc_random::{Generatable, SafeRand, SeedableRng};
 
-let key = Key::random(&mut SafeRand::from_entropy()?)?;
-let cipher = Aes256Cipher::new(&key)?;
+let cipher = TestCipher;
 
 let sensitive_data = Protected::new([1, 2, 3, 4, 5]);
 
 let encrypted = sensitive_data.encrypt(&cipher)?;
-# Ok(())
-# }
+# Ok::<(), vitaminc_aead::Unspecified>(())
 ```
 
 ### Custom Types

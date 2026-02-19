@@ -48,10 +48,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 ///
 /// ```
 /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-/// use vitaminc_encrypt::{Key, Aes256Cipher};
+/// use vitaminc_aead::test_utils::TestCipher;
 ///
-/// let key = Key::from([0u8; 32]);
-/// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+/// let cipher = TestCipher;
 ///
 /// let tagged = ContextTag::new("secret message", "user:42");
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
@@ -69,10 +68,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 ///
 /// ```
 /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-/// use vitaminc_encrypt::{Key, Aes256Cipher};
+/// use vitaminc_aead::test_utils::TestCipher;
 ///
-/// let key = Key::from([0u8; 32]);
-/// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+/// let cipher = TestCipher;
 ///
 /// let tagged = ContextTag::new("secret", "table:users");
 /// let ciphertext = tagged
@@ -96,10 +94,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 ///
 /// ```
 /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-/// use vitaminc_encrypt::{Key, Aes256Cipher};
+/// use vitaminc_aead::test_utils::TestCipher;
 ///
-/// let key = Key::from([0u8; 32]);
-/// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+/// let cipher = TestCipher;
 ///
 /// let tagged = ContextTag::new("secret", "user:42");
 /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
@@ -116,10 +113,9 @@ use crate::{Cipher, Decrypt, Encrypt, IntoAad, Unspecified};
 ///
 /// ```
 /// use vitaminc_aead::{ContextTag, Encrypt};
-/// use vitaminc_encrypt::{Key, Aes256Cipher};
+/// use vitaminc_aead::test_utils::TestCipher;
 ///
-/// let key = Key::from([0u8; 32]);
-/// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+/// let cipher = TestCipher;
 ///
 /// // &str tags work naturally — no String::from() needed
 /// let tagged = ContextTag::new(vec![1u8, 2, 3], "my-context");
@@ -140,10 +136,9 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// ```
     /// use vitaminc_aead::{ContextTag, Encrypt};
-    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    /// use vitaminc_aead::test_utils::TestCipher;
     ///
-    /// let key = Key::from([0u8; 32]);
-    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    /// let cipher = TestCipher;
     ///
     /// let tagged = ContextTag::new("hello", "my-tag");
     /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
@@ -165,10 +160,9 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// ```
     /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    /// use vitaminc_aead::test_utils::TestCipher;
     ///
-    /// let key = Key::from([0u8; 32]);
-    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    /// let cipher = TestCipher;
     ///
     /// let tagged = ContextTag::new("secret", "table:users")
     ///     .refine("column:email");
@@ -189,10 +183,9 @@ impl<Tag, T> ContextTag<Tag, T> {
     ///
     /// ```
     /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    /// use vitaminc_aead::test_utils::TestCipher;
     ///
-    /// let key = Key::from([0u8; 32]);
-    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    /// let cipher = TestCipher;
     ///
     /// let tagged = ContextTag::new("data", "a")
     ///     .refine("b")
@@ -249,10 +242,9 @@ impl<Tag> ContextTag<Tag, ()> {
     ///
     /// ```
     /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    /// use vitaminc_aead::test_utils::TestCipher;
     ///
-    /// let key = Key::from([0u8; 32]);
-    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    /// let cipher = TestCipher;
     ///
     /// let tagged = ContextTag::new("secret message", "user:42");
     /// let ciphertext = tagged.encrypt(&cipher).expect("encryption failed");
@@ -284,10 +276,9 @@ impl<Tag> ContextTag<Tag, ()> {
     ///
     /// ```
     /// use vitaminc_aead::{ContextTag, Encrypt, Decrypt};
-    /// use vitaminc_encrypt::{Key, Aes256Cipher};
+    /// use vitaminc_aead::test_utils::TestCipher;
     ///
-    /// let key = Key::from([0u8; 32]);
-    /// let cipher = Aes256Cipher::new(&key).expect("cipher creation failed");
+    /// let cipher = TestCipher;
     ///
     /// let tagged = ContextTag::new("secret", "table:users");
     /// let ciphertext = tagged
