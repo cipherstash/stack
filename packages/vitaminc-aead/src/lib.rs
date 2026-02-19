@@ -7,6 +7,8 @@ mod context;
 mod decrypt;
 mod encrypt;
 mod nonce;
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 
 #[doc(inline)]
 pub use aad::{Aad, IntoAad};

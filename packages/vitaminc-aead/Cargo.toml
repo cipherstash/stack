@@ -19,7 +19,10 @@ bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
 zeroize = { workspace = true }
 
+[features]
+test-utils = []
+
 [dev-dependencies]
-vitaminc-encrypt = { version = "0.1.0-pre4.1", path = "../encrypt" } # Used only in doctests
+vitaminc-aead = { path = ".", features = ["test-utils"] }
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
