@@ -5,7 +5,7 @@ use url::Url;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{AuthError, Token};
+use crate::{token_store::TokenStore, AuthError, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
 };
@@ -242,12 +242,19 @@ impl PendingDeviceCode {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                return Ok(Token {
+                let token = Token {
                     access_token: token_resp.access_token,
                     token_type: token_resp.token_type,
                     expires_at: now + token_resp.expires_in,
                     refresh_token: token_resp.refresh_token,
-                });
+                };
+
+                match TokenStore::new_default().and_then(|store| store.save(&token)) {
+                    Ok(()) => tracing::debug!("token saved to disk"),
+                    Err(err) => tracing::warn!(%err, "failed to save token to disk"),
+                }
+
+                return Ok(token);
             }
 
             let err: ErrorResponse = resp.json().await?;
