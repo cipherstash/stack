@@ -24,6 +24,8 @@ pub(super) struct TokenResponse {
     pub access_token: SecretToken,
     pub token_type: String,
     pub expires_in: u64,
+    #[serde(default)]
+    pub refresh_token: Option<SecretToken>,
 }
 
 #[derive(Deserialize)]

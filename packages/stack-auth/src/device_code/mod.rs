@@ -3,6 +3,8 @@ mod protocol;
 use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
 use url::Url;
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::{AuthError, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
@@ -236,10 +238,15 @@ impl PendingDeviceCode {
             if resp.status().is_success() {
                 tracing::debug!("token received");
                 let token_resp: TokenResponse = resp.json().await?;
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
                 return Ok(Token {
                     access_token: token_resp.access_token,
                     token_type: token_resp.token_type,
-                    expires_in: token_resp.expires_in,
+                    expires_at: now + token_resp.expires_in,
+                    refresh_token: token_resp.refresh_token,
                 });
             }
 

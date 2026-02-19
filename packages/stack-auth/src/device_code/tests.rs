@@ -116,7 +116,8 @@ async fn test_poll_for_token_success() {
 
     assert_eq!(token.access_token().0, "test_access_token_value");
     assert_eq!(token.token_type(), "Bearer");
-    assert_eq!(token.expires_in(), 3600);
+    assert!(!token.is_expired());
+    assert!((3598..=3600).contains(&token.expires_in()));
 }
 
 #[tokio::test(start_paused = true)]

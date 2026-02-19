@@ -64,13 +64,16 @@
 #![cfg_attr(test, allow(unused_results))]
 
 use std::convert::Infallible;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
 mod device_code;
+mod token_store;
 
 pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
+pub use token_store::{TokenStore, TokenStoreError};
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
 ///
@@ -83,11 +86,17 @@ pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
 ///
 /// You cannot construct a `SecretToken` directly — it is returned by the
 /// authentication flow via [`Token::access_token`].
-#[derive(OpaqueDebug, ZeroizeOnDrop, serde::Deserialize)]
+#[derive(OpaqueDebug, ZeroizeOnDrop, serde::Deserialize, serde::Serialize)]
 #[serde(transparent)]
 pub struct SecretToken(String);
 
 impl SecretToken {
+    /// Create a new `SecretToken` from a string value.
+    #[cfg(test)]
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
     /// Expose the inner token string for FFI boundaries.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -97,12 +106,14 @@ impl SecretToken {
 /// An access token returned by a successful authentication flow.
 ///
 /// The token contains a [`SecretToken`] (the bearer credential), a token type
-/// (typically `"Bearer"`), and an expiry time in seconds.
-#[derive(Debug)]
+/// (typically `"Bearer"`), and an absolute expiry timestamp.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Token {
     access_token: SecretToken,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<SecretToken>,
     token_type: String,
-    expires_in: u64,
+    expires_at: u64,
 }
 
 impl Token {
@@ -119,9 +130,32 @@ impl Token {
         &self.token_type
     }
 
-    /// How many seconds until the token expires.
+    /// The absolute epoch timestamp when the token expires.
+    pub fn expires_at(&self) -> u64 {
+        self.expires_at
+    }
+
+    /// How many seconds until the token expires (computed from the current time).
     pub fn expires_in(&self) -> u64 {
-        self.expires_in
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.expires_at.saturating_sub(now)
+    }
+
+    /// Returns `true` if the token has expired (with 60 seconds of leeway).
+    pub fn is_expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now + 60 >= self.expires_at
+    }
+
+    /// Returns a reference to the refresh token, if one was provided.
+    pub fn refresh_token(&self) -> Option<&SecretToken> {
+        self.refresh_token.as_ref()
     }
 }
 
