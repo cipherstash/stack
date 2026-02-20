@@ -165,9 +165,7 @@ impl<'a> AuthStrategy<'a> for &'a TokenStoreStrategy {
                 .clone();
             drop(state);
 
-            match Token::exchange_refresh_token(&refresh_token, &self.base_url, &self.client_id)
-                .await
-            {
+            match Token::refresh(&refresh_token, &self.base_url, &self.client_id).await {
                 Ok(new_token) => {
                     match self.store.save(&new_token) {
                         Ok(()) => tracing::debug!("refreshed token saved to disk"),
@@ -190,9 +188,7 @@ impl<'a> AuthStrategy<'a> for &'a TokenStoreStrategy {
         } else {
             // Token is fully expired. Refresh while holding the lock so other
             // callers block until the new token is available.
-            match Token::exchange_refresh_token(&refresh_token, &self.base_url, &self.client_id)
-                .await
-            {
+            match Token::refresh(&refresh_token, &self.base_url, &self.client_id).await {
                 Ok(new_token) => {
                     match self.store.save(&new_token) {
                         Ok(()) => tracing::debug!("refreshed token saved to disk"),

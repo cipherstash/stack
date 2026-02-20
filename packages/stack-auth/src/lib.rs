@@ -156,9 +156,6 @@ pub enum AuthError {
     /// The requested region is not supported.
     #[error("Unsupported region: {0}")]
     Region(#[from] cts_common::RegionError),
-    /// The token does not contain a refresh token.
-    #[error("No refresh token available")]
-    NoRefreshToken,
     /// An unexpected error was returned by the auth server.
     #[error("Server error: {0}")]
     Server(String),

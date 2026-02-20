@@ -80,25 +80,21 @@ impl Token {
         self.refresh_token.take()
     }
 
-    /// Refresh this token using the `/oauth/token` endpoint.
+    /// Exchange a refresh token for a new [`Token`] via the `/oauth/token`
+    /// endpoint.
     ///
-    /// Consumes `self` and returns a new [`Token`] with a fresh access token.
-    /// The `base_url` should be the CTS auth server base URL (e.g. from service
-    /// discovery) and `client_id` the OAuth client identifier.
+    /// This is a static constructor — it takes a bare [`SecretToken`] (the
+    /// refresh token) rather than operating on an existing `Token`. This
+    /// allows callers to manage the refresh token lifecycle independently
+    /// (e.g. taking it out of a cached token for cascade prevention and
+    /// restoring it on failure).
     ///
     /// # Errors
     ///
-    /// - [`AuthError::NoRefreshToken`] — this token has no refresh token.
     /// - [`AuthError::InvalidGrant`] — the refresh token was revoked or expired.
     /// - [`AuthError::InvalidClient`] — the client ID is not recognized.
     /// - [`AuthError::Request`] — a network error occurred.
-    pub async fn refresh(self, base_url: &Url, client_id: &str) -> Result<Token, AuthError> {
-        let refresh_token = self.refresh_token.ok_or(AuthError::NoRefreshToken)?;
-        Self::exchange_refresh_token(&refresh_token, base_url, client_id).await
-    }
-
-    /// Exchange a refresh token for a new [`Token`].
-    pub(crate) async fn exchange_refresh_token(
+    pub async fn refresh(
         refresh_token: &SecretToken,
         base_url: &Url,
         client_id: &str,
@@ -234,8 +230,10 @@ mod tests {
         let server = start_server(mocks).await;
         let base_url = server.url("");
 
-        let token = make_token(3600, true);
-        let refreshed = token.refresh(&base_url, "cli").await.unwrap();
+        let refresh_token = SecretToken::new("test-refresh-token");
+        let refreshed = Token::refresh(&refresh_token, &base_url, "cli")
+            .await
+            .unwrap();
 
         assert_eq!(refreshed.access_token().as_str(), "new-access-token");
         assert_eq!(refreshed.token_type(), "Bearer");
@@ -248,16 +246,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_refresh_without_refresh_token() {
-        let token = make_token(3600, false);
-        let base_url = Url::parse("http://localhost:9999").unwrap();
-
-        let err = token.refresh(&base_url, "cli").await.unwrap_err();
-
-        assert!(matches!(err, AuthError::NoRefreshToken));
-    }
-
-    #[tokio::test]
     async fn test_refresh_invalid_grant() {
         let mut mocks = MockSet::new();
         mocks.mock(|when, then| {
@@ -267,8 +255,10 @@ mod tests {
         let server = start_server(mocks).await;
         let base_url = server.url("");
 
-        let token = make_token(3600, true);
-        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+        let refresh_token = SecretToken::new("test-refresh-token");
+        let err = Token::refresh(&refresh_token, &base_url, "cli")
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, AuthError::InvalidGrant));
     }
@@ -283,8 +273,10 @@ mod tests {
         let server = start_server(mocks).await;
         let base_url = server.url("");
 
-        let token = make_token(3600, true);
-        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+        let refresh_token = SecretToken::new("test-refresh-token");
+        let err = Token::refresh(&refresh_token, &base_url, "cli")
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, AuthError::InvalidClient));
     }
@@ -299,8 +291,10 @@ mod tests {
         let server = start_server(mocks).await;
         let base_url = server.url("");
 
-        let token = make_token(3600, true);
-        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+        let refresh_token = SecretToken::new("test-refresh-token");
+        let err = Token::refresh(&refresh_token, &base_url, "cli")
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, AuthError::AccessDenied));
     }
@@ -315,8 +309,10 @@ mod tests {
         let server = start_server(mocks).await;
         let base_url = server.url("");
 
-        let token = make_token(3600, true);
-        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+        let refresh_token = SecretToken::new("test-refresh-token");
+        let err = Token::refresh(&refresh_token, &base_url, "cli")
+            .await
+            .unwrap_err();
 
         assert!(matches!(&err, AuthError::Server(desc) if desc == "something_unexpected occurred"));
     }
@@ -335,8 +331,10 @@ mod tests {
         let server = start_server(mocks).await;
         let base_url = server.url("");
 
-        let token = make_token(3600, true);
-        let refreshed = token.refresh(&base_url, "cli").await.unwrap();
+        let refresh_token = SecretToken::new("test-refresh-token");
+        let refreshed = Token::refresh(&refresh_token, &base_url, "cli")
+            .await
+            .unwrap();
 
         assert_eq!(refreshed.access_token().as_str(), "new-access-token");
         assert!(refreshed.refresh_token().is_none());
