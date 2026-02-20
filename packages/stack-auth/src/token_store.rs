@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use crate::{AuthStrategy, SecretToken, Token};
+use std::path::{Path, PathBuf};
 
 /// Errors that can occur when reading or writing the token store.
 #[derive(Debug, thiserror::Error)]
@@ -116,9 +116,7 @@ impl<'a> AuthStrategy<'a> for &'a TokenStoreStrategy {
     async fn get_token(self) -> Result<&'a SecretToken, Self::Error> {
         let token = self
             .cached
-            .get_or_try_init(|| async {
-                self.store.load()?.ok_or(TokenStoreError::NotFound)
-            })
+            .get_or_try_init(|| async { self.store.load()?.ok_or(TokenStoreError::NotFound) })
             .await?;
         if token.is_expired() {
             return Err(TokenStoreError::Expired);

@@ -140,6 +140,48 @@ struct RefreshErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::AuthError;
+    use mocktail::prelude::*;
+
+    fn make_token(expires_in: u64, refresh: bool) -> Token {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Token {
+            access_token: SecretToken::new("test-access-token"),
+            token_type: "Bearer".to_string(),
+            expires_at: now + expires_in,
+            refresh_token: if refresh {
+                Some(SecretToken::new("test-refresh-token"))
+            } else {
+                None
+            },
+        }
+    }
+
+    fn refresh_response_json() -> serde_json::Value {
+        serde_json::json!({
+            "access_token": "new-access-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "refresh_token": "new-refresh-token"
+        })
+    }
+
+    fn error_json(error: &str) -> serde_json::Value {
+        serde_json::json!({
+            "error": error,
+            "error_description": format!("{error} occurred")
+        })
+    }
+
+    async fn start_server(mocks: MockSet) -> MockServer {
+        let server = MockServer::new_http("token-refresh-test").with_mocks(mocks);
+        server.start().await.unwrap();
+        server
+    }
 
     #[test]
     fn test_secret_token_debug_does_not_leak() {
@@ -148,6 +190,140 @@ mod tests {
         assert!(
             !debug.contains("super_secret_value"),
             "SecretToken Debug should not contain the secret, got: {debug}"
+        );
+    }
+
+    // ---- refresh() tests ----
+
+    #[tokio::test]
+    async fn test_refresh_success() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(refresh_response_json());
+        });
+        let server = start_server(mocks).await;
+        let base_url = server.url("");
+
+        let token = make_token(3600, true);
+        let refreshed = token.refresh(&base_url, "cli").await.unwrap();
+
+        assert_eq!(refreshed.access_token().as_str(), "new-access-token");
+        assert_eq!(refreshed.token_type(), "Bearer");
+        assert_eq!(
+            refreshed.refresh_token().unwrap().as_str(),
+            "new-refresh-token"
+        );
+        assert!(!refreshed.is_expired());
+        assert!((3598..=3600).contains(&refreshed.expires_in()));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_without_refresh_token() {
+        let token = make_token(3600, false);
+        let base_url = Url::parse("http://localhost:9999").unwrap();
+
+        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+
+        assert!(matches!(err, AuthError::NoRefreshToken));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_invalid_grant() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.bad_request().json(error_json("invalid_grant"));
+        });
+        let server = start_server(mocks).await;
+        let base_url = server.url("");
+
+        let token = make_token(3600, true);
+        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+
+        assert!(matches!(err, AuthError::InvalidGrant));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_invalid_client() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.bad_request().json(error_json("invalid_client"));
+        });
+        let server = start_server(mocks).await;
+        let base_url = server.url("");
+
+        let token = make_token(3600, true);
+        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+
+        assert!(matches!(err, AuthError::InvalidClient));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_access_denied() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.bad_request().json(error_json("access_denied"));
+        });
+        let server = start_server(mocks).await;
+        let base_url = server.url("");
+
+        let token = make_token(3600, true);
+        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+
+        assert!(matches!(err, AuthError::AccessDenied));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_unknown_error() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.bad_request().json(error_json("something_unexpected"));
+        });
+        let server = start_server(mocks).await;
+        let base_url = server.url("");
+
+        let token = make_token(3600, true);
+        let err = token.refresh(&base_url, "cli").await.unwrap_err();
+
+        assert!(matches!(&err, AuthError::Server(desc) if desc == "something_unexpected occurred"));
+    }
+
+    #[tokio::test]
+    async fn test_refresh_response_without_new_refresh_token() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(serde_json::json!({
+                "access_token": "new-access-token",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            }));
+        });
+        let server = start_server(mocks).await;
+        let base_url = server.url("");
+
+        let token = make_token(3600, true);
+        let refreshed = token.refresh(&base_url, "cli").await.unwrap();
+
+        assert_eq!(refreshed.access_token().as_str(), "new-access-token");
+        assert!(refreshed.refresh_token().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_debug_does_not_leak_tokens() {
+        let token = make_token(3600, true);
+        let debug = format!("{:?}", token);
+        assert!(
+            !debug.contains("test-access-token"),
+            "Debug output should not contain access token, got: {debug}"
+        );
+        assert!(
+            !debug.contains("test-refresh-token"),
+            "Debug output should not contain refresh token, got: {debug}"
         );
     }
 }

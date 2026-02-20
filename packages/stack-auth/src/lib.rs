@@ -90,7 +90,9 @@ pub trait AuthStrategy<'a> {
     type Error;
 
     /// Retrieve a valid access token.
-    fn get_token(self) -> impl std::future::Future<Output = Result<&'a SecretToken, Self::Error>> + Send;
+    fn get_token(
+        self,
+    ) -> impl std::future::Future<Output = Result<&'a SecretToken, Self::Error>> + Send;
 }
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
