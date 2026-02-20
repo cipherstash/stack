@@ -14,10 +14,80 @@ use crate::{AuthStrategy, SecretToken, Token};
 /// expiry and a refresh token is available, the strategy automatically refreshes
 /// it and persists the new token to disk.
 ///
-/// This strategy is safe for concurrent use. When a token is expiring but still
-/// usable, one caller performs the refresh while others continue to receive the
-/// current token without blocking. When the token is fully expired, callers
-/// block until the refresh completes.
+/// # Concurrency model
+///
+/// Internal state is protected by a [`tokio::sync::Mutex`]. The key design
+/// decision is *when* the lock is held during a refresh, which depends on
+/// whether the current token is still usable as a bearer credential:
+///
+/// - [`Token::is_expired()`] — returns `true` when the token is within **60
+///   seconds** of its `expires_at` timestamp. This triggers a preemptive
+///   refresh attempt.
+/// - [`Token::is_usable()`] — returns `true` when the token has **not yet
+///   reached** its `expires_at` timestamp. A token can be "expired" (in the
+///   leeway sense) but still "usable" (the server will still accept it).
+///
+/// This distinction enables two concurrent refresh strategies:
+///
+/// 1. **Expiring but still usable** — The refreshing caller drops the lock
+///    before making the HTTP request. Concurrent callers acquire the lock and
+///    receive the current (still-valid) token immediately.
+/// 2. **Fully expired** — The refreshing caller holds the lock through the
+///    HTTP request. Concurrent callers block on `lock().await` until the
+///    refresh completes, then see the new token.
+///
+/// Cascade prevention: the first caller to detect an expiring token *takes*
+/// the refresh token out of the cached [`Token`] (leaving `None`). Subsequent
+/// callers see no refresh token and skip the refresh, returning the current
+/// token if usable or [`TokenStoreError::Expired`] if not.
+///
+/// # Flow diagram
+///
+/// The following diagram shows the decision tree inside
+/// [`get_token()`](AuthStrategy::get_token):
+///
+/// ```mermaid
+/// flowchart TD
+///     Start["get_token()"] --> Lock["Acquire lock"]
+///     Lock --> Cached{Token cached?}
+///     Cached -- No --> Load["Load from disk"]
+///     Load -- Not found --> ErrNotFound["Return NotFound"]
+///     Load -- OK --> CheckRefresh
+///     Cached -- Yes --> CheckRefresh{is_expired?}
+///
+///     CheckRefresh -- "No (fresh)" --> CloneFresh["Clone access token,
+///     release lock"]
+///     CloneFresh --> ReturnOk["Return Ok(token)"]
+///
+///     CheckRefresh -- "Yes (needs refresh)" --> TakeRT{take_refresh_token}
+///
+///     TakeRT -- "None (already taken)" --> Usable1{is_usable?}
+///     Usable1 -- Yes --> CloneUsable1["Clone access token,
+///     release lock"]
+///     CloneUsable1 --> ReturnOk
+///     Usable1 -- No --> ErrExpired["Return Expired"]
+///
+///     TakeRT -- "Some(refresh_token)" --> Usable2{is_usable?}
+///
+///     Usable2 -- "Yes (expiring but usable)" --> DropLock["Clone access token,
+///     release lock"]
+///     DropLock --> HTTP1["HTTP refresh
+///     (lock NOT held)"]
+///     HTTP1 -- OK --> Relock1["Re-acquire lock,
+///     store new token"]
+///     HTTP1 -- Err --> LogWarn["Log warning
+///     (token still usable)"]
+///     Relock1 --> ReturnOld["Return Ok(old token)"]
+///     LogWarn --> ReturnOld
+///
+///     Usable2 -- "No (fully expired)" --> HTTP2["HTTP refresh
+///     (lock HELD)"]
+///     HTTP2 -- OK --> StoreNew["Store new token,
+///     release lock"]
+///     StoreNew --> ReturnNew["Return Ok(new token)"]
+///     HTTP2 -- Err --> ErrExpired
+/// ```
+#[cfg_attr(doc, aquamarine::aquamarine)]
 pub struct TokenStoreStrategy {
     store: TokenStore,
     base_url: Url,
