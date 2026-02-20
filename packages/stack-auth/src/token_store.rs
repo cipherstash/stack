@@ -1,6 +1,5 @@
-use crate::{AuthError, AuthStrategy, SecretToken, Token};
+use crate::{AuthError, Token};
 use std::path::{Path, PathBuf};
-use url::Url;
 
 /// Errors that can occur when reading or writing the token store.
 #[derive(Debug, thiserror::Error)]
@@ -92,80 +91,6 @@ impl TokenStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(TokenStoreError::Io(e)),
         }
-    }
-}
-
-/// An [`AuthStrategy`] that loads a token from a [`TokenStore`], caches it in
-/// memory, and preemptively refreshes it before it expires.
-///
-/// The token is loaded from disk on the first call to [`get_token`](AuthStrategy::get_token)
-/// and cached for subsequent calls. When the token is within 60 seconds of
-/// expiry and a refresh token is available, the strategy automatically refreshes
-/// it and persists the new token to disk.
-pub struct TokenStoreStrategy {
-    store: TokenStore,
-    base_url: Url,
-    client_id: String,
-    token: Option<Token>,
-}
-
-impl TokenStoreStrategy {
-    /// Create a new `TokenStoreStrategy`.
-    ///
-    /// The `base_url` and `client_id` are used when refreshing an expired token
-    /// via the `/oauth/token` endpoint.
-    pub fn new(store: TokenStore, base_url: Url, client_id: impl Into<String>) -> Self {
-        Self {
-            store,
-            base_url,
-            client_id: client_id.into(),
-            token: None,
-        }
-    }
-}
-
-impl<'a> AuthStrategy<'a> for &'a mut TokenStoreStrategy {
-    type Error = TokenStoreError;
-
-    async fn get_token(self) -> Result<&'a SecretToken, Self::Error> {
-        // Load from disk if not yet cached.
-        if self.token.is_none() {
-            let token = self.store.load()?.ok_or(TokenStoreError::NotFound)?;
-            self.token = Some(token);
-        }
-
-        // Preemptively refresh if the token is expiring within 60 seconds.
-        // Take only the refresh token so the access token stays available
-        // for other callers and subsequent calls won't attempt a concurrent
-        // refresh (they'll see refresh_token is None and skip this block).
-        let refresh_token = self
-            .token
-            .as_mut()
-            .filter(|t| t.is_expired())
-            .and_then(|t| t.take_refresh_token());
-
-        if let Some(refresh_token) = refresh_token {
-            match Token::exchange_refresh_token(&refresh_token, &self.base_url, &self.client_id)
-                .await
-            {
-                Ok(new_token) => {
-                    match self.store.save(&new_token) {
-                        Ok(()) => tracing::debug!("refreshed token saved to disk"),
-                        Err(err) => tracing::warn!(%err, "failed to save refreshed token to disk"),
-                    }
-                    self.token = Some(new_token);
-                }
-                Err(err) => {
-                    tracing::warn!(%err, "token refresh failed");
-                }
-            }
-        }
-
-        let token = self.token.as_ref().ok_or(TokenStoreError::NotFound)?;
-        if token.is_expired() {
-            return Err(TokenStoreError::Expired);
-        }
-        Ok(token.access_token())
     }
 }
 

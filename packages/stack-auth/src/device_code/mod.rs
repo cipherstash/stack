@@ -5,7 +5,7 @@ use url::Url;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{token_store::TokenStore, AuthError, Token};
+use crate::{http_client, token_store::TokenStore, AuthError, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
 };
@@ -83,7 +83,7 @@ impl DeviceCodeStrategy {
     /// Returns [`AuthError::InvalidClient`] if the client ID is not recognized,
     /// or [`AuthError::Request`] if the server is unreachable.
     pub async fn begin(&self) -> Result<PendingDeviceCode, AuthError> {
-        let client = reqwest::Client::new();
+        let client = http_client();
 
         let code_url = self.base_url.join("oauth/device/code")?;
 
@@ -208,7 +208,7 @@ impl PendingDeviceCode {
     ///   authorized.
     /// - [`AuthError::Request`] — a network error occurred while polling.
     pub async fn poll_for_token(self) -> Result<Token, AuthError> {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let mut interval = tokio::time::Duration::from_secs(5);
         let deadline =
             tokio::time::Instant::now() + tokio::time::Duration::from_secs(self.expires_in);

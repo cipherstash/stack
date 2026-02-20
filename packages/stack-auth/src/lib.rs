@@ -64,6 +64,8 @@
 #![cfg_attr(test, allow(unused_results))]
 
 use std::convert::Infallible;
+#[cfg(not(test))]
+use std::time::Duration;
 
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
@@ -71,10 +73,12 @@ use zeroize::ZeroizeOnDrop;
 mod device_code;
 mod token;
 mod token_store;
+mod token_store_strategy;
 
 pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
 pub use token::Token;
-pub use token_store::{TokenStore, TokenStoreError, TokenStoreStrategy};
+pub use token_store::{TokenStore, TokenStoreError};
+pub use token_store_strategy::TokenStoreStrategy;
 
 /// A strategy for obtaining a [`SecretToken`] for authenticating with CipherStash services.
 ///
@@ -159,5 +163,25 @@ pub enum AuthError {
 impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
+    }
+}
+
+/// Create a [`reqwest::Client`] with standard timeouts.
+///
+/// In test builds, timeouts are omitted so that `tokio::test(start_paused = true)`
+/// does not auto-advance time past the connect timeout before the mock server
+/// can respond.
+pub(crate) fn http_client() -> reqwest::Client {
+    #[cfg(test)]
+    {
+        reqwest::Client::new()
+    }
+    #[cfg(not(test))]
+    {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     }
 }

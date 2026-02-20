@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use url::Url;
 
-use crate::{AuthError, SecretToken};
+use crate::{http_client, AuthError, SecretToken};
 
 /// An access token returned by a successful authentication flow.
 ///
@@ -91,7 +91,7 @@ impl Token {
 
         tracing::debug!(url = %token_url, "refreshing token");
 
-        let resp = reqwest::Client::new()
+        let resp = http_client()
             .post(token_url)
             .form(&RefreshRequest {
                 grant_type: "refresh_token",
