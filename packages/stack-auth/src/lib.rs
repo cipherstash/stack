@@ -73,7 +73,24 @@ mod device_code;
 mod token_store;
 
 pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
-pub use token_store::{TokenStore, TokenStoreError};
+pub use token_store::{TokenStore, TokenStoreError, TokenStoreStrategy};
+
+/// A strategy for obtaining a [`SecretToken`] for authenticating with CipherStash services.
+///
+/// Implementors provide a single method, [`get_token`](AuthStrategy::get_token), which
+/// returns a valid access token. The strategy is responsible for managing token
+/// lifecycle concerns such as caching, refreshing, or re-authenticating as needed.
+///
+/// The lifetime `'a` ties the returned reference to the data that owns the token,
+/// allowing the same strategy to be called multiple times (e.g. by implementing
+/// the trait for `&'a T`).
+pub trait AuthStrategy<'a> {
+    /// The error type returned when token retrieval fails.
+    type Error;
+
+    /// Retrieve a valid access token.
+    fn get_token(self) -> impl std::future::Future<Output = Result<&'a SecretToken, Self::Error>> + Send;
+}
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
 ///
@@ -157,6 +174,7 @@ impl Token {
     pub fn refresh_token(&self) -> Option<&SecretToken> {
         self.refresh_token.as_ref()
     }
+
 }
 
 /// Errors that can occur during an authentication flow.

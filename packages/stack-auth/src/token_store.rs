@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
-
-use crate::Token;
+use crate::{AuthStrategy, SecretToken, Token};
 
 /// Errors that can occur when reading or writing the token store.
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +14,12 @@ pub enum TokenStoreError {
     /// The user's home directory could not be determined.
     #[error("Could not determine home directory")]
     HomeDirNotFound,
+    /// No token was found in the store.
+    #[error("No token found")]
+    NotFound,
+    /// The token has expired.
+    #[error("Token has expired")]
+    Expired,
 }
 
 /// Persists and loads tokens from a JSON file on disk.
@@ -83,6 +88,42 @@ impl TokenStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(TokenStoreError::Io(e)),
         }
+    }
+}
+
+/// An [`AuthStrategy`] that loads a token from a [`TokenStore`] and caches it in memory.
+///
+/// The token is loaded from disk on the first call to [`get_token`](AuthStrategy::get_token)
+/// and cached for subsequent calls.
+pub struct TokenStoreStrategy {
+    store: TokenStore,
+    cached: tokio::sync::OnceCell<Token>,
+}
+
+impl TokenStoreStrategy {
+    /// Create a new `TokenStoreStrategy` backed by the given [`TokenStore`].
+    pub fn new(store: TokenStore) -> Self {
+        Self {
+            store,
+            cached: tokio::sync::OnceCell::new(),
+        }
+    }
+}
+
+impl<'a> AuthStrategy<'a> for &'a TokenStoreStrategy {
+    type Error = TokenStoreError;
+
+    async fn get_token(self) -> Result<&'a SecretToken, Self::Error> {
+        let token = self
+            .cached
+            .get_or_try_init(|| async {
+                self.store.load()?.ok_or(TokenStoreError::NotFound)
+            })
+            .await?;
+        if token.is_expired() {
+            return Err(TokenStoreError::Expired);
+        }
+        Ok(token.access_token())
     }
 }
 
