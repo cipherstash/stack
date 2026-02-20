@@ -59,6 +59,11 @@ impl Token {
         self.refresh_token.as_ref()
     }
 
+    /// Takes the refresh token out, leaving `None` in its place.
+    pub fn take_refresh_token(&mut self) -> Option<SecretToken> {
+        self.refresh_token.take()
+    }
+
     /// Refresh this token using the `/oauth/token` endpoint.
     ///
     /// Consumes `self` and returns a new [`Token`] with a fresh access token.
@@ -73,7 +78,15 @@ impl Token {
     /// - [`AuthError::Request`] — a network error occurred.
     pub async fn refresh(self, base_url: &Url, client_id: &str) -> Result<Token, AuthError> {
         let refresh_token = self.refresh_token.ok_or(AuthError::NoRefreshToken)?;
+        Self::exchange_refresh_token(&refresh_token, base_url, client_id).await
+    }
 
+    /// Exchange a refresh token for a new [`Token`].
+    pub(crate) async fn exchange_refresh_token(
+        refresh_token: &SecretToken,
+        base_url: &Url,
+        client_id: &str,
+    ) -> Result<Token, AuthError> {
         let token_url = base_url.join("oauth/token")?;
 
         tracing::debug!(url = %token_url, "refreshing token");
