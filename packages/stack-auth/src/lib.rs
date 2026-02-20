@@ -63,6 +63,7 @@
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
+use std::borrow::Cow;
 use std::convert::Infallible;
 #[cfg(not(test))]
 use std::time::Duration;
@@ -94,9 +95,12 @@ pub trait AuthStrategy<'a> {
     type Error;
 
     /// Retrieve a valid access token.
+    ///
+    /// Returns `Cow::Borrowed` for strategies that own a stable token, or
+    /// `Cow::Owned` for strategies that clone the token out from behind a lock.
     fn get_token(
         self,
-    ) -> impl std::future::Future<Output = Result<&'a SecretToken, Self::Error>> + Send;
+    ) -> impl std::future::Future<Output = Result<Cow<'a, SecretToken>, Self::Error>> + Send;
 }
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
@@ -110,7 +114,7 @@ pub trait AuthStrategy<'a> {
 ///
 /// You cannot construct a `SecretToken` directly — it is returned by the
 /// authentication flow via [`Token::access_token`].
-#[derive(OpaqueDebug, ZeroizeOnDrop, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, OpaqueDebug, ZeroizeOnDrop, serde::Deserialize, serde::Serialize)]
 #[serde(transparent)]
 pub struct SecretToken(String);
 

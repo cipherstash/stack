@@ -46,12 +46,28 @@ impl Token {
     }
 
     /// Returns `true` if the token has expired (with 60 seconds of leeway).
+    ///
+    /// Use this to decide whether a preemptive refresh should be attempted.
+    /// For checking whether the token is still usable as a bearer credential,
+    /// use [`is_usable`](Self::is_usable) instead.
     pub fn is_expired(&self) -> bool {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         now + 60 >= self.expires_at
+    }
+
+    /// Returns `true` if the token is still usable (before the actual expiry timestamp).
+    ///
+    /// Unlike [`is_expired`](Self::is_expired) which includes 60s leeway for preemptive
+    /// refresh, this only returns `false` when the token has genuinely expired.
+    pub fn is_usable(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        now < self.expires_at
     }
 
     /// Returns a reference to the refresh token, if one was provided.

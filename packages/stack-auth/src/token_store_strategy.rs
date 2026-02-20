@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+
+use tokio::sync::Mutex;
 use url::Url;
 
 use crate::token_store::{TokenStore, TokenStoreError};
@@ -10,10 +13,19 @@ use crate::{AuthStrategy, SecretToken, Token};
 /// and cached for subsequent calls. When the token is within 60 seconds of
 /// expiry and a refresh token is available, the strategy automatically refreshes
 /// it and persists the new token to disk.
+///
+/// This strategy is safe for concurrent use. When a token is expiring but still
+/// usable, one caller performs the refresh while others continue to receive the
+/// current token without blocking. When the token is fully expired, callers
+/// block until the refresh completes.
 pub struct TokenStoreStrategy {
     store: TokenStore,
     base_url: Url,
     client_id: String,
+    state: Mutex<State>,
+}
+
+struct State {
     token: Option<Token>,
 }
 
@@ -27,53 +39,102 @@ impl TokenStoreStrategy {
             store,
             base_url,
             client_id: client_id.into(),
-            token: None,
+            state: Mutex::new(State { token: None }),
         }
     }
 }
 
-impl<'a> AuthStrategy<'a> for &'a mut TokenStoreStrategy {
+impl<'a> AuthStrategy<'a> for &'a TokenStoreStrategy {
     type Error = TokenStoreError;
 
-    async fn get_token(self) -> Result<&'a SecretToken, Self::Error> {
+    async fn get_token(self) -> Result<Cow<'a, SecretToken>, Self::Error> {
+        let mut state = self.state.lock().await;
+
         // Load from disk if not yet cached.
-        if self.token.is_none() {
+        if state.token.is_none() {
             let token = self.store.load()?.ok_or(TokenStoreError::NotFound)?;
-            self.token = Some(token);
+            state.token = Some(token);
         }
 
-        // Preemptively refresh if the token is expiring within 60 seconds.
-        // Take only the refresh token so the access token stays available
-        // for other callers and subsequent calls won't attempt a concurrent
-        // refresh (they'll see refresh_token is None and skip this block).
-        let refresh_token = self
-            .token
-            .as_mut()
-            .filter(|t| t.is_expired())
-            .and_then(|t| t.take_refresh_token());
+        let needs_refresh = state.token.as_ref().is_some_and(|t| t.is_expired());
+        if !needs_refresh {
+            // Token is fresh — clone and return.
+            let token = state.token.as_ref().ok_or(TokenStoreError::NotFound)?;
+            return Ok(Cow::Owned(token.access_token().clone()));
+        }
 
-        if let Some(refresh_token) = refresh_token {
+        // Token needs refresh. Take the refresh token to prevent cascades.
+        let refresh_token = state.token.as_mut().and_then(|t| t.take_refresh_token());
+
+        let Some(refresh_token) = refresh_token else {
+            // No refresh token available. If the token is still usable (not
+            // actually expired, just within the 60s leeway), return it.
+            // Otherwise another caller is already refreshing (they took the
+            // refresh token) — if the token is usable, return it; if not,
+            // it's truly expired.
+            let token = state.token.as_ref().ok_or(TokenStoreError::NotFound)?;
+            if token.is_usable() {
+                return Ok(Cow::Owned(token.access_token().clone()));
+            }
+            return Err(TokenStoreError::Expired);
+        };
+
+        // We have a refresh token. Check if the current token is still usable.
+        let is_usable = state.token.as_ref().is_some_and(|t| t.is_usable());
+
+        if is_usable {
+            // Token is expiring but still usable. Clone the current access
+            // token, drop the lock, and refresh in the background of this call.
+            // Other callers can acquire the lock and get the still-valid token.
+            let current_access_token = state
+                .token
+                .as_ref()
+                .ok_or(TokenStoreError::NotFound)?
+                .access_token()
+                .clone();
+            drop(state);
+
             match Token::exchange_refresh_token(&refresh_token, &self.base_url, &self.client_id)
                 .await
             {
                 Ok(new_token) => {
                     match self.store.save(&new_token) {
                         Ok(()) => tracing::debug!("refreshed token saved to disk"),
-                        Err(err) => tracing::warn!(%err, "failed to save refreshed token to disk"),
+                        Err(err) => {
+                            tracing::warn!(%err, "failed to save refreshed token to disk")
+                        }
                     }
-                    self.token = Some(new_token);
+                    self.state.lock().await.token = Some(new_token);
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "token refresh failed (token still usable)");
+                }
+            }
+
+            Ok(Cow::Owned(current_access_token))
+        } else {
+            // Token is fully expired. Refresh while holding the lock so other
+            // callers block until the new token is available.
+            match Token::exchange_refresh_token(&refresh_token, &self.base_url, &self.client_id)
+                .await
+            {
+                Ok(new_token) => {
+                    match self.store.save(&new_token) {
+                        Ok(()) => tracing::debug!("refreshed token saved to disk"),
+                        Err(err) => {
+                            tracing::warn!(%err, "failed to save refreshed token to disk")
+                        }
+                    }
+                    let access_token = new_token.access_token().clone();
+                    state.token = Some(new_token);
+                    Ok(Cow::Owned(access_token))
                 }
                 Err(err) => {
                     tracing::warn!(%err, "token refresh failed");
+                    Err(TokenStoreError::Expired)
                 }
             }
         }
-
-        let token = self.token.as_ref().ok_or(TokenStoreError::NotFound)?;
-        if token.is_expired() {
-            return Err(TokenStoreError::Expired);
-        }
-        Ok(token.access_token())
     }
 }
 
@@ -81,6 +142,7 @@ impl<'a> AuthStrategy<'a> for &'a mut TokenStoreStrategy {
 mod tests {
     use super::*;
     use mocktail::prelude::*;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_token(access: &str, expires_in: u64, refresh: bool) -> Token {
@@ -139,10 +201,10 @@ mod tests {
     async fn test_loads_token_from_disk() {
         let dir = tempfile::tempdir().unwrap();
         let server = start_server(MockSet::new()).await;
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("my-access-token", 3600, false));
 
-        let token = (&mut strategy).get_token().await.unwrap();
+        let token = (&strategy).get_token().await.unwrap();
 
         assert_eq!(token.as_str(), "my-access-token");
     }
@@ -152,9 +214,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let server = start_server(MockSet::new()).await;
         let store = TokenStore::new(dir.path().join("auth.json"));
-        let mut strategy = TokenStoreStrategy::new(store, server.url(""), "cli");
+        let strategy = TokenStoreStrategy::new(store, server.url(""), "cli");
 
-        let err = (&mut strategy).get_token().await.unwrap_err();
+        let err = (&strategy).get_token().await.unwrap_err();
 
         assert!(matches!(err, TokenStoreError::NotFound));
     }
@@ -163,16 +225,16 @@ mod tests {
     async fn test_caches_token_across_calls() {
         let dir = tempfile::tempdir().unwrap();
         let server = start_server(MockSet::new()).await;
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("my-access-token", 3600, false));
 
-        let token1 = (&mut strategy).get_token().await.unwrap();
+        let token1 = (&strategy).get_token().await.unwrap();
         assert_eq!(token1.as_str(), "my-access-token");
 
         // Delete the file — second call should still return the cached token.
         std::fs::remove_file(dir.path().join("auth.json")).unwrap();
 
-        let token2 = (&mut strategy).get_token().await.unwrap();
+        let token2 = (&strategy).get_token().await.unwrap();
         assert_eq!(token2.as_str(), "my-access-token");
     }
 
@@ -182,10 +244,10 @@ mod tests {
     async fn test_expired_token_without_refresh_token_returns_expired() {
         let dir = tempfile::tempdir().unwrap();
         let server = start_server(MockSet::new()).await;
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, false));
 
-        let err = (&mut strategy).get_token().await.unwrap_err();
+        let err = (&strategy).get_token().await.unwrap_err();
 
         assert!(matches!(err, TokenStoreError::Expired));
     }
@@ -201,10 +263,10 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, true));
 
-        let token = (&mut strategy).get_token().await.unwrap();
+        let token = (&strategy).get_token().await.unwrap();
 
         assert_eq!(token.as_str(), "refreshed-token");
     }
@@ -218,10 +280,10 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, true));
 
-        let _ = (&mut strategy).get_token().await.unwrap();
+        let _ = (&strategy).get_token().await.unwrap();
 
         // Verify the refreshed token was saved to disk.
         let store = TokenStore::new(dir.path().join("auth.json"));
@@ -238,10 +300,10 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, true));
 
-        let err = (&mut strategy).get_token().await.unwrap_err();
+        let err = (&strategy).get_token().await.unwrap_err();
 
         assert!(matches!(err, TokenStoreError::Expired));
     }
@@ -257,10 +319,10 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("fresh-token", 3600, true));
 
-        let token = (&mut strategy).get_token().await.unwrap();
+        let token = (&strategy).get_token().await.unwrap();
 
         assert_eq!(token.as_str(), "fresh-token");
     }
@@ -278,11 +340,11 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, true));
 
         // First call refreshes successfully.
-        let token = (&mut strategy).get_token().await.unwrap();
+        let token = (&strategy).get_token().await.unwrap();
         assert_eq!(token.as_str(), "refreshed-token");
 
         // Replace the mock with one that errors — any refresh attempt would fail.
@@ -294,7 +356,7 @@ mod tests {
 
         // Second call should return the refreshed token without hitting
         // the server again (the new token has a fresh expiry).
-        let token = (&mut strategy).get_token().await.unwrap();
+        let token = (&strategy).get_token().await.unwrap();
         assert_eq!(token.as_str(), "refreshed-token");
     }
 
@@ -307,17 +369,19 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, true));
 
         // First call: refresh fails, returns Expired.
-        let err = (&mut strategy).get_token().await.unwrap_err();
+        let err = (&strategy).get_token().await.unwrap_err();
         assert!(matches!(err, TokenStoreError::Expired));
 
         // Verify the refresh token has been consumed (taken out).
         // The cached token should still exist but without a refresh token.
-        assert!(strategy.token.is_some());
-        assert!(strategy.token.as_ref().unwrap().refresh_token().is_none());
+        let state = strategy.state.lock().await;
+        assert!(state.token.is_some());
+        assert!(state.token.as_ref().unwrap().refresh_token().is_none());
+        drop(state);
 
         // Replace mock with a success response to prove it's never called.
         server.mocks().clear();
@@ -327,7 +391,7 @@ mod tests {
         });
 
         // Second call: no refresh token → no refresh attempt → Expired again.
-        let err = (&mut strategy).get_token().await.unwrap_err();
+        let err = (&strategy).get_token().await.unwrap_err();
         assert!(matches!(err, TokenStoreError::Expired));
     }
 
@@ -342,18 +406,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Token expires in 30s (within the 60s leeway so is_expired() = true),
         // but the access token is still technically usable.
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("still-usable", 30, true));
 
-        // The refresh fails, but the access token should still be in the cache.
-        // Since is_expired() returns true (30s < 60s leeway), get_token will
-        // return Expired, but the token itself is not destroyed.
-        let _ = (&mut strategy).get_token().await;
+        // The refresh fails, but the access token should still be returned
+        // because it's still usable (30s remaining > 0).
+        let token = (&strategy).get_token().await.unwrap();
+        assert_eq!(token.as_str(), "still-usable");
 
         // Verify the access token is still present in the cached token.
-        assert!(strategy.token.is_some());
+        let state = strategy.state.lock().await;
+        assert!(state.token.is_some());
         assert_eq!(
-            strategy.token.as_ref().unwrap().access_token().as_str(),
+            state.token.as_ref().unwrap().access_token().as_str(),
             "still-usable"
         );
     }
@@ -367,11 +432,11 @@ mod tests {
         });
         let server = start_server(mocks).await;
         let dir = tempfile::tempdir().unwrap();
-        let mut strategy =
+        let strategy =
             strategy_with_token(&dir, &server, make_token("old-token", 0, true));
 
         // First call triggers refresh.
-        let token = (&mut strategy).get_token().await.unwrap();
+        let token = (&strategy).get_token().await.unwrap();
         assert_eq!(token.as_str(), "refreshed-once");
 
         // Swap mock to track if another refresh is attempted.
@@ -383,12 +448,101 @@ mod tests {
 
         // Calls 2-5: the refreshed token is fresh, so no further refresh.
         for _ in 0..4 {
-            let token = (&mut strategy).get_token().await.unwrap();
+            let token = (&strategy).get_token().await.unwrap();
             assert_eq!(
                 token.as_str(),
                 "refreshed-once",
                 "should return cached refreshed token, not trigger another refresh"
             );
         }
+    }
+
+    // ---- Concurrent access tests ----
+
+    #[tokio::test]
+    async fn test_concurrent_access_with_expiring_but_usable_token() {
+        // Token expires in 30s — is_expired() = true (within 60s leeway),
+        // but is_usable() = true (not actually expired).
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(refresh_response_json("refreshed-token"));
+        });
+        let server = start_server(mocks).await;
+        let dir = tempfile::tempdir().unwrap();
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &server,
+            make_token("still-usable", 30, true),
+        ));
+
+        // Spawn two concurrent callers.
+        let s1 = Arc::clone(&strategy);
+        let handle_a = tokio::spawn(async move {
+            let token = s1.as_ref().get_token().await.unwrap();
+            token.into_owned()
+        });
+
+        let s2 = Arc::clone(&strategy);
+        let handle_b = tokio::spawn(async move {
+            let token = s2.as_ref().get_token().await.unwrap();
+            token.into_owned()
+        });
+
+        let (result_a, result_b) = tokio::join!(handle_a, handle_b);
+        let token_a = result_a.unwrap();
+        let token_b = result_b.unwrap();
+
+        // Both should succeed. One gets the old token (still usable), the
+        // other may get either old or refreshed depending on timing.
+        assert!(
+            token_a.as_str() == "still-usable" || token_a.as_str() == "refreshed-token",
+            "unexpected token_a: {}",
+            token_a.as_str()
+        );
+        assert!(
+            token_b.as_str() == "still-usable" || token_b.as_str() == "refreshed-token",
+            "unexpected token_b: {}",
+            token_b.as_str()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_access_with_fully_expired_token() {
+        // Token is fully expired (expires_at in the past) with a refresh token.
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(refresh_response_json("refreshed-token"));
+        });
+        let server = start_server(mocks).await;
+        let dir = tempfile::tempdir().unwrap();
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &server,
+            make_token("expired-token", 0, true),
+        ));
+
+        // Spawn two concurrent callers.
+        let s1 = Arc::clone(&strategy);
+        let handle_a = tokio::spawn(async move {
+            let token = s1.as_ref().get_token().await.unwrap();
+            token.into_owned()
+        });
+
+        let s2 = Arc::clone(&strategy);
+        let handle_b = tokio::spawn(async move {
+            let token = s2.as_ref().get_token().await.unwrap();
+            token.into_owned()
+        });
+
+        let (result_a, result_b) = tokio::join!(handle_a, handle_b);
+        let token_a = result_a.unwrap();
+        let token_b = result_b.unwrap();
+
+        // Both should get the refreshed token (one blocks until the other
+        // finishes refreshing).
+        assert_eq!(token_a.as_str(), "refreshed-token");
+        assert_eq!(token_b.as_str(), "refreshed-token");
     }
 }
