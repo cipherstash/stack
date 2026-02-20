@@ -656,3 +656,459 @@ mod tests {
         assert_eq!(token_b.as_str(), "refreshed-token");
     }
 }
+
+#[cfg(test)]
+mod stress_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    /// Tracks in-flight and peak concurrency for test assertions.
+    #[derive(Clone)]
+    struct CountingState {
+        total: Arc<AtomicUsize>,
+        current: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+
+    impl CountingState {
+        fn new() -> Self {
+            Self {
+                total: Arc::new(AtomicUsize::new(0)),
+                current: Arc::new(AtomicUsize::new(0)),
+                peak: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn enter(&self) {
+            self.total.fetch_add(1, Ordering::SeqCst);
+            let prev = self.current.fetch_add(1, Ordering::SeqCst);
+            self.peak.fetch_max(prev + 1, Ordering::SeqCst);
+        }
+
+        fn exit(&self) {
+            self.current.fetch_sub(1, Ordering::SeqCst);
+        }
+
+        fn peak(&self) -> usize {
+            self.peak.load(Ordering::SeqCst)
+        }
+
+        fn total(&self) -> usize {
+            self.total.load(Ordering::SeqCst)
+        }
+    }
+
+    #[derive(Clone)]
+    struct DelayedRefreshState {
+        counting: CountingState,
+        delay: Duration,
+    }
+
+    async fn delayed_refresh_handler(
+        axum::extract::State(state): axum::extract::State<DelayedRefreshState>,
+    ) -> axum::Json<serde_json::Value> {
+        state.counting.enter();
+        tokio::time::sleep(state.delay).await;
+        state.counting.exit();
+        axum::Json(serde_json::json!({
+            "access_token": "refreshed-token",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "refresh_token": "new-refresh-token"
+        }))
+    }
+
+    async fn delayed_error_handler(
+        axum::extract::State(state): axum::extract::State<DelayedRefreshState>,
+    ) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+        state.counting.enter();
+        tokio::time::sleep(state.delay).await;
+        state.counting.exit();
+        (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": "invalid_grant",
+                "error_description": "invalid_grant occurred"
+            })),
+        )
+    }
+
+    /// Starts an axum server and returns (base_url, counting_state).
+    async fn start_axum_server<H, T>(handler: H, state: DelayedRefreshState) -> (Url, CountingState)
+    where
+        H: axum::handler::Handler<T, DelayedRefreshState> + Clone + Send + 'static,
+        T: 'static,
+    {
+        let counting = state.counting.clone();
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let base_url = Url::parse(&format!("http://{addr}")).unwrap();
+        (base_url, counting)
+    }
+
+    fn make_token(access: &str, expires_in: u64, refresh: bool) -> Token {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Token {
+            access_token: SecretToken::new(access),
+            token_type: "Bearer".to_string(),
+            expires_at: now + expires_in,
+            refresh_token: if refresh {
+                Some(SecretToken::new("test-refresh-token"))
+            } else {
+                None
+            },
+        }
+    }
+
+    fn strategy_with_token(
+        dir: &tempfile::TempDir,
+        base_url: &Url,
+        token: Token,
+    ) -> TokenStoreStrategy {
+        let store = TokenStore::new(dir.path().join("auth.json"));
+        store.save(&token).unwrap();
+        TokenStoreStrategy::new(store, base_url.clone(), "cli")
+    }
+
+    const CONCURRENCY: usize = 50;
+
+    /// Fresh token (baseline) — Token is valid, no refresh needed.
+    /// N concurrent callers should all return quickly with 0 server hits.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_fresh_token_no_contention() {
+        let counting = CountingState::new();
+        let state = DelayedRefreshState {
+            counting: counting.clone(),
+            delay: Duration::from_millis(500),
+        };
+        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+        let dir = tempfile::tempdir().unwrap();
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &base_url,
+            make_token("fresh-token", 3600, true),
+        ));
+
+        let start = Instant::now();
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy);
+            handles.push(tokio::spawn(async move {
+                let token = s.as_ref().get_token().await.unwrap();
+                token.into_owned()
+            }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+        let elapsed = start.elapsed();
+
+        // All callers should get the fresh token.
+        for token in &results {
+            assert_eq!(token.as_str(), "fresh-token");
+        }
+
+        // Should complete quickly — no server round-trips.
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "expected < 200ms for fresh tokens, got {:?}",
+            elapsed
+        );
+        assert_eq!(stats.total(), 0, "no refresh requests should be made");
+    }
+
+    /// Preemptive refresh with latency — Token is expiring but still usable.
+    /// Non-refreshing callers should return immediately; only the refreshing
+    /// caller pays the latency cost.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_expiring_token_non_blocking_reads() {
+        let counting = CountingState::new();
+        let state = DelayedRefreshState {
+            counting: counting.clone(),
+            delay: Duration::from_millis(500),
+        };
+        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+        let dir = tempfile::tempdir().unwrap();
+        // Token expires in 30s — is_expired() = true (within 60s leeway),
+        // but is_usable() = true (hasn't actually expired).
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &base_url,
+            make_token("still-usable", 30, true),
+        ));
+
+        let start = Instant::now();
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy);
+            handles.push(tokio::spawn(async move {
+                let call_start = Instant::now();
+                let token = s.as_ref().get_token().await.unwrap();
+                (token.into_owned(), call_start.elapsed())
+            }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+        let elapsed = start.elapsed();
+
+        // All callers should get either the old (still usable) or the refreshed token.
+        for (token, _) in &results {
+            assert!(
+                token.as_str() == "still-usable" || token.as_str() == "refreshed-token",
+                "unexpected token: {}",
+                token.as_str()
+            );
+        }
+
+        // At least N-1 callers should complete quickly (they get the cached token
+        // while the refresher holds the lock only briefly before dropping it).
+        let fast_callers = results
+            .iter()
+            .filter(|(_, dur)| *dur < Duration::from_millis(100))
+            .count();
+        assert!(
+            fast_callers >= CONCURRENCY - 1,
+            "expected at least {} fast callers, got {} (total elapsed: {:?})",
+            CONCURRENCY - 1,
+            fast_callers,
+            elapsed
+        );
+
+        // Only one refresh request should hit the server.
+        assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
+        assert_eq!(stats.total(), 1, "total refresh requests");
+    }
+
+    /// Cold start / expired token with latency — Token is fully expired.
+    /// All callers block until the refresh completes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_expired_token_blocks_until_refresh() {
+        let refresh_delay = Duration::from_millis(200);
+        let counting = CountingState::new();
+        let state = DelayedRefreshState {
+            counting: counting.clone(),
+            delay: refresh_delay,
+        };
+        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+        let dir = tempfile::tempdir().unwrap();
+        // Fully expired token.
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &base_url,
+            make_token("expired-token", 0, true),
+        ));
+
+        let start = Instant::now();
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy);
+            handles.push(tokio::spawn(async move {
+                let token = s.as_ref().get_token().await.unwrap();
+                token.into_owned()
+            }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+        let elapsed = start.elapsed();
+
+        // All callers should get the refreshed token.
+        for token in &results {
+            assert_eq!(token.as_str(), "refreshed-token");
+        }
+
+        // All callers should complete within refresh_delay + generous margin.
+        // The first caller triggers the refresh (holds the lock), others block.
+        // Once the refresh completes the lock is released with a fresh token,
+        // so subsequent callers see `is_expired() = false` and return immediately.
+        assert!(
+            elapsed < refresh_delay + Duration::from_millis(200),
+            "expected < {:?} for blocked callers, got {:?}",
+            refresh_delay + Duration::from_millis(200),
+            elapsed
+        );
+
+        // Only one refresh request should hit the server.
+        assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
+        assert_eq!(stats.total(), 1, "total refresh requests");
+    }
+
+    /// Refresh failure with delayed error — Server returns an error after a delay.
+    /// All callers should eventually complete. Because the refresh token is
+    /// restored after each failure, each queued caller retries independently.
+    /// The key behavioral property is that the refresh token is always restored,
+    /// enabling future retries.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_expired_token_refresh_failure_recovers() {
+        let counting = CountingState::new();
+        let state = DelayedRefreshState {
+            counting: counting.clone(),
+            // Short delay — each queued caller retries, so total time is
+            // proportional to concurrency. Keep delay small to stay fast.
+            delay: Duration::from_millis(10),
+        };
+        let (base_url, stats) = start_axum_server(delayed_error_handler, state).await;
+        let dir = tempfile::tempdir().unwrap();
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &base_url,
+            make_token("expired-token", 0, true),
+        ));
+
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy);
+            handles.push(tokio::spawn(async move {
+                s.as_ref().get_token().await.map(|t| t.into_owned())
+            }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+
+        // All callers should get Expired errors.
+        for result in &results {
+            assert!(result.is_err(), "expected Expired error, got Ok");
+            assert!(matches!(
+                result.as_ref().unwrap_err(),
+                TokenStoreError::Expired
+            ));
+        }
+
+        // The refresh token should be restored for retry.
+        let state = strategy.state.lock().await;
+        assert!(
+            state.token.as_ref().unwrap().refresh_token().is_some(),
+            "refresh token should be restored after failed refresh"
+        );
+        drop(state);
+
+        // Peak server concurrency should be 1 (lock serializes access).
+        assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
+        // Each queued caller retries because the refresh token is restored
+        // after each failure. Total hits will be up to CONCURRENCY.
+        assert!(
+            stats.total() >= 1,
+            "at least one refresh attempt should be made"
+        );
+    }
+
+    /// Refresh failure then retry — First wave of callers hits a failing server,
+    /// second wave hits a working server. Verifies recovery under concurrent load.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_refresh_failure_then_retry() {
+        // Phase 1: Start a server that returns errors.
+        let counting1 = CountingState::new();
+        let state1 = DelayedRefreshState {
+            counting: counting1.clone(),
+            delay: Duration::from_millis(50),
+        };
+        let (base_url, _) = start_axum_server(delayed_error_handler, state1).await;
+        let dir = tempfile::tempdir().unwrap();
+        let strategy = Arc::new(strategy_with_token(
+            &dir,
+            &base_url,
+            make_token("expired-token", 0, true),
+        ));
+
+        // First wave: all callers should get Expired.
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy);
+            handles.push(tokio::spawn(async move {
+                s.as_ref().get_token().await.map(|t| t.into_owned())
+            }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+
+        for result in &results {
+            assert!(
+                result.is_err(),
+                "first wave: expected Expired, got Ok({})",
+                result.as_ref().unwrap().as_str()
+            );
+        }
+
+        // Phase 2: Start a new server that returns success.
+        // We need a new strategy pointing at the new server, but with the
+        // same state (token + restored refresh token).
+        let counting2 = CountingState::new();
+        let state2 = DelayedRefreshState {
+            counting: counting2.clone(),
+            delay: Duration::from_millis(50),
+        };
+        let (base_url2, stats2) = start_axum_server(delayed_refresh_handler, state2).await;
+
+        // Build a new strategy pointing at the working server, seeded with
+        // the same expired token + refresh token (simulating a retry).
+        let strategy2 = Arc::new(strategy_with_token(
+            &dir,
+            &base_url2,
+            make_token("expired-token", 0, true),
+        ));
+
+        // Second wave: all callers should get the refreshed token.
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy2);
+            handles.push(tokio::spawn(async move {
+                let token = s.as_ref().get_token().await.unwrap();
+                token.into_owned()
+            }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+
+        for token in &results {
+            assert_eq!(token.as_str(), "refreshed-token");
+        }
+
+        assert_eq!(stats2.total(), 1, "only one retry refresh should be made");
+    }
+}

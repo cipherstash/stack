@@ -29,6 +29,7 @@ name = "device_code"
 required-features = ["test-utils"]
 
 [dev-dependencies]
+axum = "0.8"
 cts-common = { workspace = true }
 mocktail = "0.3.0"
 tempfile = "3.21.0"
