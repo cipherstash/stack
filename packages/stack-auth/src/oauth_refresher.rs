@@ -6,19 +6,27 @@ use crate::{AuthError, SecretToken, Token};
 
 /// Implements [`Refresher`] using OAuth refresh tokens.
 ///
-/// Owns a [`TokenStore`] for persisting refreshed tokens to disk.
+/// Optionally owns a [`TokenStore`] for persisting refreshed tokens to disk.
+/// When the store is `None`, tokens are cached in memory only.
 pub(crate) struct OAuthRefresher {
-    store: TokenStore,
+    store: Option<TokenStore>,
     base_url: Url,
     client_id: String,
+    region: String,
 }
 
 impl OAuthRefresher {
-    pub(crate) fn new(store: TokenStore, base_url: Url, client_id: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        store: Option<TokenStore>,
+        base_url: Url,
+        client_id: impl Into<String>,
+        region: impl Into<String>,
+    ) -> Self {
         Self {
             store,
             base_url,
             client_id: client_id.into(),
+            region: region.into(),
         }
     }
 }
@@ -27,9 +35,11 @@ impl Refresher for OAuthRefresher {
     type Credential = SecretToken;
 
     fn save(&self, token: &Token) {
-        match self.store.save(token) {
-            Ok(()) => tracing::debug!("refreshed token saved to disk"),
-            Err(err) => tracing::warn!(%err, "failed to save refreshed token to disk"),
+        if let Some(store) = &self.store {
+            match store.save(token) {
+                Ok(()) => tracing::debug!("refreshed token saved to disk"),
+                Err(err) => tracing::warn!(%err, "failed to save refreshed token to disk"),
+            }
         }
     }
 
@@ -42,6 +52,9 @@ impl Refresher for OAuthRefresher {
     }
 
     async fn refresh(&self, credential: &Self::Credential) -> Result<Token, AuthError> {
-        Token::refresh(credential, &self.base_url, &self.client_id).await
+        let mut token = Token::refresh(credential, &self.base_url, &self.client_id).await?;
+        token.set_region(&self.region);
+        token.set_client_id(&self.client_id);
+        Ok(token)
     }
 }

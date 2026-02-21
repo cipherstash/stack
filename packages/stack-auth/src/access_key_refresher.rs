@@ -73,6 +73,8 @@ impl Refresher for AccessKeyRefresher {
             token_type: "Bearer".to_string(),
             expires_at: now + auth_resp.expiry,
             refresh_token: None,
+            region: None,
+            client_id: None,
         })
     }
 }
@@ -133,6 +135,8 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_at: now, // already expired
             refresh_token: None,
+            region: None,
+            client_id: None,
         }
     }
 
@@ -311,6 +315,8 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_at: now + 30, // is_expired() = true (within 90s), is_usable() = true
             refresh_token: None,
+            region: None,
+            client_id: None,
         };
 
         let refresher =
@@ -475,6 +481,8 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_at: now + 3600,
             refresh_token: None,
+            region: None,
+            client_id: None,
         };
         let strategy = Arc::new(AutoRefresh::with_token(refresher, token));
 
@@ -523,6 +531,8 @@ mod tests {
             token_type: "Bearer".to_string(),
             expires_at: now + 30,
             refresh_token: None,
+            region: None,
+            client_id: None,
         };
         let refresher =
             AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);

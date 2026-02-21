@@ -112,6 +112,8 @@ mod tests {
             } else {
                 None
             },
+            region: None,
+            client_id: None,
         }
     }
 

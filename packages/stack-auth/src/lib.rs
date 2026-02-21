@@ -81,9 +81,9 @@ mod refresher;
 mod token;
 mod token_store;
 
-pub use access_key_strategy::AccessKeyStrategy;
-pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
-pub use oauth_strategy::OAuthStrategy;
+pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
+pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
+pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use token::Token;
 pub use token_store::{TokenStore, TokenStoreError};
 
@@ -161,12 +161,24 @@ pub enum AuthError {
     /// An unexpected error was returned by the auth server.
     #[error("Server error: {0}")]
     Server(String),
+    /// A token store operation failed.
+    #[error("Token store error: {0}")]
+    Store(#[from] token_store::TokenStoreError),
 }
 
 impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
     }
+}
+
+/// Ensure a URL has a trailing slash so that `Url::join` with relative paths
+/// appends to the path rather than replacing the last segment.
+pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+    url
 }
 
 /// Create a [`reqwest::Client`] with standard timeouts.

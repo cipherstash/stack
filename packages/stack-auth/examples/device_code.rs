@@ -6,8 +6,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let region = Region::aws("ap-southeast-2")?;
-    let strategy =
-        DeviceCodeStrategy::new(region, "cli")?.with_base_url("http://localhost:3001")?;
+    let strategy = DeviceCodeStrategy::builder(region, "cli")
+        .base_url("http://localhost:3001".parse()?)
+        .build()?;
 
     // Step 1: Begin the device code flow
     let pending = strategy.begin().await?;

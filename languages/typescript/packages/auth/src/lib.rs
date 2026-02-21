@@ -22,6 +22,7 @@ fn error_code(err: &AuthError) -> &'static str {
         AuthError::InvalidUrl(_) => "INVALID_URL",
         AuthError::Region(_) => "INVALID_REGION",
         AuthError::Server(_) => "SERVER_ERROR",
+        AuthError::Store(_) => "STORE_ERROR",
         _ => "UNKNOWN_ERROR",
     }
 }
@@ -220,9 +221,9 @@ mod tests {
     /// against a mock server, then wrapping the `PendingDeviceCode`.
     async fn begin_result(server: &MockServer) -> DeviceCodeResult {
         let strategy =
-            DeviceCodeStrategy::new(Region::aws("ap-southeast-2").unwrap(), "test-client")
-                .unwrap()
-                .with_base_url(server.url(""))
+            DeviceCodeStrategy::builder(Region::aws("ap-southeast-2").unwrap(), "test-client")
+                .base_url(server.url(""))
+                .build()
                 .unwrap();
         let pending = strategy.begin().await.unwrap();
         DeviceCodeResult::from_pending(pending)
@@ -433,9 +434,9 @@ pub async fn begin_device_code_flow_with_base_url(
     let parsed_url: url::Url = base_url
         .parse()
         .map_err(|e: url::ParseError| to_napi_error(AuthError::from(e)))?;
-    let strategy = DeviceCodeStrategy::new(region, client_id)
-        .map_err(to_napi_error)?
-        .with_base_url(parsed_url)
+    let strategy = DeviceCodeStrategy::builder(region, client_id)
+        .base_url(parsed_url)
+        .build()
         .map_err(to_napi_error)?;
     let pending = strategy.begin().await.map_err(to_napi_error)?;
     Ok(DeviceCodeResult::from_pending(pending))

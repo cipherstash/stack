@@ -22,6 +22,10 @@ pub struct Token {
     pub(crate) refresh_token: Option<SecretToken>,
     pub(crate) token_type: String,
     pub(crate) expires_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) client_id: Option<String>,
 }
 
 impl Token {
@@ -90,6 +94,26 @@ impl Token {
         self.refresh_token.take()
     }
 
+    /// Returns the stored region identifier, if any.
+    pub fn region(&self) -> Option<&str> {
+        self.region.as_deref()
+    }
+
+    /// Returns the stored client ID, if any.
+    pub fn client_id(&self) -> Option<&str> {
+        self.client_id.as_deref()
+    }
+
+    /// Set the region identifier on this token.
+    pub(crate) fn set_region(&mut self, region: impl Into<String>) {
+        self.region = Some(region.into());
+    }
+
+    /// Set the client ID on this token.
+    pub(crate) fn set_client_id(&mut self, client_id: impl Into<String>) {
+        self.client_id = Some(client_id.into());
+    }
+
     /// Exchange a refresh token for a new [`Token`] via the `/oauth/token`
     /// endpoint.
     ///
@@ -145,6 +169,8 @@ impl Token {
             token_type: token_resp.token_type,
             expires_at: now + token_resp.expires_in,
             refresh_token: token_resp.refresh_token,
+            region: None,
+            client_id: None,
         })
     }
 }
@@ -193,6 +219,8 @@ mod tests {
             } else {
                 None
             },
+            region: None,
+            client_id: None,
         }
     }
 

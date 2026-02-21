@@ -5,7 +5,7 @@ use url::Url;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{http_client, token_store::TokenStore, AuthError, Token};
+use crate::{ensure_trailing_slash, http_client, token_store::TokenStore, AuthError, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
 };
@@ -30,6 +30,7 @@ mod tests;
 /// let strategy = DeviceCodeStrategy::new(region, "my-client-id").unwrap();
 /// ```
 pub struct DeviceCodeStrategy {
+    region: Region,
     base_url: Url,
     client_id: String,
 }
@@ -51,24 +52,16 @@ impl DeviceCodeStrategy {
     /// ).unwrap();
     /// ```
     pub fn new(region: Region, client_id: impl Into<String>) -> Result<Self, AuthError> {
-        let base_url = CtsServiceDiscovery::endpoint(region)?;
-        Ok(Self {
-            base_url: ensure_trailing_slash(base_url),
-            client_id: client_id.into(),
-        })
+        Self::builder(region, client_id).build()
     }
 
-    /// Override the base URL resolved by service discovery.
-    ///
-    /// Useful for pointing at a local or mock CTS instance during testing.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn with_base_url<U>(mut self, base_url: U) -> Result<Self, AuthError>
-    where
-        U: TryInto<Url>,
-        U::Error: Into<AuthError>,
-    {
-        self.base_url = ensure_trailing_slash(base_url.try_into().map_err(Into::into)?);
-        Ok(self)
+    /// Return a builder for configuring a `DeviceCodeStrategy` before construction.
+    pub fn builder(region: Region, client_id: impl Into<String>) -> DeviceCodeStrategyBuilder {
+        DeviceCodeStrategyBuilder {
+            region,
+            client_id: client_id.into(),
+            base_url_override: None,
+        }
     }
 
     /// Start the device code flow.
@@ -118,12 +111,49 @@ impl DeviceCodeStrategy {
 
         Ok(PendingDeviceCode {
             token_url,
+            region: self.region,
             client_id: self.client_id.clone(),
             device_code: code.device_code,
             user_code: code.user_code,
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
             expires_in: code.expires_in,
+        })
+    }
+}
+
+/// Builder for [`DeviceCodeStrategy`].
+///
+/// Created via [`DeviceCodeStrategy::builder`].
+pub struct DeviceCodeStrategyBuilder {
+    region: Region,
+    client_id: String,
+    base_url_override: Option<Url>,
+}
+
+impl DeviceCodeStrategyBuilder {
+    /// Override the base URL resolved by service discovery.
+    ///
+    /// Useful for pointing at a local or mock CTS instance during testing.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn base_url(mut self, url: Url) -> Self {
+        self.base_url_override = Some(url);
+        self
+    }
+
+    /// Build the [`DeviceCodeStrategy`].
+    ///
+    /// Resolves the base URL via service discovery unless overridden with
+    /// [`base_url`](Self::base_url).
+    pub fn build(self) -> Result<DeviceCodeStrategy, AuthError> {
+        let base_url = match self.base_url_override {
+            Some(url) => url,
+            None => CtsServiceDiscovery::endpoint(self.region)?,
+        };
+        Ok(DeviceCodeStrategy {
+            region: self.region,
+            base_url: ensure_trailing_slash(base_url),
+            client_id: self.client_id,
         })
     }
 }
@@ -155,6 +185,7 @@ impl DeviceCodeStrategy {
 #[derive(Debug)]
 pub struct PendingDeviceCode {
     token_url: Url,
+    region: Region,
     client_id: String,
     device_code: DeviceCode,
     /// The short code the user must enter to authorize this device.
@@ -242,12 +273,16 @@ impl PendingDeviceCode {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let token = Token {
+                let mut token = Token {
                     access_token: token_resp.access_token,
                     token_type: token_resp.token_type,
                     expires_at: now + token_resp.expires_in,
                     refresh_token: token_resp.refresh_token,
+                    region: None,
+                    client_id: None,
                 };
+                token.set_region(self.region.identifier());
+                token.set_client_id(&self.client_id);
 
                 match TokenStore::new_default().and_then(|store| store.save(&token)) {
                     Ok(()) => tracing::debug!("token saved to disk"),
@@ -276,13 +311,4 @@ impl PendingDeviceCode {
             tokio::time::sleep(interval).await;
         }
     }
-}
-
-/// Ensure a URL has a trailing slash so that `Url::join` with relative paths
-/// appends to the path rather than replacing the last segment.
-fn ensure_trailing_slash(mut url: Url) -> Url {
-    if !url.path().ends_with('/') {
-        url.set_path(&format!("{}/", url.path()));
-    }
-    url
 }

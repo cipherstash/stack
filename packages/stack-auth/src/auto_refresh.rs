@@ -297,6 +297,8 @@ mod tests {
             } else {
                 None
             },
+            region: None,
+            client_id: None,
         }
     }
 
@@ -329,7 +331,8 @@ mod tests {
     ) -> AutoRefresh<OAuthRefresher> {
         let store = TokenStore::new(dir.path().join("auth.json"));
         store.save(&token).unwrap();
-        let refresher = OAuthRefresher::new(store, server.url(""), "cli");
+        let refresher =
+            OAuthRefresher::new(Some(store), server.url(""), "cli", "ap-southeast-2.aws");
         AutoRefresh::with_token(refresher, token)
     }
 
@@ -351,7 +354,8 @@ mod tests {
     async fn test_returns_not_found_when_no_token_and_oauth() {
         let server = start_server(MockSet::new()).await;
         let store = TokenStore::new("/tmp/nonexistent/auth.json");
-        let refresher = OAuthRefresher::new(store, server.url(""), "cli");
+        let refresher =
+            OAuthRefresher::new(Some(store), server.url(""), "cli", "ap-southeast-2.aws");
         let strategy = AutoRefresh::new(refresher);
 
         let err = strategy.get_token().await.unwrap_err();
@@ -812,6 +816,8 @@ mod stress_tests {
             } else {
                 None
             },
+            region: None,
+            client_id: None,
         }
     }
 
@@ -822,7 +828,8 @@ mod stress_tests {
     ) -> AutoRefresh<OAuthRefresher> {
         let store = TokenStore::new(dir.path().join("auth.json"));
         store.save(&token).unwrap();
-        let refresher = OAuthRefresher::new(store, base_url.clone(), "cli");
+        let refresher =
+            OAuthRefresher::new(Some(store), base_url.clone(), "cli", "ap-southeast-2.aws");
         AutoRefresh::with_token(refresher, token)
     }
 
