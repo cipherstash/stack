@@ -4,6 +4,13 @@ use url::Url;
 
 use crate::{http_client, AuthError, SecretToken};
 
+/// How many seconds before expiry [`Token::is_expired`] returns `true`.
+///
+/// This leeway triggers preemptive refresh well before the token becomes
+/// unusable, giving the HTTP refresh call time to complete while concurrent
+/// callers can still use the current token.
+const EXPIRY_LEEWAY_SECS: u64 = 90;
+
 /// An access token returned by a successful authentication flow.
 ///
 /// The token contains a [`SecretToken`] (the bearer credential), a token type
@@ -45,9 +52,12 @@ impl Token {
         self.expires_at.saturating_sub(now)
     }
 
-    /// Returns `true` if the token has expired (with 60 seconds of leeway).
+    /// Returns `true` if the token has expired (with 90 seconds of leeway).
     ///
-    /// Use this to decide whether a preemptive refresh should be attempted.
+    /// The 90-second leeway triggers preemptive refresh well before the token
+    /// becomes unusable, giving the HTTP refresh call plenty of time to complete
+    /// while the current token is still valid for concurrent callers.
+    ///
     /// For checking whether the token is still usable as a bearer credential,
     /// use [`is_usable`](Self::is_usable) instead.
     pub fn is_expired(&self) -> bool {
@@ -55,12 +65,12 @@ impl Token {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        now + 60 >= self.expires_at
+        now + EXPIRY_LEEWAY_SECS >= self.expires_at
     }
 
     /// Returns `true` if the token is still usable (before the actual expiry timestamp).
     ///
-    /// Unlike [`is_expired`](Self::is_expired) which includes 60s leeway for preemptive
+    /// Unlike [`is_expired`](Self::is_expired) which includes 90s leeway for preemptive
     /// refresh, this only returns `false` when the token has genuinely expired.
     pub fn is_usable(&self) -> bool {
         let now = SystemTime::now()

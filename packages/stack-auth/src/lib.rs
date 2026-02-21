@@ -63,44 +63,41 @@
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
-use std::borrow::Cow;
 use std::convert::Infallible;
+use std::future::Future;
 #[cfg(not(test))]
 use std::time::Duration;
 
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
+mod access_key_refresher;
+mod access_key_strategy;
+mod auto_refresh;
 mod device_code;
+mod oauth_refresher;
+mod oauth_strategy;
+mod refresher;
 mod token;
 mod token_store;
-mod token_store_strategy;
 
+pub use access_key_strategy::AccessKeyStrategy;
 pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
+pub use oauth_strategy::OAuthStrategy;
 pub use token::Token;
 pub use token_store::{TokenStore, TokenStoreError};
-pub use token_store_strategy::TokenStoreStrategy;
 
-/// A strategy for obtaining a [`SecretToken`] for authenticating with CipherStash services.
+/// A strategy for obtaining access tokens.
 ///
-/// Implementors provide a single method, [`get_token`](AuthStrategy::get_token), which
-/// returns a valid access token. The strategy is responsible for managing token
-/// lifecycle concerns such as caching, refreshing, or re-authenticating as needed.
+/// Implementations handle all details of authentication, token caching, and
+/// refresh. Callers just call [`get_token`](AuthStrategy::get_token) whenever
+/// they need a valid token.
 ///
-/// The lifetime `'a` ties the returned reference to the data that owns the token,
-/// allowing the same strategy to be called multiple times (e.g. by implementing
-/// the trait for `&'a T`).
-pub trait AuthStrategy<'a> {
-    /// The error type returned when token retrieval fails.
-    type Error;
-
-    /// Retrieve a valid access token.
-    ///
-    /// Returns `Cow::Borrowed` for strategies that own a stable token, or
-    /// `Cow::Owned` for strategies that clone the token out from behind a lock.
-    fn get_token(
-        self,
-    ) -> impl std::future::Future<Output = Result<Cow<'a, SecretToken>, Self::Error>> + Send;
+/// The trait is designed to be implemented for `&T`, so that callers can use
+/// shared references (e.g. `&OAuthStrategy`) without consuming the strategy.
+pub trait AuthStrategy: Send {
+    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
+    fn get_token(self) -> impl Future<Output = Result<SecretToken, AuthError>> + Send;
 }
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
@@ -112,16 +109,15 @@ pub trait AuthStrategy<'a> {
 /// - **Opaque debug**: the [`Debug`] implementation prints `"***"` instead of
 ///   the actual value, so tokens won't leak into logs or error messages.
 ///
-/// You cannot construct a `SecretToken` directly — it is returned by the
-/// authentication flow via [`Token::access_token`].
+/// Use [`SecretToken::new`] to wrap a string value (e.g. an access key
+/// loaded from configuration or an environment variable).
 #[derive(Clone, OpaqueDebug, ZeroizeOnDrop, serde::Deserialize, serde::Serialize)]
 #[serde(transparent)]
 pub struct SecretToken(String);
 
 impl SecretToken {
     /// Create a new `SecretToken` from a string value.
-    #[cfg(test)]
-    pub(crate) fn new(value: impl Into<String>) -> Self {
+    pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
@@ -156,6 +152,12 @@ pub enum AuthError {
     /// The requested region is not supported.
     #[error("Unsupported region: {0}")]
     Region(#[from] cts_common::RegionError),
+    /// No credentials are available (e.g. not logged in, no access key configured).
+    #[error("Not authenticated")]
+    NotAuthenticated,
+    /// The token has expired and could not be refreshed.
+    #[error("Token expired")]
+    TokenExpired,
     /// An unexpected error was returned by the auth server.
     #[error("Server error: {0}")]
     Server(String),
