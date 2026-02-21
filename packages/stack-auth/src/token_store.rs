@@ -1,4 +1,4 @@
-use crate::{AuthError, Token};
+use crate::Token;
 use std::path::{Path, PathBuf};
 
 /// Errors that can occur when reading or writing the token store.
@@ -20,9 +20,6 @@ pub enum TokenStoreError {
     /// The token has expired.
     #[error("Token has expired")]
     Expired,
-    /// Token refresh failed.
-    #[error("Token refresh failed: {0}")]
-    Refresh(#[from] AuthError),
 }
 
 /// Persists and loads tokens from a JSON file on disk.
