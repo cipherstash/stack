@@ -41,9 +41,9 @@ async fn start_server(mocks: MockSet) -> MockServer {
 }
 
 fn strategy_for(server: &MockServer) -> DeviceCodeStrategy {
-    DeviceCodeStrategy::new(Region::aws("ap-southeast-2").unwrap(), "cli")
-        .unwrap()
-        .with_base_url(server.url(""))
+    DeviceCodeStrategy::builder(Region::aws("ap-southeast-2").unwrap(), "cli")
+        .base_url(server.url(""))
+        .build()
         .unwrap()
 }
 
