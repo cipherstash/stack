@@ -54,6 +54,12 @@ jobs:
       - name: test-unit
         run: mise x --env test -- cargo nextest run -p stack-auth --all-features
 
+      - name: test-doc
+        run: mise run test:doc:stack-auth
+
+      - name: doc
+        run: mise run doc:stack-auth
+
       - name: test-integration-stack-auth
         run: mise run test:integration:stack-auth
 
