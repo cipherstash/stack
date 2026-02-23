@@ -124,7 +124,7 @@ impl OAuthStrategyBuilder {
     /// Build the [`OAuthStrategy`].
     ///
     /// Resolves the base URL via service discovery unless overridden with
-    /// [`base_url`](Self::base_url).
+    /// `base_url` (available when the `test-utils` feature is enabled).
     pub fn build(self) -> Result<OAuthStrategy, AuthError> {
         match self.source {
             OAuthTokenSource::Token {
