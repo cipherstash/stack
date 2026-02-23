@@ -25,7 +25,7 @@ use crate::{AuthError, AuthStrategy, SecretToken};
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let strategy = AutoStrategy::new()?;
 /// let token = (&strategy).get_token().await?;
-/// println!("Authenticated! Token expires in {}s", token.as_str().len());
+/// println!("Authenticated! token={:?}", token);
 /// # Ok(())
 /// # }
 /// ```
