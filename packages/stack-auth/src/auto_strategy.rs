@@ -16,6 +16,19 @@ use crate::{AuthError, AuthStrategy, SecretToken};
 /// 2. If a token store file exists at the default location
 ///    (`~/.cipherstash/auth.json`), an [`OAuthStrategy`] is created from it.
 /// 3. Otherwise, [`AuthError::NotAuthenticated`] is returned.
+///
+/// # Example
+///
+/// ```no_run
+/// use stack_auth::{AuthStrategy, AutoStrategy};
+///
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// let strategy = AutoStrategy::new()?;
+/// let token = (&strategy).get_token().await?;
+/// println!("Authenticated! Token expires in {}s", token.as_str().len());
+/// # Ok(())
+/// # }
+/// ```
 pub enum AutoStrategy {
     /// Authenticated via a static access key.
     AccessKey(AccessKeyStrategy),

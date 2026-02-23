@@ -25,6 +25,9 @@ zeroize = { workspace = true }
 test-utils = []
 
 [[example]]
+name = "auto_strategy"
+
+[[example]]
 name = "device_code"
 required-features = ["test-utils"]
 
