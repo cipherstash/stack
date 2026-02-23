@@ -1,6 +1,5 @@
-use std::path::{Path, PathBuf};
-
 use crate::Token;
+use std::path::{Path, PathBuf};
 
 /// Errors that can occur when reading or writing the token store.
 #[derive(Debug, thiserror::Error)]
@@ -15,6 +14,12 @@ pub enum TokenStoreError {
     /// The user's home directory could not be determined.
     #[error("Could not determine home directory")]
     HomeDirNotFound,
+    /// No token was found in the store.
+    #[error("No token found")]
+    NotFound,
+    /// The token has expired.
+    #[error("Token has expired")]
+    Expired,
 }
 
 /// Persists and loads tokens from a JSON file on disk.

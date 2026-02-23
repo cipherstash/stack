@@ -63,17 +63,45 @@
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
+use std::borrow::Cow;
 use std::convert::Infallible;
-use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(not(test))]
+use std::time::Duration;
 
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
 mod device_code;
+mod token;
 mod token_store;
+mod token_store_strategy;
 
 pub use device_code::{DeviceCodeStrategy, PendingDeviceCode};
+pub use token::Token;
 pub use token_store::{TokenStore, TokenStoreError};
+pub use token_store_strategy::TokenStoreStrategy;
+
+/// A strategy for obtaining a [`SecretToken`] for authenticating with CipherStash services.
+///
+/// Implementors provide a single method, [`get_token`](AuthStrategy::get_token), which
+/// returns a valid access token. The strategy is responsible for managing token
+/// lifecycle concerns such as caching, refreshing, or re-authenticating as needed.
+///
+/// The lifetime `'a` ties the returned reference to the data that owns the token,
+/// allowing the same strategy to be called multiple times (e.g. by implementing
+/// the trait for `&'a T`).
+pub trait AuthStrategy<'a> {
+    /// The error type returned when token retrieval fails.
+    type Error;
+
+    /// Retrieve a valid access token.
+    ///
+    /// Returns `Cow::Borrowed` for strategies that own a stable token, or
+    /// `Cow::Owned` for strategies that clone the token out from behind a lock.
+    fn get_token(
+        self,
+    ) -> impl std::future::Future<Output = Result<Cow<'a, SecretToken>, Self::Error>> + Send;
+}
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
 ///
@@ -86,7 +114,7 @@ pub use token_store::{TokenStore, TokenStoreError};
 ///
 /// You cannot construct a `SecretToken` directly — it is returned by the
 /// authentication flow via [`Token::access_token`].
-#[derive(OpaqueDebug, ZeroizeOnDrop, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, OpaqueDebug, ZeroizeOnDrop, serde::Deserialize, serde::Serialize)]
 #[serde(transparent)]
 pub struct SecretToken(String);
 
@@ -100,62 +128,6 @@ impl SecretToken {
     /// Expose the inner token string for FFI boundaries.
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-/// An access token returned by a successful authentication flow.
-///
-/// The token contains a [`SecretToken`] (the bearer credential), a token type
-/// (typically `"Bearer"`), and an absolute expiry timestamp.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Token {
-    access_token: SecretToken,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    refresh_token: Option<SecretToken>,
-    token_type: String,
-    expires_at: u64,
-}
-
-impl Token {
-    /// Returns a reference to the access token credential.
-    ///
-    /// The returned [`SecretToken`] is opaque — its [`Debug`] output is masked.
-    /// Pass it to API clients that need the raw bearer token.
-    pub fn access_token(&self) -> &SecretToken {
-        &self.access_token
-    }
-
-    /// The token type (e.g. `"Bearer"`).
-    pub fn token_type(&self) -> &str {
-        &self.token_type
-    }
-
-    /// The absolute epoch timestamp when the token expires.
-    pub fn expires_at(&self) -> u64 {
-        self.expires_at
-    }
-
-    /// How many seconds until the token expires (computed from the current time).
-    pub fn expires_in(&self) -> u64 {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.expires_at.saturating_sub(now)
-    }
-
-    /// Returns `true` if the token has expired (with 60 seconds of leeway).
-    pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now + 60 >= self.expires_at
-    }
-
-    /// Returns a reference to the refresh token, if one was provided.
-    pub fn refresh_token(&self) -> Option<&SecretToken> {
-        self.refresh_token.as_ref()
     }
 }
 
@@ -195,17 +167,22 @@ impl From<Infallible> for AuthError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_secret_token_debug_does_not_leak() {
-        let token = SecretToken("super_secret_value".to_string());
-        let debug = format!("{:?}", token);
-        assert!(
-            !debug.contains("super_secret_value"),
-            "SecretToken Debug should not contain the secret, got: {debug}"
-        );
+/// Create a [`reqwest::Client`] with standard timeouts.
+///
+/// In test builds, timeouts are omitted so that `tokio::test(start_paused = true)`
+/// does not auto-advance time past the connect timeout before the mock server
+/// can respond.
+pub(crate) fn http_client() -> reqwest::Client {
+    #[cfg(test)]
+    {
+        reqwest::Client::new()
+    }
+    #[cfg(not(test))]
+    {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     }
 }
