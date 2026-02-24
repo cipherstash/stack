@@ -74,6 +74,7 @@ use zeroize::ZeroizeOnDrop;
 mod access_key_refresher;
 mod access_key_strategy;
 mod auto_refresh;
+mod auto_strategy;
 mod device_code;
 mod oauth_refresher;
 mod oauth_strategy;
@@ -82,6 +83,7 @@ mod token;
 mod token_store;
 
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
+pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use token::Token;
@@ -152,6 +154,9 @@ pub enum AuthError {
     /// The requested region is not supported.
     #[error("Unsupported region: {0}")]
     Region(#[from] cts_common::RegionError),
+    /// The workspace CRN could not be parsed.
+    #[error("Invalid workspace CRN: {0}")]
+    InvalidCrn(cts_common::InvalidCrn),
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
     NotAuthenticated,
