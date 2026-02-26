@@ -130,7 +130,7 @@ impl SecretToken {
 }
 
 /// Errors that can occur during an authentication flow.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum AuthError {
     /// The HTTP request to the auth server failed (network error, timeout, etc.).
