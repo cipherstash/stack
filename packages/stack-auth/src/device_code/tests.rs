@@ -1,6 +1,7 @@
 use super::*;
 use cts_common::Region;
 use mocktail::prelude::*;
+use tempfile::TempDir;
 
 fn device_code_json() -> serde_json::Value {
     serde_json::json!({
@@ -40,9 +41,10 @@ async fn start_server(mocks: MockSet) -> MockServer {
     server
 }
 
-fn strategy_for(server: &MockServer) -> DeviceCodeStrategy {
+fn strategy_for(server: &MockServer, dir: &TempDir) -> DeviceCodeStrategy {
     DeviceCodeStrategy::builder(Region::aws("ap-southeast-2").unwrap(), "cli")
         .base_url(server.url(""))
+        .token_store_path(dir.path().join("auth.json"))
         .build()
         .unwrap()
 }
@@ -51,11 +53,12 @@ fn strategy_for(server: &MockServer) -> DeviceCodeStrategy {
 
 #[tokio::test]
 async fn test_begin_returns_pending_device_code() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     let server = start_server(mocks).await;
 
-    let pending = strategy_for(&server).begin().await.unwrap();
+    let pending = strategy_for(&server, &dir).begin().await.unwrap();
 
     assert_eq!(pending.user_code(), "ABCD-EFGH");
     assert_eq!(pending.verification_uri(), "http://example.com/activate");
@@ -68,6 +71,7 @@ async fn test_begin_returns_pending_device_code() {
 
 #[tokio::test]
 async fn test_begin_invalid_client() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mocks.mock(|when, then| {
         when.post().path("/oauth/device/code");
@@ -75,13 +79,14 @@ async fn test_begin_invalid_client() {
     });
     let server = start_server(mocks).await;
 
-    let err = strategy_for(&server).begin().await.unwrap_err();
+    let err = strategy_for(&server, &dir).begin().await.unwrap_err();
 
     assert!(matches!(err, AuthError::InvalidClient));
 }
 
 #[tokio::test]
 async fn test_begin_server_error() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mocks.mock(|when, then| {
         when.post().path("/oauth/device/code");
@@ -89,7 +94,7 @@ async fn test_begin_server_error() {
     });
     let server = start_server(mocks).await;
 
-    let err = strategy_for(&server).begin().await.unwrap_err();
+    let err = strategy_for(&server, &dir).begin().await.unwrap_err();
 
     assert!(matches!(&err, AuthError::Server(desc) if desc == "server_error occurred"));
 }
@@ -98,12 +103,13 @@ async fn test_begin_server_error() {
 
 /// Helper: calls begin() against a server that already has the code mock,
 /// then returns the PendingDeviceCode ready for polling.
-async fn begin_pending(server: &MockServer) -> PendingDeviceCode {
-    strategy_for(server).begin().await.unwrap()
+async fn begin_pending(server: &MockServer, dir: &TempDir) -> PendingDeviceCode {
+    strategy_for(server, dir).begin().await.unwrap()
 }
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_success() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -112,7 +118,11 @@ async fn test_poll_for_token_success() {
     });
     let server = start_server(mocks).await;
 
-    let token = begin_pending(&server).await.poll_for_token().await.unwrap();
+    let token = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap();
 
     assert_eq!(token.access_token().0, "test_access_token_value");
     assert_eq!(token.token_type(), "Bearer");
@@ -122,6 +132,7 @@ async fn test_poll_for_token_success() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_access_denied() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -130,7 +141,7 @@ async fn test_poll_for_token_access_denied() {
     });
     let server = start_server(mocks).await;
 
-    let err = begin_pending(&server)
+    let err = begin_pending(&server, &dir)
         .await
         .poll_for_token()
         .await
@@ -141,6 +152,7 @@ async fn test_poll_for_token_access_denied() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_expired_token() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -149,7 +161,7 @@ async fn test_poll_for_token_expired_token() {
     });
     let server = start_server(mocks).await;
 
-    let err = begin_pending(&server)
+    let err = begin_pending(&server, &dir)
         .await
         .poll_for_token()
         .await
@@ -160,6 +172,7 @@ async fn test_poll_for_token_expired_token() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_invalid_grant() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -168,7 +181,7 @@ async fn test_poll_for_token_invalid_grant() {
     });
     let server = start_server(mocks).await;
 
-    let err = begin_pending(&server)
+    let err = begin_pending(&server, &dir)
         .await
         .poll_for_token()
         .await
@@ -179,6 +192,7 @@ async fn test_poll_for_token_invalid_grant() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_invalid_client() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -187,7 +201,7 @@ async fn test_poll_for_token_invalid_client() {
     });
     let server = start_server(mocks).await;
 
-    let err = begin_pending(&server)
+    let err = begin_pending(&server, &dir)
         .await
         .poll_for_token()
         .await
@@ -198,6 +212,7 @@ async fn test_poll_for_token_invalid_client() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_unknown_error() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -206,7 +221,7 @@ async fn test_poll_for_token_unknown_error() {
     });
     let server = start_server(mocks).await;
 
-    let err = begin_pending(&server)
+    let err = begin_pending(&server, &dir)
         .await
         .poll_for_token()
         .await
@@ -217,6 +232,7 @@ async fn test_poll_for_token_unknown_error() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_authorization_pending_then_success() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -224,7 +240,7 @@ async fn test_poll_for_token_authorization_pending_then_success() {
         then.bad_request().json(error_json("authorization_pending"));
     });
     let server = start_server(mocks).await;
-    let pending = begin_pending(&server).await;
+    let pending = begin_pending(&server, &dir).await;
 
     // Use tokio::join! so the swap future can borrow server.mocks() directly
     // (the shared RwLock) rather than cloning the MockSet.
@@ -245,6 +261,7 @@ async fn test_poll_for_token_authorization_pending_then_success() {
 
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_slow_down_then_success() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     mocks.mock(|when, then| {
@@ -252,7 +269,7 @@ async fn test_poll_for_token_slow_down_then_success() {
         then.bad_request().json(error_json("slow_down"));
     });
     let server = start_server(mocks).await;
-    let pending = begin_pending(&server).await;
+    let pending = begin_pending(&server, &dir).await;
 
     // First poll returns "slow_down", interval increases to 10s.
     // Swap the mock to return success before the second poll.
@@ -274,6 +291,7 @@ async fn test_poll_for_token_slow_down_then_success() {
 /// deadline, causing an `ExpiredToken` error.
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_slow_down_increases_interval() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     // expires_in = 12: without slow_down, second poll at T=10 is within
     // the deadline. With slow_down, interval becomes 10s, so second poll
@@ -293,7 +311,7 @@ async fn test_poll_for_token_slow_down_increases_interval() {
         then.bad_request().json(error_json("slow_down"));
     });
     let server = start_server(mocks).await;
-    let pending = begin_pending(&server).await;
+    let pending = begin_pending(&server, &dir).await;
 
     let err = pending.poll_for_token().await.unwrap_err();
 
@@ -342,11 +360,12 @@ fn test_relative_join_on_root_url() {
 
 #[tokio::test]
 async fn test_pending_device_code_debug_does_not_leak() {
+    let dir = TempDir::new().unwrap();
     let mut mocks = MockSet::new();
     mock_code_endpoint(&mut mocks);
     let server = start_server(mocks).await;
 
-    let pending = begin_pending(&server).await;
+    let pending = begin_pending(&server, &dir).await;
     let debug = format!("{:?}", pending);
 
     assert!(
