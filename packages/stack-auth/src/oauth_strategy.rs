@@ -150,7 +150,7 @@ impl OAuthStrategyBuilder {
                 })
             }
             OAuthTokenSource::Store(store) => {
-                let token = store.load()?.ok_or(AuthError::NotAuthenticated)?;
+                let token = store.load()?;
 
                 let region_str = token
                     .region()

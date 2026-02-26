@@ -1,5 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use cts_common::claims::Claims;
+use cts_common::WorkspaceId;
 use url::Url;
 
 use crate::{http_client, AuthError, SecretToken};
@@ -112,6 +114,47 @@ impl Token {
     /// Set the client ID on this token.
     pub(crate) fn set_client_id(&mut self, client_id: impl Into<String>) {
         self.client_id = Some(client_id.into());
+    }
+
+    /// Returns the workspace ID from the JWT claims.
+    ///
+    /// The access token is decoded (without signature verification) to extract
+    /// the `workspace` claim.
+    pub fn workspace_id(&self) -> Result<WorkspaceId, AuthError> {
+        self.decode_claims().map(|c| c.workspace)
+    }
+
+    /// Returns the issuer URL from the JWT claims.
+    ///
+    /// The `iss` claim in CipherStash tokens is the CTS host URL for the
+    /// workspace, so this can be used directly as the CTS base URL.
+    pub fn issuer(&self) -> Result<Url, AuthError> {
+        let claims = self.decode_claims()?;
+        claims.iss.parse().map_err(AuthError::from)
+    }
+
+    /// Decode the JWT payload into [`Claims`] without verifying the signature.
+    ///
+    /// This is safe because we already possess the token — we just need to read
+    /// the claims it contains.
+    fn decode_claims(&self) -> Result<Claims, AuthError> {
+        use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
+        use std::collections::HashSet;
+
+        let token_str = self.access_token.as_str();
+        let header =
+            decode_header(token_str).map_err(|e| AuthError::Server(format!("invalid JWT: {e}")))?;
+
+        let dummy_key = DecodingKey::from_secret(&[]);
+        let mut validation = Validation::new(header.alg);
+        validation.validate_exp = false;
+        validation.validate_aud = false;
+        validation.required_spec_claims = HashSet::new();
+        validation.insecure_disable_signature_validation();
+
+        decode(token_str, &dummy_key, &validation)
+            .map(|data| data.claims)
+            .map_err(|e| AuthError::Server(format!("failed to decode JWT claims: {e}")))
     }
 
     /// Exchange a refresh token for a new [`Token`] via the `/oauth/token`

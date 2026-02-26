@@ -67,14 +67,14 @@ impl TokenStore {
 
     /// Load a [`Token`] from disk.
     ///
-    /// Returns `None` if the file does not exist.
-    pub fn load(&self) -> Result<Option<Token>, TokenStoreError> {
+    /// Returns [`TokenStoreError::NotFound`] if the file does not exist.
+    pub fn load(&self) -> Result<Token, TokenStoreError> {
         match std::fs::read_to_string(&self.path) {
             Ok(contents) => {
                 let token: Token = serde_json::from_str(&contents)?;
-                Ok(Some(token))
+                Ok(token)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(TokenStoreError::NotFound),
             Err(e) => Err(TokenStoreError::Io(e)),
         }
     }
@@ -125,7 +125,7 @@ mod tests {
         let token = make_token(3600, false);
         store.save(&token).unwrap();
 
-        let loaded = store.load().unwrap().unwrap();
+        let loaded = store.load().unwrap();
         assert_eq!(loaded.access_token().as_str(), "test-access-token");
         assert_eq!(loaded.token_type(), "Bearer");
         assert!(loaded.refresh_token().is_none());
@@ -167,12 +167,12 @@ mod tests {
     }
 
     #[test]
-    fn load_returns_none_for_missing_file() {
+    fn load_returns_not_found_for_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let store = TokenStore::new(dir.path().join("nonexistent.json"));
 
-        let result = store.load().unwrap();
-        assert!(result.is_none());
+        let err = store.load().unwrap_err();
+        assert!(matches!(err, TokenStoreError::NotFound));
     }
 
     #[test]
@@ -203,7 +203,7 @@ mod tests {
         let token = make_token(3600, false);
         store.save(&token).unwrap();
 
-        let loaded = store.load().unwrap().unwrap();
+        let loaded = store.load().unwrap();
         assert_eq!(loaded.access_token().as_str(), "test-access-token");
     }
 
@@ -215,7 +215,7 @@ mod tests {
         let token = make_token(3600, true);
         store.save(&token).unwrap();
 
-        let loaded = store.load().unwrap().unwrap();
+        let loaded = store.load().unwrap();
         assert_eq!(
             loaded.refresh_token().unwrap().as_str(),
             "test-refresh-token"
