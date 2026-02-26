@@ -7,6 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+aquamarine = "0.6"
 cts-common = { workspace = true }
 jsonwebtoken = { workspace = true }
 dirs = "4.0.0"
@@ -33,7 +34,6 @@ name = "device_code"
 required-features = ["test-utils"]
 
 [dev-dependencies]
-aquamarine = "0.6"
 axum = "0.8"
 cts-common = { workspace = true }
 mocktail = "0.3.0"
