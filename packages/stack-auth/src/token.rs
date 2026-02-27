@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cts_common::claims::Claims;
-use cts_common::WorkspaceId;
+use cts_common::{Crn, Region, WorkspaceId};
 use url::Url;
 
 use crate::{http_client, AuthError, SecretToken};
@@ -122,6 +122,20 @@ impl Token {
     /// the `workspace` claim.
     pub fn workspace_id(&self) -> Result<WorkspaceId, AuthError> {
         self.decode_claims().map(|c| c.workspace)
+    }
+
+    /// Returns the workspace CRN derived from the token's region and workspace ID.
+    ///
+    /// The region is set during the device code flow, and the workspace ID is
+    /// extracted from the JWT `workspace` claim.
+    pub fn workspace_crn(&self) -> Result<Crn, AuthError> {
+        let workspace_id = self.workspace_id()?;
+        let region: Region = self
+            .region()
+            .ok_or(AuthError::NotAuthenticated)?
+            .parse()
+            .map_err(|e: cts_common::RegionError| AuthError::Server(e.to_string()))?;
+        Ok(Crn::new(region, workspace_id))
     }
 
     /// Returns the issuer URL from the JWT claims.
