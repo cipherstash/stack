@@ -161,10 +161,9 @@ impl OAuthStrategyBuilder {
                     .ok_or(AuthError::NotAuthenticated)?
                     .to_string();
 
-                let region = Region::new(&region_str)?;
                 let base_url = match self.base_url_override {
                     Some(url) => url,
-                    None => CtsServiceDiscovery::endpoint(region)?,
+                    None => token.issuer()?,
                 };
 
                 let refresher = OAuthRefresher::new(
