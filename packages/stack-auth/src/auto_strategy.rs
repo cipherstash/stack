@@ -111,12 +111,7 @@ mod tests {
         });
 
         let key = jsonwebtoken::EncodingKey::from_secret(b"test-secret");
-        let jwt = jsonwebtoken::encode(
-            &jsonwebtoken::Header::default(),
-            &claims,
-            &key,
-        )
-        .unwrap();
+        let jwt = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &key).unwrap();
 
         Token {
             access_token: SecretToken::new(jwt),
