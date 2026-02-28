@@ -38,6 +38,10 @@ pub(super) struct ErrorResponse {
 #[derive(Serialize)]
 pub(super) struct DeviceCodeRequest<'a> {
     pub client_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_instance_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<&'a str>,
 }
 
 #[derive(Serialize)]

@@ -28,6 +28,8 @@ pub struct Token {
     pub(crate) region: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) device_instance_id: Option<String>,
 }
 
 impl Token {
@@ -116,6 +118,16 @@ impl Token {
         self.client_id = Some(client_id.into());
     }
 
+    /// Returns the stored device instance ID, if any.
+    pub fn device_instance_id(&self) -> Option<&str> {
+        self.device_instance_id.as_deref()
+    }
+
+    /// Set the device instance ID on this token.
+    pub(crate) fn set_device_instance_id(&mut self, id: impl Into<String>) {
+        self.device_instance_id = Some(id.into());
+    }
+
     /// Returns the workspace ID from the JWT claims.
     ///
     /// The access token is decoded (without signature verification) to extract
@@ -189,6 +201,7 @@ impl Token {
         refresh_token: &SecretToken,
         base_url: &Url,
         client_id: &str,
+        device_instance_id: Option<&str>,
     ) -> Result<Token, AuthError> {
         let token_url = base_url.join("oauth/token")?;
 
@@ -200,6 +213,7 @@ impl Token {
                 grant_type: "refresh_token",
                 client_id,
                 refresh_token: refresh_token.as_str(),
+                device_instance_id,
             })
             .send()
             .await?;
@@ -228,6 +242,7 @@ impl Token {
             refresh_token: token_resp.refresh_token,
             region: None,
             client_id: None,
+            device_instance_id: None,
         })
     }
 }
@@ -237,6 +252,8 @@ struct RefreshRequest<'a> {
     grant_type: &'a str,
     client_id: &'a str,
     refresh_token: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_instance_id: Option<&'a str>,
 }
 
 #[derive(serde::Deserialize)]
@@ -278,6 +295,7 @@ mod tests {
             },
             region: None,
             client_id: None,
+            device_instance_id: None,
         }
     }
 
@@ -326,7 +344,7 @@ mod tests {
         let base_url = server.url("");
 
         let refresh_token = SecretToken::new("test-refresh-token");
-        let refreshed = Token::refresh(&refresh_token, &base_url, "cli")
+        let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
             .await
             .unwrap();
 
@@ -351,7 +369,7 @@ mod tests {
         let base_url = server.url("");
 
         let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli")
+        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
             .await
             .unwrap_err();
 
@@ -369,7 +387,7 @@ mod tests {
         let base_url = server.url("");
 
         let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli")
+        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
             .await
             .unwrap_err();
 
@@ -387,7 +405,7 @@ mod tests {
         let base_url = server.url("");
 
         let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli")
+        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
             .await
             .unwrap_err();
 
@@ -405,7 +423,7 @@ mod tests {
         let base_url = server.url("");
 
         let refresh_token = SecretToken::new("test-refresh-token");
-        let err = Token::refresh(&refresh_token, &base_url, "cli")
+        let err = Token::refresh(&refresh_token, &base_url, "cli", None)
             .await
             .unwrap_err();
 
@@ -427,7 +445,7 @@ mod tests {
         let base_url = server.url("");
 
         let refresh_token = SecretToken::new("test-refresh-token");
-        let refreshed = Token::refresh(&refresh_token, &base_url, "cli")
+        let refreshed = Token::refresh(&refresh_token, &base_url, "cli", None)
             .await
             .unwrap();
 

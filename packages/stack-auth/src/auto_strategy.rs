@@ -120,6 +120,7 @@ mod tests {
             refresh_token: Some(SecretToken::new("test-refresh-token")),
             region: Some("ap-southeast-2.aws".to_string()),
             client_id: Some("test-client-id".to_string()),
+            device_instance_id: None,
         }
     }
 

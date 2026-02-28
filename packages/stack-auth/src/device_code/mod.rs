@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::path::PathBuf;
 
+use crate::device_identity::DeviceIdentity;
 use crate::{ensure_trailing_slash, http_client, token_store::TokenStore, AuthError, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
@@ -36,6 +37,7 @@ pub struct DeviceCodeStrategy {
     base_url: Url,
     client_id: String,
     token_store_path: Option<PathBuf>,
+    device_identity: Option<DeviceIdentity>,
 }
 
 impl DeviceCodeStrategy {
@@ -65,6 +67,7 @@ impl DeviceCodeStrategy {
             client_id: client_id.into(),
             base_url_override: None,
             token_store_path: None,
+            device_identity: None,
         }
     }
 
@@ -86,10 +89,20 @@ impl DeviceCodeStrategy {
 
         tracing::debug!(url = %code_url, client_id = %self.client_id, "requesting device code");
 
+        let device_instance_id = self
+            .device_identity
+            .as_ref()
+            .map(|d| d.device_instance_id.to_string());
+
         let code_resp = client
             .post(code_url)
             .form(&DeviceCodeRequest {
                 client_id: &self.client_id,
+                device_instance_id: device_instance_id.as_deref(),
+                device_name: self
+                    .device_identity
+                    .as_ref()
+                    .map(|d| d.device_name.as_str()),
             })
             .send()
             .await?;
@@ -123,6 +136,7 @@ impl DeviceCodeStrategy {
             verification_uri_complete: code.verification_uri_complete,
             expires_in: code.expires_in,
             token_store_path: self.token_store_path.clone(),
+            device_identity: self.device_identity.clone(),
         })
     }
 }
@@ -135,6 +149,7 @@ pub struct DeviceCodeStrategyBuilder {
     client_id: String,
     base_url_override: Option<Url>,
     token_store_path: Option<PathBuf>,
+    device_identity: Option<DeviceIdentity>,
 }
 
 impl DeviceCodeStrategyBuilder {
@@ -157,6 +172,15 @@ impl DeviceCodeStrategyBuilder {
         self
     }
 
+    /// Set the device identity for this strategy.
+    ///
+    /// When set, the device instance ID and name are sent to the auth server
+    /// during the device code flow and persisted in the token.
+    pub fn device_identity(mut self, identity: DeviceIdentity) -> Self {
+        self.device_identity = Some(identity);
+        self
+    }
+
     /// Build the [`DeviceCodeStrategy`].
     ///
     /// Resolves the base URL via service discovery unless overridden with
@@ -171,6 +195,7 @@ impl DeviceCodeStrategyBuilder {
             base_url: ensure_trailing_slash(base_url),
             client_id: self.client_id,
             token_store_path: self.token_store_path,
+            device_identity: self.device_identity,
         })
     }
 }
@@ -215,6 +240,8 @@ pub struct PendingDeviceCode {
     expires_in: u64,
     /// Where to persist the token on success. Falls back to `~/.cipherstash/auth.json`.
     token_store_path: Option<PathBuf>,
+    /// Device identity to associate with the token.
+    device_identity: Option<DeviceIdentity>,
 }
 
 impl PendingDeviceCode {
@@ -299,9 +326,13 @@ impl PendingDeviceCode {
                     refresh_token: token_resp.refresh_token,
                     region: None,
                     client_id: None,
+                    device_instance_id: None,
                 };
                 token.set_region(self.region.identifier());
                 token.set_client_id(&self.client_id);
+                if let Some(ref identity) = self.device_identity {
+                    token.set_device_instance_id(identity.device_instance_id.to_string());
+                }
 
                 let store = match &self.token_store_path {
                     Some(path) => Ok(TokenStore::new(path)),

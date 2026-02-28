@@ -13,6 +13,7 @@ pub(crate) struct OAuthRefresher {
     base_url: Url,
     client_id: String,
     region: String,
+    device_instance_id: Option<String>,
 }
 
 impl OAuthRefresher {
@@ -21,12 +22,14 @@ impl OAuthRefresher {
         base_url: Url,
         client_id: impl Into<String>,
         region: impl Into<String>,
+        device_instance_id: Option<String>,
     ) -> Self {
         Self {
             store,
             base_url,
             client_id: client_id.into(),
             region: region.into(),
+            device_instance_id,
         }
     }
 }
@@ -52,9 +55,18 @@ impl Refresher for OAuthRefresher {
     }
 
     async fn refresh(&self, credential: &Self::Credential) -> Result<Token, AuthError> {
-        let mut token = Token::refresh(credential, &self.base_url, &self.client_id).await?;
+        let mut token = Token::refresh(
+            credential,
+            &self.base_url,
+            &self.client_id,
+            self.device_instance_id.as_deref(),
+        )
+        .await?;
         token.set_region(&self.region);
         token.set_client_id(&self.client_id);
+        if let Some(ref id) = self.device_instance_id {
+            token.set_device_instance_id(id);
+        }
         Ok(token)
     }
 }

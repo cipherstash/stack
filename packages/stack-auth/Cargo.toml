@@ -9,6 +9,7 @@ homepage.workspace = true
 [dependencies]
 aquamarine = "0.6"
 cts-common = { workspace = true }
+gethostname = "0.5"
 jsonwebtoken = { workspace = true }
 dirs = "4.0.0"
 miette = { workspace = true }
@@ -20,6 +21,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
+uuid = { workspace = true }
 vitaminc = { workspace = true, features = ["protected"] }
 zeroize = { workspace = true }
 

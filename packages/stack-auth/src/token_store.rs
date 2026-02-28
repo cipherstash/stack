@@ -32,8 +32,7 @@ pub struct TokenStore {
 impl TokenStore {
     /// Returns the default token store location: `~/.cipherstash/auth.json`.
     pub fn default_location() -> Result<PathBuf, TokenStoreError> {
-        let home = dirs::home_dir().ok_or(TokenStoreError::HomeDirNotFound)?;
-        Ok(home.join(".cipherstash").join("auth.json"))
+        Ok(crate::config_dir()?.join("auth.json"))
     }
 
     /// Create a token store at the default location (`~/.cipherstash/auth.json`).
@@ -114,6 +113,7 @@ mod tests {
             },
             region: None,
             client_id: None,
+            device_instance_id: None,
         }
     }
 

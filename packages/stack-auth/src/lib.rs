@@ -76,6 +76,7 @@ mod access_key_strategy;
 mod auto_refresh;
 mod auto_strategy;
 mod device_code;
+mod device_identity;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
@@ -85,6 +86,7 @@ mod token_store;
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
+pub use device_identity::DeviceIdentity;
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use token::Token;
 pub use token_store::{TokenStore, TokenStoreError};
@@ -175,6 +177,14 @@ impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
     }
+}
+
+/// Returns the CipherStash config directory: `~/.cipherstash`.
+///
+/// Used by [`TokenStore`] and [`DeviceIdentity`] for their default file locations.
+pub(crate) fn config_dir() -> Result<std::path::PathBuf, token_store::TokenStoreError> {
+    let home = dirs::home_dir().ok_or(token_store::TokenStoreError::HomeDirNotFound)?;
+    Ok(home.join(".cipherstash"))
 }
 
 /// Ensure a URL has a trailing slash so that `Url::join` with relative paths

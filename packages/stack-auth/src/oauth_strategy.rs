@@ -137,6 +137,7 @@ impl OAuthStrategyBuilder {
                     None => CtsServiceDiscovery::endpoint(region)?,
                 };
                 let region_id = region.identifier();
+                let device_instance_id = token.device_instance_id().map(String::from);
                 token.set_region(&region_id);
                 token.set_client_id(&client_id);
                 let refresher = OAuthRefresher::new(
@@ -144,6 +145,7 @@ impl OAuthStrategyBuilder {
                     ensure_trailing_slash(base_url),
                     &client_id,
                     &region_id,
+                    device_instance_id,
                 );
                 Ok(OAuthStrategy {
                     inner: AutoRefresh::with_token(refresher, token),
@@ -160,6 +162,7 @@ impl OAuthStrategyBuilder {
                     .client_id()
                     .ok_or(AuthError::NotAuthenticated)?
                     .to_string();
+                let device_instance_id = token.device_instance_id().map(String::from);
 
                 let base_url = match self.base_url_override {
                     Some(url) => url,
@@ -171,6 +174,7 @@ impl OAuthStrategyBuilder {
                     ensure_trailing_slash(base_url),
                     &client_id,
                     &region_str,
+                    device_instance_id,
                 );
                 Ok(OAuthStrategy {
                     inner: AutoRefresh::with_token(refresher, token),

@@ -75,6 +75,7 @@ impl Refresher for AccessKeyRefresher {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         })
     }
 }
@@ -137,6 +138,7 @@ mod tests {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         }
     }
 
@@ -317,6 +319,7 @@ mod tests {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         };
 
         let refresher =
@@ -483,6 +486,7 @@ mod tests {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         };
         let strategy = Arc::new(AutoRefresh::with_token(refresher, token));
 
@@ -533,6 +537,7 @@ mod tests {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         };
         let refresher =
             AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);
