@@ -523,4 +523,27 @@ mod tests {
         let err = token.issuer().unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)));
     }
+
+    #[test]
+    fn test_workspace_crn_derives_from_region_and_workspace() {
+        let mut token = make_jwt_token(valid_claims_json());
+        token.set_region("ap-southeast-2.aws");
+        let crn = token.workspace_crn().expect("should derive workspace CRN");
+        assert_eq!(crn.to_string(), "crn:ap-southeast-2.aws:7366ITCXSAPCH5TN");
+    }
+
+    #[test]
+    fn test_workspace_crn_fails_without_region() {
+        let token = make_jwt_token(valid_claims_json());
+        let err = token.workspace_crn().unwrap_err();
+        assert!(matches!(err, AuthError::NotAuthenticated));
+    }
+
+    #[test]
+    fn test_workspace_crn_fails_with_invalid_region() {
+        let mut token = make_jwt_token(valid_claims_json());
+        token.set_region("invalid-region");
+        let err = token.workspace_crn().unwrap_err();
+        assert!(matches!(err, AuthError::Server(_)));
+    }
 }
