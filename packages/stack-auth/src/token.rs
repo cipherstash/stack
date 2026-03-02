@@ -242,6 +242,9 @@ impl Token {
             refresh_token: token_resp.refresh_token,
             region: None,
             client_id: None,
+            // TODO(CIP-2793): The server should include device_instance_id in the
+            // refresh response. Until then, callers (e.g. OAuthRefresher) must
+            // re-attach it manually after refresh.
             device_instance_id: None,
         })
     }

@@ -61,12 +61,22 @@ impl DeviceIdentity {
     }
 
     /// Save this identity to the given path, creating parent directories as needed.
+    ///
+    /// On Unix, the file is created with mode 0600 (owner read/write only) to
+    /// avoid exposing the persistent device identifier.
     fn save(&self, path: &Path) -> Result<(), TokenStoreError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        std::fs::write(path, &json)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
         Ok(())
     }
 }
