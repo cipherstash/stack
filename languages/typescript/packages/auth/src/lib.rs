@@ -16,11 +16,12 @@ fn error_code(err: &AuthError) -> &'static str {
     match err {
         AuthError::Request(_) => "REQUEST_ERROR",
         AuthError::AccessDenied => "ACCESS_DENIED",
-        AuthError::ExpiredToken => "EXPIRED_TOKEN",
+        AuthError::TokenExpired => "EXPIRED_TOKEN",
         AuthError::InvalidGrant => "INVALID_GRANT",
         AuthError::InvalidClient => "INVALID_CLIENT",
         AuthError::InvalidUrl(_) => "INVALID_URL",
         AuthError::Region(_) => "INVALID_REGION",
+        AuthError::InvalidToken(_) => "INVALID_TOKEN",
         AuthError::Server(_) => "SERVER_ERROR",
         AuthError::Store(_) => "STORE_ERROR",
         _ => "UNKNOWN_ERROR",
@@ -234,7 +235,7 @@ mod tests {
     #[test]
     fn test_error_code_mapping() {
         assert_eq!(error_code(&AuthError::AccessDenied), "ACCESS_DENIED");
-        assert_eq!(error_code(&AuthError::ExpiredToken), "EXPIRED_TOKEN");
+        assert_eq!(error_code(&AuthError::TokenExpired), "EXPIRED_TOKEN");
         assert_eq!(error_code(&AuthError::InvalidGrant), "INVALID_GRANT");
         assert_eq!(error_code(&AuthError::InvalidClient), "INVALID_CLIENT");
         assert_eq!(

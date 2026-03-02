@@ -5,6 +5,8 @@ use url::Url;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::path::PathBuf;
+
 use crate::{ensure_trailing_slash, http_client, token_store::TokenStore, AuthError, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
@@ -33,6 +35,7 @@ pub struct DeviceCodeStrategy {
     region: Region,
     base_url: Url,
     client_id: String,
+    token_store_path: Option<PathBuf>,
 }
 
 impl DeviceCodeStrategy {
@@ -61,6 +64,7 @@ impl DeviceCodeStrategy {
             region,
             client_id: client_id.into(),
             base_url_override: None,
+            token_store_path: None,
         }
     }
 
@@ -118,6 +122,7 @@ impl DeviceCodeStrategy {
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
             expires_in: code.expires_in,
+            token_store_path: self.token_store_path.clone(),
         })
     }
 }
@@ -129,6 +134,7 @@ pub struct DeviceCodeStrategyBuilder {
     region: Region,
     client_id: String,
     base_url_override: Option<Url>,
+    token_store_path: Option<PathBuf>,
 }
 
 impl DeviceCodeStrategyBuilder {
@@ -138,6 +144,16 @@ impl DeviceCodeStrategyBuilder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn base_url(mut self, url: Url) -> Self {
         self.base_url_override = Some(url);
+        self
+    }
+
+    /// Override where the token is persisted after a successful flow.
+    ///
+    /// By default tokens are saved to `~/.cipherstash/auth.json`. Use this in
+    /// tests to redirect writes to a temporary directory.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn token_store_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.token_store_path = Some(path.into());
         self
     }
 
@@ -154,6 +170,7 @@ impl DeviceCodeStrategyBuilder {
             region: self.region,
             base_url: ensure_trailing_slash(base_url),
             client_id: self.client_id,
+            token_store_path: self.token_store_path,
         })
     }
 }
@@ -196,6 +213,8 @@ pub struct PendingDeviceCode {
     verification_uri_complete: String,
     /// How many seconds the device code remains valid.
     expires_in: u64,
+    /// Where to persist the token on success. Falls back to `~/.cipherstash/auth.json`.
+    token_store_path: Option<PathBuf>,
 }
 
 impl PendingDeviceCode {
@@ -235,7 +254,7 @@ impl PendingDeviceCode {
     /// # Errors
     ///
     /// - [`AuthError::AccessDenied`] — the user rejected the request.
-    /// - [`AuthError::ExpiredToken`] — the device code expired before the user
+    /// - [`AuthError::TokenExpired`] — the device code expired before the user
     ///   authorized.
     /// - [`AuthError::Request`] — a network error occurred while polling.
     pub async fn poll_for_token(self) -> Result<Token, AuthError> {
@@ -253,7 +272,7 @@ impl PendingDeviceCode {
         loop {
             if tokio::time::Instant::now() >= deadline {
                 tracing::debug!("device code expired while polling");
-                return Err(AuthError::ExpiredToken);
+                return Err(AuthError::TokenExpired);
             }
 
             let resp = client
@@ -284,7 +303,11 @@ impl PendingDeviceCode {
                 token.set_region(self.region.identifier());
                 token.set_client_id(&self.client_id);
 
-                match TokenStore::new_default().and_then(|store| store.save(&token)) {
+                let store = match &self.token_store_path {
+                    Some(path) => Ok(TokenStore::new(path)),
+                    None => TokenStore::new_default(),
+                };
+                match store.and_then(|s| s.save(&token)) {
                     Ok(()) => tracing::debug!("token saved to disk"),
                     Err(err) => tracing::warn!(%err, "failed to save token to disk"),
                 }
@@ -301,7 +324,7 @@ impl PendingDeviceCode {
                     interval += tokio::time::Duration::from_secs(5);
                     tracing::debug!(interval_secs = interval.as_secs(), "slowing down");
                 }
-                "expired_token" => return Err(AuthError::ExpiredToken),
+                "expired_token" => return Err(AuthError::TokenExpired),
                 "access_denied" => return Err(AuthError::AccessDenied),
                 "invalid_grant" => return Err(AuthError::InvalidGrant),
                 "invalid_client" => return Err(AuthError::InvalidClient),

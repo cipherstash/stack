@@ -130,7 +130,7 @@ impl SecretToken {
 }
 
 /// Errors that can occur during an authentication flow.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum AuthError {
     /// The HTTP request to the auth server failed (network error, timeout, etc.).
@@ -139,9 +139,6 @@ pub enum AuthError {
     /// The user denied the authorization request.
     #[error("Authorization was denied")]
     AccessDenied,
-    /// The device code expired before the user authorized.
-    #[error("Device code expired")]
-    ExpiredToken,
     /// The grant type was rejected by the server.
     #[error("Invalid grant")]
     InvalidGrant,
@@ -160,9 +157,12 @@ pub enum AuthError {
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
     NotAuthenticated,
-    /// The token has expired and could not be refreshed.
+    /// A token (access token or device code) has expired.
     #[error("Token expired")]
     TokenExpired,
+    /// The JWT could not be decoded or its claims are malformed.
+    #[error("Invalid token: {0}")]
+    InvalidToken(String),
     /// An unexpected error was returned by the auth server.
     #[error("Server error: {0}")]
     Server(String),

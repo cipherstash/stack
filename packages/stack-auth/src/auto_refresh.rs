@@ -426,7 +426,7 @@ mod tests {
 
         // Verify the refreshed token was saved to disk.
         let store = TokenStore::new(dir.path().join("auth.json"));
-        let on_disk = store.load().unwrap().unwrap();
+        let on_disk = store.load().unwrap();
         assert_eq!(on_disk.access_token().as_str(), "refreshed-token");
     }
 

@@ -100,8 +100,21 @@ mod tests {
             .unwrap()
             .as_secs();
 
+        let claims = serde_json::json!({
+            "iss": "https://cts.example.com/",
+            "sub": "CS|test-user",
+            "aud": "test-audience",
+            "iat": now,
+            "exp": now + 3600,
+            "workspace": "ZVATKW3VHMFG27DY",
+            "scope": "",
+        });
+
+        let key = jsonwebtoken::EncodingKey::from_secret(b"test-secret");
+        let jwt = jsonwebtoken::encode(&jsonwebtoken::Header::default(), &claims, &key).unwrap();
+
         Token {
-            access_token: SecretToken::new("test-access-token"),
+            access_token: SecretToken::new(jwt),
             token_type: "Bearer".to_string(),
             expires_at: now + 3600,
             refresh_token: Some(SecretToken::new("test-refresh-token")),
