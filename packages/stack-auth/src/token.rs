@@ -142,8 +142,8 @@ impl Token {
         use std::collections::HashSet;
 
         let token_str = self.access_token.as_str();
-        let header =
-            decode_header(token_str).map_err(|e| AuthError::Server(format!("invalid JWT: {e}")))?;
+        let header = decode_header(token_str)
+            .map_err(|e| AuthError::InvalidToken(format!("invalid JWT header: {e}")))?;
 
         let dummy_key = DecodingKey::from_secret(&[]);
         let mut validation = Validation::new(header.alg);
@@ -154,7 +154,7 @@ impl Token {
 
         decode(token_str, &dummy_key, &validation)
             .map(|data| data.claims)
-            .map_err(|e| AuthError::Server(format!("failed to decode JWT claims: {e}")))
+            .map_err(|e| AuthError::InvalidToken(format!("failed to decode JWT claims: {e}")))
     }
 
     /// Exchange a refresh token for a new [`Token`] via the `/oauth/token`
@@ -433,5 +433,80 @@ mod tests {
             !debug.contains("test-refresh-token"),
             "Debug output should not contain refresh token, got: {debug}"
         );
+    }
+
+    // ---- decode_claims / workspace_id / issuer tests ----
+
+    /// Build a Token whose access_token is a real (unsigned) JWT containing the
+    /// given claims JSON.
+    fn make_jwt_token(claims_json: serde_json::Value) -> Token {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        let jwt = encode(
+            &Header::default(),
+            &claims_json,
+            &EncodingKey::from_secret(b"test-secret"),
+        )
+        .expect("failed to encode JWT");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Token {
+            access_token: SecretToken::new(jwt),
+            token_type: "Bearer".to_string(),
+            expires_at: now + 3600,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+        }
+    }
+
+    fn valid_claims_json() -> serde_json::Value {
+        serde_json::json!({
+            "workspace": "7366ITCXSAPCH5TN",
+            "iss": "https://cts.example.com",
+            "sub": "user-123",
+            "aud": "https://cts.example.com",
+            "iat": 1700000000u64,
+            "exp": 1700003600u64,
+            "scope": "dataset:create"
+        })
+    }
+
+    #[test]
+    fn test_workspace_id_extracts_from_jwt() {
+        let token = make_jwt_token(valid_claims_json());
+        let ws = token.workspace_id().expect("should extract workspace ID");
+        assert_eq!(ws.to_string(), "7366ITCXSAPCH5TN");
+    }
+
+    #[test]
+    fn test_issuer_extracts_url_from_jwt() {
+        let token = make_jwt_token(valid_claims_json());
+        let issuer = token.issuer().expect("should extract issuer");
+        assert_eq!(issuer.as_str(), "https://cts.example.com/");
+    }
+
+    #[test]
+    fn test_workspace_id_fails_on_invalid_jwt() {
+        let token = Token {
+            access_token: SecretToken::new("not-a-jwt"),
+            token_type: "Bearer".to_string(),
+            expires_at: 0,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+        };
+        let err = token.workspace_id().unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    #[test]
+    fn test_issuer_fails_on_missing_claims() {
+        let token = make_jwt_token(serde_json::json!({"sub": "user-123"}));
+        let err = token.issuer().unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken(_)));
     }
 }

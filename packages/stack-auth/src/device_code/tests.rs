@@ -167,7 +167,7 @@ async fn test_poll_for_token_expired_token() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, AuthError::ExpiredToken));
+    assert!(matches!(err, AuthError::TokenExpired));
 }
 
 #[tokio::test(start_paused = true)]
@@ -288,7 +288,7 @@ async fn test_poll_for_token_slow_down_then_success() {
 
 /// Proves that `slow_down` increases the poll interval: with a short
 /// `expires_in`, the increased interval pushes the next poll past the
-/// deadline, causing an `ExpiredToken` error.
+/// deadline, causing a `TokenExpired` error.
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_slow_down_increases_interval() {
     let dir = TempDir::new().unwrap();
@@ -315,7 +315,7 @@ async fn test_poll_for_token_slow_down_increases_interval() {
 
     let err = pending.poll_for_token().await.unwrap_err();
 
-    assert!(matches!(err, AuthError::ExpiredToken));
+    assert!(matches!(err, AuthError::TokenExpired));
 }
 
 // ---- ensure_trailing_slash / URL join tests ----

@@ -254,7 +254,7 @@ impl PendingDeviceCode {
     /// # Errors
     ///
     /// - [`AuthError::AccessDenied`] — the user rejected the request.
-    /// - [`AuthError::ExpiredToken`] — the device code expired before the user
+    /// - [`AuthError::TokenExpired`] — the device code expired before the user
     ///   authorized.
     /// - [`AuthError::Request`] — a network error occurred while polling.
     pub async fn poll_for_token(self) -> Result<Token, AuthError> {
@@ -272,7 +272,7 @@ impl PendingDeviceCode {
         loop {
             if tokio::time::Instant::now() >= deadline {
                 tracing::debug!("device code expired while polling");
-                return Err(AuthError::ExpiredToken);
+                return Err(AuthError::TokenExpired);
             }
 
             let resp = client
@@ -324,7 +324,7 @@ impl PendingDeviceCode {
                     interval += tokio::time::Duration::from_secs(5);
                     tracing::debug!(interval_secs = interval.as_secs(), "slowing down");
                 }
-                "expired_token" => return Err(AuthError::ExpiredToken),
+                "expired_token" => return Err(AuthError::TokenExpired),
                 "access_denied" => return Err(AuthError::AccessDenied),
                 "invalid_grant" => return Err(AuthError::InvalidGrant),
                 "invalid_client" => return Err(AuthError::InvalidClient),
