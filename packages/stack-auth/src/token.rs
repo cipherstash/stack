@@ -492,6 +492,7 @@ mod tests {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         }
     }
 
@@ -530,6 +531,7 @@ mod tests {
             refresh_token: None,
             region: None,
             client_id: None,
+            device_instance_id: None,
         };
         let err = token.workspace_id().unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)));
