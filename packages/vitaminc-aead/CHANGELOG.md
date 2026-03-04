@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 
+### Documentation
+
+- update doctests to show vitaminc::* import paths
+
+
 ### Fixes
 
 - update codebase for rand 0.9 breaking changes
