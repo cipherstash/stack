@@ -1,9 +1,9 @@
 use std::sync::Mutex;
 
-use stack_auth::{AuthError, DeviceCodeStrategy, PendingDeviceCode};
 use cts_common::Region;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use stack_auth::{AuthError, DeviceCodeStrategy, PendingDeviceCode};
 
 #[cfg(feature = "test-utils")]
 mod mock_auth_server;
@@ -157,10 +157,7 @@ impl DeviceCodeResult {
 
 /// Begin the OAuth 2.0 Device Authorization flow.
 #[napi]
-pub async fn begin_device_code_flow(
-    region: String,
-    client_id: String,
-) -> Result<DeviceCodeResult> {
+pub async fn begin_device_code_flow(region: String, client_id: String) -> Result<DeviceCodeResult> {
     let region = Region::new(&region).map_err(|e| to_napi_error(AuthError::from(e)))?;
     let strategy = DeviceCodeStrategy::new(region, client_id).map_err(to_napi_error)?;
     let pending = strategy.begin().await.map_err(to_napi_error)?;
