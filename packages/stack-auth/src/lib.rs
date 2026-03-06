@@ -65,7 +65,7 @@
 
 use std::convert::Infallible;
 use std::future::Future;
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-utils")))]
 use std::time::Duration;
 
 use vitaminc::protected::OpaqueDebug;
@@ -202,11 +202,11 @@ pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
 /// does not auto-advance time past the connect timeout before the mock server
 /// can respond.
 pub(crate) fn http_client() -> reqwest::Client {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     {
         reqwest::Client::new()
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-utils")))]
     {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))

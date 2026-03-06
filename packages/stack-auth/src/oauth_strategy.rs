@@ -1,4 +1,4 @@
-use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
+use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 
 use crate::auto_refresh::AutoRefresh;
 use crate::oauth_refresher::OAuthRefresher;
@@ -27,6 +27,7 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Token};
 /// # }
 /// ```
 pub struct OAuthStrategy {
+    crn: Option<Crn>,
     inner: AutoRefresh<OAuthRefresher>,
 }
 
@@ -83,6 +84,11 @@ impl OAuthStrategy {
             base_url_override: None,
         }
     }
+
+    /// Return the workspace CRN, if one was extracted from the token at build time.
+    pub fn workspace_crn(&self) -> Option<&Crn> {
+        self.crn.as_ref()
+    }
 }
 
 impl AuthStrategy for &OAuthStrategy {
@@ -136,6 +142,7 @@ impl OAuthStrategyBuilder {
                     Some(url) => url,
                     None => CtsServiceDiscovery::endpoint(region)?,
                 };
+                let crn = token.workspace_crn().ok();
                 let region_id = region.identifier();
                 let device_instance_id = token.device_instance_id().map(String::from);
                 token.set_region(&region_id);
@@ -148,6 +155,7 @@ impl OAuthStrategyBuilder {
                     device_instance_id,
                 );
                 Ok(OAuthStrategy {
+                    crn,
                     inner: AutoRefresh::with_token(refresher, token),
                 })
             }
@@ -162,6 +170,7 @@ impl OAuthStrategyBuilder {
                     .client_id()
                     .ok_or(AuthError::NotAuthenticated)?
                     .to_string();
+                let crn = token.workspace_crn().ok();
                 let device_instance_id = token.device_instance_id().map(String::from);
 
                 let base_url = match self.base_url_override {
@@ -177,6 +186,7 @@ impl OAuthStrategyBuilder {
                     device_instance_id,
                 );
                 Ok(OAuthStrategy {
+                    crn,
                     inner: AutoRefresh::with_token(refresher, token),
                 })
             }

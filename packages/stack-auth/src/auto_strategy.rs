@@ -60,7 +60,7 @@ impl AutoStrategy {
         if let Some(access_key) = access_key {
             let crn_str = crn.ok_or(AuthError::NotAuthenticated)?;
             let crn: Crn = crn_str.parse().map_err(AuthError::InvalidCrn)?;
-            let strategy = AccessKeyStrategy::new(crn.region, SecretToken::new(access_key))?;
+            let strategy = AccessKeyStrategy::new_with_crn(crn, SecretToken::new(access_key))?;
             return Ok(Self::AccessKey(strategy));
         }
 
@@ -74,6 +74,26 @@ impl AutoStrategy {
 
         // 3. No credentials found
         Err(AuthError::NotAuthenticated)
+    }
+}
+
+impl AutoStrategy {
+    /// Return the workspace CRN from the inner strategy.
+    ///
+    /// For [`AccessKeyStrategy`], this is the CRN parsed from the `CS_WORKSPACE_CRN`
+    /// environment variable. For [`OAuthStrategy`], this is extracted from the stored
+    /// token's claims.
+    pub fn workspace_crn(&self) -> Result<Crn, AuthError> {
+        match self {
+            AutoStrategy::AccessKey(inner) => inner
+                .workspace_crn()
+                .cloned()
+                .ok_or(AuthError::NotAuthenticated),
+            AutoStrategy::OAuth(inner) => inner
+                .workspace_crn()
+                .cloned()
+                .ok_or(AuthError::NotAuthenticated),
+        }
     }
 }
 
