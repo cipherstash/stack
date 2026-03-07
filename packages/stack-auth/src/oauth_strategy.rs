@@ -144,8 +144,12 @@ impl OAuthStrategyBuilder {
                     None => crate::cts_base_url_from_env()?
                         .unwrap_or(CtsServiceDiscovery::endpoint(region)?),
                 };
+                // Derive CRN from the explicit region parameter and the token's
+                // workspace claim. We can't use token.workspace_crn() here
+                // because set_region() hasn't been called on the token yet.
                 let crn = token
-                    .workspace_crn()
+                    .workspace_id()
+                    .map(|ws| Crn::new(region, ws))
                     .map_err(|e| {
                         warn!("Could not extract workspace CRN from token: {e}");
                         e
