@@ -1,4 +1,5 @@
 use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
+use tracing::warn;
 
 use crate::auto_refresh::AutoRefresh;
 use crate::oauth_refresher::OAuthRefresher;
@@ -143,7 +144,13 @@ impl OAuthStrategyBuilder {
                     None => crate::cts_base_url_from_env()?
                         .unwrap_or(CtsServiceDiscovery::endpoint(region)?),
                 };
-                let crn = token.workspace_crn().ok();
+                let crn = token
+                    .workspace_crn()
+                    .map_err(|e| {
+                        warn!("Could not extract workspace CRN from token: {e}");
+                        e
+                    })
+                    .ok();
                 let region_id = region.identifier();
                 let device_instance_id = token.device_instance_id().map(String::from);
                 token.set_region(&region_id);
@@ -171,7 +178,13 @@ impl OAuthStrategyBuilder {
                     .client_id()
                     .ok_or(AuthError::NotAuthenticated)?
                     .to_string();
-                let crn = token.workspace_crn().ok();
+                let crn = token
+                    .workspace_crn()
+                    .map_err(|e| {
+                        warn!("Could not extract workspace CRN from token: {e}");
+                        e
+                    })
+                    .ok();
                 let device_instance_id = token.device_instance_id().map(String::from);
 
                 let base_url = match self.base_url_override {
