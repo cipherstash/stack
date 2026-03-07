@@ -187,6 +187,18 @@ pub(crate) fn config_dir() -> Result<std::path::PathBuf, token_store::TokenStore
     Ok(home.join(".cipherstash"))
 }
 
+/// Read the `CS_CTS_HOST` environment variable and parse it as a URL.
+///
+/// Returns `Ok(None)` if the variable is not set or empty.
+/// Returns `Ok(Some(url))` if the variable is set and valid.
+/// Returns `Err(_)` if the variable is set but not a valid URL.
+pub(crate) fn cts_base_url_from_env() -> Result<Option<url::Url>, AuthError> {
+    match std::env::var("CS_CTS_HOST") {
+        Ok(val) if !val.is_empty() => Ok(Some(val.parse()?)),
+        _ => Ok(None),
+    }
+}
+
 /// Ensure a URL has a trailing slash so that `Url::join` with relative paths
 /// appends to the path rather than replacing the last segment.
 pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {

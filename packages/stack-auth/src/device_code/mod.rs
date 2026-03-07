@@ -188,7 +188,8 @@ impl DeviceCodeStrategyBuilder {
     pub fn build(self) -> Result<DeviceCodeStrategy, AuthError> {
         let base_url = match self.base_url_override {
             Some(url) => url,
-            None => CtsServiceDiscovery::endpoint(self.region)?,
+            None => crate::cts_base_url_from_env()?
+                .unwrap_or(CtsServiceDiscovery::endpoint(self.region)?),
         };
         Ok(DeviceCodeStrategy {
             region: self.region,

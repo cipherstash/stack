@@ -140,7 +140,8 @@ impl OAuthStrategyBuilder {
             } => {
                 let base_url = match self.base_url_override {
                     Some(url) => url,
-                    None => CtsServiceDiscovery::endpoint(region)?,
+                    None => crate::cts_base_url_from_env()?
+                        .unwrap_or(CtsServiceDiscovery::endpoint(region)?),
                 };
                 let crn = token.workspace_crn().ok();
                 let region_id = region.identifier();
@@ -175,7 +176,7 @@ impl OAuthStrategyBuilder {
 
                 let base_url = match self.base_url_override {
                     Some(url) => url,
-                    None => token.issuer()?,
+                    None => crate::cts_base_url_from_env()?.unwrap_or(token.issuer()?),
                 };
 
                 let refresher = OAuthRefresher::new(
