@@ -7,8 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::path::PathBuf;
 
-use crate::device_identity::DeviceIdentity;
-use crate::{ensure_trailing_slash, http_client, token_store::TokenStore, AuthError, Token};
+use crate::{ensure_trailing_slash, http_client, AuthError, DeviceIdentity, Token, TokenStore};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
 };
@@ -36,7 +35,7 @@ pub struct DeviceCodeStrategy {
     region: Region,
     base_url: Url,
     client_id: String,
-    token_store_path: Option<PathBuf>,
+    profile_dir: Option<PathBuf>,
     device_identity: Option<DeviceIdentity>,
 }
 
@@ -66,7 +65,7 @@ impl DeviceCodeStrategy {
             region,
             client_id: client_id.into(),
             base_url_override: None,
-            token_store_path: None,
+            profile_dir: None,
             device_identity: None,
         }
     }
@@ -135,7 +134,7 @@ impl DeviceCodeStrategy {
             verification_uri: code.verification_uri,
             verification_uri_complete: code.verification_uri_complete,
             expires_in: code.expires_in,
-            token_store_path: self.token_store_path.clone(),
+            profile_dir: self.profile_dir.clone(),
             device_identity: self.device_identity.clone(),
         })
     }
@@ -148,7 +147,7 @@ pub struct DeviceCodeStrategyBuilder {
     region: Region,
     client_id: String,
     base_url_override: Option<Url>,
-    token_store_path: Option<PathBuf>,
+    profile_dir: Option<PathBuf>,
     device_identity: Option<DeviceIdentity>,
 }
 
@@ -162,13 +161,13 @@ impl DeviceCodeStrategyBuilder {
         self
     }
 
-    /// Override where the token is persisted after a successful flow.
+    /// Override the profile directory used to persist the token.
     ///
     /// By default tokens are saved to `~/.cipherstash/auth.json`. Use this in
     /// tests to redirect writes to a temporary directory.
     #[cfg(any(test, feature = "test-utils"))]
-    pub fn token_store_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.token_store_path = Some(path.into());
+    pub fn profile_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.profile_dir = Some(dir.into());
         self
     }
 
@@ -195,7 +194,7 @@ impl DeviceCodeStrategyBuilder {
             region: self.region,
             base_url: ensure_trailing_slash(base_url),
             client_id: self.client_id,
-            token_store_path: self.token_store_path,
+            profile_dir: self.profile_dir,
             device_identity: self.device_identity,
         })
     }
@@ -239,8 +238,8 @@ pub struct PendingDeviceCode {
     verification_uri_complete: String,
     /// How many seconds the device code remains valid.
     expires_in: u64,
-    /// Where to persist the token on success. Falls back to `~/.cipherstash/auth.json`.
-    token_store_path: Option<PathBuf>,
+    /// Profile directory override. Falls back to `~/.cipherstash`.
+    profile_dir: Option<PathBuf>,
     /// Device identity to associate with the token.
     device_identity: Option<DeviceIdentity>,
 }
@@ -335,11 +334,11 @@ impl PendingDeviceCode {
                     token.set_device_instance_id(identity.device_instance_id.to_string());
                 }
 
-                let store = match &self.token_store_path {
-                    Some(path) => Ok(TokenStore::new(path)),
-                    None => TokenStore::new_default(),
+                let store = match &self.profile_dir {
+                    Some(dir) => TokenStore::new(dir),
+                    None => crate::default_token_store(),
                 };
-                match store.and_then(|s| s.save(&token)) {
+                match store.save(crate::AUTH_FILENAME, &token) {
                     Ok(()) => tracing::debug!("token saved to disk"),
                     Err(err) => tracing::warn!(%err, "failed to save token to disk"),
                 }

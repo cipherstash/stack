@@ -76,20 +76,28 @@ mod access_key_strategy;
 mod auto_refresh;
 mod auto_strategy;
 mod device_code;
-mod device_identity;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
 mod token;
-mod token_store;
 
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
-pub use device_identity::DeviceIdentity;
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use token::Token;
-pub use token_store::{TokenStore, TokenStoreError};
+
+// Re-exports from stack-profile for backward compatibility.
+pub use stack_profile::DeviceIdentity;
+
+/// A profile store for persisting auth tokens and related files.
+pub type TokenStore = stack_profile::ProfileStore;
+
+/// Error type for profile-store operations.
+pub type TokenStoreError = stack_profile::ProfileError;
+
+/// Default filename for the auth token file.
+pub(crate) const AUTH_FILENAME: &str = "auth.json";
 
 /// A strategy for obtaining access tokens.
 ///
@@ -170,7 +178,7 @@ pub enum AuthError {
     Server(String),
     /// A token store operation failed.
     #[error("Token store error: {0}")]
-    Store(#[from] token_store::TokenStoreError),
+    Store(#[from] stack_profile::ProfileError),
 }
 
 impl From<Infallible> for AuthError {
@@ -179,12 +187,9 @@ impl From<Infallible> for AuthError {
     }
 }
 
-/// Returns the CipherStash config directory: `~/.cipherstash`.
-///
-/// Used by [`TokenStore`] and [`DeviceIdentity`] for their default file locations.
-pub(crate) fn config_dir() -> Result<std::path::PathBuf, token_store::TokenStoreError> {
-    let home = dirs::home_dir().ok_or(token_store::TokenStoreError::HomeDirNotFound)?;
-    Ok(home.join(".cipherstash"))
+/// Returns a token store at the default profile directory: `~/.cipherstash`.
+pub fn default_token_store() -> TokenStore {
+    TokenStore::default()
 }
 
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.

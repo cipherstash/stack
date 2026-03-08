@@ -1,7 +1,7 @@
 use url::Url;
 
 use crate::refresher::Refresher;
-use crate::token_store::TokenStore;
+use crate::TokenStore;
 use crate::{AuthError, SecretToken, Token};
 
 /// Implements [`Refresher`] using OAuth refresh tokens.
@@ -39,7 +39,7 @@ impl Refresher for OAuthRefresher {
 
     fn save(&self, token: &Token) {
         if let Some(store) = &self.store {
-            match store.save(token) {
+            match store.save(crate::AUTH_FILENAME, token) {
                 Ok(()) => tracing::debug!("refreshed token saved to disk"),
                 Err(err) => tracing::warn!(%err, "failed to save refreshed token to disk"),
             }

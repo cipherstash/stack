@@ -44,7 +44,7 @@ async fn start_server(mocks: MockSet) -> MockServer {
 fn strategy_for(server: &MockServer, dir: &TempDir) -> DeviceCodeStrategy {
     DeviceCodeStrategy::builder(Region::aws("ap-southeast-2").unwrap(), "cli")
         .base_url(server.url(""))
-        .token_store_path(dir.path().join("auth.json"))
+        .profile_dir(dir.path())
         .build()
         .unwrap()
 }

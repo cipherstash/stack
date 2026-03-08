@@ -2,8 +2,7 @@ use cts_common::Crn;
 
 use crate::access_key_strategy::AccessKeyStrategy;
 use crate::oauth_strategy::OAuthStrategy;
-use crate::token_store::TokenStore;
-use crate::{AuthError, AuthStrategy, SecretToken};
+use crate::{AuthError, AuthStrategy, SecretToken, TokenStore};
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -43,7 +42,7 @@ impl AutoStrategy {
     pub fn new() -> Result<Self, AuthError> {
         let access_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
         let crn = std::env::var("CS_WORKSPACE_CRN").ok();
-        let store = TokenStore::new_default().ok();
+        let store = Some(crate::default_token_store());
         Self::detect(access_key, crn, store)
     }
 
@@ -66,7 +65,7 @@ impl AutoStrategy {
 
         // 2. OAuth token from disk
         if let Some(store) = store {
-            if store.path().exists() {
+            if store.exists(crate::AUTH_FILENAME) {
                 let strategy = OAuthStrategy::using_store(store)?;
                 return Ok(Self::OAuth(strategy));
             }
@@ -145,8 +144,8 @@ mod tests {
     }
 
     fn write_token_store(dir: &std::path::Path) -> TokenStore {
-        let store = TokenStore::new(dir.join("auth.json"));
-        store.save(&make_oauth_token()).unwrap();
+        let store = TokenStore::new(dir);
+        store.save("auth.json", &make_oauth_token()).unwrap();
         store
     }
 
@@ -188,7 +187,7 @@ mod tests {
     #[test]
     fn oauth_store_without_token_file_returns_not_authenticated() {
         let dir = tempfile::tempdir().unwrap();
-        let store = TokenStore::new(dir.path().join("nonexistent.json"));
+        let store = TokenStore::new(dir.path());
 
         let result = AutoStrategy::detect(None, None, Some(store));
 

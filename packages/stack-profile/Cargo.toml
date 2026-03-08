@@ -1,0 +1,20 @@
+[package]
+name = "stack-profile"
+description = "Centralised ~/.cipherstash profile file management"
+license-file = "LICENSE"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+dirs = "4.0.0"
+gethostname = "0.5"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.21.0"

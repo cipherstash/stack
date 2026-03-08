@@ -3,7 +3,7 @@ use tracing::warn;
 
 use crate::auto_refresh::AutoRefresh;
 use crate::oauth_refresher::OAuthRefresher;
-use crate::token_store::TokenStore;
+use crate::TokenStore;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Token};
 
 /// An [`AuthStrategy`] that uses OAuth refresh tokens to maintain a valid access token.
@@ -172,7 +172,7 @@ impl OAuthStrategyBuilder {
                 })
             }
             OAuthTokenSource::Store(store) => {
-                let token = store.load()?;
+                let token: Token = store.load(crate::AUTH_FILENAME)?;
 
                 let region_str = token
                     .region()
