@@ -174,6 +174,7 @@ mod tests {
     use super::*;
     use cts_common::Region;
     use mocktail::prelude::*;
+    use tempfile::TempDir;
 
     // --- Mock response builders (mirrors stack-auth/src/device_code.rs) ---
 
@@ -217,10 +218,11 @@ mod tests {
 
     /// Create a `DeviceCodeResult` by running the real `DeviceCodeStrategy`
     /// against a mock server, then wrapping the `PendingDeviceCode`.
-    async fn begin_result(server: &MockServer) -> DeviceCodeResult {
+    async fn begin_result(server: &MockServer, dir: &TempDir) -> DeviceCodeResult {
         let strategy =
             DeviceCodeStrategy::builder(Region::aws("ap-southeast-2").unwrap(), "test-client")
                 .base_url(server.url(""))
+                .profile_dir(dir.path())
                 .build()
                 .unwrap();
         let pending = strategy.begin().await.unwrap();
@@ -272,11 +274,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_getters() {
+        let dir = TempDir::new().unwrap();
         let mut mocks = MockSet::new();
         mock_code_endpoint(&mut mocks);
         let server = start_server(mocks).await;
 
-        let result = begin_result(&server).await;
+        let result = begin_result(&server, &dir).await;
 
         assert_eq!(result.user_code(), "ABCD-EFGH");
         assert_eq!(result.verification_uri(), "http://example.com/activate");
@@ -298,6 +301,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_poll_for_token_success() {
+        let dir = TempDir::new().unwrap();
         let mut mocks = MockSet::new();
         mock_code_endpoint(&mut mocks);
         mocks.mock(|when, then| {
@@ -306,7 +310,7 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let result = begin_result(&server).await;
+        let result = begin_result(&server, &dir).await;
         let token = result.poll_for_token().await.unwrap();
 
         assert!(token.expires_in >= 3598.0 && token.expires_in <= 3600.0);
@@ -315,6 +319,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_poll_for_token_error_propagation() {
+        let dir = TempDir::new().unwrap();
         let mut mocks = MockSet::new();
         mock_code_endpoint(&mut mocks);
         mocks.mock(|when, then| {
@@ -323,7 +328,7 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let result = begin_result(&server).await;
+        let result = begin_result(&server, &dir).await;
         let err = result.poll_for_token().await.unwrap_err();
 
         assert!(
@@ -335,6 +340,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_poll_for_token_expired() {
+        let dir = TempDir::new().unwrap();
         let mut mocks = MockSet::new();
         mock_code_endpoint(&mut mocks);
         mocks.mock(|when, then| {
@@ -343,7 +349,7 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let result = begin_result(&server).await;
+        let result = begin_result(&server, &dir).await;
         let err = result.poll_for_token().await.unwrap_err();
 
         assert!(
@@ -357,6 +363,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_poll_for_token_already_consumed() {
+        let dir = TempDir::new().unwrap();
         let mut mocks = MockSet::new();
         mock_code_endpoint(&mut mocks);
         mocks.mock(|when, then| {
@@ -365,7 +372,7 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let result = begin_result(&server).await;
+        let result = begin_result(&server, &dir).await;
         // First call succeeds — consumes the handle
         result.poll_for_token().await.unwrap();
         // Second call should fail — handle already consumed
@@ -380,6 +387,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn test_open_in_browser_after_consumed() {
+        let dir = TempDir::new().unwrap();
         let mut mocks = MockSet::new();
         mock_code_endpoint(&mut mocks);
         mocks.mock(|when, then| {
@@ -388,7 +396,7 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let result = begin_result(&server).await;
+        let result = begin_result(&server, &dir).await;
         // Consume the handle
         result.poll_for_token().await.unwrap();
         // open_in_browser should fail — handle consumed

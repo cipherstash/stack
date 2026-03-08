@@ -19,6 +19,7 @@ serde_json = { version = "1", optional = true }
 stack-auth = { workspace = true, features = ["test-utils"] }
 mocktail = "0.3.0"
 serde_json = "1"
+tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 url = "2"
 
