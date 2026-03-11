@@ -71,6 +71,7 @@ use std::time::Duration;
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
+mod access_key;
 mod access_key_refresher;
 mod access_key_strategy;
 mod auto_refresh;
@@ -84,6 +85,7 @@ mod token;
 #[cfg(any(test, feature = "test-utils"))]
 mod static_token_strategy;
 
+pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};

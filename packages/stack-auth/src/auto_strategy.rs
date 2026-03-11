@@ -5,6 +5,7 @@ use crate::oauth_strategy::OAuthStrategy;
 use stack_profile::ProfileStore;
 
 use crate::{AuthError, AuthStrategy, SecretToken, Token};
+use std::str::FromStr;
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -61,7 +62,9 @@ impl AutoStrategy {
         if let Some(access_key) = access_key {
             let crn_str = crn.ok_or(AuthError::NotAuthenticated)?;
             let crn: Crn = crn_str.parse().map_err(AuthError::InvalidCrn)?;
-            let strategy = AccessKeyStrategy::new_with_crn(crn, SecretToken::new(access_key))?;
+            let key = crate::AccessKey::from_str(&access_key)
+                .map_err(|e| AuthError::InvalidToken(e.to_string()))?;
+            let strategy = AccessKeyStrategy::new_with_crn(crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }
 
@@ -152,8 +155,11 @@ mod tests {
 
     #[test]
     fn access_key_with_valid_crn() {
-        let result =
-            AutoStrategy::detect(Some("my-access-key".into()), Some(VALID_CRN.into()), None);
+        let result = AutoStrategy::detect(
+            Some("CSAKtestKeyId.testKeySecret".into()),
+            Some(VALID_CRN.into()),
+            None,
+        );
 
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
@@ -161,15 +167,18 @@ mod tests {
 
     #[test]
     fn access_key_without_crn_returns_not_authenticated() {
-        let result = AutoStrategy::detect(Some("my-access-key".into()), None, None);
+        let result = AutoStrategy::detect(Some("CSAKtestKeyId.testKeySecret".into()), None, None);
 
         assert!(matches!(result, Err(AuthError::NotAuthenticated)));
     }
 
     #[test]
     fn access_key_with_invalid_crn_returns_invalid_crn() {
-        let result =
-            AutoStrategy::detect(Some("my-access-key".into()), Some("not-a-crn".into()), None);
+        let result = AutoStrategy::detect(
+            Some("CSAKtestKeyId.testKeySecret".into()),
+            Some("not-a-crn".into()),
+            None,
+        );
 
         assert!(matches!(result, Err(AuthError::InvalidCrn(_))));
     }
@@ -208,7 +217,7 @@ mod tests {
         let store = write_token_store(dir.path());
 
         let result = AutoStrategy::detect(
-            Some("my-access-key".into()),
+            Some("CSAKtestKeyId.testKeySecret".into()),
             Some(VALID_CRN.into()),
             Some(store),
         );

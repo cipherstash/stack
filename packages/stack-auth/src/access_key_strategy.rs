@@ -1,5 +1,6 @@
 use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 
+use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
 use crate::auto_refresh::AutoRefresh;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken};
@@ -13,11 +14,12 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken};
 /// # Example
 ///
 /// ```no_run
-/// use stack_auth::{AccessKeyStrategy, SecretToken};
+/// use stack_auth::{AccessKey, AccessKeyStrategy};
 /// use cts_common::Region;
 ///
 /// let region = Region::aws("ap-southeast-2").unwrap();
-/// let strategy = AccessKeyStrategy::new(region, SecretToken::new("my-key")).unwrap();
+/// let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
+/// let strategy = AccessKeyStrategy::new(region, key).unwrap();
 /// ```
 pub struct AccessKeyStrategy {
     crn: Option<Crn>,
@@ -28,7 +30,7 @@ impl AccessKeyStrategy {
     /// Create a new `AccessKeyStrategy` for the given region and access key.
     ///
     /// The auth endpoint is resolved automatically via service discovery.
-    pub fn new(region: Region, access_key: SecretToken) -> Result<Self, AuthError> {
+    pub fn new(region: Region, access_key: AccessKey) -> Result<Self, AuthError> {
         Self::builder(region, access_key).build()
     }
 
@@ -36,7 +38,7 @@ impl AccessKeyStrategy {
     ///
     /// The region is extracted from the CRN for service discovery.
     /// The full CRN is stored and available via [`workspace_crn`](Self::workspace_crn).
-    pub fn new_with_crn(crn: Crn, access_key: SecretToken) -> Result<Self, AuthError> {
+    pub fn new_with_crn(crn: Crn, access_key: AccessKey) -> Result<Self, AuthError> {
         Self::builder(crn.region, access_key).crn(crn).build()
     }
 
@@ -45,19 +47,20 @@ impl AccessKeyStrategy {
     /// # Example
     ///
     /// ```no_run
-    /// use stack_auth::{AccessKeyStrategy, SecretToken};
+    /// use stack_auth::{AccessKey, AccessKeyStrategy};
     /// use cts_common::Region;
     ///
     /// let region = Region::aws("ap-southeast-2").unwrap();
-    /// let strategy = AccessKeyStrategy::builder(region, SecretToken::new("my-key"))
+    /// let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
+    /// let strategy = AccessKeyStrategy::builder(region, key)
     ///     .audience("my-audience")
     ///     .build()
     ///     .unwrap();
     /// ```
-    pub fn builder(region: Region, access_key: SecretToken) -> AccessKeyStrategyBuilder {
+    pub fn builder(region: Region, access_key: AccessKey) -> AccessKeyStrategyBuilder {
         AccessKeyStrategyBuilder {
             region,
-            access_key,
+            access_key: access_key.into_secret_token(),
             audience: None,
             base_url_override: None,
             crn: None,
