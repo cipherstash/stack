@@ -1,7 +1,7 @@
-use std::fmt;
 use std::str::FromStr;
 
 use crate::SecretToken;
+use vitaminc::protected::OpaqueDebug;
 
 /// The prefix that all CipherStash access keys start with.
 const ACCESS_KEY_PREFIX: &str = "CSAK";
@@ -32,6 +32,7 @@ const ACCESS_KEY_PREFIX: &str = "CSAK";
 /// assert!("CSAK.no-key-id".parse::<AccessKey>().is_err());
 /// assert!("CSAKno-secret.".parse::<AccessKey>().is_err());
 /// ```
+#[derive(OpaqueDebug)]
 pub struct AccessKey(SecretToken);
 
 impl AccessKey {
@@ -62,12 +63,6 @@ impl FromStr for AccessKey {
         }
 
         Ok(Self(SecretToken::new(s)))
-    }
-}
-
-impl fmt::Debug for AccessKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("AccessKey(***)")
     }
 }
 
@@ -146,6 +141,6 @@ mod tests {
         let key: AccessKey = "CSAKid.secret".parse().unwrap();
         let debug = format!("{key:?}");
         assert!(!debug.contains("secret"));
-        assert_eq!(debug, "AccessKey(***)");
+        assert!(debug.contains("AccessKey") && debug.contains("***"), "debug should hide secret: {debug}");
     }
 }
