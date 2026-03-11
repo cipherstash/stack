@@ -26,7 +26,7 @@ const DEFAULT_DIR_NAME: &str = ".cipherstash";
 /// }
 ///
 /// # fn main() -> Result<(), stack_profile::ProfileError> {
-/// let store = ProfileStore::default();
+/// let store = ProfileStore::resolve(None)?;
 /// store.save("my-config.json", &MyConfig { name: "example".into() })?;
 /// let config: MyConfig = store.load("my-config.json")?;
 /// # Ok(())
@@ -88,10 +88,11 @@ impl ProfileStore {
         self.write(filename, value, None)
     }
 
-    /// Validate that a filename is a plain filename (no path separators or `..`).
+    /// Validate that a filename is a plain, non-empty filename (no path separators or `..`).
     fn validate_filename(filename: &str) -> Result<(), ProfileError> {
         let path = Path::new(filename);
-        if path.is_absolute()
+        if filename.is_empty()
+            || path.is_absolute()
             || filename.contains(std::path::MAIN_SEPARATOR)
             || filename.contains('/')
             || path
@@ -313,6 +314,23 @@ mod tests {
 
     mod filename_validation {
         use super::*;
+
+        #[test]
+        fn rejects_empty_string() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let err = store
+                .save(
+                    "",
+                    &TestData {
+                        name: "x".into(),
+                        value: 1,
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(err, ProfileError::InvalidFilename(_)));
+        }
 
         #[test]
         fn rejects_absolute_path() {
