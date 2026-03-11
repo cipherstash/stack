@@ -19,4 +19,7 @@ pub enum ProfileError {
         /// The path that was looked up.
         path: PathBuf,
     },
+    /// The filename is invalid (contains path separators, `..`, or is absolute).
+    #[error("Invalid profile filename: {0}")]
+    InvalidFilename(String),
 }

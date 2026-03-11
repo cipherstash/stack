@@ -53,7 +53,9 @@ impl ProfileStore {
             return Ok(Self::new(path));
         }
         if let Ok(path) = std::env::var(CS_CONFIG_PATH_ENV) {
-            return Ok(Self::new(path));
+            if !path.trim().is_empty() {
+                return Ok(Self::new(path));
+            }
         }
         let home = dirs::home_dir().ok_or(ProfileError::HomeDirNotFound)?;
         Ok(Self::new(home.join(DEFAULT_DIR_NAME)))
@@ -86,12 +88,28 @@ impl ProfileStore {
         self.write(filename, value, None)
     }
 
+    /// Validate that a filename is a plain filename (no path separators or `..`).
+    fn validate_filename(filename: &str) -> Result<(), ProfileError> {
+        let path = Path::new(filename);
+        if path.is_absolute()
+            || filename.contains(std::path::MAIN_SEPARATOR)
+            || filename.contains('/')
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(ProfileError::InvalidFilename(filename.to_string()));
+        }
+        Ok(())
+    }
+
     fn write<T: Serialize>(
         &self,
         filename: &str,
         value: &T,
         _mode: Option<u32>,
     ) -> Result<(), ProfileError> {
+        Self::validate_filename(filename)?;
         std::fs::create_dir_all(&self.dir)?;
         let path = self.dir.join(filename);
         let json = serde_json::to_string_pretty(value)?;
@@ -109,6 +127,12 @@ impl ProfileStore {
                 .mode(mode)
                 .open(&path)?;
             file.write_all(json.as_bytes())?;
+
+            // Ensure permissions are set even if the file already existed,
+            // since OpenOptions::mode() only applies on creation.
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))?;
+
             return Ok(());
         }
 
@@ -120,6 +144,7 @@ impl ProfileStore {
     ///
     /// Returns [`ProfileError::NotFound`] if the file does not exist.
     pub fn load<T: DeserializeOwned>(&self, filename: &str) -> Result<T, ProfileError> {
+        Self::validate_filename(filename)?;
         let path = self.dir.join(filename);
         match std::fs::read_to_string(&path) {
             Ok(contents) => {
@@ -137,6 +162,7 @@ impl ProfileStore {
     ///
     /// Does nothing if the file does not already exist.
     pub fn clear(&self, filename: &str) -> Result<(), ProfileError> {
+        Self::validate_filename(filename)?;
         let path = self.dir.join(filename);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
@@ -147,7 +173,7 @@ impl ProfileStore {
 
     /// Check whether a file exists in the store directory.
     pub fn exists(&self, filename: &str) -> bool {
-        self.dir.join(filename).exists()
+        Self::validate_filename(filename).is_ok() && self.dir.join(filename).exists()
     }
 
     /// Save a [`ProfileData`] value using its declared filename and mode.
@@ -285,6 +311,105 @@ mod tests {
         assert_eq!(store.dir(), std::path::Path::new("/tmp/custom"));
     }
 
+    mod filename_validation {
+        use super::*;
+
+        #[test]
+        fn rejects_absolute_path() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let err = store
+                .save(
+                    "/etc/passwd",
+                    &TestData {
+                        name: "x".into(),
+                        value: 1,
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(err, ProfileError::InvalidFilename(_)));
+        }
+
+        #[test]
+        fn rejects_parent_traversal() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let err = store
+                .save(
+                    "../escape.json",
+                    &TestData {
+                        name: "x".into(),
+                        value: 1,
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(err, ProfileError::InvalidFilename(_)));
+        }
+
+        #[test]
+        fn rejects_path_with_separator() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let err = store
+                .save(
+                    "sub/file.json",
+                    &TestData {
+                        name: "x".into(),
+                        value: 1,
+                    },
+                )
+                .unwrap_err();
+            assert!(matches!(err, ProfileError::InvalidFilename(_)));
+        }
+
+        #[test]
+        fn rejects_on_load() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let err = store.load::<TestData>("../escape.json").unwrap_err();
+            assert!(matches!(err, ProfileError::InvalidFilename(_)));
+        }
+
+        #[test]
+        fn rejects_on_clear() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let err = store.clear("../escape.json").unwrap_err();
+            assert!(matches!(err, ProfileError::InvalidFilename(_)));
+        }
+
+        #[test]
+        fn exists_returns_false_for_invalid_filename() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            assert!(!store.exists("../escape.json"));
+        }
+
+        #[test]
+        fn accepts_plain_filename() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            store
+                .save(
+                    "valid.json",
+                    &TestData {
+                        name: "ok".into(),
+                        value: 1,
+                    },
+                )
+                .unwrap();
+            let loaded: TestData = store.load("valid.json").unwrap();
+            assert_eq!(loaded.name, "ok");
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn save_with_mode_sets_permissions() {
@@ -307,5 +432,45 @@ mod tests {
         let meta = std::fs::metadata(dir.path().join("secret.json")).unwrap();
         let mode = meta.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_with_mode_tightens_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProfileStore::new(dir.path());
+        let path = dir.path().join("secret.json");
+
+        // Create file with broad permissions first
+        store
+            .save(
+                "secret.json",
+                &TestData {
+                    name: "v1".into(),
+                    value: 1,
+                },
+            )
+            .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        // Overwrite with restricted mode
+        store
+            .save_with_mode(
+                "secret.json",
+                &TestData {
+                    name: "v2".into(),
+                    value: 2,
+                },
+                0o600,
+            )
+            .unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "permissions should be tightened on existing file"
+        );
     }
 }
