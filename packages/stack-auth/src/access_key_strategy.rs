@@ -3,7 +3,7 @@ use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
 use crate::auto_refresh::AutoRefresh;
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken};
+use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
 
 /// An [`AuthStrategy`] that uses a static access key to authenticate.
 ///
@@ -74,7 +74,7 @@ impl AccessKeyStrategy {
 }
 
 impl AuthStrategy for &AccessKeyStrategy {
-    async fn get_token(self) -> Result<SecretToken, AuthError> {
+    async fn get_token(self) -> Result<ServiceToken, AuthError> {
         Ok(self.inner.get_token().await?)
     }
 }

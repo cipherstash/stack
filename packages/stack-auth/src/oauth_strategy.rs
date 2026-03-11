@@ -5,7 +5,7 @@ use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
 use crate::oauth_refresher::OAuthRefresher;
-use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Token};
+use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken, Token};
 
 /// An [`AuthStrategy`] that uses OAuth refresh tokens to maintain a valid access token.
 ///
@@ -75,7 +75,7 @@ impl OAuthStrategy {
 }
 
 impl AuthStrategy for &OAuthStrategy {
-    async fn get_token(self) -> Result<SecretToken, AuthError> {
+    async fn get_token(self) -> Result<ServiceToken, AuthError> {
         Ok(self.inner.get_token().await?)
     }
 }

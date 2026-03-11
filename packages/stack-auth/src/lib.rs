@@ -80,6 +80,7 @@ mod device_code;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
+mod service_token;
 mod token;
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -90,6 +91,7 @@ pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
+pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
@@ -107,7 +109,7 @@ pub use stack_profile::DeviceIdentity;
 /// shared references (e.g. `&OAuthStrategy`) without consuming the strategy.
 pub trait AuthStrategy: Send {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
-    fn get_token(self) -> impl Future<Output = Result<SecretToken, AuthError>> + Send;
+    fn get_token(self) -> impl Future<Output = Result<ServiceToken, AuthError>> + Send;
 }
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.

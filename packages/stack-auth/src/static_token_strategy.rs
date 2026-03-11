@@ -1,4 +1,4 @@
-use crate::{AuthError, AuthStrategy, SecretToken};
+use crate::{AuthError, AuthStrategy, SecretToken, ServiceToken};
 
 /// A simple [`AuthStrategy`] that always returns a fixed token.
 ///
@@ -6,7 +6,7 @@ use crate::{AuthError, AuthStrategy, SecretToken};
 /// server or via federation) and just needs to be presented as-is.
 ///
 /// ```
-/// use stack_auth::{StaticTokenStrategy, AuthStrategy, SecretToken};
+/// use stack_auth::{StaticTokenStrategy, AuthStrategy};
 ///
 /// # async fn example() {
 /// let strategy = StaticTokenStrategy::new("my-token");
@@ -24,7 +24,7 @@ impl StaticTokenStrategy {
 }
 
 impl AuthStrategy for &StaticTokenStrategy {
-    async fn get_token(self) -> Result<SecretToken, AuthError> {
-        Ok(self.0.clone())
+    async fn get_token(self) -> Result<ServiceToken, AuthError> {
+        Ok(ServiceToken::new(self.0.clone()))
     }
 }

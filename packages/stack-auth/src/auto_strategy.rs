@@ -4,7 +4,7 @@ use crate::access_key_strategy::AccessKeyStrategy;
 use crate::oauth_strategy::OAuthStrategy;
 use stack_profile::ProfileStore;
 
-use crate::{AuthError, AuthStrategy, SecretToken, Token};
+use crate::{AuthError, AuthStrategy, ServiceToken, Token};
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -100,7 +100,7 @@ impl AutoStrategy {
 }
 
 impl AuthStrategy for &AutoStrategy {
-    async fn get_token(self) -> Result<SecretToken, AuthError> {
+    async fn get_token(self) -> Result<ServiceToken, AuthError> {
         match self {
             AutoStrategy::AccessKey(inner) => inner.get_token().await,
             AutoStrategy::OAuth(inner) => inner.get_token().await,
@@ -111,6 +111,7 @@ impl AuthStrategy for &AutoStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SecretToken, Token};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";

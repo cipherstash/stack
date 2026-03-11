@@ -1,7 +1,7 @@
 use tokio::sync::Mutex;
 
 use crate::refresher::Refresher;
-use crate::{SecretToken, Token};
+use crate::{ServiceToken, Token};
 
 /// Internal errors from [`AutoRefresh::get_token`].
 ///
@@ -156,7 +156,7 @@ impl<R> AutoRefresh<R> {
 
 impl<R: Refresher> AutoRefresh<R> {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
-    pub(crate) async fn get_token(&self) -> Result<SecretToken, AutoRefreshError> {
+    pub(crate) async fn get_token(&self) -> Result<ServiceToken, AutoRefreshError> {
         let mut state = self.state.lock().await;
 
         // No cached token — attempt initial auth.
@@ -168,10 +168,10 @@ impl<R: Refresher> AutoRefresh<R> {
             match self.refresher.refresh(&credential).await {
                 Ok(new_token) => {
                     self.refresher.save(&new_token);
-                    let access_token = new_token.access_token().clone();
+                    let service_token = ServiceToken::new(new_token.access_token().clone());
                     state.token = Some(new_token);
                     state.refresh_in_progress = false;
-                    return Ok(access_token);
+                    return Ok(service_token);
                 }
                 Err(err) => {
                     state.refresh_in_progress = false;
@@ -184,14 +184,14 @@ impl<R: Refresher> AutoRefresh<R> {
         if !needs_refresh {
             // Token is fresh — clone and return.
             let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            return Ok(token.access_token().clone());
+            return Ok(ServiceToken::new(token.access_token().clone()));
         }
 
         // Check cascade prevention flag.
         if state.refresh_in_progress {
             let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
             if token.is_usable() {
-                return Ok(token.access_token().clone());
+                return Ok(ServiceToken::new(token.access_token().clone()));
             }
             // NOTE: If a refresh was started while the token was still usable
             // (lock released) but the token has since crossed its real expiry,
@@ -211,7 +211,7 @@ impl<R: Refresher> AutoRefresh<R> {
             // No credential available (e.g. OAuth with no refresh token).
             let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
             if token.is_usable() {
-                return Ok(token.access_token().clone());
+                return Ok(ServiceToken::new(token.access_token().clone()));
             }
             return Err(AutoRefreshError::Expired);
         };
@@ -224,12 +224,14 @@ impl<R: Refresher> AutoRefresh<R> {
         if is_usable {
             // Token is expiring but still usable. Clone the current access
             // token, drop the lock, and refresh in the background of this call.
-            let current_access_token = state
-                .token
-                .as_ref()
-                .ok_or(AutoRefreshError::NotFound)?
-                .access_token()
-                .clone();
+            let current_service_token = ServiceToken::new(
+                state
+                    .token
+                    .as_ref()
+                    .ok_or(AutoRefreshError::NotFound)?
+                    .access_token()
+                    .clone(),
+            );
             drop(state);
 
             match self.refresher.refresh(&credential).await {
@@ -249,16 +251,16 @@ impl<R: Refresher> AutoRefresh<R> {
                 }
             }
 
-            Ok(current_access_token)
+            Ok(current_service_token)
         } else {
             // Token is fully expired. Refresh while holding the lock.
             match self.refresher.refresh(&credential).await {
                 Ok(new_token) => {
                     self.refresher.save(&new_token);
-                    let access_token = new_token.access_token().clone();
+                    let service_token = ServiceToken::new(new_token.access_token().clone());
                     state.token = Some(new_token);
                     state.refresh_in_progress = false;
-                    Ok(access_token)
+                    Ok(service_token)
                 }
                 Err(err) => {
                     tracing::warn!(%err, "token refresh failed");
@@ -277,6 +279,7 @@ impl<R: Refresher> AutoRefresh<R> {
 mod tests {
     use super::*;
     use crate::oauth_refresher::OAuthRefresher;
+    use crate::SecretToken;
     use mocktail::prelude::*;
     use stack_profile::ProfileStore;
     use std::sync::Arc;
@@ -715,6 +718,7 @@ mod tests {
 mod stress_tests {
     use super::*;
     use crate::oauth_refresher::OAuthRefresher;
+    use crate::SecretToken;
     use stack_profile::ProfileStore;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

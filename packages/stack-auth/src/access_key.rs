@@ -141,6 +141,9 @@ mod tests {
         let key: AccessKey = "CSAKid.secret".parse().unwrap();
         let debug = format!("{key:?}");
         assert!(!debug.contains("secret"));
-        assert!(debug.contains("AccessKey") && debug.contains("***"), "debug should hide secret: {debug}");
+        assert!(
+            debug.contains("AccessKey") && debug.contains("***"),
+            "debug should hide secret: {debug}"
+        );
     }
 }
