@@ -81,10 +81,15 @@ mod oauth_strategy;
 mod refresher;
 mod token;
 
+#[cfg(any(test, feature = "test-utils"))]
+mod static_token_strategy;
+
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
+#[cfg(any(test, feature = "test-utils"))]
+pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
 
 // Re-exports from stack-profile for backward compatibility.
