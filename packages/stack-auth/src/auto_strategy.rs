@@ -42,7 +42,7 @@ impl AutoStrategy {
     pub fn new() -> Result<Self, AuthError> {
         let access_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
         let crn = std::env::var("CS_WORKSPACE_CRN").ok();
-        let store = Some(crate::default_token_store());
+        let store = Some(crate::default_token_store()?);
         Self::detect(access_key, crn, store)
     }
 

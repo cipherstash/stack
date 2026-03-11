@@ -188,8 +188,8 @@ impl From<Infallible> for AuthError {
 }
 
 /// Returns a token store at the default profile directory: `~/.cipherstash`.
-pub fn default_token_store() -> TokenStore {
-    TokenStore::default()
+pub fn default_token_store() -> Result<TokenStore, TokenStoreError> {
+    TokenStore::resolve(None)
 }
 
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.

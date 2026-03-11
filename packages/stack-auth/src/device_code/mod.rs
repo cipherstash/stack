@@ -336,7 +336,7 @@ impl PendingDeviceCode {
 
                 let store = match &self.profile_dir {
                     Some(dir) => TokenStore::new(dir),
-                    None => crate::default_token_store(),
+                    None => crate::default_token_store()?,
                 };
                 match store.save(crate::AUTH_FILENAME, &token) {
                     Ok(()) => tracing::debug!("token saved to disk"),
