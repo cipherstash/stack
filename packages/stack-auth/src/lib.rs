@@ -71,6 +71,7 @@ use std::time::Duration;
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
 
+mod access_key;
 mod access_key_refresher;
 mod access_key_strategy;
 mod auto_refresh;
@@ -84,6 +85,7 @@ mod token;
 #[cfg(any(test, feature = "test-utils"))]
 mod static_token_strategy;
 
+pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
@@ -166,6 +168,9 @@ pub enum AuthError {
     /// A token (access token or device code) has expired.
     #[error("Token expired")]
     TokenExpired,
+    /// The access key string is malformed (e.g. missing `CSAK` prefix or `.` separator).
+    #[error("Invalid access key: {0}")]
+    InvalidAccessKey(#[from] access_key::InvalidAccessKey),
     /// The JWT could not be decoded or its claims are malformed.
     #[error("Invalid token: {0}")]
     InvalidToken(String),
