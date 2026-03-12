@@ -68,7 +68,7 @@ impl AutoStrategy {
         // 2. OAuth token from disk
         if let Some(store) = store {
             if store.exists_profile::<Token>() {
-                let strategy = OAuthStrategy::using_store(store)?;
+                let strategy = OAuthStrategy::with_profile(store).build()?;
                 return Ok(Self::OAuth(strategy));
             }
         }
