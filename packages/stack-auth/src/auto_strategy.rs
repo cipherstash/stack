@@ -171,6 +171,14 @@ mod tests {
     }
 
     #[test]
+    fn invalid_access_key_format_returns_invalid_access_key() {
+        let result =
+            AutoStrategy::detect(Some("not-a-valid-key".into()), Some(VALID_CRN.into()), None);
+
+        assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
+    }
+
+    #[test]
     fn access_key_with_invalid_crn_returns_invalid_crn() {
         let result = AutoStrategy::detect(
             Some("CSAKtestKeyId.testKeySecret".into()),
