@@ -30,7 +30,7 @@ use crate::{AuthError, SecretToken};
 pub struct ServiceToken {
     secret: SecretToken,
     #[zeroize(skip)]
-    decoded: Option<DecodedClaims>,
+    decoded: Result<DecodedClaims, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -68,7 +68,7 @@ impl ServiceToken {
         self.decoded
             .as_ref()
             .map(|d| &d.issuer)
-            .ok_or_else(|| AuthError::InvalidToken("token is not a valid JWT".into()))
+            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
     /// Return the `aud` (audience) from the JWT claims.
@@ -80,17 +80,20 @@ impl ServiceToken {
         self.decoded
             .as_ref()
             .map(|d| &d.audience)
-            .ok_or_else(|| AuthError::InvalidToken("token is not a valid JWT".into()))
+            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
     /// Attempt to decode the JWT claims from the token string.
-    /// NOTE: This does not verify the token signature or validate any claims, it only decodes the claims if the token is a well-formed JWT.
-    fn try_decode(secret: &SecretToken) -> Option<DecodedClaims> {
+    ///
+    /// NOTE: This does not verify the token signature or validate any claims,
+    /// it only decodes the claims if the token is a well-formed JWT.
+    fn try_decode(secret: &SecretToken) -> Result<DecodedClaims, String> {
         use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
         use std::collections::HashSet;
 
         let token_str = secret.as_str();
-        let header = decode_header(token_str).ok()?;
+        let header =
+            decode_header(token_str).map_err(|e| format!("failed to decode JWT header: {e}"))?;
 
         let dummy_key = DecodingKey::from_secret(&[]);
         let mut validation = Validation::new(header.alg);
@@ -100,11 +103,16 @@ impl ServiceToken {
         validation.insecure_disable_signature_validation();
 
         let data: jsonwebtoken::TokenData<cts_common::claims::Claims> =
-            decode(token_str, &dummy_key, &validation).ok()?;
+            decode(token_str, &dummy_key, &validation)
+                .map_err(|e| format!("failed to decode JWT claims: {e}"))?;
 
-        let issuer: Url = data.claims.iss.parse().ok()?;
+        let issuer: Url = data
+            .claims
+            .iss
+            .parse()
+            .map_err(|e| format!("iss claim is not a valid URL: {e}"))?;
 
-        Some(DecodedClaims {
+        Ok(DecodedClaims {
             issuer,
             audience: data.claims.aud,
         })
@@ -153,12 +161,16 @@ mod tests {
     }
 
     #[test]
-    fn non_jwt_token_returns_errors() {
+    fn non_jwt_token_returns_errors_with_reason() {
         let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
 
         assert_eq!(token.as_str(), "not-a-jwt");
-        assert!(token.issuer().is_err());
-        assert!(token.audience().is_err());
+
+        let err = token.issuer().unwrap_err().to_string();
+        assert!(
+            err.contains("failed to decode JWT header"),
+            "expected specific decode error, got: {err}"
+        );
     }
 
     #[test]
