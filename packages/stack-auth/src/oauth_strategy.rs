@@ -1,9 +1,10 @@
 use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 use tracing::warn;
 
+use stack_profile::ProfileStore;
+
 use crate::auto_refresh::AutoRefresh;
 use crate::oauth_refresher::OAuthRefresher;
-use crate::TokenStore;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Token};
 
 /// An [`AuthStrategy`] that uses OAuth refresh tokens to maintain a valid access token.
@@ -71,7 +72,7 @@ impl OAuthStrategy {
     ///
     /// Returns [`AuthError::NotAuthenticated`] if the token file is missing,
     /// or if the stored token is missing `region` or `client_id`.
-    pub fn using_store(store: TokenStore) -> Result<Self, AuthError> {
+    pub fn using_store(store: ProfileStore) -> Result<Self, AuthError> {
         Self::from_store(store).build()
     }
 
@@ -79,7 +80,7 @@ impl OAuthStrategy {
     ///
     /// The token is loaded from the store immediately. The builder allows
     /// further configuration (e.g. overriding the base URL) before building.
-    pub fn from_store(store: TokenStore) -> OAuthStrategyBuilder {
+    pub fn from_store(store: ProfileStore) -> OAuthStrategyBuilder {
         OAuthStrategyBuilder {
             source: OAuthTokenSource::Store(store),
             base_url_override: None,
@@ -107,7 +108,7 @@ enum OAuthTokenSource {
         token: Token,
     },
     /// A token loaded from a persistent store.
-    Store(TokenStore),
+    Store(ProfileStore),
 }
 
 /// Builder for [`OAuthStrategy`].
@@ -172,7 +173,7 @@ impl OAuthStrategyBuilder {
                 })
             }
             OAuthTokenSource::Store(store) => {
-                let token: Token = store.load(crate::AUTH_FILENAME)?;
+                let token: Token = store.load_profile()?;
 
                 let region_str = token
                     .region()

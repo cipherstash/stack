@@ -6,6 +6,11 @@ use url::Url;
 
 use crate::{http_client, AuthError, SecretToken};
 
+impl stack_profile::ProfileData for Token {
+    const FILENAME: &'static str = "auth.json";
+    const MODE: Option<u32> = Some(0o600);
+}
+
 /// How many seconds before expiry [`Token::is_expired`] returns `true`.
 ///
 /// This leeway triggers preemptive refresh well before the token becomes

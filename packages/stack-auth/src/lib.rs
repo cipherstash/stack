@@ -95,15 +95,6 @@ pub use token::Token;
 // Re-exports from stack-profile for backward compatibility.
 pub use stack_profile::DeviceIdentity;
 
-/// A profile store for persisting auth tokens and related files.
-pub type TokenStore = stack_profile::ProfileStore;
-
-/// Error type for profile-store operations.
-pub type TokenStoreError = stack_profile::ProfileError;
-
-/// Default filename for the auth token file.
-pub(crate) const AUTH_FILENAME: &str = "auth.json";
-
 /// A strategy for obtaining access tokens.
 ///
 /// Implementations handle all details of authentication, token caching, and
@@ -190,11 +181,6 @@ impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
     }
-}
-
-/// Returns a token store at the default profile directory: `~/.cipherstash`.
-pub fn default_token_store() -> Result<TokenStore, TokenStoreError> {
-    TokenStore::resolve(None)
 }
 
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.
