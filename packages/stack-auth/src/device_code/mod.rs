@@ -7,7 +7,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::path::PathBuf;
 
-use crate::{ensure_trailing_slash, http_client, AuthError, DeviceIdentity, Token, TokenStore};
+use stack_profile::ProfileStore;
+
+use crate::{ensure_trailing_slash, http_client, AuthError, DeviceIdentity, Token};
 use protocol::{
     DeviceCode, DeviceCodeRequest, DeviceCodeResponse, ErrorResponse, TokenRequest, TokenResponse,
 };
@@ -335,10 +337,10 @@ impl PendingDeviceCode {
                 }
 
                 let store = match &self.profile_dir {
-                    Some(dir) => TokenStore::new(dir),
-                    None => crate::default_token_store()?,
+                    Some(dir) => ProfileStore::new(dir),
+                    None => ProfileStore::resolve(None)?,
                 };
-                match store.save(crate::AUTH_FILENAME, &token) {
+                match store.save_profile(&token) {
                     Ok(()) => tracing::debug!("token saved to disk"),
                     Err(err) => tracing::warn!(%err, "failed to save token to disk"),
                 }

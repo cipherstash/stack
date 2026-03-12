@@ -2,7 +2,9 @@ use cts_common::Crn;
 
 use crate::access_key_strategy::AccessKeyStrategy;
 use crate::oauth_strategy::OAuthStrategy;
-use crate::{AuthError, AuthStrategy, SecretToken, TokenStore};
+use stack_profile::ProfileStore;
+
+use crate::{AuthError, AuthStrategy, SecretToken, Token};
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -42,7 +44,7 @@ impl AutoStrategy {
     pub fn new() -> Result<Self, AuthError> {
         let access_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
         let crn = std::env::var("CS_WORKSPACE_CRN").ok();
-        let store = Some(crate::default_token_store()?);
+        let store = Some(ProfileStore::resolve(None)?);
         Self::detect(access_key, crn, store)
     }
 
@@ -53,7 +55,7 @@ impl AutoStrategy {
     fn detect(
         access_key: Option<String>,
         crn: Option<String>,
-        store: Option<TokenStore>,
+        store: Option<ProfileStore>,
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
@@ -65,8 +67,8 @@ impl AutoStrategy {
 
         // 2. OAuth token from disk
         if let Some(store) = store {
-            if store.exists(crate::AUTH_FILENAME) {
-                let strategy = OAuthStrategy::using_store(store)?;
+            if store.exists_profile::<Token>() {
+                let strategy = OAuthStrategy::with_profile(store).build()?;
                 return Ok(Self::OAuth(strategy));
             }
         }
@@ -108,7 +110,6 @@ impl AuthStrategy for &AutoStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Token;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
@@ -143,9 +144,9 @@ mod tests {
         }
     }
 
-    fn write_token_store(dir: &std::path::Path) -> TokenStore {
-        let store = TokenStore::new(dir);
-        store.save("auth.json", &make_oauth_token()).unwrap();
+    fn write_token_store(dir: &std::path::Path) -> ProfileStore {
+        let store = ProfileStore::new(dir);
+        store.save_profile(&make_oauth_token()).unwrap();
         store
     }
 
@@ -187,7 +188,7 @@ mod tests {
     #[test]
     fn oauth_store_without_token_file_returns_not_authenticated() {
         let dir = tempfile::tempdir().unwrap();
-        let store = TokenStore::new(dir.path());
+        let store = ProfileStore::new(dir.path());
 
         let result = AutoStrategy::detect(None, None, Some(store));
 

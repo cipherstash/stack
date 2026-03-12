@@ -81,23 +81,19 @@ mod oauth_strategy;
 mod refresher;
 mod token;
 
+#[cfg(any(test, feature = "test-utils"))]
+mod static_token_strategy;
+
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::AutoStrategy;
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
+#[cfg(any(test, feature = "test-utils"))]
+pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
 
 // Re-exports from stack-profile for backward compatibility.
 pub use stack_profile::DeviceIdentity;
-
-/// A profile store for persisting auth tokens and related files.
-pub type TokenStore = stack_profile::ProfileStore;
-
-/// Error type for profile-store operations.
-pub type TokenStoreError = stack_profile::ProfileError;
-
-/// Default filename for the auth token file.
-pub(crate) const AUTH_FILENAME: &str = "auth.json";
 
 /// A strategy for obtaining access tokens.
 ///
@@ -185,11 +181,6 @@ impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
     }
-}
-
-/// Returns a token store at the default profile directory: `~/.cipherstash`.
-pub fn default_token_store() -> Result<TokenStore, TokenStoreError> {
-    TokenStore::resolve(None)
 }
 
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.

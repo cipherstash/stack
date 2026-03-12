@@ -277,8 +277,8 @@ impl<R: Refresher> AutoRefresh<R> {
 mod tests {
     use super::*;
     use crate::oauth_refresher::OAuthRefresher;
-    use crate::TokenStore;
     use mocktail::prelude::*;
+    use stack_profile::ProfileStore;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -330,8 +330,8 @@ mod tests {
         server: &MockServer,
         token: Token,
     ) -> AutoRefresh<OAuthRefresher> {
-        let store = TokenStore::new(dir.path());
-        store.save("auth.json", &token).unwrap();
+        let store = ProfileStore::new(dir.path());
+        store.save_profile(&token).unwrap();
         let refresher = OAuthRefresher::new(
             Some(store),
             server.url(""),
@@ -359,7 +359,7 @@ mod tests {
     #[tokio::test]
     async fn test_returns_not_found_when_no_token_and_oauth() {
         let server = start_server(MockSet::new()).await;
-        let store = TokenStore::new("/tmp/nonexistent");
+        let store = ProfileStore::new("/tmp/nonexistent");
         let refresher = OAuthRefresher::new(
             Some(store),
             server.url(""),
@@ -436,8 +436,8 @@ mod tests {
         let _ = strategy.get_token().await.unwrap();
 
         // Verify the refreshed token was saved to disk.
-        let store = TokenStore::new(dir.path());
-        let on_disk: Token = store.load("auth.json").unwrap();
+        let store = ProfileStore::new(dir.path());
+        let on_disk: Token = store.load_profile().unwrap();
         assert_eq!(on_disk.access_token().as_str(), "refreshed-token");
     }
 
@@ -715,7 +715,7 @@ mod tests {
 mod stress_tests {
     use super::*;
     use crate::oauth_refresher::OAuthRefresher;
-    use crate::TokenStore;
+    use stack_profile::ProfileStore;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -838,8 +838,8 @@ mod stress_tests {
         base_url: &url::Url,
         token: Token,
     ) -> AutoRefresh<OAuthRefresher> {
-        let store = TokenStore::new(dir.path());
-        store.save("auth.json", &token).unwrap();
+        let store = ProfileStore::new(dir.path());
+        store.save_profile(&token).unwrap();
         let refresher = OAuthRefresher::new(
             Some(store),
             base_url.clone(),

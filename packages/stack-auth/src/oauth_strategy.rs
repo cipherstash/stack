@@ -1,18 +1,19 @@
 use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 use tracing::warn;
 
+use stack_profile::ProfileStore;
+
 use crate::auto_refresh::AutoRefresh;
 use crate::oauth_refresher::OAuthRefresher;
-use crate::TokenStore;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Token};
 
 /// An [`AuthStrategy`] that uses OAuth refresh tokens to maintain a valid access token.
 ///
 /// # Construction
 ///
-/// Use [`OAuthStrategy::new`] with a token obtained from a device code flow
+/// Use [`OAuthStrategy::with_token`] with a token obtained from a device code flow
 /// (or any other OAuth flow) for in-memory caching only. Use
-/// [`OAuthStrategy::using_store`] to load a token from disk and persist
+/// [`OAuthStrategy::with_profile`] to load a token from disk and persist
 /// refreshed tokens back to the store.
 ///
 /// # Example
@@ -23,7 +24,7 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Token};
 ///
 /// # fn run(token: Token) -> Result<(), Box<dyn std::error::Error>> {
 /// let region = Region::aws("ap-southeast-2")?;
-/// let strategy = OAuthStrategy::new(region, "my-client-id", token)?;
+/// let strategy = OAuthStrategy::with_token(region, "my-client-id", token).build()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -33,20 +34,11 @@ pub struct OAuthStrategy {
 }
 
 impl OAuthStrategy {
-    /// Create a new `OAuthStrategy` with the given token (in-memory only).
+    /// Return a builder for configuring an `OAuthStrategy` from a token.
     ///
     /// The token's `region` and `client_id` fields are set before caching.
     /// No token store is used — tokens are not persisted to disk.
-    pub fn new(
-        region: Region,
-        client_id: impl Into<String>,
-        token: Token,
-    ) -> Result<Self, AuthError> {
-        Self::builder(region, client_id, token).build()
-    }
-
-    /// Return a builder for configuring an `OAuthStrategy` from a token.
-    pub fn builder(
+    pub fn with_token(
         region: Region,
         client_id: impl Into<String>,
         token: Token,
@@ -61,25 +53,15 @@ impl OAuthStrategy {
         }
     }
 
-    /// Create an `OAuthStrategy` by loading a token from the given store.
+    /// Return a builder for configuring an `OAuthStrategy` from a profile store.
+    ///
+    /// The token is loaded from the store when [`OAuthStrategyBuilder::build`] is called.
+    /// The builder allows further configuration (e.g. overriding the base URL) before building.
     ///
     /// The token must have `region` and `client_id` set (as saved by
     /// [`DeviceCodeStrategy`](crate::DeviceCodeStrategy) or a prior
     /// `OAuthStrategy`). The store is used for persisting refreshed tokens.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AuthError::NotAuthenticated`] if the token file is missing,
-    /// or if the stored token is missing `region` or `client_id`.
-    pub fn using_store(store: TokenStore) -> Result<Self, AuthError> {
-        Self::from_store(store).build()
-    }
-
-    /// Return a builder for configuring an `OAuthStrategy` from a token store.
-    ///
-    /// The token is loaded from the store immediately. The builder allows
-    /// further configuration (e.g. overriding the base URL) before building.
-    pub fn from_store(store: TokenStore) -> OAuthStrategyBuilder {
+    pub fn with_profile(store: ProfileStore) -> OAuthStrategyBuilder {
         OAuthStrategyBuilder {
             source: OAuthTokenSource::Store(store),
             base_url_override: None,
@@ -107,12 +89,12 @@ enum OAuthTokenSource {
         token: Token,
     },
     /// A token loaded from a persistent store.
-    Store(TokenStore),
+    Store(ProfileStore),
 }
 
 /// Builder for [`OAuthStrategy`].
 ///
-/// Created via [`OAuthStrategy::builder`] or [`OAuthStrategy::from_store`].
+/// Created via [`OAuthStrategy::with_token`] or [`OAuthStrategy::with_profile`].
 pub struct OAuthStrategyBuilder {
     source: OAuthTokenSource,
     base_url_override: Option<url::Url>,
@@ -172,7 +154,7 @@ impl OAuthStrategyBuilder {
                 })
             }
             OAuthTokenSource::Store(store) => {
-                let token: Token = store.load(crate::AUTH_FILENAME)?;
+                let token: Token = store.load_profile()?;
 
                 let region_str = token
                     .region()
