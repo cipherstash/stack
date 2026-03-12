@@ -5,7 +5,6 @@ use crate::oauth_strategy::OAuthStrategy;
 use stack_profile::ProfileStore;
 
 use crate::{AuthError, AuthStrategy, SecretToken, Token};
-use std::str::FromStr;
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -62,8 +61,7 @@ impl AutoStrategy {
         if let Some(access_key) = access_key {
             let crn_str = crn.ok_or(AuthError::NotAuthenticated)?;
             let crn: Crn = crn_str.parse().map_err(AuthError::InvalidCrn)?;
-            let key = crate::AccessKey::from_str(&access_key)
-                .map_err(|e| AuthError::InvalidToken(e.to_string()))?;
+            let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::new_with_crn(crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }

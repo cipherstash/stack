@@ -168,6 +168,9 @@ pub enum AuthError {
     /// A token (access token or device code) has expired.
     #[error("Token expired")]
     TokenExpired,
+    /// The access key string is malformed (e.g. missing `CSAK` prefix or `.` separator).
+    #[error("Invalid access key: {0}")]
+    InvalidAccessKey(#[from] access_key::InvalidAccessKey),
     /// The JWT could not be decoded or its claims are malformed.
     #[error("Invalid token: {0}")]
     InvalidToken(String),

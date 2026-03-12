@@ -41,6 +41,9 @@ impl AccessKey {
     }
 }
 
+// NOTE: The format validation here mirrors `UnverifiedAccessKey::new()` in
+// `cts-domain`. If the `CSAK<key_id>.<key_secret>` format changes, both
+// locations must be updated.
 impl FromStr for AccessKey {
     type Err = InvalidAccessKey;
 
@@ -129,6 +132,13 @@ mod tests {
     fn empty_string() {
         let err = "".parse::<AccessKey>().unwrap_err();
         assert!(matches!(err, InvalidAccessKey::MissingPrefix));
+    }
+
+    #[test]
+    fn into_secret_token() {
+        let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
+        let secret = key.into_secret_token();
+        assert_eq!(secret.as_str(), "CSAKmyKeyId.myKeySecret");
     }
 
     #[test]
