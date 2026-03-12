@@ -5,24 +5,27 @@ use zeroize::ZeroizeOnDrop;
 
 use crate::{AuthError, SecretToken};
 
-/// A token returned by an [`AuthStrategy`](crate::AuthStrategy) that carries
-/// both the bearer credential and (when the token is a JWT) decoded service
-/// discovery claims.
+/// A CipherStash service token returned by an [`AuthStrategy`](crate::AuthStrategy).
 ///
-/// # JWT claims
+/// Wraps a bearer credential ([`SecretToken`]) together with eagerly decoded
+/// JWT claims that are used for service discovery. The JWT is decoded (but
+/// **not** signature-verified) using [`cts_common::claims::Claims`], so only
+/// CipherStash-issued service tokens (from CTS or the access-key exchange)
+/// will have their claims resolved.
 ///
-/// If the underlying token string is a valid JWT, the `iss` and `aud` claims
-/// are eagerly decoded at construction time. `issuer()` returns the `iss` URL
-/// (the CTS host for this workspace) and `audience()` returns the `aud` claim
-/// (the ZeroKMS endpoint).
+/// # Decoded claims
 ///
-/// For non-JWT tokens (e.g. static test tokens), both methods return
+/// * `issuer()` — the `iss` URL, i.e. the CTS host for this workspace.
+/// * `audience()` — the `aud` claim, typically the ZeroKMS endpoint.
+///
+/// For non-JWT tokens (e.g. static test tokens) or JWTs that don't match
+/// the CipherStash claims schema, both methods return
 /// `Err(AuthError::InvalidToken)`.
 ///
 /// # Security
 ///
-/// Like [`SecretToken`], the inner credential, this is zeroized on drop and hidden
-/// from [`Debug`] output.
+/// Like [`SecretToken`], this is zeroized on drop and hidden from [`Debug`]
+/// output.
 #[derive(Clone, OpaqueDebug, ZeroizeOnDrop)]
 pub struct ServiceToken {
     secret: SecretToken,
