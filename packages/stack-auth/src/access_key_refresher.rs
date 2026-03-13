@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use url::Url;
@@ -14,6 +15,7 @@ pub(crate) struct AccessKeyRefresher {
     access_key: SecretToken,
     base_url: Url,
     audience: Option<String>,
+    http_client: Arc<reqwest::Client>,
 }
 
 impl AccessKeyRefresher {
@@ -22,6 +24,7 @@ impl AccessKeyRefresher {
             access_key,
             base_url,
             audience,
+            http_client: Arc::new(http_client()),
         }
     }
 }
@@ -46,7 +49,8 @@ impl Refresher for AccessKeyRefresher {
 
         tracing::debug!(url = %url, "authenticating with access key");
 
-        let resp = http_client()
+        let resp = self
+            .http_client
             .post(url)
             .json(&AuthoriseRequest {
                 access_key: self.access_key.as_str(),

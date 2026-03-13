@@ -219,13 +219,18 @@ pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
 pub(crate) fn http_client() -> reqwest::Client {
     #[cfg(any(test, feature = "test-utils"))]
     {
-        reqwest::Client::new()
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(10)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     }
     #[cfg(not(any(test, feature = "test-utils")))]
     {
         reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
+            .pool_idle_timeout(Duration::from_secs(5))
+            .pool_max_idle_per_host(10)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
     }
