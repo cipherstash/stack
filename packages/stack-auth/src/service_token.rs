@@ -83,6 +83,36 @@ impl ServiceToken {
             .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
+    /// Return the ZeroKMS URL derived from the first `aud` claim.
+    ///
+    /// The `aud` claim typically contains a bare hostname (e.g.
+    /// `ap-southeast-2.aws.viturhosted.net`). This method prepends `https://`
+    /// unless the value already contains a scheme or looks like a localhost address
+    /// (in which case `http://` is used).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT,
+    /// the audience is empty, or the resulting string is not a valid URL.
+    pub fn zerokms_url(&self) -> Result<Url, AuthError> {
+        let aud = self.audience()?;
+        let raw = aud
+            .first()
+            .ok_or_else(|| AuthError::InvalidToken("aud claim is empty".into()))?;
+
+        let url_str = if raw.starts_with("http://") || raw.starts_with("https://") {
+            raw
+        } else if raw.starts_with("localhost") || raw.starts_with("127.0.0.1") {
+            format!("http://{raw}")
+        } else {
+            format!("https://{raw}")
+        };
+
+        url_str
+            .parse()
+            .map_err(|e| AuthError::InvalidToken(format!("aud is not a valid URL: {e}")))
+    }
+
     /// Attempt to decode the JWT claims from the token string.
     ///
     /// NOTE: This does not verify the token signature or validate any claims,
@@ -171,6 +201,48 @@ mod tests {
             err.contains("failed to decode JWT header"),
             "expected specific decode error, got: {err}"
         );
+    }
+
+    #[test]
+    fn zerokms_url_prepends_https_for_bare_hostname() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            "ap-southeast-2.aws.viturhosted.net",
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        assert_eq!(
+            token.zerokms_url().unwrap().as_str(),
+            "https://ap-southeast-2.aws.viturhosted.net/"
+        );
+    }
+
+    #[test]
+    fn zerokms_url_prepends_http_for_localhost() {
+        let jwt = make_jwt("https://cts.example.com/", "localhost:3002");
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        assert_eq!(
+            token.zerokms_url().unwrap().as_str(),
+            "http://localhost:3002/"
+        );
+    }
+
+    #[test]
+    fn zerokms_url_keeps_existing_scheme() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            "https://zerokms.example.com/",
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        assert_eq!(
+            token.zerokms_url().unwrap().as_str(),
+            "https://zerokms.example.com/"
+        );
+    }
+
+    #[test]
+    fn zerokms_url_errors_for_non_jwt() {
+        let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
+        assert!(token.zerokms_url().is_err());
     }
 
     #[test]
