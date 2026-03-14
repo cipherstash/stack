@@ -1,4 +1,4 @@
-use cts_common::claims::Audience;
+use cts_common::claims::{ServiceType, Services};
 use url::Url;
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
@@ -16,7 +16,7 @@ use crate::{AuthError, SecretToken};
 /// # Decoded claims
 ///
 /// * `issuer()` — the `iss` URL, i.e. the CTS host for this workspace.
-/// * `audience()` — the `aud` claim, typically the ZeroKMS endpoint.
+/// * `zerokms_url()` — the ZeroKMS endpoint from the `services` claim.
 ///
 /// For non-JWT tokens (e.g. static test tokens) or JWTs that don't match
 /// the CipherStash claims schema, both methods return
@@ -36,16 +36,16 @@ pub struct ServiceToken {
 #[derive(Clone, Debug)]
 struct DecodedClaims {
     issuer: Url,
-    audience: Audience,
+    services: Services,
 }
 
 impl ServiceToken {
     /// Create a `ServiceToken` from a [`SecretToken`].
     ///
-    /// If the token string is a valid JWT with `iss` and `aud` claims, they
-    /// are decoded eagerly. If decoding fails (not a JWT, missing claims, etc.)
-    /// the token is still usable as a bearer credential — `issuer()` and
-    /// `audience()` will simply return an error.
+    /// If the token string is a valid JWT with `iss` and `services` claims,
+    /// they are decoded eagerly. If decoding fails (not a JWT, missing claims,
+    /// etc.) the token is still usable as a bearer credential — `issuer()` and
+    /// `zerokms_url()` will simply return an error.
     pub fn new(secret: SecretToken) -> Self {
         let decoded = Self::try_decode(&secret);
         Self { secret, decoded }
@@ -71,46 +71,30 @@ impl ServiceToken {
             .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
-    /// Return the `aud` (audience) from the JWT claims.
+    /// Return the ZeroKMS endpoint URL from the `services` claim.
+    ///
+    /// CTS-issued JWTs include a `services` claim containing a map of service
+    /// type to endpoint URL. This method looks up the `zerokms` entry.
     ///
     /// # Errors
     ///
-    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT.
-    pub fn audience(&self) -> Result<&Audience, AuthError> {
-        self.decoded
-            .as_ref()
-            .map(|d| &d.audience)
-            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
-    }
-
-    /// Return the ZeroKMS URL derived from the first `aud` claim.
-    ///
-    /// The `aud` claim typically contains a bare hostname (e.g.
-    /// `ap-southeast-2.aws.viturhosted.net`). This method prepends `https://`
-    /// unless the value already contains a scheme or looks like a localhost address
-    /// (in which case `http://` is used).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT,
-    /// the audience is empty, or the resulting string is not a valid URL.
+    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT or
+    /// the `services` claim does not include a ZeroKMS endpoint.
     pub fn zerokms_url(&self) -> Result<Url, AuthError> {
-        let aud = self.audience()?;
-        let raw = aud
-            .first()
-            .ok_or_else(|| AuthError::InvalidToken("aud claim is empty".into()))?;
+        let decoded = self
+            .decoded
+            .as_ref()
+            .map_err(|reason| AuthError::InvalidToken(reason.clone()))?;
 
-        let url_str = if raw.starts_with("http://") || raw.starts_with("https://") {
-            raw
-        } else if raw.starts_with("localhost") || raw.starts_with("127.0.0.1") {
-            format!("http://{raw}")
-        } else {
-            format!("https://{raw}")
-        };
-
-        url_str
-            .parse()
-            .map_err(|e| AuthError::InvalidToken(format!("aud is not a valid URL: {e}")))
+        decoded
+            .services
+            .get(ServiceType::ZeroKms)
+            .cloned()
+            .ok_or_else(|| {
+                AuthError::InvalidToken(
+                    "Token does not include a ZeroKMS endpoint in the services claim".into(),
+                )
+            })
     }
 
     /// Attempt to decode the JWT claims from the token string.
@@ -144,7 +128,7 @@ impl ServiceToken {
 
         Ok(DecodedClaims {
             issuer,
-            audience: data.claims.aud,
+            services: data.claims.services,
         })
     }
 }
@@ -152,8 +136,9 @@ impl ServiceToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
-    fn make_jwt(iss: &str, aud: &str) -> String {
+    fn make_jwt(iss: &str, services: Option<BTreeMap<&str, &str>>) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -162,15 +147,19 @@ mod tests {
             .unwrap()
             .as_secs();
 
-        let claims = serde_json::json!({
+        let mut claims = serde_json::json!({
             "iss": iss,
             "sub": "CS|test-user",
-            "aud": aud,
+            "aud": "legacy-aud-value",
             "iat": now,
             "exp": now + 3600,
             "workspace": "ZVATKW3VHMFG27DY",
             "scope": "",
         });
+
+        if let Some(svc) = services {
+            claims["services"] = serde_json::to_value(svc).unwrap();
+        }
 
         encode(
             &Header::default(),
@@ -180,14 +169,20 @@ mod tests {
         .unwrap()
     }
 
+    fn services_with_zerokms(url: &str) -> Option<BTreeMap<&str, &str>> {
+        Some(BTreeMap::from([("zerokms", url)]))
+    }
+
     #[test]
-    fn jwt_token_provides_issuer_and_audience() {
-        let jwt = make_jwt("https://cts.example.com/", "https://zerokms.example.com/");
+    fn jwt_token_provides_issuer() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
         let token = ServiceToken::new(SecretToken::new(jwt.clone()));
 
         assert_eq!(token.as_str(), jwt);
         assert_eq!(token.issuer().unwrap().as_str(), "https://cts.example.com/");
-        assert!(token.audience().is_ok());
     }
 
     #[test]
@@ -204,21 +199,24 @@ mod tests {
     }
 
     #[test]
-    fn zerokms_url_prepends_https_for_bare_hostname() {
+    fn zerokms_url_from_services_claim() {
         let jwt = make_jwt(
             "https://cts.example.com/",
-            "ap-southeast-2.aws.viturhosted.net",
+            services_with_zerokms("https://zerokms.example.com/"),
         );
         let token = ServiceToken::new(SecretToken::new(jwt));
         assert_eq!(
             token.zerokms_url().unwrap().as_str(),
-            "https://ap-southeast-2.aws.viturhosted.net/"
+            "https://zerokms.example.com/"
         );
     }
 
     #[test]
-    fn zerokms_url_prepends_http_for_localhost() {
-        let jwt = make_jwt("https://cts.example.com/", "localhost:3002");
+    fn zerokms_url_from_services_claim_localhost() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("http://localhost:3002/"),
+        );
         let token = ServiceToken::new(SecretToken::new(jwt));
         assert_eq!(
             token.zerokms_url().unwrap().as_str(),
@@ -227,15 +225,13 @@ mod tests {
     }
 
     #[test]
-    fn zerokms_url_keeps_existing_scheme() {
-        let jwt = make_jwt(
-            "https://cts.example.com/",
-            "https://zerokms.example.com/",
-        );
+    fn zerokms_url_errors_when_services_claim_missing() {
+        let jwt = make_jwt("https://cts.example.com/", None);
         let token = ServiceToken::new(SecretToken::new(jwt));
-        assert_eq!(
-            token.zerokms_url().unwrap().as_str(),
-            "https://zerokms.example.com/"
+        let err = token.zerokms_url().unwrap_err().to_string();
+        assert!(
+            err.contains("services claim"),
+            "expected services claim error, got: {err}"
         );
     }
 
@@ -247,7 +243,10 @@ mod tests {
 
     #[test]
     fn debug_does_not_leak_secret() {
-        let jwt = make_jwt("https://cts.example.com/", "https://zerokms.example.com/");
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
         let token = ServiceToken::new(SecretToken::new(jwt.clone()));
         let debug = format!("{:?}", token);
         assert!(!debug.contains(&jwt));
