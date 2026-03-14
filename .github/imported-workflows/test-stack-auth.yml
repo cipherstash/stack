@@ -11,8 +11,6 @@ on:
       - "!**.example"
 
   pull_request:
-    branches:
-      - main
     paths:
       - packages/stack-auth/**
       - .github/workflows/test-stack-auth.yml
