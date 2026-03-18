@@ -43,11 +43,17 @@ impl AutoStrategy {
     /// See the [type-level docs](AutoStrategy) for the detection order.
     pub fn new() -> Result<Self, AuthError> {
         let access_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
-        let region = std::env::var("CS_REGION").ok().or_else(|| {
-            std::env::var("CS_WORKSPACE_CRN").ok().and_then(|s| {
-                s.parse::<Crn>().ok().map(|crn| crn.region.identifier())
-            })
-        });
+        let region = match std::env::var("CS_REGION").ok() {
+            Some(r) => Some(r),
+            None => std::env::var("CS_WORKSPACE_CRN")
+                .ok()
+                .map(|s| {
+                    s.parse::<Crn>()
+                        .map(|crn| crn.region.identifier())
+                        .map_err(AuthError::InvalidCrn)
+                })
+                .transpose()?,
+        };
         let store = Some(ProfileStore::resolve(None)?);
         Self::detect(access_key, region, store)
     }
