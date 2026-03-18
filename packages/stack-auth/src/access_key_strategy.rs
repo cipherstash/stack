@@ -1,4 +1,4 @@
-use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
+use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery};
 
 use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
@@ -22,7 +22,6 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Service
 /// let strategy = AccessKeyStrategy::new(region, key).unwrap();
 /// ```
 pub struct AccessKeyStrategy {
-    crn: Option<Crn>,
     inner: AutoRefresh<AccessKeyRefresher>,
 }
 
@@ -32,14 +31,6 @@ impl AccessKeyStrategy {
     /// The auth endpoint is resolved automatically via service discovery.
     pub fn new(region: Region, access_key: AccessKey) -> Result<Self, AuthError> {
         Self::builder(region, access_key).build()
-    }
-
-    /// Create a new `AccessKeyStrategy` for the given CRN and access key.
-    ///
-    /// The region is extracted from the CRN for service discovery.
-    /// The full CRN is stored and available via [`workspace_crn`](Self::workspace_crn).
-    pub fn new_with_crn(crn: Crn, access_key: AccessKey) -> Result<Self, AuthError> {
-        Self::builder(crn.region, access_key).crn(crn).build()
     }
 
     /// Return a builder for configuring an `AccessKeyStrategy` before construction.
@@ -63,13 +54,7 @@ impl AccessKeyStrategy {
             access_key: access_key.into_secret_token(),
             audience: None,
             base_url_override: None,
-            crn: None,
         }
-    }
-
-    /// Return the workspace CRN, if one was provided at construction time.
-    pub fn workspace_crn(&self) -> Option<&Crn> {
-        self.crn.as_ref()
     }
 }
 
@@ -87,19 +72,12 @@ pub struct AccessKeyStrategyBuilder {
     access_key: SecretToken,
     audience: Option<String>,
     base_url_override: Option<url::Url>,
-    crn: Option<Crn>,
 }
 
 impl AccessKeyStrategyBuilder {
     /// Set the audience for token requests.
     pub fn audience(mut self, audience: impl Into<String>) -> Self {
         self.audience = Some(audience.into());
-        self
-    }
-
-    /// Associate a workspace CRN with this strategy.
-    pub fn crn(mut self, crn: Crn) -> Self {
-        self.crn = Some(crn);
         self
     }
 
@@ -128,7 +106,6 @@ impl AccessKeyStrategyBuilder {
             self.audience,
         );
         Ok(AccessKeyStrategy {
-            crn: self.crn,
             inner: AutoRefresh::new(refresher),
         })
     }
