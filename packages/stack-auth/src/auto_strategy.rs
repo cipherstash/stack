@@ -70,7 +70,7 @@ impl AutoStrategy {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
             let region_str = region.ok_or(AuthError::NotAuthenticated)?;
-            let region = Region::new(&region_str).map_err(AuthError::from)?;
+            let region = Region::new(&region_str)?;
             let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::new(region, key)?;
             return Ok(Self::AccessKey(strategy));
