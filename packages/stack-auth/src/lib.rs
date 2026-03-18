@@ -22,7 +22,7 @@
 //! use stack_auth::AutoStrategy;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! let strategy = AutoStrategy::new()?;
+//! let strategy = AutoStrategy::detect()?;
 //! // That's it — get_token() handles the rest.
 //! # Ok(())
 //! # }
@@ -95,7 +95,7 @@ mod static_token_strategy;
 
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
-pub use auto_strategy::AutoStrategy;
+pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use service_token::ServiceToken;

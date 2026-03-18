@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   1. CS_CLIENT_ACCESS_KEY env var  → AccessKeyStrategy
     //   2. ~/.cipherstash/auth.json file → OAuthStrategy
     //   3. Neither                       → error
-    let strategy = AutoStrategy::new()?;
+    let strategy = AutoStrategy::detect()?;
 
     match &strategy {
         AutoStrategy::AccessKey(_) => println!("Using access key authentication"),
