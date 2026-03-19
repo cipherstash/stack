@@ -51,17 +51,6 @@ pub enum AutoStrategy {
 }
 
 impl AutoStrategy {
-    /// Detect available credentials and build the appropriate strategy.
-    ///
-    /// See the [type-level docs](AutoStrategy) for the detection order.
-    #[deprecated(
-        since = "0.35.0",
-        note = "Use `AutoStrategy::detect()` or `AutoStrategy::builder().detect()` instead"
-    )]
-    pub fn new() -> Result<Self, AuthError> {
-        Self::detect()
-    }
-
     /// Create a builder for configuring credential resolution.
     ///
     /// The builder lets callers provide explicit values (access key, region)
