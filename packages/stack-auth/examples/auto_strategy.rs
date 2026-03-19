@@ -4,8 +4,8 @@
 //! requiring the caller to choose one explicitly. It checks for credentials
 //! in the following order:
 //!
-//! 1. **Access key** – if `CS_CLIENT_ACCESS_KEY` and `CS_WORKSPACE_CRN` are
-//!    set, an [`AccessKeyStrategy`] is used.
+//! 1. **Access key** – if `CS_CLIENT_ACCESS_KEY` is set along with
+//!    `CS_WORKSPACE_CRN`, an [`AccessKeyStrategy`] is used.
 //! 2. **OAuth** – if a token store file exists at `~/.cipherstash/auth.json`
 //!    (written by `stash login`), an [`OAuthStrategy`] is used.
 //! 3. If neither is available, an error is returned.
@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   1. CS_CLIENT_ACCESS_KEY env var  → AccessKeyStrategy
     //   2. ~/.cipherstash/auth.json file → OAuthStrategy
     //   3. Neither                       → error
-    let strategy = AutoStrategy::new()?;
+    let strategy = AutoStrategy::detect()?;
 
     match &strategy {
         AutoStrategy::AccessKey(_) => println!("Using access key authentication"),

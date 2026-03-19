@@ -18,15 +18,28 @@ use crate::{AuthError, AuthStrategy, ServiceToken, Token};
 ///    (`~/.cipherstash/auth.json`), an [`OAuthStrategy`] is created from it.
 /// 3. Otherwise, [`AuthError::NotAuthenticated`] is returned.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```no_run
 /// use stack_auth::{AuthStrategy, AutoStrategy};
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// let strategy = AutoStrategy::new()?;
+/// // Auto-detect from env vars + profile store
+/// let strategy = AutoStrategy::detect()?;
 /// let token = (&strategy).get_token().await?;
 /// println!("Authenticated! token={:?}", token);
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ```no_run
+/// use stack_auth::AutoStrategy;
+///
+/// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// // Provide explicit values with env/profile fallback
+/// let strategy = AutoStrategy::builder()
+///     .with_access_key("CSAK...")
+///     .detect()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -38,31 +51,61 @@ pub enum AutoStrategy {
 }
 
 impl AutoStrategy {
-    /// Detect available credentials and build the appropriate strategy.
+    /// Create a builder for configuring credential resolution.
     ///
-    /// See the [type-level docs](AutoStrategy) for the detection order.
-    pub fn new() -> Result<Self, AuthError> {
-        let access_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
-        let crn = std::env::var("CS_WORKSPACE_CRN").ok();
-        let store = Some(ProfileStore::resolve(None)?);
-        Self::detect(access_key, crn, store)
+    /// The builder lets callers provide explicit values (access key, workspace CRN)
+    /// that take precedence over environment variables and the profile store.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use stack_auth::AutoStrategy;
+    /// use cts_common::Crn;
+    ///
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let crn: Crn = "crn:ap-southeast-2.aws:workspace-id".parse()?;
+    /// let strategy = AutoStrategy::builder()
+    ///     .with_access_key("CSAKmyKeyId.myKeySecret")
+    ///     .with_workspace_crn(crn)
+    ///     .detect()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn builder() -> AutoStrategyBuilder {
+        AutoStrategyBuilder {
+            access_key: None,
+            crn: None,
+        }
+    }
+
+    /// Detect credentials from environment variables and profile store.
+    ///
+    /// Equivalent to `AutoStrategy::builder().detect()`.
+    ///
+    /// Resolution order:
+    /// 1. `CS_CLIENT_ACCESS_KEY` env var → [`AccessKeyStrategy`]
+    /// 2. `~/.cipherstash/auth.json` → [`OAuthStrategy`]
+    /// 3. [`AuthError::NotAuthenticated`]
+    pub fn detect() -> Result<Self, AuthError> {
+        Self::builder().detect()
     }
 
     /// Core detection logic, separated for testability.
     ///
     /// Takes pre-resolved inputs rather than reading from the environment
     /// or filesystem directly.
-    fn detect(
+    fn detect_inner(
         access_key: Option<String>,
-        crn: Option<String>,
+        crn: Option<Crn>,
         store: Option<ProfileStore>,
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
-            let crn_str = crn.ok_or(AuthError::NotAuthenticated)?;
-            let crn: Crn = crn_str.parse().map_err(AuthError::InvalidCrn)?;
+            let region = crn
+                .map(|c| c.region)
+                .ok_or(AuthError::MissingWorkspaceCrn)?;
             let key: crate::AccessKey = access_key.parse()?;
-            let strategy = AccessKeyStrategy::new_with_crn(crn, key)?;
+            let strategy = AccessKeyStrategy::new(region, key)?;
             return Ok(Self::AccessKey(strategy));
         }
 
@@ -79,23 +122,69 @@ impl AutoStrategy {
     }
 }
 
-impl AutoStrategy {
-    /// Return the workspace CRN from the inner strategy.
+/// Builder for configuring credential resolution before calling [`detect()`](AutoStrategyBuilder::detect).
+///
+/// Explicit values provided via builder methods take precedence over environment variables.
+/// Environment variables take precedence over the profile store.
+///
+/// # Example
+///
+/// ```no_run
+/// use stack_auth::AutoStrategy;
+///
+/// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// // Provide access key explicitly, region from CS_WORKSPACE_CRN env var
+/// let strategy = AutoStrategy::builder()
+///     .with_access_key("CSAKmyKeyId.myKeySecret")
+///     .detect()?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct AutoStrategyBuilder {
+    access_key: Option<String>,
+    crn: Option<Crn>,
+}
+
+impl AutoStrategyBuilder {
+    /// Provide an explicit access key. Takes precedence over env vars.
+    pub fn with_access_key(mut self, access_key: impl Into<String>) -> Self {
+        self.access_key = Some(access_key.into());
+        self
+    }
+
+    /// Provide an explicit workspace CRN. Takes precedence over env vars.
+    pub fn with_workspace_crn(mut self, crn: Crn) -> Self {
+        self.crn = Some(crn);
+        self
+    }
+
+    /// Resolve the auth strategy.
     ///
-    /// For [`AccessKeyStrategy`], this is the CRN parsed from the `CS_WORKSPACE_CRN`
-    /// environment variable. For [`OAuthStrategy`], this is extracted from the stored
-    /// token's claims.
-    pub fn workspace_crn(&self) -> Result<Crn, AuthError> {
-        match self {
-            AutoStrategy::AccessKey(inner) => inner
-                .workspace_crn()
-                .cloned()
-                .ok_or(AuthError::NotAuthenticated),
-            AutoStrategy::OAuth(inner) => inner
-                .workspace_crn()
-                .cloned()
-                .ok_or(AuthError::NotAuthenticated),
-        }
+    /// Resolution order:
+    /// 1. Explicit values provided via builder methods
+    /// 2. Environment variables (`CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN`)
+    /// 3. Profile store (`~/.cipherstash/auth.json` for OAuth)
+    /// 4. [`AuthError::NotAuthenticated`]
+    pub fn detect(self) -> Result<AutoStrategy, AuthError> {
+        // Merge explicit values with env vars (explicit wins)
+        let access_key = self
+            .access_key
+            .or_else(|| std::env::var("CS_CLIENT_ACCESS_KEY").ok());
+
+        let crn = match self.crn {
+            Some(crn) => Some(crn),
+            None => std::env::var("CS_WORKSPACE_CRN")
+                .ok()
+                .map(|s| s.parse::<Crn>().map_err(AuthError::InvalidCrn))
+                .transpose()?,
+        };
+
+        // Resolve errors (e.g. missing profile directory) are intentionally
+        // swallowed here so that env-var-only setups don't need a profile dir.
+        // If no credentials are found at all, NotAuthenticated is returned.
+        let store = ProfileStore::resolve(None).ok();
+
+        AutoStrategy::detect_inner(access_key, crn, store)
     }
 }
 
@@ -115,6 +204,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
+
+    fn valid_crn() -> Crn {
+        VALID_CRN.parse().unwrap()
+    }
 
     fn make_oauth_token() -> Token {
         let now = SystemTime::now()
@@ -152,84 +245,139 @@ mod tests {
         store
     }
 
-    #[test]
-    fn access_key_with_valid_crn() {
-        let result = AutoStrategy::detect(
-            Some("CSAKtestKeyId.testKeySecret".into()),
-            Some(VALID_CRN.into()),
-            None,
-        );
+    mod detect_inner {
+        use super::*;
 
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
+        #[test]
+        fn access_key_with_valid_crn() {
+            let result = AutoStrategy::detect_inner(
+                Some("CSAKtestKeyId.testKeySecret".into()),
+                Some(valid_crn()),
+                None,
+            );
+
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
+        }
+
+        #[test]
+        fn access_key_without_crn_returns_missing_workspace_crn() {
+            let result =
+                AutoStrategy::detect_inner(Some("CSAKtestKeyId.testKeySecret".into()), None, None);
+
+            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
+        }
+
+        #[test]
+        fn invalid_access_key_format_returns_invalid_access_key() {
+            let result =
+                AutoStrategy::detect_inner(Some("not-a-valid-key".into()), Some(valid_crn()), None);
+
+            assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
+        }
+
+        #[test]
+        fn oauth_store_with_valid_token() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = write_token_store(dir.path());
+
+            let result = AutoStrategy::detect_inner(None, None, Some(store));
+
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), AutoStrategy::OAuth(_)));
+        }
+
+        #[test]
+        fn oauth_store_without_token_file_returns_not_authenticated() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+
+            let result = AutoStrategy::detect_inner(None, None, Some(store));
+
+            assert!(matches!(result, Err(AuthError::NotAuthenticated)));
+        }
+
+        #[test]
+        fn no_credentials_returns_not_authenticated() {
+            let result = AutoStrategy::detect_inner(None, None, None);
+
+            assert!(matches!(result, Err(AuthError::NotAuthenticated)));
+        }
+
+        #[test]
+        fn access_key_takes_priority_over_oauth_store() {
+            let dir = tempfile::tempdir().unwrap();
+            let store = write_token_store(dir.path());
+
+            let result = AutoStrategy::detect_inner(
+                Some("CSAKtestKeyId.testKeySecret".into()),
+                Some(valid_crn()),
+                Some(store),
+            );
+
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
+        }
     }
 
-    #[test]
-    fn access_key_without_crn_returns_not_authenticated() {
-        let result = AutoStrategy::detect(Some("CSAKtestKeyId.testKeySecret".into()), None, None);
+    mod builder {
+        use super::*;
 
-        assert!(matches!(result, Err(AuthError::NotAuthenticated)));
-    }
+        #[test]
+        fn explicit_access_key_and_crn() {
+            let result = AutoStrategy::builder()
+                .with_access_key("CSAKtestKeyId.testKeySecret")
+                .with_workspace_crn(valid_crn())
+                .detect();
 
-    #[test]
-    fn invalid_access_key_format_returns_invalid_access_key() {
-        let result =
-            AutoStrategy::detect(Some("not-a-valid-key".into()), Some(VALID_CRN.into()), None);
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
+        }
 
-        assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
-    }
+        #[test]
+        fn explicit_access_key_without_crn_and_no_env_returns_missing_workspace_crn() {
+            // Save and clear env to ensure no fallback
+            let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
+            std::env::remove_var("CS_WORKSPACE_CRN");
 
-    #[test]
-    fn access_key_with_invalid_crn_returns_invalid_crn() {
-        let result = AutoStrategy::detect(
-            Some("CSAKtestKeyId.testKeySecret".into()),
-            Some("not-a-crn".into()),
-            None,
-        );
+            let result = AutoStrategy::builder()
+                .with_access_key("CSAKtestKeyId.testKeySecret")
+                .detect();
 
-        assert!(matches!(result, Err(AuthError::InvalidCrn(_))));
-    }
+            // Restore env
+            if let Some(val) = saved_crn {
+                std::env::set_var("CS_WORKSPACE_CRN", val);
+            }
 
-    #[test]
-    fn oauth_store_with_valid_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = write_token_store(dir.path());
+            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
+        }
 
-        let result = AutoStrategy::detect(None, None, Some(store));
+        #[test]
+        fn invalid_crn_env_var_returns_invalid_crn() {
+            let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
+            std::env::set_var("CS_WORKSPACE_CRN", "not-a-crn");
 
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), AutoStrategy::OAuth(_)));
-    }
+            let result = AutoStrategy::builder()
+                .with_access_key("CSAKtestKeyId.testKeySecret")
+                .detect();
 
-    #[test]
-    fn oauth_store_without_token_file_returns_not_authenticated() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = ProfileStore::new(dir.path());
+            // Restore env
+            match saved_crn {
+                Some(val) => std::env::set_var("CS_WORKSPACE_CRN", val),
+                None => std::env::remove_var("CS_WORKSPACE_CRN"),
+            }
 
-        let result = AutoStrategy::detect(None, None, Some(store));
+            assert!(matches!(result, Err(AuthError::InvalidCrn(_))));
+        }
 
-        assert!(matches!(result, Err(AuthError::NotAuthenticated)));
-    }
+        #[test]
+        fn invalid_explicit_access_key_returns_invalid_access_key() {
+            let result = AutoStrategy::builder()
+                .with_access_key("not-a-valid-key")
+                .with_workspace_crn(valid_crn())
+                .detect();
 
-    #[test]
-    fn no_credentials_returns_not_authenticated() {
-        let result = AutoStrategy::detect(None, None, None);
-
-        assert!(matches!(result, Err(AuthError::NotAuthenticated)));
-    }
-
-    #[test]
-    fn access_key_takes_priority_over_oauth_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = write_token_store(dir.path());
-
-        let result = AutoStrategy::detect(
-            Some("CSAKtestKeyId.testKeySecret".into()),
-            Some(VALID_CRN.into()),
-            Some(store),
-        );
-
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), AutoStrategy::AccessKey(_)));
+            assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
+        }
     }
 }

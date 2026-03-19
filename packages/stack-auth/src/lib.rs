@@ -1,36 +1,43 @@
-//! Authenticate with [CipherStash](https://cipherstash.com) services using the
-//! [OAuth 2.0 Device Authorization Grant](https://datatracker.ietf.org/doc/html/rfc8628).
+//! Authentication strategies for [CipherStash](https://cipherstash.com) services.
 //!
-//! This crate implements the device code flow, which lets CLI tools and other
-//! browserless applications obtain an access token by having the user authorize
-//! in a browser on another device.
+//! All strategies implement the [`AuthStrategy`] trait, which provides a single
+//! [`get_token`](AuthStrategy::get_token) method that returns a valid
+//! [`ServiceToken`]. Token caching and refresh are handled automatically.
 //!
-//! # Usage
+//! # Strategies
+//!
+//! | Strategy | Use case | Credentials |
+//! |---|---|---|
+//! | [`AutoStrategy`] | Recommended default — detects credentials automatically | `CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`, or `~/.cipherstash/auth.json` |
+//! | [`AccessKeyStrategy`] | Service-to-service / CI | Static access key + region |
+//! | [`OAuthStrategy`] | Long-lived sessions with refresh | OAuth token (from device code flow or disk) |
+//! | [`DeviceCodeStrategy`] | CLI login ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) | User authorizes in browser |
+//! | `StaticTokenStrategy` | Tests only (`test-utils` feature) | Pre-obtained token used as-is |
+//!
+//! # Quick start
+//!
+//! For most applications, [`AutoStrategy`] is the simplest way to get started:
 //!
 //! ```no_run
-//! use stack_auth::DeviceCodeStrategy;
-//! use cts_common::Region;
+//! use stack_auth::AutoStrategy;
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-//! // 1. Create a strategy for your region and client ID
+//! let strategy = AutoStrategy::detect()?;
+//! // That's it — get_token() handles the rest.
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For service-to-service authentication with an access key:
+//!
+//! ```no_run
+//! use stack_auth::AccessKeyStrategy;
+//! use cts_common::Region;
+//!
+//! # fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! let region = Region::aws("ap-southeast-2")?;
-//! let strategy = DeviceCodeStrategy::new(region, "my-client-id")?;
-//!
-//! // 2. Begin the device code flow
-//! let pending = strategy.begin().await?;
-//!
-//! // 3. Show the user their code and where to enter it
-//! println!("Go to: {}", pending.verification_uri_complete());
-//! println!("Code:  {}", pending.user_code());
-//!
-//! // Or open the browser directly:
-//! pending.open_in_browser();
-//!
-//! // 4. Poll until the user authorizes (or the code expires)
-//! let token = pending.poll_for_token().await?;
-//!
-//! // 5. Use the access token to call CipherStash APIs
-//! println!("Authenticated! Token expires in {}s", token.expires_in());
+//! let key = "CSAKkeyId.keySecret".parse()?;
+//! let strategy = AccessKeyStrategy::new(region, key)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -88,7 +95,7 @@ mod static_token_strategy;
 
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
-pub use auto_strategy::AutoStrategy;
+pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
 pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use service_token::ServiceToken;
@@ -164,6 +171,12 @@ pub enum AuthError {
     /// The workspace CRN could not be parsed.
     #[error("Invalid workspace CRN: {0}")]
     InvalidCrn(cts_common::InvalidCrn),
+    /// An access key was provided but the workspace CRN is missing.
+    ///
+    /// Set the `CS_WORKSPACE_CRN` environment variable or call
+    /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
+    #[error("Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn")]
+    MissingWorkspaceCrn,
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
     NotAuthenticated,
