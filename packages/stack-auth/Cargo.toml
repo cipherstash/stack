@@ -1,10 +1,12 @@
 [package]
 name = "stack-auth"
+description = "Authentication library for CipherStash services"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
+license-file = "LICENSE"
 
 [dependencies]
 aquamarine = "0.6"
