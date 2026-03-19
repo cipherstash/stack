@@ -1,4 +1,4 @@
-use cts_common::{Crn, Region};
+use cts_common::Crn;
 
 use crate::access_key_strategy::AccessKeyStrategy;
 use crate::oauth_strategy::OAuthStrategy;
@@ -53,19 +53,20 @@ pub enum AutoStrategy {
 impl AutoStrategy {
     /// Create a builder for configuring credential resolution.
     ///
-    /// The builder lets callers provide explicit values (access key, region)
+    /// The builder lets callers provide explicit values (access key, workspace CRN)
     /// that take precedence over environment variables and the profile store.
     ///
     /// # Example
     ///
     /// ```no_run
     /// use stack_auth::AutoStrategy;
-    /// use cts_common::Region;
+    /// use cts_common::Crn;
     ///
     /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let crn: Crn = "crn:ap-southeast-2.aws:workspace-id".parse()?;
     /// let strategy = AutoStrategy::builder()
     ///     .with_access_key("CSAKmyKeyId.myKeySecret")
-    ///     .with_region(Region::aws("ap-southeast-2")?)
+    ///     .with_workspace_crn(crn)
     ///     .detect()?;
     /// # Ok(())
     /// # }
@@ -73,7 +74,7 @@ impl AutoStrategy {
     pub fn builder() -> AutoStrategyBuilder {
         AutoStrategyBuilder {
             access_key: None,
-            region: None,
+            crn: None,
         }
     }
 
@@ -95,13 +96,14 @@ impl AutoStrategy {
     /// or filesystem directly.
     fn detect_inner(
         access_key: Option<String>,
-        region: Option<String>,
+        crn: Option<Crn>,
         store: Option<ProfileStore>,
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
-            let region_str = region.ok_or(AuthError::NotAuthenticated)?;
-            let region = Region::new(&region_str)?;
+            let region = crn
+                .map(|c| c.region)
+                .ok_or(AuthError::MissingWorkspaceCrn)?;
             let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::new(region, key)?;
             return Ok(Self::AccessKey(strategy));
@@ -140,7 +142,7 @@ impl AutoStrategy {
 /// ```
 pub struct AutoStrategyBuilder {
     access_key: Option<String>,
-    region: Option<Region>,
+    crn: Option<Crn>,
 }
 
 impl AutoStrategyBuilder {
@@ -150,9 +152,9 @@ impl AutoStrategyBuilder {
         self
     }
 
-    /// Provide an explicit region. Takes precedence over env vars.
-    pub fn with_region(mut self, region: impl Into<Region>) -> Self {
-        self.region = Some(region.into());
+    /// Provide an explicit workspace CRN. Takes precedence over env vars.
+    pub fn with_workspace_crn(mut self, crn: Crn) -> Self {
+        self.crn = Some(crn);
         self
     }
 
@@ -160,7 +162,7 @@ impl AutoStrategyBuilder {
     ///
     /// Resolution order:
     /// 1. Explicit values provided via builder methods
-    /// 2. Environment variables (`CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN` for region)
+    /// 2. Environment variables (`CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN`)
     /// 3. Profile store (`~/.cipherstash/auth.json` for OAuth)
     /// 4. [`AuthError::NotAuthenticated`]
     pub fn detect(self) -> Result<AutoStrategy, AuthError> {
@@ -169,16 +171,15 @@ impl AutoStrategyBuilder {
             .access_key
             .or_else(|| std::env::var("CS_CLIENT_ACCESS_KEY").ok());
 
-        let region = self.region.map(|r| r.identifier()).or_else(|| {
+        let crn = self.crn.or_else(|| {
             std::env::var("CS_WORKSPACE_CRN")
                 .ok()
                 .and_then(|s| s.parse::<Crn>().ok())
-                .map(|crn| crn.region.identifier())
         });
 
         let store = ProfileStore::resolve(None).ok();
 
-        AutoStrategy::detect_inner(access_key, region, store)
+        AutoStrategy::detect_inner(access_key, crn, store)
     }
 }
 
@@ -197,7 +198,11 @@ mod tests {
     use crate::{SecretToken, Token};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    const VALID_REGION: &str = "ap-southeast-2.aws";
+    const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
+
+    fn valid_crn() -> Crn {
+        VALID_CRN.parse().unwrap()
+    }
 
     fn make_oauth_token() -> Token {
         let now = SystemTime::now()
@@ -239,10 +244,10 @@ mod tests {
         use super::*;
 
         #[test]
-        fn access_key_with_valid_region() {
+        fn access_key_with_valid_crn() {
             let result = AutoStrategy::detect_inner(
                 Some("CSAKtestKeyId.testKeySecret".into()),
-                Some(VALID_REGION.into()),
+                Some(valid_crn()),
                 None,
             );
 
@@ -251,33 +256,19 @@ mod tests {
         }
 
         #[test]
-        fn access_key_without_region_returns_not_authenticated() {
+        fn access_key_without_crn_returns_missing_workspace_crn() {
             let result =
                 AutoStrategy::detect_inner(Some("CSAKtestKeyId.testKeySecret".into()), None, None);
 
-            assert!(matches!(result, Err(AuthError::NotAuthenticated)));
+            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
         }
 
         #[test]
         fn invalid_access_key_format_returns_invalid_access_key() {
-            let result = AutoStrategy::detect_inner(
-                Some("not-a-valid-key".into()),
-                Some(VALID_REGION.into()),
-                None,
-            );
+            let result =
+                AutoStrategy::detect_inner(Some("not-a-valid-key".into()), Some(valid_crn()), None);
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));
-        }
-
-        #[test]
-        fn access_key_with_invalid_region_returns_error() {
-            let result = AutoStrategy::detect_inner(
-                Some("CSAKtestKeyId.testKeySecret".into()),
-                Some("not-a-region".into()),
-                None,
-            );
-
-            assert!(matches!(result, Err(AuthError::Region(_))));
         }
 
         #[test]
@@ -315,7 +306,7 @@ mod tests {
 
             let result = AutoStrategy::detect_inner(
                 Some("CSAKtestKeyId.testKeySecret".into()),
-                Some(VALID_REGION.into()),
+                Some(valid_crn()),
                 Some(store),
             );
 
@@ -328,10 +319,10 @@ mod tests {
         use super::*;
 
         #[test]
-        fn explicit_access_key_and_region() {
+        fn explicit_access_key_and_crn() {
             let result = AutoStrategy::builder()
                 .with_access_key("CSAKtestKeyId.testKeySecret")
-                .with_region(Region::new(VALID_REGION).unwrap())
+                .with_workspace_crn(valid_crn())
                 .detect();
 
             assert!(result.is_ok());
@@ -339,7 +330,7 @@ mod tests {
         }
 
         #[test]
-        fn explicit_access_key_without_region_and_no_env_returns_not_authenticated() {
+        fn explicit_access_key_without_crn_and_no_env_returns_missing_workspace_crn() {
             // Save and clear env to ensure no fallback
             let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
             std::env::remove_var("CS_WORKSPACE_CRN");
@@ -353,14 +344,14 @@ mod tests {
                 std::env::set_var("CS_WORKSPACE_CRN", val);
             }
 
-            assert!(matches!(result, Err(AuthError::NotAuthenticated)));
+            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
         }
 
         #[test]
         fn invalid_explicit_access_key_returns_invalid_access_key() {
             let result = AutoStrategy::builder()
                 .with_access_key("not-a-valid-key")
-                .with_region(Region::new(VALID_REGION).unwrap())
+                .with_workspace_crn(valid_crn())
                 .detect();
 
             assert!(matches!(result, Err(AuthError::InvalidAccessKey(_))));

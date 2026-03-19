@@ -171,6 +171,12 @@ pub enum AuthError {
     /// The workspace CRN could not be parsed.
     #[error("Invalid workspace CRN: {0}")]
     InvalidCrn(cts_common::InvalidCrn),
+    /// An access key was provided but the workspace CRN is missing.
+    ///
+    /// Set the `CS_WORKSPACE_CRN` environment variable or call
+    /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
+    #[error("CS_WORKSPACE_CRN is required when using an access key")]
+    MissingWorkspaceCrn,
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
     NotAuthenticated,
