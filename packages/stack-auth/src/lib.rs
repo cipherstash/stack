@@ -8,7 +8,7 @@
 //!
 //! | Strategy | Use case | Credentials |
 //! |---|---|---|
-//! | [`AutoStrategy`] | Recommended default — detects credentials automatically | `CS_CLIENT_ACCESS_KEY` + `CS_REGION`, or `~/.cipherstash/auth.json` |
+//! | [`AutoStrategy`] | Recommended default — detects credentials automatically | `CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`, or `~/.cipherstash/auth.json` |
 //! | [`AccessKeyStrategy`] | Service-to-service / CI | Static access key + region |
 //! | [`OAuthStrategy`] | Long-lived sessions with refresh | OAuth token (from device code flow or disk) |
 //! | [`DeviceCodeStrategy`] | CLI login ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) | User authorizes in browser |

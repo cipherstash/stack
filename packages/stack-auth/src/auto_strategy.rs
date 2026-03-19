@@ -142,7 +142,7 @@ impl AutoStrategy {
 /// use stack_auth::AutoStrategy;
 ///
 /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// // Provide access key explicitly, region from env
+/// // Provide access key explicitly, region from CS_WORKSPACE_CRN env var
 /// let strategy = AutoStrategy::builder()
 ///     .with_access_key("CSAKmyKeyId.myKeySecret")
 ///     .detect()?;
@@ -171,7 +171,7 @@ impl AutoStrategyBuilder {
     ///
     /// Resolution order:
     /// 1. Explicit values provided via builder methods
-    /// 2. Environment variables (`CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN`)
+    /// 2. Environment variables (`CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN` for region)
     /// 3. Profile store (`~/.cipherstash/auth.json` for OAuth)
     /// 4. [`AuthError::NotAuthenticated`]
     pub fn detect(self) -> Result<AutoStrategy, AuthError> {
