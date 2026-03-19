@@ -175,7 +175,7 @@ pub enum AuthError {
     ///
     /// Set the `CS_WORKSPACE_CRN` environment variable or call
     /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
-    #[error("CS_WORKSPACE_CRN is required when using an access key")]
+    #[error("Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn")]
     MissingWorkspaceCrn,
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
