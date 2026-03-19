@@ -171,12 +171,17 @@ impl AutoStrategyBuilder {
             .access_key
             .or_else(|| std::env::var("CS_CLIENT_ACCESS_KEY").ok());
 
-        let crn = self.crn.or_else(|| {
-            std::env::var("CS_WORKSPACE_CRN")
+        let crn = match self.crn {
+            Some(crn) => Some(crn),
+            None => std::env::var("CS_WORKSPACE_CRN")
                 .ok()
-                .and_then(|s| s.parse::<Crn>().ok())
-        });
+                .map(|s| s.parse::<Crn>().map_err(AuthError::InvalidCrn))
+                .transpose()?,
+        };
 
+        // Resolve errors (e.g. missing profile directory) are intentionally
+        // swallowed here so that env-var-only setups don't need a profile dir.
+        // If no credentials are found at all, NotAuthenticated is returned.
         let store = ProfileStore::resolve(None).ok();
 
         AutoStrategy::detect_inner(access_key, crn, store)
@@ -345,6 +350,24 @@ mod tests {
             }
 
             assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
+        }
+
+        #[test]
+        fn invalid_crn_env_var_returns_invalid_crn() {
+            let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
+            std::env::set_var("CS_WORKSPACE_CRN", "not-a-crn");
+
+            let result = AutoStrategy::builder()
+                .with_access_key("CSAKtestKeyId.testKeySecret")
+                .detect();
+
+            // Restore env
+            match saved_crn {
+                Some(val) => std::env::set_var("CS_WORKSPACE_CRN", val),
+                None => std::env::remove_var("CS_WORKSPACE_CRN"),
+            }
+
+            assert!(matches!(result, Err(AuthError::InvalidCrn(_))));
         }
 
         #[test]
