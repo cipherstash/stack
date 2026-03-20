@@ -1349,4 +1349,93 @@ mod stress_tests {
             assert_eq!(stats2.total(), 1, "only one retry refresh should be made");
         }
     }
+
+    mod given_cancelled_refresh {
+        use super::*;
+
+        /// If a blocking refresh (fully expired token) is cancelled mid-flight,
+        /// the `CancelGuard` must reset `refresh_in_progress` and notify waiters
+        /// so the next caller doesn't hang in `wait_for_in_flight_refresh`.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn blocked_callers_recover_after_cancellation() {
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: Duration::from_secs(10), // Very slow — will be cancelled
+            };
+            let (base_url, _) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("expired-token", 0, true),
+            ));
+
+            // Spawn get_token and let the blocking refresh start.
+            let s = Arc::clone(&strategy);
+            let handle = tokio::spawn(async move { s.get_token().await });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // Cancel the refresh mid-flight.
+            handle.abort();
+            let _ = handle.await;
+
+            // The next caller must not hang. The credential is lost (refresh
+            // token was taken before the HTTP call), so the result is Expired,
+            // but the important thing is that it completes promptly.
+            let s = Arc::clone(&strategy);
+            let result = tokio::time::timeout(Duration::from_secs(2), s.get_token()).await;
+
+            assert!(
+                result.is_ok(),
+                "get_token() should not hang after cancelled blocking refresh"
+            );
+        }
+
+        /// If a non-blocking refresh (expiring-but-usable token) is cancelled
+        /// mid-flight, the `CancelGuard` must reset `refresh_in_progress` and
+        /// notify waiters so they don't hang once the token crosses real expiry.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn non_blocking_callers_recover_after_cancellation() {
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: Duration::from_secs(10), // Very slow — will be cancelled
+            };
+            let (base_url, _) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            // Token expires in 30s — is_expired() = true, is_usable() = true.
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("still-usable", 30, true),
+            ));
+
+            // Spawn get_token — triggers non-blocking refresh, drops lock, then
+            // blocks on the slow HTTP call.
+            let s = Arc::clone(&strategy);
+            let handle = tokio::spawn(async move { s.get_token().await });
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // Cancel the refresh mid-flight.
+            handle.abort();
+            let _ = handle.await;
+
+            // The next caller must not hang. The token is still usable so it
+            // should be returned even though the refresh was cancelled.
+            let s = Arc::clone(&strategy);
+            let result = tokio::time::timeout(Duration::from_secs(2), s.get_token()).await;
+
+            assert!(
+                result.is_ok(),
+                "get_token() should not hang after cancelled non-blocking refresh"
+            );
+            let result = result.unwrap();
+            assert!(
+                result.is_ok(),
+                "expected Ok with still-usable token, got: {:?}",
+                result.unwrap_err()
+            );
+        }
+    }
 }
