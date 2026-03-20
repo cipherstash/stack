@@ -33,72 +33,8 @@ impl From<AutoRefreshError> for crate::AuthError {
 /// Caches a token in memory and uses a [`Refresher`] to re-authenticate
 /// or refresh before expiry.
 ///
-/// # Concurrency model
-///
-/// Internal state is protected by a [`tokio::sync::Mutex`]. The key design
-/// decision is *when* the lock is held during a refresh, which depends on
-/// whether the current token is still usable as a bearer credential:
-///
-/// - [`Token::is_expired()`] — returns `true` when the token is within **90
-///   seconds** of its `expires_at` timestamp. This triggers a preemptive
-///   refresh attempt.
-/// - [`Token::is_usable()`] — returns `true` when the token has **not yet
-///   reached** its `expires_at` timestamp. A token can be "expired" (in the
-///   leeway sense) but still "usable" (the server will still accept it).
-///
-/// This distinction enables two concurrent refresh strategies:
-///
-/// 1. **Expiring but still usable** — The refreshing caller drops the lock
-///    before making the HTTP request. Concurrent callers acquire the lock and
-///    receive the current (still-valid) token immediately.
-/// 2. **Fully expired** — The refreshing caller holds the lock through the
-///    HTTP request. Concurrent callers block on `lock().await` until the
-///    refresh completes, then see the new token.
-///
-/// Cascade prevention: the `refresh_in_progress` flag prevents multiple
-/// callers from initiating concurrent refreshes.
-///
-/// # Flow diagram
-///
-/// ```mermaid
-/// flowchart TD
-///     Start["get_token()"] --> Lock["Acquire lock"]
-///     Lock --> Cached{Token cached?}
-///     Cached -- No --> InitAuth["initial_auth()
-///     (lock HELD)"]
-///     InitAuth -- OK --> ReturnNew["Return Ok(new token)"]
-///     InitAuth -- NotFound --> ErrNotFound["Return NotFound"]
-///     InitAuth -- Err --> ErrAuth["Return Auth(err)"]
-///     Cached -- Yes --> CheckRefresh{is_expired?}
-///
-///     CheckRefresh -- "No (fresh)" --> ServiceToken["service_token()"]
-///     ServiceToken --> ReturnOk["Return Ok(token)"]
-///
-///     CheckRefresh -- "Yes (needs refresh)" --> InProgress{refresh_in_progress?}
-///     InProgress -- Yes --> WaitHelper["wait_for_in_flight_refresh()
-///     (drops lock)"]
-///     WaitHelper -- "usable" --> ReturnOk
-///     WaitHelper -- "wait + recheck" --> ReturnOk
-///     WaitHelper -- "expired" --> ErrExpired["Return Expired"]
-///
-///     InProgress -- No --> TryCred{try_credential}
-///     TryCred -- None --> RequireUsable["require_usable_token()"]
-///     RequireUsable -- Ok --> ReturnOk
-///     RequireUsable -- Err --> ErrExpired
-///
-///     TryCred -- "Some(cred)" --> SetFlag["refresh_in_progress = true"]
-///     SetFlag --> Usable{is_usable?}
-///
-///     Usable -- "Yes (expiring but usable)" --> NonBlocking["refresh_non_blocking()
-///     (drops lock, notifies waiters)"]
-///     NonBlocking --> ReturnOld["Return Ok(old token)"]
-///
-///     Usable -- "No (fully expired)" --> Blocking["refresh_blocking()
-///     (lock HELD, no notify)"]
-///     Blocking -- OK --> ReturnNew2["Return Ok(new token)"]
-///     Blocking -- Err --> ErrExpired
-/// ```
-#[cfg_attr(doc, aquamarine::aquamarine)]
+/// See the [crate-level documentation](crate#token-refresh) for a full
+/// description of the concurrency model and flow diagram.
 pub(crate) struct AutoRefresh<R> {
     refresher: R,
     state: Mutex<State>,
