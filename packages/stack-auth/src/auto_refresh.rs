@@ -1,4 +1,4 @@
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard, Notify};
 
 use crate::refresher::Refresher;
 use crate::{ServiceToken, Token};
@@ -64,63 +64,66 @@ impl From<AutoRefreshError> for crate::AuthError {
 /// flowchart TD
 ///     Start["get_token()"] --> Lock["Acquire lock"]
 ///     Lock --> Cached{Token cached?}
-///     Cached -- No --> TryCred0["try_credential(None)"]
-///     TryCred0 -- None --> ErrNotFound["Return NotFound"]
-///     TryCred0 -- "Some(cred)" --> InitAuth["refresh(cred)
+///     Cached -- No --> InitAuth["initial_auth()
 ///     (lock HELD)"]
-///     InitAuth -- OK --> SaveInit["save + cache token"]
-///     SaveInit --> ReturnNew["Return Ok(new token)"]
+///     InitAuth -- OK --> ReturnNew["Return Ok(new token)"]
+///     InitAuth -- NotFound --> ErrNotFound["Return NotFound"]
 ///     InitAuth -- Err --> ErrAuth["Return Auth(err)"]
 ///     Cached -- Yes --> CheckRefresh{is_expired?}
 ///
-///     CheckRefresh -- "No (fresh)" --> CloneFresh["Clone access token,
-///     release lock"]
-///     CloneFresh --> ReturnOk["Return Ok(token)"]
+///     CheckRefresh -- "No (fresh)" --> ServiceToken["service_token()"]
+///     ServiceToken --> ReturnOk["Return Ok(token)"]
 ///
 ///     CheckRefresh -- "Yes (needs refresh)" --> InProgress{refresh_in_progress?}
-///     InProgress -- Yes --> Usable0{is_usable?}
-///     Usable0 -- Yes --> CloneUsable0["Clone access token"]
-///     CloneUsable0 --> ReturnOk
-///     Usable0 -- No --> ErrExpired["Return Expired"]
+///     InProgress -- Yes --> WaitHelper["wait_for_in_flight_refresh()
+///     (drops lock)"]
+///     WaitHelper -- "usable" --> ReturnOk
+///     WaitHelper -- "wait + recheck" --> ReturnOk
+///     WaitHelper -- "expired" --> ErrExpired["Return Expired"]
 ///
 ///     InProgress -- No --> TryCred{try_credential}
-///     TryCred -- None --> Usable1{is_usable?}
-///     Usable1 -- Yes --> CloneUsable1["Clone access token"]
-///     CloneUsable1 --> ReturnOk
-///     Usable1 -- No --> ErrExpired
+///     TryCred -- None --> RequireUsable["require_usable_token()"]
+///     RequireUsable -- Ok --> ReturnOk
+///     RequireUsable -- Err --> ErrExpired
 ///
 ///     TryCred -- "Some(cred)" --> SetFlag["refresh_in_progress = true"]
-///     SetFlag --> Usable2{is_usable?}
+///     SetFlag --> Usable{is_usable?}
 ///
-///     Usable2 -- "Yes (expiring but usable)" --> DropLock["Clone access token,
-///     release lock"]
-///     DropLock --> HTTP1["refresh(cred)
-///     (lock NOT held)"]
-///     HTTP1 -- OK --> Relock1["Re-acquire lock,
-///     save + cache, clear flag"]
-///     HTTP1 -- Err --> Restore1["Restore credential,
-///     clear flag"]
-///     Relock1 --> ReturnOld["Return Ok(old token)"]
-///     Restore1 --> ReturnOld
+///     Usable -- "Yes (expiring but usable)" --> NonBlocking["refresh_non_blocking()
+///     (drops lock, notifies waiters)"]
+///     NonBlocking --> ReturnOld["Return Ok(old token)"]
 ///
-///     Usable2 -- "No (fully expired)" --> HTTP2["refresh(cred)
-///     (lock HELD)"]
-///     HTTP2 -- OK --> StoreNew["save + cache,
-///     clear flag, release lock"]
-///     StoreNew --> ReturnNew2["Return Ok(new token)"]
-///     HTTP2 -- Err --> Restore2["Restore credential,
-///     clear flag"]
-///     Restore2 --> ErrExpired
+///     Usable -- "No (fully expired)" --> Blocking["refresh_blocking()
+///     (lock HELD, no notify)"]
+///     Blocking -- OK --> ReturnNew2["Return Ok(new token)"]
+///     Blocking -- Err --> ErrExpired
 /// ```
 #[cfg_attr(doc, aquamarine::aquamarine)]
 pub(crate) struct AutoRefresh<R> {
     refresher: R,
     state: Mutex<State>,
+    refresh_notify: Notify,
 }
 
 struct State {
     token: Option<Token>,
     refresh_in_progress: bool,
+}
+
+impl State {
+    fn service_token(&self) -> Result<ServiceToken, AutoRefreshError> {
+        let token = self.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
+        Ok(ServiceToken::new(token.access_token().clone()))
+    }
+
+    fn require_usable_token(&self) -> Result<ServiceToken, AutoRefreshError> {
+        let token = self.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
+        if token.is_usable() {
+            Ok(ServiceToken::new(token.access_token().clone()))
+        } else {
+            Err(AutoRefreshError::Expired)
+        }
+    }
 }
 
 impl<R> AutoRefresh<R> {
@@ -136,6 +139,7 @@ impl<R> AutoRefresh<R> {
                 token: None,
                 refresh_in_progress: false,
             }),
+            refresh_notify: Notify::new(),
         }
     }
 
@@ -150,6 +154,7 @@ impl<R> AutoRefresh<R> {
                 token: Some(token),
                 refresh_in_progress: false,
             }),
+            refresh_notify: Notify::new(),
         }
     }
 }
@@ -159,117 +164,137 @@ impl<R: Refresher> AutoRefresh<R> {
     pub(crate) async fn get_token(&self) -> Result<ServiceToken, AutoRefreshError> {
         let mut state = self.state.lock().await;
 
-        // No cached token — attempt initial auth.
         if state.token.is_none() {
-            let Some(credential) = self.refresher.try_credential(None) else {
-                return Err(AutoRefreshError::NotFound);
-            };
-            state.refresh_in_progress = true;
-            match self.refresher.refresh(&credential).await {
-                Ok(new_token) => {
-                    self.refresher.save(&new_token);
-                    let service_token = ServiceToken::new(new_token.access_token().clone());
-                    state.token = Some(new_token);
-                    state.refresh_in_progress = false;
-                    return Ok(service_token);
-                }
-                Err(err) => {
-                    state.refresh_in_progress = false;
-                    return Err(AutoRefreshError::Auth(err));
-                }
-            }
+            return self.initial_auth(&mut state).await;
         }
 
-        let needs_refresh = state.token.as_ref().is_some_and(|t| t.is_expired());
-        if !needs_refresh {
-            // Token is fresh — clone and return.
-            let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            return Ok(ServiceToken::new(token.access_token().clone()));
+        if !state.token.as_ref().is_some_and(|t| t.is_expired()) {
+            return state.service_token();
         }
 
-        // Check cascade prevention flag.
         if state.refresh_in_progress {
-            let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            if token.is_usable() {
-                return Ok(ServiceToken::new(token.access_token().clone()));
-            }
-            // NOTE: If a refresh was started while the token was still usable
-            // (lock released) but the token has since crossed its real expiry,
-            // we return Expired rather than waiting for the in-flight refresh.
-            // This is a deliberate trade-off: adding a Notify/condvar to wait
-            // for the in-flight refresh would increase complexity, and the
-            // window is narrow (token must expire during the HTTP call). The
-            // 90s leeway on is_expired() makes this unlikely. Callers can
-            // retry and will get the new token once the refresh completes.
-            return Err(AutoRefreshError::Expired);
+            return self.wait_for_in_flight_refresh(state).await;
         }
 
-        // Token needs refresh. Try to get a credential.
-        let credential = self.refresher.try_credential(state.token.as_mut());
-
-        let Some(credential) = credential else {
-            // No credential available (e.g. OAuth with no refresh token).
-            let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            if token.is_usable() {
-                return Ok(ServiceToken::new(token.access_token().clone()));
-            }
-            return Err(AutoRefreshError::Expired);
+        let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
+            return state.require_usable_token();
         };
 
         state.refresh_in_progress = true;
 
-        // Check if the current token is still usable.
-        let is_usable = state.token.as_ref().is_some_and(|t| t.is_usable());
-
-        if is_usable {
-            // Token is expiring but still usable. Clone the current access
-            // token, drop the lock, and refresh in the background of this call.
-            let current_service_token = ServiceToken::new(
-                state
-                    .token
-                    .as_ref()
-                    .ok_or(AutoRefreshError::NotFound)?
-                    .access_token()
-                    .clone(),
-            );
-            drop(state);
-
-            match self.refresher.refresh(&credential).await {
-                Ok(new_token) => {
-                    self.refresher.save(&new_token);
-                    let mut state = self.state.lock().await;
-                    state.token = Some(new_token);
-                    state.refresh_in_progress = false;
-                }
-                Err(err) => {
-                    tracing::warn!(%err, "token refresh failed (token still usable)");
-                    let mut state = self.state.lock().await;
-                    if let Some(token) = state.token.as_mut() {
-                        self.refresher.restore(token, credential);
-                    }
-                    state.refresh_in_progress = false;
-                }
-            }
-
-            Ok(current_service_token)
+        if state.token.as_ref().is_some_and(|t| t.is_usable()) {
+            self.refresh_non_blocking(state, credential).await
         } else {
-            // Token is fully expired. Refresh while holding the lock.
-            match self.refresher.refresh(&credential).await {
-                Ok(new_token) => {
-                    self.refresher.save(&new_token);
-                    let service_token = ServiceToken::new(new_token.access_token().clone());
-                    state.token = Some(new_token);
-                    state.refresh_in_progress = false;
-                    Ok(service_token)
+            self.refresh_blocking(&mut state, credential).await
+        }
+    }
+
+    /// No cached token — authenticate via `try_credential(None)`.
+    ///
+    /// The lock is held throughout to prevent concurrent initial-auth attempts.
+    async fn initial_auth(&self, state: &mut State) -> Result<ServiceToken, AutoRefreshError> {
+        let Some(credential) = self.refresher.try_credential(None) else {
+            return Err(AutoRefreshError::NotFound);
+        };
+        state.refresh_in_progress = true;
+        match self.refresher.refresh(&credential).await {
+            Ok(new_token) => {
+                self.refresher.save(&new_token);
+                let service_token = ServiceToken::new(new_token.access_token().clone());
+                state.token = Some(new_token);
+                state.refresh_in_progress = false;
+                Ok(service_token)
+            }
+            Err(err) => {
+                state.refresh_in_progress = false;
+                Err(AutoRefreshError::Auth(err))
+            }
+        }
+    }
+
+    /// Another caller is already refreshing — return the current token if still
+    /// usable, otherwise wait for the in-flight refresh to complete via `Notify`.
+    ///
+    /// Takes `MutexGuard` by value because the lock is dropped before awaiting
+    /// the notification.
+    async fn wait_for_in_flight_refresh(
+        &self,
+        state: MutexGuard<'_, State>,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        if let Ok(token) = state.service_token() {
+            if state.token.as_ref().is_some_and(|t| t.is_usable()) {
+                return Ok(token);
+            }
+        }
+        // Token crossed real expiry during in-flight refresh. Wait for the
+        // refresh to complete rather than returning Expired.
+        let notified = self.refresh_notify.notified();
+        drop(state);
+        notified.await;
+        // Re-check after wake — refresh may have failed.
+        let state = self.state.lock().await;
+        state.require_usable_token()
+    }
+
+    /// Token is expiring but still usable — drop the lock, refresh in the
+    /// background of this call, and return the old (still-valid) token.
+    ///
+    /// Takes `MutexGuard` by value because the lock is dropped before the HTTP
+    /// request. Notifies waiters after the refresh completes (success or error).
+    async fn refresh_non_blocking(
+        &self,
+        state: MutexGuard<'_, State>,
+        credential: R::Credential,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        let current_service_token = state.service_token()?;
+        drop(state);
+
+        match self.refresher.refresh(&credential).await {
+            Ok(new_token) => {
+                self.refresher.save(&new_token);
+                let mut state = self.state.lock().await;
+                state.token = Some(new_token);
+                state.refresh_in_progress = false;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "token refresh failed (token still usable)");
+                let mut state = self.state.lock().await;
+                if let Some(token) = state.token.as_mut() {
+                    self.refresher.restore(token, credential);
                 }
-                Err(err) => {
-                    tracing::warn!(%err, "token refresh failed");
-                    if let Some(token) = state.token.as_mut() {
-                        self.refresher.restore(token, credential);
-                    }
-                    state.refresh_in_progress = false;
-                    Err(AutoRefreshError::Expired)
+                state.refresh_in_progress = false;
+            }
+        }
+
+        self.refresh_notify.notify_waiters();
+        Ok(current_service_token)
+    }
+
+    /// Token is fully expired — refresh while holding the lock so concurrent
+    /// callers block on `lock().await` until the new token is available.
+    ///
+    /// Does NOT call `notify_waiters()` — no caller can register a `Notified`
+    /// while the lock is held, so there is nobody to notify.
+    async fn refresh_blocking(
+        &self,
+        state: &mut State,
+        credential: R::Credential,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        match self.refresher.refresh(&credential).await {
+            Ok(new_token) => {
+                self.refresher.save(&new_token);
+                let service_token = ServiceToken::new(new_token.access_token().clone());
+                state.token = Some(new_token);
+                state.refresh_in_progress = false;
+                Ok(service_token)
+            }
+            Err(err) => {
+                tracing::warn!(%err, "token refresh failed");
+                if let Some(token) = state.token.as_mut() {
+                    self.refresher.restore(token, credential);
                 }
+                state.refresh_in_progress = false;
+                Err(AutoRefreshError::Expired)
             }
         }
     }
@@ -1127,5 +1152,65 @@ mod stress_tests {
         }
 
         assert_eq!(stats2.total(), 1, "only one retry refresh should be made");
+    }
+
+    /// Reproduces the race condition where a token crosses real expiry during
+    /// an in-flight non-blocking refresh. Before the fix, late-arriving callers
+    /// would see `refresh_in_progress = true` + `!is_usable()` and return
+    /// `Err(Expired)` instead of waiting for the refresh to complete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_token_expires_during_non_blocking_refresh() {
+        // Token with 1s until real expiry (minimum granularity since
+        // expires_at is in seconds). is_expired() = true (within 90s leeway),
+        // is_usable() = true (1s remaining). Refresh takes 1.5s so the token
+        // crosses real expiry mid-refresh.
+        let refresh_delay = Duration::from_millis(1500);
+        let counting = CountingState::new();
+        let state = DelayedRefreshState {
+            counting: counting.clone(),
+            delay: refresh_delay,
+        };
+        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+        let dir = tempfile::tempdir().unwrap();
+        let strategy = Arc::new(auto_refresh_with_token(
+            &dir,
+            &base_url,
+            make_token("expiring-soon", 1, true),
+        ));
+
+        // First caller triggers the non-blocking refresh and gets the old token.
+        let first = strategy.get_token().await.unwrap();
+        assert_eq!(first.as_str(), "expiring-soon");
+
+        // Wait for the token to cross real expiry (but refresh is still in-flight).
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        // Launch 50 concurrent callers. Without the fix, these would all get
+        // Err(Expired) because refresh_in_progress = true and !is_usable().
+        let mut handles = Vec::with_capacity(CONCURRENCY);
+        for _ in 0..CONCURRENCY {
+            let s = Arc::clone(&strategy);
+            handles.push(tokio::spawn(async move { s.get_token().await }));
+        }
+
+        let results: Vec<_> = {
+            let mut results = Vec::with_capacity(handles.len());
+            for handle in handles {
+                results.push(handle.await.unwrap());
+            }
+            results
+        };
+
+        // All callers must succeed — none should get Expired.
+        for (i, result) in results.iter().enumerate() {
+            assert!(
+                result.is_ok(),
+                "caller {i} got Err({:?}), expected Ok",
+                result.as_ref().unwrap_err()
+            );
+            assert_eq!(result.as_ref().unwrap().as_str(), "refreshed-token");
+        }
+
+        assert_eq!(stats.total(), 1, "only one refresh request should be made");
     }
 }
