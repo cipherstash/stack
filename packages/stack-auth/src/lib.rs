@@ -170,7 +170,8 @@ pub use stack_profile::DeviceIdentity;
 ///     CheckRefresh -- "Yes (needs refresh)" --> InProgress{Refresh in progress?}
 ///     InProgress -- Yes --> WaitOrReturn["Return token if usable,
 ///     else wait for refresh"]
-///     WaitOrReturn --> ReturnOk
+///     WaitOrReturn -- OK --> ReturnOk
+///     WaitOrReturn -- "refresh failed" --> ErrExpired["TokenExpired"]
 ///
 ///     InProgress -- No --> HasCred{Refresh credential?}
 ///     HasCred -- None --> CheckUsable["Return token if usable,

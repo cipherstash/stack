@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use tokio::sync::{Mutex, MutexGuard, Notify};
 
 use crate::refresher::Refresher;
@@ -38,12 +40,43 @@ impl From<AutoRefreshError> for crate::AuthError {
 pub(crate) struct AutoRefresh<R> {
     refresher: R,
     state: Mutex<State>,
+    /// Set to `true` while a refresh HTTP call is in-flight.
+    ///
+    /// Stored as an [`AtomicBool`] rather than inside [`State`] so that
+    /// [`CancelGuard`] can reset it on future cancellation without acquiring
+    /// the mutex.
+    refresh_in_progress: AtomicBool,
     refresh_notify: Notify,
 }
 
 struct State {
     token: Option<Token>,
-    refresh_in_progress: bool,
+}
+
+/// Ensures [`AutoRefresh::refresh_in_progress`] is cleared and waiters are
+/// notified if the refresh future is cancelled (dropped) before completing.
+///
+/// On the normal path (success or handled error), the guard is defused before
+/// drop so that the regular cleanup code runs instead.
+struct CancelGuard<'a> {
+    in_progress: &'a AtomicBool,
+    notify: &'a Notify,
+    defused: bool,
+}
+
+impl Drop for CancelGuard<'_> {
+    fn drop(&mut self) {
+        if !self.defused {
+            self.in_progress.store(false, Ordering::Release);
+            self.notify.notify_waiters();
+        }
+    }
+}
+
+impl CancelGuard<'_> {
+    fn defuse(&mut self) {
+        self.defused = true;
+    }
 }
 
 impl State {
@@ -71,10 +104,8 @@ impl<R> AutoRefresh<R> {
     pub(crate) fn new(refresher: R) -> Self {
         Self {
             refresher,
-            state: Mutex::new(State {
-                token: None,
-                refresh_in_progress: false,
-            }),
+            state: Mutex::new(State { token: None }),
+            refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
         }
     }
@@ -86,10 +117,8 @@ impl<R> AutoRefresh<R> {
     pub(crate) fn with_token(refresher: R, token: Token) -> Self {
         Self {
             refresher,
-            state: Mutex::new(State {
-                token: Some(token),
-                refresh_in_progress: false,
-            }),
+            state: Mutex::new(State { token: Some(token) }),
+            refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
         }
     }
@@ -108,7 +137,7 @@ impl<R: Refresher> AutoRefresh<R> {
             return state.service_token();
         }
 
-        if state.refresh_in_progress {
+        if self.refresh_in_progress.load(Ordering::Acquire) {
             return self.wait_for_in_flight_refresh(state).await;
         }
 
@@ -116,7 +145,7 @@ impl<R: Refresher> AutoRefresh<R> {
             return state.require_usable_token();
         };
 
-        state.refresh_in_progress = true;
+        self.refresh_in_progress.store(true, Ordering::Release);
 
         if state.token.as_ref().is_some_and(|t| t.is_usable()) {
             self.refresh_non_blocking(state, credential).await
@@ -132,17 +161,24 @@ impl<R: Refresher> AutoRefresh<R> {
         let Some(credential) = self.refresher.try_credential(None) else {
             return Err(AutoRefreshError::NotFound);
         };
-        state.refresh_in_progress = true;
+        self.refresh_in_progress.store(true, Ordering::Release);
+        let mut guard = CancelGuard {
+            in_progress: &self.refresh_in_progress,
+            notify: &self.refresh_notify,
+            defused: false,
+        };
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
+                guard.defuse();
                 self.refresher.save(&new_token);
                 let service_token = ServiceToken::new(new_token.access_token().clone());
                 state.token = Some(new_token);
-                state.refresh_in_progress = false;
+                self.refresh_in_progress.store(false, Ordering::Release);
                 Ok(service_token)
             }
             Err(err) => {
-                state.refresh_in_progress = false;
+                guard.defuse();
+                self.refresh_in_progress.store(false, Ordering::Release);
                 Err(AutoRefreshError::Auth(err))
             }
         }
@@ -177,6 +213,10 @@ impl<R: Refresher> AutoRefresh<R> {
     ///
     /// Takes `MutexGuard` by value because the lock is dropped before the HTTP
     /// request. Notifies waiters after the refresh completes (success or error).
+    ///
+    /// A [`CancelGuard`] ensures that if this future is cancelled during the
+    /// HTTP request, `refresh_in_progress` is cleared, the credential is
+    /// restored (best-effort via `try_lock`), and waiters are notified.
     async fn refresh_non_blocking(
         &self,
         state: MutexGuard<'_, State>,
@@ -185,20 +225,28 @@ impl<R: Refresher> AutoRefresh<R> {
         let current_service_token = state.service_token()?;
         drop(state);
 
+        let mut guard = CancelGuard {
+            in_progress: &self.refresh_in_progress,
+            notify: &self.refresh_notify,
+            defused: false,
+        };
+
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
+                guard.defuse();
                 self.refresher.save(&new_token);
                 let mut state = self.state.lock().await;
                 state.token = Some(new_token);
-                state.refresh_in_progress = false;
+                self.refresh_in_progress.store(false, Ordering::Release);
             }
             Err(err) => {
+                guard.defuse();
                 tracing::warn!(%err, "token refresh failed (token still usable)");
                 let mut state = self.state.lock().await;
                 if let Some(token) = state.token.as_mut() {
                     self.refresher.restore(token, credential);
                 }
-                state.refresh_in_progress = false;
+                self.refresh_in_progress.store(false, Ordering::Release);
             }
         }
 
@@ -209,27 +257,37 @@ impl<R: Refresher> AutoRefresh<R> {
     /// Token is fully expired — refresh while holding the lock so concurrent
     /// callers block on `lock().await` until the new token is available.
     ///
-    /// Does NOT call `notify_waiters()` — no caller can register a `Notified`
-    /// while the lock is held, so there is nobody to notify.
+    /// A [`CancelGuard`] ensures that if this future is cancelled during the
+    /// HTTP request, `refresh_in_progress` is cleared and waiters are notified
+    /// so they don't hang indefinitely. (The credential is lost on cancel —
+    /// see [`CancelGuard`] docs — but subsequent callers will get `Expired`
+    /// rather than blocking forever.)
     async fn refresh_blocking(
         &self,
         state: &mut State,
         credential: R::Credential,
     ) -> Result<ServiceToken, AutoRefreshError> {
+        let mut guard = CancelGuard {
+            in_progress: &self.refresh_in_progress,
+            notify: &self.refresh_notify,
+            defused: false,
+        };
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
+                guard.defuse();
                 self.refresher.save(&new_token);
                 let service_token = ServiceToken::new(new_token.access_token().clone());
                 state.token = Some(new_token);
-                state.refresh_in_progress = false;
+                self.refresh_in_progress.store(false, Ordering::Release);
                 Ok(service_token)
             }
             Err(err) => {
+                guard.defuse();
                 tracing::warn!(%err, "token refresh failed");
                 if let Some(token) = state.token.as_mut() {
                     self.refresher.restore(token, credential);
                 }
-                state.refresh_in_progress = false;
+                self.refresh_in_progress.store(false, Ordering::Release);
                 Err(AutoRefreshError::Expired)
             }
         }
