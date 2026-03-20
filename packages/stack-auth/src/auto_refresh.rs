@@ -1,4 +1,4 @@
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard, Notify};
 
 use crate::refresher::Refresher;
 use crate::{ServiceToken, Token};
@@ -33,94 +33,33 @@ impl From<AutoRefreshError> for crate::AuthError {
 /// Caches a token in memory and uses a [`Refresher`] to re-authenticate
 /// or refresh before expiry.
 ///
-/// # Concurrency model
-///
-/// Internal state is protected by a [`tokio::sync::Mutex`]. The key design
-/// decision is *when* the lock is held during a refresh, which depends on
-/// whether the current token is still usable as a bearer credential:
-///
-/// - [`Token::is_expired()`] — returns `true` when the token is within **90
-///   seconds** of its `expires_at` timestamp. This triggers a preemptive
-///   refresh attempt.
-/// - [`Token::is_usable()`] — returns `true` when the token has **not yet
-///   reached** its `expires_at` timestamp. A token can be "expired" (in the
-///   leeway sense) but still "usable" (the server will still accept it).
-///
-/// This distinction enables two concurrent refresh strategies:
-///
-/// 1. **Expiring but still usable** — The refreshing caller drops the lock
-///    before making the HTTP request. Concurrent callers acquire the lock and
-///    receive the current (still-valid) token immediately.
-/// 2. **Fully expired** — The refreshing caller holds the lock through the
-///    HTTP request. Concurrent callers block on `lock().await` until the
-///    refresh completes, then see the new token.
-///
-/// Cascade prevention: the `refresh_in_progress` flag prevents multiple
-/// callers from initiating concurrent refreshes.
-///
-/// # Flow diagram
-///
-/// ```mermaid
-/// flowchart TD
-///     Start["get_token()"] --> Lock["Acquire lock"]
-///     Lock --> Cached{Token cached?}
-///     Cached -- No --> TryCred0["try_credential(None)"]
-///     TryCred0 -- None --> ErrNotFound["Return NotFound"]
-///     TryCred0 -- "Some(cred)" --> InitAuth["refresh(cred)
-///     (lock HELD)"]
-///     InitAuth -- OK --> SaveInit["save + cache token"]
-///     SaveInit --> ReturnNew["Return Ok(new token)"]
-///     InitAuth -- Err --> ErrAuth["Return Auth(err)"]
-///     Cached -- Yes --> CheckRefresh{is_expired?}
-///
-///     CheckRefresh -- "No (fresh)" --> CloneFresh["Clone access token,
-///     release lock"]
-///     CloneFresh --> ReturnOk["Return Ok(token)"]
-///
-///     CheckRefresh -- "Yes (needs refresh)" --> InProgress{refresh_in_progress?}
-///     InProgress -- Yes --> Usable0{is_usable?}
-///     Usable0 -- Yes --> CloneUsable0["Clone access token"]
-///     CloneUsable0 --> ReturnOk
-///     Usable0 -- No --> ErrExpired["Return Expired"]
-///
-///     InProgress -- No --> TryCred{try_credential}
-///     TryCred -- None --> Usable1{is_usable?}
-///     Usable1 -- Yes --> CloneUsable1["Clone access token"]
-///     CloneUsable1 --> ReturnOk
-///     Usable1 -- No --> ErrExpired
-///
-///     TryCred -- "Some(cred)" --> SetFlag["refresh_in_progress = true"]
-///     SetFlag --> Usable2{is_usable?}
-///
-///     Usable2 -- "Yes (expiring but usable)" --> DropLock["Clone access token,
-///     release lock"]
-///     DropLock --> HTTP1["refresh(cred)
-///     (lock NOT held)"]
-///     HTTP1 -- OK --> Relock1["Re-acquire lock,
-///     save + cache, clear flag"]
-///     HTTP1 -- Err --> Restore1["Restore credential,
-///     clear flag"]
-///     Relock1 --> ReturnOld["Return Ok(old token)"]
-///     Restore1 --> ReturnOld
-///
-///     Usable2 -- "No (fully expired)" --> HTTP2["refresh(cred)
-///     (lock HELD)"]
-///     HTTP2 -- OK --> StoreNew["save + cache,
-///     clear flag, release lock"]
-///     StoreNew --> ReturnNew2["Return Ok(new token)"]
-///     HTTP2 -- Err --> Restore2["Restore credential,
-///     clear flag"]
-///     Restore2 --> ErrExpired
-/// ```
-#[cfg_attr(doc, aquamarine::aquamarine)]
+/// See the [crate-level documentation](crate#token-refresh) for a full
+/// description of the concurrency model and flow diagram.
 pub(crate) struct AutoRefresh<R> {
     refresher: R,
     state: Mutex<State>,
+    refresh_notify: Notify,
 }
 
 struct State {
     token: Option<Token>,
     refresh_in_progress: bool,
+}
+
+impl State {
+    fn service_token(&self) -> Result<ServiceToken, AutoRefreshError> {
+        let token = self.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
+        Ok(ServiceToken::new(token.access_token().clone()))
+    }
+
+    fn require_usable_token(&self) -> Result<ServiceToken, AutoRefreshError> {
+        let token = self.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
+        if token.is_usable() {
+            Ok(ServiceToken::new(token.access_token().clone()))
+        } else {
+            Err(AutoRefreshError::Expired)
+        }
+    }
 }
 
 impl<R> AutoRefresh<R> {
@@ -136,6 +75,7 @@ impl<R> AutoRefresh<R> {
                 token: None,
                 refresh_in_progress: false,
             }),
+            refresh_notify: Notify::new(),
         }
     }
 
@@ -150,6 +90,7 @@ impl<R> AutoRefresh<R> {
                 token: Some(token),
                 refresh_in_progress: false,
             }),
+            refresh_notify: Notify::new(),
         }
     }
 }
@@ -159,123 +100,144 @@ impl<R: Refresher> AutoRefresh<R> {
     pub(crate) async fn get_token(&self) -> Result<ServiceToken, AutoRefreshError> {
         let mut state = self.state.lock().await;
 
-        // No cached token — attempt initial auth.
         if state.token.is_none() {
-            let Some(credential) = self.refresher.try_credential(None) else {
-                return Err(AutoRefreshError::NotFound);
-            };
-            state.refresh_in_progress = true;
-            match self.refresher.refresh(&credential).await {
-                Ok(new_token) => {
-                    self.refresher.save(&new_token);
-                    let service_token = ServiceToken::new(new_token.access_token().clone());
-                    state.token = Some(new_token);
-                    state.refresh_in_progress = false;
-                    return Ok(service_token);
-                }
-                Err(err) => {
-                    state.refresh_in_progress = false;
-                    return Err(AutoRefreshError::Auth(err));
-                }
-            }
+            return self.initial_auth(&mut state).await;
         }
 
-        let needs_refresh = state.token.as_ref().is_some_and(|t| t.is_expired());
-        if !needs_refresh {
-            // Token is fresh — clone and return.
-            let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            return Ok(ServiceToken::new(token.access_token().clone()));
+        if !state.token.as_ref().is_some_and(|t| t.is_expired()) {
+            return state.service_token();
         }
 
-        // Check cascade prevention flag.
         if state.refresh_in_progress {
-            let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            if token.is_usable() {
-                return Ok(ServiceToken::new(token.access_token().clone()));
-            }
-            // NOTE: If a refresh was started while the token was still usable
-            // (lock released) but the token has since crossed its real expiry,
-            // we return Expired rather than waiting for the in-flight refresh.
-            // This is a deliberate trade-off: adding a Notify/condvar to wait
-            // for the in-flight refresh would increase complexity, and the
-            // window is narrow (token must expire during the HTTP call). The
-            // 90s leeway on is_expired() makes this unlikely. Callers can
-            // retry and will get the new token once the refresh completes.
-            return Err(AutoRefreshError::Expired);
+            return self.wait_for_in_flight_refresh(state).await;
         }
 
-        // Token needs refresh. Try to get a credential.
-        let credential = self.refresher.try_credential(state.token.as_mut());
-
-        let Some(credential) = credential else {
-            // No credential available (e.g. OAuth with no refresh token).
-            let token = state.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-            if token.is_usable() {
-                return Ok(ServiceToken::new(token.access_token().clone()));
-            }
-            return Err(AutoRefreshError::Expired);
+        let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
+            return state.require_usable_token();
         };
 
         state.refresh_in_progress = true;
 
-        // Check if the current token is still usable.
-        let is_usable = state.token.as_ref().is_some_and(|t| t.is_usable());
-
-        if is_usable {
-            // Token is expiring but still usable. Clone the current access
-            // token, drop the lock, and refresh in the background of this call.
-            let current_service_token = ServiceToken::new(
-                state
-                    .token
-                    .as_ref()
-                    .ok_or(AutoRefreshError::NotFound)?
-                    .access_token()
-                    .clone(),
-            );
-            drop(state);
-
-            match self.refresher.refresh(&credential).await {
-                Ok(new_token) => {
-                    self.refresher.save(&new_token);
-                    let mut state = self.state.lock().await;
-                    state.token = Some(new_token);
-                    state.refresh_in_progress = false;
-                }
-                Err(err) => {
-                    tracing::warn!(%err, "token refresh failed (token still usable)");
-                    let mut state = self.state.lock().await;
-                    if let Some(token) = state.token.as_mut() {
-                        self.refresher.restore(token, credential);
-                    }
-                    state.refresh_in_progress = false;
-                }
-            }
-
-            Ok(current_service_token)
+        if state.token.as_ref().is_some_and(|t| t.is_usable()) {
+            self.refresh_non_blocking(state, credential).await
         } else {
-            // Token is fully expired. Refresh while holding the lock.
-            match self.refresher.refresh(&credential).await {
-                Ok(new_token) => {
-                    self.refresher.save(&new_token);
-                    let service_token = ServiceToken::new(new_token.access_token().clone());
-                    state.token = Some(new_token);
-                    state.refresh_in_progress = false;
-                    Ok(service_token)
+            self.refresh_blocking(&mut state, credential).await
+        }
+    }
+
+    /// No cached token — authenticate via `try_credential(None)`.
+    ///
+    /// The lock is held throughout to prevent concurrent initial-auth attempts.
+    async fn initial_auth(&self, state: &mut State) -> Result<ServiceToken, AutoRefreshError> {
+        let Some(credential) = self.refresher.try_credential(None) else {
+            return Err(AutoRefreshError::NotFound);
+        };
+        state.refresh_in_progress = true;
+        match self.refresher.refresh(&credential).await {
+            Ok(new_token) => {
+                self.refresher.save(&new_token);
+                let service_token = ServiceToken::new(new_token.access_token().clone());
+                state.token = Some(new_token);
+                state.refresh_in_progress = false;
+                Ok(service_token)
+            }
+            Err(err) => {
+                state.refresh_in_progress = false;
+                Err(AutoRefreshError::Auth(err))
+            }
+        }
+    }
+
+    /// Another caller is already refreshing — return the current token if still
+    /// usable, otherwise wait for the in-flight refresh to complete via `Notify`.
+    ///
+    /// Takes `MutexGuard` by value because the lock is dropped before awaiting
+    /// the notification.
+    async fn wait_for_in_flight_refresh(
+        &self,
+        state: MutexGuard<'_, State>,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        if let Ok(token) = state.service_token() {
+            if state.token.as_ref().is_some_and(|t| t.is_usable()) {
+                return Ok(token);
+            }
+        }
+        // Token crossed real expiry during in-flight refresh. Wait for the
+        // refresh to complete rather than returning Expired.
+        let notified = self.refresh_notify.notified();
+        drop(state);
+        notified.await;
+        // Re-check after wake — refresh may have failed.
+        let state = self.state.lock().await;
+        state.require_usable_token()
+    }
+
+    /// Token is expiring but still usable — drop the lock, refresh in the
+    /// background of this call, and return the old (still-valid) token.
+    ///
+    /// Takes `MutexGuard` by value because the lock is dropped before the HTTP
+    /// request. Notifies waiters after the refresh completes (success or error).
+    async fn refresh_non_blocking(
+        &self,
+        state: MutexGuard<'_, State>,
+        credential: R::Credential,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        let current_service_token = state.service_token()?;
+        drop(state);
+
+        match self.refresher.refresh(&credential).await {
+            Ok(new_token) => {
+                self.refresher.save(&new_token);
+                let mut state = self.state.lock().await;
+                state.token = Some(new_token);
+                state.refresh_in_progress = false;
+            }
+            Err(err) => {
+                tracing::warn!(%err, "token refresh failed (token still usable)");
+                let mut state = self.state.lock().await;
+                if let Some(token) = state.token.as_mut() {
+                    self.refresher.restore(token, credential);
                 }
-                Err(err) => {
-                    tracing::warn!(%err, "token refresh failed");
-                    if let Some(token) = state.token.as_mut() {
-                        self.refresher.restore(token, credential);
-                    }
-                    state.refresh_in_progress = false;
-                    Err(AutoRefreshError::Expired)
+                state.refresh_in_progress = false;
+            }
+        }
+
+        self.refresh_notify.notify_waiters();
+        Ok(current_service_token)
+    }
+
+    /// Token is fully expired — refresh while holding the lock so concurrent
+    /// callers block on `lock().await` until the new token is available.
+    ///
+    /// Does NOT call `notify_waiters()` — no caller can register a `Notified`
+    /// while the lock is held, so there is nobody to notify.
+    async fn refresh_blocking(
+        &self,
+        state: &mut State,
+        credential: R::Credential,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        match self.refresher.refresh(&credential).await {
+            Ok(new_token) => {
+                self.refresher.save(&new_token);
+                let service_token = ServiceToken::new(new_token.access_token().clone());
+                state.token = Some(new_token);
+                state.refresh_in_progress = false;
+                Ok(service_token)
+            }
+            Err(err) => {
+                tracing::warn!(%err, "token refresh failed");
+                if let Some(token) = state.token.as_mut() {
+                    self.refresher.restore(token, credential);
                 }
+                state.refresh_in_progress = false;
+                Err(AutoRefreshError::Expired)
             }
         }
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::oauth_refresher::OAuthRefresher;
@@ -345,376 +307,484 @@ mod tests {
         AutoRefresh::with_token(refresher, token)
     }
 
-    // ---- Basic loading tests ----
+    mod given_no_cached_token {
+        use super::*;
 
-    #[tokio::test]
-    async fn test_returns_cached_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let server = start_server(MockSet::new()).await;
-        let strategy =
-            auto_refresh_with_token(&dir, &server, make_token("my-access-token", 3600, false));
+        #[tokio::test]
+        async fn returns_not_found_for_oauth() {
+            let server = start_server(MockSet::new()).await;
+            let store = ProfileStore::new("/tmp/nonexistent");
+            let refresher = OAuthRefresher::new(
+                Some(store),
+                server.url(""),
+                "cli",
+                "ap-southeast-2.aws",
+                None,
+            );
+            let strategy = AutoRefresh::new(refresher);
 
-        let token = strategy.get_token().await.unwrap();
+            let err = strategy.get_token().await.unwrap_err();
 
-        assert_eq!(token.as_str(), "my-access-token");
-    }
-
-    #[tokio::test]
-    async fn test_returns_not_found_when_no_token_and_oauth() {
-        let server = start_server(MockSet::new()).await;
-        let store = ProfileStore::new("/tmp/nonexistent");
-        let refresher = OAuthRefresher::new(
-            Some(store),
-            server.url(""),
-            "cli",
-            "ap-southeast-2.aws",
-            None,
-        );
-        let strategy = AutoRefresh::new(refresher);
-
-        let err = strategy.get_token().await.unwrap_err();
-
-        assert!(matches!(err, AutoRefreshError::NotFound));
-    }
-
-    #[tokio::test]
-    async fn test_caches_token_across_calls() {
-        let dir = tempfile::tempdir().unwrap();
-        let server = start_server(MockSet::new()).await;
-        let strategy =
-            auto_refresh_with_token(&dir, &server, make_token("my-access-token", 3600, false));
-
-        let token1 = strategy.get_token().await.unwrap();
-        assert_eq!(token1.as_str(), "my-access-token");
-
-        // Delete the file — second call should still return the cached token.
-        std::fs::remove_file(dir.path().join("auth.json")).unwrap();
-
-        let token2 = strategy.get_token().await.unwrap();
-        assert_eq!(token2.as_str(), "my-access-token");
-    }
-
-    // ---- Expiry tests ----
-
-    #[tokio::test]
-    async fn test_expired_token_without_refresh_token_returns_expired() {
-        let dir = tempfile::tempdir().unwrap();
-        let server = start_server(MockSet::new()).await;
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, false));
-
-        let err = strategy.get_token().await.unwrap_err();
-
-        assert!(matches!(err, AutoRefreshError::Expired));
-    }
-
-    // ---- Refresh tests ----
-
-    #[tokio::test]
-    async fn test_refreshes_expiring_token() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
-
-        let token = strategy.get_token().await.unwrap();
-
-        assert_eq!(token.as_str(), "refreshed-token");
-    }
-
-    #[tokio::test]
-    async fn test_refresh_persists_new_token_to_disk() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
-
-        let _ = strategy.get_token().await.unwrap();
-
-        // Verify the refreshed token was saved to disk.
-        let store = ProfileStore::new(dir.path());
-        let on_disk: Token = store.load_profile().unwrap();
-        assert_eq!(on_disk.access_token().as_str(), "refreshed-token");
-    }
-
-    #[tokio::test]
-    async fn test_refresh_failure_returns_expired_when_token_is_expired() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("invalid_grant"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
-
-        let err = strategy.get_token().await.unwrap_err();
-
-        assert!(matches!(err, AutoRefreshError::Expired));
-    }
-
-    #[tokio::test]
-    async fn test_does_not_refresh_fresh_token() {
-        // Mock that would fail if hit — proves no refresh request is made.
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.internal_server_error()
-                .json(error_json("should_not_be_called"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy =
-            auto_refresh_with_token(&dir, &server, make_token("fresh-token", 3600, true));
-
-        let token = strategy.get_token().await.unwrap();
-
-        assert_eq!(token.as_str(), "fresh-token");
-    }
-
-    // ---- Cascade prevention tests ----
-
-    #[tokio::test]
-    async fn test_refresh_token_is_taken_preventing_second_refresh() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
-
-        // First call refreshes successfully.
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "refreshed-token");
-
-        // Replace the mock with one that errors.
-        server.mocks().clear();
-        server.mocks().mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("should_not_be_called"));
-        });
-
-        // Second call should return the refreshed token without hitting
-        // the server again (the new token has a fresh expiry).
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "refreshed-token");
-    }
-
-    #[tokio::test]
-    async fn test_failed_refresh_restores_refresh_token_for_retry() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("invalid_grant"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
-
-        // First call: refresh fails, returns Expired.
-        let err = strategy.get_token().await.unwrap_err();
-        assert!(matches!(err, AutoRefreshError::Expired));
-
-        // Verify the refresh token was restored so a retry is possible.
-        let state = strategy.state.lock().await;
-        assert!(state.token.is_some());
-        assert!(state.token.as_ref().unwrap().refresh_token().is_some());
-        drop(state);
-
-        // Replace mock with a success response.
-        server.mocks().clear();
-        server.mocks().mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-
-        // Second call: refresh token is available → retry succeeds.
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "refreshed-token");
-    }
-
-    #[tokio::test]
-    async fn test_access_token_remains_after_refresh_token_is_taken() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("server_error"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        // Token expires in 30s (within the 90s leeway so is_expired() = true),
-        // but the access token is still technically usable.
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("still-usable", 30, true));
-
-        // The refresh fails, but the access token should still be returned
-        // because it's still usable (30s remaining > 0).
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "still-usable");
-
-        // Verify the access token and refresh token are still present.
-        let state = strategy.state.lock().await;
-        assert!(state.token.is_some());
-        assert_eq!(
-            state.token.as_ref().unwrap().access_token().as_str(),
-            "still-usable"
-        );
-        assert!(
-            state.token.as_ref().unwrap().refresh_token().is_some(),
-            "refresh token should be restored after failed refresh"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_failed_refresh_of_usable_token_can_be_retried() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.bad_request().json(error_json("server_error"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        // Token expires in 30s — is_expired() = true, is_usable() = true.
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("still-usable", 30, true));
-
-        // First call: refresh fails, but the still-usable token is returned.
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "still-usable");
-
-        // Replace mock with a success response.
-        server.mocks().clear();
-        server.mocks().mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-
-        // Second call: refresh token was restored, so the retry succeeds.
-        let token = strategy.get_token().await.unwrap();
-        assert!(
-            token.as_str() == "still-usable" || token.as_str() == "refreshed-token",
-            "expected old or refreshed token, got: {}",
-            token.as_str()
-        );
-
-        // Verify the cache now holds the refreshed token.
-        let state = strategy.state.lock().await;
-        assert_eq!(
-            state.token.as_ref().unwrap().access_token().as_str(),
-            "refreshed-token"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_multiple_sequential_calls_only_refresh_once() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-once"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
-
-        // First call triggers refresh.
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "refreshed-once");
-
-        // Swap mock to track if another refresh is attempted.
-        server.mocks().clear();
-        server.mocks().mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-twice"));
-        });
-
-        // Calls 2-5: the refreshed token is fresh, so no further refresh.
-        for _ in 0..4 {
-            let token = strategy.get_token().await.unwrap();
-            assert_eq!(
-                token.as_str(),
-                "refreshed-once",
-                "should return cached refreshed token, not trigger another refresh"
+            assert!(
+                matches!(err, AutoRefreshError::NotFound),
+                "expected NotFound, got: {err:?}"
             );
         }
     }
 
-    // ---- Concurrent access tests ----
+    mod given_fresh_token {
+        use super::*;
 
-    #[tokio::test]
-    async fn test_concurrent_access_with_expiring_but_usable_token() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &server,
-            make_token("still-usable", 30, true),
-        ));
+        #[tokio::test]
+        async fn returns_cached_token() {
+            let dir = tempfile::tempdir().unwrap();
+            let server = start_server(MockSet::new()).await;
+            let strategy =
+                auto_refresh_with_token(&dir, &server, make_token("my-access-token", 3600, false));
 
-        let s1 = Arc::clone(&strategy);
-        let handle_a = tokio::spawn(async move { s1.get_token().await.unwrap() });
+            let token = strategy.get_token().await.unwrap();
 
-        let s2 = Arc::clone(&strategy);
-        let handle_b = tokio::spawn(async move { s2.get_token().await.unwrap() });
+            assert_eq!(
+                token.as_str(),
+                "my-access-token",
+                "should return the cached access token"
+            );
+        }
 
-        let (result_a, result_b) = tokio::join!(handle_a, handle_b);
-        let token_a = result_a.unwrap();
-        let token_b = result_b.unwrap();
+        #[tokio::test]
+        async fn caches_across_calls() {
+            let dir = tempfile::tempdir().unwrap();
+            let server = start_server(MockSet::new()).await;
+            let strategy =
+                auto_refresh_with_token(&dir, &server, make_token("my-access-token", 3600, false));
 
-        assert!(
-            token_a.as_str() == "still-usable" || token_a.as_str() == "refreshed-token",
-            "unexpected token_a: {}",
-            token_a.as_str()
-        );
-        assert!(
-            token_b.as_str() == "still-usable" || token_b.as_str() == "refreshed-token",
-            "unexpected token_b: {}",
-            token_b.as_str()
-        );
+            let token1 = strategy.get_token().await.unwrap();
+            assert_eq!(
+                token1.as_str(),
+                "my-access-token",
+                "first call should return the cached token"
+            );
+
+            // Delete the file — second call should still return the cached token.
+            std::fs::remove_file(dir.path().join("auth.json")).unwrap();
+
+            let token2 = strategy.get_token().await.unwrap();
+            assert_eq!(
+                token2.as_str(),
+                "my-access-token",
+                "second call should return the cached token even after file deletion"
+            );
+        }
+
+        #[tokio::test]
+        async fn does_not_trigger_refresh() {
+            // Mock that would fail if hit — proves no refresh request is made.
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.internal_server_error()
+                    .json(error_json("should_not_be_called"));
+            });
+            let server = start_server(mocks).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy =
+                auto_refresh_with_token(&dir, &server, make_token("fresh-token", 3600, true));
+
+            let token = strategy.get_token().await.unwrap();
+
+            assert_eq!(
+                token.as_str(),
+                "fresh-token",
+                "should return fresh token without triggering refresh"
+            );
+        }
     }
 
-    #[tokio::test]
-    async fn test_concurrent_access_with_fully_expired_token() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/token");
-            then.json(refresh_response_json("refreshed-token"));
-        });
-        let server = start_server(mocks).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &server,
-            make_token("expired-token", 0, true),
-        ));
+    mod given_fully_expired_token {
+        use super::*;
 
-        let s1 = Arc::clone(&strategy);
-        let handle_a = tokio::spawn(async move { s1.get_token().await.unwrap() });
+        mod without_refresh_token {
+            use super::*;
 
-        let s2 = Arc::clone(&strategy);
-        let handle_b = tokio::spawn(async move { s2.get_token().await.unwrap() });
+            #[tokio::test]
+            async fn returns_expired() {
+                let dir = tempfile::tempdir().unwrap();
+                let server = start_server(MockSet::new()).await;
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, false));
 
-        let (result_a, result_b) = tokio::join!(handle_a, handle_b);
-        let token_a = result_a.unwrap();
-        let token_b = result_b.unwrap();
+                let err = strategy.get_token().await.unwrap_err();
 
-        assert_eq!(token_a.as_str(), "refreshed-token");
-        assert_eq!(token_b.as_str(), "refreshed-token");
+                assert!(
+                    matches!(err, AutoRefreshError::Expired),
+                    "expected Expired, got: {err:?}"
+                );
+            }
+        }
+
+        mod with_refresh_token {
+            use super::*;
+
+            #[tokio::test]
+            async fn refreshes_and_returns_new_token() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-token"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
+
+                let token = strategy.get_token().await.unwrap();
+
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-token",
+                    "should return the refreshed token"
+                );
+            }
+
+            #[tokio::test]
+            async fn persists_refreshed_token_to_disk() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-token"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
+
+                let _ = strategy.get_token().await.unwrap();
+
+                // Verify the refreshed token was saved to disk.
+                let store = ProfileStore::new(dir.path());
+                let on_disk: Token = store.load_profile().unwrap();
+                assert_eq!(
+                    on_disk.access_token().as_str(),
+                    "refreshed-token",
+                    "refreshed token should be persisted to disk"
+                );
+            }
+
+            #[tokio::test]
+            async fn returns_expired_on_refresh_failure() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.bad_request().json(error_json("invalid_grant"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
+
+                let err = strategy.get_token().await.unwrap_err();
+
+                assert!(
+                    matches!(err, AutoRefreshError::Expired),
+                    "expected Expired after failed refresh, got: {err:?}"
+                );
+            }
+
+            #[tokio::test]
+            async fn restores_refresh_token_after_failure() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.bad_request().json(error_json("invalid_grant"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
+
+                // First call: refresh fails, returns Expired.
+                let err = strategy.get_token().await.unwrap_err();
+                assert!(
+                    matches!(err, AutoRefreshError::Expired),
+                    "expected Expired on first attempt, got: {err:?}"
+                );
+
+                // Verify the refresh token was restored so a retry is possible.
+                let state = strategy.state.lock().await;
+                assert!(
+                    state.token.is_some(),
+                    "token should still be cached after failed refresh"
+                );
+                assert!(
+                    state.token.as_ref().unwrap().refresh_token().is_some(),
+                    "refresh token should be restored for retry"
+                );
+                drop(state);
+
+                // Replace mock with a success response.
+                server.mocks().clear();
+                server.mocks().mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-token"));
+                });
+
+                // Second call: refresh token is available → retry succeeds.
+                let token = strategy.get_token().await.unwrap();
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-token",
+                    "retry should succeed with restored refresh token"
+                );
+            }
+
+            #[tokio::test]
+            async fn sequential_calls_only_refresh_once() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-once"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
+
+                // First call triggers refresh.
+                let token = strategy.get_token().await.unwrap();
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-once",
+                    "first call should trigger refresh"
+                );
+
+                // Swap mock to track if another refresh is attempted.
+                server.mocks().clear();
+                server.mocks().mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-twice"));
+                });
+
+                // Calls 2-5: the refreshed token is fresh, so no further refresh.
+                for _ in 0..4 {
+                    let token = strategy.get_token().await.unwrap();
+                    assert_eq!(
+                        token.as_str(),
+                        "refreshed-once",
+                        "should return cached refreshed token, not trigger another refresh"
+                    );
+                }
+            }
+
+            #[tokio::test]
+            async fn prevents_second_refresh_after_success() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-token"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("old-token", 0, true));
+
+                // First call refreshes successfully.
+                let token = strategy.get_token().await.unwrap();
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-token",
+                    "first call should refresh the token"
+                );
+
+                // Replace the mock with one that errors.
+                server.mocks().clear();
+                server.mocks().mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.bad_request().json(error_json("should_not_be_called"));
+                });
+
+                // Second call should return the refreshed token without hitting
+                // the server again (the new token has a fresh expiry).
+                let token = strategy.get_token().await.unwrap();
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-token",
+                    "second call should return cached refreshed token"
+                );
+            }
+        }
+    }
+
+    mod given_expiring_but_usable_token {
+        use super::*;
+
+        mod when_refresh_fails {
+            use super::*;
+
+            #[tokio::test]
+            async fn returns_current_token() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.bad_request().json(error_json("server_error"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                // Token expires in 30s (within the 90s leeway so is_expired() = true),
+                // but the access token is still technically usable.
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("still-usable", 30, true));
+
+                // The refresh fails, but the access token should still be returned
+                // because it's still usable (30s remaining > 0).
+                let token = strategy.get_token().await.unwrap();
+                assert_eq!(
+                    token.as_str(),
+                    "still-usable",
+                    "should return still-usable token despite failed refresh"
+                );
+
+                // Verify the access token and refresh token are still present.
+                let state = strategy.state.lock().await;
+                assert!(state.token.is_some(), "token should still be cached");
+                assert_eq!(
+                    state.token.as_ref().unwrap().access_token().as_str(),
+                    "still-usable",
+                    "access token should be unchanged after failed refresh"
+                );
+                assert!(
+                    state.token.as_ref().unwrap().refresh_token().is_some(),
+                    "refresh token should be restored after failed refresh"
+                );
+            }
+
+            #[tokio::test]
+            async fn restores_refresh_token_for_retry() {
+                let mut mocks = MockSet::new();
+                mocks.mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.bad_request().json(error_json("server_error"));
+                });
+                let server = start_server(mocks).await;
+                let dir = tempfile::tempdir().unwrap();
+                // Token expires in 30s — is_expired() = true, is_usable() = true.
+                let strategy =
+                    auto_refresh_with_token(&dir, &server, make_token("still-usable", 30, true));
+
+                // First call: refresh fails, but the still-usable token is returned.
+                let token = strategy.get_token().await.unwrap();
+                assert_eq!(
+                    token.as_str(),
+                    "still-usable",
+                    "first call should return still-usable token"
+                );
+
+                // Replace mock with a success response.
+                server.mocks().clear();
+                server.mocks().mock(|when, then| {
+                    when.post().path("/oauth/token");
+                    then.json(refresh_response_json("refreshed-token"));
+                });
+
+                // Second call: refresh token was restored, so the retry succeeds.
+                let token = strategy.get_token().await.unwrap();
+                assert!(
+                    token.as_str() == "still-usable" || token.as_str() == "refreshed-token",
+                    "expected old or refreshed token, got: {}",
+                    token.as_str()
+                );
+
+                // Verify the cache now holds the refreshed token.
+                let state = strategy.state.lock().await;
+                assert_eq!(
+                    state.token.as_ref().unwrap().access_token().as_str(),
+                    "refreshed-token",
+                    "cache should hold the refreshed token after retry"
+                );
+            }
+        }
+    }
+
+    mod given_concurrent_callers {
+        use super::*;
+
+        #[tokio::test]
+        async fn returns_usable_token_while_refreshing() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.json(refresh_response_json("refreshed-token"));
+            });
+            let server = start_server(mocks).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &server,
+                make_token("still-usable", 30, true),
+            ));
+
+            let s1 = Arc::clone(&strategy);
+            let handle_a = tokio::spawn(async move { s1.get_token().await.unwrap() });
+
+            let s2 = Arc::clone(&strategy);
+            let handle_b = tokio::spawn(async move { s2.get_token().await.unwrap() });
+
+            let (result_a, result_b) = tokio::join!(handle_a, handle_b);
+            let token_a = result_a.unwrap();
+            let token_b = result_b.unwrap();
+
+            assert!(
+                token_a.as_str() == "still-usable" || token_a.as_str() == "refreshed-token",
+                "unexpected token_a: {}",
+                token_a.as_str()
+            );
+            assert!(
+                token_b.as_str() == "still-usable" || token_b.as_str() == "refreshed-token",
+                "unexpected token_b: {}",
+                token_b.as_str()
+            );
+        }
+
+        #[tokio::test]
+        async fn blocks_until_refresh_completes() {
+            let mut mocks = MockSet::new();
+            mocks.mock(|when, then| {
+                when.post().path("/oauth/token");
+                then.json(refresh_response_json("refreshed-token"));
+            });
+            let server = start_server(mocks).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &server,
+                make_token("expired-token", 0, true),
+            ));
+
+            let s1 = Arc::clone(&strategy);
+            let handle_a = tokio::spawn(async move { s1.get_token().await.unwrap() });
+
+            let s2 = Arc::clone(&strategy);
+            let handle_b = tokio::spawn(async move { s2.get_token().await.unwrap() });
+
+            let (result_a, result_b) = tokio::join!(handle_a, handle_b);
+            let token_a = result_a.unwrap();
+            let token_b = result_b.unwrap();
+
+            assert_eq!(
+                token_a.as_str(),
+                "refreshed-token",
+                "caller a should receive refreshed token"
+            );
+            assert_eq!(
+                token_b.as_str(),
+                "refreshed-token",
+                "caller b should receive refreshed token"
+            );
+        }
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod stress_tests {
     use super::*;
     use crate::oauth_refresher::OAuthRefresher;
@@ -856,276 +926,369 @@ mod stress_tests {
 
     const CONCURRENCY: usize = 50;
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_concurrent_fresh_token_no_contention() {
-        let counting = CountingState::new();
-        let state = DelayedRefreshState {
-            counting: counting.clone(),
-            delay: Duration::from_millis(500),
-        };
-        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &base_url,
-            make_token("fresh-token", 3600, true),
-        ));
+    mod given_fresh_token {
+        use super::*;
 
-        let start = Instant::now();
-        let mut handles = Vec::with_capacity(CONCURRENCY);
-        for _ in 0..CONCURRENCY {
-            let s = Arc::clone(&strategy);
-            handles.push(tokio::spawn(async move { s.get_token().await.unwrap() }));
-        }
-
-        let results: Vec<_> = {
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.unwrap());
-            }
-            results
-        };
-        let elapsed = start.elapsed();
-
-        for token in &results {
-            assert_eq!(token.as_str(), "fresh-token");
-        }
-
-        assert!(
-            elapsed < Duration::from_millis(200),
-            "expected < 200ms for fresh tokens, got {:?}",
-            elapsed
-        );
-        assert_eq!(stats.total(), 0, "no refresh requests should be made");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_concurrent_expiring_token_non_blocking_reads() {
-        let counting = CountingState::new();
-        let state = DelayedRefreshState {
-            counting: counting.clone(),
-            delay: Duration::from_millis(500),
-        };
-        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &base_url,
-            make_token("still-usable", 30, true),
-        ));
-
-        let start = Instant::now();
-        let mut handles = Vec::with_capacity(CONCURRENCY);
-        for _ in 0..CONCURRENCY {
-            let s = Arc::clone(&strategy);
-            handles.push(tokio::spawn(async move {
-                let call_start = Instant::now();
-                let token = s.get_token().await.unwrap();
-                (token, call_start.elapsed())
-            }));
-        }
-
-        let results: Vec<_> = {
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.unwrap());
-            }
-            results
-        };
-        let elapsed = start.elapsed();
-
-        for (token, _) in &results {
-            assert!(
-                token.as_str() == "still-usable" || token.as_str() == "refreshed-token",
-                "unexpected token: {}",
-                token.as_str()
-            );
-        }
-
-        let fast_callers = results
-            .iter()
-            .filter(|(_, dur)| *dur < Duration::from_millis(100))
-            .count();
-        assert!(
-            fast_callers >= CONCURRENCY - 1,
-            "expected at least {} fast callers, got {} (total elapsed: {:?})",
-            CONCURRENCY - 1,
-            fast_callers,
-            elapsed
-        );
-
-        assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
-        assert_eq!(stats.total(), 1, "total refresh requests");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_concurrent_expired_token_blocks_until_refresh() {
-        let refresh_delay = Duration::from_millis(200);
-        let counting = CountingState::new();
-        let state = DelayedRefreshState {
-            counting: counting.clone(),
-            delay: refresh_delay,
-        };
-        let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &base_url,
-            make_token("expired-token", 0, true),
-        ));
-
-        let start = Instant::now();
-        let mut handles = Vec::with_capacity(CONCURRENCY);
-        for _ in 0..CONCURRENCY {
-            let s = Arc::clone(&strategy);
-            handles.push(tokio::spawn(async move { s.get_token().await.unwrap() }));
-        }
-
-        let results: Vec<_> = {
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.unwrap());
-            }
-            results
-        };
-        let elapsed = start.elapsed();
-
-        for token in &results {
-            assert_eq!(token.as_str(), "refreshed-token");
-        }
-
-        assert!(
-            elapsed < refresh_delay + Duration::from_millis(200),
-            "expected < {:?} for blocked callers, got {:?}",
-            refresh_delay + Duration::from_millis(200),
-            elapsed
-        );
-
-        assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
-        assert_eq!(stats.total(), 1, "total refresh requests");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_concurrent_expired_token_refresh_failure_recovers() {
-        let counting = CountingState::new();
-        let state = DelayedRefreshState {
-            counting: counting.clone(),
-            delay: Duration::from_millis(10),
-        };
-        let (base_url, stats) = start_axum_server(delayed_error_handler, state).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &base_url,
-            make_token("expired-token", 0, true),
-        ));
-
-        let mut handles = Vec::with_capacity(CONCURRENCY);
-        for _ in 0..CONCURRENCY {
-            let s = Arc::clone(&strategy);
-            handles.push(tokio::spawn(async move { s.get_token().await }));
-        }
-
-        let results: Vec<_> = {
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.unwrap());
-            }
-            results
-        };
-
-        for result in &results {
-            assert!(result.is_err(), "expected Expired error, got Ok");
-            assert!(matches!(
-                result.as_ref().unwrap_err(),
-                AutoRefreshError::Expired
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn all_callers_return_immediately() {
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: Duration::from_millis(500),
+            };
+            let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("fresh-token", 3600, true),
             ));
+
+            let start = Instant::now();
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy);
+                handles.push(tokio::spawn(async move { s.get_token().await.unwrap() }));
+            }
+
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+            let elapsed = start.elapsed();
+
+            for token in &results {
+                assert_eq!(
+                    token.as_str(),
+                    "fresh-token",
+                    "all callers should receive the fresh token"
+                );
+            }
+
+            assert!(
+                elapsed < Duration::from_millis(200),
+                "expected < 200ms for fresh tokens, got {:?}",
+                elapsed
+            );
+            assert_eq!(stats.total(), 0, "no refresh requests should be made");
         }
-
-        let state = strategy.state.lock().await;
-        assert!(
-            state.token.as_ref().unwrap().refresh_token().is_some(),
-            "refresh token should be restored after failed refresh"
-        );
-        drop(state);
-
-        assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
-        assert!(
-            stats.total() >= 1,
-            "at least one refresh attempt should be made"
-        );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_concurrent_refresh_failure_then_retry() {
-        // Phase 1: Server returns errors.
-        let counting1 = CountingState::new();
-        let state1 = DelayedRefreshState {
-            counting: counting1.clone(),
-            delay: Duration::from_millis(50),
-        };
-        let (base_url, _) = start_axum_server(delayed_error_handler, state1).await;
-        let dir = tempfile::tempdir().unwrap();
-        let strategy = Arc::new(auto_refresh_with_token(
-            &dir,
-            &base_url,
-            make_token("expired-token", 0, true),
-        ));
+    mod given_expiring_but_usable_token {
+        use super::*;
 
-        let mut handles = Vec::with_capacity(CONCURRENCY);
-        for _ in 0..CONCURRENCY {
-            let s = Arc::clone(&strategy);
-            handles.push(tokio::spawn(async move { s.get_token().await }));
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn non_blocking_reads_during_refresh() {
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: Duration::from_millis(500),
+            };
+            let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("still-usable", 30, true),
+            ));
+
+            let start = Instant::now();
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy);
+                handles.push(tokio::spawn(async move {
+                    let call_start = Instant::now();
+                    let token = s.get_token().await.unwrap();
+                    (token, call_start.elapsed())
+                }));
+            }
+
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+            let elapsed = start.elapsed();
+
+            for (token, _) in &results {
+                assert!(
+                    token.as_str() == "still-usable" || token.as_str() == "refreshed-token",
+                    "unexpected token: {}",
+                    token.as_str()
+                );
+            }
+
+            let fast_callers = results
+                .iter()
+                .filter(|(_, dur)| *dur < Duration::from_millis(100))
+                .count();
+            assert!(
+                fast_callers >= CONCURRENCY - 1,
+                "expected at least {} fast callers, got {} (total elapsed: {:?})",
+                CONCURRENCY - 1,
+                fast_callers,
+                elapsed
+            );
+
+            assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
+            assert_eq!(stats.total(), 1, "total refresh requests");
         }
 
-        let results: Vec<_> = {
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.unwrap());
-            }
-            results
-        };
+        /// Reproduces the race condition where a token crosses real expiry during
+        /// an in-flight non-blocking refresh. Before the fix, late-arriving callers
+        /// would see `refresh_in_progress = true` + `!is_usable()` and return
+        /// `Err(Expired)` instead of waiting for the refresh to complete.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn waiters_receive_token_when_expiry_crosses() {
+            // Token with 1s until real expiry (minimum granularity since
+            // expires_at is in seconds). is_expired() = true (within 90s leeway),
+            // is_usable() = true (1s remaining). Refresh takes 1.5s so the token
+            // crosses real expiry mid-refresh.
+            let refresh_delay = Duration::from_millis(1500);
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: refresh_delay,
+            };
+            let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("expiring-soon", 1, true),
+            ));
 
-        for result in &results {
+            // First caller triggers the non-blocking refresh and gets the old token.
+            let first = strategy.get_token().await.unwrap();
+            assert_eq!(
+                first.as_str(),
+                "expiring-soon",
+                "first caller should receive the expiring token"
+            );
+
+            // Wait for the token to cross real expiry (but refresh is still in-flight).
+            tokio::time::sleep(Duration::from_millis(1100)).await;
+
+            // Launch 50 concurrent callers. Without the fix, these would all get
+            // Err(Expired) because refresh_in_progress = true and !is_usable().
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy);
+                handles.push(tokio::spawn(async move { s.get_token().await }));
+            }
+
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+
+            // All callers must succeed — none should get Expired.
+            for (i, result) in results.iter().enumerate() {
+                assert!(
+                    result.is_ok(),
+                    "caller {i} got Err({:?}), expected Ok",
+                    result.as_ref().unwrap_err()
+                );
+                assert_eq!(
+                    result.as_ref().unwrap().as_str(),
+                    "refreshed-token",
+                    "caller {i} should receive the refreshed token"
+                );
+            }
+
+            assert_eq!(stats.total(), 1, "only one refresh request should be made");
+        }
+    }
+
+    mod given_fully_expired_token {
+        use super::*;
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn all_callers_block_until_refresh() {
+            let refresh_delay = Duration::from_millis(200);
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: refresh_delay,
+            };
+            let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("expired-token", 0, true),
+            ));
+
+            let start = Instant::now();
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy);
+                handles.push(tokio::spawn(async move { s.get_token().await.unwrap() }));
+            }
+
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+            let elapsed = start.elapsed();
+
+            for token in &results {
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-token",
+                    "all callers should receive refreshed token"
+                );
+            }
+
             assert!(
-                result.is_err(),
-                "first wave: expected Expired, got Ok({})",
-                result.as_ref().unwrap().as_str()
+                elapsed < refresh_delay + Duration::from_millis(200),
+                "expected < {:?} for blocked callers, got {:?}",
+                refresh_delay + Duration::from_millis(200),
+                elapsed
+            );
+
+            assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
+            assert_eq!(stats.total(), 1, "total refresh requests");
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn all_callers_receive_expired_on_failure() {
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: Duration::from_millis(10),
+            };
+            let (base_url, stats) = start_axum_server(delayed_error_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("expired-token", 0, true),
+            ));
+
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy);
+                handles.push(tokio::spawn(async move { s.get_token().await }));
+            }
+
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+
+            for result in &results {
+                assert!(result.is_err(), "expected Expired error, got Ok");
+                let err = result.as_ref().unwrap_err();
+                assert!(
+                    matches!(err, AutoRefreshError::Expired),
+                    "expected Expired, got: {err:?}"
+                );
+            }
+
+            let state = strategy.state.lock().await;
+            assert!(
+                state.token.as_ref().unwrap().refresh_token().is_some(),
+                "refresh token should be restored after failed refresh"
+            );
+            drop(state);
+
+            assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
+            assert!(
+                stats.total() >= 1,
+                "at least one refresh attempt should be made"
             );
         }
 
-        // Phase 2: New server that returns success.
-        let counting2 = CountingState::new();
-        let state2 = DelayedRefreshState {
-            counting: counting2.clone(),
-            delay: Duration::from_millis(50),
-        };
-        let (base_url2, stats2) = start_axum_server(delayed_refresh_handler, state2).await;
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn retry_succeeds_after_failure() {
+            // Phase 1: Server returns errors.
+            let counting1 = CountingState::new();
+            let state1 = DelayedRefreshState {
+                counting: counting1.clone(),
+                delay: Duration::from_millis(50),
+            };
+            let (base_url, _) = start_axum_server(delayed_error_handler, state1).await;
+            let dir = tempfile::tempdir().unwrap();
+            let strategy = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url,
+                make_token("expired-token", 0, true),
+            ));
 
-        let strategy2 = Arc::new(auto_refresh_with_token(
-            &dir,
-            &base_url2,
-            make_token("expired-token", 0, true),
-        ));
-
-        let mut handles = Vec::with_capacity(CONCURRENCY);
-        for _ in 0..CONCURRENCY {
-            let s = Arc::clone(&strategy2);
-            handles.push(tokio::spawn(async move { s.get_token().await.unwrap() }));
-        }
-
-        let results: Vec<_> = {
-            let mut results = Vec::with_capacity(handles.len());
-            for handle in handles {
-                results.push(handle.await.unwrap());
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy);
+                handles.push(tokio::spawn(async move { s.get_token().await }));
             }
-            results
-        };
 
-        for token in &results {
-            assert_eq!(token.as_str(), "refreshed-token");
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+
+            for result in &results {
+                assert!(
+                    result.is_err(),
+                    "first wave: expected Expired, got Ok({})",
+                    result.as_ref().unwrap().as_str()
+                );
+            }
+
+            // Phase 2: New server that returns success.
+            let counting2 = CountingState::new();
+            let state2 = DelayedRefreshState {
+                counting: counting2.clone(),
+                delay: Duration::from_millis(50),
+            };
+            let (base_url2, stats2) = start_axum_server(delayed_refresh_handler, state2).await;
+
+            let strategy2 = Arc::new(auto_refresh_with_token(
+                &dir,
+                &base_url2,
+                make_token("expired-token", 0, true),
+            ));
+
+            let mut handles = Vec::with_capacity(CONCURRENCY);
+            for _ in 0..CONCURRENCY {
+                let s = Arc::clone(&strategy2);
+                handles.push(tokio::spawn(async move { s.get_token().await.unwrap() }));
+            }
+
+            let results: Vec<_> = {
+                let mut results = Vec::with_capacity(handles.len());
+                for handle in handles {
+                    results.push(handle.await.unwrap());
+                }
+                results
+            };
+
+            for token in &results {
+                assert_eq!(
+                    token.as_str(),
+                    "refreshed-token",
+                    "retry callers should receive refreshed token"
+                );
+            }
+
+            assert_eq!(stats2.total(), 1, "only one retry refresh should be made");
         }
-
-        assert_eq!(stats2.total(), 1, "only one retry refresh should be made");
     }
 }

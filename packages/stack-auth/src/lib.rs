@@ -47,6 +47,13 @@
 //! Sensitive values ([`SecretToken`]) are automatically zeroized when dropped
 //! and are masked in [`Debug`](std::fmt::Debug) output to prevent accidental
 //! leaks in logs.
+//!
+//! # Token refresh
+//!
+//! All strategies that cache tokens ([`AccessKeyStrategy`], [`OAuthStrategy`],
+//! [`AutoStrategy`]) share the same internal refresh engine. See the
+//! [`AuthStrategy`] trait docs for a full description of the concurrency model
+//! and flow diagram.
 
 // Security lints
 #![deny(unsafe_code)]
@@ -114,6 +121,73 @@ pub use stack_profile::DeviceIdentity;
 ///
 /// The trait is designed to be implemented for `&T`, so that callers can use
 /// shared references (e.g. `&OAuthStrategy`) without consuming the strategy.
+///
+/// # Token refresh
+///
+/// All strategies that cache tokens ([`AccessKeyStrategy`], [`OAuthStrategy`],
+/// [`AutoStrategy`]) share the same internal refresh engine. Understanding the
+/// refresh model helps predict how [`get_token`](AuthStrategy::get_token)
+/// behaves under concurrent access.
+///
+/// ## Expiry vs usability
+///
+/// A token has two time thresholds:
+///
+/// - **Expired** — the token is within **90 seconds** of its `expires_at`
+///   timestamp. This triggers a preemptive refresh attempt.
+/// - **Usable** — the token has **not yet reached** its `expires_at` timestamp.
+///   A token can be "expired" (in the preemptive sense) but still "usable"
+///   (the server will still accept it).
+///
+/// ## Concurrent refresh strategies
+///
+/// The gap between "expired" and "unusable" enables two refresh modes:
+///
+/// 1. **Expiring but still usable** — The first caller triggers a background
+///    refresh. Concurrent callers receive the current (still-valid) token
+///    immediately without blocking.
+/// 2. **Fully expired** — The first caller blocks while refreshing. Concurrent
+///    callers wait until the refresh completes, then all receive the new token.
+///
+/// Only one refresh runs at a time, regardless of how many callers request a
+/// token concurrently.
+///
+/// ## Flow diagram
+///
+/// ```mermaid
+/// flowchart TD
+///     Start["get_token()"] --> Lock["Acquire lock"]
+///     Lock --> Cached{Token cached?}
+///     Cached -- No --> InitAuth["Authenticate
+///     (lock held)"]
+///     InitAuth -- OK --> ReturnNew["Return new token"]
+///     InitAuth -- NotFound --> ErrNotFound["NotAuthenticated"]
+///     InitAuth -- Err --> ErrAuth["Return error"]
+///     Cached -- Yes --> CheckRefresh{Expired?}
+///
+///     CheckRefresh -- "No (fresh)" --> ReturnOk["Return cached token"]
+///
+///     CheckRefresh -- "Yes (needs refresh)" --> InProgress{Refresh in progress?}
+///     InProgress -- Yes --> WaitOrReturn["Return token if usable,
+///     else wait for refresh"]
+///     WaitOrReturn --> ReturnOk
+///
+///     InProgress -- No --> HasCred{Refresh credential?}
+///     HasCred -- None --> CheckUsable["Return token if usable,
+///     else TokenExpired"]
+///
+///     HasCred -- Yes --> Usable{Still usable?}
+///
+///     Usable -- "Yes (preemptive)" --> NonBlocking["Refresh in background
+///     (lock released)"]
+///     NonBlocking --> ReturnOld["Return current token"]
+///
+///     Usable -- "No (fully expired)" --> Blocking["Refresh
+///     (lock held)"]
+///     Blocking -- OK --> ReturnNew2["Return new token"]
+///     Blocking -- Err --> ErrExpired["TokenExpired"]
+/// ```
+#[cfg_attr(doc, aquamarine::aquamarine)]
 pub trait AuthStrategy: Send {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     fn get_token(self) -> impl Future<Output = Result<ServiceToken, AuthError>> + Send;
