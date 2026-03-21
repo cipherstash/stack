@@ -2,6 +2,19 @@
 
 ### Documentation
 
+- 📝 move token refresh docs and mermaid diagram to public AuthStrategy trait
+
+### Fixes
+
+- 🐛 fix race condition in get_token() when token expires during refresh
+
+### Testing
+
+- ✅ restructure auto_refresh tests into nested scenario modules
+
+
+### Documentation
+
 - 📝 fix AutoStrategy docs to reference CS_WORKSPACE_CRN not CS_REGION
 
 ### Features
