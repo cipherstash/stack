@@ -5,8 +5,12 @@
 let native;
 try {
   native = require("./stack-auth-node.js");
-} catch {
-  native = require("./stack-auth-node.node");
+} catch (err) {
+  if (err && err.code === "MODULE_NOT_FOUND") {
+    native = require("./stack-auth-node.node");
+  } else {
+    throw err;
+  }
 }
 
 const CODE_RE = /^([A-Z_]+): /;

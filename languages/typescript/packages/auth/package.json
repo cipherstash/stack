@@ -20,7 +20,8 @@
   "files": [
     "index.js",
     "index.d.ts",
-    "README.md"
+    "README.md",
+    "stack-auth-node.js"
   ],
   "scripts": {
     "build": "napi build --release",

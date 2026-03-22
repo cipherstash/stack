@@ -134,6 +134,15 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
+          # Update optionalDependencies to match the publish version
+          jq --arg v "$VERSION" '
+            .optionalDependencies |= with_entries(
+              if (.key | startswith("@cipherstash/auth-"))
+              then .value = $v
+              else .
+              end
+            )
+          ' package.json > package.json.tmp && mv package.json.tmp package.json
           for dir in npm/*/; do
             if [ -f "$dir/package.json" ]; then
               cd "$dir"
