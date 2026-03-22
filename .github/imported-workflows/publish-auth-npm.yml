@@ -13,7 +13,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance
+  id-token: write # npm trusted publishing (OIDC)
 
 defaults:
   run:
@@ -167,22 +167,18 @@ jobs:
       - name: Publish platform packages
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for dir in npm/*/; do
             if [ -f "$dir/package.json" ]; then
               echo "Publishing $(jq -r .name "$dir/package.json")..."
-              npm publish "$dir" --access public --provenance --tag ${{ steps.version.outputs.npm_tag }}
+              npm publish "$dir" --access public --tag ${{ steps.version.outputs.npm_tag }}
             fi
           done
 
       - name: Publish main package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance --tag ${{ steps.version.outputs.npm_tag }}
+        run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
 
       - name: Dry run summary
         if: ${{ inputs.dry_run }}
