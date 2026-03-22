@@ -1,0 +1,180 @@
+name: "Publish @cipherstash/auth to npm"
+
+on:
+  push:
+    tags:
+      - "stack-auth-v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (do not actually publish)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
+
+defaults:
+  run:
+    shell: bash -l {0}
+
+env:
+  CARGO_TERM_COLOR: always
+  WORKING_DIR: packages/stack-auth/node
+
+concurrency:
+  group: publish-auth-npm
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-unknown-linux-gnu
+            os: blacksmith-8vcpu-ubuntu-2404
+          - target: aarch64-unknown-linux-gnu
+            os: blacksmith-8vcpu-ubuntu-2404-arm
+          - target: x86_64-unknown-linux-musl
+            os: blacksmith-8vcpu-ubuntu-2404
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm ci
+
+      - name: Build native module
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npx napi build --platform --release --target ${{ matrix.target }} --strip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.target }}
+          path: ${{ env.WORKING_DIR }}/*.node
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npm ci
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ env.WORKING_DIR }}/artifacts
+
+      - name: Move artifacts to platform packages
+        working-directory: ${{ env.WORKING_DIR }}
+        run: npx napi artifacts --dir artifacts
+
+      - name: Determine version and npm tag
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/stack-auth-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/stack-auth-v}"
+          else
+            VERSION=$(jq -r .version "${{ env.WORKING_DIR }}/package.json")
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "$VERSION" == *"-"* ]]; then
+            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Publishing version: $VERSION (tag: $(if [[ "$VERSION" == *"-"* ]]; then echo next; else echo latest; fi))"
+
+      - name: Set package versions
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          for dir in npm/*/; do
+            if [ -f "$dir/package.json" ]; then
+              cd "$dir"
+              npm version "$VERSION" --no-git-tag-version --allow-same-version
+              cd -
+            fi
+          done
+
+      - name: List packages
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          echo "=== Main package ==="
+          cat package.json | jq '{name, version}'
+          echo ""
+          for dir in npm/*/; do
+            echo "=== $(basename $dir) ==="
+            cat "$dir/package.json" | jq '{name, version, os, cpu}'
+            ls -la "$dir"*.node 2>/dev/null || echo "  (no .node file)"
+            echo ""
+          done
+
+      - name: Publish platform packages
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ env.WORKING_DIR }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for dir in npm/*/; do
+            if [ -f "$dir/package.json" ]; then
+              echo "Publishing $(jq -r .name "$dir/package.json")..."
+              npm publish "$dir" --access public --provenance --tag ${{ steps.version.outputs.npm_tag }}
+            fi
+          done
+
+      - name: Publish main package
+        if: ${{ !inputs.dry_run }}
+        working-directory: ${{ env.WORKING_DIR }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance --tag ${{ steps.version.outputs.npm_tag }}
+
+      - name: Dry run summary
+        if: ${{ inputs.dry_run }}
+        run: echo "Dry run complete. Set dry_run to false to actually publish."

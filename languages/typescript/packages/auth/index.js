@@ -2,7 +2,12 @@
 // machine-readable `.code` property by parsing the "CODE: message" format
 // that the Rust side produces.
 
-const native = require("./stack-auth-node.node");
+let native;
+try {
+  native = require("./stack-auth-node.js");
+} catch {
+  native = require("./stack-auth-node.node");
+}
 
 const CODE_RE = /^([A-Z_]+): /;
 

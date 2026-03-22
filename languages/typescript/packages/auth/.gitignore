@@ -1,3 +1,5 @@
 target/
 node_modules/
 *.node
+npm/*/*.node
+stack-auth-node.js

@@ -1,0 +1,14 @@
+{
+  "name": "@cipherstash/auth-darwin-arm64",
+  "version": "0.34.0",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "stack-auth-node.darwin-arm64.node",
+  "files": [
+    "stack-auth-node.darwin-arm64.node"
+  ]
+}
