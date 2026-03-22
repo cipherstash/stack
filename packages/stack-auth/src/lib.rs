@@ -1,6 +1,5 @@
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]
 #![doc = include_str!("../README.md")]
-
 // Security lints
 #![deny(unsafe_code)]
 #![warn(clippy::unwrap_used)]
