@@ -1,17 +1,41 @@
 {
   "name": "@cipherstash/auth",
   "version": "0.34.0",
-  "private": true,
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
-    "name": "stack-auth-node"
+    "name": "stack-auth-node",
+    "triples": {
+      "defaults": false,
+      "additional": [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "stack-auth-node.js"
+  ],
   "scripts": {
     "build": "napi build --release",
     "build:debug": "napi build",
     "build:test": "napi build --features test-utils",
     "test": "npm run build:test && vitest run"
+  },
+  "optionalDependencies": {
+    "@cipherstash/auth-darwin-x64": "0.34.0",
+    "@cipherstash/auth-darwin-arm64": "0.34.0",
+    "@cipherstash/auth-linux-x64-gnu": "0.34.0",
+    "@cipherstash/auth-linux-arm64-gnu": "0.34.0",
+    "@cipherstash/auth-linux-x64-musl": "0.34.0",
+    "@cipherstash/auth-win32-x64-msvc": "0.34.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",

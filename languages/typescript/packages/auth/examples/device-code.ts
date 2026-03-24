@@ -4,8 +4,7 @@
 // exposed to JavaScript.
 //
 // Prerequisites:
-//   1. Build the native module with test-utils:  npm run build:test
-//   2. Have CTS running locally: mise run docker:up
+//   1. Build the native module:  npm run build
 //
 // Usage:
 //   npx tsx examples/device-code.ts
@@ -13,15 +12,7 @@
 import { beginDeviceCodeFlow } from "../index";
 
 async function main() {
-  // Step 1: Begin the device code flow against a local CTS instance
-  /*const pending = await beginDeviceCodeFlowWithBaseUrl(
-    "ap-southeast-2.aws",
-    "cli",
-    "http://localhost:3001",
-  );*/
-
-  // To connect to production instead:
-  // import { beginDeviceCodeFlow } from "../index";
+  // Step 1: Begin the device code flow
   const pending = await beginDeviceCodeFlow("ap-southeast-2.aws", "cli");
 
   // Step 2: Show the user their code and verification URL
