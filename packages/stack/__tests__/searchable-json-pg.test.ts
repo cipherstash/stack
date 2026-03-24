@@ -1148,6 +1148,1106 @@ describe('searchableJson postgres integration', () => {
     }, 60000)
   })
 
+  // ─── Contained-by: <@ term queries ────────────────────────────────
+
+  describe('contained-by: <@ term queries', () => {
+    it('matches by key/value pair (Extended)', async () => {
+      const plaintext = { role: 'contained-by-kv', department: 'eng' }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'contained-by-kv' },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('matches by nested object (Extended)', async () => {
+      const plaintext = {
+        user: { profile: { role: 'contained-by-nested' } },
+        active: true,
+      }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { user: { profile: { role: 'contained-by-nested' } } },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('non-matching value returns zero rows (Extended)', async () => {
+      const plaintext = { status: 'active-cb', tier: 'free' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { status: 'nonexistent-cb-xyz' },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('matches by key/value pair (Simple)', async () => {
+      const plaintext = { role: 'contained-by-kv-simple', department: 'ops' }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'contained-by-kv-simple' },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE $1::eql_v2_encrypted <@ t.metadata
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('matches by nested object (Simple)', async () => {
+      const plaintext = {
+        user: { profile: { role: 'contained-by-nested-simple' } },
+        active: true,
+      }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { user: { profile: { role: 'contained-by-nested-simple' } } },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE $1::eql_v2_encrypted <@ t.metadata
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('non-matching value returns zero rows (Simple)', async () => {
+      const plaintext = { status: 'active-cb-simple', tier: 'premium' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { status: 'nonexistent-cb-simple-xyz' },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE $1::eql_v2_encrypted <@ t.metadata
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+  })
+
+  // ─── jsonb_path_query_first: scalar path queries ──────────────────
+
+  describe('jsonb_path_query_first: scalar path queries', () => {
+    it('finds row by string field (Extended)', async () => {
+      const plaintext = { role: 'qf-string', extra: 'data' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted) IS NOT NULL
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('finds row by nested path (Extended)', async () => {
+      const plaintext = {
+        user: { email: 'qf-nested@test.com' },
+        type: 'qf-nested',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.user.email',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted) IS NOT NULL
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('returns no rows for unknown path (Extended)', async () => {
+      const plaintext = { exists: true, marker: 'qf-nomatch' }
+      await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.nonexistent.path',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted) IS NOT NULL
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('finds row by string field (Simple)', async () => {
+      const plaintext = { role: 'qf-string-simple', extra: 'data' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_query_first(t.metadata, '${selectorTerm}'::eql_v2_encrypted) IS NOT NULL
+         AND t.test_run_id = '${TEST_RUN_ID}'`,
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('finds row by nested path (Simple)', async () => {
+      const plaintext = {
+        user: { email: 'qf-nested-simple@test.com' },
+        type: 'qf-nested-simple',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.user.email',
+        'steVecSelector',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_query_first(t.metadata, '${selectorTerm}'::eql_v2_encrypted) IS NOT NULL
+         AND t.test_run_id = '${TEST_RUN_ID}'`,
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('returns no rows for unknown path (Simple)', async () => {
+      const plaintext = { exists: true, marker: 'qf-nomatch-simple' }
+      await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.nonexistent.path',
+        'steVecSelector',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_query_first(t.metadata, '${selectorTerm}'::eql_v2_encrypted) IS NOT NULL
+         AND t.test_run_id = '${TEST_RUN_ID}'`,
+      )
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+  })
+
+  // ─── jsonb_path_exists: boolean path queries ──────────────────────
+
+  describe('jsonb_path_exists: boolean path queries', () => {
+    it('returns true for existing field (Extended)', async () => {
+      const plaintext = { role: 'pe-exists', extra: 'data' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE eql_v2.jsonb_path_exists(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('returns true for nested path (Extended)', async () => {
+      const plaintext = {
+        user: { email: 'pe-nested@test.com' },
+        type: 'pe-nested',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.user.email',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE eql_v2.jsonb_path_exists(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('returns false for unknown path (Extended)', async () => {
+      const plaintext = { exists: true, marker: 'pe-nomatch' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.nonexistent.path',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT id, eql_v2.jsonb_path_exists(t.metadata, ${selectorTerm}::eql_v2_encrypted) as path_exists
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].path_exists).toBe(false)
+    }, 30000)
+
+    it('returns true for existing field (Simple)', async () => {
+      const plaintext = { role: 'pe-exists-simple', extra: 'data' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_exists(t.metadata, '${selectorTerm}'::eql_v2_encrypted)
+         AND test_run_id = '${TEST_RUN_ID}'`,
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('returns true for nested path (Simple)', async () => {
+      const plaintext = {
+        user: { email: 'pe-nested-simple@test.com' },
+        type: 'pe-nested-simple',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.user.email',
+        'steVecSelector',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_exists(t.metadata, '${selectorTerm}'::eql_v2_encrypted)
+         AND test_run_id = '${TEST_RUN_ID}'`,
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('returns false for unknown path (Simple)', async () => {
+      const plaintext = { exists: true, marker: 'pe-nomatch-simple' }
+      await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.nonexistent.path',
+        'steVecSelector',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_exists(t.metadata, '${selectorTerm}'::eql_v2_encrypted)
+         AND test_run_id = '${TEST_RUN_ID}'`,
+      )
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+  })
+
+  describe('jsonb_array_elements + jsonb_array_length: array queries', () => {
+    it('returns null length for missing path (Extended)', async () => {
+      const plaintext = { exists: true, marker: 'al-nomatch' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.nonexistent',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT t.id,
+               eql_v2.jsonb_array_length(
+                 eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+               ) as arr_len
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].arr_len).toBeNull()
+
+      const dataRows = await sql`
+        SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = ${id}
+      `
+      expect(dataRows).toHaveLength(1)
+      await verifyRow(dataRows[0], plaintext)
+    }, 30000)
+
+    // [@] notation (proxy convention) produces the selector hash matching is_array=true STE vec entries
+    it('[@] selector matches is_array=true entries in STE vec', async () => {
+      const plaintext = { colors: ['a', 'b'], marker: 'diag-sv' }
+      const { id } = await insertRow(plaintext)
+
+      const entries = await sql`
+        SELECT
+          eql_v2.selector(e.entry::jsonb) as selector,
+          eql_v2.is_ste_vec_array(e.entry::jsonb) as is_array
+        FROM "protect-ci-jsonb" t,
+             LATERAL unnest(eql_v2.ste_vec((t.metadata).data)) WITH ORDINALITY AS e(entry, idx)
+        WHERE t.id = ${id}
+      `
+
+      const arrayEntries = entries.filter((e: any) => e.is_array === true)
+      expect(arrayEntries.length).toBeGreaterThan(0)
+
+      const selectorAt = await encryptQueryTerm('$.colors[@]', 'steVecSelector')
+      const hashAt =
+        await sql`SELECT eql_v2.selector(${selectorAt}::eql_v2_encrypted) as s`
+
+      expect(hashAt[0].s).toBe(arrayEntries[0].selector)
+    }, 30000)
+
+    it('returns correct length for known array (Extended)', async () => {
+      const plaintext = { colors: ['a', 'b', 'c', 'd'], marker: 'al-known' }
+      const { id } = await insertRow(plaintext)
+
+      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
+      const selectorTerm = await encryptQueryTerm(
+        '$.colors[@]',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT t.id,
+               eql_v2.jsonb_array_length(
+                 eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+               ) as arr_len
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].arr_len).toBe(4)
+
+      const dataRows = await sql`
+        SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = ${id}
+      `
+      expect(dataRows).toHaveLength(1)
+      await verifyRow(dataRows[0], plaintext)
+    }, 30000)
+
+    it('returns correct length for known array (Simple)', async () => {
+      const plaintext = { colors: ['x', 'y', 'z'], marker: 'al-known-s' }
+      const { id } = await insertRow(plaintext)
+
+      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
+      const selectorTerm = await encryptQueryTerm(
+        '$.colors[@]',
+        'steVecSelector',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT t.id,
+                eql_v2.jsonb_array_length(
+                  eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
+                ) as arr_len
+         FROM "protect-ci-jsonb" t
+         WHERE t.id = $2`,
+        [selectorTerm, id],
+      )
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].arr_len).toBe(3)
+
+      const dataRows = await sql.unsafe(
+        `SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = $1`,
+        [id],
+      )
+      expect(dataRows).toHaveLength(1)
+      await verifyRow(dataRows[0], plaintext)
+    }, 30000)
+
+    // EQL pattern: jsonb_array_elements(jsonb_path_query(...)) in SELECT clause, not FROM
+    it('expands array via jsonb_array_elements (Extended)', async () => {
+      const plaintext = { tags: ['ae-a', 'ae-b', 'ae-c'], marker: 'ae-expand' }
+      const { id } = await insertRow(plaintext)
+
+      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
+      const selectorTerm = await encryptQueryTerm('$.tags[@]', 'steVecSelector')
+
+      const rows = await sql`
+        SELECT eql_v2.jsonb_array_elements(
+                 eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+               ) as elem
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(3)
+
+      const dataRows = await sql`
+        SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = ${id}
+      `
+      expect(dataRows).toHaveLength(1)
+      await verifyRow(dataRows[0], plaintext)
+    }, 30000)
+
+    it('expands array via jsonb_array_elements (Simple)', async () => {
+      const plaintext = {
+        tags: ['ae-s-a', 'ae-s-b', 'ae-s-c'],
+        marker: 'ae-expand-s',
+      }
+      const { id } = await insertRow(plaintext)
+
+      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
+      const selectorTerm = await encryptQueryTerm('$.tags[@]', 'steVecSelector')
+
+      const rows = await sql.unsafe(
+        `SELECT eql_v2.jsonb_array_elements(
+                  eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
+                ) as elem
+         FROM "protect-ci-jsonb" t
+         WHERE t.id = $2`,
+        [selectorTerm, id],
+      )
+
+      expect(rows).toHaveLength(3)
+
+      const dataRows = await sql.unsafe(
+        `SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = $1`,
+        [id],
+      )
+      expect(dataRows).toHaveLength(1)
+      await verifyRow(dataRows[0], plaintext)
+    }, 30000)
+  })
+
+  describe('containment: @> with array values', () => {
+    it('matches array subset (Extended)', async () => {
+      const plaintext = {
+        tags: ['ac-alpha', 'ac-beta', 'ac-gamma'],
+        marker: 'ac-subset',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['ac-alpha'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE t.metadata @> ${containmentTerm}::eql_v2_encrypted
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('non-matching array value returns no rows (Extended)', async () => {
+      const plaintext = { tags: ['ac-exist'], marker: 'ac-nomatch' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['ac-nonexistent'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE t.metadata @> ${containmentTerm}::eql_v2_encrypted
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('matches array subset (Simple)', async () => {
+      const plaintext = {
+        tags: ['ac-simple-x', 'ac-simple-y'],
+        marker: 'ac-simple',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['ac-simple-x'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE t.metadata @> $1::eql_v2_encrypted
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('non-matching array value returns no rows (Simple)', async () => {
+      const plaintext = { tags: ['ac-s-exist'], marker: 'ac-s-nomatch' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['ac-s-absent'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE t.metadata @> $1::eql_v2_encrypted
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('matches nested array subset (Extended)', async () => {
+      const plaintext = {
+        user: { roles: ['ac-nested-admin', 'ac-nested-editor'] },
+        marker: 'ac-nested',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { user: { roles: ['ac-nested-admin'] } },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE t.metadata @> ${containmentTerm}::eql_v2_encrypted
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+  })
+
+  describe('contained-by: <@ with array values', () => {
+    it('matches array superset (Extended)', async () => {
+      const plaintext = {
+        tags: ['cb-one', 'cb-two', 'cb-three'],
+        marker: 'cb-superset',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['cb-one'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('non-matching array returns no rows (Extended)', async () => {
+      const plaintext = { tags: ['cb-exist'], marker: 'cb-nomatch' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['cb-absent'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('matches array superset (Simple)', async () => {
+      const plaintext = { tags: ['cb-s-one', 'cb-s-two'], marker: 'cb-s-super' }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['cb-s-one'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE $1::eql_v2_encrypted <@ t.metadata
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('non-matching array returns no rows (Simple)', async () => {
+      const plaintext = { tags: ['cb-s-exist'], marker: 'cb-s-nomatch' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { tags: ['cb-s-absent'] },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE $1::eql_v2_encrypted <@ t.metadata
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+  })
+
+  describe('storage: array round-trips (gaps only)', () => {
+    it('round-trips object with empty string array', async () => {
+      const plaintext = { tags: [], marker: 'rt-empty-string-arr' }
+      const { id } = await insertRow(plaintext)
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      await verifyRow(rows[0], plaintext)
+    }, 30000)
+
+    it('round-trips nested empty object array', async () => {
+      const plaintext = { data: { items: [] }, marker: 'rt-empty-obj-arr' }
+      const { id } = await insertRow(plaintext)
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      await verifyRow(rows[0], plaintext)
+    }, 30000)
+  })
+
+  // ─── Containment: operand and protocol matrix ──────────────────────
+
+  describe('containment: operand and protocol matrix', () => {
+    it('@> matches key/value (Simple)', async () => {
+      const plaintext = { role: 'cm-admin-s', dept: 'cm-eng-s' }
+      const { id } = await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'cm-admin-s' },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE t.metadata @> $1::eql_v2_encrypted
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('@> non-matching returns no rows (Simple)', async () => {
+      const plaintext = { role: 'cm-exist-s' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'cm-nope-s' },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE t.metadata @> $1::eql_v2_encrypted
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('term <@ column matches subset (Extended)', async () => {
+      const plaintext = { role: 'cm-sub', marker: 'cm-sub-marker' }
+      const { id } = await insertRow(plaintext)
+
+      // Query term is a SUBSET of the stored data
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'cm-sub' },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+
+    it('term <@ column non-matching (Extended)', async () => {
+      const plaintext = { role: 'cm-sub-x' }
+      await insertRow(plaintext)
+
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'cm-sub-miss' },
+        'steVecTerm',
+      )
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE ${containmentTerm}::eql_v2_encrypted <@ t.metadata
+        AND t.test_run_id = ${TEST_RUN_ID}
+      `
+
+      expect(rows.length).toBe(0)
+    }, 30000)
+
+    it('term <@ column matches subset (Simple)', async () => {
+      const plaintext = { role: 'cm-sub-s', marker: 'cm-sub-s-marker' }
+      const { id } = await insertRow(plaintext)
+
+      // Query term is a SUBSET of the stored data
+      const containmentTerm = await encryptQueryTerm(
+        { role: 'cm-sub-s' },
+        'steVecTerm',
+      )
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE $1::eql_v2_encrypted <@ t.metadata
+         AND t.test_run_id = $2`,
+        [containmentTerm, TEST_RUN_ID],
+      )
+
+      expect(rows.length).toBeGreaterThanOrEqual(1)
+      const matchingRow = rows.find((r: any) => r.id === id)
+      expect(matchingRow).toBeDefined()
+      await verifyRow(matchingRow!, plaintext)
+    }, 30000)
+  })
+
+  // ─── Field access: -> operator ─────────────────────────────────────
+
+  describe('field access: -> operator', () => {
+    it('extracts field by encrypted selector (Extended)', async () => {
+      const plaintext = {
+        role: 'fa-enc',
+        dept: 'fa-dept',
+        marker: 'fa-enc-sel',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql`
+        SELECT t.metadata -> ${selectorTerm}::eql_v2_encrypted as extracted
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].extracted).not.toBeNull()
+
+      const fullRows = await sql`
+        SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = ${id}
+      `
+      await verifyRow(fullRows[0], plaintext)
+    }, 30000)
+
+    it('extracts field by encrypted selector (Simple)', async () => {
+      const plaintext = {
+        role: 'fa-enc-s',
+        dept: 'fa-dept-s',
+        marker: 'fa-enc-sel-s',
+      }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql.unsafe(
+        `SELECT t.metadata -> $1::eql_v2_encrypted as extracted
+         FROM "protect-ci-jsonb" t
+         WHERE t.id = $2`,
+        [selectorTerm, id],
+      )
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].extracted).not.toBeNull()
+
+      const fullRows = await sql`
+        SELECT (metadata).data as metadata FROM "protect-ci-jsonb" t WHERE t.id = ${id}
+      `
+      await verifyRow(fullRows[0], plaintext)
+    }, 30000)
+
+    it('returns null for non-existent field (Extended)', async () => {
+      const plaintext = { role: 'fa-null', marker: 'fa-null-marker' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm(
+        '$.nonexistent',
+        'steVecSelector',
+      )
+
+      const rows = await sql`
+        SELECT t.metadata -> ${selectorTerm}::eql_v2_encrypted as extracted
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].extracted).toBeNull()
+    }, 30000)
+
+    it('extracted field can be round-tripped (Extended)', async () => {
+      const plaintext = {
+        role: 'fa-roundtrip',
+        dept: 'fa-rt-dept',
+        marker: 'fa-rt-marker',
+      }
+      const { id } = await insertRow(plaintext)
+
+      // Extract the role field via -> operator
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql`
+        SELECT t.metadata -> ${selectorTerm}::eql_v2_encrypted as extracted,
+               (t.metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0].extracted).not.toBeNull()
+
+      // Decrypt the full document and verify the extracted field matches
+      await verifyRow(rows[0], plaintext)
+    }, 30000)
+  })
+
+  // ─── WHERE comparison: = equality ──────────────────────────────────
+
+  describe('WHERE comparison: = equality', () => {
+    it('jsonb_path_query_first = self-comparison (Extended)', async () => {
+      const plaintext = { role: 'eq-jpqf', marker: 'eq-jpqf-marker' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql`
+        SELECT id, (metadata).data as metadata
+        FROM "protect-ci-jsonb" t
+        WHERE eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+            = eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+        AND t.id = ${id}
+      `
+
+      expect(rows).toHaveLength(1)
+      await verifyRow(rows[0], plaintext)
+    }, 30000)
+
+    it('jsonb_path_query_first = self-comparison (Simple)', async () => {
+      const plaintext = { role: 'eq-jpqf-s', marker: 'eq-jpqf-s-marker' }
+      const { id } = await insertRow(plaintext)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      const rows = await sql.unsafe(
+        `SELECT id, (metadata).data as metadata
+         FROM "protect-ci-jsonb" t
+         WHERE eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
+             = eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
+         AND t.id = $2`,
+        [selectorTerm, id],
+      )
+
+      expect(rows).toHaveLength(1)
+      await verifyRow(rows[0], plaintext)
+    }, 30000)
+
+    // Cross-document equality via = on jsonb_path_query_first results is not supported —
+    // the eql_v2 extension lacks a hash function for this operator.
+    it('equality across two documents rejects with missing hash function', async () => {
+      const doc1 = { role: 'eq-cross-same', dept: 'eq-cross-d1' }
+      const doc2 = { role: 'eq-cross-same', dept: 'eq-cross-d2' }
+
+      const { id: id1 } = await insertRow(doc1)
+      const { id: id2 } = await insertRow(doc2)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      await expect(
+        sql`
+          SELECT a.id as id_a, b.id as id_b
+          FROM "protect-ci-jsonb" a, "protect-ci-jsonb" b
+          WHERE eql_v2.jsonb_path_query_first(a.metadata, ${selectorTerm}::eql_v2_encrypted)
+              = eql_v2.jsonb_path_query_first(b.metadata, ${selectorTerm}::eql_v2_encrypted)
+          AND a.id = ${id1}
+          AND b.id = ${id2}
+        `,
+      ).rejects.toThrow(/could not find hash function for hash operator/)
+    }, 30000)
+
+    it('equality mismatch across two documents rejects with missing hash function', async () => {
+      const doc1 = { role: 'eq-cross-mismatch-1', marker: 'eq-mm-1' }
+      const doc2 = { role: 'eq-cross-mismatch-2', marker: 'eq-mm-2' }
+
+      const { id: id1 } = await insertRow(doc1)
+      const { id: id2 } = await insertRow(doc2)
+
+      const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
+
+      await expect(
+        sql`
+          SELECT a.id as id_a, b.id as id_b
+          FROM "protect-ci-jsonb" a, "protect-ci-jsonb" b
+          WHERE eql_v2.jsonb_path_query_first(a.metadata, ${selectorTerm}::eql_v2_encrypted)
+              = eql_v2.jsonb_path_query_first(b.metadata, ${selectorTerm}::eql_v2_encrypted)
+          AND a.id = ${id1}
+          AND b.id = ${id2}
+        `,
+      ).rejects.toThrow(/could not find hash function for hash operator/)
+    }, 30000)
+  })
+
   // ─── eql (default) return type ──────────────────────────────────────
 
   describe('eql (default) return type', () => {
