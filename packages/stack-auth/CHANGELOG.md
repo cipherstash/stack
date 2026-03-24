@@ -2,6 +2,17 @@
 
 ### Documentation
 
+- add README for stack-auth and include it as module docs
+- add README for @cipherstash/auth npm package
+
+### Fixes
+
+- remove blank line to satisfy cargo fmt
+- update vitaminc imports for 0.1.0-pre4.2 module restructure
+
+
+### Documentation
+
 - 📝 move token refresh docs and mermaid diagram to public AuthStrategy trait
 
 ### Fixes
