@@ -10,8 +10,11 @@ on:
 
 jobs:
   run-tests:
-    name: Run Tests
+    name: Run Tests (Node ${{ matrix.node-version }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      matrix:
+        node-version: [22, 24]
 
     # Postgres + EQL for the integration tests. Official EQL image —
     # PostgreSQL 17 with EQL pre-installed via /docker-entrypoint-initdb.d.
@@ -44,7 +47,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
       # node-pty's install hook falls back to `node-gyp rebuild` when no
