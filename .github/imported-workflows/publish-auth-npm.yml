@@ -167,6 +167,8 @@ jobs:
       - name: Publish platform packages
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for dir in npm/*/; do
             if [ -f "$dir/package.json" ]; then
@@ -178,6 +180,8 @@ jobs:
       - name: Publish main package
         if: ${{ !inputs.dry_run }}
         working-directory: ${{ env.WORKING_DIR }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public --tag ${{ steps.version.outputs.npm_tag }}
 
       - name: Dry run summary
