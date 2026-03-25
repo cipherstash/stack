@@ -53,15 +53,21 @@ function loadBinding() {
     );
   }
 
+  // Try the platform-specific optional dependency (production / npm install)
   try {
     return require(pkg);
-  } catch (err) {
-    throw new Error(
-      `Failed to load native binding for ${platform}-${arch}. ` +
-        `Ensure the optional dependency "${pkg}" is installed.\n` +
-        `Original error: ${err.message}`,
-    );
-  }
+  } catch (_) {}
+
+  // Fall back to local .node binary (local development / napi build)
+  try {
+    return require("./stack-auth-node.node");
+  } catch (_) {}
+
+  throw new Error(
+    `Failed to load native binding for ${platform}-${arch}. ` +
+      `Ensure the optional dependency "${pkg}" is installed, ` +
+      `or run "napi build" for local development.`,
+  );
 }
 
 module.exports = loadBinding();
