@@ -53,14 +53,16 @@ function loadBinding() {
     );
   }
 
-  // Try the platform-specific optional dependency (production / npm install)
-  try {
-    return require(pkg);
-  } catch (_) {}
-
-  // Fall back to local .node binary (local development / napi build)
+  // Prefer a local .node binary (local development / napi build) so that
+  // locally-built features (e.g. test-utils) take priority over a published
+  // platform package that may have been installed alongside it.
   try {
     return require("./stack-auth-node.node");
+  } catch (_) {}
+
+  // Fall back to the platform-specific optional dependency (production / npm install)
+  try {
+    return require(pkg);
   } catch (_) {}
 
   throw new Error(
