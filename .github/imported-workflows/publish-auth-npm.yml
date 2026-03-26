@@ -71,7 +71,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm ci
+        run: npm install --omit=optional
 
       - name: Build native module
         working-directory: ${{ env.WORKING_DIR }}
