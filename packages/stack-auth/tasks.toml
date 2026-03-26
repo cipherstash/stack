@@ -2,8 +2,8 @@
 description = "Run stack-auth Node.js integration tests"
 dir = "{{config_root}}/packages/stack-auth/node"
 run = [
-  "npm install",
+  "npm ci",
   "cargo build -p stack-auth-node --features stack-auth-node/test-utils",
-  "node -e \"const fs=require('fs'),p=require('path'); const ext=process.platform==='win32'?'dll':process.platform==='darwin'?'dylib':'so'; const src=p.resolve('..','..','..','target','debug',ext==='dll'?'stack_auth_node.dll':'libstack_auth_node.'+ext); fs.copyFileSync(src,'stack-auth-node.node')\"",
+  "cp ../../../target/debug/libstack_auth_node.dylib stack-auth-node.node 2>/dev/null || cp ../../../target/debug/libstack_auth_node.so stack-auth-node.node",
   "npx vitest run",
 ]

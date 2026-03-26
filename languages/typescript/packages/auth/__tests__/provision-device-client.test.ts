@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync } from "fs";
-import { readFileSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { MockAuthServer as MockAuthServerType } from "../test-utils";
@@ -69,10 +68,7 @@ describe("provision device client (TypeScript / vitest)", () => {
       client_id: "existing-id",
       client_key: "existing-key",
     });
-    require("fs").writeFileSync(
-      join(profileDir, "secretkey.json"),
-      existing
-    );
+    writeFileSync(join(profileDir, "secretkey.json"), existing);
 
     await provisionDeviceClientWithProfileDir(profileDir);
 
@@ -87,10 +83,7 @@ describe("provision device client (TypeScript / vitest)", () => {
 
     await provisionDeviceClientWithProfileDir(profileDir);
 
-    const exists = require("fs").existsSync(
-      join(profileDir, "secretkey.json")
-    );
-    expect(exists).toBe(false);
+    expect(existsSync(join(profileDir, "secretkey.json"))).toBe(false);
   });
 
   it("throws on server error", async () => {
