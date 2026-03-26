@@ -11,6 +11,15 @@ use zerokms_protocol::{CreateClientRequest, CreateClientResponse, ViturKeyMateri
 
 use crate::{ensure_trailing_slash, http_client, ServiceToken, Token};
 
+fn user_agent() -> String {
+    format!(
+        "stack-auth/{} ({} {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Secret key file (output)
 // ---------------------------------------------------------------------------
@@ -50,10 +59,7 @@ pub enum DeviceClientError {
 
     /// ZeroKMS returned a non-success, non-conflict status.
     #[error("ZeroKMS returned {status}: {body}")]
-    Server {
-        status: u16,
-        body: String,
-    },
+    Server { status: u16, body: String },
 
     /// Failed to construct the ZeroKMS endpoint URL.
     #[error("Invalid ZeroKMS URL: {0}")]
@@ -94,6 +100,7 @@ pub async fn provision_device_client(store: &ProfileStore) -> Result<(), DeviceC
 
     let response = http_client()
         .post(url)
+        .header(reqwest::header::USER_AGENT, user_agent())
         .bearer_auth(service_token.as_str())
         .json(&request)
         .send()
@@ -223,10 +230,7 @@ mod tests {
         provision_device_client(&store).await.unwrap();
 
         let saved: serde_json::Value = store.load(SECRET_KEY_FILENAME).unwrap();
-        assert_eq!(
-            saved["client_id"],
-            "00000000-0000-0000-0000-000000000001"
-        );
+        assert_eq!(saved["client_id"], "00000000-0000-0000-0000-000000000001");
         assert_eq!(saved["client_key"], "dGVzdC1rZXktbWF0ZXJpYWw=");
     }
 
@@ -248,7 +252,10 @@ mod tests {
         provision_device_client(&store).await.unwrap();
 
         let saved: serde_json::Value = store.load(SECRET_KEY_FILENAME).unwrap();
-        assert_eq!(saved["client_id"], "old", "should not overwrite existing key");
+        assert_eq!(
+            saved["client_id"], "old",
+            "should not overwrite existing key"
+        );
     }
 
     #[tokio::test]
