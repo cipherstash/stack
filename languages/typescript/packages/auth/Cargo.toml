@@ -9,12 +9,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 stack-auth = { workspace = true }
+stack-profile = { workspace = true }
 cts-common = { workspace = true }
 napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
 url = { version = "2", optional = true }
 mocktail = { version = "0.3.0", optional = true }
 serde_json = { version = "1", optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 stack-auth = { workspace = true, features = ["test-utils"] }
@@ -28,4 +31,4 @@ url = "2"
 napi-build = "2"
 
 [features]
-test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:serde_json"]
+test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:serde_json", "dep:jsonwebtoken", "dep:reqwest"]

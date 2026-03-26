@@ -34,6 +34,17 @@ export interface AuthResult {
   /** Number of seconds before the token expires (computed at time of return). */
   expiresIn: number
 }
+/**
+ * Provision a device client in ZeroKMS after login.
+ *
+ * Loads the auth token and device identity from `~/.cipherstash/`,
+ * creates a client on the workspace's default keyset, and persists the
+ * resulting secret key to `~/.cipherstash/secretkey.json`.
+ *
+ * This is a no-op if the secret key already exists or the server returns
+ * 409 (conflict).
+ */
+export declare function provisionDeviceClient(): Promise<void>
 /** Begin the OAuth 2.0 Device Authorization flow. */
 export declare function beginDeviceCodeFlow(region: string, clientId: string): Promise<DeviceCodeResult>
 /**
@@ -43,6 +54,21 @@ export declare function beginDeviceCodeFlow(region: string, clientId: string): P
  * `test-utils` Cargo feature.
  */
 export declare function beginDeviceCodeFlowWithBaseUrl(region: string, clientId: string, baseUrl: string): Promise<DeviceCodeResult>
+/**
+ * Variant of `provisionDeviceClient` that uses a custom profile directory.
+ *
+ * Intended for **testing only** — requires the crate to be built with the
+ * `test-utils` Cargo feature.
+ */
+export declare function provisionDeviceClientWithProfileDir(profileDir: string): Promise<void>
+/**
+ * Save a test auth token to the given profile directory with the ZeroKMS
+ * service URL set to `zerokms_base_url`.
+ *
+ * Intended for **testing only** — requires the crate to be built with the
+ * `test-utils` Cargo feature.
+ */
+export declare function saveTestToken(profileDir: string, zerokmsBaseUrl: string): void
 export declare class MockAuthServer {
   /** Start a mock auth server on a random port. */
   static start(): Promise<MockAuthServer>
@@ -63,6 +89,13 @@ export declare class MockAuthServer {
    * with the given OAuth error code and optional description.
    */
   mockTokenEndpointError(code: string, description?: string | undefined | null): void
+  /**
+   * Register a mock for `POST /create-client` that returns a successful
+   * create-client JSON response (as ZeroKMS would).
+   */
+  mockCreateClientEndpoint(): void
+  /** Register a mock for `POST /create-client` that returns a 409 conflict. */
+  mockCreateClientConflict(): void
   /** Remove all registered mocks. */
   clearMocks(): void
 }

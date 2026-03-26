@@ -70,6 +70,32 @@ impl MockAuthServer {
         });
     }
 
+    /// Register a mock for `POST /create-client` that returns a successful
+    /// create-client JSON response (as ZeroKMS would).
+    #[napi]
+    pub fn mock_create_client_endpoint(&self) {
+        self.server.mocks().mock(|when, then| {
+            when.post().path("/create-client");
+            then.json(serde_json::json!({
+                "id": "00000000-0000-0000-0000-000000000001",
+                "dataset_id": "00000000-0000-0000-0000-000000000099",
+                "name": "test-device",
+                "description": "test-device",
+                "client_key": "dGVzdC1rZXktbWF0ZXJpYWw="
+            }));
+        });
+    }
+
+    /// Register a mock for `POST /create-client` that returns a 409 conflict.
+    #[napi]
+    pub fn mock_create_client_conflict(&self) {
+        self.server.mocks().mock(|when, then| {
+            when.post().path("/create-client");
+            then.status(reqwest::StatusCode::CONFLICT)
+                .json(serde_json::json!({"error": "conflict"}));
+        });
+    }
+
     /// Remove all registered mocks.
     #[napi]
     pub fn clear_mocks(&self) {
