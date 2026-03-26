@@ -1,5 +1,24 @@
 
 
+### Features
+
+- add provisionDeviceClient Node.js binding and tests
+
+### Fixes
+
+- lock file
+- add User-Agent header, rename to device_client, surface errors
+
+### Miscellaneous
+
+- clean up test imports and simplify mise task
+
+### Refactoring
+
+- extract device client provisioning from CLI into stack-auth
+- rename provisionDeviceClient to bindClientDevice
+
+
 ### Documentation
 
 - add README for stack-auth and include it as module docs
