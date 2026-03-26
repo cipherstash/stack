@@ -36,6 +36,7 @@ mod access_key_strategy;
 mod auto_refresh;
 mod auto_strategy;
 mod device_code;
+mod device_client;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
@@ -54,6 +55,8 @@ pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
+
+pub use device_client::{provision_device_client, DeviceClientError};
 
 // Re-exports from stack-profile for backward compatibility.
 pub use stack_profile::DeviceIdentity;
