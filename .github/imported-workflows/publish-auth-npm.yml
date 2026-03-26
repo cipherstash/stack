@@ -100,7 +100,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ${{ env.WORKING_DIR }}
-        run: npm ci --omit=optional
+        run: npm install --omit=optional
 
       - name: Download all artifacts
         uses: actions/download-artifact@v8
