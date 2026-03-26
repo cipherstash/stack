@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use cts_common::Region;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use stack_auth::{AuthError, DeviceCodeStrategy, PendingDeviceCode};
+use stack_auth::{AuthError, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode};
 
 #[cfg(feature = "test-utils")]
 mod mock_auth_server;
@@ -154,6 +154,38 @@ impl DeviceCodeResult {
 // ---------------------------------------------------------------------------
 // Exported functions
 // ---------------------------------------------------------------------------
+
+fn device_client_error_code(err: &DeviceClientError) -> &'static str {
+    match err {
+        DeviceClientError::Profile(_) => "STORE_ERROR",
+        DeviceClientError::Auth(auth_err) => error_code(auth_err),
+        DeviceClientError::Request(_) => "REQUEST_ERROR",
+        DeviceClientError::Server { .. } => "SERVER_ERROR",
+        DeviceClientError::InvalidUrl(_) => "INVALID_URL",
+    }
+}
+
+fn device_client_to_napi_error(err: DeviceClientError) -> napi::Error {
+    let code = device_client_error_code(&err);
+    napi::Error::new(Status::GenericFailure, format!("{code}: {err}"))
+}
+
+/// Provision a device client in ZeroKMS after login.
+///
+/// Loads the auth token and device identity from `~/.cipherstash/`,
+/// creates a client on the workspace's default keyset, and persists the
+/// resulting secret key to `~/.cipherstash/secretkey.json`.
+///
+/// This is a no-op if the secret key already exists or the server returns
+/// 409 (conflict).
+#[napi]
+pub async fn bind_client_device() -> Result<()> {
+    let store = stack_profile::ProfileStore::resolve(None)
+        .map_err(|e| device_client_to_napi_error(DeviceClientError::from(e)))?;
+    stack_auth::bind_client_device(&store)
+        .await
+        .map_err(device_client_to_napi_error)
+}
 
 /// Begin the OAuth 2.0 Device Authorization flow.
 #[napi]
@@ -446,4 +478,67 @@ pub async fn begin_device_code_flow_with_base_url(
         .map_err(to_napi_error)?;
     let pending = strategy.begin().await.map_err(to_napi_error)?;
     Ok(DeviceCodeResult::from_pending(pending))
+}
+
+/// Variant of `provisionDeviceClient` that uses a custom profile directory.
+///
+/// Intended for **testing only** — requires the crate to be built with the
+/// `test-utils` Cargo feature.
+#[cfg(feature = "test-utils")]
+#[napi]
+pub async fn bind_client_device_with_profile_dir(profile_dir: String) -> Result<()> {
+    let store = stack_profile::ProfileStore::new(&profile_dir);
+    stack_auth::bind_client_device(&store)
+        .await
+        .map_err(device_client_to_napi_error)
+}
+
+/// Save a test auth token to the given profile directory with the ZeroKMS
+/// service URL set to `zerokms_base_url`.
+///
+/// Intended for **testing only** — requires the crate to be built with the
+/// `test-utils` Cargo feature.
+#[cfg(feature = "test-utils")]
+#[napi]
+pub fn save_test_token(profile_dir: String, zerokms_base_url: String) -> Result<()> {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?
+        .as_secs();
+
+    let claims = serde_json::json!({
+        "iss": "https://cts.example.com/",
+        "sub": "CS|test-user",
+        "aud": "legacy-aud-value",
+        "iat": now,
+        "exp": now + 3600,
+        "workspace": "ZVATKW3VHMFG27DY",
+        "scope": "",
+        "services": {
+            "zerokms": zerokms_base_url,
+        },
+    });
+
+    let jwt = encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(b"test-secret"),
+    )
+    .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
+
+    let token_json = serde_json::json!({
+        "access_token": jwt,
+        "token_type": "Bearer",
+        "expires_at": now + 3600,
+    });
+
+    let store = stack_profile::ProfileStore::new(&profile_dir);
+    store
+        .save_with_mode("auth.json", &token_json, 0o600)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
+
+    Ok(())
 }
