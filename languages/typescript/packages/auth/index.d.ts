@@ -44,7 +44,7 @@ export interface AuthResult {
  * This is a no-op if the secret key already exists or the server returns
  * 409 (conflict).
  */
-export declare function provisionDeviceClient(): Promise<void>
+export declare function bindClientDevice(): Promise<void>
 /** Begin the OAuth 2.0 Device Authorization flow. */
 export declare function beginDeviceCodeFlow(region: string, clientId: string): Promise<DeviceCodeResult>
 /**
@@ -55,12 +55,12 @@ export declare function beginDeviceCodeFlow(region: string, clientId: string): P
  */
 export declare function beginDeviceCodeFlowWithBaseUrl(region: string, clientId: string, baseUrl: string): Promise<DeviceCodeResult>
 /**
- * Variant of `provisionDeviceClient` that uses a custom profile directory.
+ * Variant of `bindClientDevice` that uses a custom profile directory.
  *
  * Intended for **testing only** — requires the crate to be built with the
  * `test-utils` Cargo feature.
  */
-export declare function provisionDeviceClientWithProfileDir(profileDir: string): Promise<void>
+export declare function bindClientDeviceWithProfileDir(profileDir: string): Promise<void>
 /**
  * Save a test auth token to the given profile directory with the ZeroKMS
  * service URL set to `zerokms_base_url`.

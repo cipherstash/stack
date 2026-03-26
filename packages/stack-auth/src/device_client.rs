@@ -78,7 +78,7 @@ pub enum DeviceClientError {
 ///
 /// If the secret key already exists on disk, or the server returns 409
 /// (conflict), this is a no-op.
-pub async fn provision_device_client(store: &ProfileStore) -> Result<(), DeviceClientError> {
+pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClientError> {
     if store.exists(SECRET_KEY_FILENAME) {
         tracing::debug!("secret key already exists, skipping provisioning");
         return Ok(());
@@ -227,7 +227,7 @@ mod tests {
         let jwt = make_test_jwt(server.url("/"));
         save_test_token(&store, &jwt);
 
-        provision_device_client(&store).await.unwrap();
+        bind_client_device(&store).await.unwrap();
 
         let saved: serde_json::Value = store.load(SECRET_KEY_FILENAME).unwrap();
         assert_eq!(saved["client_id"], "00000000-0000-0000-0000-000000000001");
@@ -249,7 +249,7 @@ mod tests {
             .unwrap();
 
         // No mock server needed — the HTTP call should never happen.
-        provision_device_client(&store).await.unwrap();
+        bind_client_device(&store).await.unwrap();
 
         let saved: serde_json::Value = store.load(SECRET_KEY_FILENAME).unwrap();
         assert_eq!(
@@ -274,7 +274,7 @@ mod tests {
         let jwt = make_test_jwt(server.url("/"));
         save_test_token(&store, &jwt);
 
-        provision_device_client(&store).await.unwrap();
+        bind_client_device(&store).await.unwrap();
 
         assert!(
             !store.exists(SECRET_KEY_FILENAME),
@@ -298,7 +298,7 @@ mod tests {
         let jwt = make_test_jwt(server.url("/"));
         save_test_token(&store, &jwt);
 
-        let err = provision_device_client(&store).await.unwrap_err();
+        let err = bind_client_device(&store).await.unwrap_err();
         assert!(
             matches!(err, DeviceClientError::Server { status: 500, .. }),
             "expected Server error, got: {err:?}"

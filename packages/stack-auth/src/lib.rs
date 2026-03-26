@@ -56,7 +56,7 @@ pub use service_token::ServiceToken;
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
 
-pub use device_client::{provision_device_client, DeviceClientError};
+pub use device_client::{bind_client_device, DeviceClientError};
 
 // Re-exports from stack-profile for backward compatibility.
 pub use stack_profile::DeviceIdentity;

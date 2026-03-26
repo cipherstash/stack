@@ -179,10 +179,10 @@ fn device_client_to_napi_error(err: DeviceClientError) -> napi::Error {
 /// This is a no-op if the secret key already exists or the server returns
 /// 409 (conflict).
 #[napi]
-pub async fn provision_device_client() -> Result<()> {
+pub async fn bind_client_device() -> Result<()> {
     let store = stack_profile::ProfileStore::resolve(None)
         .map_err(|e| device_client_to_napi_error(DeviceClientError::from(e)))?;
-    stack_auth::provision_device_client(&store)
+    stack_auth::bind_client_device(&store)
         .await
         .map_err(device_client_to_napi_error)
 }
@@ -486,9 +486,9 @@ pub async fn begin_device_code_flow_with_base_url(
 /// `test-utils` Cargo feature.
 #[cfg(feature = "test-utils")]
 #[napi]
-pub async fn provision_device_client_with_profile_dir(profile_dir: String) -> Result<()> {
+pub async fn bind_client_device_with_profile_dir(profile_dir: String) -> Result<()> {
     let store = stack_profile::ProfileStore::new(&profile_dir);
-    stack_auth::provision_device_client(&store)
+    stack_auth::bind_client_device(&store)
         .await
         .map_err(device_client_to_napi_error)
 }

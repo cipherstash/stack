@@ -52,7 +52,7 @@ proto.openInBrowser = wrapSync(proto.openInBrowser);
 module.exports = {
   ...native,
   beginDeviceCodeFlow: wrapAsync(native.beginDeviceCodeFlow),
-  provisionDeviceClient: wrapAsync(native.provisionDeviceClient),
+  bindClientDevice: wrapAsync(native.bindClientDevice),
 };
 
 if (native.beginDeviceCodeFlowWithBaseUrl) {
@@ -61,8 +61,8 @@ if (native.beginDeviceCodeFlowWithBaseUrl) {
   );
 }
 
-if (native.provisionDeviceClientWithProfileDir) {
-  module.exports.provisionDeviceClientWithProfileDir = wrapAsync(
-    native.provisionDeviceClientWithProfileDir,
+if (native.bindClientDeviceWithProfileDir) {
+  module.exports.bindClientDeviceWithProfileDir = wrapAsync(
+    native.bindClientDeviceWithProfileDir,
   );
 }

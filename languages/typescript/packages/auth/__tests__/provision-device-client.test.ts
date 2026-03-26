@@ -7,7 +7,7 @@ import type { AuthError } from "../index";
 
 const mod = require("../index.js") as typeof import("../index") & {
   MockAuthServer: typeof MockAuthServerType;
-  provisionDeviceClientWithProfileDir: (
+  bindClientDeviceWithProfileDir: (
     profileDir: string
   ) => Promise<void>;
   saveTestToken: (profileDir: string, zerokmsBaseUrl: string) => void;
@@ -15,7 +15,7 @@ const mod = require("../index.js") as typeof import("../index") & {
 
 const {
   MockAuthServer,
-  provisionDeviceClientWithProfileDir,
+  bindClientDeviceWithProfileDir,
   saveTestToken,
 } = mod;
 
@@ -49,7 +49,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     server.mockCreateClientEndpoint();
     saveTestToken(profileDir, server.baseUrl);
 
-    await provisionDeviceClientWithProfileDir(profileDir);
+    await bindClientDeviceWithProfileDir(profileDir);
 
     const raw = readFileSync(join(profileDir, "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
@@ -70,7 +70,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     });
     writeFileSync(join(profileDir, "secretkey.json"), existing);
 
-    await provisionDeviceClientWithProfileDir(profileDir);
+    await bindClientDeviceWithProfileDir(profileDir);
 
     const raw = readFileSync(join(profileDir, "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
@@ -81,7 +81,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     server.mockCreateClientConflict();
     saveTestToken(profileDir, server.baseUrl);
 
-    await provisionDeviceClientWithProfileDir(profileDir);
+    await bindClientDeviceWithProfileDir(profileDir);
 
     expect(existsSync(join(profileDir, "secretkey.json"))).toBe(false);
   });
@@ -91,7 +91,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     saveTestToken(profileDir, server.baseUrl);
 
     try {
-      await provisionDeviceClientWithProfileDir(profileDir);
+      await bindClientDeviceWithProfileDir(profileDir);
       expect.unreachable("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
@@ -101,7 +101,7 @@ describe("provision device client (TypeScript / vitest)", () => {
   it("throws STORE_ERROR when auth token is missing", async () => {
     // No token saved — should fail trying to load auth.json
     try {
-      await provisionDeviceClientWithProfileDir(profileDir);
+      await bindClientDeviceWithProfileDir(profileDir);
       expect.unreachable("should have thrown");
     } catch (err) {
       const authErr = err as AuthError;
