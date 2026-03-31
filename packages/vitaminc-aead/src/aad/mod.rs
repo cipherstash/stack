@@ -76,6 +76,18 @@ impl<'a> IntoAad<'a> for Vec<u8> {
     }
 }
 
+impl<'a, const N: usize> IntoAad<'a> for [u8; N] {
+    fn into_aad(self) -> Aad<'a> {
+        Aad::new_owned(self)
+    }
+}
+
+impl<'a, const N: usize> IntoAad<'a> for &'a [u8; N] {
+    fn into_aad(self) -> Aad<'a> {
+        Aad::from_slice(self.as_slice())
+    }
+}
+
 impl<'a> IntoAad<'a> for String {
     fn into_aad(self) -> Aad<'a> {
         Aad::new_owned(self.into_bytes())
@@ -189,6 +201,30 @@ mod tests {
         let some_aad = Some("hello").into_aad();
         let expected = Aad::pae(&[b"hello"]);
         assert_eq!(some_aad.as_bytes(), expected.as_bytes());
+    }
+
+    #[test]
+    fn test_byte_array_aad() {
+        let aad = [1u8, 2, 3].into_aad();
+        assert_eq!(aad.as_bytes(), &[1, 2, 3]);
+        assert!(!aad.is_empty());
+    }
+
+    #[test]
+    fn test_byte_array_ref_aad() {
+        let arr = [4u8, 5, 6];
+        let aad = (&arr).into_aad();
+        assert_eq!(aad.as_bytes(), &[4, 5, 6]);
+    }
+
+    #[test]
+    fn test_option_byte_array_aad() {
+        let some_aad = Some([1u8, 2, 3]).into_aad();
+        let expected = Aad::pae(&[&[1, 2, 3]]);
+        assert_eq!(some_aad.as_bytes(), expected.as_bytes());
+
+        let none_aad = Option::<[u8; 3]>::None.into_aad();
+        assert_ne!(none_aad.as_bytes(), some_aad.as_bytes());
     }
 
     #[test]
