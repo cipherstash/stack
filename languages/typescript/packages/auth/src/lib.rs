@@ -5,8 +5,7 @@ use cts_common::Region;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use stack_auth::{
-    AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode,
-    ServiceToken,
+    AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode, ServiceToken,
 };
 
 #[cfg(feature = "test-utils")]
@@ -116,7 +115,9 @@ impl AutoStrategy {
                 builder = builder.with_access_key(key);
             }
             if let Some(crn_str) = opts.workspace_crn {
-                let crn = crn_str.parse().map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
+                let crn = crn_str
+                    .parse()
+                    .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
                 builder = builder.with_workspace_crn(crn);
             }
         }
@@ -150,7 +151,9 @@ impl AccessKeyStrategy {
     #[napi(factory)]
     pub fn create(region: String, access_key: String) -> Result<Self> {
         let region = Region::new(&region).map_err(|e| to_napi_error(AuthError::from(e)))?;
-        let key: stack_auth::AccessKey = access_key.parse().map_err(|e| to_napi_error(AuthError::from(e)))?;
+        let key: stack_auth::AccessKey = access_key
+            .parse()
+            .map_err(|e| to_napi_error(AuthError::from(e)))?;
         let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_napi_error)?;
         Ok(Self { inner })
     }
@@ -480,14 +483,26 @@ mod tests {
 
         #[test]
         fn maps_all_auth_error_variants() {
-            assert_eq!(error_code(&AuthError::AccessDenied), "ACCESS_DENIED",
-                "AccessDenied should map to ACCESS_DENIED");
-            assert_eq!(error_code(&AuthError::TokenExpired), "EXPIRED_TOKEN",
-                "TokenExpired should map to EXPIRED_TOKEN");
-            assert_eq!(error_code(&AuthError::InvalidGrant), "INVALID_GRANT",
-                "InvalidGrant should map to INVALID_GRANT");
-            assert_eq!(error_code(&AuthError::InvalidClient), "INVALID_CLIENT",
-                "InvalidClient should map to INVALID_CLIENT");
+            assert_eq!(
+                error_code(&AuthError::AccessDenied),
+                "ACCESS_DENIED",
+                "AccessDenied should map to ACCESS_DENIED"
+            );
+            assert_eq!(
+                error_code(&AuthError::TokenExpired),
+                "EXPIRED_TOKEN",
+                "TokenExpired should map to EXPIRED_TOKEN"
+            );
+            assert_eq!(
+                error_code(&AuthError::InvalidGrant),
+                "INVALID_GRANT",
+                "InvalidGrant should map to INVALID_GRANT"
+            );
+            assert_eq!(
+                error_code(&AuthError::InvalidClient),
+                "INVALID_CLIENT",
+                "InvalidClient should map to INVALID_CLIENT"
+            );
             assert_eq!(
                 error_code(&AuthError::InvalidUrl(
                     "http://[".parse::<url::Url>().unwrap_err()
@@ -500,12 +515,21 @@ mod tests {
                 "INVALID_REGION",
                 "Region should map to INVALID_REGION"
             );
-            assert_eq!(error_code(&AuthError::Server("test".to_string())), "SERVER_ERROR",
-                "Server should map to SERVER_ERROR");
-            assert_eq!(error_code(&AuthError::NotAuthenticated), "NOT_AUTHENTICATED",
-                "NotAuthenticated should map to NOT_AUTHENTICATED");
-            assert_eq!(error_code(&AuthError::MissingWorkspaceCrn), "MISSING_WORKSPACE_CRN",
-                "MissingWorkspaceCrn should map to MISSING_WORKSPACE_CRN");
+            assert_eq!(
+                error_code(&AuthError::Server("test".to_string())),
+                "SERVER_ERROR",
+                "Server should map to SERVER_ERROR"
+            );
+            assert_eq!(
+                error_code(&AuthError::NotAuthenticated),
+                "NOT_AUTHENTICATED",
+                "NotAuthenticated should map to NOT_AUTHENTICATED"
+            );
+            assert_eq!(
+                error_code(&AuthError::MissingWorkspaceCrn),
+                "MISSING_WORKSPACE_CRN",
+                "MissingWorkspaceCrn should map to MISSING_WORKSPACE_CRN"
+            );
             assert_eq!(
                 error_code(&AuthError::InvalidAccessKey(
                     "bad-key".parse::<stack_auth::AccessKey>().unwrap_err()
@@ -556,15 +580,26 @@ mod tests {
 
                 let result = begin_result(&server, &dir).await;
 
-                assert_eq!(result.user_code(), "ABCD-EFGH",
-                    "user_code should match device code response");
-                assert_eq!(result.verification_uri(), "http://example.com/activate",
-                    "verification_uri should match device code response");
-                assert_eq!(result.verification_uri_complete(),
+                assert_eq!(
+                    result.user_code(),
+                    "ABCD-EFGH",
+                    "user_code should match device code response"
+                );
+                assert_eq!(
+                    result.verification_uri(),
+                    "http://example.com/activate",
+                    "verification_uri should match device code response"
+                );
+                assert_eq!(
+                    result.verification_uri_complete(),
                     "http://example.com/activate?user_code=ABCD-EFGH",
-                    "verification_uri_complete should include user code");
-                assert_eq!(result.expires_in(), 900.0,
-                    "expires_in should match device code response");
+                    "verification_uri_complete should include user code"
+                );
+                assert_eq!(
+                    result.expires_in(),
+                    900.0,
+                    "expires_in should match device code response"
+                );
             }
 
             mod given_successful_token_exchange {
@@ -584,10 +619,15 @@ mod tests {
                     let result = begin_result(&server, &dir).await;
                     let token = result.poll_for_token().await.unwrap();
 
-                    assert!(token.expires_in >= 3598.0 && token.expires_in <= 3600.0,
-                        "expires_in should be ~3600, got: {}", token.expires_in);
-                    assert!(token.expires_at > 0.0,
-                        "expires_at should be a positive epoch timestamp");
+                    assert!(
+                        token.expires_in >= 3598.0 && token.expires_in <= 3600.0,
+                        "expires_in should be ~3600, got: {}",
+                        token.expires_in
+                    );
+                    assert!(
+                        token.expires_at > 0.0,
+                        "expires_at should be a positive epoch timestamp"
+                    );
                 }
             }
 
@@ -691,12 +731,10 @@ mod tests {
 
             #[tokio::test]
             async fn returns_invalid_region_error() {
-                let err = begin_device_code_flow(
-                    "not-a-region".to_string(),
-                    "test-client".to_string(),
-                )
-                .await
-                .unwrap_err();
+                let err =
+                    begin_device_code_flow("not-a-region".to_string(), "test-client".to_string())
+                        .await
+                        .unwrap_err();
 
                 assertions::has_error_code(&err, "INVALID_REGION");
             }
@@ -713,16 +751,15 @@ mod tests {
 
             #[test]
             fn includes_bearer_token_and_claims() {
-                let service_token = make_service_token(
-                    "https://cts.example.com/",
-                    "https://zerokms.example.com/",
-                );
+                let service_token =
+                    make_service_token("https://cts.example.com/", "https://zerokms.example.com/");
                 let result = token_result_from(service_token).unwrap();
 
-                assert!(!result.token.is_empty(),
-                    "token string should not be empty");
-                assert_eq!(result.issuer, "https://cts.example.com/",
-                    "issuer should match JWT iss claim");
+                assert!(!result.token.is_empty(), "token string should not be empty");
+                assert_eq!(
+                    result.issuer, "https://cts.example.com/",
+                    "issuer should match JWT iss claim"
+                );
                 assert_eq!(
                     result.services.get("zerokms").map(String::as_str),
                     Some("https://zerokms.example.com/"),
