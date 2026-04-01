@@ -255,6 +255,40 @@ mod tests {
     }
 
     #[test]
+    fn services_returns_map_for_valid_jwt() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        let services = token.services().unwrap();
+        assert_eq!(
+            services
+                .get(cts_common::claims::ServiceType::ZeroKms)
+                .map(|u| u.as_str()),
+            Some("https://zerokms.example.com/")
+        );
+    }
+
+    #[test]
+    fn services_returns_empty_map_when_claim_missing() {
+        let jwt = make_jwt("https://cts.example.com/", None);
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        let services = token.services().unwrap();
+        assert!(services.is_empty());
+    }
+
+    #[test]
+    fn services_errors_for_non_jwt() {
+        let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
+        let err = token.services().unwrap_err().to_string();
+        assert!(
+            err.contains("failed to decode JWT header"),
+            "expected specific decode error, got: {err}"
+        );
+    }
+
+    #[test]
     fn debug_does_not_leak_secret() {
         let jwt = make_jwt(
             "https://cts.example.com/",

@@ -447,6 +447,21 @@ mod tests {
     }
 
     #[test]
+    fn test_new_error_code_mapping() {
+        assert_eq!(error_code(&AuthError::NotAuthenticated), "NOT_AUTHENTICATED");
+        assert_eq!(
+            error_code(&AuthError::MissingWorkspaceCrn),
+            "MISSING_WORKSPACE_CRN"
+        );
+        assert_eq!(
+            error_code(&AuthError::InvalidAccessKey(
+                "bad-key".parse::<stack_auth::AccessKey>().unwrap_err()
+            )),
+            "INVALID_ACCESS_KEY"
+        );
+    }
+
+    #[test]
     fn test_napi_error_format() {
         let err = to_napi_error(AuthError::AccessDenied);
         assert!(
@@ -613,6 +628,128 @@ mod tests {
         assert!(
             err.reason.contains("INVALID_REGION: "),
             "expected INVALID_REGION error, got: {}",
+            err.reason
+        );
+    }
+
+    // ---- token_result_from ----
+
+    fn make_service_token(iss: &str, zerokms_url: &str) -> ServiceToken {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let claims = serde_json::json!({
+            "iss": iss,
+            "sub": "CS|test-user",
+            "aud": "test-aud",
+            "iat": now,
+            "exp": now + 3600,
+            "workspace": "ZVATKW3VHMFG27DY",
+            "scope": "",
+            "services": { "zerokms": zerokms_url },
+        });
+
+        let jwt = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret"),
+        )
+        .unwrap();
+
+        ServiceToken::new(stack_auth::SecretToken::new(jwt))
+    }
+
+    #[test]
+    fn test_token_result_from_valid_token() {
+        let service_token =
+            make_service_token("https://cts.example.com/", "https://zerokms.example.com/");
+        let result = token_result_from(service_token).unwrap();
+
+        assert!(!result.token.is_empty());
+        assert_eq!(result.issuer, "https://cts.example.com/");
+        assert_eq!(
+            result.services.get("zerokms").map(String::as_str),
+            Some("https://zerokms.example.com/")
+        );
+    }
+
+    #[test]
+    fn test_token_result_from_non_jwt_errors() {
+        let token = ServiceToken::new(stack_auth::SecretToken::new("not-a-jwt"));
+        let err = token_result_from(token).unwrap_err();
+        assert!(
+            err.reason.contains("INVALID_TOKEN: "),
+            "expected INVALID_TOKEN error, got: {}",
+            err.reason
+        );
+    }
+
+    // ---- Strategy factory error handling ----
+
+    /// Helper to extract the error from a `Result<T, napi::Error>` without
+    /// requiring `T: Debug`.
+    fn expect_err<T>(result: Result<T>) -> napi::Error {
+        match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected Err, got Ok"),
+        }
+    }
+
+    #[test]
+    fn test_auto_strategy_detect_access_key_without_crn() {
+        let saved_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
+        let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
+        std::env::remove_var("CS_CLIENT_ACCESS_KEY");
+        std::env::remove_var("CS_WORKSPACE_CRN");
+
+        let err = expect_err(AutoStrategy::detect(Some(AutoStrategyOptions {
+            access_key: Some("CSAKtestKeyId.testKeySecret".to_string()),
+            workspace_crn: None,
+        })));
+
+        if let Some(val) = saved_key {
+            std::env::set_var("CS_CLIENT_ACCESS_KEY", val);
+        }
+        if let Some(val) = saved_crn {
+            std::env::set_var("CS_WORKSPACE_CRN", val);
+        }
+
+        assert!(
+            err.reason.contains("MISSING_WORKSPACE_CRN"),
+            "expected MISSING_WORKSPACE_CRN error, got: {}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn test_access_key_strategy_invalid_region() {
+        let err = expect_err(AccessKeyStrategy::create(
+            "not-a-region".to_string(),
+            "CSAKid.secret".to_string(),
+        ));
+
+        assert!(
+            err.reason.contains("INVALID_REGION: "),
+            "expected INVALID_REGION error, got: {}",
+            err.reason
+        );
+    }
+
+    #[test]
+    fn test_access_key_strategy_invalid_key() {
+        let err = expect_err(AccessKeyStrategy::create(
+            "ap-southeast-2.aws".to_string(),
+            "not-a-valid-key".to_string(),
+        ));
+
+        assert!(
+            err.reason.contains("INVALID_ACCESS_KEY: "),
+            "expected INVALID_ACCESS_KEY error, got: {}",
             err.reason
         );
     }
