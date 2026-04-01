@@ -88,7 +88,7 @@ fn token_result_from(token: ServiceToken) -> Result<TokenResult> {
 // ---------------------------------------------------------------------------
 
 /// Options for `AutoStrategy.detect()`.
-#[derive(Debug)]
+#[derive(OpaqueDebug)]
 #[napi(object)]
 pub struct AutoStrategyOptions {
     /// An explicit access key (takes precedence over `CS_CLIENT_ACCESS_KEY` env var).
