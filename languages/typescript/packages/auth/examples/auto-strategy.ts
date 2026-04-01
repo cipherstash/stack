@@ -30,8 +30,6 @@ async function main() {
 
   // Retrieve a token — refresh happens automatically when needed.
   const result = await strategy.getToken();
-
-  // Who am I?
   console.log(`Subject:      ${result.subject}`);
   console.log(`Workspace:    ${result.workspaceId}`);
   console.log(`Issuer:       ${result.issuer}`);
