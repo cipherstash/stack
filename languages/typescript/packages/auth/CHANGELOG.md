@@ -22,7 +22,7 @@
   ```
 - **TokenResult** — `getToken()` returns `{ token, issuer, services }` with the bearer credential
   and decoded JWT claims for service discovery.
-- New error codes: `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_ACCESS_KEY`.
+- New error codes: `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_ACCESS_KEY`, `INVALID_CRN`.
 
 ## 0.34.2
 
