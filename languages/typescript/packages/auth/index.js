@@ -44,9 +44,24 @@ function wrapSync(fn) {
 }
 
 // Patch DeviceCodeResult prototype methods
-const proto = native.DeviceCodeResult.prototype;
-proto.pollForToken = wrapAsync(proto.pollForToken);
-proto.openInBrowser = wrapSync(proto.openInBrowser);
+const dcProto = native.DeviceCodeResult.prototype;
+dcProto.pollForToken = wrapAsync(dcProto.pollForToken);
+dcProto.openInBrowser = wrapSync(dcProto.openInBrowser);
+
+// Patch strategy getToken methods
+for (const Strategy of [native.AutoStrategy, native.AccessKeyStrategy, native.OAuthStrategy]) {
+  Strategy.prototype.getToken = wrapAsync(Strategy.prototype.getToken);
+}
+
+// Wrap strategy factory methods (sync, can throw)
+const origDetect = native.AutoStrategy.detect;
+native.AutoStrategy.detect = wrapSync(origDetect);
+
+const origCreate = native.AccessKeyStrategy.create;
+native.AccessKeyStrategy.create = wrapSync(origCreate);
+
+const origFromProfile = native.OAuthStrategy.fromProfile;
+native.OAuthStrategy.fromProfile = wrapSync(origFromProfile);
 
 // Export wrapped top-level functions alongside native re-exports
 module.exports = {

@@ -15,6 +15,9 @@ export type AuthErrorCode =
   | 'INVALID_TOKEN'
   | 'SERVER_ERROR'
   | 'STORE_ERROR'
+  | 'NOT_AUTHENTICATED'
+  | 'MISSING_WORKSPACE_CRN'
+  | 'INVALID_ACCESS_KEY'
   | 'UNKNOWN_ERROR'
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */
@@ -22,6 +25,66 @@ export interface AuthError extends Error {
   code: AuthErrorCode
 }
 
+/**
+ * The result of a successful `getToken()` call.
+ *
+ * Contains the bearer credential and decoded JWT claims for service discovery.
+ */
+export interface TokenResult {
+  /** The bearer token string (used as `Authorization: Bearer <token>`). */
+  token: string
+  /** The issuer URL from the JWT `iss` claim (i.e. the CTS host). */
+  issuer: string
+  /** Service endpoint URLs from the JWT `services` claim (e.g. `{ zerokms: "https://..." }`). */
+  services: Record<string, string>
+}
+/** Options for `AutoStrategy.detect()`. */
+export interface AutoStrategyOptions {
+  /** An explicit access key (takes precedence over `CS_CLIENT_ACCESS_KEY` env var). */
+  accessKey?: string
+  /** An explicit workspace CRN (takes precedence over `CS_WORKSPACE_CRN` env var). */
+  workspaceCrn?: string
+}
+/**
+ * An auth strategy that auto-detects credentials from environment variables
+ * and the local profile store.
+ *
+ * Detection order:
+ * 1. `CS_CLIENT_ACCESS_KEY` env var (or explicit `accessKey` option) → access key auth
+ * 2. `~/.cipherstash/auth.json` → OAuth token auth
+ * 3. Error: not authenticated
+ */
+export declare class AutoStrategy {
+  /**
+   * Detect available credentials and return an `AutoStrategy`.
+   *
+   * Pass options to provide explicit values that take precedence over
+   * environment variables.
+   */
+  static detect(options?: AutoStrategyOptions): AutoStrategy
+  /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
+  getToken(): Promise<TokenResult>
+}
+/**
+ * An auth strategy that uses a static access key for service-to-service
+ * or CI/CD authentication.
+ */
+export declare class AccessKeyStrategy {
+  /** Create a new `AccessKeyStrategy` for the given region and access key. */
+  static create(region: string, accessKey: string): AccessKeyStrategy
+  /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
+  getToken(): Promise<TokenResult>
+}
+/**
+ * An auth strategy that uses OAuth refresh tokens persisted to disk
+ * (`~/.cipherstash/auth.json`).
+ */
+export declare class OAuthStrategy {
+  /** Load credentials from the default profile store and create an `OAuthStrategy`. */
+  static fromProfile(): OAuthStrategy
+  /** Retrieve a valid access token, refreshing as needed. */
+  getToken(): Promise<TokenResult>
+}
 /**
  * Metadata returned after a successful device code authentication.
  *

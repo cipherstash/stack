@@ -1,9 +1,13 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use cts_common::Region;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use stack_auth::{AuthError, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode};
+use stack_auth::{
+    AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode,
+    ServiceToken,
+};
 
 #[cfg(feature = "test-utils")]
 mod mock_auth_server;
@@ -24,6 +28,9 @@ fn error_code(err: &AuthError) -> &'static str {
         AuthError::InvalidToken(_) => "INVALID_TOKEN",
         AuthError::Server(_) => "SERVER_ERROR",
         AuthError::Store(_) => "STORE_ERROR",
+        AuthError::NotAuthenticated => "NOT_AUTHENTICATED",
+        AuthError::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
+        AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
         _ => "UNKNOWN_ERROR",
     }
 }
@@ -34,7 +41,161 @@ fn to_napi_error(err: AuthError) -> napi::Error {
 }
 
 // ---------------------------------------------------------------------------
-// TokenResult — plain data object
+// TokenResult — returned by strategy.getToken()
+// ---------------------------------------------------------------------------
+
+/// The result of a successful `getToken()` call.
+///
+/// Contains the bearer credential and decoded JWT claims for service discovery.
+#[derive(Debug)]
+#[napi(object)]
+pub struct TokenResult {
+    /// The bearer token string (used as `Authorization: Bearer <token>`).
+    pub token: String,
+    /// The issuer URL from the JWT `iss` claim (i.e. the CTS host).
+    pub issuer: String,
+    /// Service endpoint URLs from the JWT `services` claim (e.g. `{ zerokms: "https://..." }`).
+    pub services: HashMap<String, String>,
+}
+
+fn token_result_from(token: ServiceToken) -> Result<TokenResult> {
+    let issuer = token.issuer().map_err(to_napi_error)?.to_string();
+    let services = token
+        .services()
+        .map_err(to_napi_error)?
+        .iter()
+        .map(|(k, v)| (k.as_str().to_string(), v.to_string()))
+        .collect();
+
+    Ok(TokenResult {
+        token: token.as_str().to_string(),
+        issuer,
+        services,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// AutoStrategy — auto-detect credentials
+// ---------------------------------------------------------------------------
+
+/// Options for `AutoStrategy.detect()`.
+#[derive(Debug)]
+#[napi(object)]
+pub struct AutoStrategyOptions {
+    /// An explicit access key (takes precedence over `CS_CLIENT_ACCESS_KEY` env var).
+    pub access_key: Option<String>,
+    /// An explicit workspace CRN (takes precedence over `CS_WORKSPACE_CRN` env var).
+    pub workspace_crn: Option<String>,
+}
+
+/// An auth strategy that auto-detects credentials from environment variables
+/// and the local profile store.
+///
+/// Detection order:
+/// 1. `CS_CLIENT_ACCESS_KEY` env var (or explicit `accessKey` option) → access key auth
+/// 2. `~/.cipherstash/auth.json` → OAuth token auth
+/// 3. Error: not authenticated
+#[napi]
+pub struct AutoStrategy {
+    inner: stack_auth::AutoStrategy,
+}
+
+#[napi]
+impl AutoStrategy {
+    /// Detect available credentials and return an `AutoStrategy`.
+    ///
+    /// Pass options to provide explicit values that take precedence over
+    /// environment variables.
+    #[napi(factory)]
+    pub fn detect(options: Option<AutoStrategyOptions>) -> Result<Self> {
+        let mut builder = stack_auth::AutoStrategy::builder();
+
+        if let Some(opts) = options {
+            if let Some(key) = opts.access_key {
+                builder = builder.with_access_key(key);
+            }
+            if let Some(crn_str) = opts.workspace_crn {
+                let crn = crn_str.parse().map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
+                builder = builder.with_workspace_crn(crn);
+            }
+        }
+
+        let inner = builder.detect().map_err(to_napi_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
+    #[napi]
+    pub async fn get_token(&self) -> Result<TokenResult> {
+        let token = (&self.inner).get_token().await.map_err(to_napi_error)?;
+        token_result_from(token)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AccessKeyStrategy — static access key auth
+// ---------------------------------------------------------------------------
+
+/// An auth strategy that uses a static access key for service-to-service
+/// or CI/CD authentication.
+#[napi]
+pub struct AccessKeyStrategy {
+    inner: stack_auth::AccessKeyStrategy,
+}
+
+#[napi]
+impl AccessKeyStrategy {
+    /// Create a new `AccessKeyStrategy` for the given region and access key.
+    #[napi(factory)]
+    pub fn create(region: String, access_key: String) -> Result<Self> {
+        let region = Region::new(&region).map_err(|e| to_napi_error(AuthError::from(e)))?;
+        let key: stack_auth::AccessKey = access_key.parse().map_err(|e| to_napi_error(AuthError::from(e)))?;
+        let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_napi_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
+    #[napi]
+    pub async fn get_token(&self) -> Result<TokenResult> {
+        let token = (&self.inner).get_token().await.map_err(to_napi_error)?;
+        token_result_from(token)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OAuthStrategy — OAuth with profile store
+// ---------------------------------------------------------------------------
+
+/// An auth strategy that uses OAuth refresh tokens persisted to disk
+/// (`~/.cipherstash/auth.json`).
+#[napi]
+pub struct OAuthStrategy {
+    inner: stack_auth::OAuthStrategy,
+}
+
+#[napi]
+impl OAuthStrategy {
+    /// Load credentials from the default profile store and create an `OAuthStrategy`.
+    #[napi(factory)]
+    pub fn from_profile() -> Result<Self> {
+        let store = stack_profile::ProfileStore::resolve(None)
+            .map_err(|e| to_napi_error(AuthError::from(e)))?;
+        let inner = stack_auth::OAuthStrategy::with_profile(store)
+            .build()
+            .map_err(to_napi_error)?;
+        Ok(Self { inner })
+    }
+
+    /// Retrieve a valid access token, refreshing as needed.
+    #[napi]
+    pub async fn get_token(&self) -> Result<TokenResult> {
+        let token = (&self.inner).get_token().await.map_err(to_napi_error)?;
+        token_result_from(token)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AuthResult — plain data object (device code flow)
 // ---------------------------------------------------------------------------
 
 /// Metadata returned after a successful device code authentication.

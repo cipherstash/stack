@@ -71,6 +71,19 @@ impl ServiceToken {
             .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
+    /// Return the decoded services map from the JWT claims.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT or
+    /// the claims could not be decoded.
+    pub fn services(&self) -> Result<&Services, AuthError> {
+        self.decoded
+            .as_ref()
+            .map(|d| &d.services)
+            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
+    }
+
     /// Return the ZeroKMS endpoint URL from the `services` claim.
     ///
     /// CTS-issued JWTs include a `services` claim containing a map of service
