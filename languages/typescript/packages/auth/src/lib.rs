@@ -31,6 +31,7 @@ fn error_code(err: &AuthError) -> &'static str {
         AuthError::NotAuthenticated => "NOT_AUTHENTICATED",
         AuthError::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
         AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
+        AuthError::InvalidCrn(_) => "INVALID_CRN",
         _ => "UNKNOWN_ERROR",
     }
 }
@@ -512,6 +513,13 @@ mod tests {
                 "INVALID_ACCESS_KEY",
                 "InvalidAccessKey should map to INVALID_ACCESS_KEY"
             );
+            assert_eq!(
+                error_code(&AuthError::InvalidCrn(
+                    "not-a-crn".parse::<cts_common::Crn>().unwrap_err()
+                )),
+                "INVALID_CRN",
+                "InvalidCrn should map to INVALID_CRN"
+            );
         }
 
         #[test]
@@ -764,6 +772,20 @@ mod tests {
                 }
 
                 assertions::has_error_code(&err, "MISSING_WORKSPACE_CRN");
+            }
+        }
+
+        mod given_invalid_crn {
+            use super::*;
+
+            #[test]
+            fn returns_invalid_crn_error() {
+                let err = expect_err(AutoStrategy::detect(Some(AutoStrategyOptions {
+                    access_key: Some("CSAKtestKeyId.testKeySecret".to_string()),
+                    workspace_crn: Some("not-a-crn".to_string()),
+                })));
+
+                assertions::has_error_code(&err, "INVALID_CRN");
             }
         }
     }

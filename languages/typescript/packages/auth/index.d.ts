@@ -18,6 +18,7 @@ export type AuthErrorCode =
   | 'NOT_AUTHENTICATED'
   | 'MISSING_WORKSPACE_CRN'
   | 'INVALID_ACCESS_KEY'
+  | 'INVALID_CRN'
   | 'UNKNOWN_ERROR'
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */

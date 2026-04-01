@@ -94,13 +94,7 @@ impl ServiceToken {
     /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT or
     /// the `services` claim does not include a ZeroKMS endpoint.
     pub fn zerokms_url(&self) -> Result<Url, AuthError> {
-        let decoded = self
-            .decoded
-            .as_ref()
-            .map_err(|reason| AuthError::InvalidToken(reason.clone()))?;
-
-        decoded
-            .services
+        self.services()?
             .get(ServiceType::ZeroKms)
             .cloned()
             .ok_or_else(|| {
