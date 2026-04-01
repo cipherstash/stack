@@ -20,9 +20,14 @@
   const strategy = OAuthStrategy.fromProfile();
   const { token } = await strategy.getToken();
   ```
-- **TokenResult** — `getToken()` returns `{ token, issuer, services }` with the bearer credential
-  and decoded JWT claims for service discovery.
+- **TokenResult** — `getToken()` returns `{ token, subject, workspaceId, issuer, services }` with
+  the bearer credential and decoded JWT claims for identity and service discovery.
 - New error codes: `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_ACCESS_KEY`, `INVALID_CRN`.
+
+### Security
+
+- `TokenResult` and `AutoStrategyOptions` use `OpaqueDebug` to prevent tokens and access keys
+  from appearing in Rust debug/log output.
 
 ## 0.34.2
 

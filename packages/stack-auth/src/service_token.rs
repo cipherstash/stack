@@ -1,4 +1,5 @@
 use cts_common::claims::{ServiceType, Services};
+use cts_common::WorkspaceId;
 use url::Url;
 use vitaminc::protected::OpaqueDebug;
 use zeroize::ZeroizeOnDrop;
@@ -15,11 +16,13 @@ use crate::{AuthError, SecretToken};
 ///
 /// # Decoded claims
 ///
+/// * `subject()` — the `sub` claim (e.g. `"CS|auth0|user123"`).
+/// * `workspace_id()` — the workspace identifier from the token.
 /// * `issuer()` — the `iss` URL, i.e. the CTS host for this workspace.
 /// * `zerokms_url()` — the ZeroKMS endpoint from the `services` claim.
 ///
 /// For non-JWT tokens (e.g. static test tokens) or JWTs that don't match
-/// the CipherStash claims schema, both methods return
+/// the CipherStash claims schema, these methods return
 /// `Err(AuthError::InvalidToken)`.
 ///
 /// # Security
@@ -35,6 +38,8 @@ pub struct ServiceToken {
 
 #[derive(Clone, Debug)]
 struct DecodedClaims {
+    subject: String,
+    workspace: WorkspaceId,
     issuer: Url,
     services: Services,
 }
@@ -54,6 +59,36 @@ impl ServiceToken {
     /// Expose the inner token string for use as a bearer credential.
     pub fn as_str(&self) -> &str {
         self.secret.as_str()
+    }
+
+    /// Return the `sub` (subject) claim from the JWT.
+    ///
+    /// In CipherStash tokens the subject encodes the principal identity,
+    /// e.g. `"CS|auth0|user123"` for a user or `"CS|CSAKkeyId"` for an
+    /// access key.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT or
+    /// the claims could not be decoded.
+    pub fn subject(&self) -> Result<&str, AuthError> {
+        self.decoded
+            .as_ref()
+            .map(|d| d.subject.as_str())
+            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
+    }
+
+    /// Return the workspace identifier from the JWT claims.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthError::InvalidToken`] if the token is not a valid JWT or
+    /// the claims could not be decoded.
+    pub fn workspace_id(&self) -> Result<&WorkspaceId, AuthError> {
+        self.decoded
+            .as_ref()
+            .map(|d| &d.workspace)
+            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
     /// Return the `iss` (issuer) URL from the JWT claims.
@@ -134,6 +169,8 @@ impl ServiceToken {
             .map_err(|e| format!("iss claim is not a valid URL: {e}"))?;
 
         Ok(DecodedClaims {
+            subject: data.claims.sub,
+            workspace: data.claims.workspace,
             issuer,
             services: data.claims.services,
         })
@@ -279,6 +316,52 @@ mod tests {
         assert!(
             err.contains("failed to decode JWT header"),
             "expected specific decode error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn subject_from_valid_jwt() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        assert_eq!(
+            token.subject().unwrap(),
+            "CS|test-user",
+            "subject should match JWT sub claim"
+        );
+    }
+
+    #[test]
+    fn subject_errors_for_non_jwt() {
+        let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
+        assert!(
+            token.subject().is_err(),
+            "subject should error for non-JWT token"
+        );
+    }
+
+    #[test]
+    fn workspace_id_from_valid_jwt() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        assert_eq!(
+            token.workspace_id().unwrap().to_string(),
+            "ZVATKW3VHMFG27DY",
+            "workspace_id should match JWT workspace claim"
+        );
+    }
+
+    #[test]
+    fn workspace_id_errors_for_non_jwt() {
+        let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
+        assert!(
+            token.workspace_id().is_err(),
+            "workspace_id should error for non-JWT token"
         );
     }
 

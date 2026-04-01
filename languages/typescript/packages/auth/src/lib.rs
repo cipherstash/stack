@@ -7,6 +7,7 @@ use napi_derive::napi;
 use stack_auth::{
     AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode, ServiceToken,
 };
+use vitaminc_protected::OpaqueDebug;
 
 #[cfg(feature = "test-utils")]
 mod mock_auth_server;
@@ -47,11 +48,15 @@ fn to_napi_error(err: AuthError) -> napi::Error {
 /// The result of a successful `getToken()` call.
 ///
 /// Contains the bearer credential and decoded JWT claims for service discovery.
-#[derive(Debug)]
+#[derive(OpaqueDebug)]
 #[napi(object)]
 pub struct TokenResult {
     /// The bearer token string (used as `Authorization: Bearer <token>`).
     pub token: String,
+    /// The subject claim from the JWT (e.g. `"CS|auth0|user123"` or `"CS|CSAKkeyId"`).
+    pub subject: String,
+    /// The workspace identifier from the JWT.
+    pub workspace_id: String,
     /// The issuer URL from the JWT `iss` claim (i.e. the CTS host).
     pub issuer: String,
     /// Service endpoint URLs from the JWT `services` claim (e.g. `{ zerokms: "https://..." }`).
@@ -59,6 +64,8 @@ pub struct TokenResult {
 }
 
 fn token_result_from(token: ServiceToken) -> Result<TokenResult> {
+    let subject = token.subject().map_err(to_napi_error)?.to_string();
+    let workspace_id = token.workspace_id().map_err(to_napi_error)?.to_string();
     let issuer = token.issuer().map_err(to_napi_error)?.to_string();
     let services = token
         .services()
@@ -69,6 +76,8 @@ fn token_result_from(token: ServiceToken) -> Result<TokenResult> {
 
     Ok(TokenResult {
         token: token.as_str().to_string(),
+        subject,
+        workspace_id,
         issuer,
         services,
     })
@@ -79,7 +88,7 @@ fn token_result_from(token: ServiceToken) -> Result<TokenResult> {
 // ---------------------------------------------------------------------------
 
 /// Options for `AutoStrategy.detect()`.
-#[derive(Debug)]
+#[derive(OpaqueDebug)]
 #[napi(object)]
 pub struct AutoStrategyOptions {
     /// An explicit access key (takes precedence over `CS_CLIENT_ACCESS_KEY` env var).
@@ -756,6 +765,14 @@ mod tests {
                 let result = token_result_from(service_token).unwrap();
 
                 assert!(!result.token.is_empty(), "token string should not be empty");
+                assert_eq!(
+                    result.subject, "CS|test-user",
+                    "subject should match JWT sub claim"
+                );
+                assert_eq!(
+                    result.workspace_id, "ZVATKW3VHMFG27DY",
+                    "workspace_id should match JWT workspace claim"
+                );
                 assert_eq!(
                     result.issuer, "https://cts.example.com/",
                     "issuer should match JWT iss claim"

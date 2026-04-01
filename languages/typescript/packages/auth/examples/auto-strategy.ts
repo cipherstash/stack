@@ -30,10 +30,11 @@ async function main() {
 
   // Retrieve a token — refresh happens automatically when needed.
   const result = await strategy.getToken();
-
-  console.log(`Issuer:     ${result.issuer}`);
-  console.log(`Services:   ${JSON.stringify(result.services)}`);
-  console.log(`Token:      ${result.token.slice(0, 20)}...`);
+  console.log(`Subject:      ${result.subject}`);
+  console.log(`Workspace:    ${result.workspaceId}`);
+  console.log(`Issuer:       ${result.issuer}`);
+  console.log(`Services:     ${JSON.stringify(result.services)}`);
+  console.log(`Token:        ${result.token.slice(0, 20)}...`);
 }
 
 main().catch((err: AuthError) => {

@@ -45,8 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Obtain a token — refresh happens automatically when needed.
     let token = (&strategy).get_token().await?;
-    println!("Token type: Bearer");
-    println!("Access token: {:?}", token);
+    println!("Subject:      {}", token.subject()?);
+    println!("Workspace:    {}", token.workspace_id()?);
+    println!("Issuer:       {}", token.issuer()?);
 
     Ok(())
 }

@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 stack-auth = { workspace = true }
 stack-profile = { workspace = true }
 cts-common = { workspace = true }
+vitaminc-protected = { workspace = true }
 napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
 url = { version = "2", optional = true }
