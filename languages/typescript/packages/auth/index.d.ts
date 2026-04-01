@@ -34,6 +34,10 @@ export interface AuthError extends Error {
 export interface TokenResult {
   /** The bearer token string (used as `Authorization: Bearer <token>`). */
   token: string
+  /** The subject claim from the JWT (e.g. `"CS|auth0|user123"` or `"CS|CSAKkeyId"`). */
+  subject: string
+  /** The workspace identifier from the JWT. */
+  workspaceId: string
   /** The issuer URL from the JWT `iss` claim (i.e. the CTS host). */
   issuer: string
   /** Service endpoint URLs from the JWT `services` claim (e.g. `{ zerokms: "https://..." }`). */
