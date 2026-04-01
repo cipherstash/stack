@@ -7,6 +7,7 @@ use napi_derive::napi;
 use stack_auth::{
     AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode, ServiceToken,
 };
+use vitaminc_protected::OpaqueDebug;
 
 #[cfg(feature = "test-utils")]
 mod mock_auth_server;
@@ -47,7 +48,7 @@ fn to_napi_error(err: AuthError) -> napi::Error {
 /// The result of a successful `getToken()` call.
 ///
 /// Contains the bearer credential and decoded JWT claims for service discovery.
-#[derive(Debug)]
+#[derive(OpaqueDebug)]
 #[napi(object)]
 pub struct TokenResult {
     /// The bearer token string (used as `Authorization: Bearer <token>`).
