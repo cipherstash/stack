@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.34.2",
+  "version": "0.35.0",
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
@@ -30,12 +30,12 @@
     "test": "npm run build:test && vitest run"
   },
   "optionalDependencies": {
-    "@cipherstash/auth-darwin-x64": "0.34.2",
-    "@cipherstash/auth-darwin-arm64": "0.34.2",
-    "@cipherstash/auth-linux-x64-gnu": "0.34.2",
-    "@cipherstash/auth-linux-arm64-gnu": "0.34.2",
-    "@cipherstash/auth-linux-x64-musl": "0.34.2",
-    "@cipherstash/auth-win32-x64-msvc": "0.34.2"
+    "@cipherstash/auth-darwin-x64": "0.35.0",
+    "@cipherstash/auth-darwin-arm64": "0.35.0",
+    "@cipherstash/auth-linux-x64-gnu": "0.35.0",
+    "@cipherstash/auth-linux-arm64-gnu": "0.35.0",
+    "@cipherstash/auth-linux-x64-musl": "0.35.0",
+    "@cipherstash/auth-win32-x64-msvc": "0.35.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",
