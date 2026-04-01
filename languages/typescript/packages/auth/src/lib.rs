@@ -369,7 +369,7 @@ mod tests {
     use mocktail::prelude::*;
     use tempfile::TempDir;
 
-    // --- Mock response builders (mirrors stack-auth/src/device_code.rs) ---
+    // --- Shared helpers ---
 
     fn device_code_json() -> serde_json::Value {
         serde_json::json!({
@@ -422,218 +422,6 @@ mod tests {
         DeviceCodeResult::from_pending(pending)
     }
 
-    // ---- Error mapping (no mock server needed) ----
-
-    #[test]
-    fn test_error_code_mapping() {
-        assert_eq!(error_code(&AuthError::AccessDenied), "ACCESS_DENIED");
-        assert_eq!(error_code(&AuthError::TokenExpired), "EXPIRED_TOKEN");
-        assert_eq!(error_code(&AuthError::InvalidGrant), "INVALID_GRANT");
-        assert_eq!(error_code(&AuthError::InvalidClient), "INVALID_CLIENT");
-        assert_eq!(
-            error_code(&AuthError::InvalidUrl(
-                "http://[".parse::<url::Url>().unwrap_err()
-            )),
-            "INVALID_URL"
-        );
-        assert_eq!(
-            error_code(&AuthError::Region(Region::new("invalid").unwrap_err())),
-            "INVALID_REGION"
-        );
-        assert_eq!(
-            error_code(&AuthError::Server("test".to_string())),
-            "SERVER_ERROR"
-        );
-    }
-
-    #[test]
-    fn test_new_error_code_mapping() {
-        assert_eq!(error_code(&AuthError::NotAuthenticated), "NOT_AUTHENTICATED");
-        assert_eq!(
-            error_code(&AuthError::MissingWorkspaceCrn),
-            "MISSING_WORKSPACE_CRN"
-        );
-        assert_eq!(
-            error_code(&AuthError::InvalidAccessKey(
-                "bad-key".parse::<stack_auth::AccessKey>().unwrap_err()
-            )),
-            "INVALID_ACCESS_KEY"
-        );
-    }
-
-    #[test]
-    fn test_napi_error_format() {
-        let err = to_napi_error(AuthError::AccessDenied);
-        assert!(
-            err.reason.starts_with("ACCESS_DENIED: "),
-            "expected 'ACCESS_DENIED: ...' but got: {}",
-            err.reason
-        );
-
-        let err = to_napi_error(AuthError::Server("something broke".to_string()));
-        assert!(
-            err.reason.starts_with("SERVER_ERROR: "),
-            "expected 'SERVER_ERROR: ...' but got: {}",
-            err.reason
-        );
-    }
-
-    // ---- Getters (mock server needed to create a real PendingDeviceCode) ----
-
-    #[tokio::test]
-    async fn test_getters() {
-        let dir = TempDir::new().unwrap();
-        let mut mocks = MockSet::new();
-        mock_code_endpoint(&mut mocks);
-        let server = start_server(mocks).await;
-
-        let result = begin_result(&server, &dir).await;
-
-        assert_eq!(result.user_code(), "ABCD-EFGH");
-        assert_eq!(result.verification_uri(), "http://example.com/activate");
-        assert_eq!(
-            result.verification_uri_complete(),
-            "http://example.com/activate?user_code=ABCD-EFGH"
-        );
-        assert_eq!(result.expires_in(), 900.0);
-    }
-
-    // ---- Full flow with mock server ----
-    //
-    // `start_paused = true` creates a tokio runtime where the internal clock
-    // is paused. Timer operations like `tokio::time::sleep` advance the clock
-    // instantly instead of waiting in real-time. This matters because
-    // `poll_for_token` sleeps 5 seconds between each poll — without paused
-    // time these tests would take 5+ real seconds each. I/O (HTTP requests
-    // to the mock server) still works normally.
-
-    #[tokio::test(start_paused = true)]
-    async fn test_poll_for_token_success() {
-        let dir = TempDir::new().unwrap();
-        let mut mocks = MockSet::new();
-        mock_code_endpoint(&mut mocks);
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/device/token");
-            then.json(token_json());
-        });
-        let server = start_server(mocks).await;
-
-        let result = begin_result(&server, &dir).await;
-        let token = result.poll_for_token().await.unwrap();
-
-        assert!(token.expires_in >= 3598.0 && token.expires_in <= 3600.0);
-        assert!(token.expires_at > 0.0);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_poll_for_token_error_propagation() {
-        let dir = TempDir::new().unwrap();
-        let mut mocks = MockSet::new();
-        mock_code_endpoint(&mut mocks);
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/device/token");
-            then.bad_request().json(error_json("access_denied"));
-        });
-        let server = start_server(mocks).await;
-
-        let result = begin_result(&server, &dir).await;
-        let err = result.poll_for_token().await.unwrap_err();
-
-        assert!(
-            err.reason.contains("ACCESS_DENIED: "),
-            "expected ACCESS_DENIED error, got: {}",
-            err.reason
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_poll_for_token_expired() {
-        let dir = TempDir::new().unwrap();
-        let mut mocks = MockSet::new();
-        mock_code_endpoint(&mut mocks);
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/device/token");
-            then.bad_request().json(error_json("expired_token"));
-        });
-        let server = start_server(mocks).await;
-
-        let result = begin_result(&server, &dir).await;
-        let err = result.poll_for_token().await.unwrap_err();
-
-        assert!(
-            err.reason.contains("EXPIRED_TOKEN: "),
-            "expected EXPIRED_TOKEN error, got: {}",
-            err.reason
-        );
-    }
-
-    // ---- Consumed handle semantics ----
-
-    #[tokio::test(start_paused = true)]
-    async fn test_poll_for_token_already_consumed() {
-        let dir = TempDir::new().unwrap();
-        let mut mocks = MockSet::new();
-        mock_code_endpoint(&mut mocks);
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/device/token");
-            then.json(token_json());
-        });
-        let server = start_server(mocks).await;
-
-        let result = begin_result(&server, &dir).await;
-        // First call succeeds — consumes the handle
-        result.poll_for_token().await.unwrap();
-        // Second call should fail — handle already consumed
-        let err = result.poll_for_token().await.unwrap_err();
-
-        assert!(
-            err.reason.contains("already been consumed"),
-            "expected 'already been consumed' error, got: {}",
-            err.reason
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn test_open_in_browser_after_consumed() {
-        let dir = TempDir::new().unwrap();
-        let mut mocks = MockSet::new();
-        mock_code_endpoint(&mut mocks);
-        mocks.mock(|when, then| {
-            when.post().path("/oauth/device/token");
-            then.json(token_json());
-        });
-        let server = start_server(mocks).await;
-
-        let result = begin_result(&server, &dir).await;
-        // Consume the handle
-        result.poll_for_token().await.unwrap();
-        // open_in_browser should fail — handle consumed
-        let err = result.open_in_browser().unwrap_err();
-
-        assert!(
-            err.reason.contains("already been consumed"),
-            "expected 'already been consumed' error, got: {}",
-            err.reason
-        );
-    }
-
-    // ---- Top-level function error handling ----
-
-    #[tokio::test]
-    async fn test_begin_invalid_region() {
-        let err = begin_device_code_flow("not-a-region".to_string(), "test-client".to_string())
-            .await
-            .unwrap_err();
-
-        assert!(
-            err.reason.contains("INVALID_REGION: "),
-            "expected INVALID_REGION error, got: {}",
-            err.reason
-        );
-    }
-
-    // ---- token_result_from ----
-
     fn make_service_token(iss: &str, zerokms_url: &str) -> ServiceToken {
         use jsonwebtoken::{encode, EncodingKey, Header};
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -664,35 +452,8 @@ mod tests {
         ServiceToken::new(stack_auth::SecretToken::new(jwt))
     }
 
-    #[test]
-    fn test_token_result_from_valid_token() {
-        let service_token =
-            make_service_token("https://cts.example.com/", "https://zerokms.example.com/");
-        let result = token_result_from(service_token).unwrap();
-
-        assert!(!result.token.is_empty());
-        assert_eq!(result.issuer, "https://cts.example.com/");
-        assert_eq!(
-            result.services.get("zerokms").map(String::as_str),
-            Some("https://zerokms.example.com/")
-        );
-    }
-
-    #[test]
-    fn test_token_result_from_non_jwt_errors() {
-        let token = ServiceToken::new(stack_auth::SecretToken::new("not-a-jwt"));
-        let err = token_result_from(token).unwrap_err();
-        assert!(
-            err.reason.contains("INVALID_TOKEN: "),
-            "expected INVALID_TOKEN error, got: {}",
-            err.reason
-        );
-    }
-
-    // ---- Strategy factory error handling ----
-
-    /// Helper to extract the error from a `Result<T, napi::Error>` without
-    /// requiring `T: Debug`.
+    /// Extract the error from a `Result<T, napi::Error>` without requiring
+    /// `T: Debug` (NAPI wrapper structs don't implement it).
     fn expect_err<T>(result: Result<T>) -> napi::Error {
         match result {
             Err(e) => e,
@@ -700,58 +461,343 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_auto_strategy_detect_access_key_without_crn() {
-        let saved_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
-        let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
-        std::env::remove_var("CS_CLIENT_ACCESS_KEY");
-        std::env::remove_var("CS_WORKSPACE_CRN");
-
-        let err = expect_err(AutoStrategy::detect(Some(AutoStrategyOptions {
-            access_key: Some("CSAKtestKeyId.testKeySecret".to_string()),
-            workspace_crn: None,
-        })));
-
-        if let Some(val) = saved_key {
-            std::env::set_var("CS_CLIENT_ACCESS_KEY", val);
+    mod assertions {
+        /// Assert that a NAPI error's reason contains the expected error code prefix.
+        pub(super) fn has_error_code(err: &napi::Error, expected_code: &str) {
+            assert!(
+                err.reason.contains(&format!("{expected_code}: ")),
+                "expected '{expected_code}: ...' but got: {}",
+                err.reason
+            );
         }
-        if let Some(val) = saved_crn {
-            std::env::set_var("CS_WORKSPACE_CRN", val);
-        }
-
-        assert!(
-            err.reason.contains("MISSING_WORKSPACE_CRN"),
-            "expected MISSING_WORKSPACE_CRN error, got: {}",
-            err.reason
-        );
     }
 
-    #[test]
-    fn test_access_key_strategy_invalid_region() {
-        let err = expect_err(AccessKeyStrategy::create(
-            "not-a-region".to_string(),
-            "CSAKid.secret".to_string(),
-        ));
+    // --- Error mapping ---
 
-        assert!(
-            err.reason.contains("INVALID_REGION: "),
-            "expected INVALID_REGION error, got: {}",
-            err.reason
-        );
+    mod error_mapping {
+        use super::*;
+
+        #[test]
+        fn maps_all_auth_error_variants() {
+            assert_eq!(error_code(&AuthError::AccessDenied), "ACCESS_DENIED",
+                "AccessDenied should map to ACCESS_DENIED");
+            assert_eq!(error_code(&AuthError::TokenExpired), "EXPIRED_TOKEN",
+                "TokenExpired should map to EXPIRED_TOKEN");
+            assert_eq!(error_code(&AuthError::InvalidGrant), "INVALID_GRANT",
+                "InvalidGrant should map to INVALID_GRANT");
+            assert_eq!(error_code(&AuthError::InvalidClient), "INVALID_CLIENT",
+                "InvalidClient should map to INVALID_CLIENT");
+            assert_eq!(
+                error_code(&AuthError::InvalidUrl(
+                    "http://[".parse::<url::Url>().unwrap_err()
+                )),
+                "INVALID_URL",
+                "InvalidUrl should map to INVALID_URL"
+            );
+            assert_eq!(
+                error_code(&AuthError::Region(Region::new("invalid").unwrap_err())),
+                "INVALID_REGION",
+                "Region should map to INVALID_REGION"
+            );
+            assert_eq!(error_code(&AuthError::Server("test".to_string())), "SERVER_ERROR",
+                "Server should map to SERVER_ERROR");
+            assert_eq!(error_code(&AuthError::NotAuthenticated), "NOT_AUTHENTICATED",
+                "NotAuthenticated should map to NOT_AUTHENTICATED");
+            assert_eq!(error_code(&AuthError::MissingWorkspaceCrn), "MISSING_WORKSPACE_CRN",
+                "MissingWorkspaceCrn should map to MISSING_WORKSPACE_CRN");
+            assert_eq!(
+                error_code(&AuthError::InvalidAccessKey(
+                    "bad-key".parse::<stack_auth::AccessKey>().unwrap_err()
+                )),
+                "INVALID_ACCESS_KEY",
+                "InvalidAccessKey should map to INVALID_ACCESS_KEY"
+            );
+        }
+
+        #[test]
+        fn formats_as_code_colon_message() {
+            let err = to_napi_error(AuthError::AccessDenied);
+            assertions::has_error_code(&err, "ACCESS_DENIED");
+
+            let err = to_napi_error(AuthError::Server("something broke".to_string()));
+            assertions::has_error_code(&err, "SERVER_ERROR");
+        }
     }
 
-    #[test]
-    fn test_access_key_strategy_invalid_key() {
-        let err = expect_err(AccessKeyStrategy::create(
-            "ap-southeast-2.aws".to_string(),
-            "not-a-valid-key".to_string(),
-        ));
+    // --- Device code result ---
+    //
+    // `start_paused = true` creates a tokio runtime where the internal clock
+    // is paused. Timer operations like `tokio::time::sleep` advance the clock
+    // instantly instead of waiting in real-time. This matters because
+    // `poll_for_token` sleeps 5 seconds between each poll — without paused
+    // time these tests would take 5+ real seconds each. I/O (HTTP requests
+    // to the mock server) still works normally.
 
-        assert!(
-            err.reason.contains("INVALID_ACCESS_KEY: "),
-            "expected INVALID_ACCESS_KEY error, got: {}",
-            err.reason
-        );
+    mod device_code_result {
+        use super::*;
+
+        mod given_pending_device_code {
+            use super::*;
+
+            #[tokio::test]
+            async fn exposes_getters() {
+                let dir = TempDir::new().unwrap();
+                let mut mocks = MockSet::new();
+                mock_code_endpoint(&mut mocks);
+                let server = start_server(mocks).await;
+
+                let result = begin_result(&server, &dir).await;
+
+                assert_eq!(result.user_code(), "ABCD-EFGH",
+                    "user_code should match device code response");
+                assert_eq!(result.verification_uri(), "http://example.com/activate",
+                    "verification_uri should match device code response");
+                assert_eq!(result.verification_uri_complete(),
+                    "http://example.com/activate?user_code=ABCD-EFGH",
+                    "verification_uri_complete should include user code");
+                assert_eq!(result.expires_in(), 900.0,
+                    "expires_in should match device code response");
+            }
+
+            mod given_successful_token_exchange {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_expiry_metadata() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.json(token_json());
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let token = result.poll_for_token().await.unwrap();
+
+                    assert!(token.expires_in >= 3598.0 && token.expires_in <= 3600.0,
+                        "expires_in should be ~3600, got: {}", token.expires_in);
+                    assert!(token.expires_at > 0.0,
+                        "expires_at should be a positive epoch timestamp");
+                }
+            }
+
+            mod given_access_denied {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_access_denied_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.bad_request().json(error_json("access_denied"));
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assertions::has_error_code(&err, "ACCESS_DENIED");
+                }
+            }
+
+            mod given_expired_token {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_expired_token_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.bad_request().json(error_json("expired_token"));
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assertions::has_error_code(&err, "EXPIRED_TOKEN");
+                }
+            }
+
+            mod given_consumed_handle {
+                use super::*;
+
+                async fn consumed_result(server: &MockServer, dir: &TempDir) -> DeviceCodeResult {
+                    let result = begin_result(server, dir).await;
+                    result.poll_for_token().await.unwrap();
+                    result
+                }
+
+                #[tokio::test(start_paused = true)]
+                async fn poll_for_token_returns_consumed_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.json(token_json());
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = consumed_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assert!(
+                        err.reason.contains("already been consumed"),
+                        "second poll_for_token call should fail with consumed error, got: {}",
+                        err.reason
+                    );
+                }
+
+                #[tokio::test(start_paused = true)]
+                async fn open_in_browser_returns_consumed_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.json(token_json());
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = consumed_result(&server, &dir).await;
+                    let err = result.open_in_browser().unwrap_err();
+
+                    assert!(
+                        err.reason.contains("already been consumed"),
+                        "open_in_browser after consume should fail, got: {}",
+                        err.reason
+                    );
+                }
+            }
+        }
+
+        mod given_invalid_region {
+            use super::*;
+
+            #[tokio::test]
+            async fn returns_invalid_region_error() {
+                let err = begin_device_code_flow(
+                    "not-a-region".to_string(),
+                    "test-client".to_string(),
+                )
+                .await
+                .unwrap_err();
+
+                assertions::has_error_code(&err, "INVALID_REGION");
+            }
+        }
+    }
+
+    // --- token_result_from ---
+
+    mod token_result {
+        use super::*;
+
+        mod given_valid_jwt {
+            use super::*;
+
+            #[test]
+            fn includes_bearer_token_and_claims() {
+                let service_token = make_service_token(
+                    "https://cts.example.com/",
+                    "https://zerokms.example.com/",
+                );
+                let result = token_result_from(service_token).unwrap();
+
+                assert!(!result.token.is_empty(),
+                    "token string should not be empty");
+                assert_eq!(result.issuer, "https://cts.example.com/",
+                    "issuer should match JWT iss claim");
+                assert_eq!(
+                    result.services.get("zerokms").map(String::as_str),
+                    Some("https://zerokms.example.com/"),
+                    "services should include zerokms endpoint"
+                );
+            }
+        }
+
+        mod given_non_jwt {
+            use super::*;
+
+            #[test]
+            fn returns_invalid_token_error() {
+                let token = ServiceToken::new(stack_auth::SecretToken::new("not-a-jwt"));
+                let err = token_result_from(token).unwrap_err();
+
+                assertions::has_error_code(&err, "INVALID_TOKEN");
+            }
+        }
+    }
+
+    // --- Strategy factories ---
+
+    mod auto_strategy_detect {
+        use super::*;
+
+        mod given_access_key_without_crn {
+            use super::*;
+
+            #[test]
+            fn returns_missing_workspace_crn_error() {
+                let saved_key = std::env::var("CS_CLIENT_ACCESS_KEY").ok();
+                let saved_crn = std::env::var("CS_WORKSPACE_CRN").ok();
+                std::env::remove_var("CS_CLIENT_ACCESS_KEY");
+                std::env::remove_var("CS_WORKSPACE_CRN");
+
+                let err = expect_err(AutoStrategy::detect(Some(AutoStrategyOptions {
+                    access_key: Some("CSAKtestKeyId.testKeySecret".to_string()),
+                    workspace_crn: None,
+                })));
+
+                if let Some(val) = saved_key {
+                    std::env::set_var("CS_CLIENT_ACCESS_KEY", val);
+                }
+                if let Some(val) = saved_crn {
+                    std::env::set_var("CS_WORKSPACE_CRN", val);
+                }
+
+                assertions::has_error_code(&err, "MISSING_WORKSPACE_CRN");
+            }
+        }
+    }
+
+    mod access_key_strategy_create {
+        use super::*;
+
+        mod given_invalid_region {
+            use super::*;
+
+            #[test]
+            fn returns_invalid_region_error() {
+                let err = expect_err(AccessKeyStrategy::create(
+                    "not-a-region".to_string(),
+                    "CSAKid.secret".to_string(),
+                ));
+
+                assertions::has_error_code(&err, "INVALID_REGION");
+            }
+        }
+
+        mod given_invalid_key {
+            use super::*;
+
+            #[test]
+            fn returns_invalid_access_key_error() {
+                let err = expect_err(AccessKeyStrategy::create(
+                    "ap-southeast-2.aws".to_string(),
+                    "not-a-valid-key".to_string(),
+                ));
+
+                assertions::has_error_code(&err, "INVALID_ACCESS_KEY");
+            }
+        }
     }
 }
 
