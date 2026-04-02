@@ -1,3 +1,41 @@
+
+
+### Documentation
+
+- 📝 add TypeScript example for AutoStrategy usage
+- 📝 add CHANGELOG.md for @cipherstash/auth
+- 📝 add INVALID_CRN to changelog error codes
+- 📝 demonstrate whoami (subject/workspace) in examples
+- 📝 update CHANGELOG with whoami fields and security notes
+
+### Features
+
+- ✨ expose auth strategies in @cipherstash/auth Node bindings
+- ✨ add subject() and workspace_id() to ServiceToken
+
+### Fixes
+
+- 🩹 add INVALID_CRN error code and deduplicate zerokms_url
+- 🔒️ derive OpaqueDebug on TokenResult to prevent token leaks
+- 🔒️ derive OpaqueDebug on AutoStrategyOptions
+
+### Miscellaneous
+
+- 🔖 bump @cipherstash/auth to 0.35.0
+- 🔧 regenerate index.d.ts from napi build
+
+### Refactoring
+
+- ♻️ restructure stack-auth-node tests to follow conventions
+
+### Testing
+
+- ✅ add unit tests for exposed auth strategies
+
+### Style
+
+- 💄 fix cargo fmt formatting
+- 🎨 remove redundant comments from examples
 # Changelog
 
 All notable changes to this project will be documented in this file.
