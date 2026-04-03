@@ -23,6 +23,8 @@ const {
 // Helpers
 // ---------------------------------------------------------------------------
 
+const TEST_WORKSPACE_ID = "ZVATKW3VHMFG27DY";
+
 let server: InstanceType<typeof MockAuthServerType>;
 let profileDir: string;
 
@@ -33,6 +35,10 @@ async function startServer(): Promise<InstanceType<typeof MockAuthServerType>> {
 
 function freshProfileDir(): string {
   return mkdtempSync(join(tmpdir(), "cs-auth-test-"));
+}
+
+function workspaceDir(): string {
+  return join(profileDir, "workspaces", TEST_WORKSPACE_ID);
 }
 
 // ---------------------------------------------------------------------------
@@ -51,7 +57,7 @@ describe("provision device client (TypeScript / vitest)", () => {
 
     await bindClientDeviceWithProfileDir(profileDir);
 
-    const raw = readFileSync(join(profileDir, "secretkey.json"), "utf-8");
+    const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
     expect(secretKey.client_id).toBe(
       "00000000-0000-0000-0000-000000000001"
@@ -63,16 +69,16 @@ describe("provision device client (TypeScript / vitest)", () => {
     // No mock endpoints needed — should short-circuit before any HTTP call.
     saveTestToken(profileDir, server.baseUrl);
 
-    // Pre-create secretkey.json
+    // Pre-create secretkey.json in the workspace directory
     const existing = JSON.stringify({
       client_id: "existing-id",
       client_key: "existing-key",
     });
-    writeFileSync(join(profileDir, "secretkey.json"), existing);
+    writeFileSync(join(workspaceDir(), "secretkey.json"), existing);
 
     await bindClientDeviceWithProfileDir(profileDir);
 
-    const raw = readFileSync(join(profileDir, "secretkey.json"), "utf-8");
+    const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
     expect(secretKey.client_id).toBe("existing-id");
   });
@@ -83,7 +89,7 @@ describe("provision device client (TypeScript / vitest)", () => {
 
     await bindClientDeviceWithProfileDir(profileDir);
 
-    expect(existsSync(join(profileDir, "secretkey.json"))).toBe(false);
+    expect(existsSync(join(workspaceDir(), "secretkey.json"))).toBe(false);
   });
 
   it("throws on server error", async () => {

@@ -2,6 +2,39 @@ use mocktail::prelude::*;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
+/// Build a valid JWT access token containing a workspace claim.
+///
+/// Used by mock endpoints that need to return a token that can be decoded
+/// by `Token::workspace_id()`.
+fn test_jwt() -> String {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[allow(clippy::expect_used)]
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+
+    let claims = serde_json::json!({
+        "iss": "https://cts.example.com/",
+        "sub": "CS|test-user",
+        "aud": "test-audience",
+        "iat": now,
+        "exp": now + 3600,
+        "workspace": "ZVATKW3VHMFG27DY",
+        "scope": "",
+    });
+
+    #[allow(clippy::expect_used)]
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(b"test-secret"),
+    )
+    .expect("JWT encode")
+}
+
 #[napi]
 pub struct MockAuthServer {
     server: MockServer,
@@ -46,10 +79,11 @@ impl MockAuthServer {
     /// token JSON response.
     #[napi]
     pub fn mock_token_endpoint(&self) {
+        let jwt = test_jwt();
         self.server.mocks().mock(|when, then| {
             when.post().path("/oauth/device/token");
             then.json(serde_json::json!({
-                "access_token": "test_access_token_value",
+                "access_token": jwt,
                 "token_type": "Bearer",
                 "expires_in": 3600
             }));
