@@ -1,0 +1,8 @@
+{
+  "name": "@cipherstash/profile-win32-x64-msvc",
+  "version": "0.35.0",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "main": "stack-profile-node.win32-x64-msvc.node",
+  "files": ["stack-profile-node.win32-x64-msvc.node"]
+}

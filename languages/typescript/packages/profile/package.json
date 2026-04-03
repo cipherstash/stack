@@ -1,0 +1,44 @@
+{
+  "name": "@cipherstash/profile",
+  "version": "0.35.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "stack-profile-node",
+    "triples": {
+      "defaults": false,
+      "additional": [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "stack-profile-node.js"
+  ],
+  "scripts": {
+    "build": "napi build --release",
+    "build:debug": "napi build",
+    "test": "npm run build:debug && vitest run"
+  },
+  "optionalDependencies": {
+    "@cipherstash/profile-darwin-x64": "0.35.0",
+    "@cipherstash/profile-darwin-arm64": "0.35.0",
+    "@cipherstash/profile-linux-x64-gnu": "0.35.0",
+    "@cipherstash/profile-linux-arm64-gnu": "0.35.0",
+    "@cipherstash/profile-linux-x64-musl": "0.35.0",
+    "@cipherstash/profile-win32-x64-msvc": "0.35.0"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2",
+    "vitest": "^3",
+    "typescript": "^5"
+  }
+}
