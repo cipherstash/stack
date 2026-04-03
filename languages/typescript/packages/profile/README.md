@@ -7,7 +7,7 @@
 
 Native Node.js bindings for managing [CipherStash](https://cipherstash.com) workspace profiles.
 
-Profiles are stored in `~/.cipherstash/` with per-workspace directories for auth tokens and encryption keys.
+Profiles are stored in `~/.cipherstash/` (or the path specified by `CS_CONFIG_PATH`) with per-workspace directories for auth tokens and encryption keys.
 
 ## Installation
 
