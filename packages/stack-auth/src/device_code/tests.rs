@@ -155,10 +155,19 @@ async fn test_poll_for_token_success() {
     assert_eq!(token.token_type(), "Bearer");
     assert!(!token.is_expired());
     assert!((3598..=3600).contains(&token.expires_in()));
+    assert_eq!(
+        token.workspace_id().unwrap().as_str(),
+        "ZVATKW3VHMFG27DY",
+        "workspace ID should be extracted from the JWT"
+    );
 
-    // Verify the token was saved to the workspace directory
+    // Verify the token was persisted to the workspace directory
     let store = ProfileStore::new(dir.path());
-    assert_eq!(store.current_workspace().unwrap(), "ZVATKW3VHMFG27DY");
+    assert_eq!(
+        store.current_workspace().unwrap(),
+        "ZVATKW3VHMFG27DY",
+        "current workspace should be set after poll_for_token"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -288,6 +297,10 @@ async fn test_poll_for_token_authorization_pending_then_success() {
 
     let token = result.unwrap();
     assert_eq!(token.token_type(), "Bearer");
+    assert!(
+        token.workspace_id().is_ok(),
+        "token should contain a valid workspace claim"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -315,6 +328,10 @@ async fn test_poll_for_token_slow_down_then_success() {
 
     let token = result.unwrap();
     assert_eq!(token.token_type(), "Bearer");
+    assert!(
+        token.workspace_id().is_ok(),
+        "token should contain a valid workspace claim"
+    );
 }
 
 /// Proves that `slow_down` increases the poll interval: with a short
