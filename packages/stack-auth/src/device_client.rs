@@ -79,9 +79,7 @@ pub enum DeviceClientError {
 /// If the secret key already exists on disk, or the server returns 409
 /// (conflict), this is a no-op.
 pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClientError> {
-    // Resolve the workspace-scoped store for secret key operations.
-    let ws_id = store.current_workspace()?;
-    let ws_store = store.workspace_store(&ws_id)?;
+    let ws_store = store.current_workspace_store()?;
 
     if ws_store.exists(SECRET_KEY_FILENAME) {
         tracing::debug!("secret key already exists, skipping provisioning");
@@ -134,7 +132,6 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
         client_key: created.client_key,
     };
 
-    // Save to the workspace-scoped directory.
     ws_store.save_with_mode(SECRET_KEY_FILENAME, &secret_key, SECRET_KEY_MODE)?;
 
     Ok(())
