@@ -1,0 +1,8 @@
+{
+  "name": "@cipherstash/profile-darwin-x64",
+  "version": "0.35.0",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "main": "stack-profile-node.darwin-x64.node",
+  "files": ["stack-profile-node.darwin-x64.node"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@cipherstash/profile-linux-x64-musl",
+  "version": "0.35.0",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "main": "stack-profile-node.linux-x64-musl.node",
+  "files": ["stack-profile-node.linux-x64-musl.node"]
+}
