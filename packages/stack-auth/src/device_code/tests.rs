@@ -13,9 +13,37 @@ fn device_code_json() -> serde_json::Value {
     })
 }
 
+/// Build a valid JWT access token containing a workspace claim.
+fn test_access_token() -> String {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let claims = serde_json::json!({
+        "iss": "https://cts.example.com/",
+        "sub": "CS|test-user",
+        "aud": "test-audience",
+        "iat": now,
+        "exp": now + 3600,
+        "workspace": "ZVATKW3VHMFG27DY",
+        "scope": "",
+    });
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(b"test-secret"),
+    )
+    .unwrap()
+}
+
 fn token_json() -> serde_json::Value {
     serde_json::json!({
-        "access_token": "test_access_token_value",
+        "access_token": test_access_token(),
         "token_type": "Bearer",
         "expires_in": 3600
     })
@@ -124,10 +152,13 @@ async fn test_poll_for_token_success() {
         .await
         .unwrap();
 
-    assert_eq!(token.access_token().0, "test_access_token_value");
     assert_eq!(token.token_type(), "Bearer");
     assert!(!token.is_expired());
     assert!((3598..=3600).contains(&token.expires_in()));
+
+    // Verify the token was saved to the workspace directory
+    let store = ProfileStore::new(dir.path());
+    assert_eq!(store.current_workspace().unwrap(), "ZVATKW3VHMFG27DY");
 }
 
 #[tokio::test(start_paused = true)]
@@ -256,7 +287,7 @@ async fn test_poll_for_token_authorization_pending_then_success() {
     });
 
     let token = result.unwrap();
-    assert_eq!(token.access_token().0, "test_access_token_value");
+    assert_eq!(token.token_type(), "Bearer");
 }
 
 #[tokio::test(start_paused = true)]
@@ -283,7 +314,7 @@ async fn test_poll_for_token_slow_down_then_success() {
     });
 
     let token = result.unwrap();
-    assert_eq!(token.access_token().0, "test_access_token_value");
+    assert_eq!(token.token_type(), "Bearer");
 }
 
 /// Proves that `slow_down` increases the poll interval: with a short

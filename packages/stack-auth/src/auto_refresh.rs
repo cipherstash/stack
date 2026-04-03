@@ -354,9 +354,11 @@ mod tests {
         token: Token,
     ) -> AutoRefresh<OAuthRefresher> {
         let store = ProfileStore::new(dir.path());
-        store.save_profile(&token).unwrap();
+        store.set_current_workspace("ZVATKW3VHMFG27DY").unwrap();
+        let ws_store = store.current_workspace_store().unwrap();
+        ws_store.save_profile(&token).unwrap();
         let refresher = OAuthRefresher::new(
-            Some(store),
+            Some(ws_store),
             server.url(""),
             "cli",
             "ap-southeast-2.aws",
@@ -424,7 +426,13 @@ mod tests {
             );
 
             // Delete the file — second call should still return the cached token.
-            std::fs::remove_file(dir.path().join("auth.json")).unwrap();
+            std::fs::remove_file(
+                dir.path()
+                    .join("workspaces")
+                    .join("ZVATKW3VHMFG27DY")
+                    .join("auth.json"),
+            )
+            .unwrap();
 
             let token2 = strategy.get_token().await.unwrap();
             assert_eq!(
@@ -518,9 +526,10 @@ mod tests {
 
                 let _ = strategy.get_token().await.unwrap();
 
-                // Verify the refreshed token was saved to disk.
+                // Verify the refreshed token was saved to the workspace directory.
                 let store = ProfileStore::new(dir.path());
-                let on_disk: Token = store.load_profile().unwrap();
+                let ws_store = store.current_workspace_store().unwrap();
+                let on_disk: Token = ws_store.load_profile().unwrap();
                 assert_eq!(
                     on_disk.access_token().as_str(),
                     "refreshed-token",
@@ -971,9 +980,11 @@ mod stress_tests {
         token: Token,
     ) -> AutoRefresh<OAuthRefresher> {
         let store = ProfileStore::new(dir.path());
-        store.save_profile(&token).unwrap();
+        store.set_current_workspace("ZVATKW3VHMFG27DY").unwrap();
+        let ws_store = store.current_workspace_store().unwrap();
+        ws_store.save_profile(&token).unwrap();
         let refresher = OAuthRefresher::new(
-            Some(store),
+            Some(ws_store),
             base_url.clone(),
             "cli",
             "ap-southeast-2.aws",

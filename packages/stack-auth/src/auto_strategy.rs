@@ -109,9 +109,13 @@ impl AutoStrategy {
             return Ok(Self::AccessKey(strategy));
         }
 
-        // 2. OAuth token from disk
+        // 2. OAuth token from disk (in the current workspace directory)
         if let Some(store) = store {
-            if store.exists_profile::<Token>() {
+            let has_token = store
+                .current_workspace_store()
+                .map(|ws| ws.exists_profile::<Token>())
+                .unwrap_or(false);
+            if has_token {
                 let strategy = OAuthStrategy::with_profile(store).build()?;
                 return Ok(Self::OAuth(strategy));
             }
@@ -241,7 +245,9 @@ mod tests {
 
     fn write_token_store(dir: &std::path::Path) -> ProfileStore {
         let store = ProfileStore::new(dir);
-        store.save_profile(&make_oauth_token()).unwrap();
+        store.set_current_workspace("ZVATKW3VHMFG27DY").unwrap();
+        let ws_store = store.current_workspace_store().unwrap();
+        ws_store.save_profile(&make_oauth_token()).unwrap();
         store
     }
 

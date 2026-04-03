@@ -394,9 +394,36 @@ mod tests {
         })
     }
 
+    fn test_access_token_jwt() -> String {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let claims = serde_json::json!({
+            "iss": "https://cts.example.com/",
+            "sub": "CS|test-user",
+            "aud": "test-audience",
+            "iat": now,
+            "exp": now + 3600,
+            "workspace": "ZVATKW3VHMFG27DY",
+            "scope": "",
+        });
+
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret"),
+        )
+        .unwrap()
+    }
+
     fn token_json() -> serde_json::Value {
         serde_json::json!({
-            "access_token": "test_access_token_value",
+            "access_token": test_access_token_jwt(),
             "token_type": "Bearer",
             "expires_in": 3600
         })
@@ -956,7 +983,18 @@ pub fn save_test_token(profile_dir: String, zerokms_base_url: String) -> Result<
     });
 
     let store = stack_profile::ProfileStore::new(&profile_dir);
+
+    // Set the current workspace so workspace-scoped loads work.
+    let workspace_id = "ZVATKW3VHMFG27DY";
     store
+        .set_current_workspace(workspace_id)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
+
+    // Save the token to the workspace directory.
+    let ws_store = store
+        .workspace_store(workspace_id)
+        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
+    ws_store
         .save_with_mode("auth.json", &token_json, 0o600)
         .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
 

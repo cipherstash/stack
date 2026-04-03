@@ -79,15 +79,20 @@ pub enum DeviceClientError {
 /// If the secret key already exists on disk, or the server returns 409
 /// (conflict), this is a no-op.
 pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClientError> {
-    if store.exists(SECRET_KEY_FILENAME) {
+    // Resolve the workspace-scoped store for secret key operations.
+    let ws_id = store.current_workspace()?;
+    let ws_store = store.workspace_store(&ws_id)?;
+
+    if ws_store.exists(SECRET_KEY_FILENAME) {
         tracing::debug!("secret key already exists, skipping provisioning");
         return Ok(());
     }
 
-    let token: Token = store.load_profile()?;
+    let token: Token = ws_store.load_profile()?;
     let service_token = ServiceToken::new(token.access_token().clone());
     let zerokms_url = ensure_trailing_slash(service_token.zerokms_url()?);
 
+    // DeviceIdentity is NOT workspace-scoped, so this reads from the root.
     let identity = DeviceIdentity::load_or_create(store)?;
 
     let request = CreateClientRequest {
@@ -129,7 +134,8 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
         client_key: created.client_key,
     };
 
-    store.save_with_mode(SECRET_KEY_FILENAME, &secret_key, SECRET_KEY_MODE)?;
+    // Save to the workspace-scoped directory.
+    ws_store.save_with_mode(SECRET_KEY_FILENAME, &secret_key, SECRET_KEY_MODE)?;
 
     Ok(())
 }
@@ -176,6 +182,8 @@ mod tests {
         .unwrap()
     }
 
+    const TEST_WORKSPACE_ID: &str = "ZVATKW3VHMFG27DY";
+
     fn save_test_token(store: &ProfileStore, access_token: &str) {
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -193,7 +201,9 @@ mod tests {
             client_id: None,
             device_instance_id: None,
         };
-        store.save_profile(&token).unwrap();
+        store.set_current_workspace(TEST_WORKSPACE_ID).unwrap();
+        let ws_store = store.current_workspace_store().unwrap();
+        ws_store.save_profile(&token).unwrap();
     }
 
     fn client_response_json() -> serde_json::Value {
@@ -229,7 +239,8 @@ mod tests {
 
         bind_client_device(&store).await.unwrap();
 
-        let saved: serde_json::Value = store.load(SECRET_KEY_FILENAME).unwrap();
+        let ws_store = store.workspace_store(TEST_WORKSPACE_ID).unwrap();
+        let saved: serde_json::Value = ws_store.load(SECRET_KEY_FILENAME).unwrap();
         assert_eq!(saved["client_id"], "00000000-0000-0000-0000-000000000001");
         assert_eq!(saved["client_key"], "dGVzdC1rZXktbWF0ZXJpYWw=");
     }
@@ -238,9 +249,11 @@ mod tests {
     async fn skips_when_secret_key_exists() {
         let dir = TempDir::new().unwrap();
         let store = ProfileStore::new(dir.path());
+        store.set_current_workspace(TEST_WORKSPACE_ID).unwrap();
 
-        // Pre-populate secretkey.json
-        store
+        // Pre-populate secretkey.json in the workspace directory
+        let ws_store = store.workspace_store(TEST_WORKSPACE_ID).unwrap();
+        ws_store
             .save_with_mode(
                 SECRET_KEY_FILENAME,
                 &serde_json::json!({"client_id": "old", "client_key": "old"}),
@@ -251,7 +264,7 @@ mod tests {
         // No mock server needed — the HTTP call should never happen.
         bind_client_device(&store).await.unwrap();
 
-        let saved: serde_json::Value = store.load(SECRET_KEY_FILENAME).unwrap();
+        let saved: serde_json::Value = ws_store.load(SECRET_KEY_FILENAME).unwrap();
         assert_eq!(
             saved["client_id"], "old",
             "should not overwrite existing key"
@@ -276,8 +289,9 @@ mod tests {
 
         bind_client_device(&store).await.unwrap();
 
+        let ws_store = store.workspace_store(TEST_WORKSPACE_ID).unwrap();
         assert!(
-            !store.exists(SECRET_KEY_FILENAME),
+            !ws_store.exists(SECRET_KEY_FILENAME),
             "should not write secret key on conflict"
         );
     }

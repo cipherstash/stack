@@ -22,4 +22,10 @@ pub enum ProfileError {
     /// The filename is invalid (contains path separators, `..`, or is absolute).
     #[error("Invalid profile filename: {0}")]
     InvalidFilename(String),
+    /// No current workspace is set but a workspace-scoped operation was attempted.
+    #[error("No current workspace set. Run `stash login` or `stash workspaces switch` first.")]
+    NoCurrentWorkspace,
+    /// The workspace ID is invalid (not a 16-character base32 string).
+    #[error("Invalid workspace ID: {0}")]
+    InvalidWorkspaceId(String),
 }

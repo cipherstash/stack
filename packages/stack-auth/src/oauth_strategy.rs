@@ -154,7 +154,8 @@ impl OAuthStrategyBuilder {
                 })
             }
             OAuthTokenSource::Store(store) => {
-                let token: Token = store.load_profile()?;
+                let ws_store = store.current_workspace_store()?;
+                let token: Token = ws_store.load_profile()?;
 
                 let region_str = token
                     .region()
@@ -179,7 +180,7 @@ impl OAuthStrategyBuilder {
                 };
 
                 let refresher = OAuthRefresher::new(
-                    Some(store),
+                    Some(ws_store),
                     ensure_trailing_slash(base_url),
                     &client_id,
                     &region_str,

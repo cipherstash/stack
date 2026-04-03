@@ -340,9 +340,21 @@ impl PendingDeviceCode {
                     Some(dir) => ProfileStore::new(dir),
                     None => ProfileStore::resolve(None)?,
                 };
-                match store.save_profile(&token) {
-                    Ok(()) => tracing::debug!("token saved to disk"),
-                    Err(err) => tracing::warn!(%err, "failed to save token to disk"),
+
+                // Set the current workspace and save the token to the
+                // workspace directory.
+                let workspace_id = token.workspace_id()?;
+                store.set_current_workspace(workspace_id.as_str())?;
+
+                match store.workspace_store(workspace_id.as_str()) {
+                    Ok(ws_store) => match ws_store.save_profile(&token) {
+                        Ok(()) => tracing::debug!(
+                            workspace = workspace_id.as_str(),
+                            "token saved to workspace directory"
+                        ),
+                        Err(err) => tracing::warn!(%err, "failed to save token to disk"),
+                    },
+                    Err(err) => tracing::warn!(%err, "failed to resolve workspace store"),
                 }
 
                 return Ok(token);
