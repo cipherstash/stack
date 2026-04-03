@@ -354,7 +354,7 @@ mod tests {
         token: Token,
     ) -> AutoRefresh<OAuthRefresher> {
         let store = ProfileStore::new(dir.path());
-        store.set_current_workspace("ZVATKW3VHMFG27DY").unwrap();
+        store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&token).unwrap();
         let refresher = OAuthRefresher::new(
@@ -980,7 +980,7 @@ mod stress_tests {
         token: Token,
     ) -> AutoRefresh<OAuthRefresher> {
         let store = ProfileStore::new(dir.path());
-        store.set_current_workspace("ZVATKW3VHMFG27DY").unwrap();
+        store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&token).unwrap();
         let refresher = OAuthRefresher::new(

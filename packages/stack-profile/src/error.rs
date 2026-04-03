@@ -28,4 +28,7 @@ pub enum ProfileError {
     /// The workspace ID is invalid (not a 16-character base32 string).
     #[error("Invalid workspace ID: {0}")]
     InvalidWorkspaceId(String),
+    /// The workspace has no local profile data (not logged in).
+    #[error("Workspace not found: {0}. Log in to this workspace first.")]
+    WorkspaceNotFound(String),
 }

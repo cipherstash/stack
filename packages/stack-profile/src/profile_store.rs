@@ -127,10 +127,34 @@ impl ProfileStore {
     /// Set the current workspace.
     ///
     /// Writes the workspace ID to the `current_workspace` file in the profile
-    /// directory. Subsequent workspace-scoped operations will use this workspace.
+    /// directory. The workspace must already have a directory under `workspaces/`
+    /// (created during login). Use [`init_workspace`](Self::init_workspace) to
+    /// create a new workspace directory.
+    ///
+    /// Returns [`ProfileError::WorkspaceNotFound`] if the workspace directory
+    /// does not exist.
     pub fn set_current_workspace(&self, workspace_id: &str) -> Result<(), ProfileError> {
         Self::validate_workspace_id(workspace_id)?;
+        let ws_dir = self.dir.join(WORKSPACES_DIR).join(workspace_id);
+        if !ws_dir.is_dir() {
+            return Err(ProfileError::WorkspaceNotFound(workspace_id.to_string()));
+        }
         std::fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join(CURRENT_WORKSPACE_FILE);
+        std::fs::write(&path, workspace_id)?;
+        Ok(())
+    }
+
+    /// Create a workspace directory and set it as the current workspace.
+    ///
+    /// Unlike [`set_current_workspace`](Self::set_current_workspace), this
+    /// creates the workspace directory if it does not exist. Used during login
+    /// to initialize a new workspace.
+    pub fn init_workspace(&self, workspace_id: &str) -> Result<(), ProfileError> {
+        Self::validate_workspace_id(workspace_id)?;
+        // create_dir_all creates self.dir and workspaces/ as ancestors.
+        let ws_dir = self.dir.join(WORKSPACES_DIR).join(workspace_id);
+        std::fs::create_dir_all(&ws_dir)?;
         let path = self.dir.join(CURRENT_WORKSPACE_FILE);
         std::fs::write(&path, workspace_id)?;
         Ok(())
@@ -678,6 +702,35 @@ mod tests {
                 let store = ProfileStore::new(dir.path());
                 store.clear_current_workspace().unwrap();
             }
+
+            #[test]
+            fn set_current_workspace_returns_workspace_not_found() {
+                let dir = tempfile::tempdir().unwrap();
+                let store = ProfileStore::new(dir.path());
+
+                let err = store.set_current_workspace(WS_A).unwrap_err();
+                assert!(
+                    matches!(err, ProfileError::WorkspaceNotFound(_)),
+                    "expected WorkspaceNotFound, got: {err:?}"
+                );
+            }
+
+            #[test]
+            fn init_workspace_creates_dir_and_sets_current() {
+                let dir = tempfile::tempdir().unwrap();
+                let store = ProfileStore::new(dir.path());
+
+                store.init_workspace(WS_A).unwrap();
+                assert_eq!(
+                    store.current_workspace().unwrap(),
+                    WS_A,
+                    "init_workspace should set the current workspace"
+                );
+                assert!(
+                    dir.path().join("workspaces").join(WS_A).is_dir(),
+                    "init_workspace should create the workspace directory"
+                );
+            }
         }
 
         mod given_workspace_set {
@@ -686,7 +739,7 @@ mod tests {
             fn scenario() -> (tempfile::TempDir, ProfileStore) {
                 let dir = tempfile::tempdir().unwrap();
                 let store = ProfileStore::new(dir.path());
-                store.set_current_workspace(WS_A).unwrap();
+                store.init_workspace(WS_A).unwrap();
                 (dir, store)
             }
 

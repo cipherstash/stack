@@ -10,6 +10,7 @@ export type ProfileErrorCode =
   | "INVALID_FILENAME"
   | "NO_CURRENT_WORKSPACE"
   | "INVALID_WORKSPACE_ID"
+  | "WORKSPACE_NOT_FOUND"
   | "UNKNOWN_ERROR";
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */
@@ -32,7 +33,7 @@ export class ProfileStore {
   /** The directory path of this profile store. */
   get dir(): string;
 
-  /** Set the current workspace. */
+  /** Set the current workspace. The workspace must already exist on disk (created during login). Throws `WORKSPACE_NOT_FOUND` otherwise. */
   setCurrentWorkspace(workspaceId: string): void;
   /** Return the current workspace ID. Throws if no workspace has been set. */
   currentWorkspace(): string;

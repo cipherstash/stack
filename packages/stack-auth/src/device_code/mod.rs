@@ -341,7 +341,7 @@ impl PendingDeviceCode {
                     None => ProfileStore::resolve(None)?,
                 };
                 let workspace_id = token.workspace_id()?;
-                store.set_current_workspace(workspace_id.as_str())?;
+                store.init_workspace(workspace_id.as_str())?;
                 store
                     .workspace_store(workspace_id.as_str())?
                     .save_profile(&token)?;
