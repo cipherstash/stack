@@ -198,7 +198,7 @@ mod tests {
             client_id: None,
             device_instance_id: None,
         };
-        store.set_current_workspace(TEST_WORKSPACE_ID).unwrap();
+        store.init_workspace(TEST_WORKSPACE_ID).unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&token).unwrap();
     }
@@ -246,7 +246,7 @@ mod tests {
     async fn skips_when_secret_key_exists() {
         let dir = TempDir::new().unwrap();
         let store = ProfileStore::new(dir.path());
-        store.set_current_workspace(TEST_WORKSPACE_ID).unwrap();
+        store.init_workspace(TEST_WORKSPACE_ID).unwrap();
 
         // Pre-populate secretkey.json in the workspace directory
         let ws_store = store.workspace_store(TEST_WORKSPACE_ID).unwrap();

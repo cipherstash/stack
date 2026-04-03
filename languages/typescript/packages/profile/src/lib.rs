@@ -14,6 +14,7 @@ fn error_code(err: &stack_profile::ProfileError) -> &'static str {
         stack_profile::ProfileError::InvalidFilename(_) => "INVALID_FILENAME",
         stack_profile::ProfileError::NoCurrentWorkspace => "NO_CURRENT_WORKSPACE",
         stack_profile::ProfileError::InvalidWorkspaceId(_) => "INVALID_WORKSPACE_ID",
+        stack_profile::ProfileError::WorkspaceNotFound(_) => "WORKSPACE_NOT_FOUND",
         _ => "UNKNOWN_ERROR",
     }
 }

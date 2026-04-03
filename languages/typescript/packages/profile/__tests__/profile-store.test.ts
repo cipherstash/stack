@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, existsSync } from "fs";
+import { mkdtempSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { ProfileStore as ProfileStoreType, ProfileError } from "../index";
@@ -80,6 +80,7 @@ describe("ProfileStore", () => {
 
   describe("given workspace set", () => {
     beforeEach(() => {
+      mkdirSync(join(profileDir, "workspaces", WS_A), { recursive: true });
       store().setCurrentWorkspace(WS_A);
     });
 
@@ -119,14 +120,22 @@ describe("ProfileStore", () => {
     });
   });
 
+  describe("setCurrentWorkspace", () => {
+    it("throws WORKSPACE_NOT_FOUND for workspace without profile data", () => {
+      try {
+        store().setCurrentWorkspace(WS_A);
+        expect.unreachable("should have thrown");
+      } catch (err) {
+        expect((err as ProfileError).code).toBe("WORKSPACE_NOT_FOUND");
+      }
+    });
+  });
+
   describe("given multiple workspaces", () => {
     beforeEach(() => {
-      const s = store();
-      // Create workspace dirs by setting workspace and writing current_workspace
-      s.setCurrentWorkspace(WS_A);
-      // Touch a file in the workspace dir so it gets created
-      s.workspaceStore(WS_A).setCurrentWorkspace(WS_A);
-      s.workspaceStore(WS_B).setCurrentWorkspace(WS_B);
+      mkdirSync(join(profileDir, "workspaces", WS_A), { recursive: true });
+      mkdirSync(join(profileDir, "workspaces", WS_B), { recursive: true });
+      store().setCurrentWorkspace(WS_A);
     });
 
     it("listWorkspaces returns sorted workspace IDs", () => {

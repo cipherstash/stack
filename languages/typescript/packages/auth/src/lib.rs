@@ -984,10 +984,9 @@ pub fn save_test_token(profile_dir: String, zerokms_base_url: String) -> Result<
 
     let store = stack_profile::ProfileStore::new(&profile_dir);
 
-    // Set the current workspace so workspace-scoped loads work.
     let workspace_id = "ZVATKW3VHMFG27DY";
     store
-        .set_current_workspace(workspace_id)
+        .init_workspace(workspace_id)
         .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
 
     // Save the token to the workspace directory.
