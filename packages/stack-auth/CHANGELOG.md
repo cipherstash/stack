@@ -1,5 +1,10 @@
 
 
+### Miscellaneous
+
+- updated the following local packages: cts-common, cts-common, stack-profile, zerokms-protocol
+
+
 ### Documentation
 
 - 📝 add TypeScript example for AutoStrategy usage
