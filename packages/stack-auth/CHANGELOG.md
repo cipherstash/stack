@@ -12,6 +12,51 @@
 
 - ✨ expose auth strategies in @cipherstash/auth Node bindings
 - ✨ add subject() and workspace_id() to ServiceToken
+- add multi-workspace profile support (CIP-2942)
+- require workspace to exist before switching
+
+### Fixes
+
+- 🩹 add INVALID_CRN error code and deduplicate zerokms_url
+- 🔒️ derive OpaqueDebug on TokenResult to prevent token leaks
+- 🔒️ derive OpaqueDebug on AutoStrategyOptions
+- update integration tests for workspace-scoped profiles
+- hard-error on token persistence failure, strengthen test assertions
+- use npm install instead of npm ci in integration test tasks
+
+### Miscellaneous
+
+- 🔖 bump @cipherstash/auth to 0.35.0
+- 🔧 regenerate index.d.ts from napi build
+- release
+
+### Refactoring
+
+- ♻️ restructure stack-auth-node tests to follow conventions
+- simplify workspace store usage
+
+### Testing
+
+- ✅ add unit tests for exposed auth strategies
+
+### Style
+
+- 💄 fix cargo fmt formatting
+- 🎨 remove redundant comments from examples
+
+
+### Documentation
+
+- 📝 add TypeScript example for AutoStrategy usage
+- 📝 add CHANGELOG.md for @cipherstash/auth
+- 📝 add INVALID_CRN to changelog error codes
+- 📝 demonstrate whoami (subject/workspace) in examples
+- 📝 update CHANGELOG with whoami fields and security notes
+
+### Features
+
+- ✨ expose auth strategies in @cipherstash/auth Node bindings
+- ✨ add subject() and workspace_id() to ServiceToken
 
 ### Fixes
 
