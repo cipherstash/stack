@@ -2,6 +2,12 @@
 
 ### Miscellaneous
 
+- release
+- use explicit versions for cipherstash-client and stack-auth
+
+
+### Miscellaneous
+
 - updated the following local packages: cts-common, cts-common, stack-profile, zerokms-protocol
 
 
