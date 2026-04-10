@@ -224,6 +224,8 @@ mod tests {
         assert_eq!(some_aad.as_bytes(), expected.as_bytes());
 
         let none_aad = Option::<[u8; 3]>::None.into_aad();
+        // `None` is PAE-encoded as zero pieces: LE64(0) = 8 zero bytes.
+        assert_eq!(none_aad.as_bytes(), &[0u8; 8]);
         assert_ne!(none_aad.as_bytes(), some_aad.as_bytes());
     }
 
