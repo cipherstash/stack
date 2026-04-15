@@ -2,6 +2,11 @@
 
 ### Miscellaneous
 
+- release v0.34.1-alpha.2
+
+
+### Miscellaneous
+
 - release
 - use explicit versions for cipherstash-client and stack-auth
 
