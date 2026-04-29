@@ -42,6 +42,7 @@
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "^0.2.87",
 		"@cipherstash/auth": "catalog:repo",
+		"@cipherstash/migrate": "workspace:*",
 		"@clack/prompts": "0.10.1",
 		"dotenv": "16.4.7",
 		"jiti": "2.6.1",

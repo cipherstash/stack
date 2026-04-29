@@ -76,6 +76,9 @@ importers:
       '@cipherstash/auth':
         specifier: catalog:repo
         version: 0.36.0
+      '@cipherstash/migrate':
+        specifier: workspace:*
+        version: link:../migrate
       '@clack/prompts':
         specifier: 0.10.1
         version: 0.10.1
@@ -157,6 +160,31 @@ importers:
         specifier: catalog:repo
         version: 3.1.3(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.19.3)
 
+  packages/migrate:
+    dependencies:
+      zod:
+        specifier: ^3.24.2
+        version: 3.24.2
+    devDependencies:
+      '@cipherstash/stack':
+        specifier: workspace:*
+        version: link:../stack
+      '@types/pg':
+        specifier: ^8.11.11
+        version: 8.16.0
+      pg:
+        specifier: 8.13.1
+        version: 8.13.1
+      tsup:
+        specifier: catalog:repo
+        version: 8.4.0(jiti@2.6.1)(postcss@8.5.6)(tsx@4.19.3)(typescript@5.6.3)
+      typescript:
+        specifier: catalog:repo
+        version: 5.6.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.1.3(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.19.3)
+
   packages/nextjs:
     dependencies:
       jose:
@@ -165,6 +193,10 @@ importers:
       next:
         specifier: ^14 || ^15
         version: 15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu':
+        specifier: 4.24.0
+        version: 4.24.0
     devDependencies:
       '@clerk/nextjs':
         specifier: catalog:security
@@ -181,10 +213,6 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.1.3(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.19.3)
-    optionalDependencies:
-      '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.24.0
-        version: 4.24.0
 
   packages/protect:
     dependencies:
@@ -206,6 +234,10 @@ importers:
       zod:
         specifier: ^3.24.2
         version: 3.25.76
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu':
+        specifier: 4.24.0
+        version: 4.24.0
     devDependencies:
       '@supabase/supabase-js':
         specifier: ^2.47.10
@@ -231,10 +263,6 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.1.3(@types/node@22.19.3)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.19.3)
-    optionalDependencies:
-      '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.24.0
-        version: 4.24.0
 
   packages/protect-dynamodb:
     dependencies:

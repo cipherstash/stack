@@ -73,6 +73,13 @@ Commands:
 
   schema build         Build an encryption schema from your database
 
+  encrypt status       Show per-column migration status (phase, progress, drift)
+  encrypt plan         Diff intent (.cipherstash/migrations.json) vs observed state
+  encrypt advance      Record a phase transition for a column
+  encrypt backfill     Resumably encrypt plaintext into the encrypted column
+  encrypt cutover      Rename swap encrypted → primary column
+  encrypt drop         Generate a migration to drop the plaintext column
+
   env                  (experimental) Print production env vars for deployment
 
 Options:
@@ -204,6 +211,99 @@ async function runDbCommand(
   }
 }
 
+async function runEncryptCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  switch (sub) {
+    case 'status': {
+      const { statusCommand } = await requireStack(
+        () => import('../commands/encrypt/status.js'),
+      )
+      await statusCommand()
+      break
+    }
+    case 'plan': {
+      const { planCommand } = await requireStack(
+        () => import('../commands/encrypt/plan.js'),
+      )
+      await planCommand()
+      break
+    }
+    case 'advance': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const to = requireValue(values, 'to') as
+        | 'schema-added'
+        | 'dual-writing'
+        | 'backfilling'
+        | 'backfilled'
+        | 'cut-over'
+        | 'dropped'
+      const { advanceCommand } = await requireStack(
+        () => import('../commands/encrypt/advance.js'),
+      )
+      await advanceCommand({ table, column, to, note: values.note })
+      break
+    }
+    case 'backfill': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { backfillCommand } = await requireStack(
+        () => import('../commands/encrypt/backfill.js'),
+      )
+      await backfillCommand({
+        table,
+        column,
+        pkColumn: values['pk-column'],
+        chunkSize: values['chunk-size']
+          ? Number(values['chunk-size'])
+          : undefined,
+        encryptedColumn: values['encrypted-column'],
+        schemaColumnKey: values['schema-column-key'],
+      })
+      break
+    }
+    case 'cutover': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { cutoverCommand } = await requireStack(
+        () => import('../commands/encrypt/cutover.js'),
+      )
+      await cutoverCommand({ table, column, proxyUrl: values['proxy-url'] })
+      break
+    }
+    case 'drop': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { dropCommand } = await requireStack(
+        () => import('../commands/encrypt/drop.js'),
+      )
+      await dropCommand({
+        table,
+        column,
+        migrationsDir: values['migrations-dir'],
+      })
+      break
+    }
+    default:
+      p.log.error(`Unknown encrypt subcommand: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      process.exit(1)
+  }
+}
+
+function requireValue(values: Record<string, string>, key: string): string {
+  const v = values[key]
+  if (!v) {
+    p.log.error(`Missing required --${key} value.`)
+    process.exit(1)
+  }
+  return v
+}
+
 async function runSchemaCommand(
   sub: string | undefined,
   flags: Record<string, boolean>,
@@ -260,6 +360,9 @@ async function main() {
     }
     case 'db':
       await runDbCommand(subcommand, flags, values)
+      break
+    case 'encrypt':
+      await runEncryptCommand(subcommand, flags, values)
       break
     case 'schema':
       await runSchemaCommand(subcommand, flags)

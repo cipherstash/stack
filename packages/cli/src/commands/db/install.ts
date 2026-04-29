@@ -8,7 +8,12 @@ import {
   downloadEqlSql,
   loadBundledEqlSql,
 } from '@/installer/index.js'
+import {
+  MIGRATIONS_SCHEMA_SQL,
+  installMigrationsSchema,
+} from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
+import pg from 'pg'
 import { ensureStashConfig } from './config-scaffold.js'
 import {
   type SupabaseProjectInfo,
@@ -208,6 +213,23 @@ export async function installCommand(options: InstallOptions) {
     p.log.success('Supabase role permissions granted.')
   }
 
+  s.start('Installing cs_migrations tracking schema...')
+  const migrationsDb = new pg.Client({ connectionString: config.databaseUrl })
+  try {
+    await migrationsDb.connect()
+    await installMigrationsSchema(migrationsDb)
+    s.stop('cs_migrations schema installed.')
+  } catch (err) {
+    s.stop('Failed to install cs_migrations schema.')
+    p.log.warn(
+      err instanceof Error
+        ? err.message
+        : 'Encryption migration tracking is unavailable; `stash encrypt` commands will fail until this is resolved.',
+    )
+  } finally {
+    await migrationsDb.end()
+  }
+
   printNextSteps()
   p.outro('Done!')
 }
@@ -386,11 +408,16 @@ async function generateDrizzleMigration(
     }
   }
 
-  // Step 4: Write the EQL SQL into the migration file
+  // Step 4: Write the EQL SQL (and cs_migrations tracking schema) into
+  // the migration file. Bundling both means `drizzle-kit migrate` rolls
+  // everything needed for `stash encrypt ...` out to each environment
+  // in one go, rather than requiring an out-of-band `stash db install`.
   s.start('Writing EQL SQL into migration file...')
 
+  const migrationContents = `${eqlSql}\n\n-- CipherStash encryption-migration tracking schema.\n-- Tracks per-column phase + backfill progress for \`stash encrypt\`.\n${MIGRATIONS_SCHEMA_SQL.trim()}\n`
+
   try {
-    writeFileSync(generatedMigrationPath, eqlSql, 'utf-8')
+    writeFileSync(generatedMigrationPath, migrationContents, 'utf-8')
     s.stop('EQL SQL written to migration file.')
   } catch (error) {
     s.stop('Failed to write migration file.')
