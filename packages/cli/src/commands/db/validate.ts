@@ -1,3 +1,4 @@
+import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { loadEncryptConfig, loadStashConfig } from '@/config/index.js'
 import type { EncryptConfig } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
@@ -12,7 +13,17 @@ interface ValidationIssue {
 }
 
 /** Cast-as types that are not string-like — free-text search is meaningless for these. */
-const NON_STRING_CAST_TYPES = new Set(['int', 'small_int', 'big_int', 'real', 'double', 'boolean', 'date', 'number', 'bigint'])
+const NON_STRING_CAST_TYPES = new Set([
+  'int',
+  'small_int',
+  'big_int',
+  'real',
+  'double',
+  'boolean',
+  'date',
+  'number',
+  'bigint',
+])
 
 /**
  * Validate an EncryptConfig against common misconfiguration rules.
@@ -137,8 +148,14 @@ export function reportIssues(issues: ValidationIssue[]): boolean {
 export async function validateCommand(options: {
   supabase?: boolean
   excludeOperatorFamily?: boolean
+  databaseUrl?: string
 }) {
   p.intro('npx @cipherstash/cli db validate')
+
+  await resolveDatabaseUrl({
+    databaseUrlFlag: options.databaseUrl,
+    supabase: options.supabase,
+  })
 
   const s = p.spinner()
 
