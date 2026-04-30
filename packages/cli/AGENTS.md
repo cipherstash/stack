@@ -78,7 +78,44 @@ exercise the same code paths.
   the CLI, gate construction on an env var (the wizard's
   `getClient()` pattern) so E2E tests can no-op it.
 
+## Auth-flow testing layers
+
+`@cipherstash/auth@0.36.0` is a NAPI (Rust) module — its HTTP calls
+happen below Node's fetch and there is no profile-dir or base-URL
+override. The OAuth device-code flow requires a human at the issuer's
+web page. Three constraints fall out:
+
+1. We can't intercept the auth library's HTTP traffic.
+2. We can't E2E the device-code path.
+3. `vi.mock` does not cross the pty spawn boundary.
+
+So auth coverage is layered:
+
+- **Layer A — `vi.mock` unit tests of the orchestration above the NAPI
+  boundary.** Real CLI code, stubbed library. Lives in
+  `src/commands/auth/__tests__/login.test.ts`,
+  `src/commands/init/steps/__tests__/authenticate.test.ts`, and
+  `src/auth/__tests__/strategy.test.ts`. Use `tests/helpers/auth-mock.ts`
+  for `TokenResult` / `DeviceCodeResult` / `AuthError` fixtures.
+
+- **Layer B — `AccessKeyStrategy` E2E in CI.** A
+  `describe.skipIf(!CS_CLIENT_ACCESS_KEY)`-guarded test in
+  `tests/e2e/init-with-access-key.e2e.test.ts` runs `init` against real
+  CTS via the access-key strategy. CI exposes the secret on the `Run
+  CLI E2E tests` step (see `.github/workflows/tests.yml`). Locally
+  without the secret it skips. Doesn't cover the OAuth orchestration —
+  that's Layer A's job — but it does exercise the full pipe (pty →
+  CLI → real Rust auth lib → real CTS).
+
+- **Out of scope.** No fake OAuth server, no
+  `~/.cipherstash/auth.json` fixturing, no Layer 3 contract test.
+  Background in `docs/plans/cli-pty-integration-tests.md`.
+
+When you add a new command that requires authentication, mock
+`src/auth/strategy.ts` (the seam) rather than `@cipherstash/auth`
+directly — narrower surface, simpler mock setup.
+
 ## Plan and rationale
 
-Background, alternative approaches considered, and the phase-2 messages
+Background, alternative approaches considered, and the messages
 module are in `docs/plans/cli-pty-integration-tests.md`.

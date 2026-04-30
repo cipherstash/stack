@@ -85,5 +85,13 @@ jobs:
       # CLI E2E tests drive the built `dist/bin/stash.js` through a real
       # pseudo-terminal via node-pty. Run via turbo so the `^build` + `build`
       # deps declared on the `test:e2e` task are honored.
+      #
+      # `CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN` enable the
+      # `init-with-access-key` e2e test to authenticate against real CTS via
+      # `AccessKeyStrategy`. The test is `describe.skipIf`-guarded, so this
+      # is the env it watches for; without it the test simply skips.
       - name: Run CLI E2E tests
+        env:
+          CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+          CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
         run: pnpm exec turbo run test:e2e --filter @cipherstash/cli

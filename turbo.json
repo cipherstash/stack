@@ -21,7 +21,8 @@
     "test:e2e": {
       "dependsOn": ["^build", "build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["CS_CLIENT_ACCESS_KEY", "CS_WORKSPACE_CRN"]
     }
   }
 }

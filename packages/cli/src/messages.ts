@@ -20,6 +20,8 @@ export const messages = {
     unknownSubcommand: 'Unknown auth command',
     selectRegion: 'Select a region',
     cancelled: 'Cancelled.',
+    /** Prefix of the "Using workspace <id> (<region label>)" success log emitted by init's authenticate step. */
+    usingWorkspace: 'Using workspace ',
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',
