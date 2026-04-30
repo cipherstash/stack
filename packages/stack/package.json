@@ -189,7 +189,7 @@
 		"@supabase/supabase-js": "^2.47.10",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "16.4.7",
-		"drizzle-orm": ">=0.33",
+		"drizzle-orm": ">=0.45",
 		"execa": "^9.5.2",
 		"json-schema-to-typescript": "^15.0.2",
 		"postgres": "^3.4.8",
@@ -210,7 +210,7 @@
 	},
 	"peerDependencies": {
 		"@supabase/supabase-js": ">=2",
-		"drizzle-orm": ">=0.33"
+		"drizzle-orm": ">=0.45"
 	},
 	"peerDependenciesMeta": {
 		"drizzle-orm": {
