@@ -205,7 +205,7 @@
 		"@byteslice/result": "0.2.0",
 		"@cipherstash/protect-ffi": "0.21.2",
 		"evlog": "1.9.0",
-		"uuid": "13.0.0",
+		"uuid": "14.0.0",
 		"zod": "3.24.2"
 	},
 	"peerDependencies": {
