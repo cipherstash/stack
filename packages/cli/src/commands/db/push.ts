@@ -27,11 +27,16 @@ function toEqlConfig(config: EncryptConfig): Record<string, unknown> {
   return { v: config.v, tables }
 }
 
-export async function pushCommand(options: { dryRun?: boolean }) {
+export async function pushCommand(options: {
+  dryRun?: boolean
+  databaseUrl?: string
+}) {
   p.intro('npx @cipherstash/cli db push')
   p.log.info(
     'This command pushes the encryption schema to the database for use with CipherStash Proxy.\nIf you are using the SDK directly (Drizzle, Supabase, or plain PostgreSQL), this step is not required.',
   )
+
+  await resolveDatabaseUrl({ databaseUrlFlag: options.databaseUrl })
 
   const s = p.spinner()
 

@@ -93,6 +93,7 @@ DB Flags:
   --migrations-dir <path>    (install, requires --supabase) Override the Supabase migrations directory (default: supabase/migrations)
   --exclude-operator-family  (install, upgrade, validate) Skip operator family creation
   --latest                   (install, upgrade) Fetch the latest EQL from GitHub
+  --database-url <url>       (all db / schema commands) Override DATABASE_URL for this run only — never written to disk
 
 Examples:
   npx @cipherstash/cli init
@@ -145,6 +146,10 @@ async function runDbCommand(
   flags: Record<string, boolean>,
   values: Record<string, string>,
 ) {
+  // Plumbed through every db subcommand so the URL resolver can use it as
+  // an explicit override. See packages/cli/src/config/database-url.ts.
+  const databaseUrl = values['database-url']
+
   switch (sub) {
     case 'install':
       await installCommand({
@@ -159,6 +164,7 @@ async function runDbCommand(
         migration: flags.migration,
         direct: flags.direct,
         migrationsDir: values['migrations-dir'],
+        databaseUrl,
       })
       break
     case 'upgrade':
@@ -167,13 +173,14 @@ async function runDbCommand(
         supabase: flags.supabase,
         excludeOperatorFamily: flags['exclude-operator-family'],
         latest: flags.latest,
+        databaseUrl,
       })
       break
     case 'push': {
       const { pushCommand } = await requireStack(
         () => import('../commands/db/push.js'),
       )
-      await pushCommand({ dryRun: flags['dry-run'] })
+      await pushCommand({ dryRun: flags['dry-run'], databaseUrl })
       break
     }
     case 'validate': {
@@ -183,14 +190,15 @@ async function runDbCommand(
       await validateCommand({
         supabase: flags.supabase,
         excludeOperatorFamily: flags['exclude-operator-family'],
+        databaseUrl,
       })
       break
     }
     case 'status':
-      await statusCommand()
+      await statusCommand({ databaseUrl })
       break
     case 'test-connection':
-      await testConnectionCommand()
+      await testConnectionCommand({ databaseUrl })
       break
     case 'migrate':
       p.log.warn(messages.db.migrateNotImplemented)
@@ -206,13 +214,17 @@ async function runDbCommand(
 async function runSchemaCommand(
   sub: string | undefined,
   flags: Record<string, boolean>,
+  values: Record<string, string>,
 ) {
   switch (sub) {
     case 'build': {
       const { builderCommand } = await requireStack(
         () => import('../commands/schema/build.js'),
       )
-      await builderCommand({ supabase: flags.supabase })
+      await builderCommand({
+        supabase: flags.supabase,
+        databaseUrl: values['database-url'],
+      })
       break
     }
     default:
@@ -251,7 +263,7 @@ async function main() {
       await runDbCommand(subcommand, flags, values)
       break
     case 'schema':
-      await runSchemaCommand(subcommand, flags)
+      await runSchemaCommand(subcommand, flags, values)
       break
     case 'env':
       await envCommand({ write: flags.write })

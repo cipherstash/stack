@@ -1,3 +1,4 @@
+import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { loadStashConfig } from '@/config/index.js'
 import { EQLInstaller } from '@/installer/index.js'
 import * as p from '@clack/prompts'
@@ -7,8 +8,14 @@ export async function upgradeCommand(options: {
   supabase?: boolean
   excludeOperatorFamily?: boolean
   latest?: boolean
+  databaseUrl?: string
 }) {
   p.intro('npx @cipherstash/cli db upgrade')
+
+  await resolveDatabaseUrl({
+    databaseUrlFlag: options.databaseUrl,
+    supabase: options.supabase,
+  })
 
   const s = p.spinner()
 

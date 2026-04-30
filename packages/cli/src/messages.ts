@@ -25,5 +25,20 @@ export const messages = {
     unknownSubcommand: 'Unknown db subcommand',
     migrateNotImplemented:
       '"npx @cipherstash/cli db migrate" is not yet implemented.',
+    /** Source labels surfaced after DATABASE_URL resolution. */
+    urlResolvedFromFlag: 'Using DATABASE_URL from --database-url flag',
+    urlResolvedFromSupabase: 'Using DATABASE_URL from supabase status',
+    urlResolvedFromPrompt: 'Using DATABASE_URL from prompt',
+    urlPromptMessage: 'Paste your DATABASE_URL',
+    urlInvalid: 'Not a valid URL',
+    urlFlagMalformed:
+      'Invalid --database-url: not a parseable connection string',
+    urlMissingCi:
+      'Cannot resolve DATABASE_URL in CI. Pass --database-url or set DATABASE_URL.',
+    urlMissingInteractive:
+      'Cannot resolve DATABASE_URL. Pass --database-url, set DATABASE_URL in your environment, or run `supabase start` if this is a Supabase project.',
+    /** Nudge shown after a prompt-sourced run completes. */
+    urlHint: (file: string) =>
+      `Set DATABASE_URL in ${file} to skip this prompt next time.`,
   },
 } as const

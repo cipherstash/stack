@@ -1,9 +1,14 @@
+import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { loadStashConfig } from '@/config/index.js'
 import * as p from '@clack/prompts'
 import pg from 'pg'
 
-export async function testConnectionCommand() {
+export async function testConnectionCommand(
+  options: { databaseUrl?: string } = {},
+) {
   p.intro('npx @cipherstash/cli db test-connection')
+
+  await resolveDatabaseUrl({ databaseUrlFlag: options.databaseUrl })
 
   const s = p.spinner()
 
