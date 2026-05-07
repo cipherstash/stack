@@ -129,41 +129,41 @@ if (result.failure) {
 
 ## CLI Usage
 
-The CLI is available via `npx stash` after install.
+`stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun / pnpm / Yarn / npm). Examples below show the bare `stash` form. Before init has run, prefix with your package manager's runner — `bunx`, `pnpm dlx`, `yarn dlx`, or `npx` — whichever matches your project.
 
 ### Set a Secret
 
 ```bash
-npx stash secrets set --name DATABASE_URL --value "postgres://..." --environment production
-npx stash secrets set -n DATABASE_URL -V "postgres://..." -e production
+stash secrets set --name DATABASE_URL --value "postgres://..." --environment production
+stash secrets set -n DATABASE_URL -V "postgres://..." -e production
 ```
 
 ### Get a Secret
 
 ```bash
-npx stash secrets get --name DATABASE_URL --environment production
-npx stash secrets get -n DATABASE_URL -e production
+stash secrets get --name DATABASE_URL --environment production
+stash secrets get -n DATABASE_URL -e production
 ```
 
 ### Get Many Secrets
 
 ```bash
-npx stash secrets get-many --name DATABASE_URL,API_KEY --environment production
-npx stash secrets get-many -n DATABASE_URL,API_KEY,JWT_SECRET -e production
+stash secrets get-many --name DATABASE_URL,API_KEY --environment production
+stash secrets get-many -n DATABASE_URL,API_KEY,JWT_SECRET -e production
 ```
 
 ### List Secrets
 
 ```bash
-npx stash secrets list --environment production
-npx stash secrets list -e production
+stash secrets list --environment production
+stash secrets list -e production
 ```
 
 ### Delete a Secret
 
 ```bash
-npx stash secrets delete --name DATABASE_URL --environment production
-npx stash secrets delete -n DATABASE_URL -e production --yes  # skip confirmation
+stash secrets delete --name DATABASE_URL --environment production
+stash secrets delete -n DATABASE_URL -e production --yes  # skip confirmation
 ```
 
 ### CLI Flag Reference

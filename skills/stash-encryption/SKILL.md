@@ -601,11 +601,11 @@ db push (writes pending)                  drop plaintext column
 
 The gate is the rule that backfill is only safe once the dual-write code is **running in the production environment that owns the database** — not on the developer's laptop, not in CI. Any row inserted during the backfill window must be written to both columns by the application; otherwise it lands in plaintext only and creates silent migration drift.
 
-> **Runner note.** Examples below use `npx stash` for npm projects. Substitute `bunx stash` (Bun), `pnpm dlx stash` (pnpm), or `yarn dlx stash` (Yarn) — or run `stash` directly when it is installed as a project dev dep (`stash init` sets that up). The behaviour is identical across runners; only the prefix changes. The `stash-cli` skill has the full mapping.
+> **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them; only the prefix changes. The `stash-cli` skill has the full mapping.
 
 ### Where am I?
 
-Always start with `stash status` (`npx stash status` / `pnpm dlx stash status` / etc., per the runner note above). It is disk-only, idempotent, and tells you which encryption rollouts are in flight, what's been deployed, and what the next move is per column. Re-run it after every transition. Never act blind.
+Always start with `stash status` (`stash status` / `pnpm dlx stash status` / etc., per the runner note above). It is disk-only, idempotent, and tells you which encryption rollouts are in flight, what's been deployed, and what the next move is per column. Re-run it after every transition. Never act blind.
 
 ### Step 1 — Encryption rollout
 
@@ -623,9 +623,9 @@ Everything that lands in the repo and ships in **one** PR:
 
 Stop. The rollout PR ships to production. The deployed environment must be running this code before any cutover-step work is safe.
 
-When the deploy is live, run `npx stash status`. Look for the active quest's "Next move" hint to confirm dual-writes are recorded. Then run `npx stash plan` again — the CLI detects that dual-writes are live and writes a separate cutover plan.
+When the deploy is live, run `stash status`. Look for the active quest's "Next move" hint to confirm dual-writes are recorded. Then run `stash plan` again — the CLI detects that dual-writes are live and writes a separate cutover plan.
 
-`npx stash impl` will refuse to run a cutover-step plan if `cs_migrations` has no `dual_writing` event for the targeted columns. That refusal is intentional; it's the safety net for cases where someone runs cutover work locally before the code is actually live.
+`stash impl` will refuse to run a cutover-step plan if `cs_migrations` has no `dual_writing` event for the targeted columns. That refusal is intentional; it's the safety net for cases where someone runs cutover work locally before the code is actually live.
 
 ### Step 2 — Encryption cutover
 
@@ -656,13 +656,13 @@ Three sources of truth, kept separate on purpose:
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.
-npx stash status
+stash status
 
 # ---- ENCRYPTION ROLLOUT (one PR, one deploy) ----
 # 1. Add the encrypted twin column via your normal migration tooling
 #    (drizzle-kit / supabase migrations / etc.).
 # 2. Register the new encryption config with EQL:
-npx stash db push
+stash db push
 #    First push (no active config yet) → writes directly to active.
 #    Subsequent push (active already exists) → writes pending; cutover
 #    will promote it.
@@ -673,29 +673,29 @@ npx stash db push
 
 # ---- ⛔ DEPLOY GATE ----
 # Verify dual-writes are live, then redraft the plan for cutover work:
-npx stash status
-npx stash plan
+stash status
+stash plan
 
 # ---- ENCRYPTION CUTOVER ----
-npx stash encrypt backfill --table users --column email
+stash encrypt backfill --table users --column email
 # Prompts to confirm dual-writes are live (or pass
 # --confirm-dual-writes-deployed in CI). Resumable; SIGINT-safe.
 
 # Recovery — if dual-writes weren't actually live when backfill ran,
 # re-run with --force to encrypt every plaintext row regardless.
-npx stash encrypt backfill --table users --column email --force
+stash encrypt backfill --table users --column email --force
 
 # Edit the schema to drop the `_encrypted` suffix, then re-push:
-npx stash db push
+stash db push
 #  → writes the renamed-shape config as `pending`. The active config
 #    keeps serving until cutover finishes.
 
-npx stash encrypt cutover --table users --column email
+stash encrypt cutover --table users --column email
 # In one transaction: rename physical columns, promote pending → active.
 
 # Wire the read paths through the encryption client. Remove dual-write
 # code. Then drop the plaintext column:
-npx stash encrypt drop --table users --column email
+stash encrypt drop --table users --column email
 ```
 
 ### Library use

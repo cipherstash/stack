@@ -12,10 +12,12 @@ import { runWizardSpawn } from '../../wizard/index.js'
  * Hand off to the CipherStash Agent (the in-house wizard package).
  *
  * Writes `.cipherstash/context.json` so the wizard has the same prepared
- * facts the other handoffs use, then spawns the wizard via `runWizardSpawn`
- * — the same path the top-level `stash wizard` subcommand takes, but with
- * the exit code surfaced rather than `process.exit`-ed so `stash impl` can
- * finish its own outro.
+ * facts the other handoffs use (including the resolved `planStep` when
+ * `stash plan` is the caller — the wizard reads it from there rather
+ * than via argv), then spawns the wizard via `runWizardSpawn` — the same
+ * path the top-level `stash wizard` subcommand takes, but with the exit
+ * code surfaced rather than `process.exit`-ed so `stash impl` can finish
+ * its own outro.
  *
  * No skills are installed here. The wizard fetches its own agent-side
  * prompt from the gateway and runs its own `maybeInstallSkills` flow.

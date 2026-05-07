@@ -12,6 +12,7 @@ import {
   detectPackageManager,
   prodInstallCommand,
 } from '../utils.js'
+import type { PlanStep } from './parse-plan.js'
 import { type SetupPromptContext, renderSetupPrompt } from './setup-prompt.js'
 
 export const CONTEXT_REL_PATH = '.cipherstash/context.json'
@@ -33,6 +34,12 @@ export interface ContextFile {
    *  AGENTS.md handoff (skill content is inlined into AGENTS.md instead)
    *  and for wizard (the wizard installs its own). */
   installedSkills: string[]
+  /** Plan-step the CLI resolved at handoff time. Written by `stash plan`
+   *  so the wizard handoff (and any other reader of this file) can pick
+   *  up the same rollout/cutover/complete dispatch the prompt-driven
+   *  handoffs use. Absent when the file was written by `stash init` or
+   *  `stash impl` rather than `stash plan`. */
+  planStep?: PlanStep
   generatedAt: string
 }
 
@@ -97,6 +104,7 @@ export function buildContextFile(state: InitState): ContextFile {
     envKeys: [],
     schemas: state.schemas ?? [],
     installedSkills: [],
+    planStep: state.planStep,
     generatedAt: new Date().toISOString(),
   }
 }

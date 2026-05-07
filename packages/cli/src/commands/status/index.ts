@@ -1,8 +1,13 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { latestByColumn, readManifest } from '@cipherstash/migrate'
+import { type Manifest, readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import {
+  fetchActiveEqlConfig,
+  fetchPhysicalColumns,
+  latestByColumnSafe,
+} from '../encrypt/lib/db-readers.js'
 import { readContextFile } from '../init/lib/read-context.js'
 import { PLAN_REL_PATH } from '../init/lib/setup-prompt.js'
 import {
@@ -20,6 +25,23 @@ import {
   renderQuestLogPlain,
   renderQuestLogTTY,
 } from './render.js'
+
+/** Status is a hot-path "where am I in milliseconds" command — fail fast
+ *  if the DB is unreachable rather than waiting on the OS-level TCP
+ *  timeout (~75s on most platforms). */
+const CONNECT_TIMEOUT_MS = 2_000
+
+function manifestColumns(
+  manifest: Manifest,
+): { table: string; column: string }[] {
+  const out: { table: string; column: string }[] = []
+  for (const [table, cols] of Object.entries(manifest.tables)) {
+    for (const col of cols) {
+      out.push({ table, column: col.column })
+    }
+  }
+  return out
+}
 
 export type StageStatus = 'done' | 'pending'
 
@@ -56,13 +78,7 @@ export async function gatherObservations(
     return { observedFromDb: false, observations: [] }
   }
 
-  const targetColumns: { table: string; column: string }[] = []
-  for (const [table, cols] of Object.entries(manifest.tables)) {
-    for (const col of cols) {
-      targetColumns.push({ table, column: col.column })
-    }
-  }
-
+  const targetColumns = manifestColumns(manifest)
   if (targetColumns.length === 0) {
     return { observedFromDb: false, observations: [] }
   }
@@ -73,30 +89,34 @@ export async function gatherObservations(
     const config = await loadStashConfig()
     databaseUrl = config.databaseUrl
   } catch {
-    // Couldn't load config — return manifest-only observations.
     return {
       observedFromDb: false,
       observations: targetColumns.map((c) => ({ ...c })),
     }
   }
 
-  const client = new pg.Client({ connectionString: databaseUrl })
+  const client = new pg.Client({
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+  })
+  const tables = Array.from(new Set(targetColumns.map((c) => c.table)))
   try {
     await client.connect()
     const [phases, eqlConfig, physicalCols] = await Promise.all([
-      latestByColumn(client).catch(() => new Map()),
-      fetchEqlConfig(client),
-      fetchPhysicalColumns(client),
+      latestByColumnSafe(client),
+      fetchActiveEqlConfig(client),
+      fetchPhysicalColumns(client, tables),
     ])
 
     const observations: ColumnObservation[] = targetColumns.map((c) => {
       const key: `${string}.${string}` = `${c.table}.${c.column}`
       const phaseRow = phases.get(key)
+      const eqlInfo = eqlConfig.get(key)
       return {
         table: c.table,
         column: c.column,
         phase: phaseRow ? phaseRow.phase : null,
-        eql: eqlConfig.get(key) ?? null,
+        eql: eqlInfo ? { state: eqlInfo.state } : null,
         physicalEncryptedTwinExists: (
           physicalCols.get(c.table) ?? new Set()
         ).has(`${c.column}_encrypted`),
@@ -112,63 +132,6 @@ export async function gatherObservations(
   } finally {
     await client.end().catch(() => undefined)
   }
-}
-
-async function fetchEqlConfig(
-  client: pg.Client,
-): Promise<Map<string, ColumnObservation['eql']>> {
-  const out = new Map<string, ColumnObservation['eql']>()
-  try {
-    const result = await client.query<{ state: string; data: unknown }>(
-      `SELECT state, data FROM public.eql_v2_configuration
-       WHERE state IN ('active', 'pending', 'encrypting')
-       ORDER BY CASE state WHEN 'active' THEN 0 WHEN 'encrypting' THEN 1 ELSE 2 END`,
-    )
-    for (const row of result.rows) {
-      const data = row.data as {
-        tables?: Record<string, Record<string, unknown>>
-      } | null
-      if (!data?.tables) continue
-      for (const [tableName, columns] of Object.entries(data.tables)) {
-        for (const columnName of Object.keys(columns)) {
-          const key = `${tableName}.${columnName}`
-          if (out.has(key)) continue
-          out.set(key, {
-            state: row.state as 'active' | 'pending' | 'encrypting',
-          })
-        }
-      }
-    }
-  } catch (err) {
-    if (err instanceof Error && /eql_v2_configuration/i.test(err.message)) {
-      return out
-    }
-    throw err
-  }
-  return out
-}
-
-async function fetchPhysicalColumns(
-  client: pg.Client,
-): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>()
-  try {
-    const result = await client.query<{
-      table_name: string
-      column_name: string
-    }>(
-      `SELECT table_name, column_name FROM information_schema.columns
-       WHERE table_schema = current_schema()`,
-    )
-    for (const row of result.rows) {
-      const set = out.get(row.table_name) ?? new Set<string>()
-      set.add(row.column_name)
-      out.set(row.table_name, set)
-    }
-  } catch {
-    // information_schema is always present; if this fails, swallow.
-  }
-  return out
 }
 
 interface StatusFlags {
@@ -202,23 +165,23 @@ export async function statusCommand(flags: StatusFlags = {}) {
   const project = readProjectStatus(cwd)
 
   if (flags.json) {
-    const log = await buildLog(cwd, project)
+    const log = await buildLog(cwd, project, cli)
     process.stdout.write(renderQuestLogJSON(log))
     return
   }
 
   // The intro/outro frames are TTY-only; in plain mode we want the raw
   // body without `clack` decorations so the output is grep-friendly.
-  const log = await buildLog(cwd, project)
+  const log = await buildLog(cwd, project, cli)
 
   const useTTY = flags.quest ?? (process.stdout.isTTY && !flags.plain)
 
   if (useTTY) {
     p.intro('CipherStash')
-    p.note(renderQuestLogTTY(log), 'Quest log')
+    p.note(renderQuestLogTTY(log, cli), 'Quest log')
     p.outro(nextMoveHint(log, cli))
   } else {
-    process.stdout.write(`${renderQuestLogPlain(log)}\n`)
+    process.stdout.write(`${renderQuestLogPlain(log, cli)}\n`)
     process.stdout.write(`Next: ${nextMoveHint(log, cli)}\n`)
   }
 }
@@ -226,6 +189,7 @@ export async function statusCommand(flags: StatusFlags = {}) {
 async function buildLog(
   cwd: string,
   project: ProjectStatus,
+  cli: string,
 ): Promise<QuestLog> {
   const { observedFromDb, observations } = project.initialized
     ? await gatherObservations(cwd)
@@ -234,6 +198,7 @@ async function buildLog(
     initialized: project.initialized,
     observedFromDb,
     observations,
+    cli,
   })
 }
 
@@ -250,6 +215,9 @@ export function nextMoveHint(log: QuestLog, cli: string): string {
   }
   if (log.active.length === 0) {
     return 'All rollouts complete. Nothing to do.'
+  }
+  if (!log.observedFromDb) {
+    return `Database unreachable — re-run \`${cli} status\` once it is available to see what's next.`
   }
   // First active quest's nextMove already names a concrete CLI invocation
   // when relevant; if not, fall back to a generic plan/impl pointer.

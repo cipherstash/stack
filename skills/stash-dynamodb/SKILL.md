@@ -43,7 +43,7 @@ DynamoDB encryption is **single-deploy**. There is no rollout/cutover split — 
 
 For tables with **existing populated items**, the `__source` and `__hmac` attributes are added by the next write that touches each item. If you need every existing item encrypted at once (e.g. because a query uses `email__hmac` and would miss legacy items), run a one-shot script that reads every item, calls `encryptItem`, and writes it back. Idempotent: re-running an already-encrypted item is a no-op as long as the schema hasn't changed.
 
-> **Where am I?** Run `npx stash status` (or `bunx`/`pnpm dlx`/`yarn dlx` per your runner) for a project-wide view across both Postgres and DynamoDB integrations. DynamoDB columns surface in the quest log as already-complete since there is no staged lifecycle to track.
+> **Where am I?** Run `stash status` (or `bunx`/`pnpm dlx`/`yarn dlx` per your runner) for a project-wide view across both Postgres and DynamoDB integrations. DynamoDB columns surface in the quest log as already-complete since there is no staged lifecycle to track.
 
 ## Setup
 

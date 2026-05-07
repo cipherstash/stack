@@ -1,4 +1,4 @@
-import type { ColumnQuest, Objective, QuestLog } from './quest.js'
+import { type ColumnQuest, type Objective, type QuestLog, isComplete } from './quest.js'
 
 const PROGRESS_BAR_WIDTH = 6
 
@@ -7,16 +7,19 @@ const PROGRESS_BAR_WIDTH = 6
  * progress bars, lock icons, "← you are here" markers, and one-line
  * "next move" hints. Designed for an interactive terminal; non-TTY
  * callers should use {@link renderQuestLogPlain} instead.
+ *
+ * `cli` is the package-manager-aware command prefix for empty-state
+ * hints (`<cli> init`, `<cli> plan`). Pass `runnerCommand(pm, 'stash')`.
  */
-export function renderQuestLogTTY(log: QuestLog): string {
+export function renderQuestLogTTY(log: QuestLog, cli: string): string {
   if (!log.initialized) {
     return [
       '⚔️   CipherStash Quest Log',
       '',
       '  No quests yet — your encryption rollout has not begun.',
       '',
-      '  First move: run `npx stash init` to set up CipherStash, then',
-      '  `npx stash plan` to draft an encryption rollout.',
+      `  First move: run \`${cli} init\` to set up CipherStash, then`,
+      `  \`${cli} plan\` to draft an encryption rollout.`,
     ].join('\n')
   }
 
@@ -26,7 +29,7 @@ export function renderQuestLogTTY(log: QuestLog): string {
     lines.push(
       '  No active quests yet — your encryption rollout has not begun.',
       '',
-      '  First move: run `npx stash plan` to draft a rollout for the',
+      `  First move: run \`${cli} plan\` to draft a rollout for the`,
       '  columns you want to protect.',
     )
     return lines.join('\n')
@@ -99,14 +102,16 @@ function progressBar(done: number, total: number): string {
  *
  * Used in non-TTY contexts by default — CI logs, pipes, agents reading
  * the output. The user can force the TTY shape anywhere with `--quest`.
+ * `cli` is the package-manager-aware command prefix for empty-state
+ * hints (`<cli> init`, `<cli> plan`).
  */
-export function renderQuestLogPlain(log: QuestLog): string {
+export function renderQuestLogPlain(log: QuestLog, cli: string): string {
   if (!log.initialized) {
     return [
       'CipherStash status — encryption rollout',
       '',
       '  No quests yet — encryption rollout has not begun.',
-      '  First move: run `npx stash init`, then `npx stash plan`.',
+      `  First move: run \`${cli} init\`, then \`${cli} plan\`.`,
     ].join('\n')
   }
 
@@ -115,7 +120,7 @@ export function renderQuestLogPlain(log: QuestLog): string {
   if (log.active.length === 0 && log.completed.length === 0) {
     lines.push(
       '  No active quests.',
-      '  First move: run `npx stash plan` to draft a rollout.',
+      `  First move: run \`${cli} plan\` to draft a rollout.`,
     )
     return lines.join('\n')
   }
@@ -200,7 +205,7 @@ function serializeQuest(quest: ColumnQuest) {
     path: quest.path,
     title: quest.title,
     progress: quest.progress,
-    complete: quest.complete,
+    complete: isComplete(quest),
     nextMove: quest.nextMove ?? null,
     objectives: quest.objectives.map((o) => ({
       label: o.label,

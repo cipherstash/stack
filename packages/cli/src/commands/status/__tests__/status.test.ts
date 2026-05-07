@@ -8,12 +8,19 @@ import {
   buildColumnQuest,
   buildQuestLog,
   inferQuestPath,
+  isComplete,
 } from '../quest.js'
 import {
   renderQuestLogJSON,
   renderQuestLogPlain,
   renderQuestLogTTY,
 } from '../render.js'
+
+// Use a non-npm runner everywhere so the tests fail loudly if any
+// renderer or builder ever hard-codes `npx stash`. The exact value is
+// arbitrary — what matters is that it is the value the caller passed,
+// not a baked-in default.
+const CLI = 'pnpm dlx stash'
 
 let cwd: string
 
@@ -95,9 +102,6 @@ describe('inferQuestPath', () => {
   })
 
   it('defaults to migrate when DB connectivity is missing', () => {
-    // The 5-objective shape is more informative when we genuinely don't
-    // know — better to show the full lifecycle locked than to default to
-    // a 2-objective new-column shape that hides relevant work.
     expect(inferQuestPath({ table: 't', column: 'c' })).toBe('migrate')
   })
 })
@@ -108,29 +112,39 @@ describe('buildColumnQuest — migrate path', () => {
   }
 
   it('with no signals: 0/5, schema-add active, rest locked', () => {
-    const quest = buildColumnQuest(obs({ phase: 'dual-writing' }))
-    // Picking dual-writing forces the migrate path; reset and check no-events.
-    const noEvents = buildColumnQuest({
-      table: 'users',
-      column: 'email',
-      phase: 'dual-writing',
-    })
-    expect(noEvents.path).toBe('migrate')
+    const quest = buildColumnQuest(
+      { table: 'users', column: 'email', phase: null, eql: null },
+      CLI,
+    )
+    expect(quest.path).toBe('new')
+    // The schema-add objective should be the active one and every other
+    // objective locked. Asserting per-objective status guards the no-
+    // signal invariant against regressions in computeDoneCount.
+    expect(quest.progress).toEqual({ done: 0, total: 2 })
+    expect(quest.objectives[0].status).toBe('active')
+    expect(quest.objectives[1].status).toBe('locked')
+  })
+
+  it('5-objective shape applies to any non-null migrate phase (sanity)', () => {
+    // The migrate quest is always 5 objectives regardless of which phase
+    // produced it. Kept as a separate sanity check rather than smuggled
+    // into the no-signals test where it does not belong.
+    const quest = buildColumnQuest(
+      { table: 'users', column: 'email', phase: 'dual-writing' },
+      CLI,
+    )
+    expect(quest.path).toBe('migrate')
     expect(quest.progress.total).toBe(5)
   })
 
   it('phase=null + EQL pending + twin exists: schema-add done (1/5), dual-writes deployed active', () => {
-    // The encrypted twin column existing alongside the original is the
-    // unambiguous "this is a migrate column" signal — the rollout PR
-    // created `<col>_encrypted` and ran `db push` (writing pending). The
-    // user has not yet recorded a `dual_writing` event, so the next
-    // active objective is "deploy dual-writes to production".
     const quest = buildColumnQuest(
       obs({
         phase: null,
         eql: { state: 'pending' },
         physicalEncryptedTwinExists: true,
       }),
+      CLI,
     )
     expect(quest.path).toBe('migrate')
     expect(quest.progress).toEqual({ done: 1, total: 5 })
@@ -140,7 +154,7 @@ describe('buildColumnQuest — migrate path', () => {
   })
 
   it('phase=dual-writing: 2/5, backfill active', () => {
-    const quest = buildColumnQuest(obs({ phase: 'dual-writing' }))
+    const quest = buildColumnQuest(obs({ phase: 'dual-writing' }), CLI)
     expect(quest.progress).toEqual({ done: 2, total: 5 })
     expect(quest.objectives[1].status).toBe('done')
     expect(quest.objectives[2].status).toBe('active')
@@ -148,56 +162,57 @@ describe('buildColumnQuest — migrate path', () => {
   })
 
   it('phase=backfilling counts as 2/5 (backfill in flight is still the active step)', () => {
-    const quest = buildColumnQuest(obs({ phase: 'backfilling' }))
+    const quest = buildColumnQuest(obs({ phase: 'backfilling' }), CLI)
     expect(quest.progress.done).toBe(2)
     expect(quest.objectives[2].status).toBe('active')
   })
 
   it('phase=backfilled: 3/5, cutover active', () => {
-    const quest = buildColumnQuest(obs({ phase: 'backfilled' }))
+    const quest = buildColumnQuest(obs({ phase: 'backfilled' }), CLI)
     expect(quest.progress.done).toBe(3)
     expect(quest.objectives[3].status).toBe('active')
     expect(quest.objectives[3].label).toMatch(/cut over/i)
   })
 
   it('phase=cut-over: 4/5, drop plaintext active', () => {
-    const quest = buildColumnQuest(obs({ phase: 'cut-over' }))
+    const quest = buildColumnQuest(obs({ phase: 'cut-over' }), CLI)
     expect(quest.progress.done).toBe(4)
     expect(quest.objectives[4].status).toBe('active')
     expect(quest.objectives[4].label).toMatch(/drop plaintext/i)
   })
 
   it('phase=dropped: 5/5 (complete)', () => {
-    const quest = buildColumnQuest(obs({ phase: 'dropped' }))
+    const quest = buildColumnQuest(obs({ phase: 'dropped' }), CLI)
     expect(quest.progress).toEqual({ done: 5, total: 5 })
-    expect(quest.complete).toBe(true)
+    expect(isComplete(quest)).toBe(true)
     expect(quest.nextMove).toBeUndefined()
   })
 
-  it('next-move hint references concrete CLI invocations with --table/--column', () => {
-    const backfill = buildColumnQuest(obs({ phase: 'dual-writing' }))
-    expect(backfill.nextMove).toContain('stash encrypt backfill')
+  it('next-move hint uses the caller-supplied runner and concrete --table/--column', () => {
+    // Regression guard: the hint must be prefixed with whatever `cli` the
+    // caller passed in (e.g. `pnpm dlx stash`), never a hard-coded
+    // `npx stash` string.
+    const backfill = buildColumnQuest(obs({ phase: 'dual-writing' }), CLI)
+    expect(backfill.nextMove).toContain(`${CLI} encrypt backfill`)
     expect(backfill.nextMove).toContain('--table users')
     expect(backfill.nextMove).toContain('--column email')
+    expect(backfill.nextMove).not.toContain('npx stash')
 
-    const cutover = buildColumnQuest(obs({ phase: 'backfilled' }))
-    expect(cutover.nextMove).toContain('stash encrypt cutover')
+    const cutover = buildColumnQuest(obs({ phase: 'backfilled' }), CLI)
+    expect(cutover.nextMove).toContain(`${CLI} encrypt cutover`)
 
-    const drop = buildColumnQuest(obs({ phase: 'cut-over' }))
-    expect(drop.nextMove).toContain('stash encrypt drop')
+    const drop = buildColumnQuest(obs({ phase: 'cut-over' }), CLI)
+    expect(drop.nextMove).toContain(`${CLI} encrypt drop`)
   })
 
   it('falls back to physical-column existence as a schema-add signal', () => {
-    // cs_migrations is silent (schema_added events are never written);
-    // information_schema is the next-best signal that schema-add has been
-    // applied. When EQL config is missing too but the encrypted twin
-    // column physically exists, treat schema-add as done.
     const quest = buildColumnQuest(
       obs({
         phase: null,
         eql: null,
         physicalEncryptedTwinExists: true,
       }),
+      CLI,
     )
     expect(quest.progress.done).toBe(1)
     expect(quest.objectives[0].status).toBe('done')
@@ -206,53 +221,62 @@ describe('buildColumnQuest — migrate path', () => {
 
 describe('buildColumnQuest — new path', () => {
   it('no EQL config: 0/2, schema-add active', () => {
-    const quest = buildColumnQuest({
-      table: 'orders',
-      column: 'note',
-      phase: null,
-      eql: null,
-    })
+    const quest = buildColumnQuest(
+      { table: 'orders', column: 'note', phase: null, eql: null },
+      CLI,
+    )
     expect(quest.path).toBe('new')
     expect(quest.progress).toEqual({ done: 0, total: 2 })
     expect(quest.objectives[0].status).toBe('active')
   })
 
-  it('EQL pending: 1/2, activate active', () => {
-    const quest = buildColumnQuest({
-      table: 'orders',
-      column: 'note',
-      phase: null,
-      eql: { state: 'pending' },
-    })
+  it('EQL pending: 1/2, activate active, hint uses caller-supplied runner', () => {
+    const quest = buildColumnQuest(
+      {
+        table: 'orders',
+        column: 'note',
+        phase: null,
+        eql: { state: 'pending' },
+      },
+      CLI,
+    )
     expect(quest.progress).toEqual({ done: 1, total: 2 })
     expect(quest.objectives[1].status).toBe('active')
-    expect(quest.nextMove).toMatch(/db activate/)
+    expect(quest.nextMove).toContain(`${CLI} db activate`)
   })
 
   it('EQL active: 2/2, complete', () => {
-    const quest = buildColumnQuest({
-      table: 'orders',
-      column: 'note',
-      phase: null,
-      eql: { state: 'active' },
-    })
-    expect(quest.complete).toBe(true)
+    const quest = buildColumnQuest(
+      {
+        table: 'orders',
+        column: 'note',
+        phase: null,
+        eql: { state: 'active' },
+      },
+      CLI,
+    )
+    expect(isComplete(quest)).toBe(true)
     expect(quest.nextMove).toBeUndefined()
   })
 })
 
 describe('buildColumnQuest — DB unreachable', () => {
   it('locks every objective except the first when phase and eql are both undefined', () => {
-    // The only honest answer is "I don't know what's been done" — show
-    // the full migrate-shape with the first objective active so the user
-    // sees that the rollout exists; the renderer surfaces a footer note
-    // about the missing observation.
-    const quest = buildColumnQuest({ table: 't', column: 'c' })
+    const quest = buildColumnQuest({ table: 't', column: 'c' }, CLI)
     expect(quest.path).toBe('migrate')
     expect(quest.objectives[0].status).toBe('active')
     expect(quest.objectives.slice(1).every((o) => o.status === 'locked')).toBe(
       true,
     )
+  })
+
+  it('suppresses nextMove when DB is unreachable (do not invent a step)', () => {
+    // Regression guard: a column actually mid-cutover whose DB is briefly
+    // unreachable would otherwise be told to re-run schema-add via
+    // nextMoveFor's doneCount=0 fallback. The renderer surfaces the
+    // unreachable footer instead.
+    const quest = buildColumnQuest({ table: 't', column: 'c' }, CLI)
+    expect(quest.nextMove).toBeUndefined()
   })
 })
 
@@ -265,6 +289,7 @@ describe('buildQuestLog', () => {
         { table: 'users', column: 'email', phase: 'dropped' },
         { table: 'users', column: 'phone', phase: 'dual-writing' },
       ],
+      cli: CLI,
     })
     expect(log.completed).toHaveLength(1)
     expect(log.completed[0].column).toBe('email')
@@ -277,6 +302,7 @@ describe('buildQuestLog', () => {
       initialized: true,
       observedFromDb: false,
       observations: [{ table: 'users', column: 'email' }],
+      cli: CLI,
     })
     expect(log.observedFromDb).toBe(false)
   })
@@ -286,6 +312,7 @@ describe('buildQuestLog', () => {
       initialized: true,
       observedFromDb: true,
       observations: [],
+      cli: CLI,
     })
     expect(log.active).toEqual([])
     expect(log.completed).toEqual([])
@@ -293,16 +320,20 @@ describe('buildQuestLog', () => {
 })
 
 describe('renderQuestLogTTY', () => {
-  it('shows an empty-state for uninitialized projects with init prompt', () => {
+  it('shows an empty-state for uninitialized projects with init prompt that uses the caller-supplied runner', () => {
     const out = renderQuestLogTTY(
       buildQuestLog({
         initialized: false,
         observedFromDb: false,
         observations: [],
+        cli: CLI,
       }),
+      CLI,
     )
     expect(out).toMatch(/no quests yet/i)
-    expect(out).toMatch(/stash init/)
+    expect(out).toContain(`${CLI} init`)
+    expect(out).toContain(`${CLI} plan`)
+    expect(out).not.toContain('npx stash')
   })
 
   it('renders the active-quest section with progress bar, objectives, and next-move hint', () => {
@@ -312,8 +343,9 @@ describe('renderQuestLogTTY', () => {
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
       ],
+      cli: CLI,
     })
-    const out = renderQuestLogTTY(log)
+    const out = renderQuestLogTTY(log, CLI)
     expect(out).toContain('CipherStash Quest Log')
     expect(out).toContain('ACTIVE QUEST')
     expect(out).toContain('Encrypt users.email')
@@ -322,6 +354,9 @@ describe('renderQuestLogTTY', () => {
     expect(out).toContain('░')
     expect(out).toMatch(/← you are here/)
     expect(out).toMatch(/Next move/)
+    // Quest-level next-move text uses the caller-supplied runner.
+    expect(out).toContain(`${CLI} encrypt backfill`)
+    expect(out).not.toContain('npx stash')
   })
 
   it('shows a 🏆 line per completed quest', () => {
@@ -329,8 +364,9 @@ describe('renderQuestLogTTY', () => {
       initialized: true,
       observedFromDb: true,
       observations: [{ table: 'users', column: 'ssn', phase: 'dropped' }],
+      cli: CLI,
     })
-    const out = renderQuestLogTTY(log)
+    const out = renderQuestLogTTY(log, CLI)
     expect(out).toContain('🏆 COMPLETED')
     expect(out).toContain('users.ssn')
   })
@@ -340,8 +376,9 @@ describe('renderQuestLogTTY', () => {
       initialized: true,
       observedFromDb: false,
       observations: [{ table: 'users', column: 'email' }],
+      cli: CLI,
     })
-    const out = renderQuestLogTTY(log)
+    const out = renderQuestLogTTY(log, CLI)
     expect(out).toMatch(/could not reach the database/i)
   })
 })
@@ -354,15 +391,16 @@ describe('renderQuestLogPlain', () => {
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
       ],
+      cli: CLI,
     })
-    const out = renderQuestLogPlain(log)
+    const out = renderQuestLogPlain(log, CLI)
     expect(out).not.toMatch(/⚔️|🏆|🔒|💡|▓|░/)
-    // Still has the structural content.
     expect(out).toContain('Encrypt users.email')
     expect(out).toMatch(/Progress: 2\/5/)
     expect(out).toContain('Next move:')
-    // Still uses bracketed status markers as a stable plain-text signal
-    // for scripts.
+    expect(out).toContain(`${CLI} encrypt backfill`)
+    expect(out).not.toContain('npx stash')
+    // Bracketed status markers as a stable plain-text signal for scripts.
     expect(out).toMatch(/\[x\]/)
     expect(out).toMatch(/\[>\]/)
     expect(out).toMatch(/\[ \]/)
@@ -373,11 +411,27 @@ describe('renderQuestLogPlain', () => {
       initialized: true,
       observedFromDb: true,
       observations: [{ table: 'users', column: 'ssn', phase: 'dropped' }],
+      cli: CLI,
     })
-    const out = renderQuestLogPlain(log)
+    const out = renderQuestLogPlain(log, CLI)
     expect(out).toContain('Completed')
     expect(out).toContain('users.ssn')
     expect(out).not.toMatch(/🏆/)
+  })
+
+  it('empty-state hints use the caller-supplied runner', () => {
+    const out = renderQuestLogPlain(
+      buildQuestLog({
+        initialized: false,
+        observedFromDb: false,
+        observations: [],
+        cli: CLI,
+      }),
+      CLI,
+    )
+    expect(out).toContain(`${CLI} init`)
+    expect(out).toContain(`${CLI} plan`)
+    expect(out).not.toContain('npx stash')
   })
 })
 
@@ -390,6 +444,7 @@ describe('renderQuestLogJSON', () => {
         { table: 'users', column: 'email', phase: 'dual-writing' },
         { table: 'users', column: 'ssn', phase: 'dropped' },
       ],
+      cli: CLI,
     })
     const json = renderQuestLogJSON(log)
     const parsed = JSON.parse(json)
@@ -404,7 +459,7 @@ describe('renderQuestLogJSON', () => {
     expect(active.path).toBe('migrate')
     expect(active.progress).toEqual({ done: 2, total: 5 })
     expect(active.complete).toBe(false)
-    expect(active.nextMove).toContain('stash encrypt backfill')
+    expect(active.nextMove).toContain(`${CLI} encrypt backfill`)
     expect(Array.isArray(active.objectives)).toBe(true)
     expect(active.objectives[0]).toHaveProperty('label')
     expect(active.objectives[0]).toHaveProperty('status')
@@ -417,8 +472,9 @@ describe('nextMoveHint', () => {
       initialized: false,
       observedFromDb: false,
       observations: [],
+      cli: CLI,
     })
-    expect(nextMoveHint(log, 'pnpm dlx stash')).toMatch(/init/)
+    expect(nextMoveHint(log, CLI)).toMatch(/init/)
   })
 
   it('points at plan when initialized but no quests', () => {
@@ -426,8 +482,9 @@ describe('nextMoveHint', () => {
       initialized: true,
       observedFromDb: true,
       observations: [],
+      cli: CLI,
     })
-    expect(nextMoveHint(log, 'pnpm dlx stash')).toMatch(/plan/)
+    expect(nextMoveHint(log, CLI)).toMatch(/plan/)
   })
 
   it('uses the first active quest’s nextMove when one exists', () => {
@@ -437,8 +494,9 @@ describe('nextMoveHint', () => {
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
       ],
+      cli: CLI,
     })
-    expect(nextMoveHint(log, 'pnpm dlx stash')).toContain('stash encrypt backfill')
+    expect(nextMoveHint(log, CLI)).toContain(`${CLI} encrypt backfill`)
   })
 
   it('reports complete when every quest is done', () => {
@@ -446,7 +504,8 @@ describe('nextMoveHint', () => {
       initialized: true,
       observedFromDb: true,
       observations: [{ table: 'users', column: 'ssn', phase: 'dropped' }],
+      cli: CLI,
     })
-    expect(nextMoveHint(log, 'pnpm dlx stash')).toMatch(/complete|nothing/i)
+    expect(nextMoveHint(log, CLI)).toMatch(/complete|nothing/i)
   })
 })

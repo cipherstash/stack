@@ -18,10 +18,14 @@ export interface ColumnQuest {
   title: string
   objectives: Objective[]
   progress: { done: number; total: number }
-  /** One-line "what to do next" hint. Empty when the quest is complete. */
+  /** One-line "what to do next" hint. Empty when the quest is complete
+   *  (i.e. when `progress.done === progress.total`). */
   nextMove?: string
-  /** True iff every objective is done. */
-  complete: boolean
+}
+
+/** A quest is complete when every objective has been done. */
+export function isComplete(quest: ColumnQuest): boolean {
+  return quest.progress.done === quest.progress.total
 }
 
 export interface QuestLog {
@@ -99,49 +103,49 @@ export function inferQuestPath(obs: ColumnObservation): QuestPath {
 /**
  * Build a column quest from one observation. Pure; no I/O.
  *
- * Migrate-column objective mapping (phase → done count):
- *   null + no EQL              → 0 done, active = "schema-add"
- *   null + EQL pending         → 1 done, active = "dual-writes deployed"
- *   null + encrypted twin only → 1 done, active = "dual-writes deployed"
- *   dual-writing               → 2 done, active = "backfill"
- *   backfilling                → 2 done, active = "backfill"
- *   backfilled                 → 3 done, active = "cut over"
- *   cut-over                   → 4 done, active = "drop plaintext"
- *   dropped                    → 5 done (complete)
- *
- * New-column objective mapping:
- *   no EQL                     → 0 done, active = "schema-add"
- *   EQL pending                → 1 done, active = "promote to active"
- *   EQL active                 → 2 done (complete)
+ * `cli` is interpolated into the `nextMove` hint so the user sees
+ * commands prefixed with their actual package-manager runner — pass
+ * `runnerCommand(pm, 'stash')` rather than a hard-coded `npx stash`.
  */
-export function buildColumnQuest(obs: ColumnObservation): ColumnQuest {
+export function buildColumnQuest(
+  obs: ColumnObservation,
+  cli: string,
+): ColumnQuest {
   const path = inferQuestPath(obs)
   const labels = path === 'migrate' ? MIGRATE_OBJECTIVES : NEW_OBJECTIVES
-  const doneCount = computeDoneCount(path, obs)
   const total = labels.length
+  const doneCount = computeDoneCount(path, obs)
+  const dbUnreachable = obs.phase === undefined && obs.eql === undefined
 
-  const objectives: Objective[] = labels.map((label, idx) => {
-    let status: ObjectiveStatus
-    if (idx < doneCount) status = 'done'
-    else if (idx === doneCount) status = 'active'
-    else status = 'locked'
-
-    // When DB is unreachable, we can't be confident about anything past
-    // schema-add; mark everything beyond as locked but flag the active
-    // one as such.
-    if (obs.phase === undefined && obs.eql === undefined) {
-      status = 'locked'
-    }
-    return { label, status }
-  })
-
-  // If DB unreachable, no `active` was set above; set the first
-  // objective active so the user has *something* to look at.
-  if (obs.phase === undefined && obs.eql === undefined) {
-    objectives[0] = { ...objectives[0], status: 'active' }
-  }
+  // When the DB is unreachable we can't claim any objective is done.
+  // Surface the first objective as active (so the user sees the rollout
+  // exists) and lock the rest; the renderer adds the "DB unreachable"
+  // footnote that explains the missing observation.
+  const objectives: Objective[] = labels.map((label, idx) => ({
+    label,
+    status: dbUnreachable
+      ? idx === 0
+        ? 'active'
+        : 'locked'
+      : idx < doneCount
+        ? 'done'
+        : idx === doneCount
+          ? 'active'
+          : 'locked',
+  }))
 
   const complete = doneCount === total
+
+  // Without a live DB observation we cannot trust `doneCount` — it falls
+  // back to 0, but a column mid-cutover would still appear "0/5" here.
+  // Suppressing `nextMove` avoids confidently telling the user to re-run
+  // schema-add (or any other phase-zero action) when the actual state is
+  // unknown. The renderer's "could not reach the database" footer is the
+  // honest answer for what to do next.
+  const nextMove =
+    complete || dbUnreachable
+      ? undefined
+      : nextMoveFor(path, doneCount, obs, cli)
 
   return {
     table: obs.table,
@@ -149,9 +153,8 @@ export function buildColumnQuest(obs: ColumnObservation): ColumnQuest {
     path,
     title: titleFor(obs.table, obs.column, path),
     objectives,
-    progress: { done: complete ? total : doneCount, total },
-    nextMove: complete ? undefined : nextMoveFor(path, doneCount, obs),
-    complete,
+    progress: { done: doneCount, total },
+    nextMove,
   }
 }
 
@@ -207,12 +210,13 @@ function nextMoveFor(
   path: QuestPath,
   doneCount: number,
   obs: ColumnObservation,
+  cli: string,
 ): string {
   if (path === 'new') {
     if (doneCount === 0) {
-      return 'Declare the encrypted column in your schema and run the migration, then `stash db push`.'
+      return `Declare the encrypted column in your schema and run the migration, then \`${cli} db push\`.`
     }
-    return 'Promote the pending EQL config — `stash db activate`.'
+    return `Promote the pending EQL config — \`${cli} db activate\`.`
   }
 
   // Migrate.
@@ -220,13 +224,13 @@ function nextMoveFor(
     case 0:
       return 'Add the encrypted twin column (`<col>_encrypted`) and run the migration.'
     case 1:
-      return 'Wire dual-write code on every persistence path, deploy to production, then run `stash encrypt backfill` (it confirms dual-writes and records the event).'
+      return `Wire dual-write code on every persistence path, deploy to production, then run \`${cli} encrypt backfill\` (it confirms dual-writes and records the event).`
     case 2:
-      return `Run \`stash encrypt backfill --table ${obs.table} --column ${obs.column}\` to encrypt historical rows.`
+      return `Run \`${cli} encrypt backfill --table ${obs.table} --column ${obs.column}\` to encrypt historical rows.`
     case 3:
-      return `Run \`stash encrypt cutover --table ${obs.table} --column ${obs.column}\` to rename the encrypted twin into place and switch reads.`
+      return `Run \`${cli} encrypt cutover --table ${obs.table} --column ${obs.column}\` to rename the encrypted twin into place and switch reads.`
     case 4:
-      return `Run \`stash encrypt drop --table ${obs.table} --column ${obs.column}\` to remove the plaintext column.`
+      return `Run \`${cli} encrypt drop --table ${obs.table} --column ${obs.column}\` to remove the plaintext column.`
     default:
       return ''
   }
@@ -239,18 +243,22 @@ function nextMoveFor(
  * `context.json`). The renderer uses this to decide whether to show an
  * empty-state quest log. `observedFromDb` is true when at least one
  * observation has live DB data; false if the DB query failed and we're
- * working from manifest alone.
+ * working from manifest alone. `cli` is the package-manager-aware
+ * command prefix passed through to per-quest `nextMove` hints.
  */
 export function buildQuestLog(input: {
   initialized: boolean
   observedFromDb: boolean
   observations: ColumnObservation[]
+  cli: string
 }): QuestLog {
-  const quests = input.observations.map(buildColumnQuest)
+  const quests = input.observations.map((obs) =>
+    buildColumnQuest(obs, input.cli),
+  )
   const active: ColumnQuest[] = []
   const completed: ColumnQuest[] = []
   for (const quest of quests) {
-    if (quest.complete) completed.push(quest)
+    if (isComplete(quest)) completed.push(quest)
     else active.push(quest)
   }
   return {

@@ -1,12 +1,14 @@
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
-import {
-  type MigrationPhase,
-  latestByColumn,
-  readManifest,
-} from '@cipherstash/migrate'
+import { type MigrationPhase, readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import {
+  type EqlColumnInfo,
+  fetchActiveEqlConfig,
+  fetchPhysicalColumns,
+  latestByColumnSafe,
+} from './lib/db-readers.js'
 
 interface Row {
   table: string
@@ -53,7 +55,7 @@ export async function statusCommand() {
     if (manifest) {
       for (const [tableName, columns] of Object.entries(manifest.tables)) {
         for (const column of columns) {
-          const key = `${tableName}.${column.column}`
+          const key: `${string}.${string}` = `${tableName}.${column.column}`
           seen.add(key)
           rows.push(
             renderRow({
@@ -108,82 +110,6 @@ export async function statusCommand() {
     await client.end()
   }
   if (exitCode) process.exit(exitCode)
-}
-
-async function latestByColumnSafe(client: pg.Client) {
-  try {
-    return await latestByColumn(client)
-  } catch (err) {
-    if (
-      err instanceof Error &&
-      /cs_migrations|schema "cipherstash"/i.test(err.message)
-    ) {
-      return new Map()
-    }
-    throw err
-  }
-}
-
-interface EqlColumnInfo {
-  indexes: string[]
-  state: 'active' | 'pending' | 'encrypting'
-}
-
-async function fetchActiveEqlConfig(
-  client: pg.Client,
-): Promise<Map<string, EqlColumnInfo>> {
-  const out = new Map<string, EqlColumnInfo>()
-  try {
-    const result = await client.query<{ state: string; data: unknown }>(
-      `SELECT state, data FROM public.eql_v2_configuration
-       WHERE state IN ('active', 'pending', 'encrypting')
-       ORDER BY CASE state WHEN 'active' THEN 0 WHEN 'encrypting' THEN 1 ELSE 2 END`,
-    )
-    for (const row of result.rows) {
-      const data = row.data as {
-        tables?: Record<
-          string,
-          Record<string, { indexes?: Record<string, unknown> }>
-        >
-      } | null
-      if (!data?.tables) continue
-      for (const [tableName, columns] of Object.entries(data.tables)) {
-        for (const [columnName, column] of Object.entries(columns)) {
-          const key = `${tableName}.${columnName}`
-          if (out.has(key)) continue
-          out.set(key, {
-            indexes: Object.keys(column.indexes ?? {}),
-            state: row.state as 'active' | 'pending' | 'encrypting',
-          })
-        }
-      }
-    }
-  } catch (err) {
-    if (err instanceof Error && /eql_v2_configuration/i.test(err.message)) {
-      return out
-    }
-    throw err
-  }
-  return out
-}
-
-async function fetchPhysicalColumns(
-  client: pg.Client,
-): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>()
-  const result = await client.query<{
-    table_name: string
-    column_name: string
-  }>(
-    `SELECT table_name, column_name FROM information_schema.columns
-     WHERE table_schema = current_schema()`,
-  )
-  for (const row of result.rows) {
-    const set = out.get(row.table_name) ?? new Set<string>()
-    set.add(row.column_name)
-    out.set(row.table_name, set)
-  }
-  return out
 }
 
 function renderRow(input: {

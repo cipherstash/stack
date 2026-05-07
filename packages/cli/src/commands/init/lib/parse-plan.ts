@@ -1,32 +1,12 @@
 /**
  * Parse and render `.cipherstash/plan.md` summary blocks.
  *
- * The agent is instructed (in `renderPlanPrompt`) to begin the plan file
- * with an HTML-comment block carrying a structured JSON summary:
- *
- *   <!-- cipherstash:plan-summary
- *   {
- *     "step": "rollout",
- *     "columns": [
- *       {"table": "users", "column": "email", "path": "new"},
- *       {"table": "users", "column": "phone", "path": "migrate"}
- *     ]
- *   }
- *   -->
- *
- * `step` (optional for backwards compatibility) tells `stash impl` which
- * scope of the encryption rollout this plan covers:
- *   - `"rollout"`   — schema-add + dual-write code + db push (pending).
- *                     Deploy gate after this; cutover comes in a later run.
- *   - `"cutover"`   — backfill + cutover + drop. Requires `dual_writing`
- *                     events in `cs_migrations`; impl refuses otherwise.
- *   - `"complete"`  — the whole lifecycle in one document (escape hatch
- *                     for users without a production-deploy to gate on).
- *
- * Plans without `step` are treated as `"complete"` for backwards
- * compatibility — that is how every plan was shaped before the rollout
- * split landed. Plans without the block (or with a malformed one) fall
- * back to a soft "open the plan in your editor" message — never an error.
+ * The agent embeds an HTML-comment header at the top of the plan file
+ * carrying a JSON summary that `stash impl` parses. Plans without the
+ * block fall back to a soft "open it in your editor" message — never
+ * an error. `step` is optional for backwards compat: plans pre-dating
+ * the rollout/cutover split had no step field and were always
+ * end-to-end, so missing `step` is treated as `"complete"`.
  */
 
 export type PlanPath = 'new' | 'migrate'
@@ -106,7 +86,10 @@ export function effectiveStep(summary: PlanSummary): PlanStep {
 const COLUMN_LABEL_WIDTH = 20
 
 /**
- * Render the plan summary as the body of a `p.note` panel.
+ * Render the plan summary as the body of a `p.note` panel. The `cli`
+ * argument is the package-manager-aware command prefix (e.g. `pnpm dlx
+ * stash` / `bunx stash` / `npx stash`) — pass `runnerCommand(pm, 'stash')`
+ * so the rendered footer uses the runner the user actually invokes.
  *
  *   3 columns across 2 tables
  *
@@ -116,17 +99,16 @@ const COLUMN_LABEL_WIDTH = 20
  *
  *   Encryption rollout — implementation lands schema-add and dual-write
  *   code in your repo. Deploy that to production, verify with
- *   `npx stash status`, then run `npx stash plan` again to draft the
- *   encryption cutover.
+ *   `<runner> stash status`, then run `<runner> stash plan` again to
+ *   draft the encryption cutover.
  *
  * Footer copy varies by step:
- *   - rollout   → "Encryption rollout — deploy gate next."
- *   - cutover   → "Encryption cutover — backfill, switch reads, drop plaintext."
- *   - complete  → "Complete rollout — skips the deploy gate; only safe when
- *                 this database is not backing a deployed application."
- *   - (no migrate columns) → "All columns are additive — single-deploy."
+ *   - rollout   → next-step pointer at the deploy gate.
+ *   - cutover   → backfill / switch reads / drop plaintext summary.
+ *   - complete  → loud "skips the deploy gate" warning.
+ *   - (no migrate columns) → "single-deploy" line.
  */
-export function renderPlanSummary(summary: PlanSummary): string {
+export function renderPlanSummary(summary: PlanSummary, cli: string): string {
   const tables = new Set(summary.columns.map((c) => c.table))
   const migrateCount = summary.columns.filter(
     (c) => c.path === 'migrate',
@@ -143,18 +125,22 @@ export function renderPlanSummary(summary: PlanSummary): string {
     return `◇ ${`${c.table}.${c.column}`.padEnd(COLUMN_LABEL_WIDTH)} ${desc}`
   })
 
-  const footer = renderFooter(effectiveStep(summary), migrateCount)
+  const footer = renderFooter(effectiveStep(summary), migrateCount, cli)
 
   return [header, '', ...rows, '', footer].join('\n')
 }
 
-function renderFooter(step: PlanStep, migrateCount: number): string {
+function renderFooter(
+  step: PlanStep,
+  migrateCount: number,
+  cli: string,
+): string {
   if (migrateCount === 0) {
     return 'All columns are additive — single-deploy implementation.'
   }
   switch (step) {
     case 'rollout':
-      return 'Encryption rollout — implementation lands schema-add and dual-write code in your repo. Deploy that to production, verify with `npx stash status`, then run `npx stash plan` again to draft the encryption cutover.'
+      return `Encryption rollout — implementation lands schema-add and dual-write code in your repo. Deploy that to production, verify with \`${cli} status\`, then run \`${cli} plan\` again to draft the encryption cutover.`
     case 'cutover':
       return 'Encryption cutover — implementation runs the backfill, switches reads to encrypted, and drops plaintext. Requires dual-writes already live in production.'
     case 'complete':

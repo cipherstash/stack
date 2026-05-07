@@ -408,7 +408,7 @@ The hard case: a Supabase table that already exists with live data in a plaintex
 
 CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code + `db push`) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
 
-> **Runner note.** Examples below use `npx stash` for npm projects. Substitute `bunx stash` (Bun), `pnpm dlx stash` (pnpm), or `yarn dlx stash` (Yarn) — or run `stash` directly when it is installed as a project dev dep. The behaviour is identical across runners; only the prefix changes.
+> **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -471,7 +471,7 @@ export const encryptionClient = await Encryption({ schemas: [users] })
 Register the new encryption config with EQL:
 
 ```bash
-npx stash db push
+stash db push
 ```
 
 If this is the project's first encrypted column, `db push` writes directly to the active EQL config. If an active config already exists, it writes the new config as `pending` — that's expected. Cutover (later) will promote it.
@@ -515,11 +515,11 @@ Stop. Ship this PR to production. The deployed environment must be running the d
 When the deploy is live:
 
 ```bash
-npx stash status        # verify the rollout is recorded
-npx stash plan          # detects dual-writes are live; drafts the cutover plan
+stash status        # verify the rollout is recorded
+stash plan          # detects dual-writes are live; drafts the cutover plan
 ```
 
-`npx stash impl` will refuse to run a cutover-step plan if `cs_migrations` has no `dual_writing` event for `users.email`. That refusal is the safety net for cases where someone runs cutover work locally before the code is actually live.
+`stash impl` will refuse to run a cutover-step plan if `cs_migrations` has no `dual_writing` event for `users.email`. That refusal is the safety net for cases where someone runs cutover work locally before the code is actually live.
 
 ### Step 2 — Encryption cutover
 
@@ -528,7 +528,7 @@ Once dual-writes are live in production and `cs_migrations` records `dual_writin
 #### Backfill: encrypt the historical rows
 
 ```bash
-npx stash encrypt backfill --table users --column email
+stash encrypt backfill --table users --column email
 # (Interactive: answer 'yes' to the dual-write confirmation prompt.)
 # (CI: pass --confirm-dual-writes-deployed instead.)
 ```
@@ -551,7 +551,7 @@ export const users = encryptedTable('users', {
 Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
 
 ```bash
-npx stash db push
+stash db push
 # → writes the new config as `pending`. Active config (still pointing at
 #   `email_encrypted`) keeps serving while we complete the cutover.
 ```
@@ -559,7 +559,7 @@ npx stash db push
 Now run the cutover:
 
 ```bash
-npx stash encrypt cutover --table users --column email
+stash encrypt cutover --table users --column email
 ```
 
 Inside one transaction it: (1) renames `email` → `email_plaintext` and `email_encrypted` → `email`, (2) promotes the pending EQL config to `active` (and the prior active to `inactive`), (3) records a `cut_over` event in `cs_migrations`.
@@ -583,7 +583,7 @@ For queries that filter on `email`, the `encryptedSupabase` wrapper handles the 
 Once read paths are routing through `encryptedSupabase` and you're confident reads are decrypting correctly:
 
 ```bash
-npx stash encrypt drop --table users --column email
+stash encrypt drop --table users --column email
 ```
 
 The CLI emits a Supabase migration file with `ALTER TABLE users DROP COLUMN email_plaintext;`. Review and apply with `supabase migration up` (or `supabase db reset` locally). Then remove the dual-write code from app paths — `email_plaintext` is gone; only `email` (encrypted) is written now via `encryptedSupabase`.
@@ -591,9 +591,9 @@ The CLI emits a Supabase migration file with `ALTER TABLE users DROP COLUMN emai
 ### Inspecting progress at any time
 
 ```bash
-npx stash status         # quest log: where each rollout is, what to do next
-npx stash encrypt status # raw per-column phase, EQL state, backfill progress
-npx stash encrypt plan   # diffs your migrations.json intent vs observed state
+stash status         # quest log: where each rollout is, what to do next
+stash encrypt status # raw per-column phase, EQL state, backfill progress
+stash encrypt plan   # diffs your migrations.json intent vs observed state
 ```
 
 All three are read-only.

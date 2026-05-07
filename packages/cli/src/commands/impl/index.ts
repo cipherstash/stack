@@ -85,6 +85,7 @@ async function verifyCutoverPreconditions(
   }
 
   const states = await detectColumnStates(databaseUrl, migrate)
+  if (states === null) return null
   return states
     .filter((s) => classifyPhase(s.phase) !== 'cutover')
     .map((s) => ({ table: s.table, column: s.column }))
@@ -122,30 +123,13 @@ function printDeployGateBanner(cli: string): void {
 }
 
 /**
- * `stash impl` — execute an encryption plan.
+ * `stash impl` — execute an encryption plan via agent handoff.
  *
- * Always runs in implement mode. Behaviour branches on disk state and
- * flags:
- *
- *   - **Plan exists** (TTY): parse the structured summary block, render
- *     a confirmation panel, ask the user to proceed. Default-yes.
- *     For `cutover`-step plans, verify `dual_writing` events are
- *     recorded for every migrate column before launching — refuse if
- *     not, and point the user at re-running `stash plan` after deploy.
- *   - **Plan exists** (non-TTY): proceed without confirmation.
- *   - **No plan, `--continue-without-plan`**: confirm once, then implement.
- *   - **No plan, TTY**: present a `p.select` — draft a plan first
- *     (delegates to `planCommand`) or continue without one (confirms
- *     once, then implements).
- *   - **No plan, non-TTY**: error out with a clear next-action; CI must
- *     pass `--continue-without-plan` or run `stash plan` first.
- *
- * After successful handoff, the outro depends on plan step:
- *   - `rollout`  — deploy-gate banner; explicit "do not run encrypt
- *                  backfill yet" message.
- *   - `cutover`  — confirmation that the rollout is fully complete.
- *   - `complete` — same as cutover (escape hatch covers everything).
- *   - no plan / no summary — generic "verify state" pointer.
+ * Cutover-step plans are gated on a `dual_writing` event being recorded
+ * in `cs_migrations` for every migrate column (the safety net that
+ * stops destructive work running ahead of a production deploy of the
+ * dual-write code). After a rollout-step handoff, the outro is the
+ * deploy-gate banner instead of a generic "verify state" pointer.
  */
 export async function implCommand(flags: Record<string, boolean>) {
   const cwd = process.cwd()
@@ -200,7 +184,7 @@ export async function implCommand(flags: Record<string, boolean>) {
       // (potentially hour-long) implementation phase.
       if (isTTY) {
         if (summary) {
-          p.note(renderPlanSummary(summary), 'Plan summary')
+          p.note(renderPlanSummary(summary, cli), 'Plan summary')
         } else {
           p.note(
             `Plan at \`${PLAN_REL_PATH}\` doesn't include a machine-readable summary. Open it in your editor before proceeding.`,

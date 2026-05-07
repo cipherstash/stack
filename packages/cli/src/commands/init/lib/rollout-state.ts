@@ -1,5 +1,12 @@
-import { type MigrationPhase, latestByColumn } from '@cipherstash/migrate'
+import type { MigrationPhase } from '@cipherstash/migrate'
 import pg from 'pg'
+import { latestByColumnSafe } from '../../encrypt/lib/db-readers.js'
+
+/** Conservative connect timeout for rollout-state lookups: the CLI
+ *  surfaces these on hot paths (`stash plan`, `stash impl`, `stash
+ *  status`), and pg's default of "no timeout" lets an unreachable host
+ *  hang on the OS-level TCP timeout (~75s on most platforms). */
+const CONNECT_TIMEOUT_MS = 5_000
 
 /**
  * What rollout work this column needs next, derived from `cs_migrations`.
@@ -26,17 +33,7 @@ export interface ColumnState {
   needs: ColumnNeeds
 }
 
-/**
- * Classify a phase into the next plan-step the column needs. The mapping is:
- *
- *   null            → unknown   (no events; brand new or not started)
- *   schema-added    → rollout   (synthesised in some renderers; safe default)
- *   dual-writing    → cutover   (deploy gate crossed)
- *   backfilling     → cutover   (cutover work in flight)
- *   backfilled      → cutover   (ready to rename swap)
- *   cut-over        → cutover   (rename done; drop still pending)
- *   dropped         → completed (lifecycle complete)
- */
+/** Classify a phase into the plan-step the column needs next. */
 export function classifyPhase(phase: MigrationPhase | null): ColumnNeeds {
   if (phase === null) return 'unknown'
   if (phase === 'schema-added') return 'rollout'
@@ -54,17 +51,24 @@ export function classifyPhase(phase: MigrationPhase | null): ColumnNeeds {
  * have a connection should use `classifyPhases` against the result of
  * `latestByColumn` directly.
  *
- * On any unexpected error, returns `unknown` for every input — never
- * throws. The encryption rollout is paused-by-default safer than
- * crashed-by-default.
+ * Returns `null` on connect / query failure. Callers must distinguish
+ * `null` ("could not observe") from a populated array containing
+ * `needs: 'unknown'` rows ("observed, but no events recorded for this
+ * column"). Conflating the two would let a transient DB outage masquerade
+ * as "rollout has not started" — and `verifyCutoverPreconditions` then
+ * blocks legitimate cutover work with a misleading "no `dual_writing`
+ * event" error.
  */
 export async function detectColumnStates(
   databaseUrl: string,
   columns: ReadonlyArray<{ table: string; column: string }>,
-): Promise<ColumnState[]> {
+): Promise<ColumnState[] | null> {
   if (columns.length === 0) return []
 
-  const client = new pg.Client({ connectionString: databaseUrl })
+  const client = new pg.Client({
+    connectionString: databaseUrl,
+    connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
+  })
   try {
     await client.connect()
     const events = await latestByColumnSafe(client)
@@ -73,12 +77,7 @@ export async function detectColumnStates(
       return row?.phase ?? null
     })
   } catch {
-    return columns.map((c) => ({
-      table: c.table,
-      column: c.column,
-      phase: null,
-      needs: 'unknown' as const,
-    }))
+    return null
   } finally {
     await client.end().catch(() => undefined)
   }
@@ -129,19 +128,3 @@ export function rollupPlanStep(
   return 'unknown'
 }
 
-async function latestByColumnSafe(client: pg.Client) {
-  try {
-    return await latestByColumn(client)
-  } catch (err) {
-    // The cs_migrations table may not exist yet (project that has run
-    // `stash init` but not `stash db install`, or a fresh database).
-    // Treat as "no events" rather than a hard error.
-    if (
-      err instanceof Error &&
-      /cs_migrations|schema "cipherstash"/i.test(err.message)
-    ) {
-      return new Map()
-    }
-    throw err
-  }
-}

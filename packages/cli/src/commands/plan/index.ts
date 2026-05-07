@@ -88,6 +88,10 @@ async function detectPlanStep(cwd: string): Promise<PlanStep> {
   }
 
   const states = await detectColumnStates(databaseUrl, columns)
+  // DB unreachable — fall back to a rollout-shaped plan rather than
+  // refusing. The plan command is read-only and the agent will surface
+  // the missing observation in the prose.
+  if (states === null) return 'rollout'
   const step = rollupPlanStep(states)
   // `unknown` and `completed` both map to rollout for plan-step selection:
   //   unknown   — no events; treat as fresh.
