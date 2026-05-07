@@ -1,3 +1,4 @@
+import type { PlanStep } from './lib/parse-plan.js'
 import type { AgentEnvironment } from './detect-agents.js'
 import type { PackageManager } from './utils.js'
 
@@ -62,6 +63,13 @@ export interface InitState {
    *  command itself: `stash plan` always sets `'plan'`, `stash impl` always
    *  sets `'implement'`. */
   mode?: InitMode
+  /** Which step of the encryption rollout the plan should target. Set by
+   *  `stash plan` after reading `cs_migrations` (or when the user passes
+   *  `--complete-rollout`). Drives the plan-prompt template selection. Not
+   *  meaningful in implement mode — `stash impl` reads the step from the
+   *  on-disk plan-summary block instead. Defaults to `'rollout'` when the
+   *  CLI has nothing else to go on (fresh project, no DB connectivity). */
+  planStep?: PlanStep
 }
 
 /**

@@ -156,6 +156,7 @@ export function buildSetupPromptContext(
     handoff,
     mode: state.mode ?? 'implement',
     installedSkills,
+    planStep: state.planStep,
   }
 }
 

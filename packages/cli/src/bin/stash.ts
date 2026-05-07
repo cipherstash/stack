@@ -110,6 +110,20 @@ Init Flags:
   --supabase           Use Supabase-specific setup flow
   --drizzle            Use Drizzle-specific setup flow
 
+Plan Flags:
+  --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)
+                           in one document. Skips the production-deploy gate that
+                           normally separates rollout from cutover. Only safe when this
+                           database is not backing a deployed application (local dev,
+                           sandbox, freshly seeded test environment).
+
+Status Flags:
+  --quest                  Force the quest-log output (emoji + progress bars)
+                           even in non-TTY contexts. Default is auto: fancy
+                           in a terminal, plain in CI / pipes / agents.
+  --plain                  Force the plain-text output even in TTY contexts.
+  --json                   Emit a structured JSON document instead.
+
 Impl Flags:
   --continue-without-plan  Skip planning and go straight to implementation
                            (interactively confirms before proceeding)
@@ -382,13 +396,17 @@ async function main() {
       await initCommand(flags)
       break
     case 'plan':
-      await planCommand()
+      await planCommand(flags)
       break
     case 'impl':
       await implCommand(flags)
       break
     case 'status':
-      await statusCommand()
+      await statusCommand({
+        quest: flags.quest,
+        plain: flags.plain,
+        json: flags.json,
+      })
       break
     case 'auth': {
       const authArgs = subcommand ? [subcommand, ...commandArgs] : commandArgs

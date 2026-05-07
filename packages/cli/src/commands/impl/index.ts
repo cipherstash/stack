@@ -2,8 +2,18 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { type AgentEnvironment, detectAgents } from '../init/detect-agents.js'
-import { parsePlanSummary, renderPlanSummary } from '../init/lib/parse-plan.js'
+import {
+  type PlanStep,
+  type PlanSummary,
+  effectiveStep,
+  parsePlanSummary,
+  renderPlanSummary,
+} from '../init/lib/parse-plan.js'
 import { readContextFile } from '../init/lib/read-context.js'
+import {
+  classifyPhase,
+  detectColumnStates,
+} from '../init/lib/rollout-state.js'
 import { PLAN_REL_PATH } from '../init/lib/setup-prompt.js'
 import {
   CONTEXT_REL_PATH,
@@ -47,6 +57,71 @@ async function confirmContinueWithoutPlan(): Promise<void> {
 }
 
 /**
+ * Verify the plan-summary's targeted columns have crossed the deploy gate
+ * (a `dual_writing` event recorded in `cs_migrations`). Used only for
+ * `cutover`-step plans. Returns the list of columns that are still in the
+ * rollout step (no `dual_writing` event yet) — empty when the plan is
+ * safe to proceed.
+ *
+ * On any DB error, returns `null` to signal "could not verify". The caller
+ * still proceeds — refusing to run when the DB is just temporarily
+ * unreachable would be too brittle, and the encrypt commands themselves
+ * also gate on the same event before doing anything destructive.
+ */
+async function verifyCutoverPreconditions(
+  cwd: string,
+  summary: PlanSummary,
+): Promise<{ table: string; column: string }[] | null> {
+  const migrate = summary.columns.filter((c) => c.path === 'migrate')
+  if (migrate.length === 0) return []
+
+  let databaseUrl: string
+  try {
+    const { loadStashConfig } = await import('../../config/index.js')
+    const config = await loadStashConfig()
+    databaseUrl = config.databaseUrl
+  } catch {
+    return null
+  }
+
+  const states = await detectColumnStates(databaseUrl, migrate)
+  return states
+    .filter((s) => classifyPhase(s.phase) !== 'cutover')
+    .map((s) => ({ table: s.table, column: s.column }))
+}
+
+/**
+ * Print the deploy-gate banner shown at the end of a successful
+ * rollout-step impl run. The banner is the explicit handover from the
+ * CLI back to the user — the encrypted twin column and dual-write code
+ * are now in the repo, but they only become safe once that code is
+ * running in production. The CLI deliberately does not chain into
+ * anything destructive here; the next destructive step (`stash encrypt
+ * backfill`) requires the user to come back and run `stash plan` after
+ * deploy.
+ */
+function printDeployGateBanner(cli: string): void {
+  p.note(
+    [
+      'Encryption rollout is in your repo.',
+      '',
+      'Encrypted values are not yet flowing through your application because the',
+      'dual-write code is not deployed. Until your production environment is running',
+      'this code, backfilling historical rows would corrupt new writes (any row',
+      'inserted during the backfill window would land in plaintext only and create',
+      'silent migration drift).',
+      '',
+      'Next:',
+      `  1. Deploy this branch to production.`,
+      `  2. Run \`${cli} status\` to verify dual-writes are live.`,
+      `  3. Run \`${cli} plan\` again — the CLI will detect dual-writes and draft`,
+      `     the encryption cutover (backfill → switch reads → drop plaintext).`,
+    ].join('\n'),
+    '⛔ Deploy gate',
+  )
+}
+
+/**
  * `stash impl` — execute an encryption plan.
  *
  * Always runs in implement mode. Behaviour branches on disk state and
@@ -54,6 +129,9 @@ async function confirmContinueWithoutPlan(): Promise<void> {
  *
  *   - **Plan exists** (TTY): parse the structured summary block, render
  *     a confirmation panel, ask the user to proceed. Default-yes.
+ *     For `cutover`-step plans, verify `dual_writing` events are
+ *     recorded for every migrate column before launching — refuse if
+ *     not, and point the user at re-running `stash plan` after deploy.
  *   - **Plan exists** (non-TTY): proceed without confirmation.
  *   - **No plan, `--continue-without-plan`**: confirm once, then implement.
  *   - **No plan, TTY**: present a `p.select` — draft a plan first
@@ -61,6 +139,13 @@ async function confirmContinueWithoutPlan(): Promise<void> {
  *     once, then implements).
  *   - **No plan, non-TTY**: error out with a clear next-action; CI must
  *     pass `--continue-without-plan` or run `stash plan` first.
+ *
+ * After successful handoff, the outro depends on plan step:
+ *   - `rollout`  — deploy-gate banner; explicit "do not run encrypt
+ *                  backfill yet" message.
+ *   - `cutover`  — confirmation that the rollout is fully complete.
+ *   - `complete` — same as cutover (escape hatch covers everything).
+ *   - no plan / no summary — generic "verify state" pointer.
  */
 export async function implCommand(flags: Record<string, boolean>) {
   const cwd = process.cwd()
@@ -82,12 +167,38 @@ export async function implCommand(flags: Record<string, boolean>) {
   const continueWithoutPlan = flags['continue-without-plan'] === true
   const isTTY = process.stdout.isTTY
 
+  let planStep: PlanStep | undefined
+
   try {
     if (planExists) {
+      const summary = parsePlanSummary(readFileSync(planPath, 'utf-8'))
+      planStep = summary ? effectiveStep(summary) : undefined
+
+      // Deploy-gate enforcement for cutover-step plans. Block before any
+      // confirm prompt or handoff so the user never gets the chance to
+      // press Enter through a misshapen flow. The check itself is
+      // defensive: a DB outage doesn't fail the run (returns null), the
+      // encrypt commands have their own gate.
+      if (summary && planStep === 'cutover') {
+        const missing = await verifyCutoverPreconditions(cwd, summary)
+        if (missing && missing.length > 0) {
+          p.log.error(
+            'This plan is a cutover-step plan, but `cs_migrations` has no `dual_writing` event for the following column(s):',
+          )
+          for (const col of missing) {
+            p.log.error(`  · ${col.table}.${col.column}`)
+          }
+          p.log.info(
+            `Backfill, cutover, and drop are unsafe until the dual-write code is live in production. Deploy your encryption-rollout PR first, then re-run \`${cli} status\` to verify and \`${cli} plan\` to redraft.`,
+          )
+          p.outro('Cutover blocked.')
+          process.exit(1)
+        }
+      }
+
       // Plan-summary checkpoint: the last save point before launching the
       // (potentially hour-long) implementation phase.
       if (isTTY) {
-        const summary = parsePlanSummary(readFileSync(planPath, 'utf-8'))
         if (summary) {
           p.note(renderPlanSummary(summary), 'Plan summary')
         } else {
@@ -154,9 +265,14 @@ export async function implCommand(flags: Record<string, boolean>) {
 
     await howToProceedStep.run(state)
 
-    p.outro(
-      `Implementation handoff complete. Run \`${cli} db status\` to verify state.`,
-    )
+    if (planStep === 'rollout') {
+      printDeployGateBanner(cli)
+      p.outro('Encryption rollout handed off — deploy when ready.')
+    } else {
+      p.outro(
+        `Implementation handoff complete. Run \`${cli} status\` to verify state.`,
+      )
+    }
   } catch (err) {
     if (err instanceof CancelledError) {
       p.cancel('Cancelled.')

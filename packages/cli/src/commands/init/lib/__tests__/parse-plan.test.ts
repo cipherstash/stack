@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   type PlanSummary,
+  effectiveStep,
   parsePlanSummary,
   renderPlanSummary,
 } from '../parse-plan.js'
@@ -14,6 +15,7 @@ describe('parsePlanSummary', () => {
   it('parses a well-formed summary block', () => {
     const md = `<!-- cipherstash:plan-summary
 {
+  "step": "rollout",
   "columns": [
     {"table": "users", "column": "email", "path": "new"},
     {"table": "users", "column": "phone", "path": "migrate"}
@@ -25,12 +27,33 @@ describe('parsePlanSummary', () => {
 `
     const summary = parsePlanSummary(md)
     expect(summary).toBeDefined()
+    expect(summary?.step).toBe('rollout')
     expect(summary?.columns).toHaveLength(2)
     expect(summary?.columns[0]).toEqual({
       table: 'users',
       column: 'email',
       path: 'new',
     })
+  })
+
+  it('treats an absent `step` as legacy `complete` for backwards compat', () => {
+    // Plans written before the rollout/cutover split carry no `step` field.
+    // They were always end-to-end. effectiveStep falls back to `complete`
+    // so existing plans keep working without manual editing.
+    const md = `<!-- cipherstash:plan-summary
+{"columns": [{"table": "t", "column": "c", "path": "new"}]}
+-->`
+    const summary = parsePlanSummary(md)
+    expect(summary).toBeDefined()
+    expect(summary?.step).toBeUndefined()
+    expect(effectiveStep(summary as PlanSummary)).toBe('complete')
+  })
+
+  it('rejects an unknown `step` value', () => {
+    const md = `<!-- cipherstash:plan-summary
+{"step": "phase-1", "columns": [{"table": "t", "column": "c", "path": "new"}]}
+-->`
+    expect(parsePlanSummary(md)).toBeUndefined()
   })
 
   it('returns undefined for malformed JSON inside the block', () => {
@@ -63,9 +86,9 @@ describe('parsePlanSummary', () => {
 
   it('rejects an empty columns array — falls back to soft summary', () => {
     // An agent that writes `{"columns": []}` (genuinely empty plan,
-    // truncated write, or chat cutoff) would otherwise render as
-    // "0 columns across 0 tables — single-deploy", which is misleading.
-    // `stash impl` falls back to the "open in your editor" panel instead.
+    // truncated write, or chat cutoff) would otherwise render a
+    // misleading zero-state line. `stash impl` falls back to the
+    // "open it in your editor" panel instead.
     const md = `<!-- cipherstash:plan-summary
 {"columns": []}
 -->`
@@ -92,6 +115,7 @@ describe('parsePlanSummary', () => {
 <!--    cipherstash:plan-summary
 
 {
+  "step": "cutover",
   "columns": [{"table": "t", "column": "c", "path": "migrate"}]
 }
 
@@ -99,13 +123,18 @@ describe('parsePlanSummary', () => {
 
 # Plan
 `
-    expect(parsePlanSummary(md)?.columns[0]?.path).toBe('migrate')
+    const summary = parsePlanSummary(md)
+    expect(summary?.step).toBe('cutover')
+    expect(summary?.columns[0]?.path).toBe('migrate')
   })
 })
 
 describe('renderPlanSummary', () => {
-  function summary(columns: PlanSummary['columns']): PlanSummary {
-    return { columns }
+  function summary(
+    columns: PlanSummary['columns'],
+    step?: PlanSummary['step'],
+  ): PlanSummary {
+    return step ? { step, columns } : { columns }
   }
 
   it('reports column and table counts', () => {
@@ -141,15 +170,50 @@ describe('renderPlanSummary', () => {
     expect(out).toContain('migrate existing column')
   })
 
-  it('mentions the staged 4-deploy lifecycle when any column is migrate-existing', () => {
+  it('rollout step: footer mentions deploy gate and the next-plan handoff', () => {
     const out = renderPlanSummary(
-      summary([
-        { table: 'users', column: 'email', path: 'new' },
-        { table: 'users', column: 'phone', path: 'migrate' },
-      ]),
+      summary(
+        [{ table: 'users', column: 'phone', path: 'migrate' }],
+        'rollout',
+      ),
     )
-    expect(out).toMatch(/staged across 4 deploys/i)
-    expect(out).toMatch(/schema-add → backfill → cutover → drop/)
+    expect(out).toMatch(/encryption rollout/i)
+    expect(out).toMatch(/deploy/i)
+    expect(out).toMatch(/stash plan/)
+  })
+
+  it('cutover step: footer mentions backfill, reads switch, and drop', () => {
+    const out = renderPlanSummary(
+      summary(
+        [{ table: 'users', column: 'phone', path: 'migrate' }],
+        'cutover',
+      ),
+    )
+    expect(out).toMatch(/encryption cutover/i)
+    expect(out).toMatch(/backfill/i)
+    expect(out).toMatch(/drop/i)
+  })
+
+  it('complete step: footer warns that the deploy gate is skipped', () => {
+    const out = renderPlanSummary(
+      summary(
+        [{ table: 'users', column: 'phone', path: 'migrate' }],
+        'complete',
+      ),
+    )
+    expect(out).toMatch(/complete encryption rollout/i)
+    expect(out).toMatch(/skips the production-deploy gate/i)
+  })
+
+  it('legacy plans without `step`: defaults to complete-rollout footer', () => {
+    // Pre-split plans had no step field. effectiveStep falls back to
+    // `complete`; the footer reflects that, and the user/agent reading the
+    // plan in `stash impl` sees the same text they would have seen had
+    // they generated the plan via `stash plan --complete-rollout` today.
+    const out = renderPlanSummary(
+      summary([{ table: 'users', column: 'phone', path: 'migrate' }]),
+    )
+    expect(out).toMatch(/complete encryption rollout/i)
   })
 
   it('reports a single-deploy implementation when all columns are additive', () => {
@@ -160,21 +224,41 @@ describe('renderPlanSummary', () => {
       ]),
     )
     expect(out).toContain('single-deploy')
-    expect(out).not.toMatch(/4 deploys/)
+    expect(out).not.toMatch(/encryption rollout/i)
   })
 
-  it('does not multiply deploy count by migrate-column count (deploys batch)', () => {
-    // 3 migrate columns is still 4 deploys — schema-add covers all twins,
-    // one backfill, one cutover, one drop. The renderer must not say "12
-    // deploys" or anything similar.
+  it('all-additive plans ignore step (no migrate columns means no rollout split)', () => {
+    // An agent could conceivably emit `step: "rollout"` on an all-new plan.
+    // The renderer should still describe it as single-deploy because the
+    // rollout/cutover split is intrinsic to migrate columns, not to step.
     const out = renderPlanSummary(
-      summary([
-        { table: 'users', column: 'a', path: 'migrate' },
-        { table: 'users', column: 'b', path: 'migrate' },
-        { table: 'users', column: 'c', path: 'migrate' },
-      ]),
+      summary([{ table: 'users', column: 'email', path: 'new' }], 'rollout'),
     )
-    expect(out).toContain('4 deploys')
-    expect(out).not.toContain('12 deploys')
+    expect(out).toContain('single-deploy')
+  })
+})
+
+describe('effectiveStep', () => {
+  it('returns the explicit step when set', () => {
+    expect(
+      effectiveStep({
+        step: 'rollout',
+        columns: [{ table: 't', column: 'c', path: 'migrate' }],
+      }),
+    ).toBe('rollout')
+    expect(
+      effectiveStep({
+        step: 'cutover',
+        columns: [{ table: 't', column: 'c', path: 'migrate' }],
+      }),
+    ).toBe('cutover')
+  })
+
+  it('falls back to `complete` when step is absent', () => {
+    expect(
+      effectiveStep({
+        columns: [{ table: 't', column: 'c', path: 'migrate' }],
+      }),
+    ).toBe('complete')
   })
 })

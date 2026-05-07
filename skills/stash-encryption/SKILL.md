@@ -585,22 +585,60 @@ CREATE TABLE users (
 );
 ```
 
-## Column Migration Lifecycle
+## Rolling Encryption Out to Production
 
-Adding a fresh encrypted column to a table you don't yet write to is the easy case — declare it in the schema, run the migration, start writing. The harder case is taking an **existing plaintext column with live data** and turning it into an encrypted one without dropping a write or returning the wrong value mid-cutover. CipherStash models that as a six-phase lifecycle:
+Adding a fresh encrypted column to a table you don't yet write to is the easy case — declare it in the schema, run the migration, start writing. The harder case is taking an **existing plaintext column with live data** and turning it into an encrypted one without dropping a write or returning the wrong value mid-cutover.
+
+CipherStash splits that into two named steps with a hard production-deploy gate between them:
 
 ```
-schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
+ENCRYPTION ROLLOUT  →  ⛔ deploy gate  →  ENCRYPTION CUTOVER
+─────────────────────                     ──────────────────────
+schema-add                                backfill historical rows
+dual-write code                           switch reads to encrypted
+db push (writes pending)                  drop plaintext column
 ```
 
-| Phase | What's true | What changes here |
-|---|---|---|
-| `schema-added` | The encrypted twin column (`<col>_encrypted`) exists in the DB and is registered in `eql_v2_configuration`. The plaintext column is unchanged; the application still writes only plaintext. | A schema migration adds the column. |
-| `dual-writing` | Application code now writes both `<col>` (plaintext, unchanged) **and** `<col>_encrypted` (encrypted via the encryption client) on every insert/update. Reads still come from the plaintext column. | Persistence-layer code change. The CLI cannot detect this state; the user (or agent) declares the transition. |
-| `backfilling` | A backfill job is encrypting the existing plaintext rows into `<col>_encrypted`, in chunks, resumably. New rows continue to land in both columns from dual-writing. | The backfill engine in `@cipherstash/migrate` (driven by `stash encrypt backfill`). |
-| `backfilled` | Every row has a non-null `<col>_encrypted` value. Plaintext column still authoritative for reads. | Backfill completes, records the transition. |
-| `cut-over` | A single transaction renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>` (`eql_v2.rename_encrypted_columns()`). Application reads of `<col>` now return decrypted ciphertext transparently — no app code change required for reads. | One DB transaction. |
-| `dropped` | `<col>_plaintext` is removed via a regular schema migration. The application stops writing to it (dual-writing logic is removed). | App-code change to remove dual-writes + a schema migration. |
+The gate is the rule that backfill is only safe once the dual-write code is **running in the production environment that owns the database** — not on the developer's laptop, not in CI. Any row inserted during the backfill window must be written to both columns by the application; otherwise it lands in plaintext only and creates silent migration drift.
+
+> **Runner note.** Examples below use `npx stash` for npm projects. Substitute `bunx stash` (Bun), `pnpm dlx stash` (pnpm), or `yarn dlx stash` (Yarn) — or run `stash` directly when it is installed as a project dev dep (`stash init` sets that up). The behaviour is identical across runners; only the prefix changes. The `stash-cli` skill has the full mapping.
+
+### Where am I?
+
+Always start with `stash status` (`npx stash status` / `pnpm dlx stash status` / etc., per the runner note above). It is disk-only, idempotent, and tells you which encryption rollouts are in flight, what's been deployed, and what the next move is per column. Re-run it after every transition. Never act blind.
+
+### Step 1 — Encryption rollout
+
+Everything that lands in the repo and ships in **one** PR:
+
+| Action | What changes |
+|---|---|
+| Schema-add | Migration adds `<col>_encrypted` (nullable `jsonb`) alongside the existing plaintext column. Plaintext column unchanged; application still writes only plaintext. |
+| `stash db push` | Registers the new column in `eql_v2_configuration`. With no active config yet, writes directly to `active`. With an existing active config, writes `pending` — cutover (later) will promote it. |
+| Dual-write code | Application now writes both `<col>` and `<col>_encrypted` on every persistence path that mutates the row, in the same transaction, on every code branch. Reads still come from the plaintext column. |
+
+**The dual-write definition matters.** "Writes both columns" is not enough. The rule is: every persistence path that mutates this row writes both columns, in the same transaction, on every code branch. A single missed branch — a CSV import, an admin action, a background job, a third-party webhook handler — means rows inserted in production after deploy land in plaintext only, and backfill won't catch them. Grep for every site that writes the plaintext column before declaring rollout complete.
+
+### ⛔ Deploy gate
+
+Stop. The rollout PR ships to production. The deployed environment must be running this code before any cutover-step work is safe.
+
+When the deploy is live, run `npx stash status`. Look for the active quest's "Next move" hint to confirm dual-writes are recorded. Then run `npx stash plan` again — the CLI detects that dual-writes are live and writes a separate cutover plan.
+
+`npx stash impl` will refuse to run a cutover-step plan if `cs_migrations` has no `dual_writing` event for the targeted columns. That refusal is intentional; it's the safety net for cases where someone runs cutover work locally before the code is actually live.
+
+### Step 2 — Encryption cutover
+
+Once dual-writes are recorded as live in `cs_migrations`:
+
+| Action | What changes |
+|---|---|
+| `stash encrypt backfill` | Walks the table in keyset-pagination order, encrypts each chunk, writes a single transactional `UPDATE` per chunk plus a `cs_migrations` checkpoint. SIGINT-safe; idempotent re-runs converge. |
+| Schema rename + `stash db push` | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. Push registers the renamed shape as `pending`. |
+| `stash encrypt cutover` | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. |
+| Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; `encryptedSupabase` wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw `eql_v2_encrypted` payloads to end users. |
+| Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
+| `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
 
 ### State storage
 
@@ -610,50 +648,54 @@ Three sources of truth, kept separate on purpose:
 - **`eql_v2_configuration`** (DB, EQL-managed) — *EQL intent*. Which columns are encrypted and with which indexes; drives the CipherStash Proxy.
 - **`cipherstash.cs_migrations`** (DB, CipherStash-managed) — *runtime state*. Append-only event log: phase transitions, backfill cursors, error rows. Latest row per `(table, column)` is the current state.
 
-`stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing).
+`stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing). `stash status` (the quest log) rolls them up into the per-column "what's the next move" view used during a rollout.
 
-### CLI surface
+> **Note on internal phase names.** The runtime event log uses `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped` as machine-readable phase names. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then cutover, with a deploy gate in between."
 
-The `stash encrypt` command group drives each phase. See the `stash-cli` skill for full flag reference. Typical sequence for a single column:
+### CLI sequence for a single column
 
 ```bash
-# Phase 1 — schema-added
-# Add the encrypted twin column via your normal migration tooling
-# (drizzle-kit / supabase migrations / etc.). Then register the new
-# encryption config with EQL:
-stash db push
-# First push (no active config yet) → writes directly to active.
-# Subsequent push (active already exists) → writes pending; cutover
-# in phase 4 will promote it.
+# Run this often — it's the canonical "where am I?" command.
+npx stash status
 
-# Phase 2 + 3 — dual-writing then backfilling, in one command
-# (First, edit the application code to write both columns and ship that deploy.
-#  Then run backfill — it will prompt to confirm dual-writes are live, append
-#  the `dual_writing` event, and run the chunked encryption loop.)
-stash encrypt backfill --table users --column email
-# In CI / non-interactive contexts, swap the prompt for the explicit flag:
-stash encrypt backfill --table users --column email --confirm-dual-writes-deployed
-# Resumable; checkpoints to cs_migrations after every chunk. SIGINT-safe.
+# ---- ENCRYPTION ROLLOUT (one PR, one deploy) ----
+# 1. Add the encrypted twin column via your normal migration tooling
+#    (drizzle-kit / supabase migrations / etc.).
+# 2. Register the new encryption config with EQL:
+npx stash db push
+#    First push (no active config yet) → writes directly to active.
+#    Subsequent push (active already exists) → writes pending; cutover
+#    will promote it.
+# 3. Edit application code so every persistence path writes both
+#    `<col>` and `<col>_encrypted` in the same transaction, on every
+#    code branch.
+# 4. Ship the PR to production.
 
-# Recovery — if dual-writes weren't actually live when backfill first ran,
-# rows inserted during the backfill landed in plaintext only and the encrypted
-# twin is stale. Re-run with --force to re-encrypt every row regardless.
-stash encrypt backfill --table users --column email --force
+# ---- ⛔ DEPLOY GATE ----
+# Verify dual-writes are live, then redraft the plan for cutover work:
+npx stash status
+npx stash plan
 
-# Phase 4 — cut-over
-# First, edit the schema to drop the `_encrypted` suffix (the column will now
-# be named `email`, declared with encryptedType / encryptedColumn). Re-push:
-stash db push
-# → writes the renamed-shape config as `pending`. The active config (still
-#   pointing at `email_encrypted`) keeps serving until cutover finishes.
+# ---- ENCRYPTION CUTOVER ----
+npx stash encrypt backfill --table users --column email
+# Prompts to confirm dual-writes are live (or pass
+# --confirm-dual-writes-deployed in CI). Resumable; SIGINT-safe.
 
-# Now run the cutover. In one transaction: rename the physical columns,
-# promote pending → active, record cs_migrations event.
-stash encrypt cutover --table users --column email
+# Recovery — if dual-writes weren't actually live when backfill ran,
+# re-run with --force to encrypt every plaintext row regardless.
+npx stash encrypt backfill --table users --column email --force
 
-# Phase 5 — dropped
-stash encrypt drop --table users --column email
-# Emits a migration file removing <col>_plaintext. Apply with your normal tooling.
+# Edit the schema to drop the `_encrypted` suffix, then re-push:
+npx stash db push
+#  → writes the renamed-shape config as `pending`. The active config
+#    keeps serving until cutover finishes.
+
+npx stash encrypt cutover --table users --column email
+# In one transaction: rename physical columns, promote pending → active.
+
+# Wire the read paths through the encryption client. Remove dual-write
+# code. Then drop the plaintext column:
+npx stash encrypt drop --table users --column email
 ```
 
 ### Library use
@@ -682,12 +724,13 @@ await runBackfill({
 
 Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner.
 
-### Invariants the lifecycle preserves
+### Invariants the rollout preserves
 
-- **Reads never return the wrong value.** Until cut-over, reads come from the plaintext column. After cut-over, the same `SELECT email` returns the decrypted ciphertext via Proxy or the encryption client. There is no in-between.
-- **Writes never drop.** Dual-writing keeps both columns in sync until the cut-over moment. After cut-over, writes go to the encrypted column.
+- **Reads never return the wrong value.** Until cutover, reads come from the plaintext column. After cutover, the same `SELECT email` returns the decrypted ciphertext via Proxy or the encryption client. There is no in-between.
+- **Writes never drop.** Dual-writing keeps both columns in sync until the cutover moment. After cutover, writes go to the encrypted column.
+- **The deploy gate is a one-way door for production.** Backfill against rows the dual-write code never saw produces silent drift. The CLI refuses to run cutover-step plans without a `dual_writing` event recorded; do not paper over that refusal.
 - **Re-runs are safe.** Backfill is idempotent (`<col> IS NOT NULL AND <col>_encrypted IS NULL` guards every chunk). `cs_migrations` is append-only.
-- **Rollback is possible up to cut-over.** Until the rename happens, the plaintext column is authoritative; aborting just leaves the encrypted twin partially populated. After cut-over, rollback is a manual restore — the migration plan should treat cut-over as the one-way door.
+- **Rollback is possible up to cutover.** Until the rename happens, the plaintext column is authoritative; aborting just leaves the encrypted twin partially populated. After cutover, rollback is a manual restore — treat cutover as the one-way door for data.
 
 ## Migration from @cipherstash/protect
 
