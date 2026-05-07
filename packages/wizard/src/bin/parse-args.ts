@@ -33,8 +33,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       mode = 'implement'
       continue
     }
-    if (arg === '--mode' && i + 1 < args.length) {
-      const next = args[i + 1] ?? ''
+    if (arg === '--mode') {
+      if (i + 1 >= args.length) {
+        modeError = "--mode requires a value. Expected 'plan' or 'implement'."
+        break
+      }
+      const next = args[i + 1]
       if (next === 'plan' || next === 'implement') {
         mode = next
         i++

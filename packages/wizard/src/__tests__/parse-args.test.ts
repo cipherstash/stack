@@ -43,6 +43,15 @@ describe('wizard parseArgs — mode resolution', () => {
     expect(result.modeError).toMatch(/Unknown --mode value/)
   })
 
+  it('rejects --mode at the end of argv with a clear error (regression: silent fall-through)', () => {
+    // Without the trailing-value guard, `--mode` as the final arg falls
+    // through to the default `implement` with no diagnostic — strictly
+    // worse than `--mode=` (which already errors). Both forms now surface
+    // the same "requires a value" error.
+    const result = parseArgs(argv('--mode'))
+    expect(result.modeError).toMatch(/--mode requires a value/)
+  })
+
   it('lets the last mode flag win when multiple are passed', () => {
     // Useful for wrappers that always append a mode flag — they don't have
     // to detect and remove an earlier one.
