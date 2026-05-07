@@ -33,17 +33,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
       mode = 'implement'
       continue
     }
-    if (arg === '--mode' && i + 1 < args.length) {
-      const next = args[i + 1] ?? ''
-      if (next === 'plan' || next === 'implement') {
-        mode = next
-        i++
+    if (arg === '--mode') {
+      if (i + 1 < args.length) {
+        const next = args[i + 1]
+        if (next === 'plan' || next === 'implement') {
+          mode = next
+          i++
+        } else {
+          modeError = `Unknown --mode value: ${next}. Expected 'plan' or 'implement'.`
+          break
+        }
       } else {
-        modeError = `Unknown --mode value: ${next}. Expected 'plan' or 'implement'.`
+        modeError = `--mode requires a value: 'plan' or 'implement'.`
         break
       }
       continue
-    }
+
     if (arg.startsWith('--mode=')) {
       const value = arg.slice('--mode='.length)
       if (value === 'plan' || value === 'implement') {

@@ -32,6 +32,11 @@ describe('wizard parseArgs — mode resolution', () => {
     expect(parseArgs(argv('--mode=implement')).mode).toBe('implement')
   })
 
+  it('rejects --mode with no value', () => {
+    const result = parseArgs(argv('--mode'))
+    expect(result.modeError).toMatch(/--mode requires a value/)
+  })
+
   it('rejects unknown --mode values with a clear error', () => {
     const result = parseArgs(argv('--mode', 'yolo'))
     expect(result.modeError).toMatch(/Unknown --mode value/)
