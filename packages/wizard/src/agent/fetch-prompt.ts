@@ -1,6 +1,6 @@
 import auth from '@cipherstash/auth'
 import { GATEWAY_URL } from '../lib/constants.js'
-import type { GatheredContext } from '../lib/gather.js'
+import type { GatheredContext, WizardMode } from '../lib/gather.js'
 import { classifyHttpError, formatWizardError } from './errors.js'
 
 const { AutoStrategy } = auth
@@ -16,11 +16,19 @@ interface GatewayErrorBody {
   error?: { type?: string; message?: string }
 }
 
+export interface FetchIntegrationPromptOptions {
+  ctx: GatheredContext
+  cliVersion: string
+  runner: string
+  mode?: WizardMode
+}
+
 export async function fetchIntegrationPrompt(
-  ctx: GatheredContext,
-  cliVersion: string,
-  runner: string,
+  options: FetchIntegrationPromptOptions,
 ): Promise<FetchedPrompt> {
+  const { ctx, cliVersion, runner } = options
+  const mode: WizardMode = options.mode ?? 'implement'
+
   const strategy = AutoStrategy.detect()
   const { token } = await strategy.getToken()
 
@@ -36,6 +44,7 @@ export async function fetchIntegrationPrompt(
         version: 'v1',
         clientVersion: cliVersion,
         integration: ctx.integration,
+        mode,
         context: {
           selectedColumns: ctx.selectedColumns,
           schemaFiles: ctx.schemaFiles,

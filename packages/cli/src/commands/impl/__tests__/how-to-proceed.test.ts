@@ -24,13 +24,13 @@ describe('howToProceed — buildOptions', () => {
   it('offers all four targets in implement mode', () => {
     const opts = buildOptions(noAgents, 'implement')
     const values = opts.map((o) => o.value)
-    expect(values).toEqual(['claude-code', 'codex', 'wizard', 'agents-md'])
+    expect(values).toEqual(['claude-code', 'codex', 'agents-md', 'wizard'])
   })
 
-  it('offers only claude-code and codex in plan mode', () => {
+  it('offers all four targets in plan mode', () => {
     const opts = buildOptions(noAgents, 'plan')
     const values = opts.map((o) => o.value)
-    expect(values).toEqual(['claude-code', 'codex'])
+    expect(values).toEqual(['claude-code', 'codex', 'agents-md', 'wizard'])
   })
 
   it('reflects detection state in hints regardless of mode', () => {
@@ -56,14 +56,11 @@ describe('howToProceed — defaultChoice', () => {
     expect(defaultChoice(codexOnly, 'plan')).toBe('codex')
   })
 
-  it('falls back to agents-md in implement mode when no CLI is detected', () => {
+  it('falls back to agents-md in both modes when no CLI is detected', () => {
+    // AGENTS.md is the broadest "works without anything else installed"
+    // option, so it's the right default in either mode when no agent CLI
+    // is on PATH.
     expect(defaultChoice(noAgents, 'implement')).toBe('agents-md')
-  })
-
-  it('falls back to claude-code in plan mode when no CLI is detected', () => {
-    // Plan mode never offers agents-md; claude-code is the listed default
-    // so the picker has a valid initialValue rather than falling through
-    // to a hidden option.
-    expect(defaultChoice(noAgents, 'plan')).toBe('claude-code')
+    expect(defaultChoice(noAgents, 'plan')).toBe('agents-md')
   })
 })

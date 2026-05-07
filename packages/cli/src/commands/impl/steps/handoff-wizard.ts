@@ -33,12 +33,12 @@ export const handoffWizardStep: HandoffStep = {
     writeContextFile(contextAbs, ctx)
     p.log.success(`Wrote ${CONTEXT_REL_PATH}`)
 
-    // Pass through no extra flags. If a user wants to debug the wizard, they
-    // can re-run `stash wizard --debug` directly afterwards.
-    const exitCode = await runWizardSpawn([])
+    const mode = state.mode ?? 'implement'
+    const exitCode = await runWizardSpawn(['--mode', mode])
     if (exitCode !== 0) {
+      const resume = mode === 'plan' ? 'stash plan' : 'stash impl'
       p.log.warn(
-        `Wizard exited with code ${exitCode}. Re-run \`stash wizard\` to resume.`,
+        `Wizard exited with code ${exitCode}. Re-run \`${resume}\` to resume.`,
       )
     }
 

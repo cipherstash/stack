@@ -6,12 +6,25 @@
  * This eliminates the majority of API round trips.
  */
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
-import { resolve, join } from 'node:path'
+import {
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+} from 'node:fs'
+import { closeSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { introspectDatabase } from '../tools/wizard-tools.js'
 import { checkEnvKeys } from '../tools/wizard-tools.js'
-import type { Integration, DetectedPackageManager } from './types.js'
+import type {
+  DetectedPackageManager,
+  Integration,
+  WizardMode,
+} from './types.js'
+
+export type { WizardMode } from './types.js'
 
 export interface ColumnSelection {
   tableName: string
@@ -23,7 +36,8 @@ export interface ColumnSelection {
 export interface GatheredContext {
   /** The integration type. */
   integration: Integration
-  /** Tables and columns the user selected for encryption. */
+  /** Tables and columns the user selected for encryption. Empty in plan
+   *  mode — the planning agent proposes scope. */
   selectedColumns: ColumnSelection[]
   /** Drizzle schema file paths and their contents (drizzle only). */
   schemaFiles: Array<{ path: string; content: string }>
@@ -35,15 +49,28 @@ export interface GatheredContext {
   hasStashConfig: boolean
 }
 
+export interface GatherContextOptions {
+  cwd: string
+  integration: Integration
+  packageManager: DetectedPackageManager | undefined
+  mode?: WizardMode
+}
+
 /**
  * Gather all context needed for the agent via CLI prompts and local I/O.
  * No AI calls are made here — this is pure CLI interaction.
+ *
+ * Plan mode skips the column-selection TUI because the planning agent's
+ * job is to *propose* scope, not act on a pre-committed list. Schema
+ * files are still collected so the agent has something to ground its
+ * proposals in.
  */
 export async function gatherContext(
-  cwd: string,
-  integration: Integration,
-  packageManager: DetectedPackageManager | undefined,
+  options: GatherContextOptions,
 ): Promise<GatheredContext> {
+  const { cwd, integration, packageManager } = options
+  const mode: WizardMode = options.mode ?? 'implement'
+
   const installCmd = packageManager
     ? `${packageManager.installCommand} @cipherstash/stack`
     : 'npm install @cipherstash/stack'
@@ -52,24 +79,27 @@ export async function gatherContext(
     existsSync(resolve(cwd, 'stash.config.ts')) ||
     existsSync(resolve(cwd, 'stash.config.js'))
 
-  // Try DB introspection first
-  const tables = await tryIntrospect(cwd)
-
-  // Get column selections from user
   let selectedColumns: ColumnSelection[]
-  if (tables && tables.length > 0) {
-    selectedColumns = await selectColumnsFromDb(tables)
+  if (mode === 'plan') {
+    selectedColumns = []
   } else {
-    selectedColumns = await selectColumnsManually()
+    const tables = await tryIntrospect(cwd)
+    if (tables && tables.length > 0) {
+      selectedColumns = await selectColumnsFromDb(tables)
+    } else {
+      selectedColumns = await selectColumnsManually()
+    }
+
+    if (selectedColumns.length === 0) {
+      p.log.warn('No columns selected for encryption.')
+      p.cancel('Nothing to do.')
+      process.exit(0)
+    }
   }
 
-  if (selectedColumns.length === 0) {
-    p.log.warn('No columns selected for encryption.')
-    p.cancel('Nothing to do.')
-    process.exit(0)
-  }
-
-  // For Drizzle, find schema files
+  // Schema files are collected in both modes — the planning agent grounds
+  // its proposals in real schema content; the implementation agent edits
+  // it directly.
   let schemaFiles: Array<{ path: string; content: string }> = []
   if (integration === 'drizzle') {
     schemaFiles = findDrizzleSchemaFiles(cwd)
@@ -123,7 +153,8 @@ async function tryIntrospect(cwd: string): Promise<DbTable[] | null> {
   if (!dbUrl) {
     // Ask user for DATABASE_URL
     const urlInput = await p.text({
-      message: 'Enter your DATABASE_URL (or press Enter to skip and enter tables manually):',
+      message:
+        'Enter your DATABASE_URL (or press Enter to skip and enter tables manually):',
       placeholder: 'postgresql://user:pass@host:5432/dbname',
     })
 
@@ -186,7 +217,9 @@ async function selectColumnsFromDb(
     )
 
     if (encryptableColumns.length === 0) {
-      p.log.info(`No encryptable columns found in ${tableName} (IDs, timestamps, and already-encrypted columns are excluded).`)
+      p.log.info(
+        `No encryptable columns found in ${tableName} (IDs, timestamps, and already-encrypted columns are excluded).`,
+      )
       continue
     }
 
@@ -243,11 +276,18 @@ async function selectColumnsManually(): Promise<ColumnSelection[]> {
 
     if (p.isCancel(columnNames) || !columnNames?.trim()) break
 
-    for (const col of columnNames.split(',').map((c) => c.trim()).filter(Boolean)) {
+    for (const col of columnNames
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean)) {
       const dataType = await p.select({
         message: `Data type for "${tableName}.${col}":`,
         options: [
-          { value: 'text', label: 'Text / String', hint: 'varchar, text, char, uuid' },
+          {
+            value: 'text',
+            label: 'Text / String',
+            hint: 'varchar, text, char, uuid',
+          },
           { value: 'number', label: 'Number', hint: 'integer, float, numeric' },
           { value: 'boolean', label: 'Boolean' },
           { value: 'date', label: 'Date / Timestamp' },
@@ -320,6 +360,35 @@ function findDrizzleSchemaFiles(
   return results
 }
 
+/**
+ * `pgTable` is a Drizzle import that, when present, is in the file's
+ * import block — typically within the first kilobyte. Probing the head of
+ * each candidate before reading the full content keeps the recursive
+ * scan from loading every TypeScript file in the project into memory on
+ * large monorepos.
+ */
+const PROBE_BYTES = 8192
+
+function fileContainsPgTable(fullPath: string): boolean {
+  let fd: number | undefined
+  try {
+    fd = openSync(fullPath, 'r')
+    const buf = Buffer.alloc(PROBE_BYTES)
+    const bytesRead = readSync(fd, buf, 0, PROBE_BYTES, 0)
+    return buf.subarray(0, bytesRead).includes('pgTable')
+  } catch {
+    return false
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd)
+      } catch {
+        // already closed / not openable — nothing to do
+      }
+    }
+  }
+}
+
 function scanForPgTable(
   dir: string,
   cwd: string,
@@ -334,12 +403,14 @@ function scanForPgTable(
       const fullPath = join(dir, entry.name)
       if (entry.isDirectory()) {
         scanForPgTable(fullPath, cwd, results, depth + 1)
-      } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+      } else if (
+        entry.name.endsWith('.ts') &&
+        !entry.name.endsWith('.d.ts') &&
+        fileContainsPgTable(fullPath)
+      ) {
         const content = readFileSync(fullPath, 'utf-8')
-        if (content.includes('pgTable')) {
-          const relativePath = fullPath.slice(cwd.length + 1)
-          results.push({ path: relativePath, content })
-        }
+        const relativePath = fullPath.slice(cwd.length + 1)
+        results.push({ path: relativePath, content })
       }
     }
   } catch {

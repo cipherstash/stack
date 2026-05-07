@@ -49,10 +49,30 @@ export const PACKAGE_MANAGERS: Record<
   'bun' | 'pnpm' | 'yarn' | 'npm',
   DetectedPackageManager
 > = {
-  bun: { name: 'bun', installCommand: 'bun add', runCommand: 'bun run', execCommand: 'bunx' },
-  pnpm: { name: 'pnpm', installCommand: 'pnpm add', runCommand: 'pnpm run', execCommand: 'pnpm dlx' },
-  yarn: { name: 'yarn', installCommand: 'yarn add', runCommand: 'yarn run', execCommand: 'yarn dlx' },
-  npm: { name: 'npm', installCommand: 'npm install', runCommand: 'npm run', execCommand: 'npx' },
+  bun: {
+    name: 'bun',
+    installCommand: 'bun add',
+    runCommand: 'bun run',
+    execCommand: 'bunx',
+  },
+  pnpm: {
+    name: 'pnpm',
+    installCommand: 'pnpm add',
+    runCommand: 'pnpm run',
+    execCommand: 'pnpm dlx',
+  },
+  yarn: {
+    name: 'yarn',
+    installCommand: 'yarn add',
+    runCommand: 'yarn run',
+    execCommand: 'yarn dlx',
+  },
+  npm: {
+    name: 'npm',
+    installCommand: 'npm install',
+    runCommand: 'npm run',
+    execCommand: 'npx',
+  },
 }
 
 /**

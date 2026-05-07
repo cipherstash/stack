@@ -1,20 +1,24 @@
-import { config } from 'dotenv'
-
-// Load env files in Next.js precedence order. dotenv's default behavior is to
-// not overwrite vars that are already set, so loading .env.local first means
-// its values win over .env for the same keys. Users can still set anything in
-// the real environment to override both.
-config({ path: '.env.local' })
-config({ path: '.env.development.local' })
-config({ path: '.env.development' })
-config({ path: '.env' })
-
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
+import { config } from 'dotenv'
 import { detectPackageManager } from '../lib/detect.js'
 import { run } from '../run.js'
+import { parseArgs } from './parse-args.js'
+
+/**
+ * Load env files in Next.js precedence order. dotenv's default behaviour
+ * is to not overwrite vars already set, so loading `.env.local` first
+ * means its values win over `.env` for the same keys. Users can still
+ * set anything in the real environment to override both.
+ */
+function loadDotenv(): void {
+  config({ path: '.env.local' })
+  config({ path: '.env.development.local' })
+  config({ path: '.env.development' })
+  config({ path: '.env' })
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(
@@ -35,26 +39,16 @@ Options:
   --help, -h           Show help
   --version, -v        Show version
   --debug              Print extra diagnostics from the agent
+  --plan               Drafts \`.cipherstash/plan.md\` for review.
+                       No code or schema changes, no db pushes.
+  --implement          Full setup flow (the default).
+  --mode <plan|implement>
+                       Long form of \`--plan\` / \`--implement\`. Last mode
+                       flag wins if multiple are passed.
 `.trim()
 
-interface ParsedArgs {
-  help: boolean
-  version: boolean
-  debug: boolean
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const args = argv.slice(2)
-  const flags = new Set(args)
-  return {
-    help: flags.has('--help') || flags.has('-h'),
-    version: flags.has('--version') || flags.has('-v'),
-    debug: flags.has('--debug'),
-  }
-}
-
 async function main() {
-  const { help, version, debug } = parseArgs(process.argv)
+  const { help, version, debug, mode, modeError } = parseArgs(process.argv)
 
   if (help) {
     console.log(HELP)
@@ -66,10 +60,21 @@ async function main() {
     return
   }
 
+  if (modeError) {
+    p.log.error(modeError)
+    process.exit(1)
+  }
+
+  // Defer env loading until we're actually running — `--help` / `--version`
+  // shouldn't pay for it, and a malformed `--mode` should exit before it
+  // touches disk.
+  loadDotenv()
+
   await run({
     cwd: process.cwd(),
     debug,
     cliVersion: pkg.version,
+    mode,
   })
 }
 

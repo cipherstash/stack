@@ -13,14 +13,46 @@ interface ScanResult {
 
 // --- Pre-execution rules ---
 
-export const DANGEROUS_BASH_OPERATORS = [';', '`', '$', '(', ')', '|', '&&', '||', '>', '>>', '<']
+export const DANGEROUS_BASH_OPERATORS = [
+  ';',
+  '`',
+  '$',
+  '(',
+  ')',
+  '|',
+  '&&',
+  '||',
+  '>',
+  '>>',
+  '<',
+]
 
 const BLOCKED_BASH_PATTERNS = [
-  { pattern: /rm\s+-rf/i, rule: 'destructive_rm', reason: 'Recursive force delete blocked' },
-  { pattern: /git\s+push\s+--force/i, rule: 'git_force_push', reason: 'Force push blocked' },
-  { pattern: /git\s+reset\s+--hard/i, rule: 'git_reset_hard', reason: 'Hard reset blocked' },
-  { pattern: /curl.*\$.*KEY/i, rule: 'secret_exfiltration', reason: 'Potential secret exfiltration via curl' },
-  { pattern: /cat.*\.env/i, rule: 'env_file_read', reason: 'Direct .env file read blocked — use wizard-tools MCP' },
+  {
+    pattern: /rm\s+-rf/i,
+    rule: 'destructive_rm',
+    reason: 'Recursive force delete blocked',
+  },
+  {
+    pattern: /git\s+push\s+--force/i,
+    rule: 'git_force_push',
+    reason: 'Force push blocked',
+  },
+  {
+    pattern: /git\s+reset\s+--hard/i,
+    rule: 'git_reset_hard',
+    reason: 'Hard reset blocked',
+  },
+  {
+    pattern: /curl.*\$.*KEY/i,
+    rule: 'secret_exfiltration',
+    reason: 'Potential secret exfiltration via curl',
+  },
+  {
+    pattern: /cat.*\.env/i,
+    rule: 'env_file_read',
+    reason: 'Direct .env file read blocked — use wizard-tools MCP',
+  },
 ]
 
 /** Scan a Bash command before execution. */
@@ -51,14 +83,34 @@ export function scanPreToolUse(toolName: string, input: string): ScanResult {
 // --- Post-execution rules ---
 
 const PROMPT_INJECTION_PATTERNS = [
-  { pattern: /ignore\s+previous\s+instructions/i, rule: 'prompt_injection_override', severity: 'critical' as const },
-  { pattern: /you\s+are\s+now\s+a\s+different/i, rule: 'prompt_injection_identity', severity: 'medium' as const },
+  {
+    pattern: /ignore\s+previous\s+instructions/i,
+    rule: 'prompt_injection_override',
+    severity: 'critical' as const,
+  },
+  {
+    pattern: /you\s+are\s+now\s+a\s+different/i,
+    rule: 'prompt_injection_identity',
+    severity: 'medium' as const,
+  },
 ]
 
 const SECRET_PATTERNS = [
-  { pattern: /phc_[a-zA-Z0-9]{20,}/, rule: 'hardcoded_posthog_key', reason: 'PostHog API key in code' },
-  { pattern: /sk_live_[a-zA-Z0-9]+/, rule: 'hardcoded_stripe_key', reason: 'Stripe live key in code' },
-  { pattern: /password\s*=\s*['"][^'"]+['"]/i, rule: 'hardcoded_password', reason: 'Hardcoded password detected' },
+  {
+    pattern: /phc_[a-zA-Z0-9]{20,}/,
+    rule: 'hardcoded_posthog_key',
+    reason: 'PostHog API key in code',
+  },
+  {
+    pattern: /sk_live_[a-zA-Z0-9]+/,
+    rule: 'hardcoded_stripe_key',
+    reason: 'Stripe live key in code',
+  },
+  {
+    pattern: /password\s*=\s*['"][^'"]+['"]/i,
+    rule: 'hardcoded_password',
+    reason: 'Hardcoded password detected',
+  },
 ]
 
 /** Scan file content after a write/edit operation. */

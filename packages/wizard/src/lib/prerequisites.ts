@@ -26,9 +26,7 @@ export async function checkPrerequisites(
   }
 
   if (!findStashConfig(cwd)) {
-    missing.push(
-      `No stash.config.ts found. Run: ${runner} stash db install`,
-    )
+    missing.push(`No stash.config.ts found. Run: ${runner} stash db install`)
   }
 
   return { ok: missing.length === 0, missing }

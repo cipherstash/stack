@@ -57,27 +57,29 @@ describe('wizardCanUseTool — DLX command allowlist', () => {
     })
 
     it('allows pnpm add', () => {
-      expect(wizardCanUseTool('Bash', { command: 'pnpm add some-package' })).toBe(
-        true,
-      )
+      expect(
+        wizardCanUseTool('Bash', { command: 'pnpm add some-package' }),
+      ).toBe(true)
     })
 
     it('allows yarn add', () => {
-      expect(wizardCanUseTool('Bash', { command: 'yarn add some-package' })).toBe(
-        true,
-      )
+      expect(
+        wizardCanUseTool('Bash', { command: 'yarn add some-package' }),
+      ).toBe(true)
     })
 
     it('allows bun add', () => {
-      expect(wizardCanUseTool('Bash', { command: 'bun add some-package' })).toBe(
-        true,
-      )
+      expect(
+        wizardCanUseTool('Bash', { command: 'bun add some-package' }),
+      ).toBe(true)
     })
   })
 
   describe('allows stash db commands', () => {
     it('allows stash db install', () => {
-      expect(wizardCanUseTool('Bash', { command: 'stash db install' })).toBe(true)
+      expect(wizardCanUseTool('Bash', { command: 'stash db install' })).toBe(
+        true,
+      )
     })
 
     it('allows stash db push', () => {

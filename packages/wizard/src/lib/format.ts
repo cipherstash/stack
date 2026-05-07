@@ -59,10 +59,14 @@ export function formatAgentOutput(text: string): string {
     }
 
     // Bullet points with bold label: - **label** — rest
-    const bulletBoldMatch = line.match(/^\s*[-*]\s+\*\*(.+?)\*\*\s*[-—:]?\s*(.*)/)
+    const bulletBoldMatch = line.match(
+      /^\s*[-*]\s+\*\*(.+?)\*\*\s*[-—:]?\s*(.*)/,
+    )
     if (bulletBoldMatch) {
       const [, label, rest] = bulletBoldMatch
-      result.push(`  ${pc.dim('•')} ${pc.bold(label)}${rest ? pc.dim(' — ') + rest : ''}`)
+      result.push(
+        `  ${pc.dim('•')} ${pc.bold(label)}${rest ? pc.dim(' — ') + rest : ''}`,
+      )
       continue
     }
 
@@ -97,11 +101,16 @@ export function formatAgentOutput(text: string): string {
  * Format inline markdown: **bold**, `code`, and links.
  */
 function formatInline(text: string): string {
-  return text
-    // Bold
-    .replace(/\*\*(.+?)\*\*/g, (_, content) => pc.bold(content))
-    // Inline code
-    .replace(/`([^`]+)`/g, (_, content) => pc.cyan(content))
-    // Links [text](url) — show text, dim the URL
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, linkText, url) => `${pc.underline(linkText)} ${pc.dim(`(${url})`)}`)
+  return (
+    text
+      // Bold
+      .replace(/\*\*(.+?)\*\*/g, (_, content) => pc.bold(content))
+      // Inline code
+      .replace(/`([^`]+)`/g, (_, content) => pc.cyan(content))
+      // Links [text](url) — show text, dim the URL
+      .replace(
+        /\[([^\]]+)\]\(([^)]+)\)/g,
+        (_, linkText, url) => `${pc.underline(linkText)} ${pc.dim(`(${url})`)}`,
+      )
+  )
 }

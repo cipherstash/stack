@@ -18,27 +18,28 @@ import { handoffWizardStep } from './handoff-wizard.js'
  * the AGENTS.md path because that's the broadest "works without anything else
  * installed" option. The CipherStash Agent option is positioned as a fallback
  * (slow first run, requires the wizard package on top of the CLI) and is
- * never selected by default. In plan mode, AGENTS.md and wizard aren't
- * offered — the default falls back to `claude-code`.
+ * never selected by default. The same defaulting applies in both `plan` and
+ * `implement` modes; `mode` is plumbed in so future asymmetries can be added
+ * without a wider refactor.
  */
-export function defaultChoice(state: InitState, mode: InitMode): HandoffChoice {
+export function defaultChoice(
+  state: InitState,
+  _mode: InitMode,
+): HandoffChoice {
   if (state.agents?.cli.claudeCode) return 'claude-code'
   if (state.agents?.cli.codex) return 'codex'
-  return mode === 'plan' ? 'claude-code' : 'agents-md'
+  return 'agents-md'
 }
 
 /**
- * Build the option list for the menu. Hints reflect detection state — a
- * missing CLI doesn't hide the option (handoff steps still write the
- * rules files and print install instructions), it just nudges the user.
- *
- * In plan mode we only offer Claude Code and Codex. AGENTS.md and the
- * wizard don't yet have planning prompt templates, so suppress them
- * entirely rather than degrading silently.
+ * Build the option list for the menu. Hints reflect detection state, not
+ * availability — a missing CLI doesn't hide the option (handoff steps
+ * still write the rules files and print install instructions), it just
+ * nudges the user toward what's already on PATH.
  */
 export function buildOptions(
   state: InitState,
-  mode: InitMode,
+  _mode: InitMode,
 ): { value: HandoffChoice; label: string; hint?: string }[] {
   const claudeHint = state.agents?.cli.claudeCode
     ? 'claude detected — will launch interactively'
@@ -47,7 +48,7 @@ export function buildOptions(
     ? 'codex detected — will launch interactively'
     : 'codex not on PATH — files will be written, install link shown'
 
-  const options: { value: HandoffChoice; label: string; hint?: string }[] = [
+  return [
     {
       value: 'claude-code',
       label: 'Hand off to Claude Code',
@@ -58,24 +59,17 @@ export function buildOptions(
       label: 'Hand off to Codex',
       hint: codexHint,
     },
+    {
+      value: 'agents-md',
+      label: 'Write AGENTS.md',
+      hint: 'works with Cursor, Windsurf, Cline, and more',
+    },
+    {
+      value: 'wizard',
+      label: 'Use the CipherStash Agent',
+      hint: 'our hosted setup wizard (runs `stash wizard`)',
+    },
   ]
-
-  if (mode === 'implement') {
-    options.push(
-      {
-        value: 'wizard',
-        label: 'Use the CipherStash Agent',
-        hint: 'our hosted setup wizard (runs `stash wizard`)',
-      },
-      {
-        value: 'agents-md',
-        label: 'Write AGENTS.md',
-        hint: 'works with Cursor, Windsurf, Cline, and more',
-      },
-    )
-  }
-
-  return options
 }
 
 export const howToProceedStep: HandoffStep = {

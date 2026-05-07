@@ -13,9 +13,9 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk'
 import auth from '@cipherstash/auth'
 import * as p from '@clack/prompts'
 import { GATEWAY_URL } from '../lib/constants.js'
+import { PACKAGE_MANAGERS } from '../lib/detect.js'
 import { formatAgentOutput } from '../lib/format.js'
 import type { WizardSession } from '../lib/types.js'
-import { PACKAGE_MANAGERS } from '../lib/detect.js'
 import { classifyError, formatWizardError } from './errors.js'
 import { scanPreToolUse } from './hooks.js'
 
@@ -47,7 +47,9 @@ export interface WizardAgentResult {
 }
 
 /** Package manager DLX runner prefixes (tools run via runner dlx). */
-const RUNNER_PREFIXES = Object.values(PACKAGE_MANAGERS).map((pm) => pm.execCommand)
+const RUNNER_PREFIXES = Object.values(PACKAGE_MANAGERS).map(
+  (pm) => pm.execCommand,
+)
 
 /** Tools allowed to run via any DLX runner. */
 const ALLOWED_DLX_TOOLS = ['drizzle-kit', 'tsc', 'stash db'] as const
@@ -87,7 +89,9 @@ function isAllowedDlxCommand(cmd: string): boolean {
       // Token-boundary match: the tool name must be the entire remainder, or
       // the tool name followed by a space (then args). A bare `startsWith`
       // would let `drizzle-kit-malicious` slip through `drizzle-kit`.
-      return ALLOWED_DLX_TOOLS.some((t) => rest === t || rest.startsWith(`${t} `))
+      return ALLOWED_DLX_TOOLS.some(
+        (t) => rest === t || rest.startsWith(`${t} `),
+      )
     }
   }
   return false

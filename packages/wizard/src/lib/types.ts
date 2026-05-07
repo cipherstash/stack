@@ -1,6 +1,21 @@
 export type Integration = 'drizzle' | 'supabase' | 'prisma' | 'generic'
 
-export type RunPhase = 'idle' | 'detecting' | 'gathering' | 'running' | 'completed' | 'error'
+/**
+ * Setup-lifecycle phase the wizard runs in. `implement` (default) drives
+ * the full setup flow; `plan` produces a reviewable `.cipherstash/plan.md`
+ * with no code mutations. The CLI plumbs this through `--mode plan` /
+ * `--mode implement` (or the `--plan` / `--implement` shortcuts), and the
+ * gateway's `Mode` type is the public-API mirror of this same union.
+ */
+export type WizardMode = 'plan' | 'implement'
+
+export type RunPhase =
+  | 'idle'
+  | 'detecting'
+  | 'gathering'
+  | 'running'
+  | 'completed'
+  | 'error'
 
 export interface WizardSession {
   // CLI arguments

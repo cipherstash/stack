@@ -20,7 +20,7 @@ import {
   detectPackageManager,
   detectTypeScript,
 } from './lib/detect.js'
-import { gatherContext } from './lib/gather.js'
+import { type WizardMode, gatherContext } from './lib/gather.js'
 import { maybeInstallSkills } from './lib/install-skills.js'
 import { runPostAgentSteps } from './lib/post-agent.js'
 import { checkPrerequisites } from './lib/prerequisites.js'
@@ -31,16 +31,24 @@ interface RunOptions {
   cwd: string
   debug: boolean
   cliVersion: string
+  /** Setup-lifecycle phase. `implement` (default) runs the original full
+   *  flow (column selection → agent edits code → post-agent install/push
+   *  /migrate → call-site scan). `plan` skips column selection and the
+   *  post-agent steps; the agent's deliverable is `.cipherstash/plan.md`. */
+  mode?: WizardMode
 }
 
 export async function run(options: RunOptions) {
-  p.intro('CipherStash Wizard')
+  const mode: WizardMode = options.mode ?? 'implement'
+  p.intro(
+    mode === 'plan' ? 'CipherStash Wizard — plan mode' : 'CipherStash Wizard',
+  )
 
   const startTime = Date.now()
   const changelog = new WizardChangelog(options.cwd)
   changelog.phase(
     'Session start',
-    `cwd: \`${options.cwd}\`\ncli version: \`${options.cliVersion}\``,
+    `cwd: \`${options.cwd}\`\ncli version: \`${options.cliVersion}\`\nmode: \`${mode}\``,
   )
 
   // Phase 1: Prerequisites
@@ -119,21 +127,32 @@ export async function run(options: RunOptions) {
     `\`${selectedIntegration}\` (detected: ${detectedIntegration ?? 'none'})`,
   )
 
-  // Phase 5: Gather context — DB introspection, column selection, schema files
-  // All done via CLI prompts BEFORE the agent starts. No AI tokens spent on discovery.
-  const gathered = await gatherContext(
-    options.cwd,
-    selectedIntegration,
+  // Phase 5: Gather context — DB introspection, column selection, schema
+  // files. All done via CLI prompts BEFORE the agent starts; no AI tokens
+  // spent on discovery. Plan mode skips column selection.
+  const gathered = await gatherContext({
+    cwd: options.cwd,
+    integration: selectedIntegration,
     packageManager,
-  )
+    mode,
+  })
 
   const encryptedTables = Array.from(
     new Set(gathered.selectedColumns.map((c) => c.tableName)),
   )
-  changelog.phase(
-    'Columns selected',
-    `${gathered.selectedColumns.length} column(s) across ${encryptedTables.length} table(s): ${encryptedTables.map((t) => `\`${t}\``).join(', ')}`,
-  )
+  if (mode === 'plan') {
+    changelog.phase(
+      'Plan-mode scope',
+      gathered.selectedColumns.length > 0
+        ? `${gathered.selectedColumns.length} pre-selected column(s); agent may revise.`
+        : 'No columns pre-selected; agent will propose scope from the schema.',
+    )
+  } else {
+    changelog.phase(
+      'Columns selected',
+      `${gathered.selectedColumns.length} column(s) across ${encryptedTables.length} table(s): ${encryptedTables.map((t) => `\`${t}\``).join(', ')}`,
+    )
+  }
 
   // Phase 6: Build session
   const session: WizardSession = {
@@ -157,15 +176,15 @@ export async function run(options: RunOptions) {
   try {
     trackAgentStarted(selectedIntegration)
 
-    // Run prompt fetch and agent SDK init concurrently — both are network/IO
-    // and they don't depend on each other.
+    // Network/IO operations that don't depend on each other run in parallel.
     const [agent, fetched] = await Promise.all([
       initializeAgent(session),
-      fetchIntegrationPrompt(
-        gathered,
-        options.cliVersion,
-        packageManager?.execCommand ?? 'npx',
-      ),
+      fetchIntegrationPrompt({
+        ctx: gathered,
+        cliVersion: options.cliVersion,
+        runner: packageManager?.execCommand ?? 'npx',
+        mode,
+      }),
     ])
 
     if (session.debug) {
@@ -176,60 +195,72 @@ export async function run(options: RunOptions) {
     const result = await agent.run(fetched.prompt)
 
     if (result.success) {
-      changelog.phase(
-        'Agent completed',
-        'Encryption client and schema wiring generated successfully.',
-      )
-
-      // Phase 8: Run deterministic post-agent steps (install, push, migrate)
-      await runPostAgentSteps({
-        cwd: options.cwd,
-        integration: selectedIntegration,
-        gathered,
-        packageManager,
-      })
-      changelog.phase(
-        'Post-agent steps complete',
-        'Package install, `db install`, `db push`, and migrations finished.',
-      )
-
-      // Phase 9: Report call sites that still need encryptModel/decryptModel
-      // wiring. Report-only — we don't mutate these files (CIP-2995).
-      try {
-        const matches = await scanCallSites(
+      if (mode === 'plan') {
+        changelog.phase(
+          'Plan drafted',
+          '`.cipherstash/plan.md` written. Review and run `stash impl` to execute.',
+        )
+        await finalize({
+          selectedIntegration,
+          cwd: options.cwd,
+          changelog,
+          startTime,
+          // Skills install is offered in plan mode too — same agent rules
+          // apply if the user re-engages an editor agent later to refine
+          // the plan.
+          outro:
+            'Plan drafted at `.cipherstash/plan.md`. Review it, then run `stash impl` to implement.',
+        })
+      } else {
+        // Kick the call-site scan off in the background; it's read-only
+        // and independent of the post-agent install/push/migrate, so
+        // overlapping the two cuts wall-time on large projects.
+        const scanPromise = scanCallSites(
           options.cwd,
           encryptedTables,
           selectedIntegration,
+        ).then(
+          (matches) => ({ ok: true as const, matches }),
+          (err: unknown) => ({
+            ok: false as const,
+            message: err instanceof Error ? err.message : String(err),
+          }),
         )
-        const report = renderCallSiteReport(matches)
-        p.note(report, 'Server action & page call sites')
-        changelog.phase('Call-site scan', report)
-      } catch (err) {
-        p.log.warn(
-          `Could not scan for call sites: ${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
 
-      // Phase 10: Offer to install Claude skills into .claude/skills (CIP-2992).
-      const installedSkills = await maybeInstallSkills(
-        options.cwd,
-        selectedIntegration,
-      )
-      if (installedSkills.length > 0) {
-        changelog.action(
-          `Installed ${installedSkills.length} Claude skill(s).`,
-          installedSkills.map((name) => `.claude/skills/${name}`),
+        changelog.phase(
+          'Agent completed',
+          'Encryption client and schema wiring generated successfully.',
         )
-      }
 
-      trackWizardCompleted(selectedIntegration, Date.now() - startTime)
-      const logPath = await changelog.flush()
-      if (logPath) {
-        p.log.info(`Wizard log written to ${logPath}`)
+        await runPostAgentSteps({
+          cwd: options.cwd,
+          integration: selectedIntegration,
+          gathered,
+          packageManager,
+        })
+        changelog.phase(
+          'Post-agent steps complete',
+          'Package install, `db install`, `db push`, and migrations finished.',
+        )
+
+        const scanResult = await scanPromise
+        if (scanResult.ok) {
+          const report = renderCallSiteReport(scanResult.matches)
+          p.note(report, 'Server action & page call sites')
+          changelog.phase('Call-site scan', report)
+        } else {
+          p.log.warn(`Could not scan for call sites: ${scanResult.message}`)
+        }
+
+        await finalize({
+          selectedIntegration,
+          cwd: options.cwd,
+          changelog,
+          startTime,
+          outro:
+            'Encryption is set up! Your data is now protected by CipherStash.',
+        })
       }
-      p.outro(
-        'Encryption is set up! Your data is now protected by CipherStash.',
-      )
     } else {
       trackWizardError(result.error ?? 'unknown', selectedIntegration)
       changelog.note(`Agent failed: ${result.error ?? 'unknown error'}`)
@@ -251,6 +282,37 @@ export async function run(options: RunOptions) {
   }
 
   await shutdownAnalytics()
+}
+
+/**
+ * Shared post-agent tail: skills install, completion telemetry, log flush,
+ * and outro. Both `plan` and `implement` flows fall through to this so
+ * future tweaks to skills/analytics/changelog stay in one place.
+ */
+async function finalize(opts: {
+  selectedIntegration: Integration
+  cwd: string
+  changelog: WizardChangelog
+  startTime: number
+  outro: string
+}): Promise<void> {
+  const installedSkills = await maybeInstallSkills(
+    opts.cwd,
+    opts.selectedIntegration,
+  )
+  if (installedSkills.length > 0) {
+    opts.changelog.action(
+      `Installed ${installedSkills.length} Claude skill(s).`,
+      installedSkills.map((name) => `.claude/skills/${name}`),
+    )
+  }
+
+  trackWizardCompleted(opts.selectedIntegration, Date.now() - opts.startTime)
+  const logPath = await opts.changelog.flush()
+  if (logPath) {
+    p.log.info(`Wizard log written to ${logPath}`)
+  }
+  p.outro(opts.outro)
 }
 
 async function selectIntegration(): Promise<Integration> {

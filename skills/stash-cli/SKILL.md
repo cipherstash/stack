@@ -14,7 +14,9 @@ Use this skill when:
 - Code imports `stash` (or legacy `@cipherstash/stack-forge`)
 - A `stash.config.ts` file exists or needs to be created
 - The user wants to install, configure, or manage the EQL extension in PostgreSQL
+- The user is using any of the setup-lifecycle commands: `init`, `plan`, `impl`, `status`
 - The user mentions "stash CLI", "stash db", "stack-forge", "stash-forge", "EQL install", or "encryption schema"
+- The user has a `.cipherstash/` directory with `context.json`, `plan.md`, or `setup-prompt.md`
 
 Do NOT trigger when:
 - The user is working with `@cipherstash/stack` (the runtime SDK) without needing database setup
@@ -27,7 +29,20 @@ Do NOT trigger when:
 
 Think of it like Prisma Migrate or Drizzle Kit: a dev-time tool that prepares your database while the runtime SDK handles queries.
 
-The binary is named `stash`. Top-level commands: `init`, `auth`, `db`, `schema`, `env`.
+The binary is named `stash`. Top-level commands: `init`, `plan`, `impl`, `status`, `auth`, `db`, `schema`, `env`.
+
+### Setup lifecycle (the recommended flow)
+
+The setup lifecycle is split across four explicit save-points. Each command can be run standalone, but the chain prompts make first-time setup a single flow:
+
+| Command | Owns | Ends with |
+|---------|------|-----------|
+| `stash init` | Auth, database, dep install, EQL install, encryption client scaffold, `.cipherstash/context.json` | Default-yes prompt → chains to `stash plan` |
+| `stash plan` | Drafts `.cipherstash/plan.md` via agent handoff (Claude Code or Codex) | Default-yes prompt → chains to `stash impl` |
+| `stash impl` | Executes the plan via agent handoff (any of four targets) | Outro pointing at `stash db status` to verify |
+| `stash status` | Disk-only "where am I?" map, runs in ms | — |
+
+Use `stash status` at any time to see which save-points are complete.
 
 ## Configuration
 
@@ -66,7 +81,7 @@ The primary interface is the `stash` package, run via `npx` (or your package man
 npx stash <command> [options]
 ```
 
-### `init` — Initialize CipherStash for your project
+### `init` — Scaffold a CipherStash project
 
 ```bash
 npx stash init
@@ -74,14 +89,77 @@ npx stash init --supabase
 npx stash init --drizzle
 ```
 
-Init runs nearly silently, with prompts only when it can't make a sensible default choice:
+Init is the **scaffold** save-point. It does mechanical setup only — no agent handoff. Six phases, prompts only when it can't make a sensible default:
 
 1. **Authenticate** — only prompts when not already logged in (otherwise logs `Using workspace X (region)` and proceeds).
-2. **Generate encryption client** — auto-detects your framework (Drizzle from `drizzle.config.*` / `drizzle-orm` / `drizzle-kit` in `package.json`; Supabase from the `DATABASE_URL` host) and silently writes a placeholder client to `./src/encryption/index.ts`. Only prompts you if a file already exists at that path.
-3. **Install dependencies** — single combined prompt for `@cipherstash/stack` and `stash`. Skipped entirely when both are already in `node_modules`.
-4. **Print next steps** — points you at `db install` and the optional `@cipherstash/wizard` for AI-guided setup.
+2. **Resolve database** — picks up `DATABASE_URL` from `.env`/`.env.local` or prompts for it. Verifies the connection.
+3. **Build schema** — auto-detects your framework (Drizzle from `drizzle.config.*` / `drizzle-orm` / `drizzle-kit` in `package.json`; Supabase from the `DATABASE_URL` host) and silently writes a placeholder client to `./src/encryption/index.ts`. Only prompts you if a file already exists at that path.
+4. **Install dependencies** — single combined prompt for `@cipherstash/stack` and `stash`. Skipped entirely when both are already in `node_modules`.
+5. **Install EQL** — runs the equivalent of `stash db install` against the resolved database (Drizzle migration, Supabase migration, or direct, per detection). Skipped if EQL is already installed.
+6. **Gather context** — detects available coding agents (Claude Code, Codex, Cursor, Windsurf, Cline) and writes `.cipherstash/context.json` with integration, package manager, schemas, env keys, and detected agents.
 
-The `--supabase` and `--drizzle` flags tailor the intro message and next-steps output. They don't drive prompts — file scaffolding uses the same auto-detection regardless.
+When init finishes, it prints a checkmark panel of completed phases and an interactive **chain prompt** (default-yes): *"Continue to `stash plan` now to draft your encryption plan?"* Yes auto-launches `stash plan`. No prints "Next: run `stash plan` to draft your encryption plan." Non-TTY (CI, pipes) skips the prompt and prints the hint.
+
+The `--supabase` and `--drizzle` flags tailor the intro message and EQL install variant. File scaffolding uses the same auto-detection regardless.
+
+#### Generated files
+
+| File | Purpose |
+|------|---------|
+| `./src/encryption/index.ts` | Placeholder encryption client — edit to declare encrypted columns (or let `stash plan`/`stash impl` do it for you). |
+| `.cipherstash/context.json` | Detected facts about the project (integration, pm, schemas, env keys, agents). Read by `plan`, `impl`, and `status`. Never hand-edit. |
+| `stash.config.ts` | Scaffolded if missing — points the CLI at `databaseUrl` and the encryption client. |
+
+### `plan` — Draft a reviewable encryption plan
+
+```bash
+npx stash plan
+```
+
+`plan` is the **draft for review** save-point. Pre-flights `.cipherstash/context.json` (errors with a "Run `stash init` first" pointer if missing). Hands off to a coding agent — all four targets are offered: Claude Code, Codex, AGENTS.md (for Cursor/Windsurf/Cline), and the CipherStash Agent (`@cipherstash/wizard`). Claude Code, Codex, and AGENTS.md consume the local mode-aware `setup-prompt.md`. The wizard receives `--mode plan` and forwards it to the CipherStash gateway, which returns a planning prompt; the wizard runtime skips its post-agent install/push/migrate steps when `mode === 'plan'`. Every target produces a valid plan-mode artifact at `.cipherstash/plan.md`.
+
+The agent produces `.cipherstash/plan.md` with a machine-readable header `<!-- cipherstash:plan-summary {...} -->` listing each table/column the user wants to protect and whether it's a `"new"` (additive — the column doesn't yet exist) or `"migrate"` (existing column with live data) lifecycle. The plan also covers prose detail: deploy ordering for migrate columns, project-specific risks (bundler exclusion, partial CipherStash state), the exact CLI sequence to execute when ready.
+
+Ends with a default-yes prompt: *"Continue to `stash impl` now?"* Yes auto-launches `stash impl`.
+
+To re-plan, delete `.cipherstash/plan.md` first — `stash plan` will warn (non-blocking) if a plan already exists, since the agent will be told to revise it rather than start fresh.
+
+### `impl` — Execute the plan
+
+```bash
+npx stash impl
+npx stash impl --continue-without-plan
+```
+
+`impl` is the **execute** save-point. Pre-flights `.cipherstash/context.json`. Behaviour branches on disk state:
+
+| State | Behaviour |
+|-------|-----------|
+| Plan exists, TTY | Parses the summary block. Renders a confirm panel: "3 columns across 2 tables · staged across 4 deploys (schema-add → backfill → cutover → drop)". Default-yes confirm. |
+| Plan exists, non-TTY | Logs and proceeds without confirm (CI/pipe-safe). |
+| No plan, TTY | Interactive `p.select`: "Draft a plan first (recommended)" / "Continue without a plan" / cancel. "Draft" delegates to `stash plan`. "Continue" goes through a security confirm (default-no) before implementing. |
+| No plan, `--continue-without-plan` | Skips the picker, runs the security confirm (still default-no), then implements. |
+| No plan, non-TTY, no flag | Errors out with "Run `stash plan` first, or pass `--continue-without-plan` to skip planning." Forces explicit intent in CI. |
+
+Once the user clears the gate, `impl` dispatches to a handoff target (Claude Code, Codex, AGENTS.md for Cursor/Windsurf/Cline, or `@cipherstash/wizard`) and the agent executes the plan: schema edits, migrations, `stash db push`, `stash encrypt {backfill,cutover,drop}` as appropriate.
+
+`--continue-without-plan` exists to support scripts and one-off implementations where planning isn't needed. It is **not** a way to bypass safety — the security confirm still fires when interactive.
+
+### `status` — Show project lifecycle state
+
+```bash
+npx stash status
+```
+
+`status` is the **map**. Disk-only — no auth, no DB connection, runs in milliseconds. Reads three files:
+
+- `.cipherstash/context.json` → was init run?
+- `.cipherstash/plan.md` → has a plan been drafted?
+- `.cipherstash/setup-prompt.md` → has the agent been engaged at least once?
+
+Renders a lifecycle panel with three stages (Initialized, Plan written, Implementation), each marked `✓` or `◯`. Prints a context-aware "Next:" line that always names exactly one command to run.
+
+Points at `stash db status` for EQL/database state and `stash encrypt status` for per-column migration phase — those are the deeper, network-touching status commands. Use them when you need to inspect what's actually installed in the database or where each column is in the encryption lifecycle.
 
 ### `auth login` — Authenticate with CipherStash
 
@@ -101,6 +179,8 @@ npx stash db install --supabase --direct
 npx stash db install --drizzle
 npx stash db install --force
 ```
+
+`stash init` runs `db install` automatically as part of its EQL install phase. Run `db install` directly when you skipped init, when you need flags init doesn't expose (`--migration`, `--migrations-dir`, `--exclude-operator-family`), or when re-installing/upgrading EQL on its own.
 
 `db install` is the single command that gets a project from zero to installed EQL:
 
@@ -358,7 +438,7 @@ npx stash schema build --supabase
 
 Connects to your database, lets you select tables and columns to encrypt, asks about searchable indexes, and generates a typed encryption client file. Reads `databaseUrl` from `stash.config.ts`.
 
-For AI-guided schema integration that edits your existing schema files in place, run `npx @cipherstash/wizard` instead — it's a separate package designed for that workflow.
+For AI-guided schema integration that edits your existing schema files in place, the recommended path is `npx stash plan` followed by `npx stash impl` — these add a planning save-point and can hand off to Claude Code, Codex, an AGENTS.md-driven editor, or the in-house `@cipherstash/wizard` package. `npx @cipherstash/wizard` standalone is still available for users who want to skip the plan checkpoint.
 
 ### `env` — Print production env vars for deployment
 
@@ -468,7 +548,7 @@ if (await installer.isInstalled()) {
 
 - Node.js >= 22
 - PostgreSQL database with sufficient permissions (see `checkPermissions()`)
-- A `stash.config.ts` file with a valid `databaseUrl` (or run `db install` to scaffold it)
+- A `stash.config.ts` file with a valid `databaseUrl` (or run `stash init` / `stash db install` to scaffold it)
 - Peer dependency: `@cipherstash/stack` >= 0.6.0
 
 ## Common issues
@@ -479,7 +559,7 @@ The database role needs `CREATE` privileges on the database and public schema, o
 
 ### Config not found
 
-`stash.config.ts` must be in the project root or a parent directory. The file must `export default defineConfig(...)`. Or run `npx stash db install` to scaffold it.
+`stash.config.ts` must be in the project root or a parent directory. The file must `export default defineConfig(...)`. The fastest fix is `npx stash init`, which scaffolds the config (and authenticates, installs deps, installs EQL, and writes `.cipherstash/context.json` in the same run). For a CLI-only setup, `npx stash db install` also scaffolds the config.
 
 ### Supabase environments
 
