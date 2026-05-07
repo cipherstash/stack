@@ -593,14 +593,16 @@ Adding a fresh encrypted column to a table you don't yet write to is the easy ca
 schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
 ```
 
-| Phase | What's true | What changes here |
-|---|---|---|
-| `schema-added` | The encrypted twin column (`<col>_encrypted`) exists in the DB and is registered in `eql_v2_configuration`. The plaintext column is unchanged; the application still writes only plaintext. | A schema migration adds the column. |
-| `dual-writing` | Application code now writes both `<col>` (plaintext, unchanged) **and** `<col>_encrypted` (encrypted via the encryption client) on every insert/update. Reads still come from the plaintext column. | Persistence-layer code change. The CLI cannot detect this state; the user (or agent) declares the transition. |
-| `backfilling` | A backfill job is encrypting the existing plaintext rows into `<col>_encrypted`, in chunks, resumably. New rows continue to land in both columns from dual-writing. | The backfill engine in `@cipherstash/migrate` (driven by `stash encrypt backfill`). |
-| `backfilled` | Every row has a non-null `<col>_encrypted` value. Plaintext column still authoritative for reads. | Backfill completes, records the transition. |
-| `cut-over` | A single transaction renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>` (`eql_v2.rename_encrypted_columns()`). Application reads of `<col>` now return decrypted ciphertext transparently — no app code change required for reads. | One DB transaction. |
-| `dropped` | `<col>_plaintext` is removed via a regular schema migration. The application stops writing to it (dual-writing logic is removed). | App-code change to remove dual-writes + a schema migration. |
+| Phase (`phase` col) | Event (`event` col) | What's true | What changes here |
+|---|---|---|---|
+| `schema-added` | `schema_added` | The encrypted twin column (`<col>_encrypted`) exists in the DB and is registered in `eql_v2_configuration`. The plaintext column is unchanged; the application still writes only plaintext. | A schema migration adds the column. |
+| `dual-writing` | `dual_writing` | Application code now writes both `<col>` (plaintext, unchanged) **and** `<col>_encrypted` (encrypted via the encryption client) on every insert/update. Reads still come from the plaintext column. | Persistence-layer code change. The CLI cannot detect this transition; the user (or agent) declares it via the prompt / `--confirm-dual-writes-deployed` flag on the first backfill run. |
+| `backfilling` | `backfill_started`, `backfill_checkpoint` | A backfill job is encrypting the existing plaintext rows into `<col>_encrypted`, in chunks, resumably. New rows continue to land in both columns from dual-writing. Each committed chunk inserts a `backfill_checkpoint` event with the cursor value and rows processed. | The backfill engine in `@cipherstash/migrate` (driven by `stash encrypt backfill`). |
+| `backfilled` | `backfilled` | Every row has a non-null `<col>_encrypted` value. Plaintext column still authoritative for reads. | Backfill completes, records the transition. |
+| `cut-over` | `cut_over` | A single transaction renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>` (`eql_v2.rename_encrypted_columns()`). Application reads of `<col>` now return decrypted ciphertext transparently — no app code change required for reads. | One DB transaction. |
+| `dropped` | `dropped` | `<col>_plaintext` is removed via a regular schema migration. The application stops writing to it (dual-writing logic is removed). | App-code change to remove dual-writes + a schema migration. |
+
+A failure at any phase is recorded as an `error` event without changing the effective phase, so a retry resumes from where it failed.
 
 ### State storage
 
@@ -608,9 +610,50 @@ Three sources of truth, kept separate on purpose:
 
 - **`.cipherstash/migrations.json`** (repo) — *intent*. Which columns the developer wants to encrypt and at which phase, code-reviewable.
 - **`eql_v2_configuration`** (DB, EQL-managed) — *EQL intent*. Which columns are encrypted and with which indexes; drives the CipherStash Proxy.
-- **`cipherstash.cs_migrations`** (DB, CipherStash-managed) — *runtime state*. Append-only event log: phase transitions, backfill cursors, error rows. Latest row per `(table, column)` is the current state.
+- **`cipherstash.cs_migrations`** (DB, CipherStash-managed) — *runtime state*. Append-only event log: phase transitions, backfill cursors, error rows. The current phase for a column is the `phase` value on the latest row (greatest `id`) for `(table_name, column_name)`.
 
 `stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing).
+
+#### `cipherstash.cs_migrations` schema
+
+Installed by `stash db install` (or, when the project uses Drizzle/Supabase, bundled into the EQL install migration so `drizzle-kit migrate` / `supabase db reset` rolls it out alongside EQL). The DDL is:
+
+```sql
+CREATE TABLE cipherstash.cs_migrations (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  table_name     text NOT NULL,
+  column_name    text NOT NULL,
+  event          text NOT NULL,   -- discrete event, snake_case
+  phase          text NOT NULL,   -- effective phase AFTER this event, kebab-case
+  cursor_value   text,            -- last processed PK on backfill_checkpoint / backfilled
+  rows_processed bigint,          -- cumulative rows encrypted (backfill events only)
+  rows_total     bigint,          -- target rows for this backfill (backfill events only)
+  details        jsonb,           -- per-event metadata: { chunkSize, resumed, message, force, ... }
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+```
+
+> Note the column naming: `event` is snake_case (e.g. `cut_over`, `backfill_checkpoint`); `phase` is kebab-case (e.g. `cut-over`, `backfilling`). There is no `status` or `state` column — when you need to read the current state, select the latest `phase` for the `(table_name, column_name)` pair.
+
+The valid `event` values are `schema_added`, `dual_writing`, `backfill_started`, `backfill_checkpoint`, `backfilled`, `cut_over`, `dropped`, `error`. The valid `phase` values are `schema-added`, `dual-writing`, `backfilling`, `backfilled`, `cut-over`, `dropped`.
+
+Inspect runtime state directly when needed:
+
+```sql
+-- current phase per column
+SELECT DISTINCT ON (table_name, column_name)
+  table_name, column_name, event, phase, rows_processed, rows_total, created_at
+FROM cipherstash.cs_migrations
+ORDER BY table_name, column_name, id DESC;
+
+-- full history for one column
+SELECT id, event, phase, cursor_value, rows_processed, details, created_at
+FROM cipherstash.cs_migrations
+WHERE table_name = 'users' AND column_name = 'email'
+ORDER BY id;
+```
+
+Programmatic access lives in `@cipherstash/migrate` — `appendEvent`, `progress`, and `latestByColumn` wrap the same queries with typed return values. Prefer those over hand-rolled SQL when scripting transitions; they're the same primitives the CLI uses.
 
 ### CLI surface
 
