@@ -5,7 +5,7 @@ description: Configure and use the `stash` package for project initialization, E
 
 # CipherStash CLI
 
-Configure and use `stash` for project initialization, EQL database setup, encryption schema management, and Supabase integration. Previously published as `@cipherstash/stack-forge`; the `stash-forge` binary is now consolidated under `npx stash`. The AI-powered wizard formerly bundled here lives in [`@cipherstash/wizard`](https://www.npmjs.com/package/@cipherstash/wizard).
+Configure and use `stash` for project initialization, EQL database setup, encryption schema management, and Supabase integration. Previously published as `@cipherstash/stack-forge`; the `stash-forge` binary is now consolidated under `stash`. The AI-powered wizard formerly bundled here lives in [`@cipherstash/wizard`](https://www.npmjs.com/package/@cipherstash/wizard).
 
 ## Trigger
 
@@ -38,11 +38,31 @@ The setup lifecycle is split across four explicit save-points. Each command can 
 | Command | Owns | Ends with |
 |---------|------|-----------|
 | `stash init` | Auth, database, dep install, EQL install, encryption client scaffold, `.cipherstash/context.json` | Default-yes prompt → chains to `stash plan` |
-| `stash plan` | Drafts `.cipherstash/plan.md` via agent handoff (Claude Code or Codex) | Default-yes prompt → chains to `stash impl` |
-| `stash impl` | Executes the plan via agent handoff (any of four targets) | Outro pointing at `stash db status` to verify |
-| `stash status` | Disk-only "where am I?" map, runs in ms | — |
+| `stash plan` | Drafts `.cipherstash/plan.md` via agent handoff. State-driven — auto-detects whether to plan an encryption rollout or an encryption cutover. | Default-yes prompt → chains to `stash impl` |
+| `stash impl` | Executes the plan via agent handoff. Refuses cutover-step plans without a recorded `dual_writing` event; prints the deploy-gate banner after a rollout-step run. | Deploy-gate banner (rollout) or "verify state" (cutover/new) |
+| `stash status` | The encryption-rollout quest log — per-column "where am I" map, runs in ms | — |
 
-Use `stash status` at any time to see which save-points are complete.
+### Rolling encryption out to production
+
+Two paths to a fully-encrypted column:
+
+- **New encrypted column** — declared encrypted from the start. Single deploy. Use the `stash plan` → `stash impl` chain straight through.
+- **Existing column with live data** — split across two passes around a hard production-deploy gate.
+
+For migrate columns, the flow is:
+
+1. **`stash plan`** detects that no `dual_writing` event is recorded and writes an encryption-rollout plan: schema-add for the encrypted twin, `stash db push` (pending), and the application-side dual-write code.
+2. **`stash impl`** executes that plan and stops with a deploy-gate banner. Encrypted values are not flowing yet — the dual-write code has to be running in production before backfill is safe.
+3. **You ship and deploy** the rollout PR.
+4. **`stash status`** confirms dual-writes are live.
+5. **`stash plan`** detects `dual_writing` and writes a separate cutover plan: backfill, schema rename + re-push, cutover, read-path switch, drop.
+6. **`stash impl`** executes the cutover.
+
+The split is invisible to the user — they just keep running `stash plan` and `stash impl`; the CLI knows where they are.
+
+For users without a deployed application to gate on (local dev, sandboxes, freshly-seeded test DBs), `stash plan --complete-rollout` produces a single end-to-end plan with no deploy gate. The flag prints a default-no confirm with a loud warning before generating; only safe when no production app writes to this database.
+
+Use `stash status` at any time to see which save-points are complete and what each rollout's next move is.
 
 ## Configuration
 
@@ -75,18 +95,20 @@ type StashConfig = {
 
 ## CLI Usage
 
-The primary interface is the `stash` package, run via `npx` (or your package manager's equivalent runner):
+The primary interface is the `stash` package. `stash init` installs it as a project dev dependency, so after init you invoke commands directly:
 
 ```bash
-npx stash <command> [options]
+stash <command> [options]
 ```
+
+Through your package manager (`pnpm exec`, `bun x`, `yarn`, or via `npm run`-style scripts), `stash` resolves to the project-local binary. **Before init has run** — for example when you're scaffolding the very first command — use your package manager's one-shot runner: `bunx stash init`, `pnpm dlx stash init`, `yarn dlx stash init`, or `npx stash init`. The CLI is package-manager-aware; pick whichever your project uses.
 
 ### `init` — Scaffold a CipherStash project
 
 ```bash
-npx stash init
-npx stash init --supabase
-npx stash init --drizzle
+stash init
+stash init --supabase
+stash init --drizzle
 ```
 
 Init is the **scaffold** save-point. It does mechanical setup only — no agent handoff. Six phases, prompts only when it can't make a sensible default:
@@ -113,58 +135,103 @@ The `--supabase` and `--drizzle` flags tailor the intro message and EQL install 
 ### `plan` — Draft a reviewable encryption plan
 
 ```bash
-npx stash plan
+stash plan
+stash plan --complete-rollout
 ```
 
-`plan` is the **draft for review** save-point. Pre-flights `.cipherstash/context.json` (errors with a "Run `stash init` first" pointer if missing). Hands off to a coding agent — all four targets are offered: Claude Code, Codex, AGENTS.md (for Cursor/Windsurf/Cline), and the CipherStash Agent (`@cipherstash/wizard`). Claude Code, Codex, and AGENTS.md consume the local mode-aware `setup-prompt.md`. The wizard receives `--mode plan` and forwards it to the CipherStash gateway, which returns a planning prompt; the wizard runtime skips its post-agent install/push/migrate steps when `mode === 'plan'`. Every target produces a valid plan-mode artifact at `.cipherstash/plan.md`.
+`plan` is the **draft for review** save-point. Pre-flights `.cipherstash/context.json` (errors with a "Run `stash init` first" pointer if missing). Hands off to a coding agent — all four targets are offered: Claude Code, Codex, AGENTS.md (for Cursor/Windsurf/Cline), and the CipherStash Agent (`@cipherstash/wizard`).
 
-The agent produces `.cipherstash/plan.md` with a machine-readable header `<!-- cipherstash:plan-summary {...} -->` listing each table/column the user wants to protect and whether it's a `"new"` (additive — the column doesn't yet exist) or `"migrate"` (existing column with live data) lifecycle. The plan also covers prose detail: deploy ordering for migrate columns, project-specific risks (bundler exclusion, partial CipherStash state), the exact CLI sequence to execute when ready.
+`plan` is **state-driven**. It reads `.cipherstash/migrations.json` and `cs_migrations` and dispatches to one of three plan templates:
+
+| Detected state | Plan written |
+|---|---|
+| Manifest empty, fresh project, or no `dual_writing` events recorded | **Encryption rollout** — schema-add, dual-write code, `stash db push` (pending). Ends at the deploy gate. |
+| At least one column has a `dual_writing` (or later) event recorded | **Encryption cutover** — backfill, schema rename + re-push, cutover, read-path switch, drop plaintext. Requires the rollout to already be deployed. |
+| `--complete-rollout` flag passed | **Complete rollout** — schema-add through drop, no deploy gate. Escape hatch for databases without a deployed application. Default-no confirm with a loud warning before generating. |
+
+The chosen template drives the agent's prompt body for the Claude Code, Codex, and AGENTS.md handoffs. The wizard handoff receives `--mode plan` on argv and reads the resolved step from `.cipherstash/context.json` (the `planStep` field). Every target produces a valid plan-mode artifact at `.cipherstash/plan.md`.
+
+The agent writes a machine-readable header `<!-- cipherstash:plan-summary { "step": ..., "columns": [...] } -->` at the top of the plan. `step` is `"rollout" | "cutover" | "complete"`; each column entry carries `path: "new" | "migrate"`. `stash impl` parses this header to render a confirmation panel and to enforce the deploy gate.
 
 Ends with a default-yes prompt: *"Continue to `stash impl` now?"* Yes auto-launches `stash impl`.
 
 To re-plan, delete `.cipherstash/plan.md` first — `stash plan` will warn (non-blocking) if a plan already exists, since the agent will be told to revise it rather than start fresh.
 
+#### Why the rollout/cutover split
+
+There is no atomic way to replace a populated plaintext column with an encrypted one without corrupting data. The rollout phase deploys the *capability* to write encrypted values (the encrypted twin column and the application-side dual-write code). The cutover phase deploys the *transition* (backfill historical rows, then rename swap so reads decrypt). Backfill is only safe once dual-writes are running in production, because any row written during the backfill window must be picked up by both columns — otherwise it lands in plaintext only and creates silent migration drift. The split makes that pre-condition explicit.
+
 ### `impl` — Execute the plan
 
 ```bash
-npx stash impl
-npx stash impl --continue-without-plan
+stash impl
+stash impl --continue-without-plan
 ```
 
 `impl` is the **execute** save-point. Pre-flights `.cipherstash/context.json`. Behaviour branches on disk state:
 
 | State | Behaviour |
 |-------|-----------|
-| Plan exists, TTY | Parses the summary block. Renders a confirm panel: "3 columns across 2 tables · staged across 4 deploys (schema-add → backfill → cutover → drop)". Default-yes confirm. |
-| Plan exists, non-TTY | Logs and proceeds without confirm (CI/pipe-safe). |
+| Plan exists, TTY | Parses the summary block. Enforces the deploy gate (see below). Renders a confirm panel describing the plan scope. Default-yes confirm. |
+| Plan exists, non-TTY | Logs and proceeds without confirm (CI/pipe-safe). The deploy-gate check still runs. |
 | No plan, TTY | Interactive `p.select`: "Draft a plan first (recommended)" / "Continue without a plan" / cancel. "Draft" delegates to `stash plan`. "Continue" goes through a security confirm (default-no) before implementing. |
 | No plan, `--continue-without-plan` | Skips the picker, runs the security confirm (still default-no), then implements. |
 | No plan, non-TTY, no flag | Errors out with "Run `stash plan` first, or pass `--continue-without-plan` to skip planning." Forces explicit intent in CI. |
 
 Once the user clears the gate, `impl` dispatches to a handoff target (Claude Code, Codex, AGENTS.md for Cursor/Windsurf/Cline, or `@cipherstash/wizard`) and the agent executes the plan: schema edits, migrations, `stash db push`, `stash encrypt {backfill,cutover,drop}` as appropriate.
 
-`--continue-without-plan` exists to support scripts and one-off implementations where planning isn't needed. It is **not** a way to bypass safety — the security confirm still fires when interactive.
+#### Deploy-gate enforcement
 
-### `status` — Show project lifecycle state
+For plans with `step: "cutover"`, `impl` queries `cs_migrations` for every column listed in the plan-summary block and verifies that each one has a `dual_writing` (or later) event recorded. If any are missing, `impl` refuses to proceed and points the user at re-running `stash plan` after their rollout PR is deployed. The error names the specific columns that are not yet recorded.
+
+This is the safety net for the case where someone runs cutover work locally before the dual-write code is actually live in production. The encrypt commands themselves also gate on the same event before doing anything destructive, but `impl` checks early so the confirm prompt never appears for an unsafe plan.
+
+#### Outro
+
+After a successful handoff:
+
+- **`step: "rollout"`** — prints a deploy-gate banner explaining that encrypted values are not yet flowing because the dual-write code is not deployed, with the next-step sequence (deploy → `stash status` → `stash plan`).
+- **`step: "cutover"` or `step: "complete"`** — prints a generic "verify state" outro pointing at `stash status`.
+- **No plan / no summary** — same generic outro.
+
+`--continue-without-plan` exists to support scripts and one-off implementations where planning isn't needed. It is **not** a way to bypass safety — the security confirm still fires when interactive, and the cutover-step deploy-gate check applies regardless.
+
+### `status` — The encryption-rollout quest log
 
 ```bash
-npx stash status
+stash status
+stash status --quest        # force the fancy output anywhere
+stash status --plain        # force the plain-text fallback anywhere
+stash status --json         # structured output for scripts
 ```
 
-`status` is the **map**. Disk-only — no auth, no DB connection, runs in milliseconds. Reads three files:
+`status` is the **map**. Reads `.cipherstash/context.json` (was init run?), `.cipherstash/migrations.json` (which columns are tracked?), and — best-effort — `cs_migrations` plus `eql_v2_configuration` for live per-column state. DB connectivity is optional; when missing, the command falls back to a manifest-only view and surfaces a footer note.
 
-- `.cipherstash/context.json` → was init run?
-- `.cipherstash/plan.md` → has a plan been drafted?
-- `.cipherstash/setup-prompt.md` → has the agent been engaged at least once?
+Renders one **quest** per tracked column. Each quest carries:
 
-Renders a lifecycle panel with three stages (Initialized, Plan written, Implementation), each marked `✓` or `◯`. Prints a context-aware "Next:" line that always names exactly one command to run.
+- A title (`Encrypt users.email` for migrate columns; `Add encrypted column orders.note` for new columns).
+- A progress bar and an `N/M objectives` count.
+- A list of objectives with `✓` for done, `▸` for the active "you are here" objective, and `🔒` for locked.
+- A one-line "Next move" hint naming the concrete CLI invocation when relevant (`stash encrypt backfill --table users --column email`, etc.).
 
-Points at `stash db status` for EQL/database state and `stash encrypt status` for per-column migration phase — those are the deeper, network-touching status commands. Use them when you need to inspect what's actually installed in the database or where each column is in the encryption lifecycle.
+Quests separate into **active** (something to do next) and **completed** (🏆 line per column).
+
+Output mode:
+
+- **TTY by default** — the quest-log shape with emoji and progress bars.
+- **Non-TTY by default** — a plain-text fallback with the same content (no emoji, bracketed status markers `[x]` / `[>]` / `[ ]`). Designed for CI logs, pipes, and agents reading the output.
+- **`--quest`** forces the fancy shape anywhere; **`--plain`** forces the plain shape anywhere; **`--json`** emits a structured JSON document.
+
+Use the JSON form for scripts; it has a stable shape (`active`, `completed`, per-quest `objectives`, `progress`, `nextMove`) that does not break without a major version bump.
+
+Run `status` after every transition during a rollout. It is the canonical "where am I?" surface; agents working through the rollout should re-read it as they go rather than tracking state mentally.
+
+For the deeper, raw views that touch only the database, use `stash db status` (EQL installation state) and `stash encrypt status` (per-column migration phase, EQL state, backfill progress with drift detection).
 
 ### `auth login` — Authenticate with CipherStash
 
 ```bash
-npx stash auth login
+stash auth login
 ```
 
 Opens a browser-based device code flow and saves a token to `~/.cipherstash/auth.json`. Database-touching commands check for this file before running.
@@ -172,12 +239,12 @@ Opens a browser-based device code flow and saves a token to `~/.cipherstash/auth
 ### `db install` — Configure the database and install EQL extensions
 
 ```bash
-npx stash db install
-npx stash db install --supabase
-npx stash db install --supabase --migration
-npx stash db install --supabase --direct
-npx stash db install --drizzle
-npx stash db install --force
+stash db install
+stash db install --supabase
+stash db install --supabase --migration
+stash db install --supabase --direct
+stash db install --drizzle
+stash db install --force
 ```
 
 `stash init` runs `db install` automatically as part of its EQL install phase. Run `db install` directly when you skipped init, when you need flags init doesn't expose (`--migration`, `--migrations-dir`, `--exclude-operator-family`), or when re-installing/upgrading EQL on its own.
@@ -228,10 +295,10 @@ Direct-push installs (`--supabase --direct`) do **not** survive `supabase db res
 ### `db upgrade` — Upgrade EQL extensions
 
 ```bash
-npx stash db upgrade
-npx stash db upgrade --dry-run
-npx stash db upgrade --supabase
-npx stash db upgrade --latest
+stash db upgrade
+stash db upgrade --dry-run
+stash db upgrade --supabase
+stash db upgrade --latest
 ```
 
 **Flags:**
@@ -248,9 +315,9 @@ The EQL install SQL is idempotent and safe to re-run. The command checks the cur
 ### `db validate` — Validate encryption schema
 
 ```bash
-npx stash db validate
-npx stash db validate --supabase
-npx stash db validate --exclude-operator-family
+stash db validate
+stash db validate --supabase
+stash db validate --exclude-operator-family
 ```
 
 **Flags:**
@@ -279,8 +346,8 @@ Synchronises the CipherStash configuration in `eql_v2_configuration` with what y
 - For SDK users running the column-encryption lifecycle (`stash encrypt {backfill,cutover,drop}`) — `cutover` reads pending columns from EQL config to know what to rename.
 
 ```bash
-npx stash db push
-npx stash db push --dry-run
+stash db push
+stash db push --dry-run
 ```
 
 **Flags:**
@@ -302,8 +369,8 @@ When pushing, the CLI:
 
 | Situation | Command |
 |-----------|---------|
-| Adding a brand-new encrypted column (no rename) | `npx stash db activate` |
-| Cutting over from a `<col>_encrypted` twin (path 3 lifecycle) | `npx stash encrypt cutover --table T --column C` |
+| Adding a brand-new encrypted column (no rename) | `stash db activate` |
+| Cutting over from a `<col>_encrypted` twin (path 3 lifecycle) | `stash encrypt cutover --table T --column C` |
 
 **SDK to EQL type mapping:**
 
@@ -322,17 +389,17 @@ When pushing, the CLI:
 Runs `eql_v2.migrate_config()` followed by `eql_v2.activate_config()` inside a single transaction, advancing any `pending` row to `active` (and marking the prior `active` as `inactive`). No physical column renames.
 
 ```bash
-npx stash db activate
+stash db activate
 ```
 
-Use after `npx stash db push` when the new config purely adds columns or changes index ops without renaming any column. For path 3 (existing populated column → encrypted), use `npx stash encrypt cutover` instead — it does the same activation plus the physical rename.
+Use after `stash db push` when the new config purely adds columns or changes index ops without renaming any column. For path 3 (existing populated column → encrypted), use `stash encrypt cutover` instead — it does the same activation plus the physical rename.
 
 Errors out with a clear message when there is no pending configuration to activate.
 
 ### `db status` — Show EQL installation status
 
 ```bash
-npx stash db status
+stash db status
 ```
 
 Reports:
@@ -343,7 +410,7 @@ Reports:
 ### `db test-connection` — Test database connectivity
 
 ```bash
-npx stash db test-connection
+stash db test-connection
 ```
 
 Verifies the database URL in your config is valid and the database is reachable. Reports the database name, connected role, and PostgreSQL server version. Useful for debugging connection issues before running `db install`.
@@ -351,24 +418,24 @@ Verifies the database URL in your config is valid and the database is reachable.
 ### `db migrate` — Run pending encrypt config migrations
 
 ```bash
-npx stash db migrate
+stash db migrate
 ```
 
 Not yet implemented — placeholder for future encrypt-config migration tooling.
 
-### `encrypt` — Migrate plaintext columns to encrypted, in phases
+### `encrypt` — Drive the encryption-cutover work for a column
 
-The `encrypt` group orchestrates the column-encryption lifecycle:
-`schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`.
-It drives the `@cipherstash/migrate` library, which records every transition in a `cipherstash.cs_migrations` table (installed by `stash db install`) and reads the user's intent from `.cipherstash/migrations.json`. See the `stash-encryption` skill for the lifecycle model itself; this section documents the CLI surface.
+The `encrypt` group is the cutover-step toolset: it runs the database-side work that takes an existing plaintext column the rest of the way to encrypted, after the encryption-rollout PR is deployed and dual-writes are live in production. The internal event log uses `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped` as machine-readable phase names; the user-facing story is the rollout/cutover model documented in the `stash-encryption` skill.
 
-The examples below use `npx stash`. Substitute `bunx`, `pnpm dlx`, or `yarn dlx` (or run `stash` directly when it's installed as a project dev dep — `stash init` sets that up).
+It drives the `@cipherstash/migrate` library, which records every transition in a `cipherstash.cs_migrations` table (installed by `stash db install`) and reads the user's intent from `.cipherstash/migrations.json`. This section documents the CLI surface.
+
+The examples below show the bare `stash` form, which works after `stash init` adds the CLI as a project dev dep. See the "CLI Usage" section above for how to invoke it through your package manager before that.
 
 #### `encrypt status` — Show per-column phase, EQL state, and backfill progress
 
 ```bash
-npx stash encrypt status
-npx stash encrypt status --table users
+stash encrypt status
+stash encrypt status --table users
 ```
 
 Reads three sources in parallel — the `migrations.json` manifest (intent), the live `eql_v2_configuration` row (EQL state), and the latest `cs_migrations` event per column (runtime state) — and renders a table per column with phase, indexes, progress, and any drift between intent and observed state.
@@ -376,7 +443,7 @@ Reads three sources in parallel — the `migrations.json` manifest (intent), the
 #### `encrypt plan` — Diff intent vs. observed state
 
 ```bash
-npx stash encrypt plan
+stash encrypt plan
 ```
 
 Like `status`, but explicitly lists what would change to reconcile observed state with `.cipherstash/migrations.json`. Read-only — does not mutate the DB or the manifest.
@@ -384,10 +451,10 @@ Like `status`, but explicitly lists what would change to reconcile observed stat
 #### `encrypt backfill` — Resumably encrypt plaintext into the encrypted column
 
 ```bash
-npx stash encrypt backfill --table users --column email
-npx stash encrypt backfill --table users --column email --chunk-size 5000
-npx stash encrypt backfill --table users --column email --confirm-dual-writes-deployed
-npx stash encrypt backfill --table users --column email --force
+stash encrypt backfill --table users --column email
+stash encrypt backfill --table users --column email --chunk-size 5000
+stash encrypt backfill --table users --column email --confirm-dual-writes-deployed
+stash encrypt backfill --table users --column email --force
 ```
 
 Chunked, resumable, idempotent backfill. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels` from `@cipherstash/stack`, and writes a single `UPDATE ... FROM (VALUES ...)` per chunk inside a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running picks up from the last checkpoint. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs safe — they converge.
@@ -407,7 +474,7 @@ Flags:
 #### `encrypt cutover` — Rename swap encrypted → primary column AND promote pending → active
 
 ```bash
-npx stash encrypt cutover --table users --column email
+stash encrypt cutover --table users --column email
 ```
 
 **Precondition:** the column must be in the `backfilled` phase per `cs_migrations`, AND a pending EQL configuration must exist (registered via `stash db push` against a schema where the column is declared under its final name without the `_encrypted` suffix).
@@ -424,7 +491,7 @@ If a Proxy URL is configured (via `--proxy-url` or `CIPHERSTASH_PROXY_URL`), it 
 #### `encrypt drop` — Generate a migration that removes the plaintext column
 
 ```bash
-npx stash encrypt drop --table users --column email
+stash encrypt drop --table users --column email
 ```
 
 For columns in the `cut_over` phase. Detects the user's migration tooling (Drizzle today; Prisma + raw-SQL planned) and emits a migration file containing `ALTER TABLE <table> DROP COLUMN <col>_plaintext;`. Does not apply the migration — the user reviews and runs their normal migrate command. Records the `dropped` event only after a follow-up `encrypt status` confirms the column is gone from `information_schema.columns`.
@@ -432,19 +499,19 @@ For columns in the `cut_over` phase. Detects the user's migration tooling (Drizz
 ### `schema build` — Generate an encryption client from your database
 
 ```bash
-npx stash schema build
-npx stash schema build --supabase
+stash schema build
+stash schema build --supabase
 ```
 
 Connects to your database, lets you select tables and columns to encrypt, asks about searchable indexes, and generates a typed encryption client file. Reads `databaseUrl` from `stash.config.ts`.
 
-For AI-guided schema integration that edits your existing schema files in place, the recommended path is `npx stash plan` followed by `npx stash impl` — these add a planning save-point and can hand off to Claude Code, Codex, an AGENTS.md-driven editor, or the in-house `@cipherstash/wizard` package. `npx @cipherstash/wizard` standalone is still available for users who want to skip the plan checkpoint.
+For AI-guided schema integration that edits your existing schema files in place, the recommended path is `stash plan` followed by `stash impl` — these add a planning save-point and can hand off to Claude Code, Codex, an AGENTS.md-driven editor, or the in-house `@cipherstash/wizard` package. `npx @cipherstash/wizard` standalone is still available for users who want to skip the plan checkpoint.
 
 ### `env` — Print production env vars for deployment
 
 ```bash
-npx stash env
-npx stash env --write
+stash env
+stash env --write
 ```
 
 Experimental. Prints the environment variables (`CS_*`) you need to deploy a CipherStash-backed app. With `--write`, writes them into a `.env.production` file.
@@ -559,7 +626,7 @@ The database role needs `CREATE` privileges on the database and public schema, o
 
 ### Config not found
 
-`stash.config.ts` must be in the project root or a parent directory. The file must `export default defineConfig(...)`. The fastest fix is `npx stash init`, which scaffolds the config (and authenticates, installs deps, installs EQL, and writes `.cipherstash/context.json` in the same run). For a CLI-only setup, `npx stash db install` also scaffolds the config.
+`stash.config.ts` must be in the project root or a parent directory. The file must `export default defineConfig(...)`. The fastest fix is `stash init`, which scaffolds the config (and authenticates, installs deps, installs EQL, and writes `.cipherstash/context.json` in the same run). For a CLI-only setup, `stash db install` also scaffolds the config.
 
 ### Supabase environments
 

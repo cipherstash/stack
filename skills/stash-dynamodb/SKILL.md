@@ -33,6 +33,18 @@ CipherStash encrypts each attribute into two DynamoDB attributes:
 
 Non-encrypted attributes pass through unchanged. On decryption, the `__source` and `__hmac` attributes are recombined back into the original attribute name with the plaintext value.
 
+## Rolling Encryption Out to Production
+
+DynamoDB encryption is **single-deploy**. There is no rollout/cutover split — unlike the Postgres path, DynamoDB has no row-level rename swap and no shared-state proxy. The application owns every write, so adding encryption is an application-side change that ships in one PR:
+
+1. Declare the encrypted schema (see Setup below).
+2. Wrap your DynamoDB client with `encryptedDynamoDB` (or call `encryptItem` / `decryptItem` directly at write/read sites).
+3. Ship the change.
+
+For tables with **existing populated items**, the `__source` and `__hmac` attributes are added by the next write that touches each item. If you need every existing item encrypted at once (e.g. because a query uses `email__hmac` and would miss legacy items), run a one-shot script that reads every item, calls `encryptItem`, and writes it back. Idempotent: re-running an already-encrypted item is a no-op as long as the schema hasn't changed.
+
+> **Where am I?** Run `stash status` (or `bunx`/`pnpm dlx`/`yarn dlx` per your runner) for a project-wide view across both Postgres and DynamoDB integrations. DynamoDB columns surface in the quest log as already-complete since there is no staged lifecycle to track.
+
 ## Setup
 
 ### 1. Define Encrypted Schema

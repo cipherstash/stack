@@ -334,9 +334,13 @@ if (!decrypted.failure) {
 
 ## Migrating an Existing Column to Encrypted
 
-The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints. Use the **column lifecycle** documented in the `stash-encryption` skill (`schema-added → dual-writing → backfilling → cut-over → dropped`), driven by the `stash encrypt` CLI commands.
+The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
-This section walks the Drizzle-specific shape of each phase. The CLI commands themselves are documented in the `stash-cli` skill.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code + `db push`) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
+
+> **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
+
+> **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
 ### Starting state
 
@@ -352,7 +356,11 @@ export const users = pgTable('users', {
 
 And an `INSERT INTO users (email) VALUES (...)` somewhere in your app code.
 
-### Phase 1 — Schema-add: declare the encrypted twin
+### Step 1 — Encryption rollout (one PR, one deploy)
+
+Everything below lands in one PR. The deploy of that PR is the gate.
+
+#### Schema-add: declare the encrypted twin
 
 Add an `email_encrypted` column **alongside** `email`. Crucially, the encrypted column is **nullable** at creation — never `.notNull()`, because rows that already exist will have NULL in this column until backfill catches them.
 
@@ -391,13 +399,11 @@ Register the new encryption config with EQL:
 stash db push
 ```
 
-If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in phase 4.
+If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
 
-After this phase, rows still have `email_encrypted = NULL`. App reads still come from `email`. Nothing has broken.
+#### Dual-writing: write to both columns from app code
 
-### Phase 2 — Dual-writing: write to both columns from app code
-
-Find every code path that writes to `users.email` (insert, update, upsert, seeders, fixtures) and update it to encrypt and also write to `email_encrypted`:
+Find **every** code path that writes to `users.email` and update it to encrypt and also write to `email_encrypted`:
 
 ```typescript
 // Before
@@ -415,11 +421,28 @@ await db.insert(users).values({
 
 Same shape for UPDATE: if your app updates `email`, it must also re-encrypt and update `email_encrypted` in the same statement.
 
-**Ship this code change to production.** Verify in the DB that new rows arrive with `email_encrypted IS NOT NULL` (run a SELECT or check via your observability). Only proceed once you're confident every write path is dual-writing.
+**The dual-write rule.** Every persistence path that mutates this row writes both columns, in the same transaction, on every code branch. Insert sites, update sites, upserts, ON CONFLICT clauses, seeders, fixtures, CSV importers, admin actions, background jobs, third-party webhook handlers — all of them. A single missed branch means rows inserted in production after deploy land in plaintext only, and backfill won't catch them. Grep for every site that touches `users.email` before declaring this step done.
 
-### Phase 3 — Backfill: encrypt the historical rows
+After this phase, existing rows still have `email_encrypted = NULL`. App reads still come from `email`. Nothing has broken.
 
-Once dual-writes are live in production:
+### ⛔ Deploy gate
+
+Stop. Ship this PR to production. The deployed environment must be running the dual-write code before any cutover-step work is safe.
+
+When the deploy is live:
+
+```bash
+stash status        # verify the rollout is recorded
+stash plan          # detects dual-writes are live; drafts the cutover plan
+```
+
+`stash impl` will refuse to run a cutover-step plan if `cs_migrations` has no `dual_writing` event for `users.email`. That refusal is the safety net for cases where someone runs cutover work locally before the code is actually live.
+
+### Step 2 — Encryption cutover
+
+Once dual-writes are live in production and `cs_migrations` records `dual_writing`:
+
+#### Backfill: encrypt the historical rows
 
 ```bash
 stash encrypt backfill --table users --column email
@@ -431,7 +454,7 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-### Phase 4 — Cutover: rename swap and activate
+#### Cutover: rename swap and activate
 
 First, update the Drizzle schema to the post-cutover shape — switch `email` to use `encryptedType` and remove the `email_encrypted` column. Then re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
 
@@ -449,7 +472,7 @@ stash encrypt cutover --table users --column email
 
 Inside one transaction it: (1) renames `email` → `email_plaintext` and `email_encrypted` → `email`, (2) promotes the pending EQL config to `active` (and the prior active to `inactive`), (3) records a `cut_over` event in `cs_migrations`.
 
-The Drizzle schema you just edited now matches the physical DB shape — `email` is the encrypted column. Keep the temporary `email_plaintext: text('email_plaintext')` declaration in the schema file until phase 5 drops it:
+The Drizzle schema you just edited now matches the physical DB shape — `email` is the encrypted column. Keep the temporary `email_plaintext: text('email_plaintext')` declaration in the schema file until the drop step:
 
 ```typescript
 // src/db/schema.ts (post-cutover)
@@ -459,7 +482,7 @@ export const users = pgTable('users', {
     freeTextSearch: true,
     equality: true,
   }),
-  email_plaintext: text('email_plaintext'),  // temporary; dropped in phase 5
+  email_plaintext: text('email_plaintext'),  // temporary; dropped next
 })
 ```
 
@@ -481,7 +504,7 @@ const email = decrypted.data.email
 
 For queries that filter on `email`, switch to the encrypted operators from `createEncryptionOperators` — `eq`, `like`, `gte`, etc. (See `## Query Encrypted Data` above.)
 
-### Phase 5 — Drop: remove the plaintext column
+#### Drop: remove the plaintext column
 
 Once read paths are updated and you're confident reads are decrypting correctly, generate the drop migration:
 
@@ -507,11 +530,12 @@ Also remove the dual-write code from app paths — `email_plaintext` is gone; on
 ### Inspecting progress at any time
 
 ```bash
-stash encrypt status   # shows current phase, EQL state, backfill progress
-stash encrypt plan     # diffs your migrations.json intent vs observed state
+stash status         # quest log: where each rollout is, what to do next
+stash encrypt status # raw per-column phase, EQL state, backfill progress
+stash encrypt plan   # diffs your migrations.json intent vs observed state
 ```
 
-Both are read-only.
+All three are read-only.
 
 ## Complete Operator Reference
 
