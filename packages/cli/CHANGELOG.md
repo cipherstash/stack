@@ -1,5 +1,17 @@
 # @cipherstash/cli
 
+## 0.14.0
+
+### Minor Changes
+
+- 1a97d40: Add plan-mode support to the wizard so `stash plan` can hand off to the CipherStash Agent. The wizard now accepts `--mode <plan|implement>` (default `implement` for back-compat). In plan mode it skips the column-selection TUI, forwards `mode: 'plan'` to the gateway (which returns a planning prompt whose deliverable is `.cipherstash/plan.md`), and skips the post-agent install/push/migrate and call-site-scan steps. Implement mode is unchanged.
+
+  `stash plan`'s handoff picker now offers all four targets (Claude Code, Codex, AGENTS.md, CipherStash Agent) — the wizard is no longer gated out of plan mode. `stash impl`'s picker is unchanged.
+
+### Patch Changes
+
+- 440879b: feat(cli): pass `--allow-dangerously-skip-permissions` when `stash init` launches Claude Code, so the user can opt in to skip-permissions mode mid-session without relaunching. Codex and Wizard handoffs are unchanged.
+
 ## 0.13.0
 
 ### Minor Changes
