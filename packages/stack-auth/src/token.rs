@@ -6,6 +6,7 @@ use url::Url;
 
 use crate::{http_client, AuthError, SecretToken};
 
+#[cfg(not(target_arch = "wasm32"))]
 impl stack_profile::ProfileData for Token {
     const FILENAME: &'static str = "auth.json";
     const MODE: Option<u32> = Some(0o600);
@@ -168,6 +169,7 @@ impl Token {
     ///
     /// This is safe because we already possess the token — we just need to read
     /// the claims it contains.
+    #[cfg(not(target_arch = "wasm32"))]
     fn decode_claims(&self) -> Result<Claims, AuthError> {
         use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
         use std::collections::HashSet;
@@ -186,6 +188,16 @@ impl Token {
         decode(token_str, &dummy_key, &validation)
             .map(|data| data.claims)
             .map_err(|e| AuthError::InvalidToken(format!("failed to decode JWT claims: {e}")))
+    }
+
+    /// Wasm32 path: decode the JWT payload by splitting + base64 + JSON. We
+    /// don't need the cryptographic backing of `jsonwebtoken` (which pulls
+    /// `ring`) because we only ever read claims from a token we already hold;
+    /// signature validation is `insecure_disable_signature_validation()` on
+    /// native too.
+    #[cfg(target_arch = "wasm32")]
+    fn decode_claims(&self) -> Result<Claims, AuthError> {
+        crate::decode_jwt_payload_wasm(self.access_token.as_str())
     }
 
     /// Exchange a refresh token for a new [`Token`] via the `/oauth/token`

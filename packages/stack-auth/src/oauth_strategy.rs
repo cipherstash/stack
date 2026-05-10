@@ -1,6 +1,7 @@
 use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 use tracing::warn;
 
+#[cfg(not(target_arch = "wasm32"))]
 use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
@@ -61,6 +62,7 @@ impl OAuthStrategy {
     /// The token must have `region` and `client_id` set (as saved by
     /// [`DeviceCodeStrategy`](crate::DeviceCodeStrategy) or a prior
     /// `OAuthStrategy`). The store is used for persisting refreshed tokens.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_profile(store: ProfileStore) -> OAuthStrategyBuilder {
         OAuthStrategyBuilder {
             source: OAuthTokenSource::Store(store),
@@ -89,6 +91,7 @@ enum OAuthTokenSource {
         token: Token,
     },
     /// A token loaded from a persistent store.
+    #[cfg(not(target_arch = "wasm32"))]
     Store(ProfileStore),
 }
 
@@ -153,6 +156,7 @@ impl OAuthStrategyBuilder {
                     inner: AutoRefresh::with_token(refresher, token),
                 })
             }
+            #[cfg(not(target_arch = "wasm32"))]
             OAuthTokenSource::Store(store) => {
                 let ws_store = store.current_workspace_store()?;
                 let token: Token = ws_store.load_profile()?;

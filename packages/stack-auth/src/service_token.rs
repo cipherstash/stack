@@ -144,37 +144,44 @@ impl ServiceToken {
     /// NOTE: This does not verify the token signature or validate any claims,
     /// it only decodes the claims if the token is a well-formed JWT.
     fn try_decode(secret: &SecretToken) -> Result<DecodedClaims, String> {
-        use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
-        use std::collections::HashSet;
-
-        let token_str = secret.as_str();
-        let header =
-            decode_header(token_str).map_err(|e| format!("failed to decode JWT header: {e}"))?;
-
-        let dummy_key = DecodingKey::from_secret(&[]);
-        let mut validation = Validation::new(header.alg);
-        validation.validate_exp = false;
-        validation.validate_aud = false;
-        validation.required_spec_claims = HashSet::new();
-        validation.insecure_disable_signature_validation();
-
-        let data: jsonwebtoken::TokenData<cts_common::claims::Claims> =
-            decode(token_str, &dummy_key, &validation)
-                .map_err(|e| format!("failed to decode JWT claims: {e}"))?;
-
-        let issuer: Url = data
-            .claims
+        let claims = decode_claims(secret.as_str())?;
+        let issuer: Url = claims
             .iss
             .parse()
             .map_err(|e| format!("iss claim is not a valid URL: {e}"))?;
 
         Ok(DecodedClaims {
-            subject: data.claims.sub,
-            workspace: data.claims.workspace,
+            subject: claims.sub,
+            workspace: claims.workspace,
             issuer,
-            services: data.claims.services,
+            services: claims.services,
         })
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> {
+    use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
+    use std::collections::HashSet;
+
+    let header =
+        decode_header(token_str).map_err(|e| format!("failed to decode JWT header: {e}"))?;
+
+    let dummy_key = DecodingKey::from_secret(&[]);
+    let mut validation = Validation::new(header.alg);
+    validation.validate_exp = false;
+    validation.validate_aud = false;
+    validation.required_spec_claims = HashSet::new();
+    validation.insecure_disable_signature_validation();
+
+    decode(token_str, &dummy_key, &validation)
+        .map(|data| data.claims)
+        .map_err(|e| format!("failed to decode JWT claims: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> {
+    crate::decode_jwt_payload_wasm(token_str).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

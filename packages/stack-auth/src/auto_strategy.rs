@@ -2,9 +2,12 @@ use cts_common::Crn;
 
 use crate::access_key_strategy::AccessKeyStrategy;
 use crate::oauth_strategy::OAuthStrategy;
+#[cfg(not(target_arch = "wasm32"))]
 use stack_profile::ProfileStore;
 
-use crate::{AuthError, AuthStrategy, ServiceToken, Token};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::Token;
+use crate::{AuthError, AuthStrategy, ServiceToken};
 
 /// An [`AuthStrategy`] that automatically detects available credentials
 /// and delegates to the appropriate inner strategy.
@@ -93,7 +96,9 @@ impl AutoStrategy {
     /// Core detection logic, separated for testability.
     ///
     /// Takes pre-resolved inputs rather than reading from the environment
-    /// or filesystem directly.
+    /// or filesystem directly. On wasm32 the profile-store fallback is
+    /// unreachable (no filesystem) — callers must supply an access key.
+    #[cfg(not(target_arch = "wasm32"))]
     fn detect_inner(
         access_key: Option<String>,
         crn: Option<Crn>,
@@ -122,6 +127,19 @@ impl AutoStrategy {
         }
 
         // 3. No credentials found
+        Err(AuthError::NotAuthenticated)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn detect_inner(access_key: Option<String>, crn: Option<Crn>) -> Result<Self, AuthError> {
+        if let Some(access_key) = access_key {
+            let region = crn
+                .map(|c| c.region)
+                .ok_or(AuthError::MissingWorkspaceCrn)?;
+            let key: crate::AccessKey = access_key.parse()?;
+            let strategy = AccessKeyStrategy::new(region, key)?;
+            return Ok(Self::AccessKey(strategy));
+        }
         Err(AuthError::NotAuthenticated)
     }
 }
@@ -183,12 +201,18 @@ impl AutoStrategyBuilder {
                 .transpose()?,
         };
 
-        // Resolve errors (e.g. missing profile directory) are intentionally
-        // swallowed here so that env-var-only setups don't need a profile dir.
-        // If no credentials are found at all, NotAuthenticated is returned.
-        let store = ProfileStore::resolve(None).ok();
-
-        AutoStrategy::detect_inner(access_key, crn, store)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Resolve errors (e.g. missing profile directory) are intentionally
+            // swallowed here so that env-var-only setups don't need a profile dir.
+            // If no credentials are found at all, NotAuthenticated is returned.
+            let store = ProfileStore::resolve(None).ok();
+            AutoStrategy::detect_inner(access_key, crn, store)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            AutoStrategy::detect_inner(access_key, crn)
+        }
     }
 }
 

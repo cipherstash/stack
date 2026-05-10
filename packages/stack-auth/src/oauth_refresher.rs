@@ -1,5 +1,6 @@
 use url::Url;
 
+#[cfg(not(target_arch = "wasm32"))]
 use stack_profile::ProfileStore;
 
 use crate::refresher::Refresher;
@@ -7,9 +8,11 @@ use crate::{AuthError, SecretToken, Token};
 
 /// Implements [`Refresher`] using OAuth refresh tokens.
 ///
-/// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk.
-/// When the store is `None`, tokens are cached in memory only.
+/// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk
+/// (native targets only). When the store is `None` — or always on wasm32 —
+/// tokens are cached in memory only.
 pub(crate) struct OAuthRefresher {
+    #[cfg(not(target_arch = "wasm32"))]
     store: Option<ProfileStore>,
     base_url: Url,
     client_id: String,
@@ -18,6 +21,7 @@ pub(crate) struct OAuthRefresher {
 }
 
 impl OAuthRefresher {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(
         store: Option<ProfileStore>,
         base_url: Url,
@@ -33,14 +37,31 @@ impl OAuthRefresher {
             device_instance_id,
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn new(
+        _store: Option<()>,
+        base_url: Url,
+        client_id: impl Into<String>,
+        region: impl Into<String>,
+        device_instance_id: Option<String>,
+    ) -> Self {
+        Self {
+            base_url,
+            client_id: client_id.into(),
+            region: region.into(),
+            device_instance_id,
+        }
+    }
 }
 
 impl Refresher for OAuthRefresher {
     type Credential = SecretToken;
 
-    fn save(&self, token: &Token) {
+    fn save(&self, _token: &Token) {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(store) = &self.store {
-            match store.save_profile(token) {
+            match store.save_profile(_token) {
                 Ok(()) => tracing::debug!("refreshed token saved to disk"),
                 Err(err) => tracing::warn!(%err, "failed to save refreshed token to disk"),
             }

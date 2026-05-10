@@ -24,7 +24,7 @@
 
 use std::convert::Infallible;
 use std::future::Future;
-#[cfg(not(any(test, feature = "test-utils")))]
+#[cfg(all(not(any(test, feature = "test-utils")), not(target_arch = "wasm32")))]
 use std::time::Duration;
 
 use vitaminc::protected::OpaqueDebug;
@@ -35,13 +35,20 @@ mod access_key_refresher;
 mod access_key_strategy;
 mod auto_refresh;
 mod auto_strategy;
-mod device_client;
-mod device_code;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
 mod service_token;
 mod token;
+
+// Filesystem-backed device identity and the interactive device-code flow are
+// native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
+// and the device-code flow launches a browser via `open::that`. Wasm consumers
+// use `OAuthStrategy::with_token` or `AccessKeyStrategy`.
+#[cfg(not(target_arch = "wasm32"))]
+mod device_client;
+#[cfg(not(target_arch = "wasm32"))]
+mod device_code;
 
 #[cfg(any(test, feature = "test-utils"))]
 mod static_token_strategy;
@@ -49,16 +56,19 @@ mod static_token_strategy;
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
-pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use device_client::{bind_client_device, DeviceClientError};
+#[cfg(not(target_arch = "wasm32"))]
+pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDeviceCode};
 
 // Re-exports from stack-profile for backward compatibility.
+#[cfg(not(target_arch = "wasm32"))]
 pub use stack_profile::DeviceIdentity;
 
 /// A strategy for obtaining access tokens.
@@ -137,9 +147,19 @@ pub use stack_profile::DeviceIdentity;
 ///     Blocking -- Err --> ErrExpired["TokenExpired"]
 /// ```
 #[cfg_attr(doc, aquamarine::aquamarine)]
+#[cfg(not(target_arch = "wasm32"))]
 pub trait AuthStrategy: Send {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     fn get_token(self) -> impl Future<Output = Result<ServiceToken, AuthError>> + Send;
+}
+
+/// Wasm32 variant of [`AuthStrategy`] — drops the `Send` bounds because
+/// reqwest's fetch-backed futures aren't `Send` and edge runtimes are
+/// single-threaded.
+#[cfg(target_arch = "wasm32")]
+pub trait AuthStrategy {
+    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
+    fn get_token(self) -> impl Future<Output = Result<ServiceToken, AuthError>>;
 }
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
@@ -216,6 +236,7 @@ pub enum AuthError {
     #[error("Server error: {0}")]
     Server(String),
     /// A token store operation failed.
+    #[cfg(not(target_arch = "wasm32"))]
     #[error("Token store error: {0}")]
     Store(#[from] stack_profile::ProfileError),
 }
@@ -247,27 +268,58 @@ pub(crate) fn ensure_trailing_slash(mut url: url::Url) -> url::Url {
     url
 }
 
+/// Decode a JWT payload by splitting on `.`, base64-decoding the middle
+/// segment, and deserializing the JSON. Used on wasm32 to avoid `jsonwebtoken`
+/// (which pulls `ring`). Signatures are not verified — same posture as the
+/// native path, which calls `insecure_disable_signature_validation()`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn decode_jwt_payload_wasm<C>(token: &str) -> Result<C, AuthError>
+where
+    C: serde::de::DeserializeOwned,
+{
+    use base64::Engine;
+    let segments: Vec<&str> = token.split('.').collect();
+    if segments.len() != 3 {
+        return Err(AuthError::InvalidToken(
+            "JWT must have three segments".to_string(),
+        ));
+    }
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(segments[1])
+        .map_err(|e| AuthError::InvalidToken(format!("base64 decode failed: {e}")))?;
+    serde_json::from_slice(&payload)
+        .map_err(|e| AuthError::InvalidToken(format!("failed to decode JWT claims: {e}")))
+}
+
 /// Create a [`reqwest::Client`] with standard timeouts.
 ///
 /// In test builds, timeouts are omitted so that `tokio::test(start_paused = true)`
 /// does not auto-advance time past the connect timeout before the mock server
-/// can respond.
+/// can respond. On wasm32, reqwest's fetch backend doesn't expose
+/// `connect_timeout`/`pool_*` — the host runtime owns those concerns.
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn http_client() -> reqwest::Client {
-    #[cfg(any(test, feature = "test-utils"))]
-    {
-        reqwest::Client::builder()
-            .pool_max_idle_per_host(10)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    }
-    #[cfg(not(any(test, feature = "test-utils")))]
-    {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .pool_idle_timeout(Duration::from_secs(5))
-            .pool_max_idle_per_host(10)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
-    }
+    reqwest::Client::builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+#[cfg(all(not(any(test, feature = "test-utils")), not(target_arch = "wasm32")))]
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(10)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+#[cfg(all(not(any(test, feature = "test-utils")), target_arch = "wasm32"))]
+pub(crate) fn http_client() -> reqwest::Client {
+    // Wasm32 reqwest uses the host's `fetch`; timeouts and pooling are owned
+    // by the runtime, so `ClientBuilder` doesn't expose them here.
+    reqwest::Client::builder()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
 }
