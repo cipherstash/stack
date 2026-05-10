@@ -96,12 +96,12 @@ Changes:
 - `.cargo/config.toml` — wasm32 rustflag `--cfg getrandom_backend="wasm_js"` (required by `getrandom >= 0.3` to select the browser/Deno backend; pulled in via `vitaminc-random` → `rand 0.10`)
 - Per-crate wasm32 target deps for `getrandom` (`js` feature for v0.2, `wasm_js` for v0.4) so feature unification activates the right backend
 - `cts-common` wasm32 target dep on `uuid = { features = ["js"] }` so `Uuid::new_v4()` can source entropy
-- Workspace `vitaminc` dep dropped the default `encrypt` feature — it pulls `aws-lc-rs` (C deps that don't compile on wasm32). Server crates (`cts-domain`, `cts-web`) opt back in explicitly.
-- `cts-common` gained an `aead` feature (default-on) gating the `IntoAad for WorkspaceId` impl. Wasm consumers use `default-features = false`.
+- Workspace `vitaminc` deps temporarily point at the [in-flight branch](https://github.com/cipherstash/vitaminc/pull/163) that adds wasm32 support to `vitaminc-encrypt` (cfg-based dual backend: aws-lc-rs on native, RustCrypto on wasm32). Switch back to a crates.io version once that PR merges and release-plz cuts a release.
 
 Native build verified via `mise run lint`. `cts-common` unit tests: 138/138 passing.
 
 ## Known follow-ups before Layer 2
 
+- Bump the workspace `vitaminc` deps from the git branch back to a crates.io version once the [vitaminc PR](https://github.com/cipherstash/vitaminc/pull/163) lands and a release is published.
 - The current verification is `cargo check`, not full build. A real artifact build (e.g. `wasm-pack` or `cargo build --target wasm32-unknown-unknown --release`) will surface any link-time issues.
 - `cllw-ore` requires `--no-default-features` because the default `postgres-types` feature has C deps. Consider flipping the default off in a future major version (already noted in its Cargo.toml).
