@@ -22,7 +22,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
       
-      - uses: pnpm/action-setup@v6.0.3
+      - uses: pnpm/action-setup@v6.0.5
         name: Install pnpm
         with:
           run_install: false
@@ -44,7 +44,7 @@ jobs:
 
       - name: Publish to npm
         id: changesets
-        uses: changesets/action@v1
+        uses: changesets/action@v1.7.0
         with:
           publish: pnpm run release
           commitMode: 'github-api'
