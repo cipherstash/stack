@@ -1,4 +1,10 @@
-import { type ColumnQuest, type Objective, type QuestLog, isComplete } from './quest.js'
+import { PLAN_REL_PATH } from '../init/lib/setup-prompt.js'
+import {
+  type ColumnQuest,
+  type Objective,
+  type QuestLog,
+  isComplete,
+} from './quest.js'
 
 const PROGRESS_BAR_WIDTH = 6
 
@@ -26,12 +32,21 @@ export function renderQuestLogTTY(log: QuestLog, cli: string): string {
   const lines: string[] = ['⚔️   CipherStash Quest Log', '']
 
   if (log.active.length === 0 && log.completed.length === 0) {
-    lines.push(
-      '  No active quests yet — your encryption rollout has not begun.',
-      '',
-      `  First move: run \`${cli} plan\` to draft a rollout for the`,
-      '  columns you want to protect.',
-    )
+    if (log.planExists) {
+      lines.push(
+        '  Plan drafted — your encryption rollout is ready to execute.',
+        '',
+        `  Plan: \`${PLAN_REL_PATH}\``,
+        `  Next move: run \`${cli} impl\` to execute the plan.`,
+      )
+    } else {
+      lines.push(
+        '  No active quests yet — your encryption rollout has not begun.',
+        '',
+        `  First move: run \`${cli} plan\` to draft a rollout for the`,
+        '  columns you want to protect.',
+      )
+    }
     return lines.join('\n')
   }
 
@@ -41,7 +56,9 @@ export function renderQuestLogTTY(log: QuestLog, cli: string): string {
   }
 
   for (const quest of log.completed) {
-    lines.push(`  🏆 COMPLETED  ·  ${quest.table}.${quest.column} — fully encrypted`)
+    lines.push(
+      `  🏆 COMPLETED  ·  ${quest.table}.${quest.column} — fully encrypted`,
+    )
   }
 
   if (!log.observedFromDb) {
@@ -118,10 +135,18 @@ export function renderQuestLogPlain(log: QuestLog, cli: string): string {
   const lines: string[] = ['CipherStash status — encryption rollout', '']
 
   if (log.active.length === 0 && log.completed.length === 0) {
-    lines.push(
-      '  No active quests.',
-      `  First move: run \`${cli} plan\` to draft a rollout.`,
-    )
+    if (log.planExists) {
+      lines.push(
+        '  No active rollouts — plan is drafted but not executed.',
+        `  Plan: ${PLAN_REL_PATH}`,
+        `  Next move: run \`${cli} impl\` to execute the plan.`,
+      )
+    } else {
+      lines.push(
+        '  No active quests.',
+        `  First move: run \`${cli} plan\` to draft a rollout.`,
+      )
+    }
     return lines.join('\n')
   }
 
@@ -189,6 +214,7 @@ export function renderQuestLogJSON(log: QuestLog): string {
   return `${JSON.stringify(
     {
       initialized: log.initialized,
+      planExists: log.planExists,
       observedFromDb: log.observedFromDb,
       active: log.active.map(serializeQuest),
       completed: log.completed.map(serializeQuest),

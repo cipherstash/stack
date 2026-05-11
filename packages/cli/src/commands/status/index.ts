@@ -196,6 +196,7 @@ async function buildLog(
     : { observedFromDb: false, observations: [] }
   return buildQuestLog({
     initialized: project.initialized,
+    planExists: project.planExists,
     observedFromDb,
     observations,
     cli,
@@ -205,12 +206,16 @@ async function buildLog(
 /**
  * One-line prompt for what to do next, used as the outro of both rendering
  * paths. Encodes the same routing the legacy `nextAction` helper used to:
- * "haven't init'd → init", "no quests → plan", "active quest → impl or
- * follow the per-quest hint", "everything done → relax".
+ * "haven't init'd → init", "no plan → plan", "plan drafted but no manifest
+ * entries → impl", "active quest → follow the per-quest hint",
+ * "everything done → relax".
  */
 export function nextMoveHint(log: QuestLog, cli: string): string {
   if (!log.initialized) return `Run \`${cli} init\` to begin.`
   if (log.active.length === 0 && log.completed.length === 0) {
+    if (log.planExists) {
+      return `Plan drafted at \`${PLAN_REL_PATH}\` — run \`${cli} impl\` to execute it.`
+    }
     return `Run \`${cli} plan\` to draft your encryption rollout.`
   }
   if (log.active.length === 0) {
