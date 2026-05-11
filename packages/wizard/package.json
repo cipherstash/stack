@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/wizard",
-	"version": "0.1.3",
+	"version": "0.2.0",
 	"description": "AI-powered encryption setup for CipherStash. Reads your codebase, picks columns to encrypt, and wires everything up.",
 	"license": "MIT",
 	"author": "CipherStash <hello@cipherstash.com>",
