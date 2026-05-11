@@ -12,8 +12,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-vitaminc-protected = { version = "0.1.0-pre4.2", path = "../protected" }
-vitaminc-random = { version = "0.1.0-pre4.2", path = "../random" }
+vitaminc-protected = { version = "0.2.0-pre", path = "../protected" }
+vitaminc-random = { version = "0.2.0-pre", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }

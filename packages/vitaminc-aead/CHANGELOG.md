@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 
+### Features
+
+- add IntoAad impls for [u8; N] and &[u8; N]
+
+### Testing
+
+- assert None IntoAad produces PAE zero-piece encoding
+
+
 ### Documentation
 
 - update doctests to show vitaminc::* import paths
