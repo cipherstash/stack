@@ -22,7 +22,7 @@ cipherstash-client 0.34 already migrated every consumer-facing type (`ZeroKMS<C,
 
 #### 2a — Delete the dead infrastructure [DONE]
 
-Shipped in PR #1942. -2042 lines from cipherstash-client.
+Shipped in PR #1943. -2042 lines from cipherstash-client.
 
 | Removed | Why |
 |---|---|
@@ -125,7 +125,7 @@ Native build verified via `mise run lint`. `cts-common` unit tests: 138/138 pass
 
 ## Layer 2a — what shipped
 
-Deleted from cipherstash-client (PR #1942):
+Deleted from cipherstash-client (PR #1943):
 
 - `credentials/auto_refresh.rs`
 - `credentials/user_credentials/` (auth0, okta, user_token, mod)
