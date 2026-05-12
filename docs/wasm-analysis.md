@@ -30,25 +30,51 @@ Shipped in PR #1944. Both crates now build for `wasm32-unknown-unknown`. The was
 
 Deliberately not on wasm: `device_code` flow (uses `open::that`), `stack-profile` (filesystem), `cts_client`, `management`, `config::source`, `config::paths`, `config::docker_env_file`. Per-target dep splits in `stack-auth` and `cipherstash-client` work around workspace `tokio = { features = ["full"] }` (pulls `mio`, which doesn't compile to wasm32) by giving each affected crate a target-conditional minimal tokio.
 
-### Layer 3.5 — `stack-auth-wasm` bindings crate [IN PROGRESS]
+### Layer 3.5 — `@cipherstash/auth` becomes wasm-capable [IN PROGRESS]
 
-This PR. Adds `packages/stack-auth/wasm` as a sibling to the existing napi crate. Scoped to `AccessKeyStrategy` (M2M auth) — `getToken(): Promise<TokenResult>` returning `{ token, subject, workspaceId, issuer, services }`. Errors carry a `.code` enum matching the napi contract. OAuth-based strategies (`OAuthStrategy`, `AutoStrategy`, device-code) are deferred to a follow-up: federation and token-pinning for browser/edge contexts need design work that hasn't happened yet.
+Two PRs.
+
+**PR #1952 — `stack-auth-wasm` bindings crate [MERGED].** Adds `packages/stack-auth/wasm` as a sibling to the existing napi crate. Scoped to `AccessKeyStrategy` (M2M auth) — `getToken(): Promise<TokenResult>` returning `{ token, subject, workspaceId, issuer, services }`. Errors carry a `.code` enum matching the napi contract. OAuth-based strategies (`OAuthStrategy`, `AutoStrategy`, device-code) are deferred to a follow-up: federation and token-pinning for browser/edge contexts need design work that hasn't happened yet.
 
 Error-code mapping is hoisted onto `AuthError::error_code()` in the parent `stack-auth` crate so this PR and the existing napi sibling can share one source of truth (napi adoption is a non-functional cleanup for a follow-up).
 
 Build targets: `wasm-pack build --target bundler` (primary — Supabase Edge, Vite, Webpack) and `--target deno` (vanilla `deno run` only — Supabase Edge Runtime sandbox blocks `fetch('file://…')` so the deno target's auto-fetch of its `.wasm` sibling fails there; the bundler output uses `import * as wasm from "./*.wasm"` which the Edge Runtime resolves natively). Tests run via `wasm-pack test --node` — pure-logic coverage (JWT claim extraction, error-code mapping, constructor smoke). HTTP semantics stay covered by the existing native `stack-auth/node/__tests__` vitest suite. CI gains the wasm32 cargo-check + wasm-pack test step alongside the existing nextest step in `test-stack-auth.yml`.
 
-Rationale for this intermediate layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain and error-enrichment pattern here on a tiny crate (~205 LOC, 6 tests) means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting work in the same PR.
-
-End-to-end validated against a live Supabase Edge Function returning a real `TokenResult` from `AccessKeyStrategy.getToken()` against `ap-southeast-2.aws`. The validation surfaced three runtime issues fixed in this PR:
+End-to-end validated against a live Supabase Edge Function returning a real `TokenResult` from `AccessKeyStrategy.getToken()` against `ap-southeast-2.aws`. The validation surfaced three runtime issues fixed in #1952:
 
 - `stack-auth` called `std::time::SystemTime::now()` in `token.rs` and `access_key_refresher.rs` for JWT-expiry checks. The stdlib's `wasm32-unknown-unknown` `time` module is a panicking stub. Swapped to `web_time::{SystemTime, UNIX_EPOCH}` (re-exports `std::time` on native, polyfills via JS time APIs on wasm — no behavior change off wasm).
 - Rust panics on wasm surface as opaque `RuntimeError: unreachable` from bytecode offsets. Added `console_error_panic_hook` and route panics to `console.error` via a `#[wasm_bindgen(start)]` module-init function.
 - `wasm-pack --target deno` doesn't work in the Supabase Edge Runtime — its sandbox blocks `fetch('file://…')`, which is how the deno target loads its sibling `.wasm`. Made `--target bundler` the primary build (uses `import * as wasm from "./*.wasm"`, which Edge resolves natively); deno target retained for vanilla `deno run`.
 
-### Layer 4 — `protect-wasm` bindings
+**PR #1953 — npm unification.** Stacks on #1952. Single `@cipherstash/auth` npm package serves all runtimes via `exports` conditions:
 
-`protect-ffi` is napi-only. Add a sibling crate `protect-wasm` in the protect-ffi repo using `wasm-bindgen` + `wasm-bindgen-futures` + `serde-wasm-bindgen`. Port the 12 `#[neon::export]` functions in `protect-ffi/crates/protect-ffi/src/lib.rs:728-1148`. Build with `wasm-pack` (target deno or web depending on the packaging story).
+| Runtime | Condition | Loads | Types |
+|---|---|---|---|
+| Node | `node` | `./index.js` (napi loader → per-platform `.node`) | `./index.d.ts` (full surface, includes device-code + profile-store) |
+| Deno / Edge | `deno` | `./wasm/stack_auth_wasm.js` (wasm-bindgen bundler output) | `./wasm-types.d.ts` (hand-typed overlay) |
+| Cloudflare Workers | `worker` | wasm | wasm-types |
+| Browsers (via bundlers) | `browser` | wasm | wasm-types |
+| Anything else | `default` | wasm | wasm-types |
+
+`wasm-types.d.ts` is committed hand-written (refines `Promise<any>` → `Promise<TokenResult>`, hides wasm-streams type leakage from reqwest's fetch backend). The wasm-bindgen-generated artifact ships inside `wasm/`, built by a new CI job in `publish-auth-npm.yml`. Verified locally: `node --conditions=deno` routes the import to the wasm entry; `node` resolves to the existing napi loader.
+
+User outcome: `npm install @cipherstash/auth` works everywhere. Node consumers retain the full TS surface (device-code + profile-store still typed). Deno / edge / browser consumers see only what the wasm runtime actually exposes.
+
+Rationale for this layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain, conditional-exports pattern, and Token-input deserialization shape here on a small crate means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting in the same PR.
+
+### Layer 4 — Wasm bindings for the encrypt surface
+
+> **Likely superseded** — see "Medium-term direction" below. Skipping straight to Layer 5-via-stack-encrypt is on the table.
+
+Original scope: add a sibling `protect-wasm` crate in the `protectjs-ffi` repo (next to the existing `crates/protect-ffi`) using `wasm-bindgen` + `wasm-bindgen-futures` + `serde-wasm-bindgen`. Port the 9 `#[neon::export]` async functions (`new_client`, `ensure_keyset`, `encrypt`, `encrypt_bulk`, `encrypt_query`, `encrypt_query_bulk`, `decrypt`, `decrypt_bulk`, `decrypt_bulk_fallible`). Build with `wasm-pack --target bundler`. Then unify under `@cipherstash/protect-ffi` using the same conditional-exports pattern Layer 3.5 establishes.
+
+Prereqs that don't apply to stack-auth's case:
+
+- Bump `protectjs-ffi` from `cipherstash-client = "=0.34.1-alpha.2"` / `vitaminc = "=0.1.0-pre4.2"` to the post-Layer-3 versions (cipherstash-client 0.34.1-alpha.4+, vitaminc 0.2.0-pre+). Expect API drift to fix.
+- Gate `stack-profile` use in `new_client` / `ensure_keyset` — wasm has no filesystem. Pattern: accept the client key inline as a parameter (mirroring how `OAuthStrategy.withToken` replaces `fromProfile`).
+- Target-split `tokio = "full"` (pulls `mio`, doesn't compile to wasm32) — same workaround stack-auth/cipherstash-client got in PR #1944.
+
+Estimated wasm bundle: 1.5–2.5MB unoptimised, ~800KB–1.2MB optimised. Well under the 10MB Supabase Edge cap.
 
 ### Layer 5 — Validation in a Supabase Edge Function
 
@@ -58,6 +84,29 @@ Deploy a real edge function that calls `protect-wasm`, encrypt/decrypt against Z
 - Cold-start latency
 - Round-trip correctness against a server-side native client
 - Cross-backend ciphertext compatibility — encrypt on wasm (RustCrypto), decrypt on native (aws-lc-rs), and vice versa. This is the cross-backend compat test deferred from earlier.
+
+## Medium-term direction — `stack-encrypt` replaces `cipherstash-client`
+
+Layer 4 as scoped above ports the existing `protect-ffi` neon bindings to wasm. That works, but it's strictly a tactical move — the underlying `cipherstash-client` crate is the long-pole heavy dependency (full reqwest stack, EQL types, config sources, etc.), and `protect-ffi` is a thin async wrapper over it.
+
+The cleaner long-term shape mirrors what we just did with auth:
+
+1. **`stack-encrypt`** — a new slim crate inside cipherstash-suite, in the spirit of `stack-auth`. Pulls only what's needed for encrypt/decrypt/query against ZeroKMS. Drops the config sources, the EQL type machinery, the device-identity persistence. Backed by `stack-auth` for the credential half, by `vitaminc-encrypt` for crypto, and a minimal HTTP client for the ZeroKMS protocol calls.
+
+2. **`stack-encrypt/node` (napi)** — replaces today's `protectjs-ffi` neon bindings. Single-crate-per-binding pattern is consistent with `stack-auth/node`.
+
+3. **`stack-encrypt/wasm` (wasm-bindgen)** — replaces what Layer 4 would have been.
+
+4. **Single `@cipherstash/protect` npm package** under the same conditional-exports pattern Layer 3.5 establishes.
+
+This is a meaningfully larger piece of work than Layer 4. It involves designing the slim public API of `stack-encrypt`, porting the protect-ffi semantics, migrating downstream consumers (Drizzle / Prisma / TS-ORM integrations that currently consume `@cipherstash/protect-ffi`). It's not on the critical path for Layer 5 — a working `protect-wasm` (Layer 4 as originally scoped) can prove out Supabase Edge first, and `stack-encrypt` follows on a longer arc.
+
+The decision point is: **does Layer 5 need to ship sooner, or do we wait and skip Layer 4 entirely?**
+
+- *Layer 4 first*: faster path to a live Supabase Edge demo (weeks). Builds throwaway-ish bindings on top of `cipherstash-client`. Need to keep them maintained until `stack-encrypt` lands.
+- *Skip to stack-encrypt*: cleaner, but Layer 5 slips by however long `stack-encrypt` takes (months). Less duplication of binding work.
+
+Pending decision. The rest of this doc assumes Layer 4 happens for now, but every section below `## Status` should be read as conditional.
 
 ## Supabase Edge runtime specifics
 
@@ -74,8 +123,8 @@ Deploy a real edge function that calls `protect-wasm`, encrypt/decrypt against Z
 - [x] Layer 1 — pure crates verified on wasm32 (PR #1942)
 - [x] Layer 2 — legacy credentials cleanup (PR #1943)
 - [x] Layer 3 — `stack-auth` + `cipherstash-client` compile on wasm32 (PR #1944)
-- [ ] Layer 3.5 — `stack-auth-wasm` bindings crate (this PR)
-- [ ] Layer 4 — `protect-wasm` bindings (in protect-ffi repo)
+- [~] Layer 3.5 — `stack-auth-wasm` bindings crate (#1952) + npm unification (stacked follow-up)
+- [ ] Layer 4 — wasm bindings for encrypt — **likely superseded by stack-encrypt; pending decision**
 - [ ] Layer 5 — Supabase Edge validation
 
 ## Layer 1 — what shipped

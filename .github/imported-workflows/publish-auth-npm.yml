@@ -84,9 +84,51 @@ jobs:
           path: ${{ env.WORKING_DIR }}/*.node
           if-no-files-found: error
 
+  build-wasm:
+    name: Build - wasm32 (bundler target)
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        # The `jetli/wasm-pack-action` GitHub Action is rejected by the
+        # cipherstash org allowlist. Use the official rustwasm.github.io
+        # installer inline.
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: wasm-pack build
+        run: wasm-pack build --target bundler --out-dir ../node/wasm packages/stack-auth/wasm
+
+      - name: Strip wasm-pack metadata
+        # wasm-pack emits its own package.json / README / LICENSE / .gitignore
+        # alongside the .wasm + .js shims. Replace the package.json with a
+        # minimal `{ "type": "module" }` so Node recognises the .js shim as
+        # ESM (it uses `import`/`export`) without treating wasm/ as a separate
+        # npm package. The parent package.json owns the publish contract.
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          rm -f wasm/README.md wasm/LICENSE wasm/.gitignore
+          echo '{"type":"module"}' > wasm/package.json
+
+      - name: Upload wasm artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: bindings-wasm32
+          path: ${{ env.WORKING_DIR }}/wasm/
+          if-no-files-found: error
+
   publish:
     name: Publish
-    needs: build
+    needs: [build, build-wasm]
     runs-on: ubuntu-latest
 
     steps:
@@ -110,6 +152,15 @@ jobs:
       - name: Move artifacts to platform packages
         working-directory: ${{ env.WORKING_DIR }}
         run: npx napi artifacts --dir artifacts
+
+      - name: Move wasm artifact into wasm/
+        # `napi artifacts` only knows about the per-platform .node files;
+        # the wasm32 build is bundled directly into the main package.
+        working-directory: ${{ env.WORKING_DIR }}
+        run: |
+          mkdir -p wasm
+          mv artifacts/bindings-wasm32/* wasm/
+          ls -la wasm/
 
       - name: Determine version and npm tag
         id: version
