@@ -284,6 +284,7 @@ describe('buildQuestLog', () => {
   it('separates active and completed quests', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [
         { table: 'users', column: 'email', phase: 'dropped' },
@@ -300,6 +301,7 @@ describe('buildQuestLog', () => {
   it('reports observedFromDb=false when DB couldn’t be reached', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: false,
       observations: [{ table: 'users', column: 'email' }],
       cli: CLI,
@@ -310,6 +312,7 @@ describe('buildQuestLog', () => {
   it('an empty observations list with initialized=true means the user has not declared columns yet', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [],
       cli: CLI,
@@ -324,6 +327,7 @@ describe('renderQuestLogTTY', () => {
     const out = renderQuestLogTTY(
       buildQuestLog({
         initialized: false,
+        planExists: false,
         observedFromDb: false,
         observations: [],
         cli: CLI,
@@ -339,6 +343,7 @@ describe('renderQuestLogTTY', () => {
   it('renders the active-quest section with progress bar, objectives, and next-move hint', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
@@ -362,6 +367,7 @@ describe('renderQuestLogTTY', () => {
   it('shows a 🏆 line per completed quest', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [{ table: 'users', column: 'ssn', phase: 'dropped' }],
       cli: CLI,
@@ -374,6 +380,7 @@ describe('renderQuestLogTTY', () => {
   it('appends a DB-unreachable note when observedFromDb is false', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: false,
       observations: [{ table: 'users', column: 'email' }],
       cli: CLI,
@@ -381,12 +388,34 @@ describe('renderQuestLogTTY', () => {
     const out = renderQuestLogTTY(log, CLI)
     expect(out).toMatch(/could not reach the database/i)
   })
+
+  it('points the user at impl when a plan is drafted but no quests exist yet', () => {
+    // Regression guard for the gap between `stash plan` (writes plan.md)
+    // and the manifest filling in (only happens when migrations actually
+    // run via `stash impl`). The empty-state must NOT tell the user to
+    // re-run plan when they have already drafted one.
+    const log = buildQuestLog({
+      initialized: true,
+      planExists: true,
+      observedFromDb: false,
+      observations: [],
+      cli: CLI,
+    })
+    const out = renderQuestLogTTY(log, CLI)
+    expect(out).toContain('Plan drafted')
+    expect(out).toContain('.cipherstash/plan.md')
+    expect(out).toContain(`${CLI} impl`)
+    expect(out).not.toMatch(
+      new RegExp(`${CLI.replace(/ /g, '\\s')}\\s+plan\\b`),
+    )
+  })
 })
 
 describe('renderQuestLogPlain', () => {
   it('emits no emoji or progress-bar glyphs', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
@@ -409,6 +438,7 @@ describe('renderQuestLogPlain', () => {
   it('reports completed rollouts cleanly', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [{ table: 'users', column: 'ssn', phase: 'dropped' }],
       cli: CLI,
@@ -423,6 +453,7 @@ describe('renderQuestLogPlain', () => {
     const out = renderQuestLogPlain(
       buildQuestLog({
         initialized: false,
+        planExists: false,
         observedFromDb: false,
         observations: [],
         cli: CLI,
@@ -433,12 +464,26 @@ describe('renderQuestLogPlain', () => {
     expect(out).toContain(`${CLI} plan`)
     expect(out).not.toContain('npx stash')
   })
+
+  it('points the user at impl when a plan is drafted but no quests exist yet', () => {
+    const log = buildQuestLog({
+      initialized: true,
+      planExists: true,
+      observedFromDb: false,
+      observations: [],
+      cli: CLI,
+    })
+    const out = renderQuestLogPlain(log, CLI)
+    expect(out).toContain('.cipherstash/plan.md')
+    expect(out).toContain(`${CLI} impl`)
+  })
 })
 
 describe('renderQuestLogJSON', () => {
   it('emits a stable JSON shape with all fields a script needs', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
@@ -449,6 +494,9 @@ describe('renderQuestLogJSON', () => {
     const json = renderQuestLogJSON(log)
     const parsed = JSON.parse(json)
     expect(parsed.initialized).toBe(true)
+    // `planExists` is part of the stable JSON shape — scripts use it to
+    // tell "fresh project" from "plan drafted, awaiting execution".
+    expect(parsed.planExists).toBe(false)
     expect(parsed.observedFromDb).toBe(true)
     expect(parsed.active).toHaveLength(1)
     expect(parsed.completed).toHaveLength(1)
@@ -470,6 +518,7 @@ describe('nextMoveHint', () => {
   it('points at init when uninitialized', () => {
     const log = buildQuestLog({
       initialized: false,
+      planExists: false,
       observedFromDb: false,
       observations: [],
       cli: CLI,
@@ -477,9 +526,10 @@ describe('nextMoveHint', () => {
     expect(nextMoveHint(log, CLI)).toMatch(/init/)
   })
 
-  it('points at plan when initialized but no quests', () => {
+  it('points at plan when initialized but no plan and no quests', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [],
       cli: CLI,
@@ -487,9 +537,23 @@ describe('nextMoveHint', () => {
     expect(nextMoveHint(log, CLI)).toMatch(/plan/)
   })
 
+  it('points at impl when a plan is drafted but no quests exist yet', () => {
+    const log = buildQuestLog({
+      initialized: true,
+      planExists: true,
+      observedFromDb: false,
+      observations: [],
+      cli: CLI,
+    })
+    const hint = nextMoveHint(log, CLI)
+    expect(hint).toContain(`${CLI} impl`)
+    expect(hint).toContain('.cipherstash/plan.md')
+  })
+
   it('uses the first active quest’s nextMove when one exists', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [
         { table: 'users', column: 'email', phase: 'dual-writing' },
@@ -502,6 +566,7 @@ describe('nextMoveHint', () => {
   it('reports complete when every quest is done', () => {
     const log = buildQuestLog({
       initialized: true,
+      planExists: false,
       observedFromDb: true,
       observations: [{ table: 'users', column: 'ssn', phase: 'dropped' }],
       cli: CLI,

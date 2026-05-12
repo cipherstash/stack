@@ -33,6 +33,13 @@ export interface QuestLog {
    *  user has not run `stash init`. The renderer surfaces an empty-state
    *  message in that case. */
   initialized: boolean
+  /** True when `.cipherstash/plan.md` exists. The plan is a markdown
+   *  document drafted by the planning agent — it is *not* the same as the
+   *  manifest (`migrations.json`), which only fills in once migrations
+   *  actually run. When `planExists` is true but no quests have been
+   *  derived from the manifest, the empty-state message points the user
+   *  at `stash impl` instead of `stash plan`. */
+  planExists: boolean
   /** Whether DB observability succeeded. When false, column quests are
    *  still surfaced (from `migrations.json`) but objective state defaults
    *  to "locked" because we can't tell what's been done. The renderer
@@ -240,14 +247,18 @@ function nextMoveFor(
  * Compose a quest log from per-column observations. Pure; no I/O.
  *
  * `initialized` is true when the project has run `stash init` (we have a
- * `context.json`). The renderer uses this to decide whether to show an
- * empty-state quest log. `observedFromDb` is true when at least one
- * observation has live DB data; false if the DB query failed and we're
- * working from manifest alone. `cli` is the package-manager-aware
- * command prefix passed through to per-quest `nextMove` hints.
+ * `context.json`). `planExists` is true when `.cipherstash/plan.md` has
+ * been drafted by the planning agent — together with an empty quest list,
+ * this is what disambiguates "user hasn't planned yet" (point at `plan`)
+ * from "plan is drafted but not yet executed" (point at `impl`).
+ * `observedFromDb` is true when at least one observation has live DB
+ * data; false if the DB query failed and we're working from manifest
+ * alone. `cli` is the package-manager-aware command prefix passed
+ * through to per-quest `nextMove` hints.
  */
 export function buildQuestLog(input: {
   initialized: boolean
+  planExists: boolean
   observedFromDb: boolean
   observations: ColumnObservation[]
   cli: string
@@ -263,6 +274,7 @@ export function buildQuestLog(input: {
   }
   return {
     initialized: input.initialized,
+    planExists: input.planExists,
     observedFromDb: input.observedFromDb,
     active,
     completed,
