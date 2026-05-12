@@ -60,9 +60,16 @@ beforeAll(async () => {
         score eql_v2_encrypted,
         profile eql_v2_encrypted,
         encrypted eql_v2_encrypted,
+        "otherField" TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         test_run_id TEXT
       )
+    `
+    // Backfill any column added after the table was first created on a
+    // long-lived CI database. CREATE TABLE IF NOT EXISTS is a no-op on
+    // those, so new columns need an explicit ADD COLUMN IF NOT EXISTS.
+    await sql`
+      ALTER TABLE "protect-ci" ADD COLUMN IF NOT EXISTS "otherField" TEXT
     `
     // Tell PostgREST to refresh its schema cache so the supabase-js client
     // can see a freshly created table without waiting for the polling
