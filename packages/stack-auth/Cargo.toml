@@ -8,6 +8,11 @@ repository.workspace = true
 homepage.workspace = true
 license-file = "LICENSE"
 
+# `aquamarine` is only used by a `#[doc]` macro in a doctest. `cargo-udeps`
+# cannot see into rustdoc, so it reports `aquamarine` as unused. Ignore it.
+[package.metadata.cargo-udeps.ignore]
+normal = ["aquamarine"]
+
 [dependencies]
 aquamarine = "0.6"
 cts-common = { workspace = true }
