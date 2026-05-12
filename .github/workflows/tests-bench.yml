@@ -1,0 +1,69 @@
+name: "Test JS"
+
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'packages/bench/**'
+      - 'local/**'
+      - '.github/workflows/tests-bench.yml'
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - 'packages/bench/**'
+      - 'local/**'
+      - '.github/workflows/tests-bench.yml'
+
+jobs:
+  tests-bench:
+    name: Run Bench Smoke Tests
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm recursive install --frozen-lockfile
+
+      # `@cipherstash/stack` ships dist/-based `exports`; bench imports
+      # from it (and `@cipherstash/stack/drizzle`) so the package needs
+      # to be built before vitest can resolve it. Going through turbo
+      # also picks up `^build` deps if any are added later.
+      - name: Build @cipherstash/stack
+        run: pnpm exec turbo run build --filter @cipherstash/stack
+
+      # Builds the local EQL-enabled Postgres image (local/Dockerfile),
+      # starts it, and waits for the pg_isready healthcheck to pass.
+      - name: Start local Postgres (EQL)
+        working-directory: local
+        run: docker compose up --wait --wait-timeout 60
+
+      # `pnpm test:local` resolves to `vitest run`; the trailing `db-only`
+      # is a vitest path filter that narrows to __tests__/db-only.test.ts
+      # (credential-free smoke). Note: pnpm 10 forwards script args without
+      # `--`; using `--` here would cause vitest to treat it as the
+      # option-terminator and ignore the filter, running all 3 test files
+      # — including ones that need CipherStash credentials.
+      - name: Run bench smoke tests
+        working-directory: packages/bench
+        run: pnpm test:local db-only
