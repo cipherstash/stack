@@ -1,0 +1,38 @@
+[package]
+name = "stack-auth-wasm"
+description = "WebAssembly bindings for stack-auth (Supabase Edge / Deno targets)"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license-file = "LICENSE"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+stack-auth = { workspace = true }
+cts-common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+base64 = { workspace = true }
+
+# wasm-pack bundles its own `wasm-opt`; if that bundled version is older than
+# the wasm features rustc emits, optimisation fails. Disable it so the build is
+# reproducible across local + CI without requiring a separately-installed
+# wasm-opt. Re-enable once wasm-pack's bundled wasm-opt catches up, or wire
+# `binaryen` install into CI.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false

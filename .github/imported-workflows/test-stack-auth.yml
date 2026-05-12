@@ -61,6 +61,21 @@ jobs:
       - name: test-integration-stack-auth
         run: mise run test:integration:stack-auth
 
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        # The `jetli/wasm-pack-action` GitHub Action is rejected by the
+        # cipherstash org allowlist (unverified creator). Use the official
+        # rustwasm.github.io installer inline.
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: cargo check stack-auth-wasm
+        run: cargo check --target wasm32-unknown-unknown -p stack-auth-wasm
+
+      - name: wasm-pack test stack-auth-wasm
+        run: wasm-pack test --node packages/stack-auth/wasm
+
       - uses: ./.github/actions/send-slack-notification
         with:
           channel: engineering
