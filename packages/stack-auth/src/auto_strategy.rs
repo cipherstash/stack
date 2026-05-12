@@ -206,7 +206,13 @@ impl AutoStrategyBuilder {
             // Resolve errors (e.g. missing profile directory) are intentionally
             // swallowed here so that env-var-only setups don't need a profile dir.
             // If no credentials are found at all, NotAuthenticated is returned.
-            let store = ProfileStore::resolve(None).ok();
+            let store = match ProfileStore::resolve(None) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::info!(error = %e, "could not resolve profile store; continuing without it");
+                    None
+                }
+            };
             AutoStrategy::detect_inner(access_key, crn, store)
         }
         #[cfg(target_arch = "wasm32")]

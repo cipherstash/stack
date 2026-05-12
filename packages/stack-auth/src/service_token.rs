@@ -181,7 +181,13 @@ fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> 
 
 #[cfg(target_arch = "wasm32")]
 fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> {
-    crate::decode_jwt_payload_wasm(token_str).map_err(|e| e.to_string())
+    // Strip the `AuthError::InvalidToken` prefix — callers re-wrap this string
+    // in `AuthError::InvalidToken(reason)`, and we don't want "Invalid token:
+    // Invalid token: ..." in the final message.
+    crate::decode_jwt_payload_wasm(token_str).map_err(|e| match e {
+        crate::AuthError::InvalidToken(reason) => reason,
+        other => other.to_string(),
+    })
 }
 
 #[cfg(test)]
