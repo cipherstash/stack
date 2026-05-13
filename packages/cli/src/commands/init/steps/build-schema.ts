@@ -1,7 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import * as p from '@clack/prompts'
-import { detectDrizzle, detectSupabase } from '../../db/detect.js'
+import {
+  detectDrizzle,
+  detectPrismaNext,
+  detectSupabase,
+} from '../../db/detect.js'
 import { readEnvKeyNames } from '../lib/env-keys.js'
 import { writeBaselineContextFile } from '../lib/write-context.js'
 import type {
@@ -25,6 +29,11 @@ function detectIntegration(
   cwd: string,
   databaseUrl: string | undefined,
 ): Integration {
+  // Prisma Next is checked first: a project can use Prisma Next on top
+  // of a Supabase-hosted database, in which case both signals fire but
+  // the migration framework belongs to Prisma Next and that's what
+  // drives the install path.
+  if (detectPrismaNext(cwd)) return 'prisma-next'
   if (detectDrizzle(cwd)) return 'drizzle'
   if (detectSupabase(databaseUrl)) return 'supabase'
   return 'postgresql'
@@ -49,11 +58,37 @@ function detectIntegration(
 export const buildSchemaStep: InitStep = {
   id: 'build-schema',
   name: 'Generate encryption client',
-  async run(state: InitState, _provider: InitProvider): Promise<InitState> {
+  async run(state: InitState, provider: InitProvider): Promise<InitState> {
     const cwd = process.cwd()
-    const integration = detectIntegration(cwd, state.databaseUrl)
+    const integration =
+      provider.name === 'prisma-next'
+        ? 'prisma-next'
+        : detectIntegration(cwd, state.databaseUrl)
     const clientFilePath = DEFAULT_CLIENT_PATH
     const resolvedPath = resolve(cwd, clientFilePath)
+
+    // Prisma Next derives the stack-side schema from `contract.json`
+    // via `cipherstashFromStack({ contractJson })` at runtime — there
+    // is no hand-written `src/encryption/index.ts` to scaffold. Skip
+    // the placeholder step and let the framework drive the schema
+    // surface.
+    if (integration === 'prisma-next') {
+      p.log.success(
+        'Skipping encryption-client scaffold — Prisma Next derives schemas from contract.json via `cipherstashFromStack({ contractJson })`.',
+      )
+
+      const envKeys = readEnvKeyNames(cwd)
+      const nextState: InitState = {
+        ...state,
+        schemaGenerated: false,
+        integration,
+        schemas: [],
+        schemaFromIntrospection: false,
+        envKeys,
+      }
+      writeBaselineContextFile(nextState, cwd, envKeys)
+      return nextState
+    }
 
     // Existing-file branch: silent overwrite is bad. Ask once.
     let keepExisting = false

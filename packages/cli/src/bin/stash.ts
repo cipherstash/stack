@@ -109,6 +109,7 @@ Options:
 Init Flags:
   --supabase           Use Supabase-specific setup flow
   --drizzle            Use Drizzle-specific setup flow
+  --prisma-next        Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply)
 
 Plan Flags:
   --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)
@@ -143,6 +144,7 @@ DB Flags:
 Examples:
   ${STASH} init
   ${STASH} init --supabase
+  ${STASH} init --prisma-next
   ${STASH} plan
   ${STASH} impl
   ${STASH} impl --continue-without-plan

@@ -1,0 +1,17 @@
+{
+  "cliVersion": "0.14.0",
+  "integration": "prisma-next",
+  "encryptionClientPath": "./src/encryption/index.ts",
+  "packageManager": "npm",
+  "installCommand": "npm install @cipherstash/stack",
+  "envKeys": [
+    "CS_CLIENT_ACCESS_KEY",
+    "CS_CLIENT_ID",
+    "CS_CLIENT_KEY",
+    "CS_WORKSPACE_CRN",
+    "DATABASE_URL"
+  ],
+  "schemas": [],
+  "installedSkills": [],
+  "generatedAt": "2026-05-13T18:16:34.922Z"
+}

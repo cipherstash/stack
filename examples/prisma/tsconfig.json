@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "verbatimModuleSyntax": false,
+    "noFallthroughCasesInSwitch": true,
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts", "prisma-next.config.ts"],
+  "exclude": ["dist", "migrations", "node_modules"]
+}

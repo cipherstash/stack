@@ -125,3 +125,43 @@ export function detectDrizzle(cwd: string): boolean {
     return false
   }
 }
+
+/**
+ * Return true when the project uses Prisma Next.
+ *
+ * Detected via a `prisma-next.config.*` at the cwd (fast path) or
+ * a `@prisma-next/cli` / `@cipherstash/prisma-next` entry in
+ * package.json. Either signal alone is enough.
+ */
+export function detectPrismaNext(cwd: string): boolean {
+  const configCandidates = [
+    'prisma-next.config.ts',
+    'prisma-next.config.js',
+    'prisma-next.config.mjs',
+    'prisma-next.config.cjs',
+  ]
+  for (const candidate of configCandidates) {
+    if (existsSync(resolve(cwd, candidate))) return true
+  }
+
+  const pkgPath = resolve(cwd, 'package.json')
+  if (!existsSync(pkgPath)) return false
+
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as {
+      dependencies?: Record<string, unknown>
+      devDependencies?: Record<string, unknown>
+      peerDependencies?: Record<string, unknown>
+      optionalDependencies?: Record<string, unknown>
+    }
+    const deps = {
+      ...pkg.dependencies,
+      ...pkg.devDependencies,
+      ...pkg.peerDependencies,
+      ...pkg.optionalDependencies,
+    }
+    return '@prisma-next/cli' in deps || '@cipherstash/prisma-next' in deps
+  } catch {
+    return false
+  }
+}

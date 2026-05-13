@@ -27,6 +27,20 @@ export const installEqlStep: InitStep = {
   name: 'Install EQL extension',
   async run(state: InitState, provider: InitProvider): Promise<InitState> {
     const integration = state.integration ?? 'postgresql'
+
+    // Prisma Next ships the EQL bundle as a baseline migration inside
+    // `@cipherstash/prisma-next`. `prisma-next migration apply` runs
+    // it in the same control-plane sweep as the user's application
+    // migrations — running `stash db install` here would be a
+    // duplicate install and would race with the framework's
+    // migration journal. Skip with guidance instead.
+    if (integration === 'prisma-next' || provider.name === 'prisma-next') {
+      p.log.success(
+        'Skipping `stash db install` — Prisma Next installs the EQL bundle via `prisma-next migration apply` (runs alongside your app migrations).',
+      )
+      return { ...state, eqlInstalled: false }
+    }
+
     const supabase = integration === 'supabase' || provider.name === 'supabase'
     const drizzle = integration === 'drizzle' || provider.name === 'drizzle'
 

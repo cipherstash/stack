@@ -1,0 +1,36 @@
+{
+  "name": "@cipherstash/prisma-next-example",
+  "private": true,
+  "version": "0.0.0",
+  "description": "End-to-end example of @cipherstash/prisma-next: searchable application-layer encryption for Postgres with Prisma Next, using @cipherstash/stack as the SDK.",
+  "type": "module",
+  "scripts": {
+    "emit": "prisma-next contract emit",
+    "migration:plan": "prisma-next migration plan",
+    "migration:apply": "prisma-next migration apply",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@cipherstash/prisma-next": "workspace:*",
+    "@cipherstash/stack": "workspace:*",
+    "@prisma-next/adapter-postgres": "0.6.0-dev.8",
+    "@prisma-next/contract": "0.6.0-dev.8",
+    "@prisma-next/driver-postgres": "0.6.0-dev.8",
+    "@prisma-next/family-sql": "0.6.0-dev.8",
+    "@prisma-next/framework-components": "0.6.0-dev.8",
+    "@prisma-next/postgres": "0.6.0-dev.8",
+    "@prisma-next/sql-contract": "0.6.0-dev.8",
+    "@prisma-next/sql-contract-psl": "0.6.0-dev.8",
+    "@prisma-next/sql-orm-client": "0.6.0-dev.8",
+    "@prisma-next/sql-runtime": "0.6.0-dev.8",
+    "@prisma-next/target-postgres": "0.6.0-dev.8",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@prisma-next/cli": "0.6.0-dev.8",
+    "@types/node": "^22.15.12",
+    "tsx": "catalog:repo",
+    "typescript": "catalog:repo"
+  }
+}

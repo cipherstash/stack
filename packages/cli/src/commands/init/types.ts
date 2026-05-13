@@ -1,8 +1,8 @@
-import type { PlanStep } from './lib/parse-plan.js'
 import type { AgentEnvironment } from './detect-agents.js'
+import type { PlanStep } from './lib/parse-plan.js'
 import type { PackageManager } from './utils.js'
 
-export type Integration = 'drizzle' | 'supabase' | 'postgresql'
+export type Integration = 'drizzle' | 'supabase' | 'prisma-next' | 'postgresql'
 
 export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json'
 
