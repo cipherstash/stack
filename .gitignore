@@ -66,5 +66,6 @@ mise.local.toml
 cipherstash.toml
 cipherstash.secret.toml
 sql/cipherstash-*.sql
+.cipherstash/
 
 notes/

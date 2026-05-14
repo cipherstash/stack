@@ -2,6 +2,7 @@ import * as p from '@clack/prompts'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
 import { createDrizzleProvider } from './providers/drizzle.js'
+import { createPrismaNextProvider } from './providers/prisma-next.js'
 import { createSupabaseProvider } from './providers/supabase.js'
 import { authenticateStep } from './steps/authenticate.js'
 import { buildSchemaStep } from './steps/build-schema.js'
@@ -16,6 +17,7 @@ import { detectPackageManager, runnerCommand } from './utils.js'
 const PROVIDER_MAP: Record<string, () => InitProvider> = {
   supabase: createSupabaseProvider,
   drizzle: createDrizzleProvider,
+  'prisma-next': createPrismaNextProvider,
 }
 
 /**

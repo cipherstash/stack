@@ -1,0 +1,33 @@
+# Local Postgres for the @cipherstash/prisma-next example.
+#
+# Usage:
+#   docker compose up -d        # start
+#   docker compose down -v      # stop + delete volume (fresh state)
+#
+# The DATABASE_URL in .env.example matches the values below:
+#   postgres://postgres:postgres@localhost:5544/cipherstash_prisma_example
+#
+# Port 5544 (not 5432) is used to avoid colliding with any host-side
+# Postgres / other example containers.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: cipherstash-prisma-example-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cipherstash_prisma_example
+    ports:
+      - "5544:5432"
+    volumes:
+      - cipherstash-prisma-example-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cipherstash_prisma_example"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  cipherstash-prisma-example-pg-data:

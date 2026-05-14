@@ -1,0 +1,109 @@
+{
+	"name": "@cipherstash/prisma-next",
+	"version": "0.0.0",
+	"license": "MIT",
+	"author": "CipherStash <support@cipherstash.com>",
+	"description": "CipherStash extension for Prisma Next: searchable application-layer field-level encryption for Postgres, with six encrypted column types, 17 query operators, bulk encrypt/decrypt middleware, and a baseline migration that installs the vendored EQL bundle SQL byte-for-byte.",
+	"keywords": [
+		"encrypted",
+		"prisma-next",
+		"orm",
+		"type-safe",
+		"security",
+		"postgres",
+		"eql"
+	],
+	"bugs": {
+		"url": "https://github.com/cipherstash/stack/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "packages/prisma-next"
+	},
+	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		"./codec-types": {
+			"types": "./dist/codec-types.d.ts",
+			"import": "./dist/codec-types.js"
+		},
+		"./column-types": {
+			"types": "./dist/column-types.d.ts",
+			"import": "./dist/column-types.js"
+		},
+		"./control": {
+			"types": "./dist/control.d.ts",
+			"import": "./dist/control.js"
+		},
+		"./middleware": {
+			"types": "./dist/middleware.d.ts",
+			"import": "./dist/middleware.js"
+		},
+		"./migration": {
+			"types": "./dist/migration.d.ts",
+			"import": "./dist/migration.js"
+		},
+		"./operation-types": {
+			"types": "./dist/operation-types.d.ts",
+			"import": "./dist/operation-types.js"
+		},
+		"./pack": {
+			"types": "./dist/pack.d.ts",
+			"import": "./dist/pack.js"
+		},
+		"./runtime": {
+			"types": "./dist/runtime.d.ts",
+			"import": "./dist/runtime.js"
+		},
+		"./stack": {
+			"types": "./dist/stack.d.ts",
+			"import": "./dist/stack.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"types": "./dist/control.d.ts",
+	"files": [
+		"dist",
+		"src",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"typecheck": "tsc --project tsconfig.json --noEmit",
+		"lint": "biome check . --error-on-warnings",
+		"lint:fix": "biome check --write .",
+		"clean": "rm -rf dist coverage .tmp-output"
+	},
+	"dependencies": {
+		"@cipherstash/stack": "workspace:*",
+		"@prisma-next/contract": "0.6.0-dev.8",
+		"@prisma-next/family-sql": "0.6.0-dev.8",
+		"@prisma-next/framework-components": "0.6.0-dev.8",
+		"@prisma-next/migration-tools": "0.6.0-dev.8",
+		"@prisma-next/sql-contract": "0.6.0-dev.8",
+		"@prisma-next/sql-operations": "0.6.0-dev.8",
+		"@prisma-next/sql-relational-core": "0.6.0-dev.8",
+		"@prisma-next/sql-runtime": "0.6.0-dev.8",
+		"@prisma-next/ts-render": "0.6.0-dev.8",
+		"@prisma-next/utils": "0.6.0-dev.8",
+		"arktype": "^2.1.29"
+	},
+	"devDependencies": {
+		"@prisma-next/adapter-postgres": "0.6.0-dev.8",
+		"@prisma-next/cli": "0.6.0-dev.8",
+		"@prisma-next/driver-postgres": "0.6.0-dev.8",
+		"@prisma-next/psl-parser": "0.6.0-dev.8",
+		"@prisma-next/sql-contract-psl": "0.6.0-dev.8",
+		"@prisma-next/sql-contract-ts": "0.6.0-dev.8",
+		"@prisma-next/sql-schema-ir": "0.6.0-dev.8",
+		"@prisma-next/target-postgres": "0.6.0-dev.8",
+		"pathe": "^2.0.3",
+		"tsup": "catalog:repo",
+		"typescript": "catalog:repo",
+		"vitest": "catalog:repo"
+	}
+}

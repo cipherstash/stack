@@ -10,6 +10,7 @@ import {
 
 const STACK_PACKAGE = '@cipherstash/stack'
 const CLI_PACKAGE = 'stash'
+const PRISMA_NEXT_PACKAGE = '@cipherstash/prisma-next'
 
 /**
  * Install the runtime + dev npm packages the user needs to run encryption:
@@ -26,20 +27,29 @@ const CLI_PACKAGE = 'stash'
 export const installDepsStep: InitStep = {
   id: 'install-deps',
   name: 'Install dependencies',
-  async run(state: InitState, _provider: InitProvider): Promise<InitState> {
+  async run(state: InitState, provider: InitProvider): Promise<InitState> {
+    const wantPrismaNext =
+      state.integration === 'prisma-next' || provider.name === 'prisma-next'
     const stackPresent = isPackageInstalled(STACK_PACKAGE)
     const cliPresent = isPackageInstalled(CLI_PACKAGE)
+    const prismaNextPresent = wantPrismaNext
+      ? isPackageInstalled(PRISMA_NEXT_PACKAGE)
+      : true
 
-    // Both already there — silent success, no prompts.
-    if (stackPresent && cliPresent) {
-      p.log.success(
-        `${STACK_PACKAGE} and ${CLI_PACKAGE} are already installed.`,
-      )
+    // Everything already there — silent success, no prompts.
+    if (stackPresent && cliPresent && prismaNextPresent) {
+      const installed = wantPrismaNext
+        ? `${STACK_PACKAGE}, ${PRISMA_NEXT_PACKAGE} and ${CLI_PACKAGE}`
+        : `${STACK_PACKAGE} and ${CLI_PACKAGE}`
+      p.log.success(`${installed} are already installed.`)
       return { ...state, stackInstalled: true, cliInstalled: true }
     }
 
     const pm = detectPackageManager()
-    const prodPackages = stackPresent ? [] : [STACK_PACKAGE]
+    const prodPackages: string[] = []
+    if (!stackPresent) prodPackages.push(STACK_PACKAGE)
+    if (wantPrismaNext && !prismaNextPresent)
+      prodPackages.push(PRISMA_NEXT_PACKAGE)
     const devPackages = cliPresent ? [] : [CLI_PACKAGE]
     const commands = combinedInstallCommands(pm, prodPackages, devPackages)
 

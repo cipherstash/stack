@@ -1,0 +1,118 @@
+name: Prisma Next E2E
+
+# End-to-end tests for `@cipherstash/prisma-next`: spins up a real
+# Postgres container, applies the cipherstash baseline migration
+# (EQL bundle install) + the example app's schema, then runs the
+# suite at `examples/prisma/test/e2e/` against a live ZeroKMS
+# workspace.
+#
+# Triggers only on changes that affect the package or the example
+# (the unit-test suite in `tests.yml` covers everything that doesn't
+# need a live workspace).
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/prisma-next/**'
+      - 'examples/prisma/**'
+      - '.github/workflows/prisma-next-e2e.yml'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - 'packages/prisma-next/**'
+      - 'examples/prisma/**'
+      - '.github/workflows/prisma-next-e2e.yml'
+
+jobs:
+  e2e:
+    name: Run Prisma Next E2E
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    # Skip cleanly on fork PRs where secrets aren't available. The
+    # global-setup hook in the suite hard-errors when `CS_WORKSPACE_CRN`
+    # is unset; gating at the job level produces a clean "skipped"
+    # status instead of a noisy failure.
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    env:
+      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6.0.3
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Write the CS_* credentials and the harness DATABASE_URL into the
+      # example app's .env so the runtime + the `prisma-next migration
+      # apply` invocation in global-setup both pick them up. The harness
+      # also overrides DATABASE_URL inside the test process to point at
+      # the container, but the migration:apply subprocess relies on
+      # prisma-next.config.ts → process.env['DATABASE_URL'] being set
+      # before the test runner spawns it.
+      - name: Create .env file in examples/prisma
+        run: |
+          touch ./examples/prisma/.env
+          echo "DATABASE_URL=postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e" >> ./examples/prisma/.env
+          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./examples/prisma/.env
+          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./examples/prisma/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./examples/prisma/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./examples/prisma/.env
+
+      # Build via turbo so the `^build` dependency on
+      # `@cipherstash/stack` (which `@cipherstash/prisma-next` imports
+      # `/schema` from) is honoured. A bare
+      # `pnpm --filter @cipherstash/prisma-next build` bypasses the
+      # task graph and leaves the upstream dist/ empty, surfacing as
+      # `Cannot find module '@cipherstash/stack/schema'` from tsc.
+      - name: Build @cipherstash/prisma-next
+        run: pnpm exec turbo run build --filter @cipherstash/prisma-next
+
+      - name: Emit example contract
+        run: pnpm --filter @cipherstash/prisma-next-example emit
+
+      - name: Start E2E Postgres container
+        working-directory: examples/prisma
+        run: |
+          docker compose -f test/e2e/docker-compose.yml up -d
+          # Wait for pg_isready before handing off to the suite — the
+          # global-setup hook expects the container to already be up.
+          for i in {1..60}; do
+            if docker exec cipherstash-e2e-postgres pg_isready -U cipherstash -d cipherstash_e2e >/dev/null 2>&1; then
+              echo "Postgres ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run E2E suite
+        run: pnpm --filter @cipherstash/prisma-next-example test:e2e
+
+      - name: Stop E2E Postgres container
+        if: always()
+        working-directory: examples/prisma
+        run: docker compose -f test/e2e/docker-compose.yml down -v
