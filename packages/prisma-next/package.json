@@ -105,5 +105,8 @@
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
 		"vitest": "catalog:repo"
+	},
+	"publishConfig": {
+		"access": "public"
 	}
 }
