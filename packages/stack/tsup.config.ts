@@ -22,6 +22,6 @@ export default defineConfig([
     target: 'es2022',
     tsconfig: './tsconfig.json',
     external: ['drizzle-orm', '@supabase/supabase-js'],
-    noExternal: ['evlog'],
+    noExternal: ['evlog', 'uuid'],
   },
 ])
