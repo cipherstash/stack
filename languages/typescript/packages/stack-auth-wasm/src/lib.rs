@@ -1,20 +1,19 @@
 //! WebAssembly bindings for `stack-auth`.
 //!
-//! Mirrors the wasm-compatible subset of the `stack-auth-node` napi crate.
-//! Targets Supabase Edge Functions (Deno) and bundler consumers via
-//! `wasm-pack build --target deno` / `--target bundler`.
+//! Mirrors the wasm-compatible subset of the `stack-auth-node` napi crate,
+//! scoped to `AccessKeyStrategy` (M2M auth). OAuth- and profile-based
+//! strategies are deliberately out of scope for the initial wasm surface —
+//! they need design work around federation and token pinning that hasn't
+//! happened yet.
 //!
-//! Excluded vs the napi crate (these can't work on wasm32):
-//!
-//! - `bindClientDevice` / `beginDeviceCodeFlow` — filesystem identity and browser launch
-//! - `OAuthStrategy.fromProfile` — filesystem-backed profile store
-//! - `AutoStrategy` profile-store fallback — `detect()` on wasm only resolves via env vars
+//! Targets Supabase Edge Functions and bundler consumers via
+//! `wasm-pack build --target bundler` / `--target deno`.
 
 use std::collections::BTreeMap;
 
 use cts_common::Region;
-use serde::{Deserialize, Serialize};
-use stack_auth::{AuthError, AuthStrategy, ServiceToken, Token};
+use serde::Serialize;
+use stack_auth::{AuthError, AuthStrategy, ServiceToken};
 use wasm_bindgen::prelude::*;
 
 /// Route Rust panics to `console.error` with a readable message + stack.
@@ -34,10 +33,6 @@ fn attach_code(js_err: impl Into<JsValue>, code: &str) -> JsValue {
 
 fn to_js_error(err: AuthError) -> JsValue {
     attach_code(js_sys::Error::new(&err.to_string()), err.error_code())
-}
-
-fn to_js_type_error(message: &str, code: &str) -> JsValue {
-    attach_code(js_sys::TypeError::new(message), code)
 }
 
 #[derive(Serialize)]
@@ -71,72 +66,6 @@ fn token_result_from(token: ServiceToken) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&payload).map_err(JsValue::from)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AutoStrategyOptions {
-    #[serde(default)]
-    access_key: Option<String>,
-    #[serde(default)]
-    workspace_crn: Option<String>,
-}
-
-// `stack_auth::Token` has `pub(crate)` fields, so we can't construct one
-// directly — we deserialize a camelCase shim and round-trip it through the
-// snake_case JSON shape that `Token`'s own `Deserialize` accepts.
-#[derive(Deserialize)]
-struct TokenInput {
-    #[serde(rename = "accessToken", alias = "access_token")]
-    access_token: String,
-    #[serde(rename = "refreshToken", alias = "refresh_token", default)]
-    refresh_token: Option<String>,
-    #[serde(rename = "tokenType", alias = "token_type")]
-    token_type: String,
-    #[serde(rename = "expiresAt", alias = "expires_at")]
-    expires_at: u64,
-    #[serde(default)]
-    region: Option<String>,
-    #[serde(rename = "clientId", alias = "client_id", default)]
-    client_id: Option<String>,
-    #[serde(rename = "deviceInstanceId", alias = "device_instance_id", default)]
-    device_instance_id: Option<String>,
-}
-
-fn parse_token_input(value: JsValue) -> Result<Token, AuthError> {
-    let input: TokenInput = serde_wasm_bindgen::from_value(value)
-        .map_err(|e| AuthError::InvalidToken(e.to_string()))?;
-    let mut snake = serde_json::Map::new();
-    snake.insert(
-        "access_token".into(),
-        serde_json::Value::String(input.access_token),
-    );
-    snake.insert(
-        "token_type".into(),
-        serde_json::Value::String(input.token_type),
-    );
-    snake.insert(
-        "expires_at".into(),
-        serde_json::Value::Number(input.expires_at.into()),
-    );
-    if let Some(v) = input.refresh_token {
-        snake.insert("refresh_token".into(), serde_json::Value::String(v));
-    }
-    if let Some(v) = input.region {
-        snake.insert("region".into(), serde_json::Value::String(v));
-    }
-    if let Some(v) = input.client_id {
-        snake.insert("client_id".into(), serde_json::Value::String(v));
-    }
-    if let Some(v) = input.device_instance_id {
-        snake.insert("device_instance_id".into(), serde_json::Value::String(v));
-    }
-    serde_json::from_value(serde_json::Value::Object(snake))
-        .map_err(|e| AuthError::InvalidToken(e.to_string()))
-}
-
-// ---------------------------------------------------------------------------
-// AccessKeyStrategy
-// ---------------------------------------------------------------------------
-
 #[wasm_bindgen]
 pub struct AccessKeyStrategy {
     inner: stack_auth::AccessKeyStrategy,
@@ -162,94 +91,6 @@ impl AccessKeyStrategy {
     }
 }
 
-// ---------------------------------------------------------------------------
-// OAuthStrategy
-// ---------------------------------------------------------------------------
-
-#[wasm_bindgen]
-pub struct OAuthStrategy {
-    inner: stack_auth::OAuthStrategy,
-}
-
-#[wasm_bindgen]
-impl OAuthStrategy {
-    /// Build an `OAuthStrategy` from a caller-supplied token. The token is
-    /// held in memory only — there is no persistence on wasm.
-    ///
-    /// `token` must be a JS object shaped like:
-    /// `{ accessToken: string, refreshToken?: string, tokenType: string,
-    ///    expiresAt: number, region?: string, clientId?: string,
-    ///    deviceInstanceId?: string }`.
-    #[wasm_bindgen(js_name = withToken)]
-    pub fn with_token(
-        region: String,
-        client_id: String,
-        token: JsValue,
-    ) -> Result<OAuthStrategy, JsValue> {
-        let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
-        let token = parse_token_input(token).map_err(to_js_error)?;
-        let inner = stack_auth::OAuthStrategy::with_token(region, client_id, token)
-            .build()
-            .map_err(to_js_error)?;
-        Ok(OAuthStrategy { inner })
-    }
-
-    /// Retrieve a valid access token, refreshing as needed via the embedded
-    /// refresh token.
-    #[wasm_bindgen(js_name = getToken)]
-    pub async fn get_token(&self) -> Result<JsValue, JsValue> {
-        let token = self.inner.get_token().await.map_err(to_js_error)?;
-        token_result_from(token)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// AutoStrategy
-// ---------------------------------------------------------------------------
-
-#[wasm_bindgen]
-pub struct AutoStrategy {
-    inner: stack_auth::AutoStrategy,
-}
-
-#[wasm_bindgen]
-impl AutoStrategy {
-    /// Detect available credentials and return an `AutoStrategy`.
-    ///
-    /// On wasm32 there is no profile store fallback — `detect()` resolves
-    /// only via the `CS_CLIENT_ACCESS_KEY` / `CS_WORKSPACE_CRN` env vars or
-    /// the explicit values passed in `options`.
-    pub fn detect(options: Option<JsValue>) -> Result<AutoStrategy, JsValue> {
-        let mut builder = stack_auth::AutoStrategy::builder();
-
-        if let Some(options) = options.filter(|v| !v.is_null() && !v.is_undefined()) {
-            let opts: AutoStrategyOptions =
-                serde_wasm_bindgen::from_value(options).map_err(|e| {
-                    to_js_type_error(&format!("invalid options: {e}"), "INVALID_ARGUMENT")
-                })?;
-            if let Some(key) = opts.access_key {
-                builder = builder.with_access_key(key);
-            }
-            if let Some(crn_str) = opts.workspace_crn {
-                let crn = crn_str
-                    .parse()
-                    .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
-                builder = builder.with_workspace_crn(crn);
-            }
-        }
-
-        let inner = builder.detect().map_err(to_js_error)?;
-        Ok(AutoStrategy { inner })
-    }
-
-    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
-    #[wasm_bindgen(js_name = getToken)]
-    pub async fn get_token(&self) -> Result<JsValue, JsValue> {
-        let token = self.inner.get_token().await.map_err(to_js_error)?;
-        token_result_from(token)
-    }
-}
-
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
@@ -257,10 +98,8 @@ mod tests {
     use stack_auth::SecretToken;
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    // -------- JWT fixture --------
-
     /// Build an unsigned JWT-shaped token: `<header>.<payload>.<sig>`.
-    /// Signature segment is a dummy `"sig"` literal — `decode_jwt_payload_wasm`
+    /// Signature segment is a dummy `"sig"` literal — the JWT-claim decoder
     /// in stack-auth only reads the payload segment and ignores the signature.
     fn make_jwt(claims: serde_json::Value) -> String {
         let header = serde_json::json!({"alg": "HS256", "typ": "JWT"});
@@ -285,7 +124,6 @@ mod tests {
         ServiceToken::new(SecretToken::new(make_jwt(claims)))
     }
 
-    /// Extract `.code` from a JsValue Error.
     fn error_code_of(err: &JsValue) -> String {
         js_sys::Reflect::get(err, &JsValue::from_str("code"))
             .ok()
@@ -293,9 +131,9 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// Unwrap the `Err` variant without requiring `Debug` on the `Ok` type.
-    /// The bindings structs deliberately don't derive `Debug` (matches the
-    /// node crate's posture — wrappers shouldn't leak internal state via Debug).
+    /// The bindings structs deliberately don't derive `Debug` (wrappers
+    /// shouldn't leak internal state via Debug — matches the node crate's
+    /// posture), so `expect_err` / `unwrap_err` aren't available.
     fn expect_js_err<T>(result: Result<T, JsValue>) -> JsValue {
         match result {
             Ok(_) => panic!("expected Err, got Ok"),
@@ -310,8 +148,6 @@ mod tests {
         let err = to_js_error(AuthError::Server("boom".into()));
         assert_eq!(error_code_of(&err), "SERVER_ERROR");
     }
-
-    // -------- TokenResult --------
 
     #[wasm_bindgen_test]
     fn token_result_from_extracts_jwt_claims() {
@@ -341,8 +177,6 @@ mod tests {
         assert_eq!(error_code_of(&err), "INVALID_TOKEN");
     }
 
-    // -------- AccessKeyStrategy::create --------
-
     #[wasm_bindgen_test]
     fn access_key_strategy_rejects_invalid_region() {
         let err = expect_js_err(AccessKeyStrategy::create(
@@ -367,70 +201,6 @@ mod tests {
             "ap-southeast-2.aws".to_string(),
             "CSAKtestKeyId.testKeySecret".to_string(),
         );
-        // Parsing + base-URL resolution succeed without hitting the network.
-        // The returned strategy is unused — we're just exercising the constructor.
         assert!(result.is_ok());
-    }
-
-    // -------- OAuthStrategy::withToken --------
-
-    /// Build a JS-side Token-shaped object that mirrors what a Deno caller
-    /// would pass in. We construct it via `JSON.parse` so we get a real JS
-    /// plain object (vs. `serde_wasm_bindgen::to_value`, which produces a
-    /// JS `Map` for `serde_json::Value::Object` and won't deserialize back
-    /// into a struct).
-    fn make_token_jsvalue() -> JsValue {
-        let jwt = make_jwt(serde_json::json!({
-            "iss": "https://cts.example.com",
-            "sub": "user-123",
-            "aud": "test-aud",
-            "iat": 1_700_000_000u64,
-            "exp": 4_000_000_000u64,
-            "workspace": "ZVATKW3VHMFG27DY",
-            "scope": "",
-        }));
-        let json = serde_json::json!({
-            "accessToken": jwt,
-            "tokenType": "Bearer",
-            "expiresAt": 4_000_000_000u64,
-            "refreshToken": "refresh-secret",
-        });
-        js_sys::JSON::parse(&json.to_string()).unwrap()
-    }
-
-    #[wasm_bindgen_test]
-    fn oauth_strategy_with_token_constructs() {
-        let token = make_token_jsvalue();
-        let result =
-            OAuthStrategy::with_token("ap-southeast-2.aws".to_string(), "cli".to_string(), token);
-        if let Err(e) = &result {
-            let msg = js_sys::Reflect::get(e, &JsValue::from_str("message"))
-                .ok()
-                .and_then(|v| v.as_string())
-                .unwrap_or_else(|| "<no message>".into());
-            panic!("expected Ok, got Err: {msg}");
-        }
-    }
-
-    #[wasm_bindgen_test]
-    fn oauth_strategy_with_token_rejects_invalid_region() {
-        let token = make_token_jsvalue();
-        let err = expect_js_err(OAuthStrategy::with_token(
-            "not-a-region".to_string(),
-            "cli".to_string(),
-            token,
-        ));
-        assert_eq!(error_code_of(&err), "INVALID_REGION");
-    }
-
-    #[wasm_bindgen_test]
-    fn oauth_strategy_with_token_rejects_malformed_token() {
-        let bogus = js_sys::JSON::parse(r#"{"not":"a token"}"#).unwrap();
-        let err = expect_js_err(OAuthStrategy::with_token(
-            "ap-southeast-2.aws".to_string(),
-            "cli".to_string(),
-            bogus,
-        ));
-        assert_eq!(error_code_of(&err), "INVALID_TOKEN");
     }
 }
