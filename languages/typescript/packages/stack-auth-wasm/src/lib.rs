@@ -41,13 +41,24 @@ fn error_code(err: &AuthError) -> &'static str {
 }
 
 /// Build a JS `Error` enriched with a `.code` property — matches the
-/// `AuthError` shape exposed by `stack-auth-node`.
+/// `AuthError` shape exposed by `stack-auth-node`. `.message` is the plain
+/// error text; the machine-readable identifier lives on `.code`.
 fn to_js_error(err: AuthError) -> JsValue {
     let code = error_code(&err);
-    let message = format!("{code}: {err}");
-    let js_err = js_sys::Error::new(&message);
-    // Best-effort: attach `.code = "ERROR_CODE"`. If `Reflect::set` fails we
-    // fall through with the message-prefixed error, which is still callable.
+    let js_err = js_sys::Error::new(&err.to_string());
+    let _ = js_sys::Reflect::set(
+        &js_err,
+        &JsValue::from_str("code"),
+        &JsValue::from_str(code),
+    );
+    js_err.into()
+}
+
+/// Build a JS `TypeError` enriched with a `.code` property. Used when the
+/// caller passes structurally invalid input to a binding (vs. an auth-layer
+/// failure, which uses [`to_js_error`]).
+fn to_js_type_error(message: &str, code: &str) -> JsValue {
+    let js_err = js_sys::TypeError::new(message);
     let _ = js_sys::Reflect::set(
         &js_err,
         &JsValue::from_str("code"),
@@ -255,12 +266,14 @@ impl AutoStrategy {
     /// On wasm32 there is no profile store fallback — `detect()` resolves
     /// only via the `CS_CLIENT_ACCESS_KEY` / `CS_WORKSPACE_CRN` env vars or
     /// the explicit values passed in `options`.
-    pub fn detect(options: JsValue) -> Result<AutoStrategy, JsValue> {
+    pub fn detect(options: Option<JsValue>) -> Result<AutoStrategy, JsValue> {
         let mut builder = stack_auth::AutoStrategy::builder();
 
-        if !options.is_null() && !options.is_undefined() {
-            let opts: AutoStrategyOptions = serde_wasm_bindgen::from_value(options)
-                .map_err(|e| to_js_error(AuthError::Server(e.to_string())))?;
+        if let Some(options) = options.filter(|v| !v.is_null() && !v.is_undefined()) {
+            let opts: AutoStrategyOptions =
+                serde_wasm_bindgen::from_value(options).map_err(|e| {
+                    to_js_type_error(&format!("invalid options: {e}"), "INVALID_ARGUMENT")
+                })?;
             if let Some(key) = opts.access_key {
                 builder = builder.with_access_key(key);
             }

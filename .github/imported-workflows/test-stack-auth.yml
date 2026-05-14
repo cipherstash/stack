@@ -66,9 +66,18 @@ jobs:
 
       - name: Install wasm-pack
         # The `jetli/wasm-pack-action` GitHub Action is rejected by the
-        # cipherstash org allowlist (unverified creator). Use the official
-        # rustwasm.github.io installer inline.
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        # cipherstash org allowlist (unverified creator). Install a pinned
+        # version from the official GitHub release so CI is reproducible and
+        # not exposed to upstream installer-script changes.
+        env:
+          WASM_PACK_VERSION: v0.13.1
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/rustwasm/wasm-pack/releases/download/${WASM_PACK_VERSION}/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            -o /tmp/wasm-pack.tar.gz
+          tar -xzf /tmp/wasm-pack.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" /usr/local/bin/wasm-pack
+          wasm-pack --version
 
       - name: cargo check stack-auth-wasm
         run: cargo check --target wasm32-unknown-unknown -p stack-auth-wasm
