@@ -9,6 +9,7 @@
     "migration:plan": "prisma-next migration plan",
     "migration:apply": "prisma-next migration apply",
     "start": "tsx src/index.ts",
+    "test:e2e": "vitest run --config test/e2e/vitest.config.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
@@ -30,7 +31,9 @@
   "devDependencies": {
     "@prisma-next/cli": "0.6.0-dev.8",
     "@types/node": "^22.15.12",
+    "pathe": "^2.0.3",
     "tsx": "catalog:repo",
-    "typescript": "catalog:repo"
+    "typescript": "catalog:repo",
+    "vitest": "catalog:repo"
   }
 }

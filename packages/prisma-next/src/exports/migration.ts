@@ -7,7 +7,7 @@
  *
  * ```ts
  * import { Migration, MigrationCLI, createTable } from '@prisma-next/target-postgres/migration';
- * import { cipherstashAddSearchConfig } from '@prisma-next/extension-cipherstash/migration';
+ * import { cipherstashAddSearchConfig } from '@cipherstash/prisma-next/migration';
  *
  * export default class M extends Migration {
  *   override get operations() {
@@ -28,9 +28,6 @@
  * `@prisma-next/target-postgres/migration`. The codec lifecycle hook
  * for `Encrypted<string>` columns calls these factories automatically
  * when planning a contract diff.
- *
- * @see ADR 195 — Planner IR with two renderers.
- * @see ADR 213 — Codec lifecycle hooks.
  */
 
 export type {

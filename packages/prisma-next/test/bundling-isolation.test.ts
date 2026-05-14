@@ -30,10 +30,10 @@
  *      set are disjoint, modulo the shared `constants-*.js` chunk
  *      (pure literal constants — no SDK / codec / migration code).
  *
- * The dist outputs are produced by `tsdown` from `src/exports/*.ts`.
- * `@prisma-next/extension-cipherstash#test` is wired in the root
- * `turbo.json` to depend on its own `build`, so the assertions below
- * always read fresh dist output for the current source.
+ * The dist outputs are produced by `tsup` from `src/exports/*.ts`.
+ * The package's `turbo.json` declares `test` depends on its own
+ * `build`, so the assertions below always read fresh dist output for
+ * the current source.
  */
 
 import { existsSync, readFileSync } from 'node:fs';

@@ -3,10 +3,7 @@
  *
  * `cipherstashEq` and `cipherstashIlike` lower to EQL's encrypted-aware
  * comparison functions (`eql_v2.eq`, `eql_v2.ilike`) on
- * `cipherstash/string@1`-typed columns. The lowering shape mirrors the
- * canonical templates in the reference Prisma integration at
- * `reference/cipherstash/stack/packages/stack/src/prisma/core/
- * operation-templates.ts`:
+ * `cipherstash/string@1`-typed columns:
  *
  *     eql_v2.eq(<self>, <encrypted-arg>)
  *     eql_v2.ilike(<self>, <encrypted-arg>)

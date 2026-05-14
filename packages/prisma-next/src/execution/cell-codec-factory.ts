@@ -182,7 +182,7 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
         `cipherstash ${this.descriptor.codecId}: decode invoked on a metadata-only codec instance that has no SDK attached. ` +
           'Build a runtime codec via the parameterized descriptors returned by `createParameterizedCodecDescriptors(sdk)`, ' +
           `or construct the codec directly through the matching \`create*Codec(sdk)\` factory (e.g. \`create${this.#typeName}Codec\`) ` +
-          'exported from `@prisma-next/extension-cipherstash/runtime`.',
+          'exported from `@cipherstash/prisma-next/runtime`.',
         {
           codecId: this.descriptor.codecId,
           reason: 'cipherstash-sdk-required',

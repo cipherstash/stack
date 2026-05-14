@@ -1,6 +1,6 @@
 # @cipherstash/prisma-next
 
-**Searchable field-level encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/@prisma-next/cli)** — via the [EQL bundle](https://cipherstash.com/docs/stack/platform/eql).
+**Searchable field-level encryption for Postgres with [Prisma Next](https://www.npmjs.com/package/prisma-next)** — powered by [`@cipherstash/stack`](../stack/README.md) and the [EQL bundle](https://cipherstash.com/docs/stack/platform/eql).
 
 Declare encrypted columns directly in `schema.prisma`, and the framework's migration system installs the EQL bundle in the same control-plane sweep that creates your tables. No separate "install EQL" step.
 
@@ -8,8 +8,8 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 
 ## Features
 
-- 🔒 Six encrypted column types — string, double, bigint, date, boolean, JSON
-- 🔍 Searchable encryption — equality, free-text search (ILIKE), range, order, JSON path
+- 🔒 Six encrypted column types — `string`, `double`, `bigint`, `date`, `boolean`, `json`
+- 🔍 Searchable encryption — equality, free-text search, range, order, JSON path and containment
 - 🎯 17 type-safe query operators (`cipherstashEq`, `cipherstashIlike`, `cipherstashGt`, `cipherstashAsc`, …)
 - ⚡ Bulk encrypt / bulk decrypt coalescing — one SDK round-trip per `(table, column)` group per query
 - 🧩 One-call setup via `cipherstashFromStack({ contractJson })` — no duplicate stack schema to maintain
@@ -62,7 +62,7 @@ export const db = postgres<Contract>({
 ```
 
 ```bash
-stash auth login                          # one-time, per developer
+npx stash auth login                      # one-time, per developer
 npx prisma-next contract emit
 npx prisma-next migration plan --name initial
 npx prisma-next migration apply           # installs EQL bundle + your schema
@@ -102,9 +102,15 @@ See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encr
 
 ## Authentication
 
-`stash auth login` runs a PKCE flow and caches credentials in your OS keychain — each developer ends up with their own identity for every encrypt / decrypt against the workspace. No `CS_*` env vars in local development.
+There are 2 main ways to authenticate to CipherStash:
 
-The four `CS_*` env vars (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`) are reserved for production deployments and CI runners. See the [authentication docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next#authentication) for the full identity story.
+### Local profile (Dev)
+
+`npx stash auth login` lets you log in via the browser and saves credentials in the CipherStash profile (`~/.cipherstash`). A key is automatically generated and granted access to the default keyset.
+
+### Env vars (Production)
+
+The four `CS_*` env vars (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`) are reserved for production deployments and CI runners. See the [authentication docs](https://cipherstash.com/docs/stack/encryption/prisma-next#authentication) for more information.
 
 ## Example
 
@@ -119,7 +125,7 @@ See [`DEVELOPING.md`](./DEVELOPING.md) for the source layout, two-pass codec enc
 - 📖 [**Full docs**](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) — column types, operator reference, security model, known limitations.
 - [CipherStash EQL reference](https://cipherstash.com/docs/stack/platform/eql) — encrypted operator semantics and search-config index types.
 - [`@cipherstash/stack`](../stack/README.md) — encryption SDK and schema DSL.
-- [Prisma Next CLI](https://www.npmjs.com/package/@prisma-next/cli) — the framework this extension plugs into.
+- [Prisma Next](https://www.npmjs.com/package/prisma-next) — the framework this extension plugs into.
 
 ## License
 

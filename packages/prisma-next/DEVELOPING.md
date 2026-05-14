@@ -69,7 +69,7 @@ The package centres on a shared substrate that lets every cipherstash codec be o
 
 ### `EncryptedEnvelopeBase<T>` — shared envelope superclass
 
-`packages/3-extensions/cipherstash/src/execution/envelope-base.ts` exports an abstract `EncryptedEnvelopeBase<T>` class that holds the `#`-prefixed `EncryptedHandle<T>` slot and ships the five redaction overrides (`toJSON`, `toString`, `valueOf`, `Symbol.toPrimitive`, `Symbol.for('nodejs.util.inspect.custom')`), `expose()`, `decrypt({ signal? })`, and the post-decrypt plaintext cache.
+`src/execution/envelope-base.ts` exports an abstract `EncryptedEnvelopeBase<T>` class that holds the `#`-prefixed `EncryptedHandle<T>` slot and ships the five redaction overrides (`toJSON`, `toString`, `valueOf`, `Symbol.toPrimitive`, `Symbol.for('nodejs.util.inspect.custom')`), `expose()`, `decrypt({ signal? })`, and the post-decrypt plaintext cache.
 
 Each concrete subclass:
 
@@ -260,11 +260,9 @@ The cross-package convention (source-level discipline + bundling-isolation test,
 
 ## Tracked follow-ups
 
-| Linear ticket | Surface |
-| --- | --- |
-| [TML-2388](https://linear.app/prisma-company/issue/TML-2388) | Codec-SDK binding refactor — pull the per-tenant SDK binding out of the codec factory closure into the descriptor seam so multi-tenant deployments don't re-author the codec per tenant. |
-| Polymorphic `CipherstashSdk.decrypt` return type | One-line interface widening from `Promise<string>` to `Promise<unknown>` to mirror the bulk shape; removes a narrowing cast in `EncryptedEnvelopeBase.decrypt`. |
-| [TML-2504 — Cipherstash JSONB path-exists predicate: STE-VEC selector hashing](https://linear.app/prisma-company/issue/TML-2504) | `cipherstashJsonbPathExists` against the live EQL bundle expects a hashed STE-VEC selector computed via the CipherStash SDK's `selector(...)` API; the framework currently binds the JSONpath as a plain `pg/text@1` `ParamRef`. Round-trip and the two SELECT-expression helpers (`cipherstashJsonbPathQueryFirst`, `cipherstashJsonbGet`) work; the predicate clause returns zero rows. Resolution requires either a client-side path-hashing middleware or an EQL-side plaintext-path overload. |
+- **Codec-SDK binding refactor.** Pull the per-tenant SDK binding out of the codec factory closure into the descriptor seam so multi-tenant deployments don't re-author the codec per tenant.
+- **Polymorphic `CipherstashSdk.decrypt` return type.** One-line interface widening from `Promise<string>` to `Promise<unknown>` to mirror the bulk shape; removes a narrowing cast in `EncryptedEnvelopeBase.decrypt`.
+- **`cipherstashJsonbPathExists` predicate against the live EQL bundle.** The bundle expects a hashed STE-VEC selector computed via the CipherStash SDK's `selector(...)` API; the framework currently binds the JSONpath as a plain `pg/text@1` `ParamRef`. The two SELECT-expression helpers (`cipherstashJsonbPathQueryFirst`, `cipherstashJsonbGet`) work correctly against the same column; the predicate clause returns zero rows. Resolution requires either a client-side path-hashing middleware or an EQL-side plaintext-path overload.
 
 ## Behavioural invariants pinned by tests
 
@@ -331,11 +329,6 @@ The following user-facing behaviours are pinned by on-disk tests in `test/` (pac
 
 ## References
 
-- [pgvector extension](../pgvector/README.md) — the structural precedent for codec, parameterized descriptor, and pack-meta layout.
-- [ADR 202 — Codec trait system](../../../docs/architecture%20docs/adrs/ADR%20202%20-%20Codec%20trait%20system.md).
-- [ADR 207 — Codec call context per-query AbortSignal and column metadata](../../../docs/architecture%20docs/adrs/ADR%20207%20-%20Codec%20call%20context%20per-query%20AbortSignal%20and%20column%20metadata.md).
-- [ADR 208 — Higher-order codecs for parameterized types](../../../docs/architecture%20docs/adrs/ADR%20208%20-%20Higher-order%20codecs%20for%20parameterized%20types.md).
-- [ADR 212 — Contract spaces](../../../docs/architecture%20docs/adrs/ADR%20212%20-%20Contract%20spaces.md).
-- [ADR 213 — Codec lifecycle hooks](../../../docs/architecture%20docs/adrs/ADR%20213%20-%20Codec%20lifecycle%20hooks.md).
-- [ADR 214 — Extension operator surface: namespaced replacement operators and the predicate/helper split](../../../docs/architecture%20docs/adrs/ADR%20214%20-%20Extension%20operator%20surface%20namespaced%20replacement%20operators.md).
-- [ADR 215 — Runtime middleware lifecycle: `beforeExecute` fires before `encodeParams`](../../../docs/architecture%20docs/adrs/ADR%20215%20-%20Runtime%20middleware%20lifecycle%20beforeExecute%20before%20encodeParams.md).
+- [Prisma Next encryption docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) — user-facing reference for the extension.
+- [`@cipherstash/stack`](../stack/README.md) — encryption SDK and schema DSL this package adapts.
+- [CipherStash EQL bundle](https://github.com/cipherstash/encrypt-query-language) — the SQL the baseline migration installs.

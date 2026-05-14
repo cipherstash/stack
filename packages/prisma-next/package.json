@@ -2,7 +2,7 @@
 	"name": "@cipherstash/prisma-next",
 	"version": "0.0.0",
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <support@cipherstash.com>",
 	"description": "CipherStash extension for Prisma Next: searchable application-layer field-level encryption for Postgres, with six encrypted column types, 17 query operators, bulk encrypt/decrypt middleware, and a baseline migration that installs the vendored EQL bundle SQL byte-for-byte.",
 	"keywords": [
 		"encrypted",

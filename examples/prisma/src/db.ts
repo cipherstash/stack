@@ -4,10 +4,10 @@
  *
  * `cipherstashFromStack({ contractJson })` derives the encryption
  * schemas from the contract, constructs the `@cipherstash/stack`
- * `EncryptionClient` against your `CS_*` env vars, builds the SDK
- * adapter, and returns ready-to-spread arrays for `extensions` and
- * `middleware`. Override `schemas` only if you have additional tables
- * the contract does not model.
+ * `EncryptionClient` against your `CS_*` env vars or local profile,
+ * builds the SDK adapter, and returns ready-to-spread arrays for
+ * `extensions` and `middleware`. Override `schemas` only if you have
+ * additional tables the contract does not model.
  */
 
 import 'dotenv/config'
