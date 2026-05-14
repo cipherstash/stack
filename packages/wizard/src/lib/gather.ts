@@ -47,6 +47,8 @@ export interface GatheredContext {
   installCommand: string
   /** Whether stash.config.ts already exists. */
   hasStashConfig: boolean
+  /** Whether the user runs CipherStash Proxy. False = SDK-only (post-agent skips `stash db push`). Sourced from .cipherstash/context.json; defaults to false when the file is missing or the field is absent. */
+  usesProxy: boolean
 }
 
 export interface GatherContextOptions {
@@ -78,6 +80,9 @@ export async function gatherContext(
   const hasStashConfig =
     existsSync(resolve(cwd, 'stash.config.ts')) ||
     existsSync(resolve(cwd, 'stash.config.js'))
+
+  // Read usesProxy from .cipherstash/context.json, defaulting to false
+  const usesProxy = readUsesProxyFromContext(cwd)
 
   let selectedColumns: ColumnSelection[]
   if (mode === 'plan') {
@@ -118,6 +123,7 @@ export async function gatherContext(
     outputPath,
     installCommand: installCmd,
     hasStashConfig,
+    usesProxy,
   }
 }
 
@@ -416,4 +422,33 @@ function scanForPgTable(
   } catch {
     // Permission error or similar — skip
   }
+}
+
+// --- Context file reading ---
+
+/**
+ * Read usesProxy from .cipherstash/context.json.
+ * Silently defaults to false if the file is missing, invalid JSON,
+ * or the field is absent.
+ */
+function readUsesProxyFromContext(cwd: string): boolean {
+  const contextPath = resolve(cwd, '.cipherstash', 'context.json')
+  if (!existsSync(contextPath)) {
+    return false
+  }
+  try {
+    const content = readFileSync(contextPath, 'utf-8')
+    const parsed = JSON.parse(content) as unknown
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      'usesProxy' in parsed &&
+      typeof (parsed as Record<string, unknown>).usesProxy === 'boolean'
+    ) {
+      return (parsed as Record<string, unknown>).usesProxy as boolean
+    }
+  } catch {
+    // Silently ignore parse errors or other issues
+  }
+  return false
 }

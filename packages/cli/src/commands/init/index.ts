@@ -10,6 +10,7 @@ import { gatherContextStep } from './steps/gather-context.js'
 import { installDepsStep } from './steps/install-deps.js'
 import { installEqlStep } from './steps/install-eql.js'
 import { resolveDatabaseStep } from './steps/resolve-database.js'
+import { resolveProxyChoiceStep } from './steps/resolve-proxy-choice.js'
 import type { InitProvider, InitState } from './types.js'
 import { CancelledError } from './types.js'
 import { detectPackageManager, runnerCommand } from './utils.js'
@@ -34,6 +35,7 @@ const PROVIDER_MAP: Record<string, () => InitProvider> = {
 const STEPS = [
   authenticateStep,
   resolveDatabaseStep,
+  resolveProxyChoiceStep,
   buildSchemaStep,
   installDepsStep,
   installEqlStep,
@@ -70,6 +72,13 @@ export async function initCommand(flags: Record<string, boolean>) {
   p.log.info(provider.introMessage)
 
   let state: InitState = {}
+
+  // Parse --proxy and --no-proxy flags; --proxy wins if both are set
+  if (flags.proxy) {
+    state.usesProxy = true
+  } else if (flags['no-proxy']) {
+    state.usesProxy = false
+  }
 
   try {
     for (const step of STEPS) {

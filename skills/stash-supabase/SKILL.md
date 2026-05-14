@@ -406,7 +406,9 @@ type EncryptedSupabaseError = {
 
 The hard case: a Supabase table that already exists with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code + `db push`) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
+
+> **Using CipherStash Proxy?** If you query encrypted data through [CipherStash Proxy](https://github.com/cipherstash/proxy) instead of the SDK, also run `stash db push` after schema-add and again before cutover to register the encrypted column shape with EQL.
 
 > **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
@@ -468,13 +470,15 @@ import { users } from './schema'
 export const encryptionClient = await Encryption({ schemas: [users] })
 ```
 
-Register the new encryption config with EQL:
-
-```bash
-stash db push
-```
-
-If this is the project's first encrypted column, `db push` writes directly to the active EQL config. If an active config already exists, it writes the new config as `pending` — that's expected. Cutover (later) will promote it.
+> **Using CipherStash Proxy?** Register the new encryption config with EQL:
+>
+> ```bash
+> stash db push
+> ```
+>
+> If this is the project's first encrypted column, `db push` writes directly to the active EQL config. If an active config already exists, it writes the new config as `pending` — that's expected. Cutover (later) will promote it.
+>
+> **SDK users:** Skip this step. Your encryption config lives in app code.
 
 #### Dual-writing: write to both columns from app code
 
@@ -548,13 +552,15 @@ export const users = encryptedTable('users', {
 })
 ```
 
-Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
+> **Known gap (SDK-only users):** `stash encrypt cutover` currently requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. This will be decoupled in a future release — see [issue #447](https://github.com/cipherstash/stack/issues/447).
 
-```bash
-stash db push
-# → writes the new config as `pending`. Active config (still pointing at
-#   `email_encrypted`) keeps serving while we complete the cutover.
-```
+> **Using CipherStash Proxy?** Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
+>
+> ```bash
+> stash db push
+> # → writes the new config as `pending`. Active config (still pointing at
+> #   `email_encrypted`) keeps serving while we complete the cutover.
+> ```
 
 Now run the cutover:
 

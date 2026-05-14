@@ -37,6 +37,7 @@ function buildStateFromContext(
     eqlInstalled: true,
     agents,
     mode: 'implement',
+    usesProxy: ctx.usesProxy ?? false,
   }
 }
 

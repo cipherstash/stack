@@ -40,6 +40,8 @@ export interface ContextFile {
    *  handoffs use. Absent when the file was written by `stash init` or
    *  `stash impl` rather than `stash plan`. */
   planStep?: PlanStep
+  /** Whether the user queries encrypted data via CipherStash Proxy. Captured in stash init. SDK users default to false. */
+  usesProxy?: boolean
   generatedAt: string
 }
 
@@ -105,6 +107,7 @@ export function buildContextFile(state: InitState): ContextFile {
     schemas: state.schemas ?? [],
     installedSkills: [],
     planStep: state.planStep,
+    usesProxy: state.usesProxy,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -165,6 +168,7 @@ export function buildSetupPromptContext(
     mode: state.mode ?? 'implement',
     installedSkills,
     planStep: state.planStep,
+    usesProxy: state.usesProxy ?? false,
   }
 }
 

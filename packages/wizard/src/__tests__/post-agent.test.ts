@@ -20,7 +20,7 @@ describe('runPostAgentSteps execution commands', () => {
     vi.mocked(childProcess.execSync).mockImplementation(() => Buffer.from(''))
   })
 
-  it('executes db install/db push using the detected runner (bun → bunx)', async () => {
+  it('executes db install/db push using the detected runner (bun → bunx) when usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -28,6 +28,7 @@ describe('runPostAgentSteps execution commands', () => {
       gathered: {
         installCommand: 'bun add @cipherstash/stack',
         hasStashConfig: false,
+        usesProxy: true,
         // Other GatheredContext fields aren't read in this code path; cast for the test.
       } as never,
     })
@@ -43,7 +44,7 @@ describe('runPostAgentSteps execution commands', () => {
     }
   })
 
-  it('skips db install when hasStashConfig=true and still uses bunx for db push', async () => {
+  it('skips db install when hasStashConfig=true and still uses bunx for db push when usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -51,6 +52,7 @@ describe('runPostAgentSteps execution commands', () => {
       gathered: {
         installCommand: 'bun add @cipherstash/stack',
         hasStashConfig: true,
+        usesProxy: true,
       } as never,
     })
     const commands = vi
@@ -60,7 +62,7 @@ describe('runPostAgentSteps execution commands', () => {
     expect(commands).not.toContain('bunx stash db install')
   })
 
-  it('falls back to npx when packageManager is undefined', async () => {
+  it('falls back to npx when packageManager is undefined and usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -68,6 +70,7 @@ describe('runPostAgentSteps execution commands', () => {
       gathered: {
         installCommand: 'npm install @cipherstash/stack',
         hasStashConfig: false,
+        usesProxy: true,
       } as never,
     })
     const commands = vi
@@ -75,5 +78,24 @@ describe('runPostAgentSteps execution commands', () => {
       .mock.calls.map((c) => c[0] as string)
     expect(commands).toContain('npx stash db install')
     expect(commands).toContain('npx stash db push')
+  })
+
+  it('skips db push when usesProxy=false', async () => {
+    await runPostAgentSteps({
+      cwd: '/tmp/fake',
+      integration: 'supabase',
+      packageManager: bun,
+      gathered: {
+        installCommand: 'bun add @cipherstash/stack',
+        hasStashConfig: false,
+        usesProxy: false,
+      } as never,
+    })
+
+    const commands = vi
+      .mocked(childProcess.execSync)
+      .mock.calls.map((c) => c[0] as string)
+    expect(commands).not.toContain('bunx stash db push')
+    expect(commands).toContain('bunx stash db install')
   })
 })

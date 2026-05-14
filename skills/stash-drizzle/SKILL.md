@@ -336,7 +336,7 @@ if (!decrypted.failure) {
 
 The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code + `db push`) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
 > **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
@@ -393,13 +393,17 @@ export const encryptionClient = await Encryption({ schemas: [usersEncryptionSche
 
 Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN email_encrypted eql_v2_encrypted;`. Apply with `drizzle-kit migrate`.
 
-Register the new encryption config with EQL:
-
-```bash
-stash db push
-```
-
-If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
+> **Using CipherStash Proxy?**
+> 
+> If your app queries encrypted data through CipherStash Proxy, register the new encryption config with EQL:
+> 
+> ```bash
+> stash db push
+> ```
+> 
+> If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
+> 
+> SDK-only users can skip this step.
 
 #### Dual-writing: write to both columns from app code
 
@@ -454,15 +458,21 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
+> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. [Issue #447](https://github.com/cipherstash/stack/issues/447) tracks decoupling this requirement.
+
 #### Cutover: rename swap and activate
 
-First, update the Drizzle schema to the post-cutover shape — switch `email` to use `encryptedType` and remove the `email_encrypted` column. Then re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
+First, update the Drizzle schema to the post-cutover shape — switch `email` to use `encryptedType` and remove the `email_encrypted` column.
 
-```bash
-stash db push
-# → writes the new config as `pending`. Active config (still pointing at
-#   `email_encrypted`) keeps serving while we complete the cutover.
-```
+> **Using CipherStash Proxy?**
+> 
+> If using Proxy, re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
+> 
+> ```bash
+> stash db push
+> # → writes the new config as `pending`. Active config (still pointing at
+> #   `email_encrypted`) keeps serving while we complete the cutover.
+> ```
 
 Now run the cutover:
 

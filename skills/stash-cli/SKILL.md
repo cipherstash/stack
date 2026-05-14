@@ -51,11 +51,11 @@ Two paths to a fully-encrypted column:
 
 For migrate columns, the flow is:
 
-1. **`stash plan`** detects that no `dual_writing` event is recorded and writes an encryption-rollout plan: schema-add for the encrypted twin, `stash db push` (pending), and the application-side dual-write code.
+1. **`stash plan`** detects that no `dual_writing` event is recorded and writes an encryption-rollout plan: schema-add for the encrypted twin and the application-side dual-write code. (If using CipherStash Proxy, the plan also includes `stash db push` to register the pending config.)
 2. **`stash impl`** executes that plan and stops with a deploy-gate banner. Encrypted values are not flowing yet — the dual-write code has to be running in production before backfill is safe.
 3. **You ship and deploy** the rollout PR.
 4. **`stash status`** confirms dual-writes are live.
-5. **`stash plan`** detects `dual_writing` and writes a separate cutover plan: backfill, schema rename + re-push, cutover, read-path switch, drop.
+5. **`stash plan`** detects `dual_writing` and writes a separate cutover plan: backfill, schema rename, cutover, read-path switch, drop. (For Proxy users, the plan also includes `stash db push` after schema rename to register the new shape.)
 6. **`stash impl`** executes the cutover.
 
 The split is invisible to the user — they just keep running `stash plan` and `stash impl`; the CLI knows where they are.
@@ -63,6 +63,8 @@ The split is invisible to the user — they just keep running `stash plan` and `
 For users without a deployed application to gate on (local dev, sandboxes, freshly-seeded test DBs), `stash plan --complete-rollout` produces a single end-to-end plan with no deploy gate. The flag prints a default-no confirm with a loud warning before generating; only safe when no production app writes to this database.
 
 Use `stash status` at any time to see which save-points are complete and what each rollout's next move is.
+
+> **Note:** Until issue [#447](https://github.com/cipherstash/stack/issues/447) follow-up lands, `stash encrypt cutover` requires a pending EQL configuration (set by `stash db push`). SDK users must run `stash db push` once before `stash encrypt cutover` to satisfy this precondition. Tracked separately and will be addressed in a follow-up.
 
 ## Configuration
 
@@ -145,8 +147,8 @@ stash plan --complete-rollout
 
 | Detected state | Plan written |
 |---|---|
-| Manifest empty, fresh project, or no `dual_writing` events recorded | **Encryption rollout** — schema-add, dual-write code, `stash db push` (pending). Ends at the deploy gate. |
-| At least one column has a `dual_writing` (or later) event recorded | **Encryption cutover** — backfill, schema rename + re-push, cutover, read-path switch, drop plaintext. Requires the rollout to already be deployed. |
+| Manifest empty, fresh project, or no `dual_writing` events recorded | **Encryption rollout** — schema-add and dual-write code. (Proxy users also: `stash db push` to register pending.) Ends at the deploy gate. |
+| At least one column has a `dual_writing` (or later) event recorded | **Encryption cutover** — backfill and schema rename. (Proxy users also: `stash db push` to register the renamed shape.) Requires the rollout to already be deployed. |
 | `--complete-rollout` flag passed | **Complete rollout** — schema-add through drop, no deploy gate. Escape hatch for databases without a deployed application. Default-no confirm with a loud warning before generating. |
 
 The chosen template drives the agent's prompt body for the Claude Code, Codex, and AGENTS.md handoffs. The wizard handoff receives `--mode plan` on argv and reads the resolved step from `.cipherstash/context.json` (the `planStep` field). Every target produces a valid plan-mode artifact at `.cipherstash/plan.md`.
@@ -178,7 +180,7 @@ stash impl --continue-without-plan
 | No plan, `--continue-without-plan` | Skips the picker, runs the security confirm (still default-no), then implements. |
 | No plan, non-TTY, no flag | Errors out with "Run `stash plan` first, or pass `--continue-without-plan` to skip planning." Forces explicit intent in CI. |
 
-Once the user clears the gate, `impl` dispatches to a handoff target (Claude Code, Codex, AGENTS.md for Cursor/Windsurf/Cline, or `@cipherstash/wizard`) and the agent executes the plan: schema edits, migrations, `stash db push`, `stash encrypt {backfill,cutover,drop}` as appropriate.
+Once the user clears the gate, `impl` dispatches to a handoff target (Claude Code, Codex, AGENTS.md for Cursor/Windsurf/Cline, or `@cipherstash/wizard`) and the agent executes the plan: schema edits, migrations, `stash encrypt {backfill,cutover,drop}` as appropriate. (Proxy users also run `stash db push` where indicated in the plan.)
 
 #### Deploy-gate enforcement
 
@@ -340,10 +342,11 @@ Validation also runs automatically before `db push` — issues are logged as war
 
 ### `db push` — Register the encryption schema with EQL
 
-Synchronises the CipherStash configuration in `eql_v2_configuration` with what your encryption client declares. Required:
+Synchronises the CipherStash configuration in `eql_v2_configuration` with what your encryption client declares.
 
-- For CipherStash Proxy users (so Proxy knows which columns to encrypt/decrypt).
-- For SDK users running the column-encryption lifecycle (`stash encrypt {backfill,cutover,drop}`) — `cutover` reads pending columns from EQL config to know what to rename.
+**Required for CipherStash Proxy users** — Proxy needs to know which columns to encrypt/decrypt.
+
+**Not needed for SDK users** — Drizzle, Supabase, and plain PostgreSQL SDK users have their encryption config in application code. The database does not need a copy. See the "Known gap" note below.
 
 ```bash
 stash db push
@@ -371,6 +374,8 @@ When pushing, the CLI:
 |-----------|---------|
 | Adding a brand-new encrypted column (no rename) | `stash db activate` |
 | Cutting over from a `<col>_encrypted` twin (path 3 lifecycle) | `stash encrypt cutover --table T --column C` |
+
+> **Known gap:** `stash encrypt cutover` currently requires a pending EQL configuration (satisfied by `stash db push`). SDK-only users running the migrate-existing-column flow will encounter this precondition. Work to decouple `encrypt cutover` from EQL config for SDK-only users (using direct SQL rename instead) is tracked as follow-up work to [issue #447](https://github.com/cipherstash/stack/issues/447) and will be addressed in a future release.
 
 **SDK to EQL type mapping:**
 
