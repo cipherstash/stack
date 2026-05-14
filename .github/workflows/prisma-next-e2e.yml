@@ -83,8 +83,14 @@ jobs:
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./examples/prisma/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./examples/prisma/.env
 
+      # Build via turbo so the `^build` dependency on
+      # `@cipherstash/stack` (which `@cipherstash/prisma-next` imports
+      # `/schema` from) is honoured. A bare
+      # `pnpm --filter @cipherstash/prisma-next build` bypasses the
+      # task graph and leaves the upstream dist/ empty, surfacing as
+      # `Cannot find module '@cipherstash/stack/schema'` from tsc.
       - name: Build @cipherstash/prisma-next
-        run: pnpm --filter @cipherstash/prisma-next build
+        run: pnpm exec turbo run build --filter @cipherstash/prisma-next
 
       - name: Emit example contract
         run: pnpm --filter @cipherstash/prisma-next-example emit
