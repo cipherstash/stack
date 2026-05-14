@@ -10,75 +10,35 @@
 //! - `OAuthStrategy.fromProfile` — filesystem-backed profile store
 //! - `AutoStrategy` profile-store fallback — `detect()` on wasm only resolves via env vars
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use cts_common::Region;
 use serde::{Deserialize, Serialize};
 use stack_auth::{AuthError, AuthStrategy, ServiceToken, Token};
 use wasm_bindgen::prelude::*;
 
-/// Install the `console_error_panic_hook` exactly once. Called from the
-/// public constructors so any panic in the upstream auth stack lands as a
-/// readable `console.error` instead of an opaque `RuntimeError: unreachable`.
-fn install_panic_hook() {
-    use std::sync::Once;
-    static ONCE: Once = Once::new();
-    ONCE.call_once(console_error_panic_hook::set_once);
+/// Route Rust panics to `console.error` with a readable message + stack.
+/// Without this, panics surface as opaque `RuntimeError: unreachable` from
+/// wasm bytecode offsets.
+#[wasm_bindgen(start)]
+fn module_init() {
+    console_error_panic_hook::set_once();
 }
 
-// ---------------------------------------------------------------------------
-// Error helpers
-// ---------------------------------------------------------------------------
-
-fn error_code(err: &AuthError) -> &'static str {
-    match err {
-        AuthError::Request(_) => "REQUEST_ERROR",
-        AuthError::AccessDenied => "ACCESS_DENIED",
-        AuthError::TokenExpired => "EXPIRED_TOKEN",
-        AuthError::InvalidGrant => "INVALID_GRANT",
-        AuthError::InvalidClient => "INVALID_CLIENT",
-        AuthError::InvalidUrl(_) => "INVALID_URL",
-        AuthError::Region(_) => "INVALID_REGION",
-        AuthError::InvalidToken(_) => "INVALID_TOKEN",
-        AuthError::Server(_) => "SERVER_ERROR",
-        AuthError::NotAuthenticated => "NOT_AUTHENTICATED",
-        AuthError::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
-        AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
-        AuthError::InvalidCrn(_) => "INVALID_CRN",
-        _ => "UNKNOWN_ERROR",
-    }
+/// Attach a machine-readable `.code` to a JS error object.
+fn attach_code(js_err: impl Into<JsValue>, code: &str) -> JsValue {
+    let v: JsValue = js_err.into();
+    let _ = js_sys::Reflect::set(&v, &JsValue::from_str("code"), &JsValue::from_str(code));
+    v
 }
 
-/// Build a JS `Error` enriched with a `.code` property — matches the
-/// `AuthError` shape exposed by `stack-auth-node`. `.message` is the plain
-/// error text; the machine-readable identifier lives on `.code`.
 fn to_js_error(err: AuthError) -> JsValue {
-    let code = error_code(&err);
-    let js_err = js_sys::Error::new(&err.to_string());
-    let _ = js_sys::Reflect::set(
-        &js_err,
-        &JsValue::from_str("code"),
-        &JsValue::from_str(code),
-    );
-    js_err.into()
+    attach_code(js_sys::Error::new(&err.to_string()), err.error_code())
 }
 
-/// Build a JS `TypeError` enriched with a `.code` property. Used when the
-/// caller passes structurally invalid input to a binding (vs. an auth-layer
-/// failure, which uses [`to_js_error`]).
 fn to_js_type_error(message: &str, code: &str) -> JsValue {
-    let js_err = js_sys::TypeError::new(message);
-    let _ = js_sys::Reflect::set(
-        &js_err,
-        &JsValue::from_str("code"),
-        &JsValue::from_str(code),
-    );
-    js_err.into()
+    attach_code(js_sys::TypeError::new(message), code)
 }
-
-// ---------------------------------------------------------------------------
-// TokenResult — returned by strategy.getToken()
-// ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 struct TokenResultPayload {
@@ -87,7 +47,7 @@ struct TokenResultPayload {
     #[serde(rename = "workspaceId")]
     workspace_id: String,
     issuer: String,
-    services: HashMap<String, String>,
+    services: BTreeMap<String, String>,
 }
 
 fn token_result_from(token: ServiceToken) -> Result<JsValue, JsValue> {
@@ -111,10 +71,6 @@ fn token_result_from(token: ServiceToken) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&payload).map_err(JsValue::from)
 }
 
-// ---------------------------------------------------------------------------
-// AutoStrategyOptions — plain JS object deserialized from JsValue
-// ---------------------------------------------------------------------------
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AutoStrategyOptions {
@@ -124,15 +80,9 @@ struct AutoStrategyOptions {
     workspace_crn: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// TokenInput — camelCase JS shape, bridged to `stack_auth::Token`
-// ---------------------------------------------------------------------------
-//
 // `stack_auth::Token` has `pub(crate)` fields, so we can't construct one
-// directly. Instead we deserialize a `TokenInput` (camelCase, idiomatic for
-// JS callers) and JSON-round-trip it into the snake_case shape `Token`
-// expects.
-
+// directly — we deserialize a camelCase shim and round-trip it through the
+// snake_case JSON shape that `Token`'s own `Deserialize` accepts.
 #[derive(Deserialize)]
 struct TokenInput {
     #[serde(rename = "accessToken", alias = "access_token")]
@@ -154,8 +104,6 @@ struct TokenInput {
 fn parse_token_input(value: JsValue) -> Result<Token, AuthError> {
     let input: TokenInput = serde_wasm_bindgen::from_value(value)
         .map_err(|e| AuthError::InvalidToken(e.to_string()))?;
-    // Build the snake_case JSON shape that `Token`'s Deserialize expects.
-    // We can't construct `Token` directly because its fields are `pub(crate)`.
     let mut snake = serde_json::Map::new();
     snake.insert(
         "access_token".into(),
@@ -198,7 +146,6 @@ pub struct AccessKeyStrategy {
 impl AccessKeyStrategy {
     /// Create a new `AccessKeyStrategy` for the given region and access key.
     pub fn create(region: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
-        install_panic_hook();
         let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
@@ -210,7 +157,7 @@ impl AccessKeyStrategy {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     #[wasm_bindgen(js_name = getToken)]
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
-        let token = (&self.inner).get_token().await.map_err(to_js_error)?;
+        let token = self.inner.get_token().await.map_err(to_js_error)?;
         token_result_from(token)
     }
 }
@@ -233,17 +180,12 @@ impl OAuthStrategy {
     /// `{ accessToken: string, refreshToken?: string, tokenType: string,
     ///    expiresAt: number, region?: string, clientId?: string,
     ///    deviceInstanceId?: string }`.
-    ///
-    /// The Rust `Token` struct uses `snake_case` field names internally, so
-    /// the deserialisation goes through a small shim that accepts either casing
-    /// for forward compatibility.
     #[wasm_bindgen(js_name = withToken)]
     pub fn with_token(
         region: String,
         client_id: String,
         token: JsValue,
     ) -> Result<OAuthStrategy, JsValue> {
-        install_panic_hook();
         let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
         let token = parse_token_input(token).map_err(to_js_error)?;
         let inner = stack_auth::OAuthStrategy::with_token(region, client_id, token)
@@ -256,7 +198,7 @@ impl OAuthStrategy {
     /// refresh token.
     #[wasm_bindgen(js_name = getToken)]
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
-        let token = (&self.inner).get_token().await.map_err(to_js_error)?;
+        let token = self.inner.get_token().await.map_err(to_js_error)?;
         token_result_from(token)
     }
 }
@@ -278,7 +220,6 @@ impl AutoStrategy {
     /// only via the `CS_CLIENT_ACCESS_KEY` / `CS_WORKSPACE_CRN` env vars or
     /// the explicit values passed in `options`.
     pub fn detect(options: Option<JsValue>) -> Result<AutoStrategy, JsValue> {
-        install_panic_hook();
         let mut builder = stack_auth::AutoStrategy::builder();
 
         if let Some(options) = options.filter(|v| !v.is_null() && !v.is_undefined()) {
@@ -304,19 +245,10 @@ impl AutoStrategy {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     #[wasm_bindgen(js_name = getToken)]
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
-        let token = (&self.inner).get_token().await.map_err(to_js_error)?;
+        let token = self.inner.get_token().await.map_err(to_js_error)?;
         token_result_from(token)
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-//
-// Tests are gated on `target_arch = "wasm32"` and driven by
-// `wasm-bindgen-test`. Native `cargo test` doesn't exercise this crate
-// (the bindings only make sense in a wasm runtime). The CI invocation is
-// `wasm-pack test --node packages/stack-auth/wasm`.
 
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
@@ -369,29 +301,6 @@ mod tests {
             Ok(_) => panic!("expected Err, got Ok"),
             Err(e) => e,
         }
-    }
-
-    // -------- error_code mapping --------
-
-    #[wasm_bindgen_test]
-    fn maps_known_auth_error_variants() {
-        assert_eq!(error_code(&AuthError::AccessDenied), "ACCESS_DENIED");
-        assert_eq!(error_code(&AuthError::TokenExpired), "EXPIRED_TOKEN");
-        assert_eq!(error_code(&AuthError::InvalidGrant), "INVALID_GRANT");
-        assert_eq!(error_code(&AuthError::InvalidClient), "INVALID_CLIENT");
-        assert_eq!(
-            error_code(&AuthError::NotAuthenticated),
-            "NOT_AUTHENTICATED"
-        );
-        assert_eq!(
-            error_code(&AuthError::MissingWorkspaceCrn),
-            "MISSING_WORKSPACE_CRN"
-        );
-        assert_eq!(error_code(&AuthError::Server("x".into())), "SERVER_ERROR");
-        assert_eq!(
-            error_code(&AuthError::InvalidToken("malformed".into())),
-            "INVALID_TOKEN"
-        );
     }
 
     #[wasm_bindgen_test]

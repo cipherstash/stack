@@ -241,6 +241,32 @@ pub enum AuthError {
     Store(#[from] stack_profile::ProfileError),
 }
 
+impl AuthError {
+    /// Stable machine-readable identifier for surfacing across FFI boundaries
+    /// (e.g. JS `Error.code`, Node-API error codes). Named `error_code` rather
+    /// than `code` to avoid colliding with `miette::Diagnostic::code`, which
+    /// is inherited via `#[derive(Diagnostic)]`.
+    pub fn error_code(&self) -> &'static str {
+        match self {
+            Self::Request(_) => "REQUEST_ERROR",
+            Self::AccessDenied => "ACCESS_DENIED",
+            Self::TokenExpired => "EXPIRED_TOKEN",
+            Self::InvalidGrant => "INVALID_GRANT",
+            Self::InvalidClient => "INVALID_CLIENT",
+            Self::InvalidUrl(_) => "INVALID_URL",
+            Self::Region(_) => "INVALID_REGION",
+            Self::InvalidToken(_) => "INVALID_TOKEN",
+            Self::Server(_) => "SERVER_ERROR",
+            Self::NotAuthenticated => "NOT_AUTHENTICATED",
+            Self::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
+            Self::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
+            Self::InvalidCrn(_) => "INVALID_CRN",
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Store(_) => "STORE_ERROR",
+        }
+    }
+}
+
 impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
@@ -322,4 +348,30 @@ pub(crate) fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_error_code_known_variants() {
+        assert_eq!(AuthError::AccessDenied.error_code(), "ACCESS_DENIED");
+        assert_eq!(AuthError::TokenExpired.error_code(), "EXPIRED_TOKEN");
+        assert_eq!(AuthError::InvalidGrant.error_code(), "INVALID_GRANT");
+        assert_eq!(AuthError::InvalidClient.error_code(), "INVALID_CLIENT");
+        assert_eq!(
+            AuthError::NotAuthenticated.error_code(),
+            "NOT_AUTHENTICATED"
+        );
+        assert_eq!(
+            AuthError::MissingWorkspaceCrn.error_code(),
+            "MISSING_WORKSPACE_CRN"
+        );
+        assert_eq!(AuthError::Server("x".into()).error_code(), "SERVER_ERROR");
+        assert_eq!(
+            AuthError::InvalidToken("malformed".into()).error_code(),
+            "INVALID_TOKEN"
+        );
+    }
 }
