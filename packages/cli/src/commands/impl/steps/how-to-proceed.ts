@@ -12,6 +12,31 @@ import { handoffCodexStep } from './handoff-codex.js'
 import { handoffWizardStep } from './handoff-wizard.js'
 
 /**
+ * The complete set of handoff targets accepted by `--target`. Kept as a
+ * runtime array (not just a type) so the CLI can validate user input
+ * against the same source of truth that drives the picker.
+ */
+export const HANDOFF_CHOICES: readonly HandoffChoice[] = [
+  'claude-code',
+  'codex',
+  'agents-md',
+  'wizard',
+] as const
+
+/**
+ * Validate a user-supplied `--target` value. Returns the canonical
+ * `HandoffChoice` if valid, or `null` otherwise. `undefined` input
+ * (flag absent) returns `null` too — callers distinguish absence from
+ * invalidity before calling this.
+ */
+export function resolveTarget(target: string | undefined): HandoffChoice | null {
+  if (!target) return null
+  return (HANDOFF_CHOICES as readonly string[]).includes(target)
+    ? (target as HandoffChoice)
+    : null
+}
+
+/**
  * Pick the default option in the menu.
  *
  * Detected CLIs win — Claude Code first, then Codex. Otherwise we default to
@@ -77,18 +102,28 @@ export const howToProceedStep: HandoffStep = {
   name: 'How to proceed',
   async run(state: InitState): Promise<InitState> {
     const mode: InitMode = state.mode ?? 'implement'
-    const message =
-      mode === 'plan'
-        ? 'Which agent should write the plan?'
-        : 'How would you like to finish setup?'
 
-    const choice = await p.select<HandoffChoice>({
-      message,
-      options: buildOptions(state, mode),
-      initialValue: defaultChoice(state, mode),
-    })
+    // Caller pre-resolved the handoff target (e.g. via `--target` on the
+    // CLI). Skip the interactive picker entirely so the command is safe
+    // to run from automation / non-TTY contexts.
+    let choice: HandoffChoice
+    if (state.handoff) {
+      choice = state.handoff
+    } else {
+      const message =
+        mode === 'plan'
+          ? 'Which agent should write the plan?'
+          : 'How would you like to finish setup?'
 
-    if (p.isCancel(choice)) throw new CancelledError()
+      const picked = await p.select<HandoffChoice>({
+        message,
+        options: buildOptions(state, mode),
+        initialValue: defaultChoice(state, mode),
+      })
+
+      if (p.isCancel(picked)) throw new CancelledError()
+      choice = picked
+    }
 
     const next: InitState = { ...state, handoff: choice }
 

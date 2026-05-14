@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import { howToProceedStep } from '../impl/steps/how-to-proceed.js'
+import {
+  HANDOFF_CHOICES,
+  howToProceedStep,
+  resolveTarget,
+} from '../impl/steps/how-to-proceed.js'
 import { type AgentEnvironment, detectAgents } from '../init/detect-agents.js'
 import { readContextFile } from '../init/lib/read-context.js'
 import { detectColumnStates, rollupPlanStep } from '../init/lib/rollout-state.js'
@@ -119,7 +123,10 @@ async function detectPlanStep(cwd: string): Promise<PlanStep> {
  *                          one document with no deploy gate. Confirms
  *                          (default-no) before generating.
  */
-export async function planCommand(flags: Record<string, boolean> = {}) {
+export async function planCommand(
+  flags: Record<string, boolean> = {},
+  values: Record<string, string> = {},
+) {
   const cwd = process.cwd()
   const pm = detectPackageManager()
   const cli = runnerCommand(pm, 'stash')
@@ -128,6 +135,15 @@ export async function planCommand(flags: Record<string, boolean> = {}) {
   if (!ctx) {
     p.log.error(
       `No CipherStash context found at \`${CONTEXT_REL_PATH}\`. Run \`${cli} init\` first.`,
+    )
+    process.exit(1)
+  }
+
+  const targetFlag = values.target
+  const target = resolveTarget(targetFlag)
+  if (targetFlag && !target) {
+    p.log.error(
+      `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
     )
     process.exit(1)
   }
@@ -161,7 +177,17 @@ export async function planCommand(flags: Record<string, boolean> = {}) {
     const agents = detectAgents(cwd, process.env)
     const state = buildStateFromContext(ctx, agents, planStep)
 
-    await howToProceedStep.run(state)
+    // Non-TTY without --target would hang on the agent-target picker.
+    // Exit cleanly with a hint so automation users discover the flag.
+    if (!target && !process.stdout.isTTY) {
+      p.log.info(
+        `No agent selected. Pass --target <${HANDOFF_CHOICES.join('|')}> to run the handoff non-interactively.`,
+      )
+      p.outro('No handoff performed.')
+      return
+    }
+
+    await howToProceedStep.run(target ? { ...state, handoff: target } : state)
 
     if (process.stdout.isTTY) {
       const proceed = await p.confirm({
@@ -171,14 +197,20 @@ export async function planCommand(flags: Record<string, boolean> = {}) {
       if (!p.isCancel(proceed) && proceed) {
         p.outro('Plan complete — handing off to `stash impl`.')
         const { implCommand } = await import('../impl/index.js')
-        await implCommand({})
+        await implCommand({}, {})
         return
       }
+      p.outro(
+        `Plan drafted at \`${PLAN_REL_PATH}\`. Review it, then run \`${cli} impl\` to implement.`,
+      )
+    } else {
+      // Mirror init's non-TTY hint: the next command will also hit the
+      // agent-target picker, so name `--target` here rather than letting
+      // the user re-discover the flag on the next exit-cleanly hint.
+      p.outro(
+        `Plan drafted at \`${PLAN_REL_PATH}\`. Review it, then run \`${cli} impl --target <claude-code|codex|agents-md|wizard>\` to implement. The \`--target\` flag is required when running non-interactively.`,
+      )
     }
-
-    p.outro(
-      `Plan drafted at \`${PLAN_REL_PATH}\`. Review it, then run \`${cli} impl\` to implement.`,
-    )
   } catch (err) {
     if (err instanceof CancelledError) {
       p.cancel('Cancelled.')

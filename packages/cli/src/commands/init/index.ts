@@ -116,9 +116,16 @@ export async function initCommand(flags: Record<string, boolean>) {
         await planCommand()
         return
       }
+      p.outro(`Next: run \`${cli} plan\` to draft your encryption plan.`)
+    } else {
+      // Non-TTY users (CI, agent Bash tools, pipes) will hit the same
+      // agent-target picker in `stash plan`, which only reads from
+      // /dev/tty. Steer them at `--target` up front so the next command
+      // doesn't surprise them.
+      p.outro(
+        `Next: run \`${cli} plan --target <claude-code|codex|agents-md|wizard>\` to draft your encryption plan. The \`--target\` flag is required when running non-interactively (skips the agent-target picker).`,
+      )
     }
-
-    p.outro(`Next: run \`${cli} plan\` to draft your encryption plan.`)
   } catch (err) {
     if (err instanceof CancelledError) {
       p.cancel('Setup cancelled.')

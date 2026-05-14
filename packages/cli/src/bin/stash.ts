@@ -119,6 +119,10 @@ Plan Flags:
                            normally separates rollout from cutover. Only safe when this
                            database is not backing a deployed application (local dev,
                            sandbox, freshly seeded test environment).
+  --target <name>          Skip the agent-target picker and hand off directly to one of
+                           claude-code | codex | agents-md | wizard. Safe to call from
+                           non-TTY contexts (CI, pipes). Without --target in non-TTY,
+                           the command prints a hint and exits cleanly instead of hanging.
 
 Status Flags:
   --quest                  Force the quest-log output (emoji + progress bars)
@@ -130,6 +134,10 @@ Status Flags:
 Impl Flags:
   --continue-without-plan  Skip planning and go straight to implementation
                            (interactively confirms before proceeding)
+  --target <name>          Skip the agent-target picker and hand off directly to one of
+                           claude-code | codex | agents-md | wizard. Safe to call from
+                           non-TTY contexts (CI, pipes). Without --target in non-TTY,
+                           the command prints a hint and exits cleanly instead of hanging.
 
 DB Flags:
   --force                    (install) Reinstall / overwrite even if already installed
@@ -150,6 +158,7 @@ Examples:
   ${STASH} plan
   ${STASH} impl
   ${STASH} impl --continue-without-plan
+  ${STASH} impl --target claude-code
   ${STASH} status
   ${STASH} auth login
   ${STASH} wizard
@@ -400,10 +409,10 @@ async function main() {
       await initCommand(flags)
       break
     case 'plan':
-      await planCommand(flags)
+      await planCommand(flags, values)
       break
     case 'impl':
-      await implCommand(flags)
+      await implCommand(flags, values)
       break
     case 'status':
       await statusCommand({

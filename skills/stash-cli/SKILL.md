@@ -42,6 +42,17 @@ The setup lifecycle is split across four explicit save-points. Each command can 
 | `stash impl` | Executes the plan via agent handoff. Refuses cutover-step plans without a recorded `dual_writing` event; prints the deploy-gate banner after a rollout-step run. | Deploy-gate banner (rollout) or "verify state" (cutover/new) |
 | `stash status` | The encryption-rollout quest log — per-column "where am I" map, runs in ms | — |
 
+### Running from automation (non-TTY)
+
+If you're invoking `stash plan` or `stash impl` from a non-TTY context — CI, a pipe, or an agent's Bash tool — **always pass `--target <claude-code|codex|agents-md|wizard>`**. Both commands present an interactive agent-target picker that reads from `/dev/tty`; without `--target` they print a "no agent selected" hint and exit 0 without performing the handoff. With `--target`, the picker is skipped and the named handoff runs non-interactively.
+
+```bash
+stash plan --target claude-code
+stash impl --target agents-md
+```
+
+`stash init` and `stash status` are safe to call from any context — they detect non-TTY and adapt automatically.
+
 ### Rolling encryption out to production
 
 Two paths to a fully-encrypted column:
@@ -139,9 +150,12 @@ The `--supabase` and `--drizzle` flags tailor the intro message and EQL install 
 ```bash
 stash plan
 stash plan --complete-rollout
+stash plan --target claude-code        # non-interactive — skip the agent picker
 ```
 
 `plan` is the **draft for review** save-point. Pre-flights `.cipherstash/context.json` (errors with a "Run `stash init` first" pointer if missing). Hands off to a coding agent — all four targets are offered: Claude Code, Codex, AGENTS.md (for Cursor/Windsurf/Cline), and the CipherStash Agent (`@cipherstash/wizard`).
+
+`--target <claude-code|codex|agents-md|wizard>` skips the interactive agent-target picker. **Required when invoking `plan` from a non-TTY context** (CI, pipes, an agent's Bash tool) — without it, `plan` prints a "no agent selected" hint and exits 0 without performing the handoff. In a TTY, `--target` is optional; it just bypasses the picker.
 
 `plan` is **state-driven**. It reads `.cipherstash/migrations.json` and `cs_migrations` and dispatches to one of three plan templates:
 
@@ -168,19 +182,24 @@ There is no atomic way to replace a populated plaintext column with an encrypted
 ```bash
 stash impl
 stash impl --continue-without-plan
+stash impl --target claude-code        # non-interactive — skip the agent picker
 ```
 
 `impl` is the **execute** save-point. Pre-flights `.cipherstash/context.json`. Behaviour branches on disk state:
 
 | State | Behaviour |
 |-------|-----------|
-| Plan exists, TTY | Parses the summary block. Enforces the deploy gate (see below). Renders a confirm panel describing the plan scope. Default-yes confirm. |
-| Plan exists, non-TTY | Logs and proceeds without confirm (CI/pipe-safe). The deploy-gate check still runs. |
+| Plan exists, TTY, no `--target` | Parses the summary block. Enforces the deploy gate (see below). Renders a confirm panel describing the plan scope. Default-yes confirm, then the agent-target picker. |
+| Plan exists, TTY, `--target X` | Same confirm panel, but skips the picker and runs handoff `X`. |
+| Plan exists, non-TTY, `--target X` | Logs the plan path, skips both the confirm and the picker, runs handoff `X`. |
+| Plan exists, non-TTY, no `--target` | Logs the plan path, prints a "No agent selected — pass `--target`" hint, and exits 0 without performing the handoff. The deploy-gate check still runs first. |
 | No plan, TTY | Interactive `p.select`: "Draft a plan first (recommended)" / "Continue without a plan" / cancel. "Draft" delegates to `stash plan`. "Continue" goes through a security confirm (default-no) before implementing. |
 | No plan, `--continue-without-plan` | Skips the picker, runs the security confirm (still default-no), then implements. |
 | No plan, non-TTY, no flag | Errors out with "Run `stash plan` first, or pass `--continue-without-plan` to skip planning." Forces explicit intent in CI. |
 
-Once the user clears the gate, `impl` dispatches to a handoff target (Claude Code, Codex, AGENTS.md for Cursor/Windsurf/Cline, or `@cipherstash/wizard`) and the agent executes the plan: schema edits, migrations, `stash encrypt {backfill,cutover,drop}` as appropriate. (Proxy users also run `stash db push` where indicated in the plan.)
+`--target <claude-code|codex|agents-md|wizard>` skips the interactive agent-target picker. **Required when invoking `impl` from a non-TTY context** (CI, pipes, an agent's Bash tool); without it, `impl` exits cleanly with a hint rather than hanging on `/dev/tty`. In a TTY, `--target` is optional.
+
+Once the user clears the gate, `impl` dispatches to a handoff target (Claude Code, Codex, AGENTS.md for Cursor/Windsurf/Cline, or `@cipherstash/wizard`) and the agent executes the plan: schema edits, migrations, `stash db push`, `stash encrypt {backfill,cutover,drop}` as appropriate.
 
 #### Deploy-gate enforcement
 
