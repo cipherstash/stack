@@ -32,7 +32,7 @@ Deliberately not on wasm: `device_code` flow (uses `open::that`), `stack-profile
 
 ### Layer 3.5 — `stack-auth-wasm` bindings crate [IN PROGRESS]
 
-This PR. Adds `packages/stack-auth/wasm` as a sibling to the existing napi crate. Mirrors the wasm-compatible subset of the `@cipherstash/auth` surface as wasm-bindgen bindings: `AccessKeyStrategy`, `OAuthStrategy.withToken`, `AutoStrategy.detect` (env-only on wasm) — each with a `getToken(): Promise<TokenResult>`. Errors carry a `.code` enum matching the napi contract.
+This PR. Adds `packages/stack-auth/wasm` as a sibling to the existing napi crate. Scoped to `AccessKeyStrategy` (M2M auth) — `getToken(): Promise<TokenResult>` returning `{ token, subject, workspaceId, issuer, services }`. Errors carry a `.code` enum matching the napi contract. OAuth-based strategies (`OAuthStrategy`, `AutoStrategy`, device-code) are deferred to a follow-up: federation and token-pinning for browser/edge contexts need design work that hasn't happened yet.
 
 Build targets: `wasm-pack build --target bundler` (primary — Supabase Edge, Vite, Webpack) and `--target deno` (vanilla `deno run` only — Supabase Edge Runtime sandbox blocks `fetch('file://…')` so the deno target's auto-fetch of its `.wasm` sibling fails there; the bundler output uses `import * as wasm from "./*.wasm"` which the Edge Runtime resolves natively). Tests run via `wasm-pack test --node` — pure-logic coverage (type conversion, JWT claim extraction, error mapping, constructor smoke). HTTP semantics stay covered by the existing native `stack-auth/node/__tests__` vitest suite. CI gains the wasm32 cargo-check + wasm-pack test step alongside the existing nextest step in `test-stack-auth.yml`.
 
