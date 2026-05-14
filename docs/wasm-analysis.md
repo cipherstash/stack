@@ -34,9 +34,14 @@ Deliberately not on wasm: `device_code` flow (uses `open::that`), `stack-profile
 
 This PR. Adds `packages/stack-auth/wasm` as a sibling to the existing napi crate. Mirrors the wasm-compatible subset of the `@cipherstash/auth` surface as wasm-bindgen bindings: `AccessKeyStrategy`, `OAuthStrategy.withToken`, `AutoStrategy.detect` (env-only on wasm) — each with a `getToken(): Promise<TokenResult>`. Errors carry a `.code` enum matching the napi contract.
 
-Build targets: `wasm-pack build --target deno` (primary, Supabase Edge) and `--target bundler` (Vite/Webpack/Node consumers). Tests run via `wasm-pack test --node` — pure-logic coverage (type conversion, JWT claim extraction, error mapping, constructor smoke). HTTP semantics stay covered by the existing native `stack-auth/node/__tests__` vitest suite. CI gains the wasm32 cargo-check + wasm-pack test step alongside the existing nextest step in `test-stack-auth.yml`.
+Build targets: `wasm-pack build --target bundler` (primary — Supabase Edge, Vite, Webpack) and `--target deno` (vanilla `deno run` only — Supabase Edge Runtime sandbox blocks `fetch('file://…')` so the deno target's auto-fetch of its `.wasm` sibling fails there; the bundler output uses `import * as wasm from "./*.wasm"` which the Edge Runtime resolves natively). Tests run via `wasm-pack test --node` — pure-logic coverage (type conversion, JWT claim extraction, error mapping, constructor smoke). HTTP semantics stay covered by the existing native `stack-auth/node/__tests__` vitest suite. CI gains the wasm32 cargo-check + wasm-pack test step alongside the existing nextest step in `test-stack-auth.yml`.
 
 Rationale for this intermediate layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain, error-enrichment pattern, and Token-input deserialization shape here on a tiny crate (~250 LOC, 10 tests) means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting work in the same PR.
+
+End-to-end validated against a live Supabase Edge Function returning a real `TokenResult` from `AccessKeyStrategy.getToken()` against `ap-southeast-2.aws`. The validation surfaced two runtime issues fixed in this PR:
+
+- `stack-auth` called `std::time::SystemTime::now()` in `token.rs` and `access_key_refresher.rs` for JWT-expiry checks. The stdlib's `wasm32-unknown-unknown` `time` module is a panicking stub. Swapped to `web_time::{SystemTime, UNIX_EPOCH}` (re-exports `std::time` on native, polyfills via JS time APIs on wasm — no behavior change off wasm).
+- Rust panics on wasm surface as opaque `RuntimeError: unreachable` from bytecode offsets. Added `console_error_panic_hook` and an idempotent `install_panic_hook()` from each binding-crate constructor so future panics route to `console.error` with a readable message + stack.
 
 ### Layer 4 — `protect-wasm` bindings
 

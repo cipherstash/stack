@@ -27,11 +27,11 @@ These exist in the napi bindings but cannot work on wasm32:
 ## Build
 
 ```sh
-# Deno target (Supabase Edge):
-npm run build:deno      # → pkg-deno/
-
-# Bundler target (Vite / Webpack / Node):
+# Bundler target — works in Supabase Edge, Vite, Webpack, Deno with static wasm imports:
 npm run build:bundler   # → pkg-bundler/
+
+# Deno target — vanilla `deno run` (uses fetch + Deno.readFile for the .wasm sibling):
+npm run build:deno      # → pkg-deno/
 
 # Both:
 npm run build
@@ -39,10 +39,14 @@ npm run build
 
 `wasm-pack` writes the `.wasm` artifact plus matching `.d.ts` into the chosen `pkg-*` directory.
 
-## Usage (Deno / Supabase Edge)
+> **Picking a target.** Use `pkg-bundler/` for Supabase Edge Functions, Vite, Webpack, Next.js, and any consumer that statically imports `.wasm` modules. Use `pkg-deno/` only for vanilla `deno run` — the Supabase Edge Runtime sandbox blocks `fetch('file://…')`, so the deno target's auto-fetch of its sibling `.wasm` fails there.
+
+## Usage (Supabase Edge Functions)
+
+Copy `pkg-bundler/` next to your function's `index.ts` and import relatively:
 
 ```ts
-import { AccessKeyStrategy } from "./pkg-deno/stack_auth_wasm.js";
+import { AccessKeyStrategy } from "./pkg-bundler/stack_auth_wasm.js";
 
 const strategy = AccessKeyStrategy.create(
   "ap-southeast-2.aws",
@@ -54,7 +58,7 @@ const { token, workspaceId, services } = await strategy.getToken();
 ```
 
 ```ts
-import { OAuthStrategy } from "./pkg-deno/stack_auth_wasm.js";
+import { OAuthStrategy } from "./pkg-bundler/stack_auth_wasm.js";
 
 // Caller supplies an OAuth token (e.g. from request headers).
 const strategy = OAuthStrategy.withToken("ap-southeast-2.aws", "my-client-id", {
@@ -66,6 +70,8 @@ const strategy = OAuthStrategy.withToken("ap-southeast-2.aws", "my-client-id", {
 
 const { token } = await strategy.getToken();
 ```
+
+The bundler-target `stack_auth_wasm.js` uses `import * as wasm from "./stack_auth_wasm_bg.wasm"`, which the Supabase Edge Runtime resolves natively — no `fetch` of the wasm asset is required.
 
 ## Test
 

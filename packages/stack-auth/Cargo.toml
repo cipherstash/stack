@@ -21,6 +21,13 @@ url = { workspace = true }
 uuid = { workspace = true }
 vitaminc = { workspace = true, features = ["protected"] }
 vitaminc-protected = { workspace = true }
+# `web-time` re-exports `std::time` on native targets and polyfills via JS
+# time APIs on wasm32 — used in place of `std::time::{Instant, SystemTime}`
+# so callers can keep one path. The stdlib's wasm32-unknown-unknown
+# `Instant`/`SystemTime` are panicking stubs ("time not implemented on this
+# platform"), which breaks any code path that consults the wall clock or
+# measures elapsed time.
+web-time = { workspace = true }
 zerokms-protocol = { workspace = true }
 zeroize = { workspace = true }
 

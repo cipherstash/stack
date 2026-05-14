@@ -17,6 +17,15 @@ use serde::{Deserialize, Serialize};
 use stack_auth::{AuthError, AuthStrategy, ServiceToken, Token};
 use wasm_bindgen::prelude::*;
 
+/// Install the `console_error_panic_hook` exactly once. Called from the
+/// public constructors so any panic in the upstream auth stack lands as a
+/// readable `console.error` instead of an opaque `RuntimeError: unreachable`.
+fn install_panic_hook() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(console_error_panic_hook::set_once);
+}
+
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
@@ -189,6 +198,7 @@ pub struct AccessKeyStrategy {
 impl AccessKeyStrategy {
     /// Create a new `AccessKeyStrategy` for the given region and access key.
     pub fn create(region: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
+        install_panic_hook();
         let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
@@ -233,6 +243,7 @@ impl OAuthStrategy {
         client_id: String,
         token: JsValue,
     ) -> Result<OAuthStrategy, JsValue> {
+        install_panic_hook();
         let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
         let token = parse_token_input(token).map_err(to_js_error)?;
         let inner = stack_auth::OAuthStrategy::with_token(region, client_id, token)
@@ -267,6 +278,7 @@ impl AutoStrategy {
     /// only via the `CS_CLIENT_ACCESS_KEY` / `CS_WORKSPACE_CRN` env vars or
     /// the explicit values passed in `options`.
     pub fn detect(options: Option<JsValue>) -> Result<AutoStrategy, JsValue> {
+        install_panic_hook();
         let mut builder = stack_auth::AutoStrategy::builder();
 
         if let Some(options) = options.filter(|v| !v.is_null() && !v.is_undefined()) {
