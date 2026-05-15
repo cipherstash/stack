@@ -15,11 +15,12 @@ npm install @cipherstash/auth
 
 The package exposes three entries:
 
-| Entry | Use when | Surface |
-|---|---|---|
-| `@cipherstash/auth` | Node.js (loads napi); Vite/Webpack/Next.js with wasm-aware bundling (loads sibling-`.wasm` shim) | Full napi surface in Node; `AccessKeyStrategy` in browsers |
-| `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | `AccessKeyStrategy` |
-| `@cipherstash/auth/wasm-inline` | Supabase Edge Functions, Cloudflare Workers, Bun / Deno via `npm:` — runtimes that can't auto-bundle a sibling `.wasm` | `AccessKeyStrategy` |
+| Entry | Use when | Loads | Surface |
+|---|---|---|---|
+| `@cipherstash/auth` | **Node.js** | Native napi binding for the host platform | Full surface — device-code flow, profile store, OAuth, `AccessKeyStrategy` |
+| `@cipherstash/auth` | **Vite / Webpack / Next.js** (any bundler that handles `.wasm` imports) | Sibling-`.wasm` shim from `wasm-pack --target bundler` | `AccessKeyStrategy` |
+| `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | Same as bundler entry above | `AccessKeyStrategy` |
+| `@cipherstash/auth/wasm-inline` | **Supabase Edge Functions / Cloudflare Workers / Bun / Deno via `npm:`** — runtimes that can't auto-bundle a sibling `.wasm` | Inline-bytes shim (wasm embedded as base64) | `AccessKeyStrategy` |
 
 The wasm bindings are deliberately scoped to `AccessKeyStrategy` — OAuth, device-code flow, and profile-store features depend on Node-only APIs (filesystem, browser launching) that can't be ported.
 
@@ -45,23 +46,41 @@ The token is saved to `~/.cipherstash/auth.json` automatically and is never expo
 
 ## Edge usage — Supabase Edge Functions / Cloudflare Workers
 
-Use the explicit `wasm-inline` sub-path:
+Use the explicit `wasm-inline` sub-path. Full Supabase Edge Function example:
 
 ```ts
+// supabase/functions/get-token/index.ts
 import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
 
-const strategy = AccessKeyStrategy.create(
-  "ap-southeast-2.aws",
-  Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
-);
+Deno.serve(async () => {
+  const strategy = AccessKeyStrategy.create(
+    "ap-southeast-2.aws",
+    Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+  );
 
-const { token, workspaceId, services } = await strategy.getToken();
-// Use `token` as `Authorization: Bearer ${token}` against ZeroKMS.
+  const { token, workspaceId, services } = await strategy.getToken();
+  // `token` is the bearer credential; pass as `Authorization: Bearer ${token}`
+  // to ZeroKMS at `services.zerokms`.
+
+  return Response.json({ workspaceId, services });
+});
 ```
 
-The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config — no `static_files` declaration, no asset copying, no bundler plugins.
+`supabase/functions/get-token/deno.json`:
+
+```jsonc
+{
+  "imports": {
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.37/wasm-inline"
+  }
+}
+```
+
+Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying, no bundler plugins. The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config.
 
 `getToken()` resolves to `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`).
+
+For Cloudflare Workers the shape is identical; env access becomes `env.CS_CLIENT_ACCESS_KEY` instead of `Deno.env.get(...)`.
 
 ### Why the explicit sub-path
 
