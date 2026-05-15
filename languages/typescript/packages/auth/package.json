@@ -1,22 +1,10 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.36.0",
+  "version": "0.37.0-alpha.0",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
     ".": {
-      "deno": {
-        "types": "./wasm-types.d.ts",
-        "default": "./wasm/stack_auth_wasm.js"
-      },
-      "worker": {
-        "types": "./wasm-types.d.ts",
-        "default": "./wasm/stack_auth_wasm.js"
-      },
-      "browser": {
-        "types": "./wasm-types.d.ts",
-        "default": "./wasm/stack_auth_wasm.js"
-      },
       "node": {
         "types": "./index.d.ts",
         "default": "./index.js"
@@ -25,6 +13,10 @@
         "types": "./wasm-types.d.ts",
         "default": "./wasm/stack_auth_wasm.js"
       }
+    },
+    "./wasm": {
+      "types": "./wasm-types.d.ts",
+      "default": "./wasm/stack_auth_wasm.js"
     }
   },
   "napi": {
