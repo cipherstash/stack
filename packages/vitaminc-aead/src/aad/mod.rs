@@ -2,6 +2,8 @@ mod pae;
 
 use std::borrow::Cow;
 
+// We inherit the copy-on-write semantics from Cow
+#[derive(Clone)]
 pub struct Aad<'a>(Cow<'a, [u8]>);
 
 impl<'a> Aad<'a> {

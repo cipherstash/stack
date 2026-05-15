@@ -3,23 +3,26 @@
 mod aad;
 mod cipher;
 mod ciphertext;
-mod context;
-mod decrypt;
+//mod context;
+//mod decrypt;
+mod decipher;
 mod encrypt;
 mod nonce;
-#[cfg(feature = "test-utils")]
-pub mod test_utils;
+//#[cfg(feature = "test-utils")]
+//pub mod test_utils;
 
 #[doc(inline)]
 pub use aad::{Aad, IntoAad};
 #[doc(inline)]
-pub use cipher::{Cipher, Unspecified};
+pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]
 pub use ciphertext::{CipherTextBuilder, LocalCipherText};
+//#[doc(inline)]
+//pub use context::ContextTag;
+//#[doc(inline)]
+//pub use decrypt::Decrypt;
 #[doc(inline)]
-pub use context::ContextTag;
-#[doc(inline)]
-pub use decrypt::Decrypt;
+pub use decipher::{Decipher, DecipherVisitor, Decrypt, MapAccess, SeqAccess};
 #[doc(inline)]
 pub use encrypt::Encrypt;
 #[doc(inline)]
