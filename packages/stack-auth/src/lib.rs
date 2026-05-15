@@ -40,6 +40,7 @@ mod oauth_strategy;
 mod refresher;
 mod service_token;
 mod token;
+mod token_store;
 
 // Filesystem-backed device identity and the interactive device-code flow are
 // native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
@@ -61,6 +62,7 @@ pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
+pub use token_store::{CallbackTokenStore, InMemoryTokenStore, NoStore, TokenStore};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use device_client::{bind_client_device, DeviceClientError};
