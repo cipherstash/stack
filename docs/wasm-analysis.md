@@ -65,7 +65,7 @@ Why Edge consumers need the explicit sub-path: validating against a live Supabas
 - **No condition distinguishes Deno-via-`npm:` from Node ESM.** Deno applies `[node, import, default]` for `npm:` specifiers — the same set Node ESM applies. There's no condition we can place in the exports map that fires for Deno-via-`npm:` but not Node, so we can't route the bare `.` import to wasm-inline for Edge while keeping napi for Node ESM. Tried it (alpha.2 default-flip); Edge still hits the `node` branch first and tries to load the CJS napi loader, which has no statically-resolvable ESM named exports and fails at boot. The `./wasm-inline` sub-path bypasses the conditional walk entirely.
 - **Deno's `deno`/`worker`/`browser` conditions don't fire for `npm:` specifiers.** Same root cause — for npm-distributed packages, Deno walks `[node, import, default]` only. These keys are dead weight in an `npm:` package's exports map.
 
-Trade-off for inline: ~28% larger JS payload (~825KB vs ~645KB sibling `.js`+`.wasm`) and ~50ms cold-start vs streaming compile. Acceptable for an auth surface that runs once per worker boot, not per request.
+Trade-off for inline: ~27% larger JS payload (~726KB vs ~572KB sibling `.js`+`.wasm`, post-`wasm-opt -Oz`) and ~50ms cold-start vs streaming compile. Acceptable for an auth surface that runs once per worker boot, not per request.
 
 Other validation-driven fixes folded into the PR:
 
