@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::{Mutex, MutexGuard, Notify};
 
 use crate::refresher::Refresher;
+use crate::token_store::{NoStore, TokenStore};
 use crate::{ServiceToken, Token};
 
 /// Internal errors from [`AutoRefresh::get_token`].
@@ -33,13 +34,18 @@ impl From<AutoRefreshError> for crate::AuthError {
 }
 
 /// Caches a token in memory and uses a [`Refresher`] to re-authenticate
-/// or refresh before expiry.
+/// or refresh before expiry, optionally backed by an external [`TokenStore`]
+/// for persistence across short-lived strategy instances.
 ///
 /// See the [crate-level documentation](crate#token-refresh) for a full
 /// description of the concurrency model and flow diagram.
-pub(crate) struct AutoRefresh<R> {
+pub(crate) struct AutoRefresh<R, S = NoStore> {
     refresher: R,
     state: Mutex<State>,
+    /// External persistence. Consulted on cold start and written to after
+    /// every successful refresh / initial auth. Defaults to [`NoStore`] (a
+    /// zero-sized no-op) when no external store is configured.
+    store: S,
     /// Set to `true` while a refresh HTTP call is in-flight.
     ///
     /// Stored as an [`AtomicBool`] rather than inside [`State`] so that
@@ -95,22 +101,8 @@ impl State {
     }
 }
 
-impl<R> AutoRefresh<R> {
-    /// Create a new `AutoRefresh` with no initial token.
-    ///
-    /// The first call to `get_token` will attempt initial authentication via
-    /// `try_credential(None)` → `refresh()`. Use this for refreshers that can
-    /// self-authenticate (e.g. access keys).
-    pub(crate) fn new(refresher: R) -> Self {
-        Self {
-            refresher,
-            state: Mutex::new(State { token: None }),
-            refresh_in_progress: AtomicBool::new(false),
-            refresh_notify: Notify::new(),
-        }
-    }
-
-    /// Create a new `AutoRefresh` with a pre-loaded token.
+impl<R> AutoRefresh<R, NoStore> {
+    /// Create a new `AutoRefresh` with a pre-loaded token and no external store.
     ///
     /// Use this for refreshers that cannot self-authenticate (e.g. OAuth,
     /// which needs a refresh token from a prior device code flow).
@@ -118,16 +110,48 @@ impl<R> AutoRefresh<R> {
         Self {
             refresher,
             state: Mutex::new(State { token: Some(token) }),
+            store: NoStore,
             refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
         }
     }
 }
 
-impl<R: Refresher> AutoRefresh<R> {
+impl<R, S: TokenStore> AutoRefresh<R, S> {
+    /// Create a new `AutoRefresh` backed by `store` and no in-memory token.
+    ///
+    /// On the first `get_token` call the store is consulted before falling
+    /// through to initial authentication via `try_credential(None)`; every
+    /// successful refresh writes the new token back via `store.save()`. Pass
+    /// [`NoStore`] for the no-external-cache case — it's the default and
+    /// elides to a zero-cost no-op.
+    pub(crate) fn with_store(refresher: R, store: S) -> Self {
+        Self {
+            refresher,
+            state: Mutex::new(State { token: None }),
+            store,
+            refresh_in_progress: AtomicBool::new(false),
+            refresh_notify: Notify::new(),
+        }
+    }
+}
+
+impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     pub(crate) async fn get_token(&self) -> Result<ServiceToken, AutoRefreshError> {
         let mut state = self.state.lock().await;
+
+        if state.token.is_none() {
+            // Cold start — consult the external store before falling through to
+            // initial auth. If the store has a still-usable token, the existing
+            // state machine below either returns it directly (fresh), kicks off
+            // a background refresh (expiring but usable), or refreshes blocking
+            // (fully expired). If the store is empty (e.g. `NoStore`) or load
+            // returns `None`, fall into the original `initial_auth` HTTP path.
+            if let Some(loaded) = self.store.load().await {
+                state.token = Some(loaded);
+            }
+        }
 
         if state.token.is_none() {
             return self.initial_auth(&mut state).await;
@@ -171,6 +195,7 @@ impl<R: Refresher> AutoRefresh<R> {
             Ok(new_token) => {
                 guard.defuse();
                 self.refresher.save(&new_token);
+                self.store.save(&new_token).await;
                 let service_token = ServiceToken::new(new_token.access_token().clone());
                 state.token = Some(new_token);
                 self.refresh_in_progress.store(false, Ordering::Release);
@@ -235,6 +260,7 @@ impl<R: Refresher> AutoRefresh<R> {
             Ok(new_token) => {
                 guard.defuse();
                 self.refresher.save(&new_token);
+                self.store.save(&new_token).await;
                 let mut state = self.state.lock().await;
                 state.token = Some(new_token);
                 self.refresh_in_progress.store(false, Ordering::Release);
@@ -276,6 +302,7 @@ impl<R: Refresher> AutoRefresh<R> {
             Ok(new_token) => {
                 guard.defuse();
                 self.refresher.save(&new_token);
+                self.store.save(&new_token).await;
                 let service_token = ServiceToken::new(new_token.access_token().clone());
                 state.token = Some(new_token);
                 self.refresh_in_progress.store(false, Ordering::Release);
@@ -381,7 +408,7 @@ mod tests {
                 "ap-southeast-2.aws",
                 None,
             );
-            let strategy = AutoRefresh::new(refresher);
+            let strategy = AutoRefresh::with_store(refresher, NoStore);
 
             let err = strategy.get_token().await.unwrap_err();
 

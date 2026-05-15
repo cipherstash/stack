@@ -104,6 +104,7 @@ struct AuthoriseResponse {
 mod tests {
     use super::*;
     use crate::auto_refresh::{AutoRefresh, AutoRefreshError};
+    use crate::TokenStore;
     use mocktail::prelude::*;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -127,7 +128,7 @@ mod tests {
             server.url(""),
             Some("test-audience".to_string()),
         );
-        AutoRefresh::new(refresher)
+        AutoRefresh::with_store(refresher, crate::NoStore)
     }
 
     fn make_expired_token(access: &str) -> Token {
@@ -140,6 +141,23 @@ mod tests {
             access_token: SecretToken::new(access),
             token_type: "Bearer".to_string(),
             expires_at: now, // already expired
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+    }
+
+    fn make_fresh_token(access: &str) -> Token {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        Token {
+            access_token: SecretToken::new(access),
+            token_type: "Bearer".to_string(),
+            expires_at: now + 3600, // 1h ahead, not in the expiry-leeway window
             refresh_token: None,
             region: None,
             client_id: None,
@@ -187,6 +205,115 @@ mod tests {
 
         let token2 = strategy.get_token().await.unwrap();
         assert_eq!(token2.as_str(), "new-token");
+    }
+
+    // ---- TokenStore integration tests ----
+
+    #[tokio::test]
+    async fn test_loads_token_from_store_on_cold_start_no_http() {
+        // Mock returns 500 so we know the test fails loudly if the strategy
+        // ever calls authorise — but we expect it not to, since the store
+        // already holds a fresh token.
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "should not be called"}));
+        });
+        let server = start_server(mocks).await;
+
+        let store = Arc::new(crate::InMemoryTokenStore::new());
+        store.save(&make_fresh_token("from-store")).await;
+
+        let refresher =
+            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
+
+        let token = strategy.get_token().await.unwrap();
+        assert_eq!(token.as_str(), "from-store");
+    }
+
+    #[tokio::test]
+    async fn test_persists_token_to_store_after_initial_auth() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.json(auth_response_json("freshly-minted", 3600));
+        });
+        let server = start_server(mocks).await;
+
+        let store = Arc::new(crate::InMemoryTokenStore::new());
+        assert!(store.load().await.is_none());
+
+        let refresher =
+            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
+
+        let token = strategy.get_token().await.unwrap();
+        assert_eq!(token.as_str(), "freshly-minted");
+
+        // After initial auth, the store should hold the new token.
+        let saved = store.load().await.unwrap();
+        assert_eq!(saved.access_token().as_str(), "freshly-minted");
+    }
+
+    #[tokio::test]
+    async fn test_two_strategies_sharing_store_skip_http_on_second_cold_start() {
+        // Allow exactly one /api/authorise call; the second strategy must hit
+        // the store, not the server.
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.json(auth_response_json("shared-cache-token", 3600));
+        });
+        let server = start_server(mocks).await;
+        let store = Arc::new(crate::InMemoryTokenStore::new());
+
+        // First strategy — does the HTTP exchange and writes to the store.
+        let refresher_a =
+            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let strategy_a = AutoRefresh::with_store(refresher_a, Arc::clone(&store));
+        let token_a = strategy_a.get_token().await.unwrap();
+        assert_eq!(token_a.as_str(), "shared-cache-token");
+
+        // Replace the mock so any second call fails the test loudly.
+        server.mocks().clear();
+        server.mocks().mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "second strategy must hit store"}));
+        });
+
+        // Second strategy — fresh instance, same store. Should load from store.
+        let refresher_b =
+            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let strategy_b = AutoRefresh::with_store(refresher_b, Arc::clone(&store));
+        let token_b = strategy_b.get_token().await.unwrap();
+        assert_eq!(token_b.as_str(), "shared-cache-token");
+    }
+
+    #[tokio::test]
+    async fn test_refreshes_when_store_has_expired_token() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.json(auth_response_json("refreshed-after-store-miss", 3600));
+        });
+        let server = start_server(mocks).await;
+
+        let store = Arc::new(crate::InMemoryTokenStore::new());
+        store.save(&make_expired_token("stale-from-store")).await;
+
+        let refresher =
+            AccessKeyRefresher::new(SecretToken::new("test-access-key"), server.url(""), None);
+        let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
+
+        let token = strategy.get_token().await.unwrap();
+        assert_eq!(token.as_str(), "refreshed-after-store-miss");
+
+        // Store should now hold the refreshed token, not the stale one.
+        let saved = store.load().await.unwrap();
+        assert_eq!(saved.access_token().as_str(), "refreshed-after-store-miss");
     }
 
     // ---- Refresh on expiry tests ----
@@ -438,7 +565,7 @@ mod tests {
 
         let refresher =
             AccessKeyRefresher::new(SecretToken::new("test-access-key"), base_url, None);
-        let strategy = Arc::new(AutoRefresh::new(refresher));
+        let strategy = Arc::new(AutoRefresh::with_store(refresher, crate::NoStore));
 
         let start = Instant::now();
         let mut handles = Vec::with_capacity(CONCURRENCY);
