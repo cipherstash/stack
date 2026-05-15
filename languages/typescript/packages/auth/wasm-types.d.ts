@@ -60,6 +60,22 @@ export interface TokenResult {
 }
 
 /**
+ * Async callback used by `AccessKeyStrategy.createWithStore` to load a
+ * previously-persisted token JSON. Returning `null` (or `undefined`) signals
+ * "no token cached" — the strategy will fall through to re-authenticating
+ * with the access key.
+ */
+export type LoadTokenCallback = () => Promise<string | null | undefined>
+
+/**
+ * Async callback used by `AccessKeyStrategy.createWithStore` to persist a
+ * freshly-issued token JSON. The string is opaque to the caller — pass it
+ * back unchanged to a future `LoadTokenCallback` (e.g. set it as a cookie
+ * value, write it to a KV store, etc.).
+ */
+export type SaveTokenCallback = (json: string) => Promise<void>
+
+/**
  * An auth strategy that uses a static access key for service-to-service
  * or CI/CD authentication.
  */
@@ -67,6 +83,25 @@ export declare class AccessKeyStrategy {
   private constructor()
   /** Create a new `AccessKeyStrategy` for the given region and access key. */
   static create(region: string, accessKey: string): AccessKeyStrategy
+  /**
+   * Create an `AccessKeyStrategy` backed by external token-store callbacks.
+   *
+   * The strategy consults `loadToken` on cold start before issuing any HTTP
+   * request — if it returns a still-valid token, that's reused. After every
+   * successful refresh or initial authentication the new token JSON is
+   * written back via `saveToken`. Both callbacks return Promises so they
+   * can perform async I/O (read a cookie, write to KV, etc.).
+   *
+   * The JSON string passed to `saveToken` contains the bearer credential
+   * verbatim — treat it as secret material. End-to-end protection at rest
+   * (encrypting before persistence) is a planned follow-up.
+   */
+  static createWithStore(
+    region: string,
+    accessKey: string,
+    loadToken: LoadTokenCallback,
+    saveToken: SaveTokenCallback,
+  ): AccessKeyStrategy
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
   getToken(): Promise<TokenResult>
   /** Release the underlying wasm resources. */

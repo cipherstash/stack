@@ -15,7 +15,11 @@ use cts_common::Region;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
+#[cfg(target_arch = "wasm32")]
+use stack_auth::{Token, TokenStore};
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::JsFuture;
 
 /// Route Rust panics to `console.error` with a readable message + stack.
 /// Without this, panics surface as opaque `RuntimeError: unreachable` from
@@ -79,9 +83,61 @@ fn token_result_from(token: ServiceToken) -> Result<JsValue, JsValue> {
         .map_err(JsValue::from)
 }
 
+/// `TokenStore` adapter over a pair of JS callbacks.
+///
+/// `load` is called with no arguments and is expected to return
+/// `Promise<string | null | undefined>` — the previously-stored JSON
+/// or a nullish value if nothing is cached. `save` is called with the
+/// JSON string and is expected to return `Promise<void>`.
+///
+/// Cfg-gated to `wasm32` because `js_sys::Function` is not `Send` and the
+/// parent `stack_auth::TokenStore` trait drops the `Send + Sync` bound on
+/// wasm32 to accommodate exactly this case.
+#[cfg(target_arch = "wasm32")]
+struct JsTokenStore {
+    load: js_sys::Function,
+    save: js_sys::Function,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl TokenStore for JsTokenStore {
+    async fn load(&self) -> Option<Token> {
+        let promise = self.load.call0(&JsValue::NULL).ok()?;
+        let result = JsFuture::from(js_sys::Promise::from(promise)).await.ok()?;
+        let json = result.as_string()?;
+        serde_json::from_str(&json).ok()
+    }
+
+    async fn save(&self, token: &Token) {
+        let Ok(json) = serde_json::to_string(token) else {
+            return;
+        };
+        let Ok(promise) = self.save.call1(&JsValue::NULL, &JsValue::from_str(&json)) else {
+            return;
+        };
+        let _ = JsFuture::from(js_sys::Promise::from(promise)).await;
+    }
+}
+
+enum AccessKeyStrategyInner {
+    NoStore(stack_auth::AccessKeyStrategy),
+    #[cfg(target_arch = "wasm32")]
+    WithStore(stack_auth::AccessKeyStrategy<JsTokenStore>),
+}
+
+impl AccessKeyStrategyInner {
+    async fn get_token(&self) -> Result<ServiceToken, AuthError> {
+        match self {
+            Self::NoStore(s) => s.get_token().await,
+            #[cfg(target_arch = "wasm32")]
+            Self::WithStore(s) => s.get_token().await,
+        }
+    }
+}
+
 #[wasm_bindgen]
 pub struct AccessKeyStrategy {
-    inner: stack_auth::AccessKeyStrategy,
+    inner: AccessKeyStrategyInner,
 }
 
 #[wasm_bindgen]
@@ -93,7 +149,44 @@ impl AccessKeyStrategy {
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
         let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_js_error)?;
-        Ok(AccessKeyStrategy { inner })
+        Ok(AccessKeyStrategy {
+            inner: AccessKeyStrategyInner::NoStore(inner),
+        })
+    }
+
+    /// Create an `AccessKeyStrategy` backed by external token-store callbacks.
+    ///
+    /// `loadToken` is called on cold start before any HTTP request fires; it
+    /// must return the previously-saved JSON string (or null/undefined for
+    /// "cache miss") wrapped in a Promise. `saveToken` receives the JSON
+    /// string after every successful refresh and must persist it; its return
+    /// Promise resolves to undefined.
+    ///
+    /// Use this to back the strategy with HTTP-only cookies (Supabase Edge),
+    /// KV stores (Cloudflare Workers), or any other request-scoped cache.
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen(js_name = createWithStore)]
+    pub fn create_with_store(
+        region: String,
+        access_key: String,
+        load_token: js_sys::Function,
+        save_token: js_sys::Function,
+    ) -> Result<AccessKeyStrategy, JsValue> {
+        let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
+        let key: stack_auth::AccessKey = access_key
+            .parse()
+            .map_err(|e| to_js_error(AuthError::from(e)))?;
+        let store = JsTokenStore {
+            load: load_token,
+            save: save_token,
+        };
+        let inner = stack_auth::AccessKeyStrategy::builder(region, key)
+            .with_token_store(store)
+            .build()
+            .map_err(to_js_error)?;
+        Ok(AccessKeyStrategy {
+            inner: AccessKeyStrategyInner::WithStore(inner),
+        })
     }
 
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
@@ -230,5 +323,59 @@ mod tests {
             "CSAKtestKeyId.testKeySecret".to_string(),
         );
         assert!(result.is_ok());
+    }
+
+    fn empty_load_fn() -> js_sys::Function {
+        // `async () => null`
+        js_sys::Function::new_no_args("return Promise.resolve(null);")
+    }
+
+    fn noop_save_fn() -> js_sys::Function {
+        // `async (_) => undefined`
+        js_sys::Function::new_with_args("_json", "return Promise.resolve();")
+    }
+
+    #[wasm_bindgen_test]
+    fn create_with_store_rejects_invalid_region() {
+        let err = expect_js_err(AccessKeyStrategy::create_with_store(
+            "not-a-region".to_string(),
+            "CSAKtestKeyId.testKeySecret".to_string(),
+            empty_load_fn(),
+            noop_save_fn(),
+        ));
+        assert_eq!(
+            error_code_of(&err),
+            "INVALID_REGION",
+            "invalid region should surface INVALID_REGION even on the store variant"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn create_with_store_rejects_invalid_access_key() {
+        let err = expect_js_err(AccessKeyStrategy::create_with_store(
+            "ap-southeast-2.aws".to_string(),
+            "not-a-valid-key".to_string(),
+            empty_load_fn(),
+            noop_save_fn(),
+        ));
+        assert_eq!(
+            error_code_of(&err),
+            "INVALID_ACCESS_KEY",
+            "invalid access key should surface INVALID_ACCESS_KEY"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn create_with_store_accepts_valid_inputs() {
+        let result = AccessKeyStrategy::create_with_store(
+            "ap-southeast-2.aws".to_string(),
+            "CSAKtestKeyId.testKeySecret".to_string(),
+            empty_load_fn(),
+            noop_save_fn(),
+        );
+        assert!(
+            result.is_ok(),
+            "valid region + key + callbacks should construct successfully"
+        );
     }
 }
