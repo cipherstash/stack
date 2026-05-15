@@ -62,7 +62,9 @@ jobs:
         run: mise run test:integration:stack-auth
 
       - name: Install wasm32 target
-        run: rustup target add wasm32-unknown-unknown
+        uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
         # The `jetli/wasm-pack-action` GitHub Action is rejected by the
