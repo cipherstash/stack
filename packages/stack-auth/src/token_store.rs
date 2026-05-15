@@ -41,6 +41,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
+use zeroize::Zeroizing;
 
 use crate::Token;
 
@@ -116,13 +117,14 @@ impl TokenStore for NoStore {
 /// In-process token store. Useful for tests and as a shared cache across
 /// multiple strategy instances in the same process (e.g. a worker pool).
 ///
-/// Internally stores the JSON-serialised form of the token. The
+/// Internally stores the JSON-serialised form of the token wrapped in
+/// [`Zeroizing`] so the buffer is wiped on overwrite and on store drop. The
 /// [`SecretToken`](crate::SecretToken) wrapped inside [`Token`] is
 /// [`ZeroizeOnDrop`](zeroize::ZeroizeOnDrop), so we deliberately don't clone
 /// the in-memory `Token` value — round-tripping through serde gives us a
 /// fresh `SecretToken` on each `load` without violating that invariant.
 pub struct InMemoryTokenStore {
-    state: Mutex<Option<String>>,
+    state: Mutex<Option<Zeroizing<String>>>,
 }
 
 impl InMemoryTokenStore {
@@ -153,7 +155,7 @@ impl TokenStore for InMemoryTokenStore {
             return;
         };
         let mut guard = self.state.lock().await;
-        *guard = Some(json);
+        *guard = Some(Zeroizing::new(json));
     }
 }
 
@@ -166,6 +168,17 @@ impl TokenStore for InMemoryTokenStore {
 ///
 /// The closure return types are generic so async blocks / `async ||`
 /// closures / `async fn` adapters all compose without boxing.
+///
+/// **Secret-material handling.** The JSON string passed to the `save`
+/// closure contains the bearer token verbatim (via
+/// [`SecretToken`](crate::SecretToken)'s `#[serde(transparent)]` impl). Once
+/// the value crosses into the user's closure, `stack-auth` has no control
+/// over zeroize semantics — implementations should treat the input as
+/// secret material and clear any local copies promptly. `load` wraps the
+/// returned string in [`Zeroizing`] internally, so the buffer is wiped
+/// after deserialisation. End-to-end protection at rest (e.g. encrypting
+/// the value before it ever leaves the worker) is tracked as a future
+/// `EncryptedTokenStore` decorator.
 pub struct CallbackTokenStore<L, S> {
     load: L,
     save: S,
@@ -190,14 +203,11 @@ where
     SF: Future<Output = ()> + Send,
 {
     async fn load(&self) -> Option<Token> {
-        let json = (self.load)().await?;
-        match serde_json::from_str(&json) {
-            Ok(token) => Some(token),
-            Err(err) => {
-                tracing::warn!(%err, "CallbackTokenStore: load returned invalid JSON");
-                None
-            }
-        }
+        let json = Zeroizing::new((self.load)().await?);
+        // Don't log the underlying serde_json error — its `Display` impl can
+        // include byte positions of unexpected tokens, leaking partial token
+        // content if the input was mid-parse when it failed.
+        serde_json::from_str(&json).ok()
     }
 
     async fn save(&self, token: &Token) {
@@ -218,14 +228,11 @@ where
     SF: Future<Output = ()>,
 {
     async fn load(&self) -> Option<Token> {
-        let json = (self.load)().await?;
-        match serde_json::from_str(&json) {
-            Ok(token) => Some(token),
-            Err(err) => {
-                tracing::warn!(%err, "CallbackTokenStore: load returned invalid JSON");
-                None
-            }
-        }
+        let json = Zeroizing::new((self.load)().await?);
+        // Don't log the underlying serde_json error — its `Display` impl can
+        // include byte positions of unexpected tokens, leaking partial token
+        // content if the input was mid-parse when it failed.
+        serde_json::from_str(&json).ok()
     }
 
     async fn save(&self, token: &Token) {
@@ -262,16 +269,30 @@ mod tests {
     #[tokio::test]
     async fn in_memory_load_returns_none_when_empty() {
         let store = InMemoryTokenStore::new();
-        assert!(store.load().await.is_none());
+        assert!(
+            store.load().await.is_none(),
+            "freshly constructed store should hold no token"
+        );
     }
 
     #[tokio::test]
     async fn in_memory_round_trip_preserves_expires_at() {
         let store = InMemoryTokenStore::new();
         store.save(&dummy_token(4_000_000_000)).await;
-        let loaded = store.load().await.unwrap();
-        assert_eq!(loaded.expires_at(), 4_000_000_000);
-        assert_eq!(loaded.token_type(), "Bearer");
+        let loaded = store
+            .load()
+            .await
+            .expect("load should return the saved token");
+        assert_eq!(
+            loaded.expires_at(),
+            4_000_000_000,
+            "round-trip should preserve expires_at"
+        );
+        assert_eq!(
+            loaded.token_type(),
+            "Bearer",
+            "round-trip should preserve token_type"
+        );
     }
 
     #[tokio::test]
@@ -279,7 +300,12 @@ mod tests {
         let store = InMemoryTokenStore::new();
         store.save(&dummy_token(1_000_000_000)).await;
         store.save(&dummy_token(2_000_000_000)).await;
-        assert_eq!(store.load().await.unwrap().expires_at(), 2_000_000_000);
+        let loaded = store.load().await.expect("store should hold a token");
+        assert_eq!(
+            loaded.expires_at(),
+            2_000_000_000,
+            "second save should replace the first"
+        );
     }
 
     #[tokio::test]
@@ -301,12 +327,30 @@ mod tests {
             |_json: String| async move {},
         );
 
-        assert!(store.load().await.is_none());
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(
+            store.load().await.is_none(),
+            "first load returns None because the closure does"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "first call should have invoked the load closure exactly once"
+        );
 
-        let loaded = store.load().await.unwrap();
-        assert_eq!(loaded.expires_at(), 4_000_000_000);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let loaded = store
+            .load()
+            .await
+            .expect("second load should yield a token");
+        assert_eq!(
+            loaded.expires_at(),
+            4_000_000_000,
+            "deserialised token should preserve the JSON payload's expires_at"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "second call should have invoked the load closure a second time"
+        );
     }
 
     #[tokio::test]
@@ -324,9 +368,19 @@ mod tests {
         );
 
         store.save(&dummy_token(4_000_000_000)).await;
-        let json = captured.lock().await.clone().unwrap();
-        assert!(json.contains("\"expires_at\":4000000000"));
-        assert!(json.contains("\"token_type\":\"Bearer\""));
+        let json = captured
+            .lock()
+            .await
+            .clone()
+            .expect("save closure should have captured the JSON");
+        assert!(
+            json.contains("\"expires_at\":4000000000"),
+            "captured JSON should encode expires_at; got: {json}"
+        );
+        assert!(
+            json.contains("\"token_type\":\"Bearer\""),
+            "captured JSON should encode token_type; got: {json}"
+        );
     }
 
     #[tokio::test]
@@ -335,6 +389,9 @@ mod tests {
             || async { Some("not valid json".to_string()) },
             |_json: String| async move {},
         );
-        assert!(store.load().await.is_none());
+        assert!(
+            store.load().await.is_none(),
+            "invalid JSON from the load closure should be treated as cache miss"
+        );
     }
 }
