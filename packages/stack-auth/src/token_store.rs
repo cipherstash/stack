@@ -32,8 +32,8 @@
 //! use stack_auth::CallbackTokenStore;
 //!
 //! let store = Arc::new(CallbackTokenStore::new(
-//!     || async { /* read cookie */ None },
-//!     |json: String| async move { /* write Set-Cookie header */ },
+//!     || async { /* read cookie */ None::<String> },
+//!     |_json: String| async move { /* write Set-Cookie header */ },
 //! ));
 //! ```
 
