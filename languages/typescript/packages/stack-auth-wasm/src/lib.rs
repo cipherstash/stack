@@ -37,6 +37,12 @@ fn to_js_error(err: AuthError) -> JsValue {
 
 #[derive(Serialize)]
 struct TokenResultPayload {
+    // Bearer credential. Kept as `String` rather than `stack_auth::SecretToken`
+    // because the protections `SecretToken` provides (`ZeroizeOnDrop`,
+    // `OpaqueDebug`) don't survive `serde_wasm_bindgen` — once the value
+    // crosses the FFI boundary it lives in JS-managed memory with no zeroize
+    // equivalent. Wasm-side memory hygiene is tracked separately as the
+    // "never-expose-JWT" follow-up.
     token: String,
     subject: String,
     #[serde(rename = "workspaceId")]
