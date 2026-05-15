@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.37.0-alpha.2",
+  "version": "0.37.0-alpha.3",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
@@ -11,7 +11,7 @@
       },
       "default": {
         "types": "./wasm-types.d.ts",
-        "default": "./wasm/stack_auth_wasm_inline.js"
+        "default": "./wasm/stack_auth_wasm.js"
       }
     },
     "./wasm": {

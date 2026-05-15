@@ -13,12 +13,13 @@ Authentication bindings for [CipherStash](https://cipherstash.com) services. Shi
 npm install @cipherstash/auth
 ```
 
-The package routes to the right binary based on the consumer's runtime:
+The package exposes three entries:
 
-| Runtime | Loads | Surface |
+| Entry | Use when | Surface |
 |---|---|---|
-| Node.js | Prebuilt native (.node) for darwin x64/arm64, linux x64/arm64 (glibc), linux x64 (musl), windows x64 | Full surface — device-code flow, profile store, access keys, OAuth |
-| Supabase Edge / Cloudflare Workers / Bun / Deno / browsers | Wasm bindings (inline-bytes shim) | `AccessKeyStrategy` only (machine-to-machine auth) |
+| `@cipherstash/auth` | Node.js (loads napi); Vite/Webpack/Next.js with wasm-aware bundling (loads sibling-`.wasm` shim) | Full napi surface in Node; `AccessKeyStrategy` in browsers |
+| `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | `AccessKeyStrategy` |
+| `@cipherstash/auth/wasm-inline` | Supabase Edge Functions, Cloudflare Workers, Bun / Deno via `npm:` — runtimes that can't auto-bundle a sibling `.wasm` | `AccessKeyStrategy` |
 
 The wasm bindings are deliberately scoped to `AccessKeyStrategy` — OAuth, device-code flow, and profile-store features depend on Node-only APIs (filesystem, browser launching) that can't be ported.
 
@@ -44,8 +45,10 @@ The token is saved to `~/.cipherstash/auth.json` automatically and is never expo
 
 ## Edge usage — Supabase Edge Functions / Cloudflare Workers
 
+Use the explicit `wasm-inline` sub-path:
+
 ```ts
-import { AccessKeyStrategy } from "@cipherstash/auth";
+import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
 
 const strategy = AccessKeyStrategy.create(
   "ap-southeast-2.aws",
@@ -56,19 +59,27 @@ const { token, workspaceId, services } = await strategy.getToken();
 // Use `token` as `Authorization: Bearer ${token}` against ZeroKMS.
 ```
 
-The default entry under non-Node runtimes is an **inline-bytes** wasm shim — the wasm module is embedded as base64 in the JS, so it loads with zero runtime config. No `static_files`, no asset copying, no bundler configuration.
+The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config — no `static_files` declaration, no asset copying, no bundler plugins.
 
 `getToken()` resolves to `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`).
 
+### Why the explicit sub-path
+
+Bare `@cipherstash/auth` works in Node (resolves to native napi) and in wasm-aware bundlers (Vite/Webpack handle the sibling-`.wasm` import natively).
+
+It does **not** work in Deno-resolving-`npm:` runtimes (Supabase Edge, Cloudflare Workers via `npm:`). Deno applies the `node` exports condition for `npm:` specifiers — it emulates Node for npm packages — which routes the bare import to the napi loader. That loader is a CJS module without statically-resolvable ESM named exports, so it errors at boot. There's no condition Deno applies for `npm:` packages that Node ESM doesn't, so we can't route the two apart in the exports map. The `wasm-inline` sub-path bypasses the conditional walk entirely.
+
+Trade-off for inline: ~28% larger JS payload (~825KB vs ~645KB raw wasm + JS shim) and ~50ms cold-start vs streaming compile. Acceptable for an auth surface that runs once per worker boot.
+
 ### Bundler users (Vite / Webpack / Next.js)
 
-The default entry trades ~28% extra JS bundle for the zero-config story. Bundlers that natively understand `.wasm` imports can opt in to the smaller sibling-`.wasm` variant:
+Bare import is the right shape — these bundlers understand the sibling-`.wasm` reference and emit it as an asset:
 
 ```ts
-import { AccessKeyStrategy } from "@cipherstash/auth/wasm";
+import { AccessKeyStrategy } from "@cipherstash/auth";
 ```
 
-The two entries expose identical APIs.
+If your bundler doesn't handle `.wasm` imports, fall back to `@cipherstash/auth/wasm-inline`. All three entries expose identical APIs.
 
 ## API
 
