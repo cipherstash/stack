@@ -3,6 +3,7 @@
   "version": "0.37.0-alpha.3",
   "main": "index.js",
   "types": "index.d.ts",
+  "browser": false,
   "exports": {
     ".": {
       "node": {
