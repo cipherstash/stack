@@ -119,6 +119,14 @@ jobs:
           rm -f wasm/README.md wasm/LICENSE wasm/.gitignore
           echo '{"type":"module"}' > wasm/package.json
 
+      - name: Emit inline-bytes shim
+        # Generate the `@cipherstash/auth/wasm-inline` entry: a JS shim with
+        # the wasm bytes embedded as base64. Loads with zero config in
+        # runtimes that don't auto-bundle sibling `.wasm` assets (Supabase
+        # Edge, Cloudflare Workers, browsers without a wasm-aware bundler).
+        working-directory: ${{ env.WORKING_DIR }}
+        run: node scripts/inline-wasm.mjs
+
       - name: Upload wasm artifact
         uses: actions/upload-artifact@v7
         with:
