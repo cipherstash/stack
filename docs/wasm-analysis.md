@@ -46,21 +46,30 @@ End-to-end validated against a live Supabase Edge Function returning a real `Tok
 - Rust panics on wasm surface as opaque `RuntimeError: unreachable` from bytecode offsets. Added `console_error_panic_hook` and route panics to `console.error` via a `#[wasm_bindgen(start)]` module-init function.
 - `wasm-pack --target deno` doesn't work in the Supabase Edge Runtime — its sandbox blocks `fetch('file://…')`, which is how the deno target loads its sibling `.wasm`. Made `--target bundler` the primary build (uses `import * as wasm from "./*.wasm"`, which Edge resolves natively); deno target retained for vanilla `deno run`.
 
-**PR #1953 — npm unification.** Stacks on #1952. Single `@cipherstash/auth` npm package serves all runtimes via `exports` conditions:
+**PR #1953 — npm unification.** Stacks on #1952. Single `@cipherstash/auth` npm package serves Node and edge runtimes from one install. Final `exports` shape:
 
-| Runtime | Condition | Loads | Types |
-|---|---|---|---|
-| Node | `node` | `./index.js` (napi loader → per-platform `.node`) | `./index.d.ts` (full surface, includes device-code + profile-store) |
-| Deno / Edge | `deno` | `./wasm/stack_auth_wasm.js` (wasm-bindgen bundler output) | `./wasm-types.d.ts` (hand-typed overlay) |
-| Cloudflare Workers | `worker` | wasm | wasm-types |
-| Browsers (via bundlers) | `browser` | wasm | wasm-types |
-| Anything else | `default` | wasm | wasm-types |
+| Entry | `node` condition | `default` condition |
+|---|---|---|
+| `.` (main) | `./index.js` (napi loader) + `./index.d.ts` | `./wasm/stack_auth_wasm_inline.js` + `./wasm-types.d.ts` |
+| `./wasm` | — | `./wasm/stack_auth_wasm.js` (bundler-target, sibling `.wasm`) |
+| `./wasm-inline` | — | `./wasm/stack_auth_wasm_inline.js` (inline-bytes) |
 
-`wasm-types.d.ts` is committed hand-written (refines `Promise<any>` → `Promise<TokenResult>`, hides wasm-streams type leakage from reqwest's fetch backend). The wasm-bindgen-generated artifact ships inside `wasm/`, built by a new CI job in `publish-auth-npm.yml`. Verified locally: `node --conditions=deno` routes the import to the wasm entry; `node` resolves to the existing napi loader.
+User outcome: `npm install @cipherstash/auth` and `import { AccessKeyStrategy } from "@cipherstash/auth"` works in Node (full surface via napi) and in Supabase Edge / Cloudflare Workers / Bun / Deno / browsers (`AccessKeyStrategy` via inline-bytes wasm) with **zero runtime config** — no `static_files`, no asset copying, no bundler plugins. Bundler-savvy consumers (Vite/Webpack) opt in to the smaller sibling-`.wasm` variant via the explicit `@cipherstash/auth/wasm` sub-path.
 
-User outcome: `npm install @cipherstash/auth` works everywhere. Node consumers retain the full TS surface (device-code + profile-store still typed). Deno / edge / browser consumers see only what the wasm runtime actually exposes.
+Why inline-bytes is the non-Node default: validating the unified-package design against a live Supabase Edge worker surfaced two fundamental Supabase Edge Runtime 1.73.0 constraints:
 
-Rationale for this layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain, conditional-exports pattern, and Token-input deserialization shape here on a small crate means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting in the same PR.
+- **Deno's `deno`/`worker`/`browser` conditions don't fire for `npm:` specifiers.** For npm-distributed packages, Deno (and the Supabase fork) walks `[node, import, default]` only — `deno`/`worker`/`browser` keys in the exports map are dead weight when consumers reach the package via `npm:`.
+- **Bare `.wasm` ESM imports aren't supported, and assets aren't auto-bundled.** Native `import * as wasm from "./x.wasm"` (Deno 2.x), `import bytes from "./x.wasm" with { type: "bytes" }` (modern web import attributes), and `Deno.readFile` from inside `node_modules` all fail in Edge 1.73.0 unless the `.wasm` is declared in `supabase/config.toml` via `static_files`. The inline-bytes shim base64-encodes the wasm into the JS module so no asset bundling is required — works everywhere `WebAssembly.instantiate` works.
+
+Trade-off for inline: ~28% larger JS payload (~825KB vs ~645KB sibling `.js`+`.wasm`) and ~50ms cold-start vs streaming compile. Acceptable for an auth surface that runs once per worker boot, not per request.
+
+Other validation-driven fixes folded into the PR:
+
+- `serde_wasm_bindgen::Serializer::json_compatible()` for the `TokenResultPayload` so `services: BTreeMap<String, String>` serialises as a plain JS object — `BTreeMap` defaults to JS `Map`, which `JSON.stringify` flattens to `"{}"`, dropping every entry. The `wasm-types.d.ts` overlay declares `services: Record<string, string>`, so this aligns runtime shape with declared type.
+- `wasm-types.d.ts` is committed hand-written (refines `Promise<any>` → `Promise<TokenResult>`, hides wasm-streams type leakage from reqwest's fetch backend, scoped to `AccessKeyStrategy`).
+- CI (`publish-auth-npm.yml`) gains a `build-wasm` job that runs wasm-pack + the inline-bytes postbuild script (`scripts/inline-wasm.mjs`); the `publish` job depends on it so every release ships the inline shim. The published prerelease pipeline is exercised: `0.37.0-alpha.0` (bundler-target only) and `0.37.0-alpha.1` / `0.37.0-alpha.2` (with inline) all published cleanly under the `next` dist-tag.
+
+Rationale for this layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain, inline-bytes postbuild pattern, and the exports-map shape here on a small crate means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting in the same PR.
 
 ### Layer 4 — Wasm bindings for the encrypt surface
 

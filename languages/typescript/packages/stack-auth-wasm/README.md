@@ -1,67 +1,34 @@
-# @cipherstash/stack-auth-wasm
+# stack-auth-wasm
 
-WebAssembly bindings for [`stack-auth`](https://github.com/cipherstash/cipherstash-suite/tree/main/packages/stack-auth) — built for Supabase Edge Functions (Deno) and bundler runtimes (Vite / Webpack / Node).
+WebAssembly bindings for [`stack-auth`](../). Consumed by the unified [`@cipherstash/auth`](../node/) npm package — this crate is the upstream source, not a published artifact.
 
-This is the wasm-compatible subset of the existing [`@cipherstash/auth`](https://www.npmjs.com/package/@cipherstash/auth) napi bindings, scoped to machine-to-machine authentication.
+Scoped to `AccessKeyStrategy` (machine-to-machine auth). `AccessKeyStrategy.create(region, accessKey)` returns a strategy; `getToken(): Promise<TokenResult>` resolves to `{ token, subject, workspaceId, issuer, services }`. Errors thrown extend `Error` with a machine-readable `.code` property (`INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, etc.) sourced from `AuthError::error_code()` in the parent `stack-auth` crate.
 
-## What's included
-
-| Class | Purpose |
-|---|---|
-| `AccessKeyStrategy` | Machine-to-machine auth with a static access key |
-
-`AccessKeyStrategy.create(region, accessKey)` returns a strategy; `getToken(): Promise<TokenResult>` resolves to `{ token, subject, workspaceId, issuer, services }`.
-
-Errors thrown from this package extend `Error` with a machine-readable `.code` property (e.g. `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`).
-
-## What's not included
-
-OAuth-based strategies (`OAuthStrategy`, `AutoStrategy`, the device-code flow, profile-store loading) are deliberately out of scope for the initial wasm surface. Federation and token-pinning need design work that hasn't happened yet — once those decisions are made, the OAuth surface can be added to this crate.
-
-The following napi-only features also can't work on wasm32 and won't be ported:
-
-- `bindClientDevice` / `beginDeviceCodeFlow` — depend on filesystem device identity and browser-launching for the OAuth 2.0 device-code flow
-- `OAuthStrategy.fromProfile` — reads `~/.cipherstash/auth.json`
+OAuth strategies, device-code flow, and profile-store loading are deliberately out of scope — they need Node-only APIs (filesystem device identity, browser launching) that can't be ported to wasm32.
 
 ## Build
 
+The npm package's `build:wasm` script orchestrates everything:
+
 ```sh
-# Bundler target — works in Supabase Edge, Vite, Webpack, Deno with static wasm imports:
-npm run build:bundler   # → pkg-bundler/
-
-# Deno target — vanilla `deno run` (uses fetch + Deno.readFile for the .wasm sibling):
-npm run build:deno      # → pkg-deno/
-
-# Both:
-npm run build
+cd ../node && npm run build:wasm
 ```
 
-`wasm-pack` writes the `.wasm` artifact plus matching `.d.ts` into the chosen `pkg-*` directory.
-
-> **Picking a target.** Use `pkg-bundler/` for Supabase Edge Functions, Vite, Webpack, Next.js, and any consumer that statically imports `.wasm` modules. Use `pkg-deno/` only for vanilla `deno run` — the Supabase Edge Runtime sandbox blocks `fetch('file://…')`, so the deno target's auto-fetch of its sibling `.wasm` fails there.
-
-## Usage (Supabase Edge Functions)
-
-Copy `pkg-bundler/` next to your function's `index.ts` and import relatively:
-
-```ts
-import { AccessKeyStrategy } from "./pkg-bundler/stack_auth_wasm.js";
-
-const strategy = AccessKeyStrategy.create(
-  "ap-southeast-2.aws",
-  Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
-);
-
-const { token, workspaceId, services } = await strategy.getToken();
-// `token` is the bearer credential; pass to ZeroKMS as `Authorization: Bearer ${token}`
-```
-
-The bundler-target `stack_auth_wasm.js` uses `import * as wasm from "./stack_auth_wasm_bg.wasm"`, which the Supabase Edge Runtime resolves natively — no `fetch` of the wasm asset is required.
+This invokes `wasm-pack build --target bundler --out-dir ../node/wasm`, strips wasm-pack metadata, and runs `scripts/inline-wasm.mjs` to emit the inline-bytes variant. CI does the same in `.github/workflows/publish-auth-npm.yml`.
 
 ## Test
 
 ```sh
-npm test  # runs `wasm-pack test --node`
+wasm-pack test --node
 ```
 
-Pure-logic tests (type conversions, JWT claim extraction, error-code mapping, constructor smoke checks) run under Node-hosted wasm. HTTP semantics are covered by the native `stack-auth/node/__tests__` suite.
+Pure-logic coverage — JWT claim extraction, services-as-plain-object serialisation, error-code mapping, constructor smoke checks. HTTP semantics are covered by the native `stack-auth/node/__tests__` vitest suite.
+
+## Published shape
+
+The `@cipherstash/auth` package exposes two wasm entries built from this crate:
+
+- `@cipherstash/auth` (default for non-Node) and `@cipherstash/auth/wasm-inline` — inline-bytes shim with the wasm embedded as base64. Zero-config in Supabase Edge, Cloudflare Workers, browsers, Deno, Bun.
+- `@cipherstash/auth/wasm` — sibling-`.wasm` shim from `wasm-pack --target bundler`. Smaller bundle for consumers using a wasm-aware bundler (Vite/Webpack).
+
+Both expose the same surface. See [`../node/README.md`](../node/README.md) for consumer-facing usage.
