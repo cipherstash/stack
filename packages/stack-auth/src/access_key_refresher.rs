@@ -131,7 +131,10 @@ mod tests {
         AutoRefresh::with_store(refresher, crate::NoStore)
     }
 
-    fn make_expired_token(access: &str) -> Token {
+    /// Build a `Token` whose `expires_at` is `expires_in_secs` from now —
+    /// pass `0` for "already expired", `3600` for "fresh, well outside the
+    /// 90s expiry-leeway window".
+    fn make_token(access: &str, expires_in_secs: u64) -> Token {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -140,7 +143,7 @@ mod tests {
         Token {
             access_token: SecretToken::new(access),
             token_type: "Bearer".to_string(),
-            expires_at: now, // already expired
+            expires_at: now + expires_in_secs,
             refresh_token: None,
             region: None,
             client_id: None,
@@ -148,21 +151,12 @@ mod tests {
         }
     }
 
-    fn make_fresh_token(access: &str) -> Token {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    fn make_expired_token(access: &str) -> Token {
+        make_token(access, 0)
+    }
 
-        Token {
-            access_token: SecretToken::new(access),
-            token_type: "Bearer".to_string(),
-            expires_at: now + 3600, // 1h ahead, not in the expiry-leeway window
-            refresh_token: None,
-            region: None,
-            client_id: None,
-            device_instance_id: None,
-        }
+    fn make_fresh_token(access: &str) -> Token {
+        make_token(access, 3600)
     }
 
     // ---- Initial auth tests ----

@@ -76,9 +76,8 @@ pub trait TokenStore {
     fn save(&self, token: &Token) -> impl Future<Output = ()>;
 }
 
-/// Forward [`TokenStore`] through `Arc`, so callers can share one store
-/// across multiple strategy instances (e.g. an Edge Function pool, or a
-/// worker pool inside CipherStash Proxy) without juggling references.
+/// Forward [`TokenStore`] through `Arc` so one store can back many strategy
+/// instances (Edge Function pool, CipherStash Proxy worker pool, etc).
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: TokenStore + ?Sized> TokenStore for Arc<T> {
     fn load(&self) -> impl Future<Output = Option<Token>> + Send {
@@ -101,11 +100,8 @@ impl<T: TokenStore + ?Sized> TokenStore for Arc<T> {
     }
 }
 
-/// Default placeholder used when no [`TokenStore`] has been configured.
-///
-/// `load` always returns `None` and `save` is a no-op — the calling state
-/// machine sees the same behaviour as the original no-external-cache shape.
-/// Zero-sized; carries no per-instance cost.
+/// Zero-sized default for `AutoRefresh<R, S = NoStore>` — `load` returns
+/// `None`, `save` is a no-op. Carries no per-instance cost.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoStore;
 

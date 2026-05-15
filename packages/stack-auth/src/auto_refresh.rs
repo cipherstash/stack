@@ -42,9 +42,6 @@ impl From<AutoRefreshError> for crate::AuthError {
 pub(crate) struct AutoRefresh<R, S = NoStore> {
     refresher: R,
     state: Mutex<State>,
-    /// External persistence. Consulted on cold start and written to after
-    /// every successful refresh / initial auth. Defaults to [`NoStore`] (a
-    /// zero-sized no-op) when no external store is configured.
     store: S,
     /// Set to `true` while a refresh HTTP call is in-flight.
     ///
@@ -142,14 +139,17 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         let mut state = self.state.lock().await;
 
         if state.token.is_none() {
-            // Cold start — consult the external store before falling through to
-            // initial auth. If the store has a still-usable token, the existing
-            // state machine below either returns it directly (fresh), kicks off
-            // a background refresh (expiring but usable), or refreshes blocking
-            // (fully expired). If the store is empty (e.g. `NoStore`) or load
-            // returns `None`, fall into the original `initial_auth` HTTP path.
-            if let Some(loaded) = self.store.load().await {
-                state.token = Some(loaded);
+            // Drop the lock for the store read so a slow user-supplied backend
+            // (cookie, KV, Redis) doesn't serialise concurrent `get_token`
+            // callers. Re-acquire and double-check `state.token.is_none()` in
+            // case another caller populated it while we awaited.
+            drop(state);
+            let loaded = self.store.load().await;
+            state = self.state.lock().await;
+            if state.token.is_none() {
+                if let Some(t) = loaded {
+                    state.token = Some(t);
+                }
             }
         }
 
