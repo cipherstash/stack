@@ -16,59 +16,35 @@ Six crates compile clean for `wasm32-unknown-unknown`: `recipher`, `cipherstash-
 
 `vitaminc-encrypt` got a cfg-based dual backend (aws-lc-rs on native, RustCrypto on wasm32) so cipherstash-suite can use AEAD types from `vitaminc::encrypt` on both targets without a feature-gate workaround. Available from vitaminc 0.2.0-pre on crates.io (vitaminc PR #163, shipped as part of the 0.2.0-pre minor-bump release).
 
-### Layer 2 — Legacy credentials cleanup [PARTIAL]
+### Layer 2 — Legacy credentials cleanup [DONE]
 
-cipherstash-client 0.34 already migrated every consumer-facing type (`ZeroKMS<C, _>`, `ScopedCipher<C>`, `CtsClient<C>`, `ZeroKMSBuilder<C>`) to the bound `for<'a> &'a C: AuthStrategy` from `stack-auth`. Nothing in 0.34 references the old `Credentials` / `AutoRefreshable` traits. The whole credentials tree was dead — kept alive only because proxy is pinned to `cipherstash-client = "0.32.2"`, predating the migration.
+Shipped in PR #1943. cipherstash-client 0.34 already migrated every consumer-facing type to the bound `for<'a> &'a C: AuthStrategy` from `stack-auth`; the whole legacy `Credentials` / `AutoRefreshable` tree was dead, kept alive only because proxy is pinned to `cipherstash-client = "0.32.2"`. Deleted modules: `credentials/{auto_refresh, user_credentials, service_credentials, static_credentials, token_store}`, the `Credentials`/`AutoRefreshable`/`TokenExpiry` traits, the never-imported `logger_client`/`reqwest_client` modules, and the `sleep` wrapper. -2042 lines. Dropped `open` and `cfg-if` deps.
 
-#### 2a — Delete the dead infrastructure [DONE]
+`ServiceToken` (the legacy JSON-wire type at `cipherstash_client::credentials::service_credentials::service_token::ServiceToken`) is intentionally retained — it backs a `serde::Deserialize`able `{accessToken, expiry}` contract that protect-ffi consumes, and migrating it requires a separate design decision.
 
-Shipped in PR #1943. -2042 lines from cipherstash-client.
+The cipherstash-client release + proxy bump (separate concern, not blocking wasm work) remains as a follow-up.
 
-| Removed | Why |
-|---|---|
-| `credentials/auto_refresh` | Hosted all four `tokio::spawn` refresh loops. Replaced by `stack-auth`'s internal lazy refresh engine. |
-| `credentials/user_credentials/` | OAuth device-code flow. Replaced by `stack_auth::OAuthStrategy`. |
-| `credentials/service_credentials/{service_user_credentials, service_access_key_credentials}` | Replaced by `stack_auth::{OAuthStrategy, AccessKeyStrategy}`. |
-| `credentials/static_credentials` | Internal helper for the deleted service-credentials code. |
-| `credentials/token_store` | File-backed token cache, only used by `user_credentials`. |
-| `credentials::{Credentials, AutoRefreshable, TokenExpiry}` traits | All impls were in the modules above. |
-| `logger_client`, `reqwest_client` | Independently dead — defined but never imported anywhere. |
-| `sleep` | tokio/std cfg-pick wrapper, only used by deleted `auto_refresh`. |
+### Layer 3 — `stack-auth` + `cipherstash-client` wasm32 compile [DONE]
 
-Dropped `open` and `cfg-if` deps. Verified workspace + lint + 340 cipherstash-client unit tests + wasm32 spot-check.
+Shipped in PR #1944. Both crates now build for `wasm32-unknown-unknown`. The wasm-compatible auth surface is `AccessKeyStrategy` (full M2M flow with token caching), `OAuthStrategy::with_token` (caller-supplied JWT with in-memory refresh) — the path edge workers will use — and `ZeroKMS<S>::encrypt`/`decrypt` against any wasm-compatible strategy.
 
-#### 2b — `ServiceToken` JSON contract [DEFERRED]
+Deliberately not on wasm: `device_code` flow (uses `open::that`), `stack-profile` (filesystem), `cts_client`, `management`, `config::source`, `config::paths`, `config::docker_env_file`. Per-target dep splits in `stack-auth` and `cipherstash-client` work around workspace `tokio = { features = ["full"] }` (pulls `mio`, which doesn't compile to wasm32) by giving each affected crate a target-conditional minimal tokio.
 
-The legacy `cipherstash_client::credentials::ServiceToken` is intentionally retained as the only surviving piece of the credentials tree. It backs a JSON wire contract (`{accessToken, expiry}`) that protect-ffi consumes via `serde::Deserialize` from JS callers. `stack_auth::ServiceToken` doesn't impl `Deserialize` and has a different shape (wraps a `SecretToken` with eagerly-decoded JWT claims).
+### Layer 3.5 — `stack-auth-wasm` bindings crate [IN PROGRESS]
 
-Migrating it requires a design decision and is **not** in this PR's scope:
+This PR. Adds `packages/stack-auth/wasm` as a sibling to the existing napi crate. Scoped to `AccessKeyStrategy` (M2M auth) — `getToken(): Promise<TokenResult>` returning `{ token, subject, workspaceId, issuer, services }`. Errors carry a `.code` enum matching the napi contract. OAuth-based strategies (`OAuthStrategy`, `AutoStrategy`, device-code) are deferred to a follow-up: federation and token-pinning for browser/edge contexts need design work that hasn't happened yet.
 
-- **Option A**: teach `stack_auth::ServiceToken` to deserialize from `{accessToken, expiry}` (and accept that some non-JWT tokens won't have decoded claims).
-- **Option B**: protect-ffi deserializes into a thin `ServiceTokenInput` shape and converts internally.
-- **Option C**: keep two ServiceToken types and document the boundary explicitly.
+Error-code mapping is hoisted onto `AuthError::error_code()` in the parent `stack-auth` crate so this PR and the existing napi sibling can share one source of truth (napi adoption is a non-functional cleanup for a follow-up).
 
-Worth a conversation before code changes. Until resolved, the type lives at `cipherstash_client::credentials::service_credentials::service_token::ServiceToken`.
+Build targets: `wasm-pack build --target bundler` (primary — Supabase Edge, Vite, Webpack) and `--target deno` (vanilla `deno run` only — Supabase Edge Runtime sandbox blocks `fetch('file://…')` so the deno target's auto-fetch of its `.wasm` sibling fails there; the bundler output uses `import * as wasm from "./*.wasm"` which the Edge Runtime resolves natively). Tests run via `wasm-pack test --node` — pure-logic coverage (JWT claim extraction, error-code mapping, constructor smoke). HTTP semantics stay covered by the existing native `stack-auth/node/__tests__` vitest suite. CI gains the wasm32 cargo-check + wasm-pack test step alongside the existing nextest step in `test-stack-auth.yml`.
 
-#### 2c — Cipherstash-client release & proxy bump [PENDING]
+Rationale for this intermediate layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain and error-enrichment pattern here on a tiny crate (~205 LOC, 6 tests) means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting work in the same PR.
 
-1. Cut a cipherstash-client 0.35 release containing the current `main` (the AuthStrategy bounds + the 2a delete).
-2. Proxy PR: bump to 0.35; replace `AutoRefresh::new(zerokms_config.credentials())` with `AccessKeyStrategy::builder()…build()`. The type aliases become `ZeroKMS<AccessKeyStrategy, ClientKey>` etc. The version bump alone forces this — `AutoRefresh<ServiceCredentials>` no longer exists, and the bounds require an `AuthStrategy` impl regardless.
+End-to-end validated against a live Supabase Edge Function returning a real `TokenResult` from `AccessKeyStrategy.getToken()` against `ap-southeast-2.aws`. The validation surfaced three runtime issues fixed in this PR:
 
-Verified gap analysis: proxy uses no API on the old `Credentials` trait that isn't already on `AuthStrategy`. `grep` of the proxy tree finds no `clear_token` calls, no `.valid()` calls — only `get_token` semantics. `AccessKeyStrategy` is a drop-in replacement modulo the eager-vs-lazy refresh model (functionally equivalent for any active session).
-
-### Layer 3 — `cipherstash-client` wasm cleanup
-
-After Layer 2a, the residual blockers are small:
-
-| Blocker | Location | Fix | Status after 2a |
-|---|---|---|---|
-| `tokio::time::sleep` wrapper | `src/zerokms/vitur_client/futures.rs:48` (sleep.rs gone with 2a) | Cfg-pick or replace with `gloo-timers::future::TimeoutFuture` on wasm | Reduced to 1 site |
-| `std::fs` writes for local logging | `src/zerokms/local_log.rs` | Cfg-out for wasm (already feature-gated) | Unchanged |
-| `std::fs` reads for config sources | `src/config/source/{cipherstash,cipherstash_secret,file}.rs`, `src/config/source/user.rs:67` (`dirs::home_dir`) | Cfg-out for wasm. Edge consumers pass config explicitly at construction time. | Unchanged |
-| `reqwest` features `rustls` / `hickory-dns` / `stream` | workspace `Cargo.toml` | Wasm cfg uses `default-features = false, features = ["json"]`; reqwest's wasm32 backend dispatches to host `fetch` automatically | Unchanged |
-| `reqwest-retry`, `reqwest-tracing` | workspace deps | Gate off for wasm (`reqwest-middleware` works on wasm). Audit call sites that wrap `with_retries(...)`. | Unchanged |
-
-`stack-auth` needs its own pass — `device_code` (calls `open::that` to launch a browser) cfg-out for wasm; the access-key path is already pure-rust. `stack-profile` is filesystem-backed and only reached via OAuth flows; on wasm we drop `stack-auth/device_code` and so don't pull `stack-profile` in.
+- `stack-auth` called `std::time::SystemTime::now()` in `token.rs` and `access_key_refresher.rs` for JWT-expiry checks. The stdlib's `wasm32-unknown-unknown` `time` module is a panicking stub. Swapped to `web_time::{SystemTime, UNIX_EPOCH}` (re-exports `std::time` on native, polyfills via JS time APIs on wasm — no behavior change off wasm).
+- Rust panics on wasm surface as opaque `RuntimeError: unreachable` from bytecode offsets. Added `console_error_panic_hook` and route panics to `console.error` via a `#[wasm_bindgen(start)]` module-init function.
+- `wasm-pack --target deno` doesn't work in the Supabase Edge Runtime — its sandbox blocks `fetch('file://…')`, which is how the deno target loads its sibling `.wasm`. Made `--target bundler` the primary build (uses `import * as wasm from "./*.wasm"`, which Edge resolves natively); deno target retained for vanilla `deno run`.
 
 ### Layer 4 — `protect-wasm` bindings
 
@@ -95,10 +71,11 @@ Deploy a real edge function that calls `protect-wasm`, encrypt/decrypt against Z
 ## Status
 
 - [x] Analysis (this doc)
-- [x] Layer 1 — pure crates verified on wasm32
-- [~] Layer 2 — legacy credentials cleanup (2a infra delete shipped; 2b ServiceToken migration deferred; 2c release + proxy bump pending)
-- [ ] Layer 3 — `cipherstash-client` wasm cleanup
-- [ ] Layer 4 — `protect-wasm` bindings
+- [x] Layer 1 — pure crates verified on wasm32 (PR #1942)
+- [x] Layer 2 — legacy credentials cleanup (PR #1943)
+- [x] Layer 3 — `stack-auth` + `cipherstash-client` compile on wasm32 (PR #1944)
+- [ ] Layer 3.5 — `stack-auth-wasm` bindings crate (this PR)
+- [ ] Layer 4 — `protect-wasm` bindings (in protect-ffi repo)
 - [ ] Layer 5 — Supabase Edge validation
 
 ## Layer 1 — what shipped
@@ -142,8 +119,13 @@ Net delta: 19 files changed, +14 / -2042. Verified via `cargo check --workspace 
 
 ## Known follow-ups
 
-- The current verification is `cargo check`, not full build. A real artifact build (e.g. `wasm-pack` or `cargo build --target wasm32-unknown-unknown --release`) will surface any link-time issues.
+- Layer 1's `cargo check` verification is now partially exercised by Layer 3.5's `wasm-pack build` (pulls `cts-common`, `cipherstash-config`, `zerokms-protocol` transitively). Crates outside that dep graph (`recipher`, `cipherstash-core`, `cllw-ore`) still need a real artifact build.
 - `cllw-ore` requires `--no-default-features` because the default `postgres-types` feature has C deps. Consider flipping the default off in a future major version (already noted in its Cargo.toml).
 - Cipherstash-client 0.35 release containing the legacy delete; proxy bump to 0.35 with `AccessKeyStrategy` migration. See Layer 2c.
 - `ServiceToken` JSON contract migration (Layer 2b) — design conversation needed before code.
 - Pre-existing API drift between cipherstash-client and protect-ffi (path dep) — `cipherstash_client::eql::EncryptedField` not found. Surfaces under `cargo check -p protect-ffi`. Not caused by Layer 2a; flagged for the next protect-ffi sync.
+- Adopt `AuthError::error_code()` in `stack-auth-node` (the napi sibling) — currently inlined there, now duplicates the parent crate.
+- OAuth-based wasm strategies (`OAuthStrategy`, `AutoStrategy`, device-code) — deferred from Layer 3.5 pending federation/token-pinning design.
+- Token cookie pinning — encrypt the JWT under a worker-only key before storing in cookies (so a stolen cookie can't be replayed elsewhere).
+- Never-expose-JWT API — wallet/keychain pattern where the JWT lives only in wasm memory and JS calls signed operations.
+- npm publishing strategy — separate `@cipherstash/stack-auth-wasm` package vs sub-path under existing `@cipherstash/auth` vs conditional exports.

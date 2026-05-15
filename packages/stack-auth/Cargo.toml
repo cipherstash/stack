@@ -26,6 +26,7 @@ url = { workspace = true }
 uuid = { workspace = true }
 vitaminc = { workspace = true, features = ["protected"] }
 vitaminc-protected = { workspace = true }
+web-time = { workspace = true }
 zerokms-protocol = { workspace = true }
 zeroize = { workspace = true }
 
