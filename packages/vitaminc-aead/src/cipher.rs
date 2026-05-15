@@ -14,42 +14,39 @@ impl std::fmt::Display for Unspecified {
 
 impl std::error::Error for Unspecified {}
 
-/*pub trait Cipher {
-    fn encrypt_slice<'a, A>(
-        &self,
-        plaintext: &'a [u8],
-        aad: A,
-    ) -> Result<LocalCipherText, Unspecified>
-    where
-        A: IntoAad<'a>;
-
-    fn encrypt_vec<'a, A>(
-        &self,
-        plaintext: Vec<u8>,
-        aad: A,
-    ) -> Result<LocalCipherText, Unspecified>
-    where
-        A: IntoAad<'a>;
-
-    fn decrypt_vec<'a, A>(
-        &self,
-        ciphertext: LocalCipherText,
-        aad: A,
-    ) -> Result<Vec<u8>, Unspecified>
-    where
-        A: IntoAad<'a>;
-}*/
-
+/// A driver of an encryption operation, analogous to serde's `Serializer`.
+///
+/// `Cipher` defines the entry points an [`Encrypt`](crate::Encrypt) implementation
+/// can use to encrypt itself. Concrete implementations (e.g. an AES-256-GCM
+/// cipher) decide how plaintext is sealed and what ciphertext container is
+/// produced via [`Ok`](Cipher::Ok).
+///
+/// The trait supports three modes:
+/// - raw byte plaintext, via [`encrypt_bytes_vec`](Cipher::encrypt_bytes_vec) /
+///   [`encrypt_bytes_array`](Cipher::encrypt_bytes_array);
+/// - structured sequences, via [`encrypt_seq`](Cipher::encrypt_seq) returning
+///   a [`SeqCipher`];
+/// - structured maps, via [`encrypt_map`](Cipher::encrypt_map) returning a
+///   [`MapCipher`].
 pub trait Cipher: Sized {
+    /// The encrypted output produced by this cipher (e.g. a structured
+    /// ciphertext container holding nonce + ciphertext + tag).
     type Ok;
+    /// The error type returned on cipher failure. Implementations should keep
+    /// this opaque — see [`Unspecified`].
     type Error;
+    /// The sub-cipher returned by [`encrypt_seq`](Cipher::encrypt_seq).
     type SeqCipher: SeqCipher<Ok = Self::Ok, Error = Self::Error>;
+    /// The sub-cipher returned by [`encrypt_map`](Cipher::encrypt_map).
     type MapCipher: MapCipher<Ok = Self::Ok, Error = Self::Error>;
 
+    /// Encrypt the given byte vector with the supplied associated data.
     fn encrypt_bytes_vec<'a, A>(self, data: Vec<u8>, aad: A) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>;
 
+    /// Encrypt a fixed-size byte array. The default implementation forwards to
+    /// [`encrypt_bytes_vec`](Cipher::encrypt_bytes_vec).
     fn encrypt_bytes_array<'a, const N: usize, A>(
         self,
         data: [u8; N],
@@ -58,15 +55,19 @@ pub trait Cipher: Sized {
     where
         A: IntoAad<'a>,
     {
-        // TODO: We should probably zeroize the data here (what does to_vec do internally?)
+        // See https://github.com/cipherstash/vitaminc/issues/170 — verify
+        // `to_vec` behaviour and zeroize the original stack array.
         self.encrypt_bytes_vec(data.to_vec(), aad)
     }
 
+    /// Begin encrypting a sequence of values. `size_hint` lets the implementation
+    /// preallocate when known.
     fn encrypt_seq(self, size_hint: Option<usize>) -> Self::SeqCipher;
 
+    /// Begin encrypting a map of key/value pairs.
     fn encrypt_map(self) -> Self::MapCipher;
 
-    // TODO: Implement encrypt_some, encrypt_none, and passthrough
+    // Tracked: https://github.com/cipherstash/vitaminc/issues/171
     // fn encrypt_some<T>(self, value: T) -> Result<Self::Ok, Self::Error>
     // where
     //     T: Encrypt,
@@ -79,28 +80,50 @@ pub trait Cipher: Sized {
     // fn passthrough<T: 'static>(self, data: T) -> Result<Self::Ok, Self::Error>;
 }
 
+/// Sub-cipher driving the encryption of a sequence of values.
+///
+/// Obtained from [`Cipher::encrypt_seq`]. Each element is encrypted with
+/// [`encrypt_next`](SeqCipher::encrypt_next); the caller finalises the sequence
+/// with [`end`](SeqCipher::end) to produce the cipher's `Ok` output.
 pub trait SeqCipher: Sized {
+    /// The final encrypted output produced by [`end`](SeqCipher::end).
     type Ok;
+    /// The error type for sequence operations.
     type Error;
 
+    /// Encrypt the next element in the sequence, returning the updated cipher.
     fn encrypt_next<'a, T, A>(self, data: T, aad: A) -> Result<Self, Self::Error>
     where
         T: Encrypt,
         A: IntoAad<'a>;
 
+    /// Finalise the sequence and return the produced ciphertext container.
     fn end(self) -> Result<Self::Ok, Self::Error>;
 }
 
+/// Sub-cipher driving the encryption of a map of key/value pairs.
+///
+/// Obtained from [`Cipher::encrypt_map`]. Keys are not encrypted; values are.
+/// The expected call order is key → value → key → value → … → `end`, or use
+/// the [`encrypt_entry`](MapCipher::encrypt_entry) convenience method.
 pub trait MapCipher: Sized {
+    /// The final encrypted output produced by [`end`](MapCipher::end).
     type Ok;
+    /// The error type for map operations.
     type Error;
 
+    /// Record the next key. Keys are stored in the clear — only values are
+    /// encrypted.
     fn encrypt_key(self, key: &'static str) -> Result<Self, Self::Error>;
+
+    /// Encrypt the value associated with the most recently supplied key.
     fn encrypt_value<'a, T, A>(self, value: T, aad: A) -> Result<Self, Self::Error>
     where
         T: Encrypt,
         A: IntoAad<'a>;
 
+    /// Convenience for [`encrypt_key`](MapCipher::encrypt_key) followed by
+    /// [`encrypt_value`](MapCipher::encrypt_value).
     fn encrypt_entry<'a, T, A>(
         self,
         key: &'static str,
@@ -124,5 +147,6 @@ pub trait MapCipher: Sized {
         self.encrypt_key(key).passthrough(value)
     }*/
 
+    /// Finalise the map and return the produced ciphertext container.
     fn end(self) -> Result<Self::Ok, Self::Error>;
 }

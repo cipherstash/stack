@@ -105,7 +105,8 @@ where
     }
 }
 
-// TODO: Requires passthrough/encrypt_none on Cipher
+// Tracked: https://github.com/cipherstash/vitaminc/issues/173
+// (blocked on https://github.com/cipherstash/vitaminc/issues/171)
 // impl<T> Encrypt for Option<T>
 // where
 //     T: Encrypt,

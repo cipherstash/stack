@@ -2,38 +2,45 @@ mod pae;
 
 use std::borrow::Cow;
 
-// We inherit the copy-on-write semantics from Cow
+/// Associated Authenticated Data passed to an AEAD cipher.
+///
+/// `Aad` is authenticated but not encrypted: tampering with it (or with the
+/// associated ciphertext) causes decryption to fail. The underlying storage is
+/// copy-on-write so borrowed slices can be passed without an allocation.
 #[derive(Clone)]
 pub struct Aad<'a>(Cow<'a, [u8]>);
 
 impl<'a> Aad<'a> {
+    /// Returns an empty `Aad` — no associated data is authenticated.
     pub fn empty() -> Self {
         Aad(Cow::Borrowed(&[]))
     }
 
+    /// Constructs an owned `Aad` by collecting the iterator into a `Vec<u8>`.
     pub fn new_owned<I>(aad: I) -> Self
     where
         I: IntoIterator<Item = u8>,
     {
-        // Collect the iterator into a Vec<u8>
         let aad: Vec<u8> = aad.into_iter().collect();
-        // Convert the Vec<u8> into a Cow<[u8]>
-        // and wrap it in Aad
         Aad(Cow::Owned(aad))
     }
 
+    /// Constructs a borrowed `Aad` from a byte slice — no allocation.
     pub fn from_slice(slice: &'a [u8]) -> Self {
         Aad(Cow::Borrowed(slice))
     }
 
+    /// Returns the underlying bytes of the associated data.
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
 
+    /// Returns `true` if the associated data is empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
+    /// Converts a borrowed `Aad` into an owned one, copying the bytes if necessary.
     pub fn into_owned(self) -> Aad<'a> {
         match self.0 {
             x @ Cow::Borrowed(_) => Self(x.into_owned().into()),
@@ -46,7 +53,14 @@ impl<'a> Aad<'a> {
     }
 }
 
+/// Types that can be canonically converted into an [`Aad`].
+///
+/// Implementations are provided for common shapes (byte slices, strings,
+/// integers, tuples, options). Composite implementations use Pre-Authentication
+/// Encoding (PAE) so structurally distinct inputs always encode to distinct
+/// byte strings.
 pub trait IntoAad<'a> {
+    /// Convert `self` into an [`Aad`].
     fn into_aad(self) -> Aad<'a>
     where
         Self: Sized;
