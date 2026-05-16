@@ -35,6 +35,7 @@ mod access_key_refresher;
 mod access_key_strategy;
 mod auto_refresh;
 mod auto_strategy;
+mod callback_strategy;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
@@ -57,6 +58,7 @@ mod static_token_strategy;
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
+pub use callback_strategy::CallbackAuthStrategy;
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
