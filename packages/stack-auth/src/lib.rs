@@ -33,9 +33,9 @@ use zeroize::ZeroizeOnDrop;
 mod access_key;
 mod access_key_refresher;
 mod access_key_strategy;
+mod auth_strategy_fn;
 mod auto_refresh;
 mod auto_strategy;
-mod callback_strategy;
 mod oauth_refresher;
 mod oauth_strategy;
 mod refresher;
@@ -57,14 +57,14 @@ mod static_token_strategy;
 
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
+pub use auth_strategy_fn::AuthStrategyFn;
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
-pub use callback_strategy::CallbackAuthStrategy;
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
-pub use token_store::{CallbackTokenStore, InMemoryTokenStore, NoStore, TokenStore};
+pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use device_client::{bind_client_device, DeviceClientError};
@@ -74,6 +74,52 @@ pub use device_code::{DeviceCodeStrategy, DeviceCodeStrategyBuilder, PendingDevi
 // Re-exports from stack-profile for backward compatibility.
 #[cfg(not(target_arch = "wasm32"))]
 pub use stack_profile::DeviceIdentity;
+
+/// Token *acquisition* — strategies that produce a [`ServiceToken`].
+///
+/// Use [`AuthStrategy`](self::AuthStrategy) as the consumer-facing trait
+/// (e.g. when wiring strategies into `cipherstash-client`).
+/// [`AuthStrategyFn`](self::AuthStrategyFn) is the closure-shaped impl for
+/// callers that source tokens externally (FFI, custom IPC).
+///
+/// For the *persistence layer* — pluggable storage that slots into an
+/// existing strategy — see [`crate::store`].
+///
+/// All items in this module are also re-exported at the crate root.
+pub mod auth {
+    pub use crate::{
+        AccessKey, AccessKeyStrategy, AccessKeyStrategyBuilder, AuthError, AuthStrategy,
+        AuthStrategyFn, AutoStrategy, AutoStrategyBuilder, InvalidAccessKey, OAuthStrategy,
+        OAuthStrategyBuilder, SecretToken, ServiceToken,
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::{
+        bind_client_device, DeviceClientError, DeviceCodeStrategy, DeviceCodeStrategyBuilder,
+        DeviceIdentity, PendingDeviceCode,
+    };
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub use crate::StaticTokenStrategy;
+}
+
+/// Token *persistence* — pluggable backends for the service-token cache.
+///
+/// Use [`TokenStore`](self::TokenStore) as the trait,
+/// [`TokenStoreFn`](self::TokenStoreFn) for closure-shaped impls (cookies,
+/// KV blobs, Redis), and [`InMemoryTokenStore`](self::InMemoryTokenStore) /
+/// [`NoStore`](self::NoStore) for ready-made implementations.
+///
+/// A `TokenStore` plugs into a concrete strategy via that strategy's
+/// builder (e.g.
+/// [`AccessKeyStrategyBuilder::with_token_store`](crate::AccessKeyStrategyBuilder::with_token_store))
+/// — it does *not* replace the strategy. For full token acquisition (custom
+/// fetcher, FFI-hosted strategy), see [`crate::auth`].
+///
+/// All items in this module are also re-exported at the crate root.
+pub mod store {
+    pub use crate::{InMemoryTokenStore, NoStore, Token, TokenStore, TokenStoreFn};
+}
 
 /// A strategy for obtaining access tokens.
 ///

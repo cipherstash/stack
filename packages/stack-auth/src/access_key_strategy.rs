@@ -109,7 +109,7 @@ impl<S> AccessKeyStrategyBuilder<S> {
     ///
     /// Returns a new builder with the store type erased into the chain — see
     /// [`InMemoryTokenStore`](crate::InMemoryTokenStore) and
-    /// [`CallbackTokenStore`](crate::CallbackTokenStore) for ready-made
+    /// [`TokenStoreFn`](crate::TokenStoreFn) for ready-made
     /// implementations.
     pub fn with_token_store<T: TokenStore>(self, store: T) -> AccessKeyStrategyBuilder<T> {
         AccessKeyStrategyBuilder {

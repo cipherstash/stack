@@ -2,7 +2,7 @@
 
 > **Status:** RFC. Cross-repo design — implementation lives in [`cipherstash/protectjs-ffi`](https://github.com/cipherstash/protectjs-ffi).
 >
-> **Prep landed in this repo:** [`stack_auth::CallbackAuthStrategy`](packages/stack-auth/src/callback_strategy.rs) — the helper protect-ffi will reach for.
+> **Prep landed in this repo:** [`stack_auth::AuthStrategyFn`](packages/stack-auth/src/auth_strategy_fn.rs) — the helper protect-ffi will reach for. Sits on the acquisition layer ([`stack_auth::auth`](packages/stack-auth/src/lib.rs)); its sibling [`stack_auth::TokenStoreFn`](packages/stack-auth/src/token_store.rs) on the persistence layer is what `JsTokenStore` already uses for cookie-backed caching.
 
 ## Why
 
@@ -179,7 +179,7 @@ If the JS `getToken` throws or rejects, the adapter surfaces an `AuthError`. Rec
 
 This is bridge scaffolding. Once `stack-encrypt` lands with its own napi/wasm bindings that accept a `stack_auth::AuthStrategy` natively (no JS-callback round-trip per ZeroKMS request), `protect-ffi`'s `JsAuthStrategy` adapter can be retired and consumers migrate to `@cipherstash/protect` (or whatever the published package becomes).
 
-[`CallbackAuthStrategy`](packages/stack-auth/src/callback_strategy.rs) itself stays useful past that retirement — any foreign Rust consumer that wants to bring a non-`stack-auth`-native strategy to `cipherstash-client` (third-party integrations, test fixtures, future sidecars) uses the same pattern.
+[`AuthStrategyFn`](packages/stack-auth/src/auth_strategy_fn.rs) itself stays useful past that retirement — any foreign Rust consumer that wants to bring a non-`stack-auth`-native strategy to `cipherstash-client` (third-party integrations, test fixtures, future sidecars) uses the same pattern.
 
 ## Why no changes to cipherstash-suite production code
 
@@ -187,8 +187,8 @@ This is bridge scaffolding. Once `stack-encrypt` lands with its own napi/wasm bi
 
 The only thing this repo ships in support of this RFC is:
 
-- `stack_auth::CallbackAuthStrategy` — a public helper mirroring the existing `CallbackTokenStore`. Saves protect-ffi (and any future foreign consumer) ~20 lines of trait-impl boilerplate.
-- A doctest in `cipherstash-client::zerokms::builder` (compile-only) showing the `CallbackAuthStrategy` → `ZeroKMSBuilder::new` composition. Catches regressions if anyone tightens the builder's trait bound.
+- `stack_auth::AuthStrategyFn` — public helper on the acquisition layer, sibling of `stack_auth::TokenStoreFn` on the persistence layer. Saves protect-ffi (and any future foreign consumer) ~20 lines of trait-impl boilerplate.
+- A doctest in `cipherstash-client::zerokms::builder` (compile-only) showing the `AuthStrategyFn` → `ZeroKMSBuilder::new` composition. Catches regressions if anyone tightens the builder's trait bound.
 
 ## Out of scope
 

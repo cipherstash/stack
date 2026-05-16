@@ -50,6 +50,41 @@ let strategy = AccessKeyStrategy::new(region, key)?;
 # }
 ```
 
+## Extensibility
+
+`stack-auth` exposes two layers that can be plugged independently:
+
+```text
+            ┌──────────────────────────────────────────────────┐
+            │  AuthStrategy ─ acquisition layer                │
+            │  get_token() -> ServiceToken                     │
+            │  AccessKeyStrategy / OAuthStrategy / AutoStrategy│
+            │  ── or ──                                        │
+            │  AuthStrategyFn (closure → AuthStrategy)         │
+            └────────────────────────┬─────────────────────────┘
+                                     │ uses
+            ┌────────────────────────▼─────────────────────────┐
+            │  TokenStore ─ persistence layer                  │
+            │  load() / save() of Token                        │
+            │  InMemoryTokenStore / NoStore                    │
+            │  ── or ──                                        │
+            │  TokenStoreFn (closures → TokenStore)            │
+            └──────────────────────────────────────────────────┘
+```
+
+Use [`TokenStoreFn`] when you want stack-auth's own strategies to handle
+HTTP/refresh, but you need to plug in custom **persistence** (a cookie,
+a KV blob, Redis). Wire it via the strategy's builder.
+
+Use [`AuthStrategyFn`] when you want to bring your own **token acquisition**
+end-to-end — typically because the strategy lives across an FFI boundary
+(e.g. a JS `getToken()` reached via `protect-ffi`). The closure runs every
+time a token is needed.
+
+Module paths mirror this split: [`stack_auth::auth`](crate::auth) groups the
+acquisition layer, [`stack_auth::store`](crate::store) groups the persistence
+layer. All items are also re-exported at the crate root.
+
 ## Security
 
 Sensitive values ([`SecretToken`]) are automatically zeroized when dropped

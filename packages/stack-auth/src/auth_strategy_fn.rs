@@ -1,13 +1,17 @@
 //! [`AuthStrategy`] adapter built from an async closure.
 //!
-//! Mirrors [`CallbackTokenStore`](crate::CallbackTokenStore) but for the
-//! single-method [`AuthStrategy`] trait. Lets foreign crates — most notably
-//! `protect-ffi`, which hosts JS callbacks across a Neon boundary — present
-//! a [`stack-auth`](crate)-shaped strategy to [`cipherstash-client`] without
-//! depending on `stack-auth`'s concrete strategy types.
+//! `AuthStrategyFn` is the closure-shaped impl of the *acquisition layer*
+//! ([`AuthStrategy`]): the closure runs every time a token is requested and
+//! returns a [`ServiceToken`]. Use this when the actual token acquisition
+//! lives outside `stack-auth` — most commonly behind an FFI callback
+//! (a JS `getToken()` reached via Neon, a foreign IPC channel, a hand-rolled
+//! test double).
 //!
-//! See `auth-strategy-handover.md` at the repo root for the wider design
-//! discussion this scaffolding supports.
+//! Sibling primitive on the *persistence layer* is
+//! [`TokenStoreFn`](crate::TokenStoreFn), which plugs into an existing
+//! strategy to back its cache. `AuthStrategyFn` replaces the whole
+//! acquisition pipeline; `TokenStoreFn` slots into one. See `auth-strategy-handover.md`
+//! at the repo root for the wider design discussion.
 //!
 //! [`cipherstash-client`]: https://docs.rs/cipherstash-client/
 
@@ -15,42 +19,45 @@ use std::future::Future;
 
 use crate::{AuthError, AuthStrategy, ServiceToken};
 
-/// An [`AuthStrategy`] backed by a user-supplied async closure that returns
+/// [`AuthStrategy`] backed by a user-supplied async closure that returns
 /// a [`ServiceToken`].
-///
-/// Use this when the actual token acquisition lives outside `stack-auth` —
-/// behind an FFI callback, a custom IPC channel, a test fixture, etc. The
-/// `cipherstash-client` integration test [in this crate's
-/// `tests/`](https://github.com/cipherstash/cipherstash-suite/tree/main/packages/cipherstash-client/tests)
-/// exercises this shape end-to-end against a mocktail server.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use stack_auth::{CallbackAuthStrategy, SecretToken, ServiceToken};
+/// use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
 ///
-/// let strategy = CallbackAuthStrategy::new(|| async {
+/// let strategy = AuthStrategyFn::new(|| async {
 ///     // Real consumers would call into FFI / IPC / a cached token store.
-///     Ok(ServiceToken::new(SecretToken::new("dummy.jwt.value".to_string())))
+///     Ok::<_, AuthError>(ServiceToken::new(SecretToken::new("dummy.jwt.value".to_string())))
 /// });
 /// ```
-pub struct CallbackAuthStrategy<F> {
+///
+/// # When to reach for this vs [`TokenStoreFn`](crate::TokenStoreFn)
+///
+/// - **`AuthStrategyFn`**: you control the *entire* token pipeline — fetch,
+///   refresh, cache. `cipherstash-client` calls your closure and uses
+///   whatever it returns, no further questions asked. Used by FFI bindings
+///   that proxy to a JS-side strategy doing all the work upstream.
+/// - **`TokenStoreFn`**: you want stack-auth's `AccessKeyStrategy` (or
+///   another concrete strategy) to do the HTTP/refresh work, and you just
+///   want to plug in custom persistence (a cookie, a KV blob, Redis).
+pub struct AuthStrategyFn<F> {
     get_token: F,
 }
 
-impl<F> CallbackAuthStrategy<F> {
-    /// Build a `CallbackAuthStrategy` from an async closure. The closure
-    /// fires every time [`AuthStrategy::get_token`] is called on a reference
-    /// to this strategy — typically once per `cipherstash-client` HTTP
-    /// request, modulo the in-process [`AutoRefresh`](crate::auto_refresh)
-    /// cache layered on top by individual strategy implementations.
+impl<F> AuthStrategyFn<F> {
+    /// Build an `AuthStrategyFn` from an async closure. The closure fires
+    /// every time [`AuthStrategy::get_token`] is called on a reference to
+    /// this strategy — typically once per `cipherstash-client` HTTP request,
+    /// modulo any in-process caching the closure does internally.
     pub fn new(get_token: F) -> Self {
         Self { get_token }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<F, Fut> AuthStrategy for &CallbackAuthStrategy<F>
+impl<F, Fut> AuthStrategy for &AuthStrategyFn<F>
 where
     F: Fn() -> Fut + Send + Sync,
     Fut: Future<Output = Result<ServiceToken, AuthError>> + Send,
@@ -61,7 +68,7 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-impl<F, Fut> AuthStrategy for &CallbackAuthStrategy<F>
+impl<F, Fut> AuthStrategy for &AuthStrategyFn<F>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<ServiceToken, AuthError>>,
@@ -89,7 +96,7 @@ mod tests {
     async fn closure_runs_on_each_get_token_call() {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = Arc::clone(&calls);
-        let strategy = CallbackAuthStrategy::new(move || {
+        let strategy = AuthStrategyFn::new(move || {
             let calls = Arc::clone(&calls_clone);
             async move {
                 let n = calls.fetch_add(1, Ordering::SeqCst);
@@ -120,7 +127,7 @@ mod tests {
 
     #[tokio::test]
     async fn closure_errors_propagate_unchanged() {
-        let strategy = CallbackAuthStrategy::new(|| async { Err(AuthError::AccessDenied) });
+        let strategy = AuthStrategyFn::new(|| async { Err(AuthError::AccessDenied) });
         let err = (&strategy).get_token().await.unwrap_err();
         assert!(
             matches!(err, AuthError::AccessDenied),
