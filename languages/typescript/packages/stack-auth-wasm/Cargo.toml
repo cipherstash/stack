@@ -21,10 +21,16 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
-# `console` feature gives us `web_sys::console::warn_1` for surfacing JS
-# callback rejections inside `JsTokenStore` (CIP-3114).
-web-sys = { version = "0.3", features = ["console"] }
 console_error_panic_hook = "0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# `console` feature gives us `web_sys::console::warn_2` for surfacing JS
+# callback rejections inside `JsTokenStore` (CIP-3114). Target-gated to
+# wasm32 because the consuming code in `JsTokenStore` is itself cfg-gated;
+# on native the crate has no use for it and `cargo udeps --all-targets`
+# (the `test-no-unused-cargo-dependencies` workflow) would flag it as
+# unused.
+web-sys = { version = "0.3", features = ["console"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
