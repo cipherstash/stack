@@ -202,9 +202,12 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          # Update optionalDependencies to match the publish version
+          # Update peerDependencies (the napi platform sub-packages) to match
+          # the publish version. They live under `peerDependencies` rather than
+          # `optionalDependencies` so Deno's strict npm resolver doesn't choke
+          # on platform packages that don't apply to the consumer's runtime.
           jq --arg v "$VERSION" '
-            .optionalDependencies |= with_entries(
+            .peerDependencies |= with_entries(
               if (.key | startswith("@cipherstash/auth-"))
               then .value = $v
               else .

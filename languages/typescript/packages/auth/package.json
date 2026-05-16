@@ -53,13 +53,21 @@
     "build:wasm": "cd ../wasm && wasm-pack build --target bundler --out-dir ../node/wasm && rm -f ../node/wasm/README.md ../node/wasm/LICENSE ../node/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../node/wasm/package.json && node ../node/scripts/inline-wasm.mjs",
     "test": "npm run build:test && vitest run"
   },
-  "optionalDependencies": {
+  "peerDependencies": {
     "@cipherstash/auth-darwin-x64": "0.36.0",
     "@cipherstash/auth-darwin-arm64": "0.36.0",
     "@cipherstash/auth-linux-x64-gnu": "0.36.0",
     "@cipherstash/auth-linux-arm64-gnu": "0.36.0",
     "@cipherstash/auth-linux-x64-musl": "0.36.0",
     "@cipherstash/auth-win32-x64-msvc": "0.36.0"
+  },
+  "peerDependenciesMeta": {
+    "@cipherstash/auth-darwin-x64": { "optional": true },
+    "@cipherstash/auth-darwin-arm64": { "optional": true },
+    "@cipherstash/auth-linux-x64-gnu": { "optional": true },
+    "@cipherstash/auth-linux-arm64-gnu": { "optional": true },
+    "@cipherstash/auth-linux-x64-musl": { "optional": true },
+    "@cipherstash/auth-win32-x64-msvc": { "optional": true }
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",
