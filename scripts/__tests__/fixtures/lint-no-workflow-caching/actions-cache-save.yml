@@ -1,0 +1,15 @@
+name: Actions Cache Save
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Save build cache
+        uses: actions/cache/save@v4
+        with:
+          path: .turbo
+          key: turbo-${{ github.sha }}
+      - run: pnpm install --frozen-lockfile

@@ -1,0 +1,15 @@
+name: Actions Cache Restore
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .turbo
+          key: turbo-${{ github.sha }}
+      - run: pnpm install --frozen-lockfile

@@ -1,0 +1,13 @@
+name: No Actions Cache
+on:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # `actions/cache` is named here in prose but never used as a step —
+      # the check must only match a real `uses:` reference.
+      - name: Note — actions/cache is intentionally avoided
+        run: echo "this project does not use actions/cache"

@@ -39,6 +39,9 @@ importers:
       '@types/node':
         specifier: ^22.15.12
         version: 22.19.3
+      js-yaml:
+        specifier: ^3.14.2
+        version: 3.14.2
       rimraf:
         specifier: ^6.1.2
         version: 6.1.2
