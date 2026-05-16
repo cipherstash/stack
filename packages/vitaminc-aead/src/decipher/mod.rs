@@ -1,5 +1,7 @@
 pub mod impls;
 
+use std::any::Any;
+
 use crate::Unspecified;
 
 /// A trait for types that can decrypt data, driving a [`DecipherVisitor`] to produce values.
@@ -52,6 +54,20 @@ pub trait Decipher<'c>: Sized {
     /// Decrypt a map of ciphertexts, driving the visitor's
     /// [`visit_map`](DecipherVisitor::visit_map).
     fn decrypt_map<V: DecipherVisitor<'c> + Send + 'c>(self, visitor: V) -> Self::Ok<V::Value>;
+
+    /// Recover a value stored via [`Cipher::passthrough`](crate::Cipher::passthrough).
+    /// Returns an error if the ciphertext is not a passthrough or the stored
+    /// type does not match `T`.
+    fn decrypt_passthrough<T>(self) -> Self::Ok<T>
+    where
+        T: Any + Send + 'static;
+
+    /// Decrypt an `Option<T>`. The decipher inspects the ciphertext shape:
+    /// a `None`-marker variant produces `Ok(None)` (after AAD verification);
+    /// any other shape is decrypted as `T` and wrapped in `Some`.
+    fn decrypt_option<T>(self) -> Self::Ok<Option<T>>
+    where
+        T: Decrypt<'c> + 'c;
 }
 
 /// A visitor over the structural shape of a ciphertext, analogous to serde's

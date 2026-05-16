@@ -111,3 +111,12 @@ where
         D::map_ok(T::decrypt(decipher), Protected::init_from_inner)
     }
 }
+
+impl<'c, T> Decrypt<'c> for Option<T>
+where
+    T: Decrypt<'c> + 'c,
+{
+    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
+        decipher.decrypt_option::<T>()
+    }
+}

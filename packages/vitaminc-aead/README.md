@@ -32,6 +32,7 @@ This crate provides traits and types for implementing AEAD operations in a safe 
 A [`Cipher`] is consumed by the operation it drives — typically you implement it for a *reference* to your cipher state (`&MyCipher`) so the same cipher can be reused across many calls. The trait declares the output (`Ok`) and error types, plus associated types for sequence and map encryption:
 
 ```rust,no_run
+use std::any::Any;
 use vitaminc_aead::{Cipher, IntoAad, MapCipher, SeqCipher, Unspecified};
 
 pub struct MyCipher { /* key material, nonce generator, ... */ }
@@ -50,15 +51,29 @@ impl<'c> Cipher for &'c MyCipher {
     where
         A: IntoAad<'a>,
     {
-        todo!("seal `data` with AAD and return a ciphertext")
+        unimplemented!("seal `data` with AAD and return a ciphertext")
     }
 
     fn encrypt_seq(self, size_hint: Option<usize>) -> Self::SeqCipher {
-        todo!("return a SeqCipher initialised with `size_hint` capacity")
+        unimplemented!("return a SeqCipher initialised with `size_hint` capacity")
     }
 
     fn encrypt_map(self) -> Self::MapCipher {
-        todo!("return a MapCipher")
+        unimplemented!("return a MapCipher")
+    }
+
+    fn encrypt_none<'a, A>(self, _aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>,
+    {
+        unimplemented!("produce an authenticated 'absent' marker bound to `aad`")
+    }
+
+    fn passthrough<T>(self, _value: T) -> Result<Self::Ok, Self::Error>
+    where
+        T: Any + Send + 'static,
+    {
+        unimplemented!("store `value` unencrypted inside the cipher's output container")
     }
 }
 
@@ -70,24 +85,34 @@ impl<'c> SeqCipher for MySeqCipher<'c> {
     where
         T: vitaminc_aead::Encrypt,
         A: IntoAad<'a>,
-    { todo!() }
+    { unimplemented!() }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> { todo!() }
+    fn passthrough_next<T>(self, _value: T) -> Result<Self, Self::Error>
+    where
+        T: Any + Send + 'static,
+    { unimplemented!() }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
 
 impl<'c> MapCipher for MyMapCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
 
-    fn encrypt_key(self, _key: &'static str) -> Result<Self, Self::Error> { todo!() }
+    fn encrypt_key(self, _key: &'static str) -> Result<Self, Self::Error> { unimplemented!() }
 
     fn encrypt_value<'a, T, A>(self, _value: T, _aad: A) -> Result<Self, Self::Error>
     where
         T: vitaminc_aead::Encrypt,
         A: IntoAad<'a>,
-    { todo!() }
+    { unimplemented!() }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> { todo!() }
+    fn passthrough_entry<T>(self, _key: &'static str, _value: T) -> Result<Self, Self::Error>
+    where
+        T: Any + Send + 'static,
+    { unimplemented!() }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
 ```
 

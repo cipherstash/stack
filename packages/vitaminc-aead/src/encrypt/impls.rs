@@ -105,20 +105,18 @@ where
     }
 }
 
-// Tracked: https://github.com/cipherstash/vitaminc/issues/173
-// (blocked on https://github.com/cipherstash/vitaminc/issues/171)
-// impl<T> Encrypt for Option<T>
-// where
-//     T: Encrypt,
-// {
-//     fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-//     where
-//         C: Cipher,
-//         A: IntoAad<'a>,
-//     {
-//         match self {
-//             Some(v) => v.encrypt_with_aad(cipher, aad),
-//             None => cipher.passthrough(()),
-//         }
-//     }
-// }
+impl<T> Encrypt for Option<T>
+where
+    T: Encrypt,
+{
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        match self {
+            Some(v) => cipher.encrypt_some(v, aad),
+            None => cipher.encrypt_none(aad),
+        }
+    }
+}

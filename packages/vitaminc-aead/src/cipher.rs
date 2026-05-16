@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use crate::{Encrypt, IntoAad};
 
 /// An error that provides **no information** about the failure.
@@ -67,17 +69,34 @@ pub trait Cipher: Sized {
     /// Begin encrypting a map of key/value pairs.
     fn encrypt_map(self) -> Self::MapCipher;
 
-    // Tracked: https://github.com/cipherstash/vitaminc/issues/171
-    // fn encrypt_some<T>(self, value: T) -> Result<Self::Ok, Self::Error>
-    // where
-    //     T: Encrypt,
-    // {
-    //     value.encrypt(self)
-    // }
-    //
-    // fn encrypt_none(self) -> Result<Self::Ok, Self::Error>;
-    //
-    // fn passthrough<T: 'static>(self, data: T) -> Result<Self::Ok, Self::Error>;
+    /// Encrypt a present optional value. Default forwards to the inner value's
+    /// [`Encrypt`] impl — the `Some` discriminator is implicit in the structural
+    /// shape of the ciphertext (any non-`None` variant means `Some`).
+    fn encrypt_some<'a, T, A>(self, value: T, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        T: Encrypt,
+        A: IntoAad<'a>,
+    {
+        value.encrypt_with_aad(self, aad)
+    }
+
+    /// Encrypt the absent case of an optional value. Must produce a
+    /// cryptographically authenticated marker — distinguishable from any
+    /// `Some(_)` ciphertext and bound to `aad` so it cannot be forged.
+    fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
+    where
+        A: IntoAad<'a>;
+
+    /// Pass a typed value through the cipher's output container **without**
+    /// encrypting it. Intended for fields that need to survive the encryption
+    /// envelope in the clear (e.g. a schema version tag).
+    ///
+    /// The value is typed at the API boundary but stored opaquely by the
+    /// cipher; the corresponding [`Decipher::decrypt_passthrough`] checks the
+    /// type at runtime.
+    fn passthrough<T>(self, value: T) -> Result<Self::Ok, Self::Error>
+    where
+        T: Any + Send + 'static;
 }
 
 /// Sub-cipher driving the encryption of a sequence of values.
@@ -96,6 +115,11 @@ pub trait SeqCipher: Sized {
     where
         T: Encrypt,
         A: IntoAad<'a>;
+
+    /// Append a passthrough (unencrypted) element to the sequence.
+    fn passthrough_next<T>(self, value: T) -> Result<Self, Self::Error>
+    where
+        T: Any + Send + 'static;
 
     /// Finalise the sequence and return the produced ciphertext container.
     fn end(self) -> Result<Self::Ok, Self::Error>;
@@ -154,13 +178,12 @@ pub trait MapCipher: Sized {
             .and_then(|mc| mc.encrypt_value(value, aad))
     }
 
-    /*fn encrypt_passthrough_entry<T>(self, key: &'static str, value: T) -> Self
+    /// Insert a passthrough (unencrypted) entry under `key`. Equivalent to
+    /// [`encrypt_key`](MapCipher::encrypt_key) followed by storing the value
+    /// without AEAD treatment.
+    fn passthrough_entry<T>(self, key: &'static str, value: T) -> Result<Self, Self::Error>
     where
-        T: erased_serde::Serialize + Send + Sync + 'static,
-        Self: Sized,
-    {
-        self.encrypt_key(key).passthrough(value)
-    }*/
+        T: Any + Send + 'static;
 
     /// Finalise the map and return the produced ciphertext container.
     fn end(self) -> Result<Self::Ok, Self::Error>;
