@@ -52,17 +52,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Disable Windows Defender realtime scan on workspace
-        # Defender real-time scanning every file Cargo writes (target/ has 10k+
-        # small files) is the dominant cost of MSVC napi builds — usually
-        # 2-4× slowdown vs. Linux for the same code. Disabling it for the
-        # ephemeral runner's workspace shaves ~30-50% off this job. See
-        # CIP-3109.
+      - name: Exclude Windows build output from Defender realtime scan
+        # Defender real-time scanning every file Cargo writes under target/
+        # (10k+ small files) is the dominant cost of MSVC napi builds —
+        # usually 2-4× slowdown vs. Linux for the same code. Excluding only
+        # this package's build output keeps the mitigation scoped to the
+        # generated artifacts while reducing Windows build time. See CIP-3109.
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Set-MpPreference -DisableRealtimeMonitoring $true
-          Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+          Add-MpPreference -ExclusionPath "${{ github.workspace }}\${{ env.WORKING_DIR }}\target"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@1.90.0
