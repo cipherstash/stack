@@ -102,21 +102,50 @@ struct JsTokenStore {
 #[cfg(target_arch = "wasm32")]
 impl TokenStore for JsTokenStore {
     async fn load(&self) -> Option<Token> {
-        let promise = self.load.call0(&JsValue::NULL).ok()?;
-        let result = JsFuture::from(js_sys::Promise::from(promise)).await.ok()?;
-        let json = result.as_string()?;
-        serde_json::from_str(&json).ok()
+        let promise = match self.load.call0(&JsValue::NULL) {
+            Ok(p) => p,
+            Err(err) => {
+                warn_callback("loadToken", "synchronous throw", &err);
+                return None;
+            }
+        };
+        match JsFuture::from(js_sys::Promise::from(promise)).await {
+            Ok(result) => {
+                let json = result.as_string()?;
+                serde_json::from_str(&json).ok()
+            }
+            Err(err) => {
+                warn_callback("loadToken", "promise rejection", &err);
+                None
+            }
+        }
     }
 
     async fn save(&self, token: &Token) {
         let Ok(json) = serde_json::to_string(token) else {
             return;
         };
-        let Ok(promise) = self.save.call1(&JsValue::NULL, &JsValue::from_str(&json)) else {
-            return;
+        let promise = match self.save.call1(&JsValue::NULL, &JsValue::from_str(&json)) {
+            Ok(p) => p,
+            Err(err) => {
+                warn_callback("saveToken", "synchronous throw", &err);
+                return;
+            }
         };
-        let _ = JsFuture::from(js_sys::Promise::from(promise)).await;
+        if let Err(err) = JsFuture::from(js_sys::Promise::from(promise)).await {
+            warn_callback("saveToken", "promise rejection", &err);
+        }
     }
+}
+
+/// Surface JS callback failures so consumers can see them — without this,
+/// rejections in user-supplied `loadToken` / `saveToken` were invisible and
+/// led to silent cache misses (e.g. when `setCookie` rejected a value
+/// containing chars outside RFC 6265's allowed range). See CIP-3114.
+#[cfg(target_arch = "wasm32")]
+fn warn_callback(name: &str, kind: &str, err: &JsValue) {
+    let msg = format!("stack-auth: {name} {kind}");
+    web_sys::console::warn_2(&JsValue::from_str(&msg), err);
 }
 
 enum AccessKeyStrategyInner {
@@ -377,5 +406,43 @@ mod tests {
             result.is_ok(),
             "valid region + key + callbacks should construct successfully"
         );
+    }
+
+    #[wasm_bindgen_test]
+    async fn js_token_store_load_returns_none_on_callback_throw() {
+        use stack_auth::TokenStore as _;
+        // A throwing `loadToken` mustn't crash — it should be treated as a
+        // cache miss so the strategy falls through to initial auth.
+        // CIP-3114: prior to the fix this still returned None (via `.ok()?`)
+        // but without surfacing the throw. With the fix, the throw is logged
+        // via `web_sys::console::warn_2`; behaviour-wise we just confirm
+        // the call returns None rather than panicking.
+        let store = JsTokenStore {
+            load: js_sys::Function::new_no_args("throw new Error('boom');"),
+            save: noop_save_fn(),
+        };
+        assert!(
+            store.load().await.is_none(),
+            "throwing loadToken should produce a cache miss, not a crash"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn js_token_store_save_swallows_callback_throw() {
+        use stack_auth::TokenStore as _;
+        // A throwing `saveToken` mustn't crash the surrounding refresh path.
+        // Trait contract is "best-effort" — save returns `()` regardless.
+        let store = JsTokenStore {
+            load: empty_load_fn(),
+            save: js_sys::Function::new_with_args("_json", "throw new Error('boom');"),
+        };
+        // `Token`'s fields are `pub(crate)`; round-trip through serde to build
+        // one from this crate without touching the field privacy.
+        let token: Token = serde_json::from_str(
+            r#"{"access_token":"dummy","token_type":"Bearer","expires_at":4000000000}"#,
+        )
+        .unwrap();
+        // No assertion needed beyond "this doesn't panic".
+        store.save(&token).await;
     }
 }

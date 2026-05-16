@@ -21,6 +21,9 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 serde-wasm-bindgen = "0.6"
 js-sys = "0.3"
+# `console` feature gives us `web_sys::console::warn_1` for surfacing JS
+# callback rejections inside `JsTokenStore` (CIP-3114).
+web-sys = { version = "0.3", features = ["console"] }
 console_error_panic_hook = "0.1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
