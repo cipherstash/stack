@@ -5,6 +5,8 @@ mod cipher;
 mod ciphertext;
 mod decipher;
 mod encrypt;
+#[cfg(feature = "hlist")]
+pub mod hlist;
 mod nonce;
 
 #[doc(inline)]

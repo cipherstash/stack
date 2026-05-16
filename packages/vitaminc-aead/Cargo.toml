@@ -19,6 +19,19 @@ bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
 zeroize = { workspace = true }
 
+[features]
+test-utils = []
+# Opt-in HList-based ciphertext shape. Trades the dynamic `Cipher::Ok` enum
+# (heap-allocated `Vec`s, `Box<dyn Any>` passthrough) for a per-call typed
+# builder where the full structural shape is encoded in the type system —
+# no heap nodes, no type erasure, statically-typed passthrough access.
+#
+# Best suited to native Rust performance-sensitive paths; the dynamic
+# default remains preferable for wasm32 / JS bindings where bundle size
+# and runtime-determined shapes matter more.
+hlist = []
+
+
 [dev-dependencies]
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
