@@ -21,17 +21,24 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
-      
+
       - uses: pnpm/action-setup@v6
         name: Install pnpm
         with:
           run_install: false
+          # Supply-chain hardening — never cache the pnpm store; a poisoned
+          # cache entry would execute in this credential-bearing workflow.
+          cache: false
 
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: 'pnpm'
+          # No `cache:`, and package-manager-cache disabled. release.yml
+          # publishes to npm (NPM_TOKEN + OIDC) and must not restore the
+          # GitHub Actions cache — a cache-poisoning / supply-chain vector.
+          # Enforced by .github/workflows/tests-supply-chain.yml.
+          package-manager-cache: false
 
       # node-pty's install hook falls back to `node-gyp rebuild` when no
       # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships

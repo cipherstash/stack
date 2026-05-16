@@ -1,0 +1,80 @@
+name: Test supply chain security
+
+# Supply-chain gate: asserts that release.yml (and this workflow) never
+# restore the GitHub Actions cache. A workflow that both restores a cache
+# and holds publish credentials is a cache-poisoning target — see
+# https://adnanthekhan.com/2024/05/06/the-monsters-in-your-build-cache-github-actions-cache-poisoning/
+#
+# The check (scripts/lint-no-workflow-caching.mjs) requires caching to be
+# disabled *explicitly*, not just left at its default:
+# - `pnpm/action-setup` must set `cache: false`
+# - `actions/setup-node` must set `package-manager-cache: false`
+# - no `cache:` input and no `actions/cache` step anywhere
+# See the "CI/CD Supply-Chain Hardening" section of SECURITY.md.
+#
+# Deliberately minimal:
+# - GitHub-hosted runner (no Blacksmith transparent cache)
+# - contents:read only
+# - no secrets
+# - no caching
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/tests-supply-chain.yml'
+      - 'scripts/lint-no-workflow-caching.mjs'
+      - 'scripts/__tests__/lint-no-workflow-caching.test.mjs'
+      - 'scripts/__tests__/fixtures/lint-no-workflow-caching/**'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/tests-supply-chain.yml'
+      - 'scripts/lint-no-workflow-caching.mjs'
+      - 'scripts/__tests__/lint-no-workflow-caching.test.mjs'
+      - 'scripts/__tests__/fixtures/lint-no-workflow-caching/**'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-no-caching-in-release-workflows:
+    name: Verify no caching in release workflows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        name: Install pnpm
+        with:
+          run_install: false
+          # Do not use caching in this cache-testing workflow
+          cache: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          # Do not use caching in this cache-testing workflow
+          package-manager-cache: false
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run lint script self-tests
+        run: pnpm run test:scripts
+
+      - name: Verify no caching in release.yml and tests-supply-chain.yml
+        run: pnpm run lint:workflow-cache
