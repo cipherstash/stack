@@ -417,7 +417,7 @@ export class EncryptedTable<T extends EncryptedTableColumn> {
 
   constructor(
     public readonly tableName: string,
-    private readonly columnBuilders: T,
+    public readonly columnBuilders: T,
   ) {}
 
   /**

@@ -237,6 +237,23 @@ describe('schema builders', () => {
       expect(table.name).toBeInstanceOf(EncryptedColumn)
       expect(table.age).toBeInstanceOf(EncryptedColumn)
     })
+
+    it('exposes columnBuilders as a public, read-only map of the typed builders', () => {
+      const emailCol = encryptedColumn('email').equality()
+      const ageCol = encryptedColumn('age').dataType('number').orderAndRange()
+      const table = encryptedTable('users', {
+        email: emailCol,
+        age: ageCol,
+      })
+
+      // Consumers should be able to iterate the builders without reaching
+      // into the built TableDefinition (`table.build().columns`) or a
+      // private internal.
+      expect(Object.keys(table.columnBuilders).sort()).toEqual(['age', 'email'])
+      expect(table.columnBuilders.email).toBe(emailCol)
+      expect(table.columnBuilders.age).toBe(ageCol)
+      expect(table.columnBuilders).toBe(table.columnBuilders)
+    })
   })
 
   // -------------------------------------------------------
