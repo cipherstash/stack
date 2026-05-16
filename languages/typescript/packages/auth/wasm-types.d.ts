@@ -2,21 +2,25 @@
 /* eslint-disable */
 
 /*
- * Hand-typed overlay for the wasm-bindgen-generated bindings.
+ * Hand-typed overlay for the raw wasm-bindgen output behind the `/wasm`
+ * sub-path. Most consumers should reach for the slick wrapper at
+ * `/wasm-inline` (see `wasm-inline.d.ts`) which exposes the options-object
+ * API and the `cookieStore`-friendly shape. This file documents the
+ * lower-level surface: a single `create(region, accessKey)` factory with
+ * no built-in store wiring.
  *
- * The wasm-bindgen build emits `wasm/stack_auth_wasm.d.ts` automatically, but
- * its types are looser than we want (`Promise<any>` for `getToken`, and it
+ * The wasm-bindgen build emits `wasm/stack_auth_wasm.d.ts` automatically,
+ * but its types are looser than we want (`Promise<any>` for `getToken`,
  * leaks internal `wasm-streams` types like `IntoUnderlyingByteSource` that
- * arrive transitively via reqwest's wasm32 fetch backend). This file is the
- * `types` entry for the `deno` / `worker` / `browser` / `default` conditions
- * in the `exports` map — at runtime callers load the auto-generated `.js`
- * shim, but the types they see come from here.
+ * arrive transitively via reqwest's wasm32 fetch backend). This file is
+ * the `types` entry for `/wasm` — at runtime callers load the
+ * auto-generated `.js` shim, but the types they see come from here.
  *
- * The Node entry continues to use `index.d.ts`, which exposes the full surface
- * (including filesystem- and browser-backed features like the device-code flow
- * and profile-store loading) that doesn't compile to wasm32. OAuth-based
- * strategies on wasm (`OAuthStrategy`, `AutoStrategy`) are deferred to a
- * follow-up — see the Layer 3.5 notes in `wasm-analysis.md`.
+ * The Node entry uses `index.d.ts`, which exposes the full surface
+ * (including filesystem- and browser-backed features like the device-code
+ * flow and profile-store loading) that doesn't compile to wasm32.
+ * OAuth-based strategies on wasm (`OAuthStrategy`, `AutoStrategy`) are
+ * deferred to a follow-up — see the Layer 3.5 notes in `wasm-analysis.md`.
  */
 
 /** Error codes attached to errors thrown by this package. */
@@ -60,48 +64,15 @@ export interface TokenResult {
 }
 
 /**
- * Async callback used by `AccessKeyStrategy.createWithStore` to load a
- * previously-persisted token JSON. Returning `null` (or `undefined`) signals
- * "no token cached" — the strategy will fall through to re-authenticating
- * with the access key.
- */
-export type LoadTokenCallback = () => Promise<string | null | undefined>
-
-/**
- * Async callback used by `AccessKeyStrategy.createWithStore` to persist a
- * freshly-issued token JSON. The string is opaque to the caller — pass it
- * back unchanged to a future `LoadTokenCallback` (e.g. set it as a cookie
- * value, write it to a KV store, etc.).
- */
-export type SaveTokenCallback = (json: string) => Promise<void>
-
-/**
  * An auth strategy that uses a static access key for service-to-service
- * or CI/CD authentication.
+ * or CI/CD authentication. This is the raw bundler-target binding —
+ * consumers wanting the options-object / cookie-store-friendly shape
+ * should import from `/wasm-inline` instead.
  */
 export declare class AccessKeyStrategy {
   private constructor()
   /** Create a new `AccessKeyStrategy` for the given region and access key. */
   static create(region: string, accessKey: string): AccessKeyStrategy
-  /**
-   * Create an `AccessKeyStrategy` backed by external token-store callbacks.
-   *
-   * The strategy consults `loadToken` on cold start before issuing any HTTP
-   * request — if it returns a still-valid token, that's reused. After every
-   * successful refresh or initial authentication the new token JSON is
-   * written back via `saveToken`. Both callbacks return Promises so they
-   * can perform async I/O (read a cookie, write to KV, etc.).
-   *
-   * The JSON string passed to `saveToken` contains the bearer credential
-   * verbatim — treat it as secret material. End-to-end protection at rest
-   * (encrypting before persistence) is a planned follow-up.
-   */
-  static createWithStore(
-    region: string,
-    accessKey: string,
-    loadToken: LoadTokenCallback,
-    saveToken: SaveTokenCallback,
-  ): AccessKeyStrategy
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
   getToken(): Promise<TokenResult>
   /** Release the underlying wasm resources. */

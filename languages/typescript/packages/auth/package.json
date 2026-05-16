@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.37.0-alpha.3",
+  "version": "0.37.0-alpha.6",
   "main": "index.js",
   "types": "index.d.ts",
   "browser": false,
@@ -20,8 +20,12 @@
       "default": "./wasm/stack_auth_wasm.js"
     },
     "./wasm-inline": {
-      "types": "./wasm-types.d.ts",
-      "default": "./wasm/stack_auth_wasm_inline.js"
+      "types": "./wasm-inline.d.ts",
+      "default": "./wasm-inline.mjs"
+    },
+    "./cookies": {
+      "types": "./cookies.d.ts",
+      "default": "./cookies.mjs"
     }
   },
   "napi": {
@@ -44,6 +48,10 @@
     "README.md",
     "stack-auth-node.js",
     "wasm-types.d.ts",
+    "wasm-inline.mjs",
+    "wasm-inline.d.ts",
+    "cookies.mjs",
+    "cookies.d.ts",
     "wasm/"
   ],
   "scripts": {
