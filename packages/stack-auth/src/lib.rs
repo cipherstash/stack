@@ -77,10 +77,10 @@ pub use stack_profile::DeviceIdentity;
 
 /// Token *acquisition* — strategies that produce a [`ServiceToken`].
 ///
-/// Use [`AuthStrategy`](self::AuthStrategy) as the consumer-facing trait
-/// (e.g. when wiring strategies into `cipherstash-client`).
-/// [`AuthStrategyFn`](self::AuthStrategyFn) is the closure-shaped impl for
-/// callers that source tokens externally (FFI, custom IPC).
+/// Use [`AuthStrategy`] as the consumer-facing trait (e.g. when wiring
+/// strategies into `cipherstash-client`). [`AuthStrategyFn`] is the
+/// closure-shaped impl for callers that source tokens externally
+/// (FFI, custom IPC).
 ///
 /// For the *persistence layer* — pluggable storage that slots into an
 /// existing strategy — see [`crate::store`].
@@ -105,10 +105,9 @@ pub mod auth {
 
 /// Token *persistence* — pluggable backends for the service-token cache.
 ///
-/// Use [`TokenStore`](self::TokenStore) as the trait,
-/// [`TokenStoreFn`](self::TokenStoreFn) for closure-shaped impls (cookies,
-/// KV blobs, Redis), and [`InMemoryTokenStore`](self::InMemoryTokenStore) /
-/// [`NoStore`](self::NoStore) for ready-made implementations.
+/// Use [`TokenStore`] as the trait, [`TokenStoreFn`] for closure-shaped
+/// impls (cookies, KV blobs, Redis), and [`InMemoryTokenStore`] / [`NoStore`]
+/// for ready-made implementations.
 ///
 /// A `TokenStore` plugs into a concrete strategy via that strategy's
 /// builder (e.g.
