@@ -26,9 +26,10 @@ Pure-logic coverage — JWT claim extraction, services-as-plain-object serialisa
 
 ## Published shape
 
-The `@cipherstash/auth` package exposes two wasm entries built from this crate:
+The `@cipherstash/auth` package exposes three wasm-related entries:
 
-- `@cipherstash/auth` (default for non-Node) and `@cipherstash/auth/wasm-inline` — inline-bytes shim with the wasm embedded as base64. Zero-config in Supabase Edge, Cloudflare Workers, browsers, Deno, Bun.
-- `@cipherstash/auth/wasm` — sibling-`.wasm` shim from `wasm-pack --target bundler`. Smaller bundle for consumers using a wasm-aware bundler (Vite/Webpack).
+- `@cipherstash/auth/wasm-inline` — hand-written ESM wrapper around the inline-bytes bundle (wasm embedded as base64). Exposes the slick options-object API: `AccessKeyStrategy.create(region, key, { store })`. Zero-config in Supabase Edge, Cloudflare Workers, Deno, Bun.
+- `@cipherstash/auth/wasm` — raw sibling-`.wasm` shim from `wasm-pack --target bundler`. Lower-level surface (no options-object wrapper) for consumers using a wasm-aware bundler (Vite/Webpack).
+- `@cipherstash/auth/cookies` — pure-JS helper `cookieStore({ request, responseHeaders, ... })` returning a `TokenStore`-shaped object. No wasm dependency; works in any WHATWG-fetch runtime, and forward-compatible with the future napi binding (CIP-3113).
 
-Both expose the same surface. See [`../node/README.md`](../node/README.md) for consumer-facing usage.
+`AccessKeyStrategy.create()` accepts an optional `{ store }` field that takes any `{ load, save }` shape. JS callback rejections inside the store are logged via `web_sys::console::warn_2` rather than swallowed (CIP-3114). See [`../node/README.md`](../node/README.md) for consumer-facing usage and the `cookieStore` reference.

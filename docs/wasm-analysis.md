@@ -46,13 +46,14 @@ End-to-end validated against a live Supabase Edge Function returning a real `Tok
 - Rust panics on wasm surface as opaque `RuntimeError: unreachable` from bytecode offsets. Added `console_error_panic_hook` and route panics to `console.error` via a `#[wasm_bindgen(start)]` module-init function.
 - `wasm-pack --target deno` doesn't work in the Supabase Edge Runtime — its sandbox blocks `fetch('file://…')`, which is how the deno target loads its sibling `.wasm`. Made `--target bundler` the primary build (uses `import * as wasm from "./*.wasm"`, which Edge resolves natively); deno target retained for vanilla `deno run`.
 
-**PR #1953 — npm unification.** Stacks on #1952. Single `@cipherstash/auth` npm package serves Node, browser/bundler, and edge consumers from one install. Final `exports` shape:
+**PR #1953 — npm unification.** Stacks on #1952. Single `@cipherstash/auth` npm package serves Node, browser/bundler, and edge consumers from one install. Final `exports` shape (post-PRs #1958 + #1959):
 
 | Entry | `node` condition | `default` condition |
 |---|---|---|
 | `.` (main) | `./index.js` (napi loader) + `./index.d.ts` | `./wasm/stack_auth_wasm.js` (bundler-target, sibling `.wasm`) + `./wasm-types.d.ts` |
-| `./wasm` | — | `./wasm/stack_auth_wasm.js` (explicit alias of `.`'s default) |
-| `./wasm-inline` | — | `./wasm/stack_auth_wasm_inline.js` (inline-bytes) |
+| `./wasm` | — | `./wasm/stack_auth_wasm.js` (raw bundler-target shim; lower-level surface) |
+| `./wasm-inline` | — | `./wasm-inline.mjs` (slick wrapper with options-object API + inline-bytes wasm via `./wasm/stack_auth_wasm_inline.js`) |
+| `./cookies` | — | `./cookies.mjs` (pure-JS `cookieStore` helper for WHATWG-fetch runtimes) |
 
 Consumer routing:
 - **Node** — bare `@cipherstash/auth`, gets full napi surface (device-code, profile-store, OAuth, AccessKeyStrategy).
@@ -71,7 +72,7 @@ Other validation-driven fixes folded into the PR:
 
 - `serde_wasm_bindgen::Serializer::json_compatible()` for the `TokenResultPayload` so `services: BTreeMap<String, String>` serialises as a plain JS object — `BTreeMap` defaults to JS `Map`, which `JSON.stringify` flattens to `"{}"`, dropping every entry. The `wasm-types.d.ts` overlay declares `services: Record<string, string>`, so this aligns runtime shape with declared type.
 - `wasm-types.d.ts` is committed hand-written (refines `Promise<any>` → `Promise<TokenResult>`, hides wasm-streams type leakage from reqwest's fetch backend, scoped to `AccessKeyStrategy`).
-- CI (`publish-auth-npm.yml`) gains a `build-wasm` job that runs wasm-pack + the inline-bytes postbuild script (`scripts/inline-wasm.mjs`); the `publish` job depends on it so every release ships the inline shim. Prerelease pipeline validated through `0.37.0-alpha.0` (bundler-target only) → `0.37.0-alpha.1` (inline added) → `0.37.0-alpha.2` (services serialization fix; also tested a default-entry flip that turned out not to help Edge consumers) → `0.37.0-alpha.3` (default-flip reverted, docs corrected). All published under the `next` dist-tag.
+- CI (`publish-auth-npm.yml`) gains a `build-wasm` job that runs wasm-pack + the inline-bytes postbuild script (`scripts/inline-wasm.mjs`); the `publish` job depends on it so every release ships the inline shim. Prerelease pipeline validated through `0.37.0-alpha.0` (bundler-target only) → `0.37.0-alpha.1` (inline added) → `0.37.0-alpha.2` (services serialization fix; also tested a default-entry flip that turned out not to help Edge consumers) → `0.37.0-alpha.3` (default-flip reverted, docs corrected) → `0.37.0-alpha.5` (TokenStore trait + wasm `createWithStore` bindings landed via PRs #1958 + #1959) → `0.37.0-alpha.6` (slick options-object API + built-in `cookieStore` helper; spike's integration code dropped to ~35 lines, three of which are stack-auth-related). All published under the `next` dist-tag.
 
 Rationale for this layer: protect-wasm (Layer 4) will need to wrap auth strategies anyway. Establishing the wasm-bindgen toolchain, inline-bytes postbuild pattern, and the exports-map shape here on a small crate means Layer 4 doesn't absorb both the toolchain bootstrap and the encrypt/decrypt porting in the same PR.
 

@@ -15,7 +15,7 @@ Authentication bindings for [CipherStash](https://cipherstash.com) services. Shi
 npm install @cipherstash/auth
 ```
 
-The package exposes three entries:
+The package exposes four entries:
 
 | Entry | Use when | Loads | Surface |
 |---|---|---|---|
@@ -23,6 +23,7 @@ The package exposes three entries:
 | `@cipherstash/auth` | **SSR bundlers** (Vite/Webpack/Next.js targeting Node or server-side rendering) | Sibling-`.wasm` shim from `wasm-pack --target bundler` | `AccessKeyStrategy` |
 | `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | Same as bundler entry above | `AccessKeyStrategy` |
 | `@cipherstash/auth/wasm-inline` | **Supabase Edge Functions / Cloudflare Workers / Bun / Deno via `npm:`** — runtimes that can't auto-bundle a sibling `.wasm` | Inline-bytes shim (wasm embedded as base64) | `AccessKeyStrategy` |
+| `@cipherstash/auth/cookies` | Any runtime with WHATWG `Request`/`Headers` (Edge, Workers, Bun, Deno, Node 18+, Next.js App Router) | Pure-JS helper | `cookieStore(...)` — builds a `TokenStore` from a `Request + Headers` pair |
 
 The wasm bindings are deliberately scoped to `AccessKeyStrategy` — OAuth, device-code flow, and profile-store features depend on Node-only APIs (filesystem, browser launching) that can't be ported.
 
@@ -48,23 +49,30 @@ The token is saved to `~/.cipherstash/auth.json` automatically and is never expo
 
 ## Edge usage — Supabase Edge Functions / Cloudflare Workers
 
-Use the explicit `wasm-inline` sub-path. Full Supabase Edge Function example:
+Pair the `wasm-inline` entry with the `cookies` helper to back the strategy with an HTTP-only cookie. Every Edge invocation gets a fresh strategy, but the cookie keeps the issued service token alive across invocations — so only the first request pays the full round-trip to CTS:
 
 ```ts
 // supabase/functions/get-token/index.ts
 import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
+import { cookieStore } from "@cipherstash/auth/cookies";
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  const responseHeaders = new Headers({ "content-type": "application/json" });
+
   const strategy = AccessKeyStrategy.create(
     "ap-southeast-2.aws",
     Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+    { store: cookieStore({ request: req, responseHeaders }) },
   );
 
   const { token, workspaceId, services } = await strategy.getToken();
   // `token` is the bearer credential; pass as `Authorization: Bearer ${token}`
   // to ZeroKMS at `services.zerokms`.
 
-  return Response.json({ workspaceId, services });
+  return new Response(
+    JSON.stringify({ workspaceId, services }),
+    { headers: responseHeaders },
+  );
 });
 ```
 
@@ -73,7 +81,8 @@ Deno.serve(async () => {
 ```jsonc
 {
   "imports": {
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.37/wasm-inline"
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.37/wasm-inline",
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.37/cookies"
   }
 }
 ```
@@ -83,6 +92,44 @@ Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying,
 `getToken()` resolves to `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`).
 
 For Cloudflare Workers the shape is identical; env access becomes `env.CS_CLIENT_ACCESS_KEY` instead of `Deno.env.get(...)`.
+
+### Caching with `cookieStore`
+
+`cookieStore({ request, responseHeaders })` returns a `TokenStore`:
+
+- `load()` parses the `Cookie:` header from the request, finds `cs_token` (configurable via `name`), base64url-decodes it, and returns the JSON the strategy stored last time.
+- `save(json)` happens automatically after every successful refresh / initial auth — `cookieStore` appends a `Set-Cookie` header to `responseHeaders` with the JSON base64url-encoded as the value, `HttpOnly`, `SameSite=Lax`, and `Max-Age` derived from the token's `expires_at` minus a 30-second safety margin.
+
+Available options:
+
+| Option | Default | Notes |
+|---|---|---|
+| `request` | — required — | Incoming `Request` to read the cookie from |
+| `responseHeaders` | — required — | Outgoing `Headers` to append `Set-Cookie` to |
+| `name` | `"cs_token"` | Cookie name |
+| `domain` | unset | `Domain` attribute (host-only by default) |
+| `path` | `"/"` | `Path` attribute |
+| `secure` | `false` | Opt in for production HTTPS |
+| `httpOnly` | `true` | Prevents JS access — keep this on |
+| `sameSite` | `"Lax"` | `"Strict"` / `"Lax"` / `"None"` |
+| `expirySafetyMarginSeconds` | `30` | Seconds subtracted from `expires_at` when computing `Max-Age` |
+
+The base64url encoding skirts RFC 6265's cookie-value char range, which would otherwise reject the `"` characters present in raw JSON.
+
+### Rolling your own store
+
+The `store` field accepts any `{ load, save }`-shaped object — Redis, KV stores, an in-memory `Map`, anything you'd reach for:
+
+```ts
+const strategy = AccessKeyStrategy.create(region, accessKey, {
+  store: {
+    async load() { return await redis.get("cs:token"); /* string | null */ },
+    async save(json: string) { await redis.set("cs:token", json); },
+  },
+});
+```
+
+Errors thrown inside `load` / `save` are caught and logged via `console.warn` — the strategy treats them as cache misses and falls back to fresh authentication.
 
 ### Why the explicit sub-path
 
@@ -130,10 +177,25 @@ Starts the OAuth 2.0 Device Authorization flow. Returns a `Promise<DeviceCodeRes
 
 | Method | Description |
 |---|---|
-| `AccessKeyStrategy.create(region, accessKey)` | Build a strategy from a region and access key |
+| `AccessKeyStrategy.create(region, accessKey, options?)` | Build a strategy from a region and access key. Pass `{ store }` to back it with a persistent cache. |
 | `strategy.getToken()` | Retrieve a valid `TokenResult`, refreshing as needed |
 
 `TokenResult` is `{ token, subject, workspaceId, issuer, services }`.
+
+`options.store` accepts any `{ load, save }`-shaped object:
+
+```ts
+interface TokenStore {
+  load(): Promise<string | null | undefined>;  // null = cache miss
+  save(json: string): Promise<void>;
+}
+```
+
+The strategy calls `load` on cold start (no in-memory token); if it returns a still-fresh JSON, the strategy reuses it. Otherwise it hits CTS for a fresh token and writes it back via `save`. Stale tokens trigger a refresh and the refreshed token is persisted.
+
+### Edge — `cookieStore`
+
+Helper that returns a `TokenStore` backed by an HTTP-only cookie. Works in any runtime that exposes WHATWG `Request` / `Headers`. See the [Caching with `cookieStore`](#caching-with-cookiestore) section above for the option reference.
 
 ## Error handling
 
