@@ -67,7 +67,7 @@ pub trait TokenStore: Send + Sync {
 
     /// Persist a token after a successful refresh or initial authentication.
     /// Best-effort — implementations should log on failure rather than
-    /// returning an error, matching [`Refresher::save`](crate::refresher).
+    /// returning an error.
     fn save(&self, token: &Token) -> impl Future<Output = ()> + Send;
 }
 
