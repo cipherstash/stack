@@ -186,7 +186,7 @@
 	},
 	"devDependencies": {
 		"@clack/prompts": "^0.10.1",
-		"@supabase/supabase-js": "^2.47.10",
+		"@supabase/supabase-js": "^2.105.4",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
 		"drizzle-orm": "^0.45.2",
