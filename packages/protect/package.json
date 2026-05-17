@@ -55,7 +55,7 @@
 		"release": "tsup"
 	},
 	"devDependencies": {
-		"@supabase/supabase-js": "^2.47.10",
+		"@supabase/supabase-js": "^2.105.4",
 		"execa": "^9.5.2",
 		"json-schema-to-typescript": "^15.0.2",
 		"postgres": "^3.4.7",
