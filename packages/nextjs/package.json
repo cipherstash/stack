@@ -52,6 +52,6 @@
 		"@rollup/rollup-linux-x64-gnu": "4.24.0"
 	},
 	"dependencies": {
-		"jose": "^5.9.6"
+		"jose": "^6.2.3"
 	}
 }
