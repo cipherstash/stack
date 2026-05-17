@@ -43,7 +43,7 @@
 		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/migrate": "workspace:*",
 		"@clack/prompts": "0.10.1",
-		"dotenv": "16.4.7",
+		"dotenv": "17.4.2",
 		"jiti": "2.6.1",
 		"pg": "8.13.1",
 		"picocolors": "^1.1.1",
