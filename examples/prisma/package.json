@@ -26,7 +26,7 @@
     "@prisma-next/sql-orm-client": "0.6.0-dev.8",
     "@prisma-next/sql-runtime": "0.6.0-dev.8",
     "@prisma-next/target-postgres": "0.6.0-dev.8",
-    "dotenv": "^16.4.5"
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@prisma-next/cli": "0.6.0-dev.8",

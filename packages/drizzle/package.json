@@ -68,7 +68,7 @@
 	"devDependencies": {
 		"@cipherstash/protect": "workspace:*",
 		"@cipherstash/schema": "workspace:*",
-		"dotenv": "^16.4.7",
+		"dotenv": "^17.4.2",
 		"fast-check": "^4.3.0",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
