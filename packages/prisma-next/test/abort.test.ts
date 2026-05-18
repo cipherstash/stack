@@ -114,6 +114,7 @@ function makeMiddlewareCtx(signal: AbortSignal | undefined): SqlMiddlewareContex
   return {
     contract: {} as Contract<SqlStorage>,
     mode: 'strict',
+    scope: 'runtime',
     now: () => Date.now(),
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     contentHash: async () => 'mock-hash',
