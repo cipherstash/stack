@@ -105,45 +105,45 @@ importers:
         specifier: workspace:*
         version: link:../../packages/stack
       '@prisma-next/adapter-postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       '@prisma-next/contract':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/driver-postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/family-sql':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/framework-components':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       '@prisma-next/sql-contract':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-contract-psl':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-orm-client':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-runtime':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/target-postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
     devDependencies:
       '@prisma-next/cli':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       '@types/node':
         specifier: ^22.15.12
         version: 22.19.3
@@ -346,63 +346,63 @@ importers:
         specifier: workspace:*
         version: link:../stack
       '@prisma-next/contract':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/family-sql':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/framework-components':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/migration-tools':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-contract':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-operations':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-relational-core':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-runtime':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/ts-render':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/utils':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       arktype:
         specifier: ^2.1.29
         version: 2.2.0
     devDependencies:
       '@prisma-next/adapter-postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       '@prisma-next/cli':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       '@prisma-next/driver-postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/psl-parser':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-contract-psl':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-contract-ts':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/sql-schema-ir':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8
+        specifier: 0.8.0
+        version: 0.8.0
       '@prisma-next/target-postgres':
-        specifier: 0.6.0-dev.8
-        version: 0.6.0-dev.8(typanion@3.14.0)
+        specifier: 0.8.0
+        version: 0.8.0(typanion@3.14.0)
       pathe:
         specifier: ^2.0.3
         version: 2.0.3
@@ -1754,108 +1754,108 @@ packages:
   '@posthog/core@1.24.4':
     resolution: {integrity: sha512-S+TolwBHSSJz7WWtgaELQWQqXviSm3uf1e+qorWUts0bZcgPwWzhnmhCUZAhvn0NVpTQHDJ3epv+hHbPLl5dHg==}
 
-  '@prisma-next/adapter-postgres@0.6.0-dev.8':
-    resolution: {integrity: sha512-Y4c3PakfHTE33dJJjKBT4umWOCbo4yYaovsgdNGpm4rAR6D56qxNVDtsl6ILZT/p+Pytpa9anXjs3JYf1Fs5TA==}
+  '@prisma-next/adapter-postgres@0.8.0':
+    resolution: {integrity: sha512-YLzaPw+DZX9/FdPi3NK8bBEUpATULW+GTkB6v8BIl/upgVp6XkKxJe1rq2JEeDcxYF71JNhI8le7HCrAsfMoEQ==}
 
-  '@prisma-next/cli@0.6.0-dev.8':
-    resolution: {integrity: sha512-/1/+JPo2FI9K4YapfE2t2yTCDfFpCeW5v/JlMAnCZaH/WkOgHxk10uFwIGkgJQHQ1jKKhhqS4AEFv1eWRKjihw==}
+  '@prisma-next/cli@0.8.0':
+    resolution: {integrity: sha512-3tVU24PDPwQFTEcI4K/RC9eC1aEHsSSNCAcg2/zpl3qH1FcjgRLc7XMkzqWnMH35ifPkPrwxuOjlNXp239643w==}
     hasBin: true
 
-  '@prisma-next/config@0.6.0-dev.8':
-    resolution: {integrity: sha512-DdtKwTUQCuRhhLqb8e1icvrtYwpXmrJEgqYFcXPo3cEPzPxW+5M5mxQkoIVCly0yhCt1BKnznK06nwg4R0YSdQ==}
+  '@prisma-next/config@0.8.0':
+    resolution: {integrity: sha512-RMZk/At00KC6tWrdfLnu2yXcWLjfPljiQgd1Ucr5Xfs2Fw5QA1c0/Rp/nb+2hfnCPLjiZ1Q71cNIzFEb3HNkrQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/contract-authoring@0.6.0-dev.8':
-    resolution: {integrity: sha512-p7yfnCagxv7g7YVihIlGM1r+NSu+vLlrTaMe8FB8Th/jbV5wjYiyKF0FNMsxoGCd7XfA7q46qf6iINaO+26O5A==}
+  '@prisma-next/contract-authoring@0.8.0':
+    resolution: {integrity: sha512-LQ4kLO9U/adM9RdtWDOtNlkdq8wzpGs9Yml0yVun0t8zOoULvQkMFKsK1lHOnU9+xwBgHLUTnewU96ll436I9w==}
 
-  '@prisma-next/contract@0.6.0-dev.8':
-    resolution: {integrity: sha512-2IIuFFFNXiPZwvtbysWmMfLfSVT0ehe5DsiCCVUX3sHxC7hqfn65e4dHXJoASp8aqHWmUeKlByDX34RVv2tI2Q==}
+  '@prisma-next/contract@0.8.0':
+    resolution: {integrity: sha512-n9mgNwBX1PSNHOFWXAhFihOv7osD+ZbAFlY5fVVPjOKKXpTcCUi0/Hqo5SIjhz8JKXpsGqz/Eq4X23c9Y3C99g==}
     engines: {node: '>=20'}
 
-  '@prisma-next/driver-postgres@0.6.0-dev.8':
-    resolution: {integrity: sha512-rqmuiwy5jUX8OxU/o9w3qxz3trf9URSFtPE5Kz5cHsb9i7fPaLJvAUGuOTew+Y4BOj3zrFuujCZyWLuoNiAlYg==}
+  '@prisma-next/driver-postgres@0.8.0':
+    resolution: {integrity: sha512-dg5FQ+hFYC3NwyZPoMN6/ppbLdEWnxN+w1z2XkaVSic5VFC/eXRONxMBlE0YNM69/AhXXbavtBmHklFBw0xduQ==}
 
-  '@prisma-next/emitter@0.6.0-dev.8':
-    resolution: {integrity: sha512-3BoSGXhxIPumn7M2OdvcrB6JdV5w1ErFUXvVq1QJ4juc1B2/J5ZZO9CwnRUnzPUMZJaZxAsfPcX6mI/JT1m1lg==}
+  '@prisma-next/emitter@0.8.0':
+    resolution: {integrity: sha512-GU/WGpwNejOUauIY0diE3OMYsIfw3SuzH9FpzEri8nl5jvmzjG44Sa6gMEc/g22D3MSD9Ufn2rsLc2K5RmC9wA==}
 
-  '@prisma-next/errors@0.6.0-dev.8':
-    resolution: {integrity: sha512-AjRvbAh/N/MfIW/PqFjCqn3hHNSINyjZNai0A9KL56Sy1pTymapt/m1gt7udxPcLpPh2NsUmjuMQJV6HVERV5w==}
+  '@prisma-next/errors@0.8.0':
+    resolution: {integrity: sha512-/ojKRvq4wYuH2ipTla9BeqGKZRFR6VIloxyXU+G2IILhpcobIepYTiOaafVd1ajx8KgR3Ux/rn8oTemIihdceA==}
     engines: {node: '>=20'}
 
-  '@prisma-next/family-sql@0.6.0-dev.8':
-    resolution: {integrity: sha512-toFN9MJIWkHJw/Yn2ZFXRfUQSZSq6Hk5inUZeFl80hgQTZ9CvyLsIak8tdPqSA1NF15oDDl1k38x7ZeyZ0VqYw==}
+  '@prisma-next/family-sql@0.8.0':
+    resolution: {integrity: sha512-L2wFXFv2gDFb2E+jm2HIUGSNMNuUwhZRzxDk4YzWEaG4+Xmj1kuv6tdqCLkTzuW9Re1OXMBivqtdIGDS9u4UWA==}
 
-  '@prisma-next/framework-components@0.6.0-dev.8':
-    resolution: {integrity: sha512-OGXw5/3lPA+OVTB/gb/KHicPfO2CptEc8QVT78cX53U5oTLCmmilU5xJwkmC6uEFbhy2Uk4NYB1xRHjU0PhSCw==}
+  '@prisma-next/framework-components@0.8.0':
+    resolution: {integrity: sha512-t0RXECncHX+gby7mCT/WbBXGvayQQ6/JmwmE24dArxFqhj+HqDaTCa6OVPN7MRyuPZ3sAXc3g46EpNsQY3Sx9A==}
 
-  '@prisma-next/ids@0.6.0-dev.8':
-    resolution: {integrity: sha512-hmXJmR0ItlulYj2NurjqUkx12pMEgPashf+taltOf6d95mBQb524ESvL+4Pqo26fEx+DoCzS8nkExyiygEU9qw==}
+  '@prisma-next/ids@0.8.0':
+    resolution: {integrity: sha512-Z8LnSHxtdcX0Fj976zb8dM3PmeRKErWBGUdtExBAgu4aU1So0buG3qOQKkx36Ff1AvD6YhNQFAvTYdSJymPjqg==}
 
-  '@prisma-next/migration-tools@0.6.0-dev.8':
-    resolution: {integrity: sha512-qJeDnqEriBn0GWWsNuNUHhUQ+ArNLw1UBotkJ9p8rYU6NARM6o2gJtOs91nw05wkvDFIEkvzoagU6dcuhNptZA==}
+  '@prisma-next/migration-tools@0.8.0':
+    resolution: {integrity: sha512-MRHV/CcQTHiliG+5jIFgnWrcIC8dfr9/Oh7WgOz9djysNxiytphE0QZAvKwghCC8dCXFTS4giAhimBsNjblv1A==}
     engines: {node: '>=20'}
 
-  '@prisma-next/operations@0.6.0-dev.8':
-    resolution: {integrity: sha512-TD7m+Ko6iFVu8wAnm4zVAOyLcqOysdwveZB23EKIQhKxjdRMjfiS3MbBf064AuV1TkD6dLhmCV6spTGgAoA8ug==}
+  '@prisma-next/operations@0.8.0':
+    resolution: {integrity: sha512-zT0DFdXYSDfenBzyAZpkoMXRamw6fN9gcRQeVkaq3EhtCMCbIIj+gTMMYIFEKRLgbzqvdkRmEl3IV0ouyvvCyQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/postgres@0.6.0-dev.8':
-    resolution: {integrity: sha512-gqAp4e9vpDGAQqI1v5MwnIYvEQrZClZVFk3cfiFmFZw0UDlE7oOdbvPbLSbHYIkI1qeQpOobw9/1wpp30op7Yg==}
+  '@prisma-next/postgres@0.8.0':
+    resolution: {integrity: sha512-UrUd7SBxgnCGm41+VbeGuYFkWU5ym8IPRO1Uem+M98w4sYk/EYuJCnF/KDpL2scqy3qg22MMc92j1jiz6d2Anw==}
     engines: {node: '>=20'}
 
-  '@prisma-next/psl-parser@0.6.0-dev.8':
-    resolution: {integrity: sha512-bxQ9Q44c+LCQ+G+N+X1gKW8d7QzQ2fVCugE4t5IbMLKMFvpVYtLJ/grf3D2PNwEptpK08CX+aAkso9LoR3suYQ==}
+  '@prisma-next/psl-parser@0.8.0':
+    resolution: {integrity: sha512-cDsVRqq0SZ3W+du1fFaUOe679dV1Zl35C9wmgSLQQ9LYohiEWsTsWfACDO9oOhLUOzeK6iFJb5WMdEgbvf/6Fg==}
 
-  '@prisma-next/psl-printer@0.6.0-dev.8':
-    resolution: {integrity: sha512-e6Bzey9y3r8xpAHDNR0QegAiWUOVoH+9SP4Yl06ZRgxJBM04pw541hk+OHPkzTJqt9iekrDhVXW7lOQsl3viWQ==}
+  '@prisma-next/psl-printer@0.8.0':
+    resolution: {integrity: sha512-M4jM5ZMVUMYNwmUTnuA3wqtjYVKIRfvh9XA5e26pCPFuBimDtHHN3PdDTciueCTrCqA4/Agl2xRQrACmUPaZ4A==}
 
-  '@prisma-next/sql-builder@0.6.0-dev.8':
-    resolution: {integrity: sha512-C7WSoDKDQZ8U473GBVkjGkVCCIEvwXJO6/ug70IIBG/KH6hjKSyNk5DWHpSrEAI3zVtmwaFfNMxR6Yt/+dUbaw==}
+  '@prisma-next/sql-builder@0.8.0':
+    resolution: {integrity: sha512-bCCEL7AkfAiGJUX3457YpRqVhfQbjbFbe2BaLD8JyqQPdwQOq7yHyDQuZwtG36zaPgGK9X7VzrFbNfxA+Q+Oww==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-contract-emitter@0.6.0-dev.8':
-    resolution: {integrity: sha512-9wrfgxqC+0aHF2I3C73zluiH48WPl5k4NYv7nAaQVEqveSUeZ6lyGK7+AV/46GaV7eKhdD5heBy7XQYbKE0rwQ==}
+  '@prisma-next/sql-contract-emitter@0.8.0':
+    resolution: {integrity: sha512-7OYXFoRrWFN7qfxGnI1CvqqMMwGGffDeazO2JSzOL2rOR8T/SlqQGg8wXRckR6HNgXQisZKFc8aEPTJcLioJew==}
 
-  '@prisma-next/sql-contract-psl@0.6.0-dev.8':
-    resolution: {integrity: sha512-JR0izkN3CaIBr5xmXus1wvH1eQcH1GLXLoJMDtuVSpEpJC5S2XjfB+/qKxpgAEyTM5nZvstBNSAT3f+uKufjew==}
+  '@prisma-next/sql-contract-psl@0.8.0':
+    resolution: {integrity: sha512-cJFUOyDWwb8FR3YLm1Ye18luofSoVwJiMO1LPmnjAH9W+da8mbkFpH0OuJbppeHAnKkY4lqKj5HPW9Ow0RZ3Jg==}
 
-  '@prisma-next/sql-contract-ts@0.6.0-dev.8':
-    resolution: {integrity: sha512-XRqdCEk8ywxct1Pnmw9dRV+Cxlnqzc5TXAaSaH6+kndVyZRrvd6H3w0z2qeoSDEYeeRbGNSAXgUI9a7SCMwYZQ==}
+  '@prisma-next/sql-contract-ts@0.8.0':
+    resolution: {integrity: sha512-sjfYhT7nyuBJVVxAztlnLppcouXms71BreCXOvvuGp5nw4CzMECD12qjRt8BHcNDdpVSSYeUIhd/TIeMD/qtcQ==}
 
-  '@prisma-next/sql-contract@0.6.0-dev.8':
-    resolution: {integrity: sha512-0wWPTCFpwcRyfmkb3LnHKFSREoVT3AVxwnS4sxxJZ06fXDApHVU54IWeWzpRN9mt1R2hVjBIbBcMhC8apx+Hkg==}
+  '@prisma-next/sql-contract@0.8.0':
+    resolution: {integrity: sha512-SJbWPz05GlOrV58Dbk5Tfx88cAbgH7nqd1NWQ66yT5E1OSJ4SGwZCyJbtUnbb9HqLqqphYws6vDBmmMy5NQ77w==}
 
-  '@prisma-next/sql-errors@0.6.0-dev.8':
-    resolution: {integrity: sha512-qQ5AAZUNymSB1xZTjocQApfu5PagFJLX3XPQtR5rOINFtgB3a7/3YXiKFHIPkTePRXywcarP8wUjnYBo+sNcGg==}
+  '@prisma-next/sql-errors@0.8.0':
+    resolution: {integrity: sha512-e7KCFVmHEHOXNHYx6XOr0xW/kTCwo0yeyE/zR2EZVTyNjDRGTCS7FOkqOSVWyPwGmUosDogY51ojChZYfn/fdw==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-operations@0.6.0-dev.8':
-    resolution: {integrity: sha512-uzxyBKu/9p9OOYIAlayuV5BYTCuOJPDlIeuxRORq6iIkiLSJsScaYFolWGd1brLzefP83+OUl0YosphA9bviHg==}
+  '@prisma-next/sql-operations@0.8.0':
+    resolution: {integrity: sha512-uBTbNPsCjSMQxBw9ZV0K4egON2Vnp/YUe70dVEw/FPczR/w7/NKqiMhZ74qNpfxtFxpkefJ+nfERkMs3bnm1IQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-orm-client@0.6.0-dev.8':
-    resolution: {integrity: sha512-zGLgFdn+dVhES4zQ/QFvWJTPZEYr995ulDuJut9oRu3hN/rDMw36S0Lumq3LMBOFWtQQ2IbHeR9SZuCFvuPLlA==}
+  '@prisma-next/sql-orm-client@0.8.0':
+    resolution: {integrity: sha512-UOCWxxY6uIj3FRJur7xztp/lz9Tm0RWaTw0CLxV0sFnoJ+QTHvjkTY3nIvgc/vvqsgtb4EpkthDDJAQjzK5VlQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-relational-core@0.6.0-dev.8':
-    resolution: {integrity: sha512-Zg/raUomgOzyz7C7MCsieESARfHk5rk3xEVenNlbb3oazR6i2eEIXzINN4icdZU2vQD8PUnfFyzLZw4YFOpDiQ==}
+  '@prisma-next/sql-relational-core@0.8.0':
+    resolution: {integrity: sha512-l+hfL3ChYJI1oBgd9dZqUbf+I1dMpUBqlHzZJG1zyXv5wcTlqXbtOk18EoYe+BXp6jnHBwgQDsiBayLvB+ehpQ==}
 
-  '@prisma-next/sql-runtime@0.6.0-dev.8':
-    resolution: {integrity: sha512-5uFwOKJjsKBTWz3Y6yzJyC9au9BwByIRZ4wAE9k1D60sPlE0zgaNmzd7fLzS0pmvgpv05l4A8BKHi3m5kDxK7Q==}
+  '@prisma-next/sql-runtime@0.8.0':
+    resolution: {integrity: sha512-YLqJTzxFcpC5y/2ZPfWqvlHgifqJ/ADAXM8o7PHhrEJ5Z9fivppkEfVUlgnRVDjvPGGwCUY3VbK3FqOL/SbmXw==}
 
-  '@prisma-next/sql-schema-ir@0.6.0-dev.8':
-    resolution: {integrity: sha512-ggISridMa2om0TgYV1A0RF5ii6d83JmmsyTAoaybqmWwJ0tnjmidE+tRf2FD0DruIquEbVU/emb44v7bRk6F1Q==}
+  '@prisma-next/sql-schema-ir@0.8.0':
+    resolution: {integrity: sha512-8xv+leV0bAK8jaFJN5ngEDUeYZGlvXvP/csiCzz8LHC5M4OTouGpbgyDDXFwC9tJThLaCZUK1zVF4XRYP9hftQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/target-postgres@0.6.0-dev.8':
-    resolution: {integrity: sha512-+9zoNO53w9XyeeHGhRx5o7oc5axkMrEmp9oFy31pvlgBr10zqz4rwCCZhVLbDxiYBvPOKxKNNwMknIUmiEUB6w==}
+  '@prisma-next/target-postgres@0.8.0':
+    resolution: {integrity: sha512-CXkzmyXhtvcfhaBXBDlyb6Aq2wISQuax2pUbK+tq+e9Acz0idDRZk3FtvCkPUkviKv6ZAPA8EpnB9FT3iP3KGw==}
 
-  '@prisma-next/ts-render@0.6.0-dev.8':
-    resolution: {integrity: sha512-qA6bZVH0Q7Puw24cdhaRUtTq/nGRaM9uUo/Gf1lA/ZeRyqVwHyAMNSmRD9jxfO/bYHknpjcpAdd9btfmX+ONeg==}
+  '@prisma-next/ts-render@0.8.0':
+    resolution: {integrity: sha512-IYx4NLsTaJxVlUWI+QQyY8LgLEHUOqqxTOwAlhSyXbzbTXiz89DN/I/swtapH3cl1Tk/PAJG9c5vKMl3lfAcng==}
     engines: {node: '>=20'}
 
-  '@prisma-next/utils@0.6.0-dev.8':
-    resolution: {integrity: sha512-DMf0TiVqQgIZqHnDwt+RTBwAotcyl9OQLXHVQlJhKEf2XMRXSWVCqpKecNsfn8ZdC7hLsv/SXmfRPOoxhAQArw==}
+  '@prisma-next/utils@0.8.0':
+    resolution: {integrity: sha512-zpSG3L7/Cwtb/WkUZKZCSd4j5gzLCqNTqDb6hO3hcK7Me+blv72cOuyscyUMiYlkHRdLinnSX7MWcAQnsqNONQ==}
     engines: {node: '>=20'}
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
@@ -4710,39 +4710,39 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
 
-  '@prisma-next/adapter-postgres@0.6.0-dev.8(typanion@3.14.0)':
+  '@prisma-next/adapter-postgres@0.8.0(typanion@3.14.0)':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/contract-authoring': 0.6.0-dev.8
-      '@prisma-next/family-sql': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/ids': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-contract-psl': 0.6.0-dev.8
-      '@prisma-next/sql-contract-ts': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/sql-runtime': 0.6.0-dev.8
-      '@prisma-next/sql-schema-ir': 0.6.0-dev.8
-      '@prisma-next/target-postgres': 0.6.0-dev.8(typanion@3.14.0)
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/contract-authoring': 0.8.0
+      '@prisma-next/family-sql': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/ids': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-contract-psl': 0.8.0
+      '@prisma-next/sql-contract-ts': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/sql-runtime': 0.8.0
+      '@prisma-next/sql-schema-ir': 0.8.0
+      '@prisma-next/target-postgres': 0.8.0(typanion@3.14.0)
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
     transitivePeerDependencies:
       - magicast
       - typanion
 
-  '@prisma-next/cli@0.6.0-dev.8(typanion@3.14.0)':
+  '@prisma-next/cli@0.8.0(typanion@3.14.0)':
     dependencies:
       '@clack/prompts': 1.3.0
       '@dagrejs/dagre': 3.0.0
-      '@prisma-next/config': 0.6.0-dev.8
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/emitter': 0.6.0-dev.8
-      '@prisma-next/errors': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/migration-tools': 0.6.0-dev.8
-      '@prisma-next/psl-printer': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/config': 0.8.0
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/emitter': 0.8.0
+      '@prisma-next/errors': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/migration-tools': 0.8.0
+      '@prisma-next/psl-printer': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
       c12: 3.3.4
       clipanion: 4.0.0-rc.4(typanion@3.14.0)
@@ -4760,112 +4760,112 @@ snapshots:
       - magicast
       - typanion
 
-  '@prisma-next/config@0.6.0-dev.8':
+  '@prisma-next/config@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
 
-  '@prisma-next/contract-authoring@0.6.0-dev.8': {}
+  '@prisma-next/contract-authoring@0.8.0': {}
 
-  '@prisma-next/contract@0.6.0-dev.8':
+  '@prisma-next/contract@0.8.0':
     dependencies:
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/utils': 0.8.0
       '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
 
-  '@prisma-next/driver-postgres@0.6.0-dev.8':
+  '@prisma-next/driver-postgres@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/errors': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-errors': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/errors': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-errors': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
       pg: 8.20.0
       pg-cursor: 2.19.0(pg@8.20.0)
     transitivePeerDependencies:
       - pg-native
 
-  '@prisma-next/emitter@0.6.0-dev.8':
+  '@prisma-next/emitter@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
       prettier: 3.8.3
 
-  '@prisma-next/errors@0.6.0-dev.8':
+  '@prisma-next/errors@0.8.0':
     dependencies:
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/utils': 0.8.0
 
-  '@prisma-next/family-sql@0.6.0-dev.8':
+  '@prisma-next/family-sql@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/emitter': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/migration-tools': 0.6.0-dev.8
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-contract-emitter': 0.6.0-dev.8
-      '@prisma-next/sql-contract-ts': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/sql-runtime': 0.6.0-dev.8
-      '@prisma-next/sql-schema-ir': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/emitter': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/migration-tools': 0.8.0
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-contract-emitter': 0.8.0
+      '@prisma-next/sql-contract-ts': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/sql-runtime': 0.8.0
+      '@prisma-next/sql-schema-ir': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
 
-  '@prisma-next/framework-components@0.6.0-dev.8':
+  '@prisma-next/framework-components@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/ts-render': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/ts-render': 0.8.0
+      '@prisma-next/utils': 0.8.0
       '@standard-schema/spec': 1.1.0
 
-  '@prisma-next/ids@0.6.0-dev.8':
+  '@prisma-next/ids@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/utils': 0.8.0
       uniku: 0.0.12
 
-  '@prisma-next/migration-tools@0.6.0-dev.8':
+  '@prisma-next/migration-tools@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
       pathe: 2.0.3
       prettier: 3.8.3
 
-  '@prisma-next/operations@0.6.0-dev.8': {}
+  '@prisma-next/operations@0.8.0': {}
 
-  '@prisma-next/postgres@0.6.0-dev.8(typanion@3.14.0)':
+  '@prisma-next/postgres@0.8.0(typanion@3.14.0)':
     dependencies:
-      '@prisma-next/adapter-postgres': 0.6.0-dev.8(typanion@3.14.0)
-      '@prisma-next/cli': 0.6.0-dev.8(typanion@3.14.0)
-      '@prisma-next/config': 0.6.0-dev.8
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/driver-postgres': 0.6.0-dev.8
-      '@prisma-next/family-sql': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/sql-builder': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-contract-psl': 0.6.0-dev.8
-      '@prisma-next/sql-contract-ts': 0.6.0-dev.8
-      '@prisma-next/sql-orm-client': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/sql-runtime': 0.6.0-dev.8
-      '@prisma-next/target-postgres': 0.6.0-dev.8(typanion@3.14.0)
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/adapter-postgres': 0.8.0(typanion@3.14.0)
+      '@prisma-next/cli': 0.8.0(typanion@3.14.0)
+      '@prisma-next/config': 0.8.0
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/driver-postgres': 0.8.0
+      '@prisma-next/family-sql': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/sql-builder': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-contract-psl': 0.8.0
+      '@prisma-next/sql-contract-ts': 0.8.0
+      '@prisma-next/sql-orm-client': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/sql-runtime': 0.8.0
+      '@prisma-next/target-postgres': 0.8.0(typanion@3.14.0)
+      '@prisma-next/utils': 0.8.0
       pathe: 2.0.3
       pg: 8.20.0
     transitivePeerDependencies:
@@ -4873,121 +4873,121 @@ snapshots:
       - pg-native
       - typanion
 
-  '@prisma-next/psl-parser@0.6.0-dev.8':
+  '@prisma-next/psl-parser@0.8.0':
     dependencies:
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/utils': 0.8.0
 
-  '@prisma-next/psl-printer@0.6.0-dev.8':
+  '@prisma-next/psl-printer@0.8.0':
     dependencies:
-      '@prisma-next/framework-components': 0.6.0-dev.8
+      '@prisma-next/framework-components': 0.8.0
 
-  '@prisma-next/sql-builder@0.6.0-dev.8':
+  '@prisma-next/sql-builder@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
 
-  '@prisma-next/sql-contract-emitter@0.6.0-dev.8':
+  '@prisma-next/sql-contract-emitter@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/emitter': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/emitter': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/utils': 0.8.0
 
-  '@prisma-next/sql-contract-psl@0.6.0-dev.8':
+  '@prisma-next/sql-contract-psl@0.8.0':
     dependencies:
-      '@prisma-next/config': 0.6.0-dev.8
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/psl-parser': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-contract-ts': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/config': 0.8.0
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/psl-parser': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-contract-ts': 0.8.0
+      '@prisma-next/utils': 0.8.0
       pathe: 2.0.3
 
-  '@prisma-next/sql-contract-ts@0.6.0-dev.8':
+  '@prisma-next/sql-contract-ts@0.8.0':
     dependencies:
-      '@prisma-next/config': 0.6.0-dev.8
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/contract-authoring': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/config': 0.8.0
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/contract-authoring': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
       pathe: 2.0.3
       ts-toolbelt: 9.6.0
 
-  '@prisma-next/sql-contract@0.6.0-dev.8':
+  '@prisma-next/sql-contract@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
       arktype: 2.2.0
 
-  '@prisma-next/sql-errors@0.6.0-dev.8': {}
+  '@prisma-next/sql-errors@0.8.0': {}
 
-  '@prisma-next/sql-operations@0.6.0-dev.8':
+  '@prisma-next/sql-operations@0.8.0':
     dependencies:
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
       arktype: 2.2.0
 
-  '@prisma-next/sql-orm-client@0.6.0-dev.8':
+  '@prisma-next/sql-orm-client@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/sql-runtime': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/sql-runtime': 0.8.0
+      '@prisma-next/utils': 0.8.0
 
-  '@prisma-next/sql-relational-core@0.6.0-dev.8':
+  '@prisma-next/sql-relational-core@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/utils': 0.8.0
       '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
       ts-toolbelt: 9.6.0
 
-  '@prisma-next/sql-runtime@0.6.0-dev.8':
+  '@prisma-next/sql-runtime@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/ids': 0.6.0-dev.8
-      '@prisma-next/operations': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/ids': 0.8.0
+      '@prisma-next/operations': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
 
-  '@prisma-next/sql-schema-ir@0.6.0-dev.8':
+  '@prisma-next/sql-schema-ir@0.8.0':
     dependencies:
-      '@prisma-next/contract': 0.6.0-dev.8
+      '@prisma-next/contract': 0.8.0
 
-  '@prisma-next/target-postgres@0.6.0-dev.8(typanion@3.14.0)':
+  '@prisma-next/target-postgres@0.8.0(typanion@3.14.0)':
     dependencies:
-      '@prisma-next/cli': 0.6.0-dev.8(typanion@3.14.0)
-      '@prisma-next/contract': 0.6.0-dev.8
-      '@prisma-next/errors': 0.6.0-dev.8
-      '@prisma-next/family-sql': 0.6.0-dev.8
-      '@prisma-next/framework-components': 0.6.0-dev.8
-      '@prisma-next/migration-tools': 0.6.0-dev.8
-      '@prisma-next/sql-contract': 0.6.0-dev.8
-      '@prisma-next/sql-errors': 0.6.0-dev.8
-      '@prisma-next/sql-operations': 0.6.0-dev.8
-      '@prisma-next/sql-relational-core': 0.6.0-dev.8
-      '@prisma-next/sql-schema-ir': 0.6.0-dev.8
-      '@prisma-next/ts-render': 0.6.0-dev.8
-      '@prisma-next/utils': 0.6.0-dev.8
+      '@prisma-next/cli': 0.8.0(typanion@3.14.0)
+      '@prisma-next/contract': 0.8.0
+      '@prisma-next/errors': 0.8.0
+      '@prisma-next/family-sql': 0.8.0
+      '@prisma-next/framework-components': 0.8.0
+      '@prisma-next/migration-tools': 0.8.0
+      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/sql-errors': 0.8.0
+      '@prisma-next/sql-operations': 0.8.0
+      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/sql-schema-ir': 0.8.0
+      '@prisma-next/ts-render': 0.8.0
+      '@prisma-next/utils': 0.8.0
       '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
       pathe: 2.0.3
@@ -4995,9 +4995,9 @@ snapshots:
       - magicast
       - typanion
 
-  '@prisma-next/ts-render@0.6.0-dev.8': {}
+  '@prisma-next/ts-render@0.8.0': {}
 
-  '@prisma-next/utils@0.6.0-dev.8': {}
+  '@prisma-next/utils@0.8.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.59.0':
     optional: true

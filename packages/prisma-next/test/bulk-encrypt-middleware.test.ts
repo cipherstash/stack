@@ -56,6 +56,7 @@ function createCtx(overrides?: Partial<SqlMiddlewareContext>): SqlMiddlewareCont
   return {
     contract: {} as Contract<SqlStorage>,
     mode: 'strict' as const,
+    scope: 'runtime' as const,
     now: () => Date.now(),
     log: {
       info: vi.fn(),

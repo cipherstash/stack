@@ -131,15 +131,19 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
   }
 
   async encode(value: E, _ctx: SqlCodecCallContext): Promise<unknown> {
-    // Two-pass write path: `lower`/`encodeParams` runs first and reaches
-    // this method with the envelope as the user authored it (plaintext
-    // set, ciphertext unset). We return the envelope as a sentinel; the
-    // bulk-encrypt middleware then runs in `beforeExecute`, stamps the
-    // ciphertext onto the envelope, and rewrites the param slot to the
-    // wire-format string via `params.replaceValues(...)` before the
-    // driver reads. See `../middleware/bulk-encrypt.ts` for the full
-    // flow. On the read side, `handle.ciphertext` is already set on
-    // arrival and encode short-circuits to the wire-format string.
+    // Two-pass write path. As of `@prisma-next/sql-runtime@0.8`, the
+    // `beforeExecute` middleware chain fires *before* `encodeParams`:
+    // `bulkEncryptMiddleware` runs, calls `params.replaceValues(...)` to
+    // swap each envelope for its wire-format composite-literal string,
+    // and the encoder then sees that string directly. Pass it through.
+    // (Prior to 0.8 the order was inverted: encode ran first, returned
+    // the envelope as a sentinel, then the middleware replaced the param
+    // before the driver read it. The branches below preserve that older
+    // contract for non-runtime callers — e.g. the codec unit tests that
+    // call `encode` directly with an envelope.)
+    if (typeof value === 'string') {
+      return value;
+    }
     const handle = value.expose();
     if (handle.ciphertext === undefined) {
       // Misconfig diagnostic: when an SDK-bound codec sees a pre-encrypt
