@@ -13,11 +13,11 @@
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "pg": "^8.16.3"
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.15.12",
-    "@types/pg": "^8.15.0",
+    "@types/pg": "^8.20.0",
     "tsx": "catalog:repo",
     "typescript": "catalog:repo",
     "vitest": "catalog:repo"
