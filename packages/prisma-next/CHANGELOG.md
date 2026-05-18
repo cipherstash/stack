@@ -1,5 +1,20 @@
 # @cipherstash/prisma-next
 
+## 0.2.0
+
+### Minor Changes
+
+- f2aca22: Upgrade `@prisma-next/*` peer/runtime stack from `0.6.0-dev.8` to `0.8.0`.
+
+  `@prisma-next/sql-runtime@0.8` reordered the SQL execution pipeline so the `beforeExecute` middleware chain fires _before_ `encodeParams`. `bulkEncryptMiddleware` now mutates params via `replaceValues(...)` ahead of encode, which means `CipherstashCellCodec.encode` is invoked with the wire-format string rather than the original `EncryptedEnvelopeBase`. The cell codec now short-circuits string values through unchanged; the envelope path is preserved for direct (non-runtime) callers such as the codec unit tests.
+
+  `SqlMiddlewareContext.scope` (`"runtime" | "connection" | "transaction"`) also became required in 0.8 (was optional in 0.7); test mocks now set `scope: 'runtime'` explicitly.
+
+### Patch Changes
+
+- Updated dependencies [1c2fdbf]
+  - @cipherstash/stack@0.16.0
+
 ## 0.1.0
 
 ### Minor Changes

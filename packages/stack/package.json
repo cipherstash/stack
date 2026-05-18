@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/stack",
-	"version": "0.15.3",
+	"version": "0.16.0",
 	"description": "CipherStash Stack for TypeScript and JavaScript",
 	"keywords": [
 		"encrypted",
