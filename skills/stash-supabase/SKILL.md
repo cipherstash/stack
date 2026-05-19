@@ -553,7 +553,7 @@ export const users = encryptedTable('users', {
 ```
 
 > **Known gap (SDK-only users):** `stash encrypt cutover` currently requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. This will be decoupled in a future release — see [issue #447](https://github.com/cipherstash/stack/issues/447).
-
+>
 > **Using CipherStash Proxy?** Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
 >
 > ```bash
