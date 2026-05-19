@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use cts_common::Region;
 use serde::Serialize;
+use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
 use wasm_bindgen::prelude::*;
 
@@ -69,7 +70,13 @@ fn token_result_from(token: ServiceToken) -> Result<JsValue, JsValue> {
         issuer,
         services,
     };
-    serde_wasm_bindgen::to_value(&payload).map_err(JsValue::from)
+    // `json_compatible` serializes maps as plain objects rather than JS `Map`s,
+    // so consumers can `JSON.stringify` the result and read fields with normal
+    // object syntax — matches the `Record<string, string>` shape advertised in
+    // `wasm-types.d.ts`.
+    payload
+        .serialize(&Serializer::json_compatible())
+        .map_err(JsValue::from)
 }
 
 #[wasm_bindgen]
@@ -173,6 +180,21 @@ mod tests {
         assert_eq!(
             issuer.as_string().as_deref(),
             Some("https://cts.example.com/")
+        );
+
+        // `services` must serialise as a plain object so `JSON.stringify`
+        // returns the entries — not as a JS `Map`, which stringifies to `{}`.
+        let services =
+            js_sys::Reflect::get(&value, &JsValue::from_str("services")).expect("has services");
+        assert!(
+            !services.is_instance_of::<js_sys::Map>(),
+            "services must not be a JS Map (JSON.stringify would drop entries)",
+        );
+        let zerokms_url = js_sys::Reflect::get(&services, &JsValue::from_str("zerokms"))
+            .expect("services has zerokms entry");
+        assert_eq!(
+            zerokms_url.as_string().as_deref(),
+            Some("https://zerokms.example.com/")
         );
     }
 

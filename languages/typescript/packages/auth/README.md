@@ -5,7 +5,9 @@
 
  [Website](https://cipherstash.com) | [Docs](https://cipherstash.com/docs) | [Discord](https://discord.com/invite/5qwXUFb6PB)
 
-Native Node.js bindings for authenticating with [CipherStash](https://cipherstash.com) services using the [OAuth 2.0 Device Authorization](https://datatracker.ietf.org/doc/html/rfc8628) flow.
+Authentication bindings for [CipherStash](https://cipherstash.com) services. Ships native Node.js bindings for the full surface, and a wasm build for server-side edge runtimes (Supabase Edge Functions, Cloudflare Workers).
+
+> **Not for direct browser use.** This package is intended for server-side environments — Node.js, Edge Functions, Workers, Bun, Deno. Embedding it directly in a browser bundle would leak the access key into client-side source. The `"browser": false` field in `package.json` makes bundlers like webpack and browserify refuse browser builds; for bundlers that don't honor that convention (esbuild, Vite), don't include `@cipherstash/auth` in client-only chunks. A browser-safe shape that exposes only signed operations (no raw JWT or access key) is tracked as a separate piece of work.
 
 ## Installation
 
@@ -13,13 +15,18 @@ Native Node.js bindings for authenticating with [CipherStash](https://cipherstas
 npm install @cipherstash/auth
 ```
 
-Prebuilt native binaries are included for:
+The package exposes three entries:
 
-- macOS (x64, ARM64)
-- Linux (x64 glibc, x64 musl, ARM64 glibc)
-- Windows (x64)
+| Entry | Use when | Loads | Surface |
+|---|---|---|---|
+| `@cipherstash/auth` | **Node.js** | Native napi binding for the host platform | Full surface — device-code flow, profile store, OAuth, `AccessKeyStrategy` |
+| `@cipherstash/auth` | **SSR bundlers** (Vite/Webpack/Next.js targeting Node or server-side rendering) | Sibling-`.wasm` shim from `wasm-pack --target bundler` | `AccessKeyStrategy` |
+| `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | Same as bundler entry above | `AccessKeyStrategy` |
+| `@cipherstash/auth/wasm-inline` | **Supabase Edge Functions / Cloudflare Workers / Bun / Deno via `npm:`** — runtimes that can't auto-bundle a sibling `.wasm` | Inline-bytes shim (wasm embedded as base64) | `AccessKeyStrategy` |
 
-## Usage
+The wasm bindings are deliberately scoped to `AccessKeyStrategy` — OAuth, device-code flow, and profile-store features depend on Node-only APIs (filesystem, browser launching) that can't be ported.
+
+## Node.js usage — OAuth device-code flow
 
 ```js
 const { beginDeviceCodeFlow } = require("@cipherstash/auth");
@@ -39,13 +46,69 @@ console.log(`Token expires in ${auth.expiresIn} seconds`);
 
 The token is saved to `~/.cipherstash/auth.json` automatically and is never exposed to JavaScript.
 
+## Edge usage — Supabase Edge Functions / Cloudflare Workers
+
+Use the explicit `wasm-inline` sub-path. Full Supabase Edge Function example:
+
+```ts
+// supabase/functions/get-token/index.ts
+import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
+
+Deno.serve(async () => {
+  const strategy = AccessKeyStrategy.create(
+    "ap-southeast-2.aws",
+    Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+  );
+
+  const { token, workspaceId, services } = await strategy.getToken();
+  // `token` is the bearer credential; pass as `Authorization: Bearer ${token}`
+  // to ZeroKMS at `services.zerokms`.
+
+  return Response.json({ workspaceId, services });
+});
+```
+
+`supabase/functions/get-token/deno.json`:
+
+```jsonc
+{
+  "imports": {
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.37/wasm-inline"
+  }
+}
+```
+
+Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying, no bundler plugins. The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config.
+
+`getToken()` resolves to `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`).
+
+For Cloudflare Workers the shape is identical; env access becomes `env.CS_CLIENT_ACCESS_KEY` instead of `Deno.env.get(...)`.
+
+### Why the explicit sub-path
+
+Bare `@cipherstash/auth` works in Node (resolves to native napi) and in wasm-aware bundlers (Vite/Webpack handle the sibling-`.wasm` import natively).
+
+It does **not** work in Deno-resolving-`npm:` runtimes (Supabase Edge, Cloudflare Workers via `npm:`). Deno applies the `node` exports condition for `npm:` specifiers — it emulates Node for npm packages — which routes the bare import to the napi loader. That loader is a CJS module without statically-resolvable ESM named exports, so it errors at boot. There's no condition Deno applies for `npm:` packages that Node ESM doesn't, so we can't route the two apart in the exports map. The `wasm-inline` sub-path bypasses the conditional walk entirely.
+
+Trade-off for inline: ~27% larger JS payload (~726KB vs ~572KB raw wasm + JS shim) and ~50ms cold-start vs streaming compile. Acceptable for an auth surface that runs once per worker boot.
+
+### Bundler users (Vite / Webpack / Next.js)
+
+Bare import is the right shape — these bundlers understand the sibling-`.wasm` reference and emit it as an asset:
+
+```ts
+import { AccessKeyStrategy } from "@cipherstash/auth";
+```
+
+If your bundler doesn't handle `.wasm` imports, fall back to `@cipherstash/auth/wasm-inline`. All three entries expose identical APIs.
+
 ## API
 
-### `beginDeviceCodeFlow(region, clientId)`
+### Node — `beginDeviceCodeFlow(region, clientId)`
 
 Starts the OAuth 2.0 Device Authorization flow. Returns a `Promise<DeviceCodeResult>`.
 
-### `DeviceCodeResult`
+#### `DeviceCodeResult`
 
 | Property / Method | Description |
 |---|---|
@@ -56,25 +119,36 @@ Starts the OAuth 2.0 Device Authorization flow. Returns a `Promise<DeviceCodeRes
 | `openInBrowser()` | Opens the verification URI in the default browser |
 | `pollForToken()` | Polls until the user completes authorization. Returns `Promise<AuthResult>` |
 
-### `AuthResult`
+#### `AuthResult`
 
 | Property | Description |
 |---|---|
 | `expiresAt` | Absolute epoch timestamp (seconds) when the token expires |
 | `expiresIn` | Seconds until the token expires |
 
+### Edge — `AccessKeyStrategy`
+
+| Method | Description |
+|---|---|
+| `AccessKeyStrategy.create(region, accessKey)` | Build a strategy from a region and access key |
+| `strategy.getToken()` | Retrieve a valid `TokenResult`, refreshing as needed |
+
+`TokenResult` is `{ token, subject, workspaceId, issuer, services }`.
+
 ## Error handling
 
-Errors thrown by the native module include a machine-readable `.code` property:
+Errors thrown from this package extend `Error` with a machine-readable `.code` property:
 
 ```js
 try {
-  await result.pollForToken();
+  await strategy.getToken();
 } catch (err) {
   console.error(err.code);    // e.g. "EXPIRED_TOKEN"
   console.error(err.message); // Human-readable description
 }
 ```
+
+Common codes: `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, `INVALID_REGION`, `INVALID_TOKEN`, `SERVER_ERROR`, `REQUEST_ERROR`.
 
 ## License
 

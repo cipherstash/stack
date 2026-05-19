@@ -1,8 +1,29 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.36.0",
+  "version": "0.37.0-alpha.3",
   "main": "index.js",
   "types": "index.d.ts",
+  "browser": false,
+  "exports": {
+    ".": {
+      "node": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      },
+      "default": {
+        "types": "./wasm-types.d.ts",
+        "default": "./wasm/stack_auth_wasm.js"
+      }
+    },
+    "./wasm": {
+      "types": "./wasm-types.d.ts",
+      "default": "./wasm/stack_auth_wasm.js"
+    },
+    "./wasm-inline": {
+      "types": "./wasm-types.d.ts",
+      "default": "./wasm/stack_auth_wasm_inline.js"
+    }
+  },
   "napi": {
     "name": "stack-auth-node",
     "triples": {
@@ -21,12 +42,15 @@
     "index.js",
     "index.d.ts",
     "README.md",
-    "stack-auth-node.js"
+    "stack-auth-node.js",
+    "wasm-types.d.ts",
+    "wasm/"
   ],
   "scripts": {
     "build": "napi build --release",
     "build:debug": "napi build",
     "build:test": "napi build --features test-utils",
+    "build:wasm": "cd ../wasm && wasm-pack build --target bundler --out-dir ../node/wasm && rm -f ../node/wasm/README.md ../node/wasm/LICENSE ../node/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../node/wasm/package.json && node ../node/scripts/inline-wasm.mjs",
     "test": "npm run build:test && vitest run"
   },
   "optionalDependencies": {

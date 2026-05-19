@@ -27,13 +27,8 @@ console_error_panic_hook = "0.1"
 wasm-bindgen-test = "0.3"
 base64 = { workspace = true }
 
-# wasm-pack bundles its own `wasm-opt`; if that bundled version is older than
-# the wasm features rustc emits, optimisation fails. Disable it so the build is
-# reproducible across local + CI without requiring a separately-installed
-# wasm-opt. Re-enable once wasm-pack's bundled wasm-opt catches up, or wire
-# `binaryen` install into CI.
 [package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+wasm-opt = ["-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int"]
 
 [package.metadata.wasm-pack.profile.dev]
 wasm-opt = false
