@@ -69,7 +69,7 @@ const ManifestColumnSchema = z.object({
 const ManifestSchema = z.object({
   version: z.literal(1).default(1),
   /** Map of table name → array of column intents for that table. */
-  tables: z.record(z.array(ManifestColumnSchema)),
+  tables: z.record(z.string(), z.array(ManifestColumnSchema)),
 })
 
 export type Manifest = z.infer<typeof ManifestSchema>

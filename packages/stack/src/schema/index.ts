@@ -128,19 +128,25 @@ const indexesSchema = z
   })
   .default({})
 
+// `.prefault` (not `.default`) because the default `{}` is an *input* value
+// that must be parsed to fill in `cast_as` and `indexes` defaults. In zod 4
+// `.default` takes an already-parsed output value and skips parsing.
 const columnSchema = z
   .object({
     cast_as: castAsEnum,
     indexes: indexesSchema,
   })
-  .default({})
+  .prefault({})
 
-const tableSchema = z.record(columnSchema).default({})
+const tableSchema = z.record(z.string(), columnSchema).default({})
 
-const tablesSchema = z.record(tableSchema).default({})
+const tablesSchema = z.record(z.string(), tableSchema).default({})
 
+// Annotated as ZodType<EncryptConfig> so the emitted .d.ts exposes a shallow
+// type. The fully-inferred zod 4 type for this triply-nested record is too
+// deep for consumers to instantiate, which degrades `tables` to `unknown`.
 /** @internal */
-export const encryptConfigSchema = z.object({
+export const encryptConfigSchema: z.ZodType<EncryptConfig> = z.object({
   v: z.number(),
   tables: tablesSchema,
 })
@@ -183,7 +189,10 @@ export type EncryptedTableColumn = {
             }
       }
 }
-export type EncryptConfig = z.infer<typeof encryptConfigSchema>
+export type EncryptConfig = {
+  v: number
+  tables: Record<string, Record<string, ColumnSchema>>
+}
 
 // ------------------------
 // Interface definitions
