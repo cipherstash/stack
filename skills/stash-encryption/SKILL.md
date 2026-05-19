@@ -685,7 +685,10 @@ stash encrypt backfill --table users --column email
 # re-run with --force to encrypt every plaintext row regardless.
 stash encrypt backfill --table users --column email --force
 
-# Edit the schema to drop the `_encrypted` suffix:
+# Edit the schema to drop the `_encrypted` suffix, then register the
+# pending EQL config — cutover requires it (see Known limitation above),
+# so SDK-only deployments must run `stash db push` once here too:
+stash db push
 stash encrypt cutover --table users --column email
 # In one transaction: rename physical columns, promote pending → active.
 
