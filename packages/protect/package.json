@@ -73,7 +73,7 @@
 		"@cipherstash/schema": "workspace:*",
 		"@stricli/core": "^1.2.6",
 		"dotenv": "17.4.2",
-		"zod": "^3.24.2"
+		"zod": "^4.4.3"
 	},
 	"optionalDependencies": {
 		"@rollup/rollup-linux-x64-gnu": "4.60.3"
