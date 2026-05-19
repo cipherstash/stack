@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { HANDOFF_CHOICES } from '../../src/commands/impl/steps/how-to-proceed.js'
 import { runPiped } from '../helpers/spawn-piped.js'
 
 /**
@@ -51,7 +52,9 @@ describe('stash impl — non-TTY safety (BUGS.md reproducer)', () => {
     expect(r.exitCode).toBe(0)
     expect(r.stdout).toContain('No agent selected')
     expect(r.stdout).toContain('--target')
-    expect(r.stdout).toContain('claude-code|codex|agents-md|wizard')
+    // Derive the target list from the same source the command renders it
+    // from, so adding a handoff target can't silently drift the test.
+    expect(r.stdout).toContain(HANDOFF_CHOICES.join('|'))
   })
 
   it('rejects an unknown --target with a clear error and exits 1', async () => {
