@@ -5,11 +5,16 @@ const mockQuery = vi.fn()
 const mockEnd = vi.fn()
 
 vi.mock('pg', () => {
-  const Client = vi.fn(() => ({
-    connect: mockConnect,
-    query: mockQuery,
-    end: mockEnd,
-  }))
+  // vitest 4 invokes a mock's implementation as a real constructor when the
+  // mock is called with `new`. An arrow function cannot be a constructor, so
+  // the implementation must be a regular function.
+  const Client = vi.fn(function Client() {
+    return {
+      connect: mockConnect,
+      query: mockQuery,
+      end: mockEnd,
+    }
+  })
   return { default: { Client } }
 })
 

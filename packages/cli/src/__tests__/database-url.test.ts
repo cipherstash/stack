@@ -49,6 +49,10 @@ function noProject() {
 }
 
 beforeEach(() => {
+  // vitest 4's restoreAllMocks only restores vi.spyOn spies; it no longer
+  // clears the call history of vi.fn() mocks. Clear them explicitly so call
+  // counts don't bleed between tests.
+  vi.clearAllMocks()
   originalEnv = process.env.DATABASE_URL
   originalCi = process.env.CI
   originalIsTty = process.stdin.isTTY
