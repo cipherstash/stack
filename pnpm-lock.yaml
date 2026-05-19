@@ -419,8 +419,8 @@ importers:
   packages/protect:
     dependencies:
       '@byteslice/result':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.2.0
+        version: 0.2.0
       '@cipherstash/protect-ffi':
         specifier: 0.21.4
         version: 0.21.4
@@ -469,8 +469,8 @@ importers:
   packages/protect-dynamodb:
     dependencies:
       '@byteslice/result':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: ^0.2.0
+        version: 0.2.0
     devDependencies:
       '@cipherstash/protect':
         specifier: workspace:*
@@ -510,8 +510,8 @@ importers:
   packages/stack:
     dependencies:
       '@byteslice/result':
-        specifier: 0.3.0
-        version: 0.3.0
+        specifier: 0.2.0
+        version: 0.2.0
       '@cipherstash/protect-ffi':
         specifier: 0.21.4
         version: 0.21.4
@@ -737,8 +737,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@byteslice/result@0.3.0':
-    resolution: {integrity: sha512-nIVjzVJ5LEUsj5jZ196OQ+XFYDPw74JVmHrsKs0g/iX1c8llydLWKbseMKmAtcEnpRj8hdsEue5H/naz7wdC4A==}
+  '@byteslice/result@0.2.0':
+    resolution: {integrity: sha512-4zENy+fMQuZ5vvoK+W685qdkPu7FBJ8lo5t5XSUAbqvixsiTzvAGDkxsrAR9WwqlvY3OgitWo8ciCXLSURcNLw==}
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -4131,7 +4131,7 @@ snapshots:
   '@biomejs/cli-win32-x64@2.4.15':
     optional: true
 
-  '@byteslice/result@0.3.0': {}
+  '@byteslice/result@0.2.0': {}
 
   '@changesets/apply-release-plan@7.1.1':
     dependencies:

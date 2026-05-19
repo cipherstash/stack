@@ -48,6 +48,6 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@byteslice/result": "^0.3.0"
+		"@byteslice/result": "^0.2.0"
 	}
 }
