@@ -38,10 +38,12 @@ export function readContextFile(cwd: string): ContextFile | undefined {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown
     if (!isContextFile(parsed)) return undefined
-    // Ensure usesProxy defaults to false for older files that don't have it
+    // Normalize usesProxy to a strict boolean: older files lack it and a
+    // hand-edited file could hold any JSON value, so coerce to `true` only
+    // when it is exactly `true` and `false` otherwise.
     return {
       ...parsed,
-      usesProxy: parsed.usesProxy ?? false,
+      usesProxy: parsed.usesProxy === true,
     }
   } catch {
     return undefined
