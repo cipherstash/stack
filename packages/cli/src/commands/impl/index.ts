@@ -168,7 +168,11 @@ export async function implCommand(
   const planPath = resolve(cwd, PLAN_REL_PATH)
   const planExists = existsSync(planPath)
   const continueWithoutPlan = flags['continue-without-plan'] === true
-  const isTTY = process.stdout.isTTY
+  // Interactive only when stdin is a real TTY and we're not in CI — the
+  // same gate the encrypt commands use. `process.stdout.isTTY` alone is
+  // wrong: a redirected stdin still hangs the agent-target picker (clack
+  // `select` reads from /dev/tty).
+  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
 
   let planStep: PlanStep | undefined
 

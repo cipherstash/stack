@@ -25,8 +25,10 @@ function writePlan() {
   fs.writeFileSync(path.join(tmpDir, '.cipherstash', 'plan.md'), '# Plan')
 }
 
+// `implCommand` gates interactivity on `process.stdin.isTTY` (a redirected
+// stdin still hangs the agent-target picker), so the tests mock stdin.
 function setIsTTY(value: boolean) {
-  Object.defineProperty(process.stdout, 'isTTY', {
+  Object.defineProperty(process.stdin, 'isTTY', {
     value,
     configurable: true,
   })
@@ -35,7 +37,7 @@ function setIsTTY(value: boolean) {
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stash-impl-test-'))
   originalCwd = process.cwd()
-  originalIsTTY = process.stdout.isTTY
+  originalIsTTY = process.stdin.isTTY
   process.chdir(tmpDir)
   writeContext()
   writePlan()
@@ -43,7 +45,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.chdir(originalCwd)
-  Object.defineProperty(process.stdout, 'isTTY', {
+  Object.defineProperty(process.stdin, 'isTTY', {
     value: originalIsTTY,
     configurable: true,
   })
@@ -54,7 +56,7 @@ afterEach(() => {
 })
 
 describe('implCommand — TTY handling', () => {
-  it('exits cleanly without running the agent-target picker when stdout is not a TTY and no --target is given', async () => {
+  it('exits cleanly without running the agent-target picker when stdin is not a TTY and no --target is given', async () => {
     setIsTTY(false)
     const runSpy = vi
       .spyOn(howToProceedStep, 'run')
