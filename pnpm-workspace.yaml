@@ -9,7 +9,7 @@ catalogs:
     tsup: 8.5.1
     tsx: 4.21.0
     typescript: 5.6.3
-    vitest: 3.1.3
+    vitest: 4.1.5
   security:
     '@clerk/nextjs': 7.3.0
     next: 15.5.18
