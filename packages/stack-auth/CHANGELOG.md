@@ -1,5 +1,26 @@
 
 
+### Documentation
+
+- document why TokenResultPayload uses String
+
+### Features
+
+- wasm-bindgen sibling crate for Supabase Edge (Layer 3.5)
+- make runtime work in Supabase Edge
+
+### Fixes
+
+- address Copilot review feedback + patch Dockerfiles
+
+### Refactoring
+
+- wasm32 support — cfg-gate filesystem and Send bounds
+- 🚨 address review feedback on Layer 3 PR
+- dedupe error code mapping + tighten bindings
+- scope down to AccessKeyStrategy
+
+
 
 ### Miscellaneous
 
