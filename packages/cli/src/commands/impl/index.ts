@@ -21,7 +21,11 @@ import {
 } from '../init/lib/write-context.js'
 import { CancelledError, type InitState } from '../init/types.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
-import { howToProceedStep } from './steps/how-to-proceed.js'
+import {
+  HANDOFF_CHOICES,
+  howToProceedStep,
+  resolveTarget,
+} from './steps/how-to-proceed.js'
 
 function buildStateFromContext(
   ctx: ContextFile,
@@ -132,7 +136,10 @@ function printDeployGateBanner(cli: string): void {
  * dual-write code). After a rollout-step handoff, the outro is the
  * deploy-gate banner instead of a generic "verify state" pointer.
  */
-export async function implCommand(flags: Record<string, boolean>) {
+export async function implCommand(
+  flags: Record<string, boolean>,
+  values: Record<string, string> = {},
+) {
   const cwd = process.cwd()
   const pm = detectPackageManager()
   const cli = runnerCommand(pm, 'stash')
@@ -145,12 +152,27 @@ export async function implCommand(flags: Record<string, boolean>) {
     process.exit(1)
   }
 
+  // Validate `--target` before printing the intro so the error sits at
+  // the top of the output instead of after a half-rendered prompt frame.
+  const targetFlag = values.target
+  const target = resolveTarget(targetFlag)
+  if (targetFlag && !target) {
+    p.log.error(
+      `Unknown --target \`${targetFlag}\`. Valid values: ${HANDOFF_CHOICES.join(', ')}.`,
+    )
+    process.exit(1)
+  }
+
   p.intro('CipherStash Implementation')
 
   const planPath = resolve(cwd, PLAN_REL_PATH)
   const planExists = existsSync(planPath)
   const continueWithoutPlan = flags['continue-without-plan'] === true
-  const isTTY = process.stdout.isTTY
+  // Interactive only when stdin is a real TTY and we're not in CI — the
+  // same gate the encrypt commands use. `process.stdout.isTTY` alone is
+  // wrong: a redirected stdin still hangs the agent-target picker (clack
+  // `select` reads from /dev/tty).
+  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
 
   let planStep: PlanStep | undefined
 
@@ -248,7 +270,18 @@ export async function implCommand(flags: Record<string, boolean>) {
     const agents = detectAgents(cwd, process.env)
     const state = buildStateFromContext(ctx, agents)
 
-    await howToProceedStep.run(state)
+    // Non-TTY without an explicit target would block forever on the
+    // agent-target picker (it reads from /dev/tty). Make the command
+    // safe to call from automation by short-circuiting with a hint.
+    if (!target && !isTTY) {
+      p.log.info(
+        `No agent selected. Plan is at \`${PLAN_REL_PATH}\`. Pass --target <${HANDOFF_CHOICES.join('|')}> to run the handoff non-interactively.`,
+      )
+      p.outro('No handoff performed.')
+      return
+    }
+
+    await howToProceedStep.run(target ? { ...state, handoff: target } : state)
 
     if (planStep === 'rollout') {
       printDeployGateBanner(cli)

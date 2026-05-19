@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentEnvironment } from '../../init/detect-agents.js'
 import type { InitState } from '../../init/types.js'
-import { buildOptions, defaultChoice } from '../steps/how-to-proceed.js'
+import {
+  HANDOFF_CHOICES,
+  buildOptions,
+  defaultChoice,
+  resolveTarget,
+} from '../steps/how-to-proceed.js'
 
 function makeAgents(claudeCode: boolean, codex: boolean): AgentEnvironment {
   return {
@@ -62,5 +67,24 @@ describe('howToProceed — defaultChoice', () => {
     // is on PATH.
     expect(defaultChoice(noAgents, 'implement')).toBe('agents-md')
     expect(defaultChoice(noAgents, 'plan')).toBe('agents-md')
+  })
+})
+
+describe('howToProceed — resolveTarget', () => {
+  it('accepts every documented handoff target', () => {
+    for (const choice of HANDOFF_CHOICES) {
+      expect(resolveTarget(choice)).toBe(choice)
+    }
+  })
+
+  it('returns null for unknown values', () => {
+    expect(resolveTarget('claude')).toBeNull()
+    expect(resolveTarget('CLAUDE-CODE')).toBeNull()
+    expect(resolveTarget('agents.md')).toBeNull()
+    expect(resolveTarget('')).toBeNull()
+  })
+
+  it('returns null when the flag is absent', () => {
+    expect(resolveTarget(undefined)).toBeNull()
   })
 })
