@@ -110,6 +110,8 @@ Init Flags:
   --supabase           Use Supabase-specific setup flow
   --drizzle            Use Drizzle-specific setup flow
   --prisma-next        Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply)
+  --proxy              Query encrypted data via CipherStash Proxy
+  --no-proxy           Query encrypted data directly via the SDK (default)
 
 Plan Flags:
   --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)

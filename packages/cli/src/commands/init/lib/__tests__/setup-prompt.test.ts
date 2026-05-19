@@ -12,6 +12,7 @@ const baseCtx: SetupPromptContext = {
   handoff: 'claude-code',
   mode: 'implement',
   installedSkills: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+  usesProxy: false,
 }
 
 describe('renderSetupPrompt — orient + route (implement mode)', () => {
@@ -378,5 +379,181 @@ describe('renderSetupPrompt — plan mode default when planStep is unset', () =>
     expect(out).toContain(
       '# CipherStash setup — write an encryption rollout plan',
     )
+  })
+})
+
+describe('renderSetupPrompt — usesProxy conditional', () => {
+  describe('implement mode with usesProxy: false (SDK-only)', () => {
+    it('drops db push step from add-new-column flow', () => {
+      const out = renderSetupPrompt({ ...baseCtx, usesProxy: false })
+      expect(out).not.toMatch(/5\.\s*Register the encryption config/)
+      // Step 5 should now be the wire-the-column step, not db push
+      expect(out).toMatch(/5\.\s*Wire the column through/)
+    })
+
+    it('drops register-pending-config step from rollout path', () => {
+      const out = renderSetupPrompt({ ...baseCtx, usesProxy: false })
+      // Should have only "Schema-add" as step 1, then "Dual-write" as step 2
+      // (no "Register pending config" in between)
+      expect(out).toMatch(/1\.\s*\*\*Schema-add/)
+      expect(out).toMatch(/2\.\s*\*\*Dual-write/)
+      // Register pending config should not appear in the rollout section
+      const rolloutSection = out.substring(
+        out.indexOf('#### Encryption rollout'),
+        out.indexOf('⛔'),
+      )
+      expect(rolloutSection).not.toMatch(/Register pending config/)
+    })
+
+    it('keeps encrypt cutover invocation and notes the pending-config workaround', () => {
+      const out = renderSetupPrompt({ ...baseCtx, usesProxy: false })
+      const cutoverSection = out.substring(
+        out.indexOf('#### Encryption cutover'),
+      )
+      // Should mention encrypt cutover
+      expect(cutoverSection).toMatch(/encrypt cutover/)
+      // SDK-only setups still hit the pending-config gap, so the cutover
+      // step must call out the `db push` workaround for that error.
+      expect(cutoverSection).toMatch(/No pending EQL configuration/)
+      expect(cutoverSection).toMatch(/db push/)
+    })
+  })
+
+  describe('implement mode with usesProxy: true (Proxy)', () => {
+    it('includes db push step in add-new-column flow', () => {
+      const out = renderSetupPrompt({ ...baseCtx, usesProxy: true })
+      expect(out).toMatch(/5\.\s*Register the encryption config.*db push/)
+      expect(out).toMatch(/6\.\s*\*\*If db push wrote pending\*\*.*db activate/)
+    })
+
+    it('includes register-pending-config step in rollout path', () => {
+      const out = renderSetupPrompt({ ...baseCtx, usesProxy: true })
+      expect(out).toMatch(/2\.\s*\*\*Register pending config.*db push/)
+      expect(out).toMatch(/3\.\s*\*\*Dual-write/)
+    })
+
+    it('includes full db push in cutover step', () => {
+      const out = renderSetupPrompt({ ...baseCtx, usesProxy: true })
+      const cutoverSection = out.substring(
+        out.indexOf('#### Encryption cutover'),
+      )
+      expect(cutoverSection).toMatch(/5\.\s*\*\*Switch the schema and re-push/)
+      expect(cutoverSection).toMatch(/Run.*db push.*again/)
+    })
+  })
+
+  describe('plan mode (rollout) with usesProxy conditional', () => {
+    it('mentions db push in rollout plan summary when usesProxy: true', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'rollout',
+        usesProxy: true,
+      })
+      expect(out).toMatch(
+        /Encryption rollout.*dual-write code, and.*db push.*writes pending/,
+      )
+    })
+
+    it('notes db push as Proxy-only in rollout plan summary when usesProxy: false', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'rollout',
+        usesProxy: false,
+      })
+      expect(out).toMatch(
+        /Encryption rollout.*dual-write code.*plus.*db push.*Proxy users only/,
+      )
+    })
+
+    it('includes db push in rollout PR contents when usesProxy: true', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'rollout',
+        usesProxy: true,
+      })
+      expect(out).toMatch(/schema-add.*db push.*pending.*dual-write code/)
+    })
+
+    it('drops db push from rollout PR contents when usesProxy: false', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'rollout',
+        usesProxy: false,
+      })
+      expect(out).toMatch(/schema-add.*dual-write code/)
+      // Should not mention "db push (pending)" in the rollout PR contents
+      const prSection = out.substring(
+        out.indexOf('migrate columns: what the rollout PR contains'),
+      )
+      expect(prSection).not.toMatch(/db push.*pending/)
+    })
+  })
+
+  describe('plan mode (cutover) with usesProxy conditional', () => {
+    it('includes db push in schema-rename when usesProxy: true', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'cutover',
+        usesProxy: true,
+      })
+      expect(out).toMatch(/Schema rename and re-push/)
+      expect(out).toMatch(/db push.*registers the renamed/)
+    })
+
+    it('separates schema rename from db push when usesProxy: false', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'cutover',
+        usesProxy: false,
+      })
+      expect(out).toMatch(/\*\*Schema rename\.\*\*.*original column/)
+      expect(out).toMatch(/Proxy users only.*db push/)
+    })
+
+    it('notes db push as Proxy-only in prose when usesProxy: false', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'cutover',
+        usesProxy: false,
+      })
+      expect(out).toMatch(/schema-edit step.*exact rename pattern/)
+      expect(out).not.toMatch(/schema-edit.*db push.*step/i)
+    })
+  })
+
+  describe('plan mode (complete) with usesProxy conditional', () => {
+    it('includes db push steps in full lifecycle when usesProxy: true', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'complete',
+        usesProxy: true,
+      })
+      expect(out).toMatch(/db push.*backfill.*schema rename.*db push.*cutover/)
+    })
+
+    it('drops both db push mentions from full lifecycle when usesProxy: false', () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode: 'plan',
+        planStep: 'complete',
+        usesProxy: false,
+      })
+      expect(out).toMatch(/schema-add.*dual-write code.*backfill.*schema rename/)
+      // The lifecycle line should not have "db push" twice
+      const migrateSection = out.substring(
+        out.indexOf('**Migrate existing columns**'),
+      )
+      const firstLine = migrateSection.split('\n')[0]
+      const dbPushCount = (firstLine.match(/db push/g) || []).length
+      expect(dbPushCount).toBe(0)
+    })
   })
 })

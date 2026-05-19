@@ -70,6 +70,8 @@ export interface InitState {
    *  on-disk plan-summary block instead. Defaults to `'rollout'` when the
    *  CLI has nothing else to go on (fresh project, no DB connectivity). */
   planStep?: PlanStep
+  /** Whether the user queries encrypted data via CipherStash Proxy. Captured in stash init. SDK users default to false; setting true makes prompts/skills include `stash db push` steps. */
+  usesProxy?: boolean
 }
 
 /**

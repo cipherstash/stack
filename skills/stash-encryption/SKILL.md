@@ -596,8 +596,8 @@ ENCRYPTION ROLLOUT  →  ⛔ deploy gate  →  ENCRYPTION CUTOVER
 ─────────────────────                     ──────────────────────
 schema-add                                backfill historical rows
 dual-write code                           switch reads to encrypted
-db push (writes pending)                  drop plaintext column
 ```
+then drop the plaintext column when reads are decrypting.
 
 The gate is the rule that backfill is only safe once the dual-write code is **running in the production environment that owns the database** — not on the developer's laptop, not in CI. Any row inserted during the backfill window must be written to both columns by the application; otherwise it lands in plaintext only and creates silent migration drift.
 
@@ -614,8 +614,9 @@ Everything that lands in the repo and ships in **one** PR:
 | Action | What changes |
 |---|---|
 | Schema-add | Migration adds `<col>_encrypted` (nullable `jsonb`) alongside the existing plaintext column. Plaintext column unchanged; application still writes only plaintext. |
-| `stash db push` | Registers the new column in `eql_v2_configuration`. With no active config yet, writes directly to `active`. With an existing active config, writes `pending` — cutover (later) will promote it. |
 | Dual-write code | Application now writes both `<col>` and `<col>_encrypted` on every persistence path that mutates the row, in the same transaction, on every code branch. Reads still come from the plaintext column. |
+
+> **If you use CipherStash Proxy:** After the schema-add, run `stash db push` to register the new column in `eql_v2_configuration`. With no active config yet it writes directly to `active`; with an existing active config it writes `pending` (cutover will promote it). Required for Proxy-based queries.
 
 **The dual-write definition matters.** "Writes both columns" is not enough. The rule is: every persistence path that mutates this row writes both columns, in the same transaction, on every code branch. A single missed branch — a CSV import, an admin action, a background job, a third-party webhook handler — means rows inserted in production after deploy land in plaintext only, and backfill won't catch them. Grep for every site that writes the plaintext column before declaring rollout complete.
 
@@ -634,11 +635,13 @@ Once dual-writes are recorded as live in `cs_migrations`:
 | Action | What changes |
 |---|---|
 | `stash encrypt backfill` | Walks the table in keyset-pagination order, encrypts each chunk, writes a single transactional `UPDATE` per chunk plus a `cs_migrations` checkpoint. SIGINT-safe; idempotent re-runs converge. |
-| Schema rename + `stash db push` | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. Push registers the renamed shape as `pending`. |
+| Schema rename | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. |
 | `stash encrypt cutover` | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. |
 | Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; `encryptedSupabase` wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw `eql_v2_encrypted` payloads to end users. |
 | Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
 | `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
+
+> **If you use CipherStash Proxy:** After the schema rename, run `stash db push` to register the renamed shape as `pending`. This is required for Proxy-based queries; SDK users skip this step.
 
 ### State storage
 
@@ -653,6 +656,50 @@ Three sources of truth, kept separate on purpose:
 > **Note on internal phase names.** The runtime event log uses `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped` as machine-readable phase names. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then cutover, with a deploy gate in between."
 
 ### CLI sequence for a single column
+
+> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked in issue [#447](https://github.com/cipherstash/stack/issues/447) follow-up work.
+
+```bash
+# Run this often — it's the canonical "where am I?" command.
+stash status
+
+# ---- ENCRYPTION ROLLOUT (one PR, one deploy) ----
+# 1. Add the encrypted twin column via your normal migration tooling
+#    (drizzle-kit / supabase migrations / etc.).
+# 2. Edit application code so every persistence path writes both
+#    `<col>` and `<col>_encrypted` in the same transaction, on every
+#    code branch.
+# 3. Ship the PR to production.
+
+# ---- ⛔ DEPLOY GATE ----
+# Verify dual-writes are live, then redraft the plan for cutover work:
+stash status
+stash plan
+
+# ---- ENCRYPTION CUTOVER ----
+stash encrypt backfill --table users --column email
+# Prompts to confirm dual-writes are live (or pass
+# --confirm-dual-writes-deployed in CI). Resumable; SIGINT-safe.
+
+# Recovery — if dual-writes weren't actually live when backfill ran,
+# re-run with --force to encrypt every plaintext row regardless.
+stash encrypt backfill --table users --column email --force
+
+# Edit the schema to drop the `_encrypted` suffix, then register the
+# pending EQL config — cutover requires it (see Known limitation above),
+# so SDK-only deployments must run `stash db push` once here too:
+stash db push
+stash encrypt cutover --table users --column email
+# In one transaction: rename physical columns, promote pending → active.
+
+# Wire the read paths through the encryption client. Remove dual-write
+# code. Then drop the plaintext column:
+stash encrypt drop --table users --column email
+```
+
+#### If you use CipherStash Proxy
+
+Register and promote encryption config at each phase:
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.

@@ -53,13 +53,19 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     )
   }
 
-  // Step 3: Push encryption config
-  await runStep(
-    'Pushing encryption config to database...',
-    'Encryption config pushed',
-    `${runner} stash db push`,
-    cwd,
-  )
+  // Step 3: Push encryption config (only when using Proxy)
+  if (gathered.usesProxy) {
+    await runStep(
+      'Pushing encryption config to database...',
+      'Encryption config pushed',
+      `${runner} stash db push`,
+      cwd,
+    )
+  } else {
+    p.log.info(
+      'Skipping `stash db push` — not using CipherStash Proxy. Run it manually if you ever switch to Proxy.',
+    )
+  }
 
   // Step 4: Integration-specific migrations
   if (integration === 'drizzle') {
