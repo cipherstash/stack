@@ -177,9 +177,16 @@ export async function planCommand(
     const agents = detectAgents(cwd, process.env)
     const state = buildStateFromContext(ctx, agents, planStep)
 
-    // Non-TTY without --target would hang on the agent-target picker.
-    // Exit cleanly with a hint so automation users discover the flag.
-    if (!target && !process.stdout.isTTY) {
+    // Interactive only when stdin is a real TTY and we're not in CI — the
+    // same gate `stash impl` and the encrypt commands use. Keying off
+    // `process.stdout.isTTY` alone is wrong: a redirected stdin still
+    // hangs the agent-target picker (clack `select` reads from /dev/tty).
+    const isInteractive =
+      Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
+
+    // Non-interactive without --target would hang on the agent-target
+    // picker. Exit cleanly with a hint so automation users discover the flag.
+    if (!target && !isInteractive) {
       p.log.info(
         `No agent selected. Pass --target <${HANDOFF_CHOICES.join('|')}> to run the handoff non-interactively.`,
       )
@@ -189,7 +196,7 @@ export async function planCommand(
 
     await howToProceedStep.run(target ? { ...state, handoff: target } : state)
 
-    if (process.stdout.isTTY) {
+    if (isInteractive) {
       const proceed = await p.confirm({
         message: `Plan drafted at \`${PLAN_REL_PATH}\`. Continue to \`${cli} impl\` now?`,
         initialValue: true,
