@@ -405,15 +405,17 @@ describe('renderSetupPrompt — usesProxy conditional', () => {
       expect(rolloutSection).not.toMatch(/Register pending config/)
     })
 
-    it('removes db push from cutover step but keeps encrypt cutover invocation', () => {
+    it('keeps encrypt cutover invocation and notes the pending-config workaround', () => {
       const out = renderSetupPrompt({ ...baseCtx, usesProxy: false })
       const cutoverSection = out.substring(
         out.indexOf('#### Encryption cutover'),
       )
       // Should mention encrypt cutover
       expect(cutoverSection).toMatch(/encrypt cutover/)
-      // Should include the Proxy-conditional aside
-      expect(cutoverSection).toMatch(/If you use CipherStash Proxy/)
+      // SDK-only setups still hit the pending-config gap, so the cutover
+      // step must call out the `db push` workaround for that error.
+      expect(cutoverSection).toMatch(/No pending EQL configuration/)
+      expect(cutoverSection).toMatch(/db push/)
     })
   })
 
