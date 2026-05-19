@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { HANDOFF_CHOICES } from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
 import { createDrizzleProvider } from './providers/drizzle.js'
@@ -123,7 +124,7 @@ export async function initCommand(flags: Record<string, boolean>) {
       // /dev/tty. Steer them at `--target` up front so the next command
       // doesn't surprise them.
       p.outro(
-        `Next: run \`${cli} plan --target <claude-code|codex|agents-md|wizard>\` to draft your encryption plan. The \`--target\` flag is required when running non-interactively (skips the agent-target picker).`,
+        `Next: run \`${cli} plan --target <${HANDOFF_CHOICES.join('|')}>\` to draft your encryption plan. The \`--target\` flag is required when running non-interactively (skips the agent-target picker).`,
       )
     }
   } catch (err) {
