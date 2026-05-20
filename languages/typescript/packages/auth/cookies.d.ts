@@ -7,8 +7,8 @@
  * Functions, Cloudflare Workers, Bun, Deno, Node 18+, Next.js App Router.
  *
  * Pair with `AccessKeyStrategy.create(region, key, { store })` from the
- * `/wasm-inline` entry (or, once CIP-3113 lands, the napi binding at the
- * main `.` entry).
+ * `/wasm-inline` entry (or, once the napi binding supports it, the main
+ * `.` entry).
  */
 
 import type { TokenStore } from "./wasm-inline.d.ts";
@@ -33,7 +33,11 @@ export interface CookieStoreOptions {
   secure?: boolean;
   /** `HttpOnly` flag — prevents JS access. Default: `true`. */
   httpOnly?: boolean;
-  /** `SameSite` attribute. Default: `"Lax"`. */
+  /**
+   * `SameSite` attribute. Default: `"Lax"`. Passing `"None"` requires
+   * `secure: true` — `cookieStore` throws otherwise, since browsers drop
+   * non-Secure `SameSite=None` cookies.
+   */
   sameSite?: "Strict" | "Lax" | "None";
   /**
    * Seconds subtracted from the token's `expires_at` when computing the

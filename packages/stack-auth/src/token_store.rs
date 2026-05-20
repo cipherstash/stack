@@ -24,18 +24,24 @@
 //! ```
 //!
 //! For cookie-style storage where the load/save logic lives in the calling
-//! request handler, use [`CallbackTokenStore::new`] with two async closures
+//! request handler, use [`TokenStoreFn::new`] with two async closures
 //! that deal in JSON strings:
 //!
 //! ```no_run
 //! use std::sync::Arc;
-//! use stack_auth::CallbackTokenStore;
+//! use stack_auth::TokenStoreFn;
 //!
-//! let store = Arc::new(CallbackTokenStore::new(
+//! let store = Arc::new(TokenStoreFn::new(
 //!     || async { /* read cookie */ None::<String> },
 //!     |_json: String| async move { /* write Set-Cookie header */ },
 //! ));
 //! ```
+//!
+//! See also: [`AuthStrategyFn`](crate::AuthStrategyFn) — the closure-shaped
+//! impl of the *acquisition* layer ([`AuthStrategy`](crate::AuthStrategy)).
+//! `TokenStoreFn` plugs into an existing strategy as a persistence backend;
+//! `AuthStrategyFn` replaces the whole acquisition pipeline (used by FFI
+//! consumers like `protect-ffi` that source tokens from JS).
 
 use std::future::Future;
 use std::sync::Arc;
@@ -159,7 +165,13 @@ impl TokenStore for InMemoryTokenStore {
     }
 }
 
-/// Token store backed by user-supplied `load` and `save` async closures.
+/// [`TokenStore`] backed by user-supplied `load` and `save` async closures.
+///
+/// This is the *persistence layer* primitive — it plugs into an existing
+/// strategy (e.g. [`AccessKeyStrategy`](crate::AccessKeyStrategy)) so that
+/// strategy can share its service-token cache across processes. For wiring
+/// in a complete *acquisition pipeline* (e.g. a JS-defined strategy across
+/// an FFI boundary), use [`AuthStrategyFn`](crate::AuthStrategyFn) instead.
 ///
 /// Closures deal in JSON strings — the on-the-wire form of [`Token`] — not
 /// the `Token` type itself. This keeps the caller's signatures free of
@@ -179,12 +191,12 @@ impl TokenStore for InMemoryTokenStore {
 /// after deserialisation. End-to-end protection at rest (e.g. encrypting
 /// the value before it ever leaves the worker) is tracked as a future
 /// `EncryptedTokenStore` decorator.
-pub struct CallbackTokenStore<L, S> {
+pub struct TokenStoreFn<L, S> {
     load: L,
     save: S,
 }
 
-impl<L, S> CallbackTokenStore<L, S> {
+impl<L, S> TokenStoreFn<L, S> {
     /// Build a token store from a `load` closure (returns the stored JSON, or
     /// `None` if nothing is cached) and a `save` closure (persists the JSON).
     ///
@@ -195,7 +207,7 @@ impl<L, S> CallbackTokenStore<L, S> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<L, LF, S, SF> TokenStore for CallbackTokenStore<L, S>
+impl<L, LF, S, SF> TokenStore for TokenStoreFn<L, S>
 where
     L: Fn() -> LF + Send + Sync,
     LF: Future<Output = Option<String>> + Send,
@@ -212,7 +224,7 @@ where
 
     async fn save(&self, token: &Token) {
         let Ok(json) = serde_json::to_string(token) else {
-            tracing::warn!("CallbackTokenStore: failed to serialise token");
+            tracing::warn!("TokenStoreFn: failed to serialise token");
             return;
         };
         (self.save)(json).await;
@@ -220,7 +232,7 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-impl<L, LF, S, SF> TokenStore for CallbackTokenStore<L, S>
+impl<L, LF, S, SF> TokenStore for TokenStoreFn<L, S>
 where
     L: Fn() -> LF,
     LF: Future<Output = Option<String>>,
@@ -237,7 +249,7 @@ where
 
     async fn save(&self, token: &Token) {
         let Ok(json) = serde_json::to_string(token) else {
-            tracing::warn!("CallbackTokenStore: failed to serialise token");
+            tracing::warn!("TokenStoreFn: failed to serialise token");
             return;
         };
         (self.save)(json).await;
@@ -312,7 +324,7 @@ mod tests {
     async fn callback_store_invokes_load_closure_each_call() {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = Arc::clone(&calls);
-        let store = CallbackTokenStore::new(
+        let store = TokenStoreFn::new(
             move || {
                 let calls = Arc::clone(&calls_clone);
                 async move {
@@ -357,7 +369,7 @@ mod tests {
     async fn callback_store_forwards_serialised_token_to_save_closure() {
         let captured = Arc::new(Mutex::new(None::<String>));
         let captured_clone = Arc::clone(&captured);
-        let store = CallbackTokenStore::new(
+        let store = TokenStoreFn::new(
             || async { None },
             move |json: String| {
                 let captured = Arc::clone(&captured_clone);
@@ -385,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn callback_store_ignores_invalid_json_on_load() {
-        let store = CallbackTokenStore::new(
+        let store = TokenStoreFn::new(
             || async { Some("not valid json".to_string()) },
             |_json: String| async move {},
         );

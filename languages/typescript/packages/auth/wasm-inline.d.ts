@@ -22,7 +22,7 @@ export type { AuthErrorCode, AuthError, TokenResult } from "./wasm-types.d.ts";
  * Both methods are best-effort. `load` returning `null` / `undefined` is
  * treated as "cache miss" and falls through to fresh authentication.
  * Rejections in either callback are logged via `console.warn` and
- * otherwise ignored — see [CIP-3114](https://linear.app/cipherstash/issue/CIP-3114).
+ * otherwise ignored.
  */
 export interface TokenStore {
   load(): Promise<string | null | undefined>;
