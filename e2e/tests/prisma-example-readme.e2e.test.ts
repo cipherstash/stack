@@ -95,21 +95,87 @@ async function wipeTransientOutputs(): Promise<void> {
   }
 }
 
-describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', () => {
-  let snapDir: string
+interface Outcomes {
+  cpEnv?: StepResult
+  dockerUp?: StepResult
+  pnpmInstall?: StepResult
+  pnpmEmit?: StepResult
+  pnpmPlan?: StepResult
+  pnpmApply?: StepResult
+  pnpmStart?: StepResult
+}
 
+const outcomes: Outcomes = {}
+let snapDir: string
+
+describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', () => {
   beforeAll(async () => {
     snapDir = await snapshotTransientOutputs()
     await wipeTransientOutputs()
-  }, 60_000)
+
+    // Step 1: cp .env.example .env
+    // Run via `cp` for fidelity to the README; falls back to ENOENT spawn
+    // error on Windows runners (we only target Linux/macOS in CI).
+    outcomes.cpEnv = runStep('cp .env.example .env', 'cp', ['.env.example', '.env'], {
+      timeoutMs: 5_000,
+    })
+
+    // Step 2: docker compose up -d
+    outcomes.dockerUp = runStep(
+      'docker compose up -d',
+      'docker',
+      ['compose', 'up', '-d', '--wait'],
+      { timeoutMs: 180_000 },
+    )
+
+    // Step 3: pnpm install
+    outcomes.pnpmInstall = runStep('pnpm install', 'pnpm', ['install'], {
+      timeoutMs: 180_000,
+    })
+
+    // Step 4: pnpm emit
+    outcomes.pnpmEmit = runStep('pnpm emit', 'pnpm', ['emit'], {
+      timeoutMs: 60_000,
+    })
+
+    // Step 5: pnpm migration:plan --name initial
+    outcomes.pnpmPlan = runStep(
+      'pnpm migration:plan --name initial',
+      'pnpm',
+      ['migration:plan', '--name', 'initial'],
+      { timeoutMs: 60_000 },
+    )
+
+    // Step 6: pnpm migration:apply
+    outcomes.pnpmApply = runStep(
+      'pnpm migration:apply',
+      'pnpm',
+      ['migration:apply'],
+      { timeoutMs: 120_000 },
+    )
+
+    // Step 7: pnpm start
+    outcomes.pnpmStart = runStep('pnpm start', 'pnpm', ['start'], {
+      timeoutMs: 120_000,
+    })
+  }, 600_000) // 10 min total budget for the cold path
 
   afterAll(async () => {
+    // Teardown the bundled Postgres container regardless of outcome.
+    runStep(
+      'docker compose down -v',
+      'docker',
+      ['compose', 'down', '-v'],
+      { timeoutMs: 60_000 },
+    )
+    // Restore the transient outputs from snapshot so the working tree is clean.
     await restoreTransientOutputs(snapDir)
-  }, 60_000)
+    // Remove the .env we copied in the walkthrough (not tracked anyway).
+    rmSync(join(EXAMPLE_DIR, '.env'), { force: true })
+  }, 120_000)
 
-  it('wipes transient outputs and restores from snapshot', () => {
-    // Mid-test: contract.json is gone (wipe ran in beforeAll).
-    expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.json'))).toBe(false)
-    expect(existsSync(join(EXAMPLE_DIR, 'migrations/app'))).toBe(false)
+  it('cp .env.example .env succeeded', () => {
+    const r = outcomes.cpEnv!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
   })
 })
