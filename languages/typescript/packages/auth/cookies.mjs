@@ -5,7 +5,7 @@
 // Cloudflare Workers, Bun, Deno, Node 18+, Next.js App Router. The strategy
 // stays substrate-agnostic — same helper plugs into both the wasm
 // `AccessKeyStrategy` (this package's `/wasm-inline` entry) and the future
-// napi binding (CIP-3113).
+// napi binding.
 //
 // Cookie value is base64url-encoded because the raw Token JSON contains `"`
 // characters, which fall outside RFC 6265's allowed cookie-value char range
@@ -25,7 +25,7 @@ const DEFAULT_SAFETY_MARGIN_SECONDS = 30;
  * @property {string} [path="/"]                            `Path` attribute
  * @property {boolean} [secure=true]                        `Secure` flag — set to `false` only for localhost HTTP dev
  * @property {boolean} [httpOnly=true]                      `HttpOnly` flag
- * @property {"Strict" | "Lax" | "None"} [sameSite="Lax"]   `SameSite` attribute
+ * @property {"Strict" | "Lax" | "None"} [sameSite="Lax"]   `SameSite` attribute — `"None"` requires `secure: true`
  * @property {number} [expirySafetyMarginSeconds=30]        Seconds to subtract from token expiry when computing `Max-Age`
  */
 
@@ -45,6 +45,14 @@ export function cookieStore(options) {
     sameSite = "Lax",
     expirySafetyMarginSeconds = DEFAULT_SAFETY_MARGIN_SECONDS,
   } = options;
+
+  // Browsers reject `SameSite=None` cookies that aren't also `Secure`, so the
+  // cookie would silently fail to persist. Fail fast on the misconfiguration.
+  if (sameSite === "None" && !secure) {
+    throw new Error(
+      'cookieStore: `sameSite: "None"` requires `secure: true` — browsers drop non-Secure SameSite=None cookies.',
+    );
+  }
 
   return {
     async load() {

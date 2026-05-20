@@ -149,4 +149,29 @@ describe("cookieStore.save", () => {
     await offStore.save(tokenJson());
     expect(offResponseHeaders.get("set-cookie")).not.toContain("HttpOnly");
   });
+
+  it("rejects sameSite:None without secure (browsers drop the cookie)", () => {
+    expect(() =>
+      cookieStore({
+        request: makeRequest(),
+        responseHeaders: new Headers(),
+        sameSite: "None",
+        secure: false,
+      }),
+    ).toThrow(/sameSite.*None.*requires.*secure/i);
+  });
+
+  it("allows sameSite:None when secure is set", async () => {
+    const responseHeaders = new Headers();
+    const store = cookieStore({
+      request: makeRequest(),
+      responseHeaders,
+      sameSite: "None",
+      secure: true,
+    });
+    await store.save(tokenJson());
+    const setCookie = responseHeaders.get("set-cookie")!;
+    expect(setCookie).toContain("SameSite=None");
+    expect(setCookie).toContain("Secure");
+  });
 });

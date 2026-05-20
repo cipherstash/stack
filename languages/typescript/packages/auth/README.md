@@ -27,6 +27,8 @@ The package exposes four entries:
 
 The wasm bindings are deliberately scoped to `AccessKeyStrategy` — OAuth, device-code flow, and profile-store features depend on Node-only APIs (filesystem, browser launching) that can't be ported.
 
+The `wasm`, `wasm-inline`, and `cookies` entries are **ESM-only** — they target Edge/Workers/Deno/Bun runtimes that are ESM-native. From a CommonJS context, load them via dynamic `import()` rather than `require()`. Only the default `@cipherstash/auth` entry has a CJS (`node`) build.
+
 ## Node.js usage — OAuth device-code flow
 
 ```js
