@@ -29,7 +29,7 @@ export interface CookieStoreOptions {
   domain?: string;
   /** `Path` attribute. Default: `"/"`. */
   path?: string;
-  /** `Secure` flag. Caller opts in for production. Default: `false`. */
+  /** `Secure` flag. Set `false` only for localhost HTTP dev. Default: `true`. */
   secure?: boolean;
   /** `HttpOnly` flag — prevents JS access. Default: `true`. */
   httpOnly?: boolean;

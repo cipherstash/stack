@@ -31,6 +31,11 @@ console_error_panic_hook = "0.1"
 # (the `test-no-unused-cargo-dependencies` workflow) would flag it as
 # unused.
 web-sys = { version = "0.3", features = ["console"] }
+# `Zeroizing` wraps the JSON-serialised `Token` while it sits in Rust heap
+# between (de)serialisation and crossing the JS boundary, matching the
+# behaviour of the upstream `CallbackTokenStore` on native. Target-gated for
+# the same reason as `web-sys`.
+zeroize = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

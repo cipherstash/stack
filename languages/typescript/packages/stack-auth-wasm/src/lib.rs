@@ -20,6 +20,8 @@ use stack_auth::{Token, TokenStore};
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
+#[cfg(target_arch = "wasm32")]
+use zeroize::Zeroizing;
 
 /// Route Rust panics to `console.error` with a readable message + stack.
 /// Without this, panics surface as opaque `RuntimeError: unreachable` from
@@ -111,7 +113,9 @@ impl TokenStore for JsTokenStore {
         };
         match JsFuture::from(js_sys::Promise::from(promise)).await {
             Ok(result) => {
-                let json = result.as_string()?;
+                // Zero the JSON heap buffer on drop — it carries the bearer
+                // token in cleartext between the JS boundary and serde.
+                let json = Zeroizing::new(result.as_string()?);
                 serde_json::from_str(&json).ok()
             }
             Err(err) => {
@@ -122,7 +126,7 @@ impl TokenStore for JsTokenStore {
     }
 
     async fn save(&self, token: &Token) {
-        let Ok(json) = serde_json::to_string(token) else {
+        let Ok(json) = serde_json::to_string(token).map(Zeroizing::new) else {
             return;
         };
         let promise = match self.save.call1(&JsValue::NULL, &JsValue::from_str(&json)) {

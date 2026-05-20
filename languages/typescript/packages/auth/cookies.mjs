@@ -23,7 +23,7 @@ const DEFAULT_SAFETY_MARGIN_SECONDS = 30;
  * @property {string} [name="cs_token"]                     Cookie name
  * @property {string} [domain]                              `Domain` attribute
  * @property {string} [path="/"]                            `Path` attribute
- * @property {boolean} [secure=false]                       `Secure` flag — caller opts in for prod
+ * @property {boolean} [secure=true]                        `Secure` flag — set to `false` only for localhost HTTP dev
  * @property {boolean} [httpOnly=true]                      `HttpOnly` flag
  * @property {"Strict" | "Lax" | "None"} [sameSite="Lax"]   `SameSite` attribute
  * @property {number} [expirySafetyMarginSeconds=30]        Seconds to subtract from token expiry when computing `Max-Age`
@@ -40,7 +40,7 @@ export function cookieStore(options) {
     name = DEFAULT_NAME,
     domain,
     path = DEFAULT_PATH,
-    secure = false,
+    secure = true,
     httpOnly = true,
     sameSite = "Lax",
     expirySafetyMarginSeconds = DEFAULT_SAFETY_MARGIN_SECONDS,

@@ -109,7 +109,7 @@ Available options:
 | `name` | `"cs_token"` | Cookie name |
 | `domain` | unset | `Domain` attribute (host-only by default) |
 | `path` | `"/"` | `Path` attribute |
-| `secure` | `false` | Opt in for production HTTPS |
+| `secure` | `true` | Set `false` only for localhost HTTP dev |
 | `httpOnly` | `true` | Prevents JS access — keep this on |
 | `sameSite` | `"Lax"` | `"Strict"` / `"Lax"` / `"None"` |
 | `expirySafetyMarginSeconds` | `30` | Seconds subtracted from `expires_at` when computing `Max-Age` |
