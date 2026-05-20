@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.37.0-alpha.6",
+  "version": "0.37.0-alpha.8",
   "main": "index.js",
   "types": "index.d.ts",
   "browser": false,
