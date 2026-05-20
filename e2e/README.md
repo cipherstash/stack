@@ -23,6 +23,8 @@ pnpm --filter @cipherstash/e2e exec vitest run tests/package-managers.e2e.test.t
 | Test file | Scope |
 | --- | --- |
 | `tests/package-managers.e2e.test.ts` | The `init` providers and the wizard binary render `bunx`/`pnpm dlx`/`yarn dlx`/`npx` based on detected package manager. |
+| `tests/supply-chain.e2e.test.ts` | Lockfile/registry/CODEOWNERS controls from `skills/stash-supply-chain-security` are still enforced. |
+| `tests/prisma-example-readme.e2e.test.ts` | Walks every command in `examples/prisma/README.md`'s "Run it" section (skips `stash auth login`) and asserts `pnpm start` matches the documented "Expected output". |
 
 ## Auth-dependent suites
 
