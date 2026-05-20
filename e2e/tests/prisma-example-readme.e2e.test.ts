@@ -57,8 +57,59 @@ function runStep(
   }
 }
 
+const TRANSIENT_PATHS = [
+  'migrations/app',
+  'src/prisma/contract.json',
+  'src/prisma/contract.d.ts',
+] as const
+
+async function snapshotTransientOutputs(): Promise<string> {
+  const snap = mkdtempSync(join(tmpdir(), 'prisma-readme-e2e-snap-'))
+  const { cpSync, mkdirSync } = await import('node:fs')
+  for (const rel of TRANSIENT_PATHS) {
+    const src = join(EXAMPLE_DIR, rel)
+    if (!existsSync(src)) continue
+    const dest = join(snap, rel)
+    mkdirSync(dirname(dest), { recursive: true })
+    cpSync(src, dest, { recursive: true })
+  }
+  return snap
+}
+
+async function restoreTransientOutputs(snap: string): Promise<void> {
+  const { cpSync } = await import('node:fs')
+  for (const rel of TRANSIENT_PATHS) {
+    const src = join(snap, rel)
+    const dest = join(EXAMPLE_DIR, rel)
+    rmSync(dest, { recursive: true, force: true })
+    if (existsSync(src)) {
+      cpSync(src, dest, { recursive: true })
+    }
+  }
+  rmSync(snap, { recursive: true, force: true })
+}
+
+async function wipeTransientOutputs(): Promise<void> {
+  for (const rel of TRANSIENT_PATHS) {
+    rmSync(join(EXAMPLE_DIR, rel), { recursive: true, force: true })
+  }
+}
+
 describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', () => {
-  it('placeholder — replaced in subsequent tasks', () => {
-    expect(authConfigured).toBe(true)
+  let snapDir: string
+
+  beforeAll(async () => {
+    snapDir = await snapshotTransientOutputs()
+    await wipeTransientOutputs()
+  }, 60_000)
+
+  afterAll(async () => {
+    await restoreTransientOutputs(snapDir)
+  }, 60_000)
+
+  it('wipes transient outputs and restores from snapshot', () => {
+    // Mid-test: contract.json is gone (wipe ran in beforeAll).
+    expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.json'))).toBe(false)
+    expect(existsSync(join(EXAMPLE_DIR, 'migrations/app'))).toBe(false)
   })
 })
