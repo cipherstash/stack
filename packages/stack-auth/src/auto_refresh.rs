@@ -147,9 +147,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             let loaded = self.store.load().await;
             state = self.state.lock().await;
             if state.token.is_none() {
-                if let Some(t) = loaded {
-                    state.token = Some(t);
-                }
+                state.token = loaded;
             }
         }
 
@@ -194,12 +192,8 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
                 guard.defuse();
-                self.refresher.save(&new_token);
-                self.store.save(&new_token).await;
-                let service_token = ServiceToken::new(new_token.access_token().clone());
-                state.token = Some(new_token);
-                self.refresh_in_progress.store(false, Ordering::Release);
-                Ok(service_token)
+                self.save_refreshed_token(&new_token).await;
+                Ok(self.install_refreshed_token(state, new_token))
             }
             Err(err) => {
                 guard.defuse();
@@ -207,6 +201,27 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                 Err(AutoRefreshError::Auth(err))
             }
         }
+    }
+
+    /// Persist a freshly refreshed token to the per-refresher sink and the
+    /// user-supplied `TokenStore`. Awaits the store write, so callers should
+    /// drop the state lock before invoking this where possible (the
+    /// non-blocking refresh path does; the blocking/initial paths hold the
+    /// state lock throughout by design).
+    async fn save_refreshed_token(&self, new_token: &Token) {
+        self.refresher.save(new_token);
+        self.store.save(new_token).await;
+    }
+
+    /// Install a freshly refreshed token in `state`, clear the in-progress
+    /// flag, and return the corresponding [`ServiceToken`]. Pure in-lock
+    /// work; caller is responsible for having already persisted the token via
+    /// [`save_refreshed_token`](Self::save_refreshed_token).
+    fn install_refreshed_token(&self, state: &mut State, new_token: Token) -> ServiceToken {
+        let service_token = ServiceToken::new(new_token.access_token().clone());
+        state.token = Some(new_token);
+        self.refresh_in_progress.store(false, Ordering::Release);
+        service_token
     }
 
     /// Another caller is already refreshing — return the current token if still
@@ -259,11 +274,9 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
                 guard.defuse();
-                self.refresher.save(&new_token);
-                self.store.save(&new_token).await;
+                self.save_refreshed_token(&new_token).await;
                 let mut state = self.state.lock().await;
-                state.token = Some(new_token);
-                self.refresh_in_progress.store(false, Ordering::Release);
+                let _ = self.install_refreshed_token(&mut state, new_token);
             }
             Err(err) => {
                 guard.defuse();
@@ -301,12 +314,8 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
                 guard.defuse();
-                self.refresher.save(&new_token);
-                self.store.save(&new_token).await;
-                let service_token = ServiceToken::new(new_token.access_token().clone());
-                state.token = Some(new_token);
-                self.refresh_in_progress.store(false, Ordering::Release);
-                Ok(service_token)
+                self.save_refreshed_token(&new_token).await;
+                Ok(self.install_refreshed_token(state, new_token))
             }
             Err(err) => {
                 guard.defuse();
