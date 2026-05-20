@@ -224,4 +224,43 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
     const r = outcomes.pnpmStart!
     expect(r.status, describeSpawnFailure(r)).toBe(0)
   })
+
+  it('pnpm start output contains every documented codec demo heading', () => {
+    const stdout = outcomes.pnpmStart!.stdout
+
+    // Headings from README "Expected output" — every one must appear.
+    const headings = [
+      '--- Insert (mixed-codec round-trip) ---',
+      '--- cipherstashEq (string equality) ---',
+      '--- cipherstashIlike (string free-text-search) ---',
+      '--- cipherstashGt (double order-and-range) ---',
+      '--- cipherstashBetween (date order-and-range) ---',
+      '--- cipherstashInArray (bigint equality) ---',
+      '--- cipherstashInArray (boolean equality-only) ---',
+      '--- cipherstashAsc (bare-column ORDER BY) ---',
+    ]
+    for (const heading of headings) {
+      expect(stdout, `missing heading: ${heading}`).toContain(heading)
+    }
+  })
+
+  it('pnpm start output contains the documented row counts and email values', () => {
+    const stdout = outcomes.pnpmStart!.stdout
+    const expectations = [
+      'Inserted 4 rows across six cipherstash codecs.',
+      'Found 1 row(s) for alice@example.com.',
+      'Found 3 row(s) matching %@example.com.',
+      'Found 2 user(s) with salary > 100,000.',
+      'Found 3 user(s) born between 1985 and 1995.',
+      'Found 2 user(s) whose accountId is in the supplied array.',
+      'Found 3 user(s) with emailVerified = true.',
+      'alice@example.com',
+      'bob@example.com',
+      'carol@example.com',
+      'dave@otherorg.test',
+    ]
+    for (const line of expectations) {
+      expect(stdout, `missing expected line: ${line}`).toContain(line)
+    }
+  })
 })
