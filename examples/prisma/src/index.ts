@@ -103,6 +103,7 @@ async function main() {
 
   const runtime = await db.connect({ url })
   try {
+    await clearUsers()
     await insertUsers()
     await searchByEq()
     await searchByIlikeAndDecrypt()
@@ -113,6 +114,13 @@ async function main() {
     await sortByEmailAsc()
   } finally {
     await runtime.close()
+  }
+}
+
+async function clearUsers(): Promise<void> {
+  const removed = await db.orm.User.where((u) => u.id.isNotNull()).deleteCount()
+  if (removed > 0) {
+    console.log(`--- Cleanup ---\nRemoved ${removed} existing user row(s).\n`)
   }
 }
 
