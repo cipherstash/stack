@@ -1,5 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -93,17 +93,52 @@ async function wipeTransientOutputs(): Promise<void> {
   }
 }
 
-interface Outcomes {
-  cpEnv?: StepResult
-  dockerUp?: StepResult
-  pnpmInstall?: StepResult
-  pnpmEmit?: StepResult
-  pnpmPlan?: StepResult
-  pnpmApply?: StepResult
-  pnpmStart?: StepResult
+// Parses the bash code fence directly under `## Run it` in the example's
+// README. Strips inline ` # ...` comments, trims, drops blank lines, and
+// preserves order. Throws with a descriptive message if the heading or
+// fence isn't found — that way a malformed README surfaces at test-collection
+// time, not as an opaque parse error mid-run.
+function parseRunItCommands(readme: string): string[] {
+  const match = readme.match(/^## Run it\b[\s\S]*?\n```bash\n([\s\S]*?)\n```/m)
+  if (!match) {
+    throw new Error(
+      'parseRunItCommands: could not locate the bash code fence under `## Run it` in the README. ' +
+        'Check examples/prisma/README.md structure (expected `## Run it` heading followed by a ```bash fenced block).',
+    )
+  }
+  return match[1]!
+    .split('\n')
+    .map((line) => line.replace(/\s+#\s.*$/, '').trim())
+    .filter((line) => line.length > 0)
 }
 
-const outcomes: Outcomes = {}
+// Interactive commands the test must skip in CI. `stash auth login` is PKCE;
+// it blocks on a browser. Exact-match by design — if the README's wording
+// drifts, the test fails loudly rather than silently over-skipping.
+const SKIP_COMMANDS = new Set<string>(['stash auth login'])
+
+const TIMEOUT_BY_PREFIX: Array<readonly [RegExp, number]> = [
+  [/^cp\b/, 5_000],
+  [/^docker compose up\b/, 180_000],
+  [/^pnpm install\b/, 180_000],
+  [/^pnpm migration:apply\b/, 180_000],
+  [/^pnpm start\b/, 180_000],
+]
+const DEFAULT_TIMEOUT_MS = 60_000
+function timeoutFor(line: string): number {
+  for (const [re, ms] of TIMEOUT_BY_PREFIX) if (re.test(line)) return ms
+  return DEFAULT_TIMEOUT_MS
+}
+
+// Parse the README at module load (test collection time) so per-step `it()`s
+// can be registered dynamically. The README is in-repo and small; a sync read
+// here is the right call.
+const README_COMMANDS = parseRunItCommands(
+  readFileSync(resolve(EXAMPLE_DIR, 'README.md'), 'utf8'),
+)
+const EXECUTED_COMMANDS = README_COMMANDS.filter((line) => !SKIP_COMMANDS.has(line))
+
+const outcomes = new Map<string, StepResult>()
 let snapDir: string
 
 describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', () => {
@@ -111,51 +146,16 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
     snapDir = await snapshotTransientOutputs()
     await wipeTransientOutputs()
 
-    // Step 1: cp .env.example .env
-    // Run via `cp` for fidelity to the README; falls back to ENOENT spawn
-    // error on Windows runners (we only target Linux/macOS in CI).
-    outcomes.cpEnv = runStep('cp .env.example .env', 'cp', ['.env.example', '.env'], {
-      timeoutMs: 5_000,
-    })
-
-    // Step 2: docker compose up -d
-    outcomes.dockerUp = runStep(
-      'docker compose up -d',
-      'docker',
-      ['compose', 'up', '-d', '--wait'],
-      { timeoutMs: 180_000 },
-    )
-
-    // Step 3: pnpm install
-    outcomes.pnpmInstall = runStep('pnpm install', 'pnpm', ['install'], {
-      timeoutMs: 180_000,
-    })
-
-    // Step 4: pnpm emit
-    outcomes.pnpmEmit = runStep('pnpm emit', 'pnpm', ['emit'], {
-      timeoutMs: 60_000,
-    })
-
-    // Step 5: pnpm migration:plan --name initial
-    outcomes.pnpmPlan = runStep(
-      'pnpm migration:plan --name initial',
-      'pnpm',
-      ['migration:plan', '--name', 'initial'],
-      { timeoutMs: 60_000 },
-    )
-
-    // Step 6: pnpm migration:apply
-    outcomes.pnpmApply = runStep(
-      'pnpm migration:apply',
-      'pnpm',
-      ['migration:apply'],
-      { timeoutMs: 120_000 },
-    )
-
-    // Step 7: pnpm start
-    outcomes.pnpmStart = runStep('pnpm start', 'pnpm', ['start'], {
-      timeoutMs: 120_000,
-    })
+    // Drive the walkthrough straight from the parsed README. `bash -c` keeps
+    // fidelity with what a user actually types — no argv tokenizer needed,
+    // future README evolutions (operators, quoting) Just Work.
+    for (const line of README_COMMANDS) {
+      if (SKIP_COMMANDS.has(line)) {
+        console.log(`[readme-walkthrough] skip: ${line}`)
+        continue
+      }
+      outcomes.set(line, runStep(line, 'bash', ['-c', line], { timeoutMs: timeoutFor(line) }))
+    }
   }, 600_000) // 10 min total budget for the cold path
 
   afterAll(async () => {
@@ -172,17 +172,21 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
     rmSync(join(EXAMPLE_DIR, '.env'), { force: true })
   }, 120_000)
 
-  it('cp .env.example .env succeeded', () => {
-    const r = outcomes.cpEnv!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
+  // Per-step exit-zero assertion, registered once per non-skipped README line.
+  it.each(EXECUTED_COMMANDS)('README "Run it" step exited 0: %s', (line) => {
+    const r = outcomes.get(line)
+    expect(r, `no outcome recorded for \`${line}\` — beforeAll did not run this step`).toBeDefined()
+    expect(r!.status, describeSpawnFailure(r!)).toBe(0)
+  })
+
+  // Side-effect assertions: observe the final state after the walkthrough.
+  // Not driven by README parse — these guard against "exit 0 but produced
+  // no output" regressions that pure exit-zero checks can't catch.
+  it('cp produced examples/prisma/.env', () => {
     expect(existsSync(join(EXAMPLE_DIR, '.env'))).toBe(true)
   })
 
-  it('docker compose up -d succeeded and Postgres became ready', () => {
-    const r = outcomes.dockerUp!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
-    // Compose --wait already gates on the healthcheck. Double-check by
-    // exec'ing pg_isready against the container the README owns.
+  it('Postgres container is ready', () => {
     const ready = runStep(
       'pg_isready',
       'docker',
@@ -192,41 +196,22 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
     expect(ready.status, describeSpawnFailure(ready)).toBe(0)
   })
 
-  it('pnpm install succeeded', () => {
-    const r = outcomes.pnpmInstall!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
-  })
-
-  it('pnpm emit succeeded and wrote contract.{json,d.ts}', () => {
-    const r = outcomes.pnpmEmit!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
+  it('pnpm emit wrote contract.{json,d.ts}', () => {
     expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.json'))).toBe(true)
     expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.d.ts'))).toBe(true)
   })
 
-  it('pnpm migration:plan --name initial succeeded and produced an initial migration', () => {
-    const r = outcomes.pnpmPlan!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
+  it('pnpm migration:plan produced an initial migration', () => {
     const appDir = join(EXAMPLE_DIR, 'migrations/app')
     expect(existsSync(appDir)).toBe(true)
     const entries = readdirSync(appDir)
-    // CLI names the migration `<timestamp>_initial`; assert at least one
-    // entry matches that suffix.
     expect(entries.some((e) => /_initial$/.test(e))).toBe(true)
   })
 
-  it('pnpm migration:apply succeeded', () => {
-    const r = outcomes.pnpmApply!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
-  })
-
-  it('pnpm start exited 0', () => {
-    const r = outcomes.pnpmStart!
-    expect(r.status, describeSpawnFailure(r)).toBe(0)
-  })
-
   it('pnpm start output contains every documented codec demo heading', () => {
-    const stdout = outcomes.pnpmStart!.stdout
+    const startLine = README_COMMANDS.find((l) => /^pnpm start\b/.test(l))
+    expect(startLine, '`pnpm start` not found in README walkthrough').toBeDefined()
+    const stdout = outcomes.get(startLine!)?.stdout ?? ''
 
     // Headings from README "Expected output" — every one must appear.
     const headings = [
@@ -245,7 +230,9 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
   })
 
   it('pnpm start output contains the documented row counts and email values', () => {
-    const stdout = outcomes.pnpmStart!.stdout
+    const startLine = README_COMMANDS.find((l) => /^pnpm start\b/.test(l))
+    expect(startLine, '`pnpm start` not found in README walkthrough').toBeDefined()
+    const stdout = outcomes.get(startLine!)?.stdout ?? ''
     const expectations = [
       'Inserted 4 rows across six cipherstash codecs.',
       'Found 1 row(s) for alice@example.com.',
