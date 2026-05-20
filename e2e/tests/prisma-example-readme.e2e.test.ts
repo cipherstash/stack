@@ -1,5 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -65,7 +65,6 @@ const TRANSIENT_PATHS = [
 
 async function snapshotTransientOutputs(): Promise<string> {
   const snap = mkdtempSync(join(tmpdir(), 'prisma-readme-e2e-snap-'))
-  const { cpSync, mkdirSync } = await import('node:fs')
   for (const rel of TRANSIENT_PATHS) {
     const src = join(EXAMPLE_DIR, rel)
     if (!existsSync(src)) continue
@@ -77,7 +76,6 @@ async function snapshotTransientOutputs(): Promise<string> {
 }
 
 async function restoreTransientOutputs(snap: string): Promise<void> {
-  const { cpSync } = await import('node:fs')
   for (const rel of TRANSIENT_PATHS) {
     const src = join(snap, rel)
     const dest = join(EXAMPLE_DIR, rel)
@@ -176,6 +174,54 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
 
   it('cp .env.example .env succeeded', () => {
     const r = outcomes.cpEnv!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
+    expect(existsSync(join(EXAMPLE_DIR, '.env'))).toBe(true)
+  })
+
+  it('docker compose up -d succeeded and Postgres became ready', () => {
+    const r = outcomes.dockerUp!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
+    // Compose --wait already gates on the healthcheck. Double-check by
+    // exec'ing pg_isready against the container the README owns.
+    const ready = runStep(
+      'pg_isready',
+      'docker',
+      ['exec', 'cipherstash-prisma-example-pg', 'pg_isready', '-U', 'postgres', '-d', 'cipherstash_prisma_example'],
+      { timeoutMs: 10_000 },
+    )
+    expect(ready.status, describeSpawnFailure(ready)).toBe(0)
+  })
+
+  it('pnpm install succeeded', () => {
+    const r = outcomes.pnpmInstall!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
+  })
+
+  it('pnpm emit succeeded and wrote contract.{json,d.ts}', () => {
+    const r = outcomes.pnpmEmit!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
+    expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.json'))).toBe(true)
+    expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.d.ts'))).toBe(true)
+  })
+
+  it('pnpm migration:plan --name initial succeeded and produced an initial migration', () => {
+    const r = outcomes.pnpmPlan!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
+    const appDir = join(EXAMPLE_DIR, 'migrations/app')
+    expect(existsSync(appDir)).toBe(true)
+    const entries = readdirSync(appDir)
+    // CLI names the migration `<timestamp>_initial`; assert at least one
+    // entry matches that suffix.
+    expect(entries.some((e) => /_initial$/.test(e))).toBe(true)
+  })
+
+  it('pnpm migration:apply succeeded', () => {
+    const r = outcomes.pnpmApply!
+    expect(r.status, describeSpawnFailure(r)).toBe(0)
+  })
+
+  it('pnpm start exited 0', () => {
+    const r = outcomes.pnpmStart!
     expect(r.status, describeSpawnFailure(r)).toBe(0)
   })
 })
