@@ -1,5 +1,40 @@
 
 
+### Documentation
+
+- annotate None literal in TokenStore doctest
+- document slick API + cookieStore + /cookies entry
+
+### Features
+
+- add TokenStore trait for pluggable token caching
+- wire TokenStore into AutoRefresh + AccessKeyStrategy
+- AccessKeyStrategy.createWithStore JS-callback bindings
+- slick options-object API + cookieStore helper
+- add CallbackAuthStrategy for foreign-callback strategies
+
+### Fixes
+
+- zeroize JSON-serialised tokens; add assertion messages
+- drop private intra-doc link to crate::refresher
+- log JsTokenStore callback rejections (CIP-3114)
+- scope `web-sys` to the wasm32 target
+- Zeroize JsTokenStore JSON + default cookieStore to Secure
+- drop redundant self:: link targets in module docs
+- address PR #1959 review feedback
+
+### Miscellaneous
+
+- migrate napi platform sub-packages to peerDependencies optional
+- regenerate index.d.ts; preserve manual AuthError block
+
+### Refactoring
+
+- release state mutex during TokenStore load; tighten comments
+- extract save_refreshed_token + install_refreshed_token helpers
+- rename callback helpers to *Fn, split into auth/store modules
+
+
 
 
 ### Documentation
