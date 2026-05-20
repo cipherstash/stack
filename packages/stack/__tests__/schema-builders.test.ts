@@ -260,14 +260,14 @@ describe('schema builders', () => {
   // buildEncryptConfig
   // -------------------------------------------------------
   describe('buildEncryptConfig', () => {
-    it('produces { v: 2, tables: {...} } structure', () => {
+    it('produces { v: 1, tables: {...} } structure', () => {
       const table = encryptedTable('users', {
         email: encryptedColumn('email').equality(),
       })
       const config = buildEncryptConfig(table)
 
       expect(config).toEqual({
-        v: 2,
+        v: 1,
         tables: {
           users: {
             email: {
@@ -290,7 +290,7 @@ describe('schema builders', () => {
       })
       const config = buildEncryptConfig(users, products)
 
-      expect(config.v).toBe(2)
+      expect(config.v).toBe(1)
       expect(Object.keys(config.tables)).toHaveLength(2)
       expect(config.tables).toHaveProperty('users')
       expect(config.tables).toHaveProperty('products')
@@ -298,12 +298,12 @@ describe('schema builders', () => {
       expect(config.tables.products).toHaveProperty('price')
     })
 
-    it('v is always 2', () => {
+    it('v is always 1', () => {
       const table = encryptedTable('t', {
         col: encryptedColumn('col'),
       })
       const config = buildEncryptConfig(table)
-      expect(config.v).toBe(2)
+      expect(config.v).toBe(1)
     })
 
     it('config with searchableJson has correct ste_vec prefix', () => {

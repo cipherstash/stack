@@ -53,7 +53,7 @@ export class SearchTermsOperation extends DynamoDBOperation<string[]> {
             )
           }
 
-          if (!term?.hm) {
+          if (term?.k !== 'ct' || !term.hm) {
             throw new Error('expected encrypted search term to have an HMAC')
           }
 

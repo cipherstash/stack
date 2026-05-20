@@ -51,10 +51,16 @@ function assertEncryptedPayload(
   value: unknown,
   columnName: string,
 ): asserts value is EncryptedPayload {
+  // EQL v2.3: scalar payloads carry the ciphertext at the root (`k: 'ct', c`);
+  // SteVec payloads carry it on the first sv entry (`k: 'sv', sv: [{ c }]`).
   expect(
     value,
     `${columnName} should be returned as encrypted payload before decrypt`,
-  ).toEqual(expect.objectContaining({ c: expect.any(String) }))
+  ).toEqual(
+    expect.objectContaining({
+      k: expect.stringMatching(/^(ct|sv)$/),
+    }),
+  )
 }
 
 export function unwrapResult<T>(

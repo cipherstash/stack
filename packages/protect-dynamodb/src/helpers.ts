@@ -108,7 +108,7 @@ export function toEncryptedDynamoItem(
         'c' in (attrValue as object))
     ) {
       const encryptPayload = attrValue as Encrypted
-      if (encryptPayload?.c) {
+      if (encryptPayload?.k === 'ct' && encryptPayload.c) {
         const result: Record<string, unknown> = {}
         if (encryptPayload.hm) {
           result[`${attrName}${searchTermAttrSuffix}`] = encryptPayload.hm
@@ -117,8 +117,7 @@ export function toEncryptedDynamoItem(
         return result
       }
 
-      // TODO: Need to implement the new Encrypt payload type when FFI is updated
-      if (encryptPayload?.sv) {
+      if (encryptPayload?.k === 'sv' && encryptPayload.sv) {
         const result: Record<string, unknown> = {}
         result[`${attrName}${ciphertextAttrSuffix}`] = encryptPayload.sv
         return result

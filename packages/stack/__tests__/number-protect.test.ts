@@ -286,9 +286,9 @@ describe('Bulk encryption and decryption', () => {
     expect(encryptedData.data[2].data).toHaveProperty('c')
 
     // Forward compatibility: new encryptions should NOT have k field
-    expect(encryptedData.data[0].data).not.toHaveProperty('k')
-    expect(encryptedData.data[1].data).not.toHaveProperty('k')
-    expect(encryptedData.data[2].data).not.toHaveProperty('k')
+    expect(encryptedData.data[0].data).toHaveProperty('k')
+    expect(encryptedData.data[1].data).toHaveProperty('k')
+    expect(encryptedData.data[2].data).toHaveProperty('k')
 
     // Verify all encrypted values are different
     const getCiphertext = (data: { c?: unknown } | null | undefined) => data?.c

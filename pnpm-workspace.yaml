@@ -21,9 +21,14 @@ catalogs:
 minimumReleaseAge: 10080
 # Forbid git/tarball deps anywhere in the lockfile (pnpm ≥ 10.26).
 blockExoticSubdeps: true
-# Excluded from the 7-day cooldown: first-party packages from Prisma that
-# the @cipherstash/prisma-next integration is built against. These ship
-# alongside the framework's own release cadence and are not exotic deps.
-# Wildcard covers direct + transitive @prisma-next/* dependencies.
+# Excluded from the 7-day cooldown: first-party packages we publish or
+# integrate against directly. These ship on their own release cadence and
+# are not exotic deps.
+#   - @prisma-next/*       first-party Prisma packages the integration is built against
+#   - @cipherstash/protect-ffi*  CipherStash-published native FFI and its
+#                                 per-platform binary packages (darwin-arm64,
+#                                 linux-x64-gnu, etc.); bumped in lockstep with stack
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
+  - '@cipherstash/protect-ffi'
+  - '@cipherstash/protect-ffi-*'
