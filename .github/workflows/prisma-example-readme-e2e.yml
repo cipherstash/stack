@@ -1,0 +1,81 @@
+name: Prisma Example README E2E
+
+# Outside-in walkthrough of `examples/prisma/README.md`'s "Run it"
+# section: copies .env.example, brings up the bundled Postgres, runs
+# `pnpm install`, `pnpm emit`, `pnpm migration:plan --name initial`,
+# `pnpm migration:apply`, then `pnpm start`, asserting each command
+# exits 0 and that `pnpm start` prints the documented "Expected
+# output" lines.
+#
+# Lives in the root `e2e/` workspace as
+# `tests/prisma-example-readme.e2e.test.ts`. Auth-gated: skips
+# cleanly on fork PRs where ZeroKMS secrets are unavailable.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'examples/prisma/**'
+      - '.github/workflows/prisma-example-readme-e2e.yml'
+  pull_request:
+    branches:
+      - '**'
+    paths:
+      - 'examples/prisma/**'
+      - '.github/workflows/prisma-example-readme-e2e.yml'
+
+jobs:
+  walkthrough:
+    name: Run README walkthrough
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    # Skip cleanly on fork PRs where secrets aren't available. The
+    # test's `describe.skipIf(!authConfigured)` would also skip, but
+    # gating at the job level produces a clean "skipped" status.
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    env:
+      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6.0.7
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Build via turbo so `^build` on `@cipherstash/prisma-next` and
+      # its `@cipherstash/stack` peer is honoured. The test's
+      # `pnpm install` subprocess inside `examples/prisma/` is a no-op
+      # given the lockfile is already in steady state from this step.
+      - name: Build @cipherstash/prisma-next
+        run: pnpm exec turbo run build --filter @cipherstash/prisma-next
+
+      - name: Run README walkthrough e2e
+        run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e -- --run tests/prisma-example-readme.e2e.test.ts
+
+      - name: Tear down bundled Postgres (best-effort)
+        if: always()
+        working-directory: examples/prisma
+        run: docker compose down -v || true
