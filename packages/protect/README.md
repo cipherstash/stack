@@ -814,17 +814,17 @@ CREATE TABLE users (
 
 To enable searchable encryption in PostgreSQL, [install the EQL custom types and functions](https://github.com/cipherstash/encrypt-query-language?tab=readme-ov-file#installation).
 
-1. Download the latest EQL install script:
+1. Download the EQL install script. The version is pinned to match this release of Protect.js — install exactly this version:
 
    ```sh
-   curl -sLo cipherstash-encrypt.sql https://github.com/cipherstash/encrypt-query-language/releases/latest/download/cipherstash-encrypt.sql
+   curl -sLo cipherstash-encrypt.sql https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt.sql
    ```
 
    Using [Supabase](https://supabase.com/)? We ship an EQL release specifically for Supabase.
-   Download the latest EQL install script:
+   Download the matching Supabase EQL install script:
 
    ```sh
-   curl -sLo cipherstash-encrypt-supabase.sql https://github.com/cipherstash/encrypt-query-language/releases/latest/download/cipherstash-encrypt-supabase.sql
+   curl -sLo cipherstash-encrypt-supabase.sql https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt-supabase.sql
    ```
 
 2. Run this command to install the custom types and functions:

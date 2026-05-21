@@ -1,8 +1,8 @@
 services:
   postgres: &postgres
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # PostgreSQL 17 with CipherStash EQL pre-installed (official image).
+    # Pinned by tag — bump in lockstep with the EQL version the code targets.
+    image: ghcr.io/cipherstash/postgres-eql:17-2.2.1
     environment:
       PGPORT: 5432
       POSTGRES_DB: "cipherstash"
