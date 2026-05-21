@@ -52,8 +52,8 @@ jobs:
       - name: Build @cipherstash/stack
         run: pnpm exec turbo run build --filter @cipherstash/stack
 
-      # Builds the local EQL-enabled Postgres image (local/Dockerfile),
-      # starts it, and waits for the pg_isready healthcheck to pass.
+      # Starts the pinned postgres-eql container (PostgreSQL 17 + EQL
+      # pre-installed) via local/docker-compose.yml; waits for healthcheck.
       - name: Start local Postgres (EQL)
         working-directory: local
         run: docker compose up --wait --wait-timeout 60
