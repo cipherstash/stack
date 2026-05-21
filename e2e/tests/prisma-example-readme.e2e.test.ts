@@ -1,4 +1,4 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -35,20 +35,15 @@ function describeSpawnFailure(result: StepResult): string {
   return lines.join('\n')
 }
 
-function runStep(
-  label: string,
-  cmd: string,
-  args: string[],
-  opts: { cwd?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
-): StepResult {
-  const result: SpawnSyncReturns<Buffer> = spawnSync(cmd, args, {
-    cwd: opts.cwd ?? EXAMPLE_DIR,
-    timeout: opts.timeoutMs ?? 120_000,
+function runStep(commandLine: string, timeoutMs: number): StepResult {
+  const result = spawnSync('bash', ['-c', commandLine], {
+    cwd: EXAMPLE_DIR,
+    timeout: timeoutMs,
     stdio: 'pipe',
-    env: opts.env ?? process.env,
+    env: process.env,
   })
   return {
-    label,
+    label: commandLine,
     status: result.status,
     signal: result.signal,
     stdout: result.stdout?.toString() ?? '',
@@ -154,18 +149,13 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
         console.log(`[readme-walkthrough] skip: ${line}`)
         continue
       }
-      outcomes.set(line, runStep(line, 'bash', ['-c', line], { timeoutMs: timeoutFor(line) }))
+      outcomes.set(line, runStep(line, timeoutFor(line)))
     }
   }, 600_000) // 10 min total budget for the cold path
 
   afterAll(async () => {
     // Teardown the bundled Postgres container regardless of outcome.
-    runStep(
-      'docker compose down -v',
-      'docker',
-      ['compose', 'down', '-v'],
-      { timeoutMs: 60_000 },
-    )
+    runStep('docker compose down -v', 60_000)
     // Restore the transient outputs from snapshot so the working tree is clean.
     await restoreTransientOutputs(snapDir)
     // Remove the .env we copied in the walkthrough (not tracked anyway).
