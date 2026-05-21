@@ -34,10 +34,13 @@ updates:
       type-definitions:
         patterns:
           - "@types/*"
-    # Major bumps stay un-grouped → one PR each, easier to review.
     ignore:
       # Catalog-managed; bump manually via pnpm-workspace.yaml + changeset.
       - dependency-name: "@cipherstash/auth"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
 
   # ── GitHub Actions ─────────────────────────────────────────────
   - package-ecosystem: github-actions
@@ -60,3 +63,8 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
