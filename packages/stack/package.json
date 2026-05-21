@@ -185,7 +185,7 @@
 		"release": "tsup"
 	},
 	"devDependencies": {
-		"@clack/prompts": "^1.3.0",
+		"@clack/prompts": "^1.4.0",
 		"@supabase/supabase-js": "^2.105.4",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
@@ -202,11 +202,11 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@byteslice/result": "0.2.0",
+		"@byteslice/result": "0.3.0",
 		"@cipherstash/protect-ffi": "0.21.4",
-		"evlog": "1.9.0",
+		"evlog": "1.11.0",
 		"uuid": "14.0.0",
-		"zod": "3.24.2"
+		"zod": "3.25.76"
 	},
 	"peerDependencies": {
 		"@supabase/supabase-js": ">=2",

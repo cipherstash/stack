@@ -42,13 +42,13 @@
 	"dependencies": {
 		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/migrate": "workspace:*",
-		"@clack/prompts": "1.3.0",
+		"@clack/prompts": "1.4.0",
 		"dotenv": "17.4.2",
 		"jiti": "2.7.0",
 		"pg": "8.20.0",
 		"picocolors": "^1.1.1",
-		"posthog-node": "^5.33.5",
-		"zod": "^4.3.6"
+		"posthog-node": "^5.34.1",
+		"zod": "^3.25.76"
 	},
 	"peerDependencies": {
 		"@cipherstash/stack": ">=0.6.0"
