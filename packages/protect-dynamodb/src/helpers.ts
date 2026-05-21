@@ -186,7 +186,7 @@ export function toItemWithEqlPayloads(
       // Worth noting, that encryptConfig.columns[columnName] will be undefined if isNested is true.
       if (
         !isNested &&
-        encryptConfig.columns[columnName].cast_as === 'jsonb' &&
+        encryptConfig.columns[columnName].cast_as === 'json' &&
         encryptConfig.columns[columnName].indexes.ste_vec
       ) {
         return {
