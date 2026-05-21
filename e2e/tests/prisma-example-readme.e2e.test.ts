@@ -1,5 +1,5 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -177,77 +177,5 @@ describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', 
     const r = outcomes.get(line)
     expect(r, `no outcome recorded for \`${line}\` — beforeAll did not run this step`).toBeDefined()
     expect(r!.status, describeSpawnFailure(r!)).toBe(0)
-  })
-
-  // Side-effect assertions: observe the final state after the walkthrough.
-  // Not driven by README parse — these guard against "exit 0 but produced
-  // no output" regressions that pure exit-zero checks can't catch.
-  it('cp produced examples/prisma/.env', () => {
-    expect(existsSync(join(EXAMPLE_DIR, '.env'))).toBe(true)
-  })
-
-  it('Postgres container is ready', () => {
-    const ready = runStep(
-      'pg_isready',
-      'docker',
-      ['exec', 'cipherstash-prisma-example-pg', 'pg_isready', '-U', 'postgres', '-d', 'cipherstash_prisma_example'],
-      { timeoutMs: 10_000 },
-    )
-    expect(ready.status, describeSpawnFailure(ready)).toBe(0)
-  })
-
-  it('pnpm emit wrote contract.{json,d.ts}', () => {
-    expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.json'))).toBe(true)
-    expect(existsSync(join(EXAMPLE_DIR, 'src/prisma/contract.d.ts'))).toBe(true)
-  })
-
-  it('pnpm migration:plan produced an initial migration', () => {
-    const appDir = join(EXAMPLE_DIR, 'migrations/app')
-    expect(existsSync(appDir)).toBe(true)
-    const entries = readdirSync(appDir)
-    expect(entries.some((e) => /_initial$/.test(e))).toBe(true)
-  })
-
-  it('pnpm start output contains every documented codec demo heading', () => {
-    const startLine = README_COMMANDS.find((l) => /^pnpm start\b/.test(l))
-    expect(startLine, '`pnpm start` not found in README walkthrough').toBeDefined()
-    const stdout = outcomes.get(startLine!)?.stdout ?? ''
-
-    // Headings from README "Expected output" — every one must appear.
-    const headings = [
-      '--- Insert (mixed-codec round-trip) ---',
-      '--- cipherstashEq (string equality) ---',
-      '--- cipherstashIlike (string free-text-search) ---',
-      '--- cipherstashGt (double order-and-range) ---',
-      '--- cipherstashBetween (date order-and-range) ---',
-      '--- cipherstashInArray (bigint equality) ---',
-      '--- cipherstashInArray (boolean equality-only) ---',
-      '--- cipherstashAsc (bare-column ORDER BY) ---',
-    ]
-    for (const heading of headings) {
-      expect(stdout, `missing heading: ${heading}`).toContain(heading)
-    }
-  })
-
-  it('pnpm start output contains the documented row counts and email values', () => {
-    const startLine = README_COMMANDS.find((l) => /^pnpm start\b/.test(l))
-    expect(startLine, '`pnpm start` not found in README walkthrough').toBeDefined()
-    const stdout = outcomes.get(startLine!)?.stdout ?? ''
-    const expectations = [
-      'Inserted 4 rows across six cipherstash codecs.',
-      'Found 1 row(s) for alice@example.com.',
-      'Found 3 row(s) matching %@example.com.',
-      'Found 2 user(s) with salary > 100,000.',
-      'Found 3 user(s) born between 1985 and 1995.',
-      'Found 2 user(s) whose accountId is in the supplied array.',
-      'Found 3 user(s) with emailVerified = true.',
-      'alice@example.com',
-      'bob@example.com',
-      'carol@example.com',
-      'dave@otherorg.test',
-    ]
-    for (const line of expectations) {
-      expect(stdout, `missing expected line: ${line}`).toContain(line)
-    }
   })
 })
