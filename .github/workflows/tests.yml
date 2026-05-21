@@ -15,11 +15,11 @@ jobs:
 
     # Postgres + EQL for the integration tests. Official EQL image —
     # PostgreSQL 17 with EQL pre-installed via /docker-entrypoint-initdb.d.
-    # Pinned to eql-2.2.1 to match the EQL payload format the code emits
+    # Pinned to eql-2.3.1 to match the EQL payload format the code emits
     # (protect-ffi 0.21.x); bump in lockstep with the protect-ffi upgrade.
     services:
       postgres:
-        image: ghcr.io/cipherstash/postgres-eql:17-2.2.1
+        image: ghcr.io/cipherstash/postgres-eql:17-2.3.1
         env:
           POSTGRES_USER: cipherstash
           POSTGRES_PASSWORD: password
