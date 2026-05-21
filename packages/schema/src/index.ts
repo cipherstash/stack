@@ -89,8 +89,12 @@ const tableSchema = z.record(columnSchema).default({})
 
 const tablesSchema = z.record(tableSchema).default({})
 
+// `v` is locked to `1` because protect-ffi `0.22.0+` rejects any other value at
+// `newClient` with `UNSUPPORTED_CONFIG_VERSION`. Enforcing it here means a bad
+// hand-rolled config fails at zod-validation time instead of crossing into the
+// native module first.
 export const encryptConfigSchema = z.object({
-  v: z.number(),
+  v: z.literal(1),
   tables: tablesSchema,
 })
 

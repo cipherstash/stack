@@ -285,10 +285,10 @@ describe('Bulk encryption and decryption', () => {
     expect(encryptedData.data[2]).toHaveProperty('data')
     expect(encryptedData.data[2].data).toHaveProperty('c')
 
-    // Forward compatibility: new encryptions should NOT have k field
-    expect(encryptedData.data[0].data).toHaveProperty('k')
-    expect(encryptedData.data[1].data).toHaveProperty('k')
-    expect(encryptedData.data[2].data).toHaveProperty('k')
+    // EQL v2.3: scalar encryptions carry the `k: 'ct'` discriminator
+    expect(encryptedData.data[0].data).toHaveProperty('k', 'ct')
+    expect(encryptedData.data[1].data).toHaveProperty('k', 'ct')
+    expect(encryptedData.data[2].data).toHaveProperty('k', 'ct')
 
     // Verify all encrypted values are different
     const getCiphertext = (data: { c?: unknown } | null | undefined) => data?.c

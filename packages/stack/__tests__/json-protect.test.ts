@@ -58,7 +58,7 @@ describe('JSON encryption and decryption', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -110,7 +110,7 @@ describe('JSON encryption and decryption', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -132,7 +132,7 @@ describe('JSON encryption and decryption', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -159,7 +159,7 @@ describe('JSON encryption and decryption', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -197,9 +197,9 @@ describe('JSON model encryption and decryption', () => {
     }
 
     // Verify encrypted fields
-    expect(encryptedModel.data.email).toHaveProperty('k')
-    expect(encryptedModel.data.address).toHaveProperty('k')
-    expect(encryptedModel.data.json).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
+    expect(encryptedModel.data.address).toHaveProperty('k', 'ct')
+    expect(encryptedModel.data.json).toHaveProperty('k', 'ct')
 
     // Verify non-encrypted fields remain unchanged
     expect(encryptedModel.data.id).toBe('1')
@@ -237,8 +237,8 @@ describe('JSON model encryption and decryption', () => {
     }
 
     // Verify encrypted fields
-    expect(encryptedModel.data.email).toHaveProperty('k')
-    expect(encryptedModel.data.address).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
+    expect(encryptedModel.data.address).toHaveProperty('k', 'ct')
     expect(encryptedModel.data.json).toBeNull()
 
     const decryptedResult = await protectClient.decryptModel<User>(
@@ -272,8 +272,8 @@ describe('JSON model encryption and decryption', () => {
     }
 
     // Verify encrypted fields
-    expect(encryptedModel.data.email).toHaveProperty('k')
-    expect(encryptedModel.data.address).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
+    expect(encryptedModel.data.address).toHaveProperty('k', 'ct')
     expect(encryptedModel.data.json).toBeUndefined()
 
     const decryptedResult = await protectClient.decryptModel<User>(
@@ -309,13 +309,13 @@ describe('JSON bulk encryption and decryption', () => {
     expect(encryptedData.data).toHaveLength(3)
     expect(encryptedData.data[0]).toHaveProperty('id', 'user1')
     expect(encryptedData.data[0]).toHaveProperty('data')
-    expect(encryptedData.data[0].data).toHaveProperty('k')
+    expect(encryptedData.data[0].data).toHaveProperty('k', 'ct')
     expect(encryptedData.data[1]).toHaveProperty('id', 'user2')
     expect(encryptedData.data[1]).toHaveProperty('data')
-    expect(encryptedData.data[1].data).toHaveProperty('k')
+    expect(encryptedData.data[1].data).toHaveProperty('k', 'ct')
     expect(encryptedData.data[2]).toHaveProperty('id', 'user3')
     expect(encryptedData.data[2]).toHaveProperty('data')
-    expect(encryptedData.data[2].data).toHaveProperty('k')
+    expect(encryptedData.data[2].data).toHaveProperty('k', 'ct')
 
     // Now decrypt the data
     const decryptedData = await protectClient.bulkDecrypt(encryptedData.data)
@@ -379,12 +379,12 @@ describe('JSON bulk encryption and decryption', () => {
     }
 
     // Verify encrypted fields for each model
-    expect(encryptedModels.data[0].email).toHaveProperty('k')
-    expect(encryptedModels.data[0].address).toHaveProperty('k')
-    expect(encryptedModels.data[0].json).toHaveProperty('k')
-    expect(encryptedModels.data[1].email).toHaveProperty('k')
-    expect(encryptedModels.data[1].address).toHaveProperty('k')
-    expect(encryptedModels.data[1].json).toHaveProperty('k')
+    expect(encryptedModels.data[0].email).toHaveProperty('k', 'ct')
+    expect(encryptedModels.data[0].address).toHaveProperty('k', 'ct')
+    expect(encryptedModels.data[0].json).toHaveProperty('k', 'ct')
+    expect(encryptedModels.data[1].email).toHaveProperty('k', 'ct')
+    expect(encryptedModels.data[1].address).toHaveProperty('k', 'ct')
+    expect(encryptedModels.data[1].json).toHaveProperty('k', 'ct')
 
     // Verify non-encrypted fields remain unchanged
     expect(encryptedModels.data[0].id).toBe('1')
@@ -443,7 +443,7 @@ describe('JSON encryption with lock context', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient
       .decrypt(ciphertext.data)
@@ -489,8 +489,8 @@ describe('JSON encryption with lock context', () => {
     }
 
     // Verify encrypted fields
-    expect(encryptedModel.data.email).toHaveProperty('k')
-    expect(encryptedModel.data.json).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
+    expect(encryptedModel.data.json).toHaveProperty('k', 'ct')
 
     const decryptedResult = await protectClient
       .decryptModel(encryptedModel.data)
@@ -538,10 +538,10 @@ describe('JSON encryption with lock context', () => {
     expect(encryptedData.data).toHaveLength(2)
     expect(encryptedData.data[0]).toHaveProperty('id', 'user1')
     expect(encryptedData.data[0]).toHaveProperty('data')
-    expect(encryptedData.data[0].data).toHaveProperty('k')
+    expect(encryptedData.data[0].data).toHaveProperty('k', 'ct')
     expect(encryptedData.data[1]).toHaveProperty('id', 'user2')
     expect(encryptedData.data[1]).toHaveProperty('data')
-    expect(encryptedData.data[1].data).toHaveProperty('k')
+    expect(encryptedData.data[1].data).toHaveProperty('k', 'ct')
 
     // Decrypt with lock context
     const decryptedData = await protectClient
@@ -602,8 +602,8 @@ describe('JSON nested object encryption', () => {
     }
 
     // Verify encrypted fields
-    expect(encryptedModel.data.email).toHaveProperty('k')
-    expect(encryptedModel.data.metadata?.profile).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
+    expect(encryptedModel.data.metadata?.profile).toHaveProperty('k', 'ct')
     expect(encryptedModel.data.metadata?.settings?.preferences).toHaveProperty(
       'c',
     )
@@ -646,7 +646,7 @@ describe('JSON nested object encryption', () => {
     }
 
     // Verify null fields are preserved
-    expect(encryptedModel.data.email).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
     expect(encryptedModel.data.metadata?.profile).toBeNull()
     expect(encryptedModel.data.metadata?.settings?.preferences).toBeNull()
 
@@ -685,7 +685,7 @@ describe('JSON nested object encryption', () => {
     }
 
     // Verify undefined fields are preserved
-    expect(encryptedModel.data.email).toHaveProperty('k')
+    expect(encryptedModel.data.email).toHaveProperty('k', 'ct')
     expect(encryptedModel.data.metadata?.profile).toBeUndefined()
     expect(encryptedModel.data.metadata?.settings?.preferences).toBeUndefined()
 
@@ -731,7 +731,7 @@ describe('JSON edge cases and error handling', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -779,7 +779,7 @@ describe('JSON edge cases and error handling', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -880,7 +880,7 @@ describe('JSON advanced scenarios', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -907,7 +907,7 @@ describe('JSON advanced scenarios', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -942,7 +942,7 @@ describe('JSON advanced scenarios', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -977,7 +977,7 @@ describe('JSON advanced scenarios', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -1013,7 +1013,7 @@ describe('JSON advanced scenarios', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -1072,7 +1072,7 @@ describe('JSON error handling and edge cases', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -1101,7 +1101,7 @@ describe('JSON error handling and edge cases', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
@@ -1138,7 +1138,7 @@ describe('JSON error handling and edge cases', () => {
     }
 
     // Verify encrypted field
-    expect(ciphertext.data).toHaveProperty('k')
+    expect(ciphertext.data).toHaveProperty('k', 'ct')
 
     const plaintext = await protectClient.decrypt(ciphertext.data)
 
