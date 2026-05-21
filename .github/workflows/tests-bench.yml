@@ -1,4 +1,4 @@
-name: "Test JS"
+name: "Test Benchmark JS"
 
 on:
   push:
