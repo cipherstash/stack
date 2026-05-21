@@ -13,20 +13,19 @@ import {
 
 import { createClient } from '@supabase/supabase-js'
 
-if (!process.env.SUPABASE_URL) {
-  throw new Error('Missing env.SUPABASE_URL')
-}
-if (!process.env.SUPABASE_ANON_KEY) {
-  throw new Error('Missing env.SUPABASE_ANON_KEY')
-}
-if (!process.env.DATABASE_URL) {
-  throw new Error('Missing env.DATABASE_URL — needed for fixture setup DDL')
-}
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY,
+// supabase.test.ts needs a live Supabase project, so the suite is skipped
+// when the Supabase environment is not configured (e.g. in CI, pending a
+// containerised Supabase setup). It runs locally when SUPABASE_URL,
+// SUPABASE_ANON_KEY, and DATABASE_URL are all set.
+const SUPABASE_ENABLED = Boolean(
+  process.env.SUPABASE_URL &&
+    process.env.SUPABASE_ANON_KEY &&
+    process.env.DATABASE_URL,
 )
+
+const supabase = SUPABASE_ENABLED
+  ? createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!)
+  : (undefined as unknown as ReturnType<typeof createClient>)
 
 const table = csTable('protect-ci', {
   encrypted: csColumn('encrypted').freeTextSearch().equality(),
@@ -103,7 +102,7 @@ afterAll(async () => {
   }
 })
 
-describe('supabase', () => {
+describe.skipIf(!SUPABASE_ENABLED)('supabase', () => {
   it('should insert and select encrypted data', async () => {
     const protectClient = await protect({ schemas: [table] })
 

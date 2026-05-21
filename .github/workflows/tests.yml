@@ -13,6 +13,25 @@ jobs:
     name: Run Tests
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
+    # Postgres + EQL for the integration tests. Official EQL image —
+    # PostgreSQL 17 with EQL pre-installed via /docker-entrypoint-initdb.d.
+    # Pinned to eql-2.2.1 to match the EQL payload format the code emits
+    # (protect-ffi 0.21.x); bump in lockstep with the protect-ffi upgrade.
+    services:
+      postgres:
+        image: ghcr.io/cipherstash/postgres-eql:17-2.2.1
+        env:
+          POSTGRES_USER: cipherstash
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: cipherstash
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cipherstash -d cipherstash"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -50,9 +69,7 @@ jobs:
           echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> ./packages/protect/.env
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> ./packages/protect/.env
-          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> ./packages/protect/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
 
       - name: Create .env file in ./packages/stack/
         run: |
@@ -61,9 +78,7 @@ jobs:
           echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> ./packages/stack/.env
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> ./packages/stack/.env
-          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> ./packages/stack/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
 
       - name: Create .env file in ./packages/protect-dynamodb/
         run: |
@@ -80,7 +95,7 @@ jobs:
           echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
-          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> ./packages/drizzle/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env
 
       # Run TurboRepo tests
       - name: Run tests
