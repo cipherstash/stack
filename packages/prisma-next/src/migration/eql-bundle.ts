@@ -2,7 +2,7 @@
  * Vendored CipherStash EQL bundle SQL.
  *
  * The CipherStash team ships the bundle as a single Postgres script
- * (~5,750 lines, currently `eql-2.2.1`) that creates the `eql_v2`
+ * (~7,650 lines, currently `eql-2.3.1`) that creates the `eql_v2`
  * schema, the `eql_v2_*` composite types / domains, the
  * `eql_v2_configuration` table, plus roughly 169 functions, 46
  * operators, 4 casts, and 9 operator classes / families. CipherStash

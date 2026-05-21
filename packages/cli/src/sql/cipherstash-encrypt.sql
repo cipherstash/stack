@@ -3843,7 +3843,7 @@ CREATE FUNCTION eql_v2.version()
   RETURNS text
   IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT 'eql-2.3.0';
+  SELECT 'eql-2.3.1';
 $$ LANGUAGE SQL;
 
 
@@ -6460,12 +6460,21 @@ $$ LANGUAGE plpgsql;
 --! @brief Validate ciphertext field in encrypted payload
 --! @internal
 --!
---! Checks that the encrypted payload contains the required 'c' (ciphertext) field
---! which stores the encrypted data.
+--! Checks that the encrypted payload carries the required root-level ciphertext
+--! envelope. The v2.3 payload schema admits two mutually exclusive top-level
+--! shapes (`docs/reference/schema/eql-payload-v2.3.schema.json`):
+--!
+--!   - `EncryptedPayload` (scalar) — carries `c` at the root.
+--!   - `SteVecPayload` (jsonb / structured) — carries `sv` at the root; the
+--!     root document ciphertext lives inside `sv[0].c`, so `c` is absent at
+--!     the root.
+--!
+--! Either shape satisfies this check. Per-element ciphertext validity on
+--! `sv` entries is enforced separately by the `eql_v2.ste_vec_entry` DOMAIN.
 --!
 --! @param jsonb Encrypted payload to validate
---! @return Boolean True if 'c' field is present
---! @throws Exception if 'c' field is missing
+--! @return Boolean True if either 'c' or 'sv' is present at the root
+--! @throws Exception if neither 'c' nor 'sv' is present
 --!
 --! @note Used in CHECK constraints to ensure payload structure
 --! @see eql_v2.check_encrypted
@@ -6474,10 +6483,10 @@ CREATE FUNCTION eql_v2._encrypted_check_c(val jsonb)
   SET search_path = pg_catalog, extensions, public
 AS $$
 	BEGIN
-    IF (val ? 'c') THEN
+    IF (val ? 'c') OR (val ? 'sv') THEN
       RETURN true;
     END IF;
-    RAISE 'Encrypted column missing ciphertext (c) field: %', val;
+    RAISE 'Encrypted column missing ciphertext (c) or ste_vec (sv) field: %', val;
   END;
 $$ LANGUAGE plpgsql;
 
