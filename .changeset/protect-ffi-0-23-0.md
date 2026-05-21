@@ -1,7 +1,7 @@
 ---
-"@cipherstash/protect": minor
+"@cipherstash/protect": major
 "@cipherstash/stack": minor
-"@cipherstash/schema": minor
+"@cipherstash/schema": major
 "@cipherstash/protect-dynamodb": patch
 "@cipherstash/prisma-next": minor
 "stash": minor
