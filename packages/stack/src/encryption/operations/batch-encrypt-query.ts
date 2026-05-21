@@ -9,7 +9,10 @@ import {
   type QueryPayload,
   encryptQueryBulk as ffiEncryptQueryBulk,
 } from '@cipherstash/protect-ffi'
-import type { Encrypted as CipherStashEncrypted } from '@cipherstash/protect-ffi'
+import type {
+  Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
+} from '@cipherstash/protect-ffi'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
   assertValidNumericValue,
@@ -58,7 +61,7 @@ function buildQueryPayload(
  */
 function assembleResults(
   terms: readonly ScalarQueryTerm[],
-  encryptedValues: CipherStashEncrypted[],
+  encryptedValues: (CipherStashEncrypted | CipherStashEncryptedQuery)[],
 ): EncryptedQueryResult[] {
   return terms.map((term, i) =>
     formatEncryptedResult(encryptedValues[i], term.returnType),

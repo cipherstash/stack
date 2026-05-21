@@ -53,7 +53,10 @@ export class SearchTermsOperation extends DynamoDBOperation<string[]> {
             )
           }
 
-          if (term?.k !== 'ct' || !term.hm) {
+          // DynamoDB lookups go through equality queries → the FFI returns an
+          // EncryptedScalarQuery carrying `hm`. Anything else (scalar storage,
+          // a `bf`/`ob` query, or a SteVec payload) is a misconfiguration.
+          if (term?.k !== 'ct' || !('hm' in term) || typeof term.hm !== 'string') {
             throw new Error('expected encrypted search term to have an HMAC')
           }
 

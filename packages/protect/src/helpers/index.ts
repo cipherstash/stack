@@ -1,5 +1,6 @@
 import type {
   Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
   KeysetIdentifier as KeysetIdentifierFfi,
 } from '@cipherstash/protect-ffi'
 import type {
@@ -7,6 +8,14 @@ import type {
   EncryptedQueryResult,
   KeysetIdentifier,
 } from '../types'
+
+/**
+ * The shape `encryptQuery` / `encryptQueryBulk` can return: a full storage
+ * payload (`Encrypted`, returned for `ste_vec_term` containment queries) or a
+ * query-only payload with no ciphertext (`EncryptedQuery`, returned for
+ * scalar `unique`/`match`/`ore` lookups and `ste_vec_selector` path queries).
+ */
+type EncryptedQueryTerm = CipherStashEncrypted | CipherStashEncryptedQuery
 
 export type EncryptedPgComposite = {
   data: Encrypted
@@ -43,7 +52,7 @@ export function encryptedToPgComposite(obj: Encrypted): EncryptedPgComposite {
  * await supabase.from('table').select().eq('column', searchTerm)
  * ```
  */
-export function encryptedToCompositeLiteral(obj: CipherStashEncrypted): string {
+export function encryptedToCompositeLiteral(obj: EncryptedQueryTerm): string {
   if (obj === null) {
     throw new Error('encryptedToCompositeLiteral: obj cannot be null')
   }
@@ -71,7 +80,7 @@ export function encryptedToCompositeLiteral(obj: CipherStashEncrypted): string {
  * ```
  */
 export function encryptedToEscapedCompositeLiteral(
-  obj: CipherStashEncrypted,
+  obj: EncryptedQueryTerm,
 ): string {
   if (obj === null) {
     throw new Error('encryptedToEscapedCompositeLiteral: obj cannot be null')
@@ -80,7 +89,7 @@ export function encryptedToEscapedCompositeLiteral(
 }
 
 export function formatEncryptedResult(
-  encrypted: CipherStashEncrypted,
+  encrypted: EncryptedQueryTerm,
   returnType?: string,
 ): EncryptedQueryResult {
   if (returnType === 'composite-literal') {

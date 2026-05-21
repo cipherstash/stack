@@ -1,5 +1,6 @@
 import type {
   Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
   JsPlaintext,
   QueryOpName,
   newClient,
@@ -17,9 +18,21 @@ import type {
 export type Client = Awaited<ReturnType<typeof newClient>> | undefined
 
 /**
- * Type to represent an encrypted payload
+ * Type to represent an encrypted payload stored in the database. Always carries
+ * a ciphertext — scalar payloads at the root (`c`), SteVec payloads at
+ * `sv[0].c`. For search-term payloads returned by `encryptQuery`, see
+ * {@link EncryptedQuery}.
  */
 export type Encrypted = CipherStashEncrypted | null
+
+/**
+ * Type to represent an encrypted query term (search needle) returned by
+ * `encryptQuery` / `encryptQueryBulk` for scalar (`unique` / `match` / `ore`)
+ * lookups and `ste_vec_selector` JSON path queries. Carries no ciphertext — it
+ * is matched against stored values, never decrypted. JSON containment queries
+ * (`ste_vec_term`) return a storage-shaped {@link Encrypted} payload instead.
+ */
+export type EncryptedQuery = CipherStashEncryptedQuery | null
 
 /**
  * Represents an encrypted payload in the database
@@ -52,18 +65,21 @@ export type KeysetIdentifier =
     }
 
 /**
- * The return type of the search term based on the return type specified in the `SearchTerm` type
- * If the return type is `eql`, the return type is `Encrypted`
- * If the return type is `composite-literal`, the return type is `string` where the value is a composite literal
- * If the return type is `escaped-composite-literal`, the return type is `string` where the value is an escaped composite literal
+ * The return type of the search term based on the return type specified in the `SearchTerm` type.
+ * - `eql` → an `Encrypted` storage payload (for `ste_vec_term` containment) or an
+ *   {@link EncryptedQuery} term (for scalar lookups and `ste_vec_selector` queries).
+ * - `composite-literal` → `string` where the value is a composite literal.
+ * - `escaped-composite-literal` → `string` where the value is an escaped composite literal.
  */
-export type EncryptedSearchTerm = Encrypted | string
+export type EncryptedSearchTerm = Encrypted | EncryptedQuery | string
 
 /**
  * Result type for encryptQuery batch operations.
- * Can be Encrypted (default), string (for composite-literal formats), or null.
+ * Can be an `Encrypted` storage payload (e.g. for `ste_vec_term`), an
+ * {@link EncryptedQuery} term (for scalar lookups and `ste_vec_selector`),
+ * a `string` (for composite-literal formats), or `null` (for null inputs).
  */
-export type EncryptedQueryResult = Encrypted | string | null
+export type EncryptedQueryResult = Encrypted | EncryptedQuery | string | null
 
 /**
  * Represents a payload to be encrypted using the `encrypt` function
