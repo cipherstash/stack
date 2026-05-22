@@ -1,6 +1,7 @@
 import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedScalarQuery,
   KeysetIdentifier as KeysetIdentifierFfi,
 } from '@cipherstash/protect-ffi'
 import type {
@@ -156,6 +157,42 @@ export function isEncryptedPayload(value: unknown): value is Encrypted {
   }
 
   return false
+}
+
+/**
+ * Type guard narrowing a value to {@link EncryptedScalarQuery} — the scalar
+ * query term (`unique` / `match` / `ore` lookup) returned by `encryptQuery` /
+ * `encryptQueryBulk`. Unlike a storage payload it carries no ciphertext (`c`);
+ * it carries exactly one lookup term: `hm`, `bf`, or `ob`.
+ *
+ * Use this to discriminate a scalar query term from a storage payload
+ * (`EncryptedScalar`/`EncryptedSteVec`) or a `ste_vec_selector` query.
+ */
+export function isEncryptedScalarQuery(
+  value: unknown,
+): value is EncryptedScalarQuery {
+  if (value === null || typeof value !== 'object') return false
+
+  const obj = value as Record<string, unknown>
+
+  // `k: 'ct'` is the scalar discriminant; a query term never carries the
+  // ciphertext (`c`) that every storage payload has.
+  if (obj.k !== 'ct' || 'c' in obj) return false
+  if (
+    typeof obj.v !== 'number' ||
+    typeof obj.i !== 'object' ||
+    obj.i === null
+  ) {
+    return false
+  }
+
+  // Exactly one lookup term: `hm` (unique), `bf` (match), or `ob` (ore).
+  const lookupTerms = [
+    typeof obj.hm === 'string',
+    Array.isArray(obj.bf),
+    Array.isArray(obj.ob),
+  ].filter(Boolean)
+  return lookupTerms.length === 1
 }
 
 export {

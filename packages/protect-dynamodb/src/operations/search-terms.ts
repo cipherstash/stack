@@ -1,5 +1,9 @@
 import { type Result, withResult } from '@byteslice/result'
-import type { ProtectClient, SearchTerm } from '@cipherstash/protect'
+import {
+  type ProtectClient,
+  type SearchTerm,
+  isEncryptedScalarQuery,
+} from '@cipherstash/protect'
 import { handleError } from '../helpers'
 import type { ProtectDynamoDBError } from '../types'
 import {
@@ -56,7 +60,7 @@ export class SearchTermsOperation extends DynamoDBOperation<string[]> {
           // DynamoDB lookups go through equality queries → the FFI returns an
           // EncryptedScalarQuery carrying `hm`. Anything else (scalar storage,
           // a `bf`/`ob` query, or a SteVec payload) is a misconfiguration.
-          if (term?.k !== 'ct' || !('hm' in term) || typeof term.hm !== 'string') {
+          if (!isEncryptedScalarQuery(term) || !('hm' in term)) {
             throw new Error('expected encrypted search term to have an HMAC')
           }
 
