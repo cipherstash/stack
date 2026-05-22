@@ -65,7 +65,7 @@ where
         struct VecVisitor<T>(std::marker::PhantomData<T>);
         impl<'c, T> DecipherVisitor<'c> for VecVisitor<T>
         where
-            T: Decrypt<'c> + Send + 'c,
+            T: Decrypt<'c> + 'c,
         {
             type Value = Vec<T>;
             fn visit_seq<A: SeqAccess<'c>>(self, mut seq: A) -> Result<Self::Value, Unspecified> {
@@ -88,7 +88,7 @@ where
         struct HashMapVisitor<T>(std::marker::PhantomData<T>);
         impl<'c, T> DecipherVisitor<'c> for HashMapVisitor<T>
         where
-            T: Decrypt<'c> + Send + 'c,
+            T: Decrypt<'c> + 'c,
         {
             type Value = HashMap<String, T>;
             fn visit_map<A: MapAccess<'c>>(self, mut map: A) -> Result<Self::Value, Unspecified> {

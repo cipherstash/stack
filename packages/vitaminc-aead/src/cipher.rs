@@ -106,6 +106,15 @@ pub trait SeqCipher: Sized {
 /// Obtained from [`Cipher::encrypt_map`]. Keys are not encrypted; values are.
 /// The expected call order is key → value → key → value → … → `end`, or use
 /// the [`encrypt_entry`](MapCipher::encrypt_entry) convenience method.
+///
+/// # Static keys only
+///
+/// [`encrypt_key`](MapCipher::encrypt_key) takes a `&'static str`, so maps can
+/// only be *encrypted* when their keys are known at compile time. A
+/// `HashMap<String, T>` with runtime-derived keys can be *decrypted* (the
+/// [`Decrypt`](crate::Decrypt) impl yields `HashMap<String, T>`) but cannot be
+/// encrypted directly — only `HashMap<&'static str, T>` implements
+/// [`Encrypt`](crate::Encrypt).
 pub trait MapCipher: Sized {
     /// The final encrypted output produced by [`end`](MapCipher::end).
     type Ok;
@@ -114,6 +123,12 @@ pub trait MapCipher: Sized {
 
     /// Record the next key. Keys are stored in the clear — only values are
     /// encrypted.
+    ///
+    /// Must be followed by exactly one [`encrypt_value`](MapCipher::encrypt_value)
+    /// before the next `encrypt_key` or [`end`](MapCipher::end). Calling
+    /// `encrypt_key` twice with no intervening `encrypt_value` is a trait-contract
+    /// violation; implementations should return an error rather than silently
+    /// dropping the first key.
     fn encrypt_key(self, key: &'static str) -> Result<Self, Self::Error>;
 
     /// Encrypt the value associated with the most recently supplied key.

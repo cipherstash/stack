@@ -130,6 +130,8 @@ let plaintext: String = cipher.decrypt_with_aad(ciphertext, "context data")?;
 
 `String`, `Vec<u8>`, `[u8; N]`, `u32`, `Vec<T: Decrypt>`, `HashMap<String, T: Decrypt>`, and `Protected<T: Decrypt>` all implement `Decrypt` out of the box.
 
+> **Note on maps:** `HashMap` decryption yields `HashMap<String, T>`, but map *encryption* requires statically known keys — only `HashMap<&'static str, T>` implements `Encrypt`. Map keys are passed to [`MapCipher::encrypt_key`], which takes a `&'static str`. A `HashMap<String, T>` with runtime-derived keys can therefore be decrypted but not encrypted directly.
+
 ### Additional Authenticated Data (AAD)
 
 Many types can be used as AAD through the [`IntoAad`] trait:

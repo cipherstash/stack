@@ -8,7 +8,7 @@ use crate::Unspecified;
 /// allows implementations to wrap the output in different containers:
 ///
 /// - **Sync**: `type Ok<T> = Result<T, Unspecified>`
-/// - **Async**: `type Ok<T> = BoxFuture<'c, Result<T, Error>>`
+/// - **Async**: `type Ok<T> = BoxFuture<'c, Result<T, Unspecified>>`
 ///
 /// Because `Ok<T>` is a GAT, code that holds a `D::Ok<T>` cannot generically transform the
 /// inner `T` (e.g., wrapping it in `Box`, `Protected`, or another newtype). The [`map_ok`]
@@ -19,12 +19,13 @@ use crate::Unspecified;
 pub trait Decipher<'c>: Sized {
     /// The output container produced by a decrypt call. Implementations may
     /// wrap the result in `Result<_, _>` (sync) or `BoxFuture<_, _>` (async).
+    ///
+    /// The failure mode is carried inside this container (e.g. the `Err`
+    /// variant of a `Result`), so there is no separate associated error type —
+    /// failures are always reported as [`Unspecified`].
     type Ok<T>
     where
         T: Send + 'c;
-    /// The error type returned on decryption failure. Implementations should
-    /// keep this opaque — see [`Unspecified`].
-    type Error;
 
     /// Transform the inner value of an [`Ok`](Decipher::Ok) container.
     ///
