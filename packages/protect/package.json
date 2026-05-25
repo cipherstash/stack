@@ -68,14 +68,14 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@byteslice/result": "^0.2.0",
+		"@byteslice/result": "^0.3.0",
 		"@cipherstash/protect-ffi": "0.21.4",
 		"@cipherstash/schema": "workspace:*",
-		"@stricli/core": "^1.2.6",
+		"@stricli/core": "^1.2.7",
 		"dotenv": "17.4.2",
-		"zod": "^3.24.2"
+		"zod": "^3.25.76"
 	},
 	"optionalDependencies": {
-		"@rollup/rollup-linux-x64-gnu": "4.60.3"
+		"@rollup/rollup-linux-x64-gnu": "4.60.4"
 	}
 }
