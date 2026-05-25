@@ -37,6 +37,9 @@ updates:
     ignore:
       # Catalog-managed; bump manually via pnpm-workspace.yaml + changeset.
       - dependency-name: "@cipherstash/auth"
+      # 0.x bumps ship breaking type changes (e.g. 0.2 → 0.3 tightened the
+      # FailureOption constraint). Review and apply manually.
+      - dependency-name: "@byteslice/result"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"
         update-types:

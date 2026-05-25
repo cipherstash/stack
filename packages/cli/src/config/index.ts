@@ -43,7 +43,7 @@ const DEFAULT_ENCRYPT_CLIENT_PATH = './src/encryption/index.ts'
 
 const stashConfigSchema = z.object({
   databaseUrl: z
-    .string({ error: 'databaseUrl is required' })
+    .string({ required_error: 'databaseUrl is required' })
     .min(1, 'databaseUrl must not be empty'),
   client: z.string().default(DEFAULT_ENCRYPT_CLIENT_PATH),
 })
