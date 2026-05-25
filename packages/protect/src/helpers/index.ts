@@ -15,6 +15,11 @@ import type {
  * payload (`Encrypted`, returned for `ste_vec_term` containment queries) or a
  * query-only payload with no ciphertext (`EncryptedQuery`, returned for
  * scalar `unique`/`match`/`ore` lookups and `ste_vec_selector` path queries).
+ *
+ * TODO: duplicated in `@cipherstash/stack` — see
+ * `packages/stack/src/encryption/helpers/index.ts`. Both copies should be
+ * removed once `@cipherstash/protect-ffi` exports a named alias for the
+ * `encryptQuery` return type (https://github.com/cipherstash/stack/pull/473).
  */
 type EncryptedQueryTerm = CipherStashEncrypted | CipherStashEncryptedQuery
 
