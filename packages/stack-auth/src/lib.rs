@@ -89,8 +89,8 @@ pub use stack_profile::DeviceIdentity;
 pub mod auth {
     pub use crate::{
         AccessKey, AccessKeyStrategy, AccessKeyStrategyBuilder, AuthError, AuthStrategy,
-        AuthStrategyFn, AutoStrategy, AutoStrategyBuilder, InvalidAccessKey, OAuthStrategy,
-        OAuthStrategyBuilder, SecretToken, ServiceToken,
+        AuthStrategyBounds, AuthStrategyFn, AutoStrategy, AutoStrategyBuilder, InvalidAccessKey,
+        OAuthStrategy, OAuthStrategyBuilder, SecretToken, ServiceToken,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -210,6 +210,35 @@ pub trait AuthStrategy {
     /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     fn get_token(self) -> impl Future<Output = Result<ServiceToken, AuthError>>;
 }
+
+/// Marker trait alias for the bounds an owned `AuthStrategy`-providing
+/// credential type `C` must satisfy when held inside a long-lived client
+/// (e.g. `cipherstash_client::ZeroKMS<C>` shared across requests).
+///
+/// - On native targets `C` must be `Send + Sync + 'static` so the client
+///   can be carried across tokio task / `reqwest` worker boundaries.
+/// - On `wasm32` the runtime is single-threaded and the typical credential
+///   backing (a JS callable held by a `JsValue`) cannot cross threads
+///   even in principle, so the `Send + Sync` requirement is dropped and
+///   only `'static` remains.
+///
+/// Implemented via a blanket impl — any type satisfying the per-target
+/// bounds automatically implements `AuthStrategyBounds`. Callers don't
+/// implement it directly.
+///
+/// Mirrors the `cfg`-split already in place on [`AuthStrategy`] itself,
+/// one layer up. Wasm consumers (e.g. `@cipherstash/protect-ffi` on
+/// `wasm32-unknown-unknown`) can hold a `!Send + !Sync` credential type
+/// without declaring `unsafe impl Send` / `Sync`.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait AuthStrategyBounds: Send + Sync + 'static {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync + 'static> AuthStrategyBounds for T {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait AuthStrategyBounds: 'static {}
+#[cfg(target_arch = "wasm32")]
+impl<T: 'static> AuthStrategyBounds for T {}
 
 /// A sensitive token string that is zeroized on drop and hidden from debug output.
 ///
