@@ -12,7 +12,7 @@ if (!process.env.DATABASE_URL) {
 // Disable prepared statements — required for pooled connections (PgBouncer in transaction mode)
 const sql = postgres(process.env.DATABASE_URL, { prepare: false })
 
-const table = encryptedTable('protect-ci-jsonb', {
+const table = encryptedTable('protect-ci-jsonb-stack', {
   metadata: encryptedColumn('metadata').searchableJson(),
 })
 
@@ -32,7 +32,7 @@ async function insertRow(plaintext: any) {
   if (encrypted.failure) throw new Error(encrypted.failure.message)
 
   const [inserted] = await sql`
-    INSERT INTO "protect-ci-jsonb" (metadata, test_run_id)
+    INSERT INTO "protect-ci-jsonb-stack" (metadata, test_run_id)
     VALUES (${sql.json(encrypted.data.metadata)}::eql_v2_encrypted, ${TEST_RUN_ID})
     RETURNING id
   `
@@ -67,7 +67,7 @@ beforeAll(async () => {
   protectClient = await Encryption({ schemas: [table] })
 
   await sql`
-    CREATE TABLE IF NOT EXISTS "protect-ci-jsonb" (
+    CREATE TABLE IF NOT EXISTS "protect-ci-jsonb-stack" (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       metadata eql_v2_encrypted,
       test_run_id TEXT
@@ -76,7 +76,7 @@ beforeAll(async () => {
 }, 30000)
 
 afterAll(async () => {
-  await sql`DELETE FROM "protect-ci-jsonb" WHERE test_run_id = ${TEST_RUN_ID}`
+  await sql`DELETE FROM "protect-ci-jsonb-stack" WHERE test_run_id = ${TEST_RUN_ID}`
   await sql.end()
 }, 30000)
 
@@ -89,7 +89,7 @@ describe('searchableJson postgres integration', () => {
       const { id } = await insertRow(plaintext)
 
       const rows = await sql`
-        SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb"
+        SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack"
         WHERE id = ${id}
       `
 
@@ -108,7 +108,7 @@ describe('searchableJson postgres integration', () => {
       const { id } = await insertRow(plaintext)
 
       const rows = await sql`
-        SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb"
+        SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack"
         WHERE id = ${id}
       `
 
@@ -128,7 +128,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -153,7 +153,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -172,7 +172,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -195,7 +195,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -225,7 +225,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -250,7 +250,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql.unsafe(
         `SELECT id, (metadata).data as metadata
-         FROM "protect-ci-jsonb" t,
+         FROM "protect-ci-jsonb-stack" t,
               eql_v2.jsonb_path_query(t.metadata, '${selectorTerm}'::eql_v2_encrypted) as result
          WHERE t.test_run_id = '${TEST_RUN_ID}'`,
       )
@@ -275,7 +275,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql.unsafe(
         `SELECT id, (metadata).data as metadata
-         FROM "protect-ci-jsonb" t,
+         FROM "protect-ci-jsonb-stack" t,
               eql_v2.jsonb_path_query(t.metadata, '${selectorTerm}'::eql_v2_encrypted) as result
          WHERE t.test_run_id = '${TEST_RUN_ID}'`,
       )
@@ -300,7 +300,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql.unsafe(
         `SELECT id, (metadata).data as metadata
-         FROM "protect-ci-jsonb" t,
+         FROM "protect-ci-jsonb-stack" t,
               eql_v2.jsonb_path_query(t.metadata, '${selectorTerm}'::eql_v2_encrypted) as result
          WHERE t.test_run_id = '${TEST_RUN_ID}'`,
       )
@@ -322,7 +322,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql.unsafe(
         `SELECT id, (metadata).data as metadata
-         FROM "protect-ci-jsonb" t,
+         FROM "protect-ci-jsonb-stack" t,
               eql_v2.jsonb_path_query(t.metadata, '${selectorTerm}'::eql_v2_encrypted) as result
          WHERE t.test_run_id = '${TEST_RUN_ID}'`,
       )
@@ -345,7 +345,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t
+        FROM "protect-ci-jsonb-stack" t
         WHERE t.metadata @> ${containmentTerm}::eql_v2_encrypted
         AND t.test_run_id = ${TEST_RUN_ID}
       `
@@ -370,7 +370,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t
+        FROM "protect-ci-jsonb-stack" t
         WHERE t.metadata @> ${containmentTerm}::eql_v2_encrypted
         AND t.test_run_id = ${TEST_RUN_ID}
       `
@@ -392,7 +392,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t
+        FROM "protect-ci-jsonb-stack" t
         WHERE t.metadata @> ${containmentTerm}::eql_v2_encrypted
         AND t.test_run_id = ${TEST_RUN_ID}
       `
@@ -435,7 +435,7 @@ describe('searchableJson postgres integration', () => {
       // Selector query: jsonb_path_query
       const selectorRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -448,7 +448,7 @@ describe('searchableJson postgres integration', () => {
       // Containment query: @>
       const containmentRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${containmentTerm}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -475,14 +475,14 @@ describe('searchableJson postgres integration', () => {
 
       const inferredRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${inferredSelectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
 
       const explicitRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${explicitSelectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -525,14 +525,14 @@ describe('searchableJson postgres integration', () => {
 
       const inferredTermRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${inferredContainmentTerm}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
 
       const explicitTermRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${explicitContainmentTerm}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -595,7 +595,7 @@ describe('searchableJson postgres integration', () => {
       // Use composite-literal form to query PG
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${compositeData}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -631,7 +631,7 @@ describe('searchableJson postgres integration', () => {
       // Use unwrapped composite-literal form to query PG
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${unwrapped}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -681,7 +681,7 @@ describe('searchableJson postgres integration', () => {
       // Selector query
       const selectorRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorUnwrapped}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -694,7 +694,7 @@ describe('searchableJson postgres integration', () => {
       // Containment query
       const containmentRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${containmentUnwrapped}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -725,7 +725,7 @@ describe('searchableJson postgres integration', () => {
       if (encrypted.failure) throw new Error(encrypted.failure.message)
 
       const [inserted] = await sql`
-        INSERT INTO "protect-ci-jsonb" (metadata, test_run_id)
+        INSERT INTO "protect-ci-jsonb-stack" (metadata, test_run_id)
         VALUES (${sql.json(encrypted.data.metadata)}::eql_v2_encrypted, ${TEST_RUN_ID})
         RETURNING id
       `
@@ -744,7 +744,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorResult.data}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -773,7 +773,7 @@ describe('searchableJson postgres integration', () => {
       if (encrypted.failure) throw new Error(encrypted.failure.message)
 
       const [inserted] = await sql`
-        INSERT INTO "protect-ci-jsonb" (metadata, test_run_id)
+        INSERT INTO "protect-ci-jsonb-stack" (metadata, test_run_id)
         VALUES (${sql.json(encrypted.data.metadata)}::eql_v2_encrypted, ${TEST_RUN_ID})
         RETURNING id
       `
@@ -795,7 +795,7 @@ describe('searchableJson postgres integration', () => {
 
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${containmentResult.data}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -828,7 +828,7 @@ describe('searchableJson postgres integration', () => {
       if (encrypted.failure) throw new Error(encrypted.failure.message)
 
       const [inserted] = await sql`
-        INSERT INTO "protect-ci-jsonb" (metadata, test_run_id)
+        INSERT INTO "protect-ci-jsonb-stack" (metadata, test_run_id)
         VALUES (${sql.json(encrypted.data.metadata)}::eql_v2_encrypted, ${TEST_RUN_ID})
         RETURNING id
       `
@@ -859,7 +859,7 @@ describe('searchableJson postgres integration', () => {
       // Selector query
       const selectorRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -878,7 +878,7 @@ describe('searchableJson postgres integration', () => {
       // Containment query
       const containmentRows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${containmentTerm}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -942,17 +942,17 @@ describe('searchableJson postgres integration', () => {
       // Execute each against PG
       const [rows1, rows2, rows3] = await Promise.all([
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb" t,
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack" t,
                eql_v2.jsonb_path_query(t.metadata, ${q1.data}::eql_v2_encrypted) as result
           WHERE t.test_run_id = ${TEST_RUN_ID}
         `,
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb" t,
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack" t,
                eql_v2.jsonb_path_query(t.metadata, ${q2.data}::eql_v2_encrypted) as result
           WHERE t.test_run_id = ${TEST_RUN_ID}
         `,
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb" t,
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack" t,
                eql_v2.jsonb_path_query(t.metadata, ${q3.data}::eql_v2_encrypted) as result
           WHERE t.test_run_id = ${TEST_RUN_ID}
         `,
@@ -1031,12 +1031,12 @@ describe('searchableJson postgres integration', () => {
 
       const [rows1, rows2] = await Promise.all([
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb"
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack"
           WHERE metadata @> ${c1.data}::eql_v2_encrypted
           AND test_run_id = ${TEST_RUN_ID}
         `,
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb"
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack"
           WHERE metadata @> ${c2.data}::eql_v2_encrypted
           AND test_run_id = ${TEST_RUN_ID}
         `,
@@ -1101,7 +1101,7 @@ describe('searchableJson postgres integration', () => {
 
       // Insert the encrypted doc
       const [inserted] = await sql`
-        INSERT INTO "protect-ci-jsonb" (metadata, test_run_id)
+        INSERT INTO "protect-ci-jsonb-stack" (metadata, test_run_id)
         VALUES (${sql.json(encryptedModel.data.metadata)}::eql_v2_encrypted, ${TEST_RUN_ID})
         RETURNING id
       `
@@ -1109,12 +1109,12 @@ describe('searchableJson postgres integration', () => {
       // Query with both terms
       const [selectorRows, containmentRows] = await Promise.all([
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb" t,
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack" t,
                eql_v2.jsonb_path_query(t.metadata, ${selectorResult.data}::eql_v2_encrypted) as result
           WHERE t.test_run_id = ${TEST_RUN_ID}
         `,
         sql`
-          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb"
+          SELECT id, (metadata).data as metadata FROM "protect-ci-jsonb-stack"
           WHERE metadata @> ${containmentResult.data}::eql_v2_encrypted
           AND test_run_id = ${TEST_RUN_ID}
         `,
@@ -1170,7 +1170,7 @@ describe('searchableJson postgres integration', () => {
       // Must use sql.json() to pass raw Encrypted object to PG
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb" t,
+        FROM "protect-ci-jsonb-stack" t,
              eql_v2.jsonb_path_query(t.metadata, ${sql.json(rawResult)}::eql_v2_encrypted) as result
         WHERE t.test_run_id = ${TEST_RUN_ID}
       `
@@ -1200,7 +1200,7 @@ describe('searchableJson postgres integration', () => {
       // Must use sql.json() to pass raw Encrypted object to PG
       const rows = await sql`
         SELECT id, (metadata).data as metadata
-        FROM "protect-ci-jsonb"
+        FROM "protect-ci-jsonb-stack"
         WHERE metadata @> ${sql.json(rawResult)}::eql_v2_encrypted
         AND test_run_id = ${TEST_RUN_ID}
       `
@@ -1242,7 +1242,7 @@ describe('searchableJson postgres integration', () => {
           // Query PG
           const rows = await sql`
             SELECT id, (metadata).data as metadata
-            FROM "protect-ci-jsonb" t,
+            FROM "protect-ci-jsonb-stack" t,
                  eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) as result
             WHERE t.id = ${insertedIds[i]}
           `
