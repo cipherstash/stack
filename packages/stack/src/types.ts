@@ -6,6 +6,7 @@ import type {
 } from '@/schema'
 import type {
   Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
   JsPlaintext,
   QueryOpName,
   newClient,
@@ -30,8 +31,19 @@ export type Client = Awaited<ReturnType<typeof newClient>> | undefined
 /** A branded type representing encrypted data. Cannot be accidentally used as plaintext. */
 export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 
-/** Structural type representing encrypted data. See also `EncryptedValue` for branded nominal typing. */
+/** Structural type representing encrypted data stored in the database. Always
+ * carries a ciphertext. See also `EncryptedValue` for branded nominal typing,
+ * and {@link EncryptedQuery} for the search-term shape returned by
+ * `encryptQuery`. */
 export type Encrypted = CipherStashEncrypted
+
+/** Structural type representing an encrypted query term (search needle)
+ * returned by `encryptQuery` / `encryptQueryBulk` for scalar
+ * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
+ * queries. Carries no ciphertext — matched against stored values, never
+ * decrypted. JSON containment queries (`ste_vec_term`) return a
+ * storage-shaped {@link Encrypted} payload instead. */
+export type EncryptedQuery = CipherStashEncryptedQuery
 
 // ---------------------------------------------------------------------------
 // Client configuration
@@ -112,11 +124,16 @@ export type SearchTerm = {
   returnType?: EncryptedReturnType
 }
 
-/** Encrypted search term result: EQL object or composite literal string */
-export type EncryptedSearchTerm = Encrypted | string
+/** Encrypted search term result. `eql` return type yields either a storage
+ * payload (`Encrypted`, for `ste_vec_term`) or a query-only term
+ * (`EncryptedQuery`, for scalar lookups and `ste_vec_selector`); the
+ * `composite-literal` return types yield a string. */
+export type EncryptedSearchTerm = Encrypted | EncryptedQuery | string
 
-/** Result of encryptQuery (single or batch): EQL or composite literal string */
-export type EncryptedQueryResult = Encrypted | string
+/** Result of encryptQuery (single or batch). `eql` return type yields either a
+ * storage payload (`Encrypted`) or a query-only term (`EncryptedQuery`); the
+ * `composite-literal` return types yield a string. */
+export type EncryptedQueryResult = Encrypted | EncryptedQuery | string
 
 // ---------------------------------------------------------------------------
 // Model field types (encrypted vs decrypted views)

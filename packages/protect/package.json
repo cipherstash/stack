@@ -69,7 +69,7 @@
 	},
 	"dependencies": {
 		"@byteslice/result": "^0.2.0",
-		"@cipherstash/protect-ffi": "0.21.4",
+		"@cipherstash/protect-ffi": "0.23.0",
 		"@cipherstash/schema": "workspace:*",
 		"@stricli/core": "^1.2.7",
 		"dotenv": "17.4.2",

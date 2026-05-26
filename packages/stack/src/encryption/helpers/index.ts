@@ -1,8 +1,22 @@
 import type { Encrypted, EncryptedQueryResult, KeysetIdentifier } from '@/types'
 import type {
   Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
   KeysetIdentifier as KeysetIdentifierFfi,
 } from '@cipherstash/protect-ffi'
+
+/**
+ * The shape `encryptQuery` / `encryptQueryBulk` can return: a full storage
+ * payload (returned for `ste_vec_term` containment queries) or a query-only
+ * payload with no ciphertext (scalar `unique`/`match`/`ore` lookups and
+ * `ste_vec_selector` path queries).
+ *
+ * TODO: duplicated in `@cipherstash/protect` — see
+ * `packages/protect/src/helpers/index.ts`. Both copies should be removed once
+ * `@cipherstash/protect-ffi` exports a named alias for the `encryptQuery`
+ * return type (https://github.com/cipherstash/stack/pull/473).
+ */
+type EncryptedQueryTerm = CipherStashEncrypted | CipherStashEncryptedQuery
 
 export type EncryptedPgComposite = {
   data: Encrypted
@@ -28,7 +42,7 @@ export function encryptedToPgComposite(obj: Encrypted): EncryptedPgComposite {
  * await supabase.from('table').select().eq('column', literal)
  * ```
  */
-export function encryptedToCompositeLiteral(obj: CipherStashEncrypted): string {
+export function encryptedToCompositeLiteral(obj: EncryptedQueryTerm): string {
   return `(${JSON.stringify(JSON.stringify(obj))})`
 }
 
@@ -42,7 +56,7 @@ export function encryptedToCompositeLiteral(obj: CipherStashEncrypted): string {
  * ```
  */
 export function encryptedToEscapedCompositeLiteral(
-  obj: CipherStashEncrypted,
+  obj: EncryptedQueryTerm,
 ): string {
   return JSON.stringify(encryptedToCompositeLiteral(obj))
 }
@@ -55,7 +69,7 @@ export function encryptedToEscapedCompositeLiteral(
  * - default (`'eql'` or omitted) → raw encrypted object
  */
 export function formatEncryptedResult(
-  encrypted: CipherStashEncrypted,
+  encrypted: EncryptedQueryTerm,
   returnType?: string,
 ): EncryptedQueryResult {
   if (returnType === 'composite-literal') {

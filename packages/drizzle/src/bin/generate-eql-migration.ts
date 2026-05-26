@@ -6,7 +6,7 @@ import { detectRunner } from './runner.js'
 
 // EQL release, pinned to match the EQL payload format this package emits.
 // Bump in lockstep with @cipherstash/protect-ffi.
-const EQL_VERSION = 'eql-2.2.1'
+const EQL_VERSION = 'eql-2.3.1'
 const EQL_INSTALL_URL =
   `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
 

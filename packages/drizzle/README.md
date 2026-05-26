@@ -64,7 +64,7 @@ If you prefer to install EQL manually:
 
 ```bash
 npx drizzle-kit generate --custom --name=install-eql
-curl -sL https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.2.1/cipherstash-encrypt.sql > drizzle/0001_install-eql.sql
+curl -sL https://github.com/cipherstash/encrypt-query-language/releases/download/eql-2.3.1/cipherstash-encrypt.sql > drizzle/0001_install-eql.sql
 npx drizzle-kit migrate
 ```
 

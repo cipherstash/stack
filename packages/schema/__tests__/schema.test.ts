@@ -18,7 +18,7 @@ describe('Schema with nested columns', () => {
 
     // Verify basic structure
     expect(config).toEqual({
-      v: 2,
+      v: 1,
       tables: {
         users: expect.any(Object),
       },

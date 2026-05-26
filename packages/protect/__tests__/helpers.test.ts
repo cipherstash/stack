@@ -4,6 +4,7 @@ import {
   encryptedToCompositeLiteral,
   encryptedToPgComposite,
   isEncryptedPayload,
+  isEncryptedScalarQuery,
   modelToEncryptedPgComposites,
 } from '../src/helpers'
 
@@ -69,6 +70,131 @@ describe('helpers', () => {
 
     it('should return false for non-encrypted object', () => {
       expect(isEncryptedPayload({ foo: 'bar' })).toBe(false)
+    })
+  })
+
+  describe('isEncryptedScalarQuery', () => {
+    const baseIndex = { c: 'email', t: 'users' }
+
+    it('returns true for a unique (hm) scalar query term', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: baseIndex,
+          hm: 'abc123',
+        }),
+      ).toBe(true)
+    })
+
+    it('returns true for a match (bf) scalar query term', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: baseIndex,
+          bf: [1, 2, 3],
+        }),
+      ).toBe(true)
+    })
+
+    it('returns true for an ore (ob) scalar query term', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: baseIndex,
+          ob: ['a', 'b'],
+        }),
+      ).toBe(true)
+    })
+
+    it('returns false when the storage ciphertext (c) is present', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: baseIndex,
+          c: 'ciphertext',
+          hm: 'abc123',
+        }),
+      ).toBe(false)
+    })
+
+    it('returns false when more than one lookup term is present', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: baseIndex,
+          hm: 'abc123',
+          bf: [1, 2, 3],
+        }),
+      ).toBe(false)
+    })
+
+    it('returns false when no lookup term is present', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: baseIndex,
+        }),
+      ).toBe(false)
+    })
+
+    it('returns false for a ste_vec query term (k: "sv")', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'sv',
+          i: baseIndex,
+          sv: [{ s: 'selector', t: 'term' }],
+        }),
+      ).toBe(false)
+    })
+
+    it('returns false when version (v) is missing or not a number', () => {
+      expect(
+        isEncryptedScalarQuery({
+          k: 'ct',
+          i: baseIndex,
+          hm: 'abc123',
+        }),
+      ).toBe(false)
+      expect(
+        isEncryptedScalarQuery({
+          v: '2',
+          k: 'ct',
+          i: baseIndex,
+          hm: 'abc123',
+        }),
+      ).toBe(false)
+    })
+
+    it('returns false when index (i) is missing or null', () => {
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          hm: 'abc123',
+        }),
+      ).toBe(false)
+      expect(
+        isEncryptedScalarQuery({
+          v: 2,
+          k: 'ct',
+          i: null,
+          hm: 'abc123',
+        }),
+      ).toBe(false)
+    })
+
+    it('returns false for null, primitives, and non-objects', () => {
+      expect(isEncryptedScalarQuery(null)).toBe(false)
+      expect(isEncryptedScalarQuery(undefined)).toBe(false)
+      expect(isEncryptedScalarQuery('string')).toBe(false)
+      expect(isEncryptedScalarQuery(42)).toBe(false)
     })
   })
 

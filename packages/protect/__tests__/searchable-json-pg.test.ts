@@ -1599,17 +1599,19 @@ describe('searchableJson postgres integration', () => {
       await verifyRow(dataRows[0], plaintext)
     }, 30000)
 
-    // [@] notation (proxy convention) produces the selector hash matching is_array=true STE vec entries
+    // [@] notation (proxy convention) produces the selector hash matching is_array=true STE vec entries.
+    // EQL v2.3: walk the raw sv array on the jsonb payload so each element is a plain jsonb object
+    // (not the wrapped eql_v2_encrypted composite — its `.data` notation only works inside the function).
     it('[@] selector matches is_array=true entries in STE vec', async () => {
       const plaintext = { colors: ['a', 'b'], marker: 'diag-sv' }
       const { id } = await insertRow(plaintext)
 
       const entries = await sql`
         SELECT
-          eql_v2.selector(e.entry::jsonb) as selector,
-          eql_v2.is_ste_vec_array(e.entry::jsonb) as is_array
+          elem->>'s' as selector,
+          (elem->>'a')::boolean as is_array
         FROM "protect-ci-jsonb" t,
-             LATERAL unnest(eql_v2.ste_vec((t.metadata).data)) WITH ORDINALITY AS e(entry, idx)
+             LATERAL jsonb_array_elements((t.metadata).data -> 'sv') AS elem
         WHERE t.id = ${id}
       `
 
@@ -1617,28 +1619,29 @@ describe('searchableJson postgres integration', () => {
       expect(arrayEntries.length).toBeGreaterThan(0)
 
       const selectorAt = await encryptQueryTerm('$.colors[@]', 'steVecSelector')
-      const hashAt =
-        await sql`SELECT eql_v2.selector(${selectorAt}::eql_v2_encrypted) as s`
+      const hashAt = await sql`
+        SELECT (${selectorAt}::eql_v2_encrypted).data->>'s' as s
+      `
 
       expect(hashAt[0].s).toBe(arrayEntries[0].selector)
     }, 30000)
 
+    // EQL v2.3: `jsonb_path_query_first` returns at most one sv entry (LIMIT 1) — counting / expanding
+    // uses `jsonb_path_query`, which aggregates matching array entries into a single row whose `data`
+    // carries `sv: [...]` + `a: 1`. `jsonb_array_length` / `jsonb_array_elements` walk that inner sv.
     it('returns correct length for known array (Extended)', async () => {
       const plaintext = { colors: ['a', 'b', 'c', 'd'], marker: 'al-known' }
       const { id } = await insertRow(plaintext)
 
-      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
       const selectorTerm = await encryptQueryTerm(
         '$.colors[@]',
         'steVecSelector',
       )
 
       const rows = await sql`
-        SELECT t.id,
-               eql_v2.jsonb_array_length(
-                 eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
-               ) as arr_len
-        FROM "protect-ci-jsonb" t
+        SELECT eql_v2.jsonb_array_length(elem) AS arr_len
+        FROM "protect-ci-jsonb" t,
+             LATERAL eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) AS elem
         WHERE t.id = ${id}
       `
 
@@ -1656,18 +1659,15 @@ describe('searchableJson postgres integration', () => {
       const plaintext = { colors: ['x', 'y', 'z'], marker: 'al-known-s' }
       const { id } = await insertRow(plaintext)
 
-      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
       const selectorTerm = await encryptQueryTerm(
         '$.colors[@]',
         'steVecSelector',
       )
 
       const rows = await sql.unsafe(
-        `SELECT t.id,
-                eql_v2.jsonb_array_length(
-                  eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
-                ) as arr_len
-         FROM "protect-ci-jsonb" t
+        `SELECT eql_v2.jsonb_array_length(elem) AS arr_len
+         FROM "protect-ci-jsonb" t,
+              LATERAL eql_v2.jsonb_path_query(t.metadata, $1::eql_v2_encrypted) AS elem
          WHERE t.id = $2`,
         [selectorTerm, id],
       )
@@ -1683,19 +1683,16 @@ describe('searchableJson postgres integration', () => {
       await verifyRow(dataRows[0], plaintext)
     }, 30000)
 
-    // EQL pattern: jsonb_array_elements(jsonb_path_query(...)) in SELECT clause, not FROM
     it('expands array via jsonb_array_elements (Extended)', async () => {
       const plaintext = { tags: ['ae-a', 'ae-b', 'ae-c'], marker: 'ae-expand' }
       const { id } = await insertRow(plaintext)
 
-      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
       const selectorTerm = await encryptQueryTerm('$.tags[@]', 'steVecSelector')
 
       const rows = await sql`
-        SELECT eql_v2.jsonb_array_elements(
-                 eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
-               ) as elem
-        FROM "protect-ci-jsonb" t
+        SELECT eql_v2.jsonb_array_elements(elem) AS item
+        FROM "protect-ci-jsonb" t,
+             LATERAL eql_v2.jsonb_path_query(t.metadata, ${selectorTerm}::eql_v2_encrypted) AS elem
         WHERE t.id = ${id}
       `
 
@@ -1715,14 +1712,12 @@ describe('searchableJson postgres integration', () => {
       }
       const { id } = await insertRow(plaintext)
 
-      // Use [@] notation — proxy convention for array element selector (is_array=true entries)
       const selectorTerm = await encryptQueryTerm('$.tags[@]', 'steVecSelector')
 
       const rows = await sql.unsafe(
-        `SELECT eql_v2.jsonb_array_elements(
-                  eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
-                ) as elem
-         FROM "protect-ci-jsonb" t
+        `SELECT eql_v2.jsonb_array_elements(elem) AS item
+         FROM "protect-ci-jsonb" t,
+              LATERAL eql_v2.jsonb_path_query(t.metadata, $1::eql_v2_encrypted) AS elem
          WHERE t.id = $2`,
         [selectorTerm, id],
       )
@@ -2187,14 +2182,12 @@ describe('searchableJson postgres integration', () => {
   })
 
   // ─── WHERE comparison: = equality ──────────────────────────────────
-  //
-  // SKIPPED: these 4 tests are calibrated to STE-vec entry `=` behaviour
-  // and error wording from an unreleased EQL build — they do not pass
-  // against any published EQL release (verified across 2.1.x–2.3.x). The
-  // CI Postgres is now pinned to a published image (eql-2.2.1), so they
-  // fail. Re-enable and re-calibrate as part of the EQL 2.3 upgrade
-  // (protect-ffi 0.22.0 — PR #473).
-  describe.skip('WHERE comparison: = equality', () => {
+
+  // EQL v2.3: `=` on `eql_v2_encrypted` reduces to `hmac_256(a) = hmac_256(b)` and silently
+  // returns 0 rows when either side lacks `hm` (previously raised). For sv-element equality on
+  // oc-bearing selectors (strings / numbers), cast the extracted entry to `eql_v2.ste_vec_entry`
+  // — that operator is XOR-aware over `hm`/`oc` via `eq_term`.
+  describe('WHERE comparison: = equality (sv-element via ste_vec_entry)', () => {
     it('jsonb_path_query_first = self-comparison (Extended)', async () => {
       const plaintext = { role: 'eq-jpqf', marker: 'eq-jpqf-marker' }
       const { id } = await insertRow(plaintext)
@@ -2204,8 +2197,8 @@ describe('searchableJson postgres integration', () => {
       const rows = await sql`
         SELECT id, (metadata).data as metadata
         FROM "protect-ci-jsonb" t
-        WHERE eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
-            = eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)
+        WHERE (eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
+            = (eql_v2.jsonb_path_query_first(t.metadata, ${selectorTerm}::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
         AND t.id = ${id}
       `
 
@@ -2222,8 +2215,8 @@ describe('searchableJson postgres integration', () => {
       const rows = await sql.unsafe(
         `SELECT id, (metadata).data as metadata
          FROM "protect-ci-jsonb" t
-         WHERE eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
-             = eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)
+         WHERE (eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
+             = (eql_v2.jsonb_path_query_first(t.metadata, $1::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
          AND t.id = $2`,
         [selectorTerm, id],
       )
@@ -2232,9 +2225,7 @@ describe('searchableJson postgres integration', () => {
       await verifyRow(rows[0], plaintext)
     }, 30000)
 
-    // Cross-document equality via = on jsonb_path_query_first results is not supported —
-    // the eql_v2 extension lacks a hash function for this operator.
-    it('equality across two documents rejects with missing hash function', async () => {
+    it('equality across two documents with same plaintext matches both', async () => {
       const doc1 = { role: 'eq-cross-same', dept: 'eq-cross-d1' }
       const doc2 = { role: 'eq-cross-same', dept: 'eq-cross-d2' }
 
@@ -2243,19 +2234,20 @@ describe('searchableJson postgres integration', () => {
 
       const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
 
-      await expect(
-        sql`
-          SELECT a.id as id_a, b.id as id_b
-          FROM "protect-ci-jsonb" a, "protect-ci-jsonb" b
-          WHERE eql_v2.jsonb_path_query_first(a.metadata, ${selectorTerm}::eql_v2_encrypted)
-              = eql_v2.jsonb_path_query_first(b.metadata, ${selectorTerm}::eql_v2_encrypted)
-          AND a.id = ${id1}
-          AND b.id = ${id2}
-        `,
-      ).rejects.toThrow(/could not find hash function for hash operator/)
+      const rows = await sql`
+        SELECT a.id as id_a, b.id as id_b
+        FROM "protect-ci-jsonb" a, "protect-ci-jsonb" b
+        WHERE (eql_v2.jsonb_path_query_first(a.metadata, ${selectorTerm}::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
+            = (eql_v2.jsonb_path_query_first(b.metadata, ${selectorTerm}::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
+        AND a.id = ${id1}
+        AND b.id = ${id2}
+      `
+
+      expect(rows).toHaveLength(1)
+      expect(rows[0]).toMatchObject({ id_a: id1, id_b: id2 })
     }, 30000)
 
-    it('equality mismatch across two documents rejects with missing hash function', async () => {
+    it('equality across two documents with different plaintext returns empty', async () => {
       const doc1 = { role: 'eq-cross-mismatch-1', marker: 'eq-mm-1' }
       const doc2 = { role: 'eq-cross-mismatch-2', marker: 'eq-mm-2' }
 
@@ -2264,16 +2256,16 @@ describe('searchableJson postgres integration', () => {
 
       const selectorTerm = await encryptQueryTerm('$.role', 'steVecSelector')
 
-      await expect(
-        sql`
-          SELECT a.id as id_a, b.id as id_b
-          FROM "protect-ci-jsonb" a, "protect-ci-jsonb" b
-          WHERE eql_v2.jsonb_path_query_first(a.metadata, ${selectorTerm}::eql_v2_encrypted)
-              = eql_v2.jsonb_path_query_first(b.metadata, ${selectorTerm}::eql_v2_encrypted)
-          AND a.id = ${id1}
-          AND b.id = ${id2}
-        `,
-      ).rejects.toThrow(/could not find hash function for hash operator/)
+      const rows = await sql`
+        SELECT a.id as id_a, b.id as id_b
+        FROM "protect-ci-jsonb" a, "protect-ci-jsonb" b
+        WHERE (eql_v2.jsonb_path_query_first(a.metadata, ${selectorTerm}::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
+            = (eql_v2.jsonb_path_query_first(b.metadata, ${selectorTerm}::eql_v2_encrypted)).data::eql_v2.ste_vec_entry
+        AND a.id = ${id1}
+        AND b.id = ${id2}
+      `
+
+      expect(rows).toHaveLength(0)
     }, 30000)
   })
 

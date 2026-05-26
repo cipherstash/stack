@@ -7,14 +7,14 @@ const users = csTable('users', {
   email: csColumn('email'),
 })
 
-describe('k-field backward compatibility', () => {
+describe('k-field discriminator (EQL v2.3)', () => {
   let protectClient: Awaited<ReturnType<typeof protect>>
 
   beforeAll(async () => {
     protectClient = await protect({ schemas: [users] })
   })
 
-  it('should encrypt new data WITHOUT k field (forward compatibility)', async () => {
+  it('encrypts scalar data with k: "ct" discriminator', async () => {
     const testData = 'test@example.com'
 
     const result = await protectClient.encrypt(testData, {
@@ -26,16 +26,14 @@ describe('k-field backward compatibility', () => {
       throw new Error(`Encryption failed: ${result.failure.message}`)
     }
 
-    // Forward compatibility: new encryptions should NOT have k field
-    expect(result.data).not.toHaveProperty('k')
+    expect(result.data).toHaveProperty('k', 'ct')
     expect(result.data).toHaveProperty('c')
     expect(result.data).toHaveProperty('v')
     expect(result.data).toHaveProperty('i')
   }, 30000)
 
-  it('should decrypt data with legacy k field (backward compatibility)', async () => {
-    // First encrypt some data
-    const testData = 'legacy@example.com'
+  it('decrypts a payload round-trips back to the original plaintext', async () => {
+    const testData = 'roundtrip@example.com'
 
     const encrypted = await protectClient.encrypt(testData, {
       column: users.email,
@@ -46,15 +44,7 @@ describe('k-field backward compatibility', () => {
       throw new Error(`Encryption failed: ${encrypted.failure.message}`)
     }
 
-    // Simulate legacy payload by adding k field to the encrypted data
-    // Use non-null assertion since we've already checked for failure above
-    const legacyPayload = {
-      ...encrypted.data!,
-      k: 'ct', // Legacy discriminant field - should be ignored during decryption
-    }
-
-    // Decrypt should succeed even with legacy k field present
-    const result = await protectClient.decrypt(legacyPayload)
+    const result = await protectClient.decrypt(encrypted.data!)
 
     if (result.failure) {
       throw new Error(`Decryption failed: ${result.failure.message}`)

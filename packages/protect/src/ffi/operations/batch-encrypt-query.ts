@@ -4,7 +4,10 @@ import {
   type QueryPayload,
   encryptQueryBulk as ffiEncryptQueryBulk,
 } from '@cipherstash/protect-ffi'
-import type { Encrypted as CipherStashEncrypted } from '@cipherstash/protect-ffi'
+import type {
+  Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
+} from '@cipherstash/protect-ffi'
 import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
 import { formatEncryptedResult } from '../../helpers'
@@ -83,7 +86,7 @@ function buildQueryPayload(
  */
 function assembleResults(
   totalLength: number,
-  encryptedValues: CipherStashEncrypted[],
+  encryptedValues: (CipherStashEncrypted | CipherStashEncryptedQuery)[],
   nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[],
 ): EncryptedQueryResult[] {
   const results: EncryptedQueryResult[] = new Array(totalLength).fill(null)

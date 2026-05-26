@@ -1,5 +1,7 @@
 import type {
   Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedScalarQuery,
   KeysetIdentifier as KeysetIdentifierFfi,
 } from '@cipherstash/protect-ffi'
 import type {
@@ -7,6 +9,19 @@ import type {
   EncryptedQueryResult,
   KeysetIdentifier,
 } from '../types'
+
+/**
+ * The shape `encryptQuery` / `encryptQueryBulk` can return: a full storage
+ * payload (`Encrypted`, returned for `ste_vec_term` containment queries) or a
+ * query-only payload with no ciphertext (`EncryptedQuery`, returned for
+ * scalar `unique`/`match`/`ore` lookups and `ste_vec_selector` path queries).
+ *
+ * TODO: duplicated in `@cipherstash/stack` — see
+ * `packages/stack/src/encryption/helpers/index.ts`. Both copies should be
+ * removed once `@cipherstash/protect-ffi` exports a named alias for the
+ * `encryptQuery` return type (https://github.com/cipherstash/stack/pull/473).
+ */
+type EncryptedQueryTerm = CipherStashEncrypted | CipherStashEncryptedQuery
 
 export type EncryptedPgComposite = {
   data: Encrypted
@@ -43,7 +58,7 @@ export function encryptedToPgComposite(obj: Encrypted): EncryptedPgComposite {
  * await supabase.from('table').select().eq('column', searchTerm)
  * ```
  */
-export function encryptedToCompositeLiteral(obj: CipherStashEncrypted): string {
+export function encryptedToCompositeLiteral(obj: EncryptedQueryTerm): string {
   if (obj === null) {
     throw new Error('encryptedToCompositeLiteral: obj cannot be null')
   }
@@ -71,7 +86,7 @@ export function encryptedToCompositeLiteral(obj: CipherStashEncrypted): string {
  * ```
  */
 export function encryptedToEscapedCompositeLiteral(
-  obj: CipherStashEncrypted,
+  obj: EncryptedQueryTerm,
 ): string {
   if (obj === null) {
     throw new Error('encryptedToEscapedCompositeLiteral: obj cannot be null')
@@ -80,7 +95,7 @@ export function encryptedToEscapedCompositeLiteral(
 }
 
 export function formatEncryptedResult(
-  encrypted: CipherStashEncrypted,
+  encrypted: EncryptedQueryTerm,
   returnType?: string,
 ): EncryptedQueryResult {
   if (returnType === 'composite-literal') {
@@ -147,6 +162,42 @@ export function isEncryptedPayload(value: unknown): value is Encrypted {
   }
 
   return false
+}
+
+/**
+ * Type guard narrowing a value to {@link EncryptedScalarQuery} — the scalar
+ * query term (`unique` / `match` / `ore` lookup) returned by `encryptQuery` /
+ * `encryptQueryBulk`. Unlike a storage payload it carries no ciphertext (`c`);
+ * it carries exactly one lookup term: `hm`, `bf`, or `ob`.
+ *
+ * Use this to discriminate a scalar query term from a storage payload
+ * (`EncryptedScalar`/`EncryptedSteVec`) or a `ste_vec_selector` query.
+ */
+export function isEncryptedScalarQuery(
+  value: unknown,
+): value is EncryptedScalarQuery {
+  if (value === null || typeof value !== 'object') return false
+
+  const obj = value as Record<string, unknown>
+
+  // `k: 'ct'` is the scalar discriminant; a query term never carries the
+  // ciphertext (`c`) that every storage payload has.
+  if (obj.k !== 'ct' || 'c' in obj) return false
+  if (
+    typeof obj.v !== 'number' ||
+    typeof obj.i !== 'object' ||
+    obj.i === null
+  ) {
+    return false
+  }
+
+  // Exactly one lookup term: `hm` (unique), `bf` (match), or `ob` (ore).
+  const lookupTerms = [
+    typeof obj.hm === 'string',
+    Array.isArray(obj.bf),
+    Array.isArray(obj.ob),
+  ].filter(Boolean)
+  return lookupTerms.length === 1
 }
 
 export {
