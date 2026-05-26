@@ -22,7 +22,12 @@ export default defineConfig({
   target: 'es2022',
   tsconfig: './tsconfig.json',
   external: ['drizzle-orm', '@supabase/supabase-js'],
-  noExternal: ['evlog', 'uuid'],
+  // zod + @byteslice/result are bundled so dist/wasm-inline.js carries no
+  // bare-specifier transitive imports — important for Deno / Edge /
+  // browser consumers whose runtime won't resolve npm names without an
+  // explicit import map. Both are small (zod ~50 KB, result ~3 KB) and
+  // dependency-free, so bundling them into the Node entries too is fine.
+  noExternal: ['evlog', 'uuid', 'zod', '@byteslice/result'],
   // Drop dist/wasm-inline.cjs after bundling — the protect-ffi
   // wasm-inline runtime it transitively requires is ESM-only and
   // crashes a Node CJS consumer with ERR_REQUIRE_ESM. The runtimes
