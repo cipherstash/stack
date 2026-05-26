@@ -19,5 +19,4 @@ Type adjustments to support the runtime behavior honestly:
 
 - `BulkEncryptPayload['plaintext']`, `BulkEncryptedData['data']`, `BulkDecryptPayload['data']`, and the `T` of `BulkDecryptedData` all widen to `... | null`. Bulk APIs now accept and return mixed nullable arrays without filtering ahead of time.
 - `EncryptedQueryResult` widens to include `null` so the batch query path can return position-stable arrays with null slots.
-- `Encryption.decrypt()` accepts `Encrypted | null` (returns null for null input).
-- `Encryption.encrypt()`'s public signature is unchanged — still `JsPlaintext` (no null). The runtime guard is defense in depth for the cases the type system can't catch.
+- `Encryption.encrypt()` and `Encryption.decrypt()` public signatures are unchanged — still narrow (`JsPlaintext` / `Encrypted` input, `Encrypted` / `JsPlaintext` non-nullable output). The runtime null short-circuit in `EncryptOperation` / `DecryptOperation` is defense in depth for callers reaching the operation classes through casts, dynamic field walking, or JS interop. The narrow-return contract holds for any caller that respects the input contract.

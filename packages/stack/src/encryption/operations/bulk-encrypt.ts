@@ -11,10 +11,10 @@ import type {
   BulkEncryptPayload,
   BulkEncryptedData,
   Client,
+  Encrypted,
   EncryptOptions,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import type { Encrypted } from '@/types'
 import { type Result, withResult } from '@byteslice/result'
 import { type JsPlaintext, encryptBulk } from '@cipherstash/protect-ffi'
 import { noClientError } from '../index'

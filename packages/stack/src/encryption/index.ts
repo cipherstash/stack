@@ -308,10 +308,17 @@ export class EncryptionClient {
    *      .withLockContext(lockContext)
    * ```
    *
+   * @remarks
+   * The public input type rejects null, but at runtime `decrypt` will
+   * short-circuit and return null when given a null ciphertext
+   * (defense in depth for legacy / manually-NULLed DB rows reached via
+   * casts or dynamic field walking). The narrow return type holds for
+   * any caller that respects the input contract.
+   *
    * @see {@link LockContext}
    * @see {@link DecryptOperation}
    */
-  decrypt(encryptedData: Encrypted | null): DecryptOperation {
+  decrypt(encryptedData: Encrypted): DecryptOperation {
     return new DecryptOperation(this.client, encryptedData)
   }
 

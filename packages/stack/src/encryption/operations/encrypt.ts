@@ -17,7 +17,7 @@ import {
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
-export class EncryptOperation extends EncryptionOperation<Encrypted | null> {
+export class EncryptOperation extends EncryptionOperation<Encrypted> {
   private client: Client
   // Internally widened to allow null so the runtime guard below can
   // short-circuit. The public `Encryption.encrypt()` signature still
@@ -45,7 +45,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted | null> {
     return new EncryptOperationWithLockContext(this, lockContext)
   }
 
-  public async execute(): Promise<Result<Encrypted | null, EncryptionError>> {
+  public async execute(): Promise<Result<Encrypted, EncryptionError>> {
     const log = createRequestLogger()
     log.set({
       op: 'encrypt',
@@ -61,7 +61,13 @@ export class EncryptOperation extends EncryptionOperation<Encrypted | null> {
         }
 
         if (this.plaintext === null) {
-          return null
+          // Defense in depth: the public `Encryption.encrypt()` signature
+          // rejects null, but null can still arrive here via casts or
+          // dynamic field walking. Return null directly so the result
+          // matches DB NULL semantics rather than encrypting JSON null
+          // into a SteVec. The cast acknowledges the type-narrow
+          // contract at the public boundary.
+          return null as unknown as Encrypted
         }
 
         if (
@@ -115,7 +121,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted | null> {
   }
 }
 
-export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypted | null> {
+export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypted> {
   private operation: EncryptOperation
   private lockContext: LockContext
 
@@ -129,7 +135,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
     }
   }
 
-  public async execute(): Promise<Result<Encrypted | null, EncryptionError>> {
+  public async execute(): Promise<Result<Encrypted, EncryptionError>> {
     const { client, plaintext, column, table } = this.operation.getOperation()
 
     const log = createRequestLogger()
@@ -147,7 +153,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
         }
 
         if (plaintext === null) {
-          return null
+          return null as unknown as Encrypted
         }
 
         const { metadata } = this.getAuditData()

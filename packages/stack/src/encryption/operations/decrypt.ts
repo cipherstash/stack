@@ -15,10 +15,12 @@ import { EncryptionOperation } from './base-operation'
  * Decrypts an encrypted payload using the provided client.
  * This is the type returned by the {@link EncryptionClient.decrypt | decrypt} method of the {@link EncryptionClient}.
  */
-export class DecryptOperation extends EncryptionOperation<JsPlaintext | null> {
+export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
   private client: Client
-  // Widened to allow null so legacy / manually-NULLed rows can be
-  // round-tripped through decrypt without misbehaving in protect-ffi.
+  // Internally widened to allow null so the runtime guard below can
+  // short-circuit on legacy / manually-NULLed rows. The public
+  // `Encryption.decrypt()` signature still rejects null at the type
+  // layer; this is defense in depth for direct construction.
   private encryptedData: Encrypted | null
 
   constructor(client: Client, encryptedData: Encrypted | null) {
@@ -33,7 +35,7 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext | null> {
     return new DecryptOperationWithLockContext(this, lockContext)
   }
 
-  public async execute(): Promise<Result<JsPlaintext | null, EncryptionError>> {
+  public async execute(): Promise<Result<JsPlaintext, EncryptionError>> {
     const log = createRequestLogger()
     log.set({
       op: 'decrypt',
@@ -47,7 +49,8 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext | null> {
         }
 
         if (this.encryptedData === null) {
-          return null
+          // See encrypt.ts for the same defense-in-depth pattern.
+          return null as unknown as JsPlaintext
         }
 
         const { metadata } = this.getAuditData()
@@ -83,9 +86,7 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext | null> {
   }
 }
 
-export class DecryptOperationWithLockContext extends EncryptionOperation<
-  JsPlaintext | null
-> {
+export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlaintext> {
   private operation: DecryptOperation
   private lockContext: LockContext
 
@@ -99,7 +100,7 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<
     }
   }
 
-  public async execute(): Promise<Result<JsPlaintext | null, EncryptionError>> {
+  public async execute(): Promise<Result<JsPlaintext, EncryptionError>> {
     const log = createRequestLogger()
     log.set({
       op: 'decrypt',
@@ -115,7 +116,7 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<
         }
 
         if (encryptedData === null) {
-          return null
+          return null as unknown as JsPlaintext
         }
 
         const { metadata } = this.getAuditData()

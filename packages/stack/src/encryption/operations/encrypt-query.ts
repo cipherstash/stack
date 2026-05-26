@@ -20,9 +20,7 @@ import { EncryptionOperation } from './base-operation'
 /**
  * @internal Use {@link EncryptionClient.encryptQuery} instead.
  */
-export class EncryptQueryOperation extends EncryptionOperation<
-  EncryptedQueryResult | null
-> {
+export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
     private plaintext: JsPlaintext | null | undefined,
@@ -44,7 +42,7 @@ export class EncryptQueryOperation extends EncryptionOperation<
   }
 
   public async execute(): Promise<
-    Result<EncryptedQueryResult | null, EncryptionError>
+    Result<EncryptedQueryResult, EncryptionError>
   > {
     const log = createRequestLogger()
     log.set({
@@ -60,7 +58,9 @@ export class EncryptQueryOperation extends EncryptionOperation<
       return { data: null }
     }
 
-    const validationError = validateNumericValue(this.plaintext)
+    const plaintext: JsPlaintext = this.plaintext
+
+    const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
       log.emit()
       return { failure: validationError.failure }
@@ -75,18 +75,18 @@ export class EncryptQueryOperation extends EncryptionOperation<
         const { indexType, queryOp } = resolveIndexType(
           this.opts.column,
           this.opts.queryType,
-          this.plaintext as JsPlaintext,
+          plaintext,
         )
 
         // Validate value/index compatibility
         assertValueIndexCompatibility(
-          this.plaintext as JsPlaintext,
+          plaintext,
           indexType,
           this.opts.column.getName(),
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext: this.plaintext as JsPlaintext,
+          plaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
@@ -117,9 +117,7 @@ export class EncryptQueryOperation extends EncryptionOperation<
 /**
  * @internal Use {@link EncryptionClient.encryptQuery} with `.withLockContext()` instead.
  */
-export class EncryptQueryOperationWithLockContext extends EncryptionOperation<
-  EncryptedQueryResult | null
-> {
+export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
     private plaintext: JsPlaintext | null | undefined,
@@ -132,7 +130,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<
   }
 
   public async execute(): Promise<
-    Result<EncryptedQueryResult | null, EncryptionError>
+    Result<EncryptedQueryResult, EncryptionError>
   > {
     const log = createRequestLogger()
     log.set({
@@ -148,7 +146,9 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<
       return { data: null }
     }
 
-    const validationError = validateNumericValue(this.plaintext)
+    const plaintext: JsPlaintext = this.plaintext
+
+    const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
       log.emit()
       return { failure: validationError.failure }
@@ -171,18 +171,18 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<
         const { indexType, queryOp } = resolveIndexType(
           this.opts.column,
           this.opts.queryType,
-          this.plaintext as JsPlaintext,
+          plaintext,
         )
 
         // Validate value/index compatibility
         assertValueIndexCompatibility(
-          this.plaintext as JsPlaintext,
+          plaintext,
           indexType,
           this.opts.column.getName(),
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext: this.plaintext as JsPlaintext,
+          plaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
