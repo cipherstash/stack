@@ -1,5 +1,5 @@
 ---
-"@cipherstash/stack": patch
+"@cipherstash/stack": minor
 ---
 
 Fix: restore runtime null short-circuits in the encryption operation classes.
