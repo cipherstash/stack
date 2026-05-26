@@ -48,11 +48,13 @@ import {
 } from '@cipherstash/protect-ffi/wasm-inline'
 import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
 import {
+  type CastAs,
   type EncryptConfig,
   type EncryptedTable,
   type EncryptedTableColumn,
   buildEncryptConfig,
   encryptConfigSchema,
+  toEqlCastAs,
 } from '@/schema'
 import { EncryptedColumn, EncryptedField } from '@/schema'
 import type { Encrypted, EncryptOptions } from '@/types'
@@ -190,12 +192,37 @@ export async function Encryption(
   const strategy = resolveStrategy(clientConfig)
 
   const client = await wasmNewClient(strategy as never, {
-    encryptConfig,
+    encryptConfig: normalizeCastAs(encryptConfig),
     clientId: clientConfig.clientId,
     clientKey: clientConfig.clientKey,
   } as never)
 
   return new WasmEncryptionClient(client)
+}
+
+/**
+ * Convert SDK-facing `cast_as` values (`'string'`, `'number'`, …) to the
+ * EQL-native variants (`'text'`, `'double'`, …) that the WASM
+ * `newClient` accepts.
+ *
+ * The Node entry of protect-ffi performs this normalization internally
+ * via `normalizeEncryptConfig.js`; the WASM bindings do not. Without
+ * this, the WASM client rejects an `encryptedColumn('email')` (which
+ * defaults to `cast_as: 'string'`) with
+ * `unknown variant `string`, expected one of `big_int`, …`.
+ */
+function normalizeCastAs(config: EncryptConfig): unknown {
+  const tables: Record<string, Record<string, unknown>> = {}
+  for (const [tableName, columns] of Object.entries(config.tables)) {
+    const normalised: Record<string, unknown> = {}
+    for (const [colName, col] of Object.entries(columns)) {
+      normalised[colName] = col.cast_as
+        ? { ...col, cast_as: toEqlCastAs(col.cast_as as CastAs) }
+        : col
+    }
+    tables[tableName] = normalised
+  }
+  return { ...config, tables }
 }
 
 function getColumnName(
