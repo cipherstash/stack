@@ -1,0 +1,14 @@
+{
+  "//1": "Deno smoke test for @cipherstash/stack/wasm-inline. Run `pnpm exec turbo run build --filter @cipherstash/stack` first so dist/ is fresh.",
+  "//2": "stack is imported via a file URL because the wasm-inline subpath isn't on a published version yet — once stack ships with /wasm-inline this can switch to a plain npm: specifier. protect-ffi and auth resolve via npm: against the workspace's installed versions (Deno's nodeModulesDir: auto lets it use what pnpm fetched).",
+  "//3": "No --allow-ffi grant. If protect-ffi ever silently fell back to a native binding under Deno, the test would fail on missing FFI permission — this is the WASM guarantee.",
+  "nodeModulesDir": "auto",
+  "tasks": {
+    "test": "deno test --allow-env --allow-net --allow-read --allow-sys --no-prompt"
+  },
+  "imports": {
+    "@cipherstash/stack/wasm-inline": "../../packages/stack/dist/wasm-inline.js",
+    "@cipherstash/protect-ffi/wasm-inline": "npm:@cipherstash/protect-ffi@0.24.0/wasm-inline",
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@0.37.0-alpha.8/wasm-inline"
+  }
+}

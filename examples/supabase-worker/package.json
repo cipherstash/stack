@@ -1,0 +1,11 @@
+{
+  "name": "@cipherstash/supabase-worker-example",
+  "private": true,
+  "version": "0.0.0",
+  "description": "CipherStash Protect inside a Supabase Edge Function, via @cipherstash/stack/wasm-inline.",
+  "type": "module",
+  "scripts": {
+    "//": "Run via the Supabase CLI; the function imports stack/wasm-inline (and its transitive npm: deps) at runtime, so there is no build step here.",
+    "serve": "supabase functions serve --env-file .env.local cipherstash-roundtrip"
+  }
+}

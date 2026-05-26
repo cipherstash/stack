@@ -156,6 +156,56 @@ jobs:
       - name: Run E2E tests
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
 
+  # Verifies @cipherstash/stack/wasm-inline works under Deno — i.e. the
+  # WASM build of protect-ffi 0.24+ and auth 0.37+ can round-trip an
+  # encryption against ZeroKMS / CTS in a runtime with no native
+  # bindings available. The deno.json deliberately omits --allow-ffi so
+  # a silent fallback to the NAPI module is impossible.
+  wasm-e2e-tests:
+    name: Run WASM E2E Tests (Deno)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    env:
+      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6.0.8
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Deno smoke test imports the locally-built dist/wasm-inline.js
+      # via a file URL in e2e/wasm/deno.json — it needs a fresh build.
+      - name: Build stack
+        run: pnpm exec turbo run build --filter @cipherstash/stack
+
+      - name: Run Deno WASM smoke test
+        working-directory: e2e/wasm
+        run: deno task test
+
   run-tests-bun:
     name: Run Tests (Bun)
     runs-on: blacksmith-4vcpu-ubuntu-2404

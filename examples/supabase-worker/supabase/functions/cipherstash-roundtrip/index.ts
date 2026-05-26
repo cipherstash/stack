@@ -1,0 +1,86 @@
+/// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
+/**
+ * Supabase Edge Function demo: encrypt a value with CipherStash Protect
+ * and decrypt it back, all via WASM (no native bindings).
+ *
+ * Imports `@cipherstash/stack/wasm-inline` — the WASM-inline subpath
+ * works in any V8-only runtime (Supabase Edge, Cloudflare Workers, Bun,
+ * Deno, modern browsers).
+ *
+ * Usage:
+ *   cp ../../.env.example ../../.env.local   # fill in your CS_* values
+ *   supabase functions serve --env-file ../../.env.local cipherstash-roundtrip
+ *   curl http://localhost:54321/functions/v1/cipherstash-roundtrip
+ */
+
+import {
+  Encryption,
+  encryptedColumn,
+  encryptedTable,
+  isEncrypted,
+} from 'npm:@cipherstash/stack@^0.18.0/wasm-inline'
+
+const users = encryptedTable('users', {
+  email: encryptedColumn('email').equality(),
+})
+
+Deno.serve(async (_req: Request) => {
+  const accessKey = Deno.env.get('CS_CLIENT_ACCESS_KEY')
+  const clientId = Deno.env.get('CS_CLIENT_ID')
+  const clientKey = Deno.env.get('CS_CLIENT_KEY')
+  const region = Deno.env.get('CS_REGION') ?? 'ap-southeast-2.aws'
+
+  const missing = Object.entries({
+    CS_CLIENT_ACCESS_KEY: accessKey,
+    CS_CLIENT_ID: clientId,
+    CS_CLIENT_KEY: clientKey,
+  })
+    .filter(([, v]) => !v)
+    .map(([k]) => k)
+
+  if (missing.length > 0) {
+    return Response.json(
+      {
+        error: `missing env vars: ${missing.join(', ')}`,
+        hint: 'Pass via `supabase functions serve --env-file .env.local`',
+      },
+      { status: 400 },
+    )
+  }
+
+  try {
+    const client = await Encryption({
+      schemas: [users],
+      config: {
+        region,
+        accessKey: accessKey!,
+        clientId: clientId!,
+        clientKey: clientKey!,
+      },
+    })
+
+    const plaintext = 'alice@example.com'
+    const encrypted = await client.encrypt(plaintext, {
+      column: users.email,
+      table: users,
+    })
+    const decrypted = await client.decrypt(encrypted)
+
+    return Response.json(
+      {
+        ok: decrypted === plaintext,
+        plaintext,
+        decrypted,
+        isEncrypted: isEncrypted(encrypted),
+        ciphertextIdentifier: (encrypted as { i?: unknown }).i,
+      },
+      { headers: { 'content-type': 'application/json' } },
+    )
+  } catch (e) {
+    const err = e as { code?: string; message?: string; stack?: string }
+    return Response.json(
+      { code: err.code, message: err.message, stack: err.stack },
+      { status: 500 },
+    )
+  }
+})
