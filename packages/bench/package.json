@@ -13,7 +13,7 @@
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "pg": "^8.20.0"
+    "pg": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
