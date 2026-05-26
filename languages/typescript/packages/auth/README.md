@@ -83,8 +83,8 @@ Deno.serve(async (req) => {
 ```jsonc
 {
   "imports": {
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.37/wasm-inline",
-    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.37/cookies"
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.38/wasm-inline",
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.38/cookies"
   }
 }
 ```
