@@ -311,7 +311,7 @@ export class EncryptionClient {
    * @see {@link LockContext}
    * @see {@link DecryptOperation}
    */
-  decrypt(encryptedData: Encrypted): DecryptOperation {
+  decrypt(encryptedData: Encrypted | null): DecryptOperation {
     return new DecryptOperation(this.client, encryptedData)
   }
 

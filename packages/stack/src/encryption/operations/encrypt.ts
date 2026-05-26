@@ -17,13 +17,21 @@ import {
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
-export class EncryptOperation extends EncryptionOperation<Encrypted> {
+export class EncryptOperation extends EncryptionOperation<Encrypted | null> {
   private client: Client
-  private plaintext: JsPlaintext
+  // Internally widened to allow null so the runtime guard below can
+  // short-circuit. The public `Encryption.encrypt()` signature still
+  // rejects null at the type layer; this is defense in depth for callers
+  // that reach this class through casts or dynamic field walking.
+  private plaintext: JsPlaintext | null
   private column: EncryptedColumn | EncryptedField
   private table: EncryptedTable<EncryptedTableColumn>
 
-  constructor(client: Client, plaintext: JsPlaintext, opts: EncryptOptions) {
+  constructor(
+    client: Client,
+    plaintext: JsPlaintext | null,
+    opts: EncryptOptions,
+  ) {
     super()
     this.client = client
     this.plaintext = plaintext
@@ -37,7 +45,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
     return new EncryptOperationWithLockContext(this, lockContext)
   }
 
-  public async execute(): Promise<Result<Encrypted, EncryptionError>> {
+  public async execute(): Promise<Result<Encrypted | null, EncryptionError>> {
     const log = createRequestLogger()
     log.set({
       op: 'encrypt',
@@ -50,6 +58,10 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
       async () => {
         if (!this.client) {
           throw noClientError()
+        }
+
+        if (this.plaintext === null) {
+          return null
         }
 
         if (
@@ -90,7 +102,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   public getOperation(): {
     client: Client
-    plaintext: JsPlaintext
+    plaintext: JsPlaintext | null
     column: EncryptedColumn | EncryptedField
     table: EncryptedTable<EncryptedTableColumn>
   } {
@@ -103,7 +115,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   }
 }
 
-export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypted> {
+export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypted | null> {
   private operation: EncryptOperation
   private lockContext: LockContext
 
@@ -117,7 +129,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
     }
   }
 
-  public async execute(): Promise<Result<Encrypted, EncryptionError>> {
+  public async execute(): Promise<Result<Encrypted | null, EncryptionError>> {
     const { client, plaintext, column, table } = this.operation.getOperation()
 
     const log = createRequestLogger()
@@ -132,6 +144,10 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
       async () => {
         if (!client) {
           throw noClientError()
+        }
+
+        if (plaintext === null) {
+          return null
         }
 
         const { metadata } = this.getAuditData()

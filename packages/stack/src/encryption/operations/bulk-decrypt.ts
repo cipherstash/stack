@@ -5,40 +5,53 @@ import type { BulkDecryptPayload, BulkDecryptedData, Client } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { type Result, withResult } from '@byteslice/result'
 import {
+  type Encrypted as CipherStashEncrypted,
   type DecryptResult,
   decryptBulkFallible,
 } from '@cipherstash/protect-ffi'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
-// Helper functions for better composability
+// Drops nulls so they don't reach protect-ffi's bulk decrypt. The
+// dropped positions are re-inserted as null in `mapDecryptedDataToResult`.
 const createDecryptPayloads = (
   encryptedPayloads: BulkDecryptPayload,
   lockContext?: Context,
 ) => {
-  return encryptedPayloads.map(({ id, data }) => ({
-    id,
-    ciphertext: data,
-    ...(lockContext && { lockContext }),
-  }))
+  return encryptedPayloads
+    .filter(({ data }) => data !== null)
+    .map(({ id, data }) => ({
+      id,
+      ciphertext: data as CipherStashEncrypted,
+      ...(lockContext && { lockContext }),
+    }))
 }
+
+const createNullResult = (
+  encryptedPayloads: BulkDecryptPayload,
+): BulkDecryptedData =>
+  encryptedPayloads.map(({ id }) => ({ id, data: null }))
 
 const mapDecryptedDataToResult = (
   encryptedPayloads: BulkDecryptPayload,
   decryptedData: DecryptResult[],
 ): BulkDecryptedData => {
-  return decryptedData.map((decryptResult, i) => {
-    if ('error' in decryptResult) {
-      return {
-        id: encryptedPayloads[i].id,
-        error: decryptResult.error,
+  const result: BulkDecryptedData = new Array(encryptedPayloads.length)
+  let decryptedIndex = 0
+  for (let i = 0; i < encryptedPayloads.length; i++) {
+    if (encryptedPayloads[i].data === null) {
+      result[i] = { id: encryptedPayloads[i].id, data: null }
+    } else {
+      const decryptResult = decryptedData[decryptedIndex]
+      if ('error' in decryptResult) {
+        result[i] = { id: encryptedPayloads[i].id, error: decryptResult.error }
+      } else {
+        result[i] = { id: encryptedPayloads[i].id, data: decryptResult.data }
       }
+      decryptedIndex++
     }
-    return {
-      id: encryptedPayloads[i].id,
-      data: decryptResult.data,
-    }
-  })
+  }
+  return result
 }
 
 export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData> {
@@ -71,12 +84,16 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
         if (!this.encryptedPayloads || this.encryptedPayloads.length === 0)
           return []
 
-        const payloads = createDecryptPayloads(this.encryptedPayloads)
+        const nonNullPayloads = createDecryptPayloads(this.encryptedPayloads)
+
+        if (nonNullPayloads.length === 0) {
+          return createNullResult(this.encryptedPayloads)
+        }
 
         const { metadata } = this.getAuditData()
 
         const decryptedData = await decryptBulkFallible(this.client, {
-          ciphertexts: payloads,
+          ciphertexts: nonNullPayloads,
           unverifiedContext: metadata,
         })
 
@@ -140,15 +157,19 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
           throw new Error(`[encryption]: ${context.failure.message}`)
         }
 
-        const payloads = createDecryptPayloads(
+        const nonNullPayloads = createDecryptPayloads(
           encryptedPayloads,
           context.data.context,
         )
 
+        if (nonNullPayloads.length === 0) {
+          return createNullResult(encryptedPayloads)
+        }
+
         const { metadata } = this.getAuditData()
 
         const decryptedData = await decryptBulkFallible(client, {
-          ciphertexts: payloads,
+          ciphertexts: nonNullPayloads,
           serviceToken: context.data.ctsToken,
           unverifiedContext: metadata,
         })

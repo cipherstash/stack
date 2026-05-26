@@ -20,10 +20,12 @@ import { EncryptionOperation } from './base-operation'
 /**
  * @internal Use {@link EncryptionClient.encryptQuery} instead.
  */
-export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
+export class EncryptQueryOperation extends EncryptionOperation<
+  EncryptedQueryResult | null
+> {
   constructor(
     private client: Client,
-    private plaintext: JsPlaintext,
+    private plaintext: JsPlaintext | null | undefined,
     private opts: EncryptQueryOptions,
   ) {
     super()
@@ -42,7 +44,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
   }
 
   public async execute(): Promise<
-    Result<EncryptedQueryResult, EncryptionError>
+    Result<EncryptedQueryResult | null, EncryptionError>
   > {
     const log = createRequestLogger()
     log.set({
@@ -52,6 +54,11 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
       queryType: this.opts.queryType,
       lockContext: false,
     })
+
+    if (this.plaintext === null || this.plaintext === undefined) {
+      log.emit()
+      return { data: null }
+    }
 
     const validationError = validateNumericValue(this.plaintext)
     if (validationError?.failure) {
@@ -68,18 +75,18 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
         const { indexType, queryOp } = resolveIndexType(
           this.opts.column,
           this.opts.queryType,
-          this.plaintext,
+          this.plaintext as JsPlaintext,
         )
 
         // Validate value/index compatibility
         assertValueIndexCompatibility(
-          this.plaintext,
+          this.plaintext as JsPlaintext,
           indexType,
           this.opts.column.getName(),
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext: this.plaintext,
+          plaintext: this.plaintext as JsPlaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
@@ -110,10 +117,12 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
 /**
  * @internal Use {@link EncryptionClient.encryptQuery} with `.withLockContext()` instead.
  */
-export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
+export class EncryptQueryOperationWithLockContext extends EncryptionOperation<
+  EncryptedQueryResult | null
+> {
   constructor(
     private client: Client,
-    private plaintext: JsPlaintext,
+    private plaintext: JsPlaintext | null | undefined,
     private opts: EncryptQueryOptions,
     private lockContext: LockContext,
     auditMetadata?: Record<string, unknown>,
@@ -123,7 +132,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
   }
 
   public async execute(): Promise<
-    Result<EncryptedQueryResult, EncryptionError>
+    Result<EncryptedQueryResult | null, EncryptionError>
   > {
     const log = createRequestLogger()
     log.set({
@@ -133,6 +142,11 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       queryType: this.opts.queryType,
       lockContext: true,
     })
+
+    if (this.plaintext === null || this.plaintext === undefined) {
+      log.emit()
+      return { data: null }
+    }
 
     const validationError = validateNumericValue(this.plaintext)
     if (validationError?.failure) {
@@ -157,18 +171,18 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
         const { indexType, queryOp } = resolveIndexType(
           this.opts.column,
           this.opts.queryType,
-          this.plaintext,
+          this.plaintext as JsPlaintext,
         )
 
         // Validate value/index compatibility
         assertValueIndexCompatibility(
-          this.plaintext,
+          this.plaintext as JsPlaintext,
           indexType,
           this.opts.column.getName(),
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext: this.plaintext,
+          plaintext: this.plaintext as JsPlaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
