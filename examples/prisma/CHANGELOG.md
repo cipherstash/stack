@@ -1,5 +1,13 @@
 # @cipherstash/prisma-next-example
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [f743fcc]
+  - @cipherstash/stack@0.17.0
+  - @cipherstash/prisma-next@0.3.0
+
 ## 0.0.2
 
 ### Patch Changes

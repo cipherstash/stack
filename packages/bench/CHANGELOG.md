@@ -1,5 +1,12 @@
 # @cipherstash/bench
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies [f743fcc]
+  - @cipherstash/stack@0.17.0
+
 ## 0.0.1
 
 ### Patch Changes
