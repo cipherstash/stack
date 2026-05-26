@@ -10,8 +10,11 @@ on:
 
 jobs:
   run-tests:
-    name: Run Tests
+    name: Run Tests (Node ${{ matrix.node-version }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      matrix:
+        node-version: [22, 24]
 
     # Postgres + EQL for the integration tests. Official EQL image —
     # PostgreSQL 17 with EQL pre-installed via /docker-entrypoint-initdb.d.
@@ -44,7 +47,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
 
       # node-pty's install hook falls back to `node-gyp rebuild` when no
@@ -152,3 +155,94 @@ jobs:
       # job above; we filter to the new workspace here to avoid duplication.
       - name: Run E2E tests
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
+
+  run-tests-bun:
+    name: Run Tests (Bun)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    continue-on-error: true
+
+    services:
+      postgres:
+        image: ghcr.io/cipherstash/postgres-eql:17-2.3.1
+        env:
+          POSTGRES_USER: cipherstash
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: cipherstash
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cipherstash -d cipherstash"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: pnpm/action-setup@v6.0.8
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create .env file in ./packages/protect/
+        run: |
+          touch ./packages/protect/.env
+          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
+
+      - name: Create .env file in ./packages/stack/
+        run: |
+          touch ./packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
+
+      - name: Create .env file in ./packages/protect-dynamodb/
+        run: |
+          touch ./packages/protect-dynamodb/.env
+          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
+
+      - name: Create .env file in ./packages/drizzle/
+        run: |
+          touch ./packages/drizzle/.env
+          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env
+
+      # Build with Node (turbo/tsup need Node), then run tests with Bun
+      - name: Build packages
+        run: pnpm turbo build --filter './packages/*'
+
+      - name: Run tests with Bun
+        run: |
+          for dir in packages/schema packages/protect packages/stack packages/protect-dynamodb packages/drizzle packages/stack-forge; do
+            if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/package.json" ]; then
+              echo "--- Testing $dir ---"
+              (cd "$dir" && bunx --bun vitest run) || true
+            fi
+          done

@@ -86,7 +86,13 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
 
 describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
   const workflow = readYaml('.github/workflows/tests.yml') as {
-    jobs: Record<string, { steps: Array<{ run?: string; uses?: string; with?: Record<string, unknown> }> }>
+    jobs: Record<
+      string,
+      {
+        strategy?: { matrix?: Record<string, unknown> }
+        steps: Array<{ run?: string; uses?: string; with?: Record<string, unknown> }>
+      }
+    >
   }
 
   it('every `pnpm install` invocation uses --frozen-lockfile', () => {
@@ -104,7 +110,7 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
     }
   })
 
-  it('every pnpm-using job runs on Node 22', () => {
+  it('every pnpm-using job runs on Node 22 (literal or matrix incl. 22)', () => {
     for (const [jobName, job] of Object.entries(workflow.jobs)) {
       const usesPnpm = job.steps.some(
         (s) =>
@@ -116,7 +122,21 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
         (s) => typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node'),
       )
       expect(setup, `${jobName} uses pnpm but lacks actions/setup-node`).toBeTruthy()
-      expect(String(setup?.with?.['node-version']), `${jobName} node version`).toBe('22')
+      const nv = String(setup?.with?.['node-version'])
+      if (nv === '22') continue
+      // Allow `${{ matrix.<key> }}` only when that matrix key resolves to
+      // an array of versions that includes 22 — so the matrix can broaden
+      // coverage without ever dropping the Node 22 hardening baseline.
+      const matrixRef = nv.match(/^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/)
+      expect(matrixRef, `${jobName} node version: expected '22' or matrix expression, got '${nv}'`).toBeTruthy()
+      const matrixKey = matrixRef![1]
+      const versions = job.strategy?.matrix?.[matrixKey]
+      expect(
+        Array.isArray(versions),
+        `${jobName} references matrix.${matrixKey} but no such array on strategy.matrix`,
+      ).toBe(true)
+      const versionStrings = (versions as unknown[]).map((v) => String(v))
+      expect(versionStrings, `${jobName} matrix.${matrixKey} must include 22`).toContain('22')
     }
   })
 })
