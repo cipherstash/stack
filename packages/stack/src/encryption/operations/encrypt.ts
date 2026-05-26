@@ -19,11 +19,19 @@ import { EncryptionOperation } from './base-operation'
 
 export class EncryptOperation extends EncryptionOperation<Encrypted> {
   private client: Client
-  private plaintext: JsPlaintext
+  // Internally widened to allow null so the runtime guard below can
+  // short-circuit. The public `Encryption.encrypt()` signature still
+  // rejects null at the type layer; this is defense in depth for callers
+  // that reach this class through casts or dynamic field walking.
+  private plaintext: JsPlaintext | null
   private column: EncryptedColumn | EncryptedField
   private table: EncryptedTable<EncryptedTableColumn>
 
-  constructor(client: Client, plaintext: JsPlaintext, opts: EncryptOptions) {
+  constructor(
+    client: Client,
+    plaintext: JsPlaintext | null,
+    opts: EncryptOptions,
+  ) {
     super()
     this.client = client
     this.plaintext = plaintext
@@ -50,6 +58,16 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
       async () => {
         if (!this.client) {
           throw noClientError()
+        }
+
+        if (this.plaintext === null) {
+          // Defense in depth: the public `Encryption.encrypt()` signature
+          // rejects null, but null can still arrive here via casts or
+          // dynamic field walking. Return null directly so the result
+          // matches DB NULL semantics rather than encrypting JSON null
+          // into a SteVec. The cast acknowledges the type-narrow
+          // contract at the public boundary.
+          return null as unknown as Encrypted
         }
 
         if (
@@ -90,7 +108,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   public getOperation(): {
     client: Client
-    plaintext: JsPlaintext
+    plaintext: JsPlaintext | null
     column: EncryptedColumn | EncryptedField
     table: EncryptedTable<EncryptedTableColumn>
   } {
@@ -132,6 +150,10 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
       async () => {
         if (!client) {
           throw noClientError()
+        }
+
+        if (plaintext === null) {
+          return null as unknown as Encrypted
         }
 
         const { metadata } = this.getAuditData()

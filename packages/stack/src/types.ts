@@ -133,7 +133,14 @@ export type EncryptedSearchTerm = Encrypted | EncryptedQuery | string
 /** Result of encryptQuery (single or batch). `eql` return type yields either a
  * storage payload (`Encrypted`) or a query-only term (`EncryptedQuery`); the
  * `composite-literal` return types yield a string. */
-export type EncryptedQueryResult = Encrypted | EncryptedQuery | string
+// null elements appear in the batch path when a term has a null/undefined
+// value — the operation preserves position so callers can correlate results
+// with their input array.
+export type EncryptedQueryResult =
+  | Encrypted
+  | EncryptedQuery
+  | string
+  | null
 
 // ---------------------------------------------------------------------------
 // Model field types (encrypted vs decrypted views)
@@ -191,14 +198,19 @@ export type EncryptedFromSchema<T, S extends EncryptedTableColumn> = {
 // Bulk operations
 // ---------------------------------------------------------------------------
 
+// Bulk payloads admit null elements — bulk operations pass them through
+// untouched (encrypt(null) -> null, decrypt(null) -> null) so callers can
+// process mixed nullable arrays without filtering ahead of time. The
+// runtime guards in the operation classes preserve the null in the
+// position-stable output.
 export type BulkEncryptPayload = Array<{
   id?: string
-  plaintext: JsPlaintext
+  plaintext: JsPlaintext | null
 }>
 
-export type BulkEncryptedData = Array<{ id?: string; data: Encrypted }>
-export type BulkDecryptPayload = Array<{ id?: string; data: Encrypted }>
-export type BulkDecryptedData = Array<DecryptionResult<JsPlaintext>>
+export type BulkEncryptedData = Array<{ id?: string; data: Encrypted | null }>
+export type BulkDecryptPayload = Array<{ id?: string; data: Encrypted | null }>
+export type BulkDecryptedData = Array<DecryptionResult<JsPlaintext | null>>
 
 type DecryptionSuccess<T> = { error?: never; data: T; id?: string }
 type DecryptionError<T> = { error: T; id?: string; data?: never }

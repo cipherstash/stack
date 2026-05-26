@@ -23,7 +23,7 @@ import { EncryptionOperation } from './base-operation'
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
-    private plaintext: JsPlaintext,
+    private plaintext: JsPlaintext | null | undefined,
     private opts: EncryptQueryOptions,
   ) {
     super()
@@ -53,7 +53,14 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
       lockContext: false,
     })
 
-    const validationError = validateNumericValue(this.plaintext)
+    if (this.plaintext === null || this.plaintext === undefined) {
+      log.emit()
+      return { data: null }
+    }
+
+    const plaintext: JsPlaintext = this.plaintext
+
+    const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
       log.emit()
       return { failure: validationError.failure }
@@ -68,18 +75,18 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
         const { indexType, queryOp } = resolveIndexType(
           this.opts.column,
           this.opts.queryType,
-          this.plaintext,
+          plaintext,
         )
 
         // Validate value/index compatibility
         assertValueIndexCompatibility(
-          this.plaintext,
+          plaintext,
           indexType,
           this.opts.column.getName(),
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext: this.plaintext,
+          plaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
@@ -113,7 +120,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
 export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
-    private plaintext: JsPlaintext,
+    private plaintext: JsPlaintext | null | undefined,
     private opts: EncryptQueryOptions,
     private lockContext: LockContext,
     auditMetadata?: Record<string, unknown>,
@@ -134,7 +141,14 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       lockContext: true,
     })
 
-    const validationError = validateNumericValue(this.plaintext)
+    if (this.plaintext === null || this.plaintext === undefined) {
+      log.emit()
+      return { data: null }
+    }
+
+    const plaintext: JsPlaintext = this.plaintext
+
+    const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
       log.emit()
       return { failure: validationError.failure }
@@ -157,18 +171,18 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
         const { indexType, queryOp } = resolveIndexType(
           this.opts.column,
           this.opts.queryType,
-          this.plaintext,
+          plaintext,
         )
 
         // Validate value/index compatibility
         assertValueIndexCompatibility(
-          this.plaintext,
+          plaintext,
           indexType,
           this.opts.column.getName(),
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext: this.plaintext,
+          plaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,

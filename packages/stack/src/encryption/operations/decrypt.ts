@@ -17,9 +17,13 @@ import { EncryptionOperation } from './base-operation'
  */
 export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
   private client: Client
-  private encryptedData: Encrypted
+  // Internally widened to allow null so the runtime guard below can
+  // short-circuit on legacy / manually-NULLed rows. The public
+  // `Encryption.decrypt()` signature still rejects null at the type
+  // layer; this is defense in depth for direct construction.
+  private encryptedData: Encrypted | null
 
-  constructor(client: Client, encryptedData: Encrypted) {
+  constructor(client: Client, encryptedData: Encrypted | null) {
     super()
     this.client = client
     this.encryptedData = encryptedData
@@ -44,6 +48,11 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
           throw noClientError()
         }
 
+        if (this.encryptedData === null) {
+          // See encrypt.ts for the same defense-in-depth pattern.
+          return null as unknown as JsPlaintext
+        }
+
         const { metadata } = this.getAuditData()
 
         return await ffiDecrypt(this.client, {
@@ -66,7 +75,7 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
 
   public getOperation(): {
     client: Client
-    encryptedData: Encrypted
+    encryptedData: Encrypted | null
     auditData?: Record<string, unknown>
   } {
     return {
@@ -104,6 +113,10 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlain
 
         if (!client) {
           throw noClientError()
+        }
+
+        if (encryptedData === null) {
+          return null as unknown as JsPlaintext
         }
 
         const { metadata } = this.getAuditData()

@@ -11,28 +11,54 @@ import type {
   BulkEncryptPayload,
   BulkEncryptedData,
   Client,
+  Encrypted,
   EncryptOptions,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { type Result, withResult } from '@byteslice/result'
-import { encryptBulk } from '@cipherstash/protect-ffi'
+import { type JsPlaintext, encryptBulk } from '@cipherstash/protect-ffi'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
-// Helper functions for better composability
+// Drops nulls so they don't reach protect-ffi (which would otherwise
+// produce a SteVec wrapping the JSON null). The dropped positions are
+// re-inserted as null in `mapEncryptedDataToResult`.
 const createEncryptPayloads = (
   plaintexts: BulkEncryptPayload,
   column: EncryptedColumn | EncryptedField,
   table: EncryptedTable<EncryptedTableColumn>,
   lockContext?: Context,
 ) => {
-  return plaintexts.map(({ id, plaintext }) => ({
-    id,
-    plaintext,
-    column: column.getName(),
-    table: table.tableName,
-    ...(lockContext && { lockContext }),
-  }))
+  return plaintexts
+    .filter(({ plaintext }) => plaintext !== null)
+    .map(({ id, plaintext }) => ({
+      id,
+      plaintext: plaintext as JsPlaintext,
+      column: column.getName(),
+      table: table.tableName,
+      ...(lockContext && { lockContext }),
+    }))
+}
+
+const createNullResult = (
+  plaintexts: BulkEncryptPayload,
+): BulkEncryptedData => plaintexts.map(({ id }) => ({ id, data: null }))
+
+const mapEncryptedDataToResult = (
+  plaintexts: BulkEncryptPayload,
+  encryptedData: Encrypted[],
+): BulkEncryptedData => {
+  const result: BulkEncryptedData = new Array(plaintexts.length)
+  let encryptedIndex = 0
+  for (let i = 0; i < plaintexts.length; i++) {
+    if (plaintexts[i].plaintext === null) {
+      result[i] = { id: plaintexts[i].id, data: null }
+    } else {
+      result[i] = { id: plaintexts[i].id, data: encryptedData[encryptedIndex] }
+      encryptedIndex++
+    }
+  }
+  return result
 }
 
 export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData> {
@@ -78,23 +104,24 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
           return []
         }
 
-        const payloads = createEncryptPayloads(
+        const nonNullPayloads = createEncryptPayloads(
           this.plaintexts,
           this.column,
           this.table,
         )
 
+        if (nonNullPayloads.length === 0) {
+          return createNullResult(this.plaintexts)
+        }
+
         const { metadata } = this.getAuditData()
 
         const encryptedData = await encryptBulk(this.client, {
-          plaintexts: payloads,
+          plaintexts: nonNullPayloads,
           unverifiedContext: metadata,
         })
 
-        return encryptedData.map((data, i) => ({
-          id: this.plaintexts[i].id,
-          data,
-        }))
+        return mapEncryptedDataToResult(this.plaintexts, encryptedData)
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
@@ -164,25 +191,26 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
           throw new Error(`[encryption]: ${context.failure.message}`)
         }
 
-        const payloads = createEncryptPayloads(
+        const nonNullPayloads = createEncryptPayloads(
           plaintexts,
           column,
           table,
           context.data.context,
         )
 
+        if (nonNullPayloads.length === 0) {
+          return createNullResult(plaintexts)
+        }
+
         const { metadata } = this.getAuditData()
 
         const encryptedData = await encryptBulk(client, {
-          plaintexts: payloads,
+          plaintexts: nonNullPayloads,
           serviceToken: context.data.ctsToken,
           unverifiedContext: metadata,
         })
 
-        return encryptedData.map((data, i) => ({
-          id: plaintexts[i].id,
-          data,
-        }))
+        return mapEncryptedDataToResult(plaintexts, encryptedData)
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
