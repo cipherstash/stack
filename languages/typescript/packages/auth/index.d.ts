@@ -165,7 +165,10 @@ export declare class AccessKeyStrategy {
    * access key.
    *
    * The CRN format is `crn:<region>:<workspace-id>` (e.g.
-   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`).
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from
+   * the CRN and used for service discovery; the workspace ID is used to
+   * verify every issued token belongs to the right workspace. A mismatch
+   * fails `getToken()` with `code === "WORKSPACE_MISMATCH"`.
    */
   static create(workspaceCrn: string, accessKey: string): AccessKeyStrategy
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */

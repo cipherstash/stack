@@ -158,12 +158,13 @@ pub struct AccessKeyStrategy {
 #[napi]
 impl AccessKeyStrategy {
     /// Create a new `AccessKeyStrategy` for the given workspace CRN and
-    /// access key. Region is derived from the CRN — there's no separate
-    /// region argument — so the strategy can't be configured for one
-    /// workspace's region while the CRN says another.
+    /// access key.
     ///
-    /// Every issued token's workspace claim is verified against the CRN;
-    /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
+    /// The CRN format is `crn:<region>:<workspace-id>` (e.g.
+    /// `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed
+    /// from the CRN and used for service discovery; the workspace ID is
+    /// used to verify every issued token belongs to the right workspace.
+    /// A mismatch fails `getToken()` with `code === "WORKSPACE_MISMATCH"`.
     #[napi(factory)]
     pub fn create(workspace_crn: String, access_key: String) -> Result<Self> {
         let crn: cts_common::Crn = workspace_crn
