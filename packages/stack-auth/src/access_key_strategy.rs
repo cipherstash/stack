@@ -4,9 +4,7 @@ use crate::access_key::AccessKey;
 use crate::access_key_refresher::AccessKeyRefresher;
 use crate::auto_refresh::AutoRefresh;
 use crate::token_store::{NoStore, TokenStore};
-use crate::{
-    ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken,
-};
+use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
 
 /// An [`AuthStrategy`] that uses a static access key to authenticate against
 /// a specific workspace.
@@ -154,8 +152,9 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
         let region = self.workspace_crn.region.clone();
         let base_url = match self.base_url_override {
             Some(url) => url,
-            None => crate::cts_base_url_from_env()?
-                .unwrap_or(CtsServiceDiscovery::endpoint(region)?),
+            None => {
+                crate::cts_base_url_from_env()?.unwrap_or(CtsServiceDiscovery::endpoint(region)?)
+            }
         };
         let refresher = AccessKeyRefresher::new(
             self.access_key,
@@ -212,8 +211,7 @@ mod workspace_verification_tests {
                 "expiry": 3600,
             }));
         });
-        let server = MockServer::new_http("access-key-strategy-workspace-test")
-            .with_mocks(mocks);
+        let server = MockServer::new_http("access-key-strategy-workspace-test").with_mocks(mocks);
         #[allow(clippy::expect_used)]
         server.start().await.expect("mock server start");
         server
@@ -265,7 +263,10 @@ mod workspace_verification_tests {
             .build()
             .expect("builder");
 
-        let err = (&strategy).get_token().await.expect_err("expected mismatch");
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected mismatch");
         match err {
             AuthError::WorkspaceMismatch {
                 expected_workspace,

@@ -181,10 +181,7 @@ impl AccessKeyStrategy {
     ///
     /// Every issued token's workspace claim is verified against the CRN;
     /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
-    pub fn create(
-        workspace_crn: String,
-        access_key: String,
-    ) -> Result<AccessKeyStrategy, JsValue> {
+    pub fn create(workspace_crn: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
         let crn: cts_common::Crn = workspace_crn
             .parse()
             .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
@@ -343,19 +340,22 @@ mod tests {
         assert_eq!(error_code_of(&err), "INVALID_TOKEN");
     }
 
+    const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
+    const VALID_KEY: &str = "CSAKtestKeyId.testKeySecret";
+
     #[wasm_bindgen_test]
-    fn access_key_strategy_rejects_invalid_region() {
+    fn access_key_strategy_rejects_invalid_crn() {
         let err = expect_js_err(AccessKeyStrategy::create(
-            "not-a-region".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
+            "not-a-crn".to_string(),
+            VALID_KEY.to_string(),
         ));
-        assert_eq!(error_code_of(&err), "INVALID_REGION");
+        assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn access_key_strategy_rejects_invalid_key() {
         let err = expect_js_err(AccessKeyStrategy::create(
-            "ap-southeast-2.aws".to_string(),
+            VALID_CRN.to_string(),
             "not-a-valid-key".to_string(),
         ));
         assert_eq!(error_code_of(&err), "INVALID_ACCESS_KEY");
@@ -363,10 +363,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn access_key_strategy_accepts_valid_inputs() {
-        let result = AccessKeyStrategy::create(
-            "ap-southeast-2.aws".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
-        );
+        let result = AccessKeyStrategy::create(VALID_CRN.to_string(), VALID_KEY.to_string());
         assert!(result.is_ok());
     }
 
@@ -381,24 +378,24 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn create_with_store_rejects_invalid_region() {
+    fn create_with_store_rejects_invalid_crn() {
         let err = expect_js_err(AccessKeyStrategy::create_with_store(
-            "not-a-region".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
+            "not-a-crn".to_string(),
+            VALID_KEY.to_string(),
             empty_load_fn(),
             noop_save_fn(),
         ));
         assert_eq!(
             error_code_of(&err),
-            "INVALID_REGION",
-            "invalid region should surface INVALID_REGION even on the store variant"
+            "INVALID_CRN",
+            "invalid CRN should surface INVALID_CRN even on the store variant"
         );
     }
 
     #[wasm_bindgen_test]
     fn create_with_store_rejects_invalid_access_key() {
         let err = expect_js_err(AccessKeyStrategy::create_with_store(
-            "ap-southeast-2.aws".to_string(),
+            VALID_CRN.to_string(),
             "not-a-valid-key".to_string(),
             empty_load_fn(),
             noop_save_fn(),
@@ -413,14 +410,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn create_with_store_accepts_valid_inputs() {
         let result = AccessKeyStrategy::create_with_store(
-            "ap-southeast-2.aws".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
+            VALID_CRN.to_string(),
+            VALID_KEY.to_string(),
             empty_load_fn(),
             noop_save_fn(),
         );
         assert!(
             result.is_ok(),
-            "valid region + key + callbacks should construct successfully"
+            "valid CRN + key + callbacks should construct successfully"
         );
     }
 
