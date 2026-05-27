@@ -188,6 +188,7 @@
 		"./package.json": "./package.json"
 	},
 	"scripts": {
+		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
 		"build": "tsup",
 		"dev": "tsup --watch",
 		"test": "vitest run",

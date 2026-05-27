@@ -165,8 +165,13 @@ jobs:
     name: Run WASM E2E Tests (Deno)
     runs-on: blacksmith-4vcpu-ubuntu-2404
 
+    permissions:
+      contents: read
+
+    # CS_WORKSPACE_CRN deliberately not exposed here: the WASM client
+    # doesn't read it. A separate ticket tracks adding parity with the
+    # Node entry, at which point the CRN should be re-added.
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
       CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
@@ -174,6 +179,8 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6.0.8
         name: Install pnpm
@@ -186,6 +193,12 @@ jobs:
           node-version: 22
           cache: 'pnpm'
 
+      # node-pty (a dev-dep of @cipherstash/cli used by its E2E PTY
+      # tests) falls back to `node-gyp rebuild` when no prebuild matches
+      # the runner, and pnpm/action-setup v6 no longer ships node-gyp on
+      # PATH. The WASM smoke test itself uses no native modules — this
+      # install only exists so the workspace-wide `pnpm install` step
+      # below doesn't fail.
       - name: Install node-gyp
         run: npm install -g node-gyp
 
@@ -209,7 +222,7 @@ jobs:
       # Fail loudly instead.
       - name: Assert CS_* secrets are present
         run: |
-          for v in CS_WORKSPACE_CRN CS_CLIENT_ID CS_CLIENT_KEY CS_CLIENT_ACCESS_KEY; do
+          for v in CS_CLIENT_ID CS_CLIENT_KEY CS_CLIENT_ACCESS_KEY; do
             if [ -z "${!v}" ]; then
               echo "::error::Required secret $v is not set on this runner — the WASM smoke test would silently skip."
               exit 1

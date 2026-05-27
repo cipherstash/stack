@@ -22,11 +22,14 @@ import {
   isEncrypted,
 } from '@cipherstash/stack/wasm-inline'
 
+// `CS_WORKSPACE_CRN` is intentionally not in this list — the WASM
+// client doesn't read it (workspace identity comes from the access-key
+// token). A separate ticket tracks adding parity with the Node entry,
+// at which point CRN should be added back here.
 const REQUIRED_ENV = [
   'CS_CLIENT_ACCESS_KEY',
   'CS_CLIENT_ID',
   'CS_CLIENT_KEY',
-  'CS_WORKSPACE_CRN',
 ] as const
 
 function envOrSkip(): Record<(typeof REQUIRED_ENV)[number], string> | null {

@@ -21,7 +21,7 @@
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     region: "ap-southeast-2.aws",
+ *     region:    "ap-southeast-2.aws",
  *     accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
  *     clientId:  Deno.env.get("CS_CLIENT_ID")!,
  *     clientKey: Deno.env.get("CS_CLIENT_KEY")!,
@@ -36,11 +36,9 @@
  * ```
  *
  * For runtimes that need a custom token store (e.g. cookies on a
- * Supabase Edge Function), pass a pre-built strategy via
- * `config.strategy`. The strategy type is structural — any object with
- * `getToken(): Promise<{ token: string }>` works. Use
- * `AccessKeyStrategy.create(...)` from `@cipherstash/auth/wasm-inline`
- * to build one with a `cookieStore` from `@cipherstash/auth/cookies`.
+ * Supabase Edge Function), build the strategy yourself with
+ * `AccessKeyStrategy.create(region, accessKey, { store })` from
+ * `@cipherstash/auth/wasm-inline` and pass it via `config.strategy`.
  */
 
 import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
@@ -101,22 +99,46 @@ export function isEncrypted(value: unknown): boolean {
 // High-level `Encryption` factory + client.
 // -----------------------------------------------------------------------
 
-/** Default region used when `WasmClientConfig.region` is unset. */
-const DEFAULT_REGION = 'ap-southeast-2.aws'
+/**
+ * The plaintext shape accepted by `encrypt` and returned by `decrypt`.
+ * Mirrors protect-ffi's `JsPlaintext` (recursive: arrays of any of
+ * these are valid). Re-defined here so the wasm-inline `.d.ts` doesn't
+ * pull in the Node-only protect-ffi types.
+ */
+export type WasmPlaintext =
+  | string
+  | number
+  | boolean
+  | Record<string, unknown>
+  | WasmPlaintext[]
 
 /**
  * Config for {@link Encryption} on the WASM entry point.
  *
- * Unlike the Node entry, the WASM path requires an explicit auth
- * strategy. For service-to-service / CI use, pass `accessKey` plus the
- * workspace `clientId` / `clientKey` and we construct an
- * `AccessKeyStrategy` for you. To use a custom token store (e.g.
- * cookies on a Supabase Edge Function), pass a pre-built `strategy`
- * instead.
+ * Unlike the Node entry, the WASM path needs the region passed
+ * explicitly today (no default — workspace deployment region is a
+ * caller concern). For service-to-service / CI use, pass `accessKey`
+ * plus the workspace `clientId` / `clientKey` and we construct an
+ * `AccessKeyStrategy` for you. To plug in a custom token store
+ * (cookies on Supabase Edge, KV on Cloudflare Workers, …) build the
+ * strategy with `AccessKeyStrategy.create(region, accessKey, { store })`
+ * and hand it to `config.strategy` instead.
+ *
+ * NOTE: `region` will be removed in a future release. The strategy
+ * will then take a `workspaceCrn` and derive the region from it —
+ * single source of truth, with the bearer token's workspace asserted
+ * against the CRN. Plan accordingly; the field is required for now
+ * because the underlying `@cipherstash/auth/wasm-inline`
+ * `AccessKeyStrategy.create()` still takes a region argument.
  */
 export type WasmClientConfig = {
-  /** CipherStash region, e.g. `"ap-southeast-2.aws"`. Defaults to ap-southeast-2.aws. */
-  region?: string
+  /**
+   * CipherStash region, e.g. `"ap-southeast-2.aws"`. Required for now.
+   * @deprecated will be replaced by `workspaceCrn` once
+   * `@cipherstash/auth` switches `AccessKeyStrategy.create()` to derive
+   * region from a CRN.
+   */
+  region: string
   /** Workspace client identifier — required by the WASM client. */
   clientId: string
   /** Workspace client key — required by the WASM client. */
@@ -129,7 +151,7 @@ export type WasmClientConfig = {
     }
   | {
       accessKey?: never
-      strategy: { getToken(): Promise<unknown> }
+      strategy: AccessKeyStrategy
     }
 )
 
@@ -142,23 +164,44 @@ export type WasmEncryptionConfig = {
 }
 
 /**
+ * Internal token used to gate the {@link WasmEncryptionClient}
+ * constructor. Symbols are unique by reference, so external code can't
+ * forge one even if they recreate `WasmEncryptionClient` via type
+ * inspection.
+ */
+const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
+
+/**
  * WASM encryption client. Returned by {@link Encryption}.
  *
- * Wraps an opaque {@link wasmNewClient} handle and exposes a minimal
+ * Wraps an opaque `wasmNewClient` handle and exposes a minimal
  * `encrypt` / `decrypt` surface. Larger surface (bulk, query, model
  * helpers) lives on the Node entry — port lazily as Deno / edge
  * consumers demand it.
+ *
+ * Construct via {@link Encryption} — the constructor is private to
+ * prevent callers from wrapping arbitrary objects in this type.
  */
 export class WasmEncryptionClient {
   /** @internal */
   private readonly client: unknown
 
-  constructor(client: unknown) {
+  private constructor(token: symbol, client: unknown) {
+    if (token !== INTERNAL_CONSTRUCT) {
+      throw new Error(
+        '[encryption]: WasmEncryptionClient cannot be constructed directly — use the Encryption() factory.',
+      )
+    }
     this.client = client
   }
 
+  /** @internal */
+  static __construct(client: unknown): WasmEncryptionClient {
+    return new WasmEncryptionClient(INTERNAL_CONSTRUCT, client)
+  }
+
   async encrypt(
-    plaintext: string | number | boolean | Record<string, unknown>,
+    plaintext: WasmPlaintext,
     opts: EncryptOptions,
   ): Promise<Encrypted> {
     const ffiOpts = {
@@ -172,10 +215,10 @@ export class WasmEncryptionClient {
     )) as Encrypted
   }
 
-  async decrypt(encrypted: Encrypted): Promise<string | number | boolean | Record<string, unknown>> {
+  async decrypt(encrypted: Encrypted): Promise<WasmPlaintext> {
     return (await wasmDecrypt(this.client as never, {
       ciphertext: encrypted,
-    } as never)) as string | number | boolean | Record<string, unknown>
+    } as never)) as WasmPlaintext
   }
 
   isEncrypted(value: unknown): boolean {
@@ -213,7 +256,7 @@ export async function Encryption(
     clientKey: clientConfig.clientKey,
   } as never)
 
-  return new WasmEncryptionClient(client)
+  return WasmEncryptionClient.__construct(client)
 }
 
 /**
@@ -232,8 +275,10 @@ export async function Encryption(
  * function throws synchronously at startup with a clear message rather
  * than handing `undefined` to the WASM serde (which surfaces as an
  * opaque `unknown variant 'null'` error).
+ *
+ * @internal exported for unit-test coverage of the drift-guard branch.
  */
-function normalizeCastAs(config: EncryptConfig): unknown {
+export function normalizeCastAs(config: EncryptConfig): unknown {
   const tables: Record<string, Record<string, unknown>> = {}
   for (const [tableName, columns] of Object.entries(config.tables)) {
     const normalised: Record<string, unknown> = {}
@@ -266,17 +311,8 @@ function getColumnName(
   )
 }
 
-function resolveStrategy(
-  cfg: WasmClientConfig,
-): { getToken(): Promise<unknown> } {
+function resolveStrategy(cfg: WasmClientConfig): AccessKeyStrategy {
   if (cfg.strategy) return cfg.strategy
-  if (cfg.accessKey) {
-    return AccessKeyStrategy.create(
-      cfg.region ?? DEFAULT_REGION,
-      cfg.accessKey,
-    )
-  }
-  throw new Error(
-    '[encryption]: WASM entry requires either `config.strategy` or `config.accessKey`',
-  )
+  // Discriminated union guarantees this branch implies `accessKey` is set.
+  return AccessKeyStrategy.create(cfg.region, cfg.accessKey as string)
 }

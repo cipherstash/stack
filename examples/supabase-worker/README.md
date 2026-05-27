@@ -6,14 +6,23 @@ The function imports from the `@cipherstash/stack/wasm-inline` subpath — the W
 
 ## Prerequisites
 
-- A CipherStash workspace + client credentials (workspace CRN, client ID/key, access key) — see the [CipherStash docs](https://cipherstash.com/docs).
+- Node ≥ 22 and pnpm 10 (matches the repo root); only needed for the local install step.
+- A CipherStash workspace + service-to-service credentials (client ID, client key, access key) — see the [CipherStash docs](https://cipherstash.com/docs).
 - [Supabase CLI](https://supabase.com/docs/guides/cli) installed locally.
+
+## Install
+
+This example has no compile step — the Edge runtime resolves `npm:` specifiers at function start. The `pnpm install` below only wires up workspace metadata (no runtime dependencies):
+
+```sh
+pnpm install
+```
 
 ## Run locally
 
 ```sh
 cp .env.example .env.local
-# fill in CS_WORKSPACE_CRN, CS_CLIENT_ID, CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY
+# fill in CS_CLIENT_ID, CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY (and optionally CS_REGION)
 
 supabase functions serve --env-file .env.local cipherstash-roundtrip
 ```
@@ -43,8 +52,14 @@ supabase functions deploy cipherstash-roundtrip
 supabase secrets set --env-file .env.local
 ```
 
-## What this proves
+## Native modules
+
+There are none. The `@cipherstash/stack/wasm-inline` subpath embeds the protect-ffi WASM module as base64 inside its JS bundle and pulls `AccessKeyStrategy` from `@cipherstash/auth/wasm-inline` (also pure WASM). No `node-gyp`, no `.node` binaries, no platform-specific install scripts.
+
+## What this verifies
 
 - Protect's WASM build works inside Supabase Edge Functions.
 - The full `@cipherstash/stack/wasm-inline` developer surface (`Encryption`, `encryptedTable`, `encryptedColumn`, …) is usable from an Edge Function with no native dependencies.
 - A CipherStash service-to-service `AccessKeyStrategy` is the right credential shape for serverless / edge environments.
+
+Automated coverage of the same code path lives at `e2e/wasm/roundtrip.test.ts` and runs in CI on every PR — this example is the runnable runbook version.

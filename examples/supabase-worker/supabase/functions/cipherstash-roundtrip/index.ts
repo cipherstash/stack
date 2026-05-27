@@ -77,9 +77,13 @@ Deno.serve(async (_req: Request) => {
       { headers: { 'content-type': 'application/json' } },
     )
   } catch (e) {
+    // Debug-only response shape — a production handler should never
+    // surface error details to callers. The `stack` field is logged
+    // for the operator but not returned in the response body.
     const err = e as { code?: string; message?: string; stack?: string }
+    console.error('cipherstash-roundtrip failed:', err.stack ?? err.message)
     return Response.json(
-      { code: err.code, message: err.message, stack: err.stack },
+      { code: err.code, message: err.message },
       { status: 500 },
     )
   }
