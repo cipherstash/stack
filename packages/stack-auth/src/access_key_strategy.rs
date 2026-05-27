@@ -53,6 +53,10 @@ impl AccessKeyStrategy {
     /// access key. The auth endpoint is resolved automatically via service
     /// discovery using the region encoded in the CRN.
     ///
+    /// The `CS_CTS_HOST` environment variable, if set and non-empty,
+    /// overrides service discovery — useful for pointing the strategy at
+    /// a staging CTS or a local mock without changing the CRN.
+    ///
     /// A CRN with a `service_name` component (e.g.
     /// `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY:zerokms`) is accepted; the
     /// `service_name` is ignored. Only the region and workspace ID are
