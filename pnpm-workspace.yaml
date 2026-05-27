@@ -5,16 +5,7 @@ packages:
 
 catalogs:
   repo:
-    # NAPI consumers (wizard, cli) stay on 0.36.0 — that release uses
-    # `optionalDependencies` for the per-platform native binaries, so pnpm
-    # auto-installs the matching binary on each CI platform. 0.37.0-alpha
-    # moved them to optional peerDependencies which pnpm does NOT install
-    # by platform, breaking `import auth from '@cipherstash/auth'` on
-    # Linux CI. `@cipherstash/stack` pins 0.37.0-alpha.8 directly for the
-    # `/wasm-inline` subpath — it never touches the NAPI bindings, so the
-    # missing native binary doesn't matter there. Promote the catalog
-    # once auth 0.38.0 ships a stable release.
-    '@cipherstash/auth': 0.36.0
+    '@cipherstash/auth': 0.38.0
     tsup: 8.5.1
     tsx: 4.22.1
     typescript: 5.9.3

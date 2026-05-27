@@ -212,7 +212,7 @@
 	},
 	"dependencies": {
 		"@byteslice/result": "0.2.0",
-		"@cipherstash/auth": "0.37.0-alpha.8",
+		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/protect-ffi": "0.24.0",
 		"evlog": "1.11.0",
 		"uuid": "14.0.0",
