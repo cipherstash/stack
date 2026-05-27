@@ -23,7 +23,7 @@
  *   config: {
  *     region: "ap-southeast-2.aws",
  *     accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
- *     clientId: Deno.env.get("CS_CLIENT_ID")!,
+ *     clientId:  Deno.env.get("CS_CLIENT_ID")!,
  *     clientKey: Deno.env.get("CS_CLIENT_KEY")!,
  *   },
  * })
@@ -35,32 +35,36 @@
  * const dec = await client.decrypt(enc)
  * ```
  *
- * For lower-level access, the raw `@cipherstash/protect-ffi/wasm-inline`
- * functions and the `@cipherstash/auth/wasm-inline` strategy are
- * re-exported below.
+ * For runtimes that need a custom token store (e.g. cookies on a
+ * Supabase Edge Function), pass a pre-built strategy via
+ * `config.strategy`. The strategy type is structural — any object with
+ * `getToken(): Promise<{ token: string }>` works. Use
+ * `AccessKeyStrategy.create(...)` from `@cipherstash/auth/wasm-inline`
+ * to build one with a `cookieStore` from `@cipherstash/auth/cookies`.
  */
 
+import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
 import {
   decrypt as wasmDecrypt,
   encrypt as wasmEncrypt,
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
-import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
 import {
   type CastAs,
   type EncryptConfig,
+  EncryptedColumn,
+  EncryptedField,
   type EncryptedTable,
   type EncryptedTableColumn,
   buildEncryptConfig,
   encryptConfigSchema,
   toEqlCastAs,
 } from '@/schema'
-import { EncryptedColumn, EncryptedField } from '@/schema'
 import type { Encrypted, EncryptOptions } from '@/types'
 
 // -----------------------------------------------------------------------
-// Re-exports — direct passthrough for consumers who want the raw API.
+// Schema + type re-exports
 // -----------------------------------------------------------------------
 
 export {
@@ -80,14 +84,18 @@ export type {
 
 export type { Encrypted } from '@/types'
 
-export {
-  decrypt as decryptRaw,
-  encrypt as encryptRaw,
-  isEncrypted,
-  newClient as newClientRaw,
-} from '@cipherstash/protect-ffi/wasm-inline'
+/** Re-exported convenience predicate — same as the raw protect-ffi one. */
+export function isEncrypted(value: unknown): boolean {
+  return wasmIsEncrypted(value as never)
+}
 
-export { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
+// Note: the raw `newClient` / `encrypt` / `decrypt` from
+// `@cipherstash/protect-ffi/wasm-inline` and `AccessKeyStrategy` from
+// `@cipherstash/auth/wasm-inline` are intentionally NOT re-exported. The
+// raw `newClient` does not normalise SDK-facing `cast_as` values (see
+// `normalizeCastAs` below) and a re-export would invite consumers to
+// build configs that this normaliser rejects. Import those names
+// directly from their source packages if you need raw access.
 
 // -----------------------------------------------------------------------
 // High-level `Encryption` factory + client.
@@ -100,22 +108,30 @@ const DEFAULT_REGION = 'ap-southeast-2.aws'
  * Config for {@link Encryption} on the WASM entry point.
  *
  * Unlike the Node entry, the WASM path requires an explicit auth
- * strategy. For service-to-service / CI use, pass an `accessKey` and we
- * construct an {@link AccessKeyStrategy} for you; alternatively, pass
- * your own pre-built `strategy` to use OAuth-style flows or a custom
- * token store.
+ * strategy. For service-to-service / CI use, pass `accessKey` plus the
+ * workspace `clientId` / `clientKey` and we construct an
+ * `AccessKeyStrategy` for you. To use a custom token store (e.g.
+ * cookies on a Supabase Edge Function), pass a pre-built `strategy`
+ * instead.
  */
 export type WasmClientConfig = {
   /** CipherStash region, e.g. `"ap-southeast-2.aws"`. Defaults to ap-southeast-2.aws. */
   region?: string
-  /** Static access key. Mutually exclusive with `strategy`. */
-  accessKey?: string
-  /** Pre-built auth strategy (e.g. `AccessKeyStrategy.create(...)` with a custom token store). */
-  strategy?: { getToken(): Promise<unknown> }
-  /** Workspace credentials. */
-  clientId?: string
-  clientKey?: string
-}
+  /** Workspace client identifier — required by the WASM client. */
+  clientId: string
+  /** Workspace client key — required by the WASM client. */
+  clientKey: string
+} & ( // Either pass an accessKey (we build the strategy) or hand in
+  // your own pre-built one — never both, never neither.
+  | {
+      accessKey: string
+      strategy?: never
+    }
+  | {
+      accessKey?: never
+      strategy: { getToken(): Promise<unknown> }
+    }
+)
 
 export type WasmEncryptionConfig = {
   schemas: [
@@ -210,15 +226,29 @@ export async function Encryption(
  * this, the WASM client rejects an `encryptedColumn('email')` (which
  * defaults to `cast_as: 'string'`) with
  * `unknown variant `string`, expected one of `big_int`, …`.
+ *
+ * `toEqlCastAs` is exhaustive over the current `CastAs` union; if a new
+ * SDK-facing variant is added without updating that switch, this
+ * function throws synchronously at startup with a clear message rather
+ * than handing `undefined` to the WASM serde (which surfaces as an
+ * opaque `unknown variant 'null'` error).
  */
 function normalizeCastAs(config: EncryptConfig): unknown {
   const tables: Record<string, Record<string, unknown>> = {}
   for (const [tableName, columns] of Object.entries(config.tables)) {
     const normalised: Record<string, unknown> = {}
     for (const [colName, col] of Object.entries(columns)) {
-      normalised[colName] = col.cast_as
-        ? { ...col, cast_as: toEqlCastAs(col.cast_as as CastAs) }
-        : col
+      if (col.cast_as) {
+        const eqlCastAs = toEqlCastAs(col.cast_as as CastAs)
+        if (eqlCastAs === undefined) {
+          throw new Error(
+            `[encryption]: unrecognised cast_as value "${col.cast_as}" on ${tableName}.${colName} — update toEqlCastAs() to map it to an EQL variant.`,
+          )
+        }
+        normalised[colName] = { ...col, cast_as: eqlCastAs }
+      } else {
+        normalised[colName] = col
+      }
     }
     tables[tableName] = normalised
   }

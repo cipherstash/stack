@@ -5,7 +5,19 @@ packages:
 
 catalogs:
   repo:
+    # @cipherstash/auth ships per-platform native bindings as optional
+    # peerDependencies. pnpm does not auto-install platform-matched
+    # optional peer deps, so the consuming packages (wizard, cli)
+    # declare them as `optionalDependencies` via `catalog:repo`. Keep
+    # all seven entries on the same version so a single bump here moves
+    # everything in lockstep.
     '@cipherstash/auth': 0.38.0
+    '@cipherstash/auth-darwin-arm64': 0.38.0
+    '@cipherstash/auth-darwin-x64': 0.38.0
+    '@cipherstash/auth-linux-arm64-gnu': 0.38.0
+    '@cipherstash/auth-linux-x64-gnu': 0.38.0
+    '@cipherstash/auth-linux-x64-musl': 0.38.0
+    '@cipherstash/auth-win32-x64-msvc': 0.38.0
     tsup: 8.5.1
     tsx: 4.22.1
     typescript: 5.9.3

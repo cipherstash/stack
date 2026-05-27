@@ -202,6 +202,20 @@ jobs:
       - name: Build stack
         run: pnpm exec turbo run build --filter @cipherstash/stack
 
+      # roundtrip.test.ts skips itself (Deno.test.ignore) when any of
+      # the four CS_* env vars is missing — that's the right behaviour
+      # for local runs, but in CI a silent skip would mean a rotated /
+      # cleared secret hides a real WASM regression behind a green job.
+      # Fail loudly instead.
+      - name: Assert CS_* secrets are present
+        run: |
+          for v in CS_WORKSPACE_CRN CS_CLIENT_ID CS_CLIENT_KEY CS_CLIENT_ACCESS_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Required secret $v is not set on this runner — the WASM smoke test would silently skip."
+              exit 1
+            fi
+          done
+
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm
         run: deno task test

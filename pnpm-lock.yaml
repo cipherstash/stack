@@ -9,6 +9,24 @@ catalogs:
     '@cipherstash/auth':
       specifier: 0.38.0
       version: 0.38.0
+    '@cipherstash/auth-darwin-arm64':
+      specifier: 0.38.0
+      version: 0.38.0
+    '@cipherstash/auth-darwin-x64':
+      specifier: 0.38.0
+      version: 0.38.0
+    '@cipherstash/auth-linux-arm64-gnu':
+      specifier: 0.38.0
+      version: 0.38.0
+    '@cipherstash/auth-linux-x64-gnu':
+      specifier: 0.38.0
+      version: 0.38.0
+    '@cipherstash/auth-linux-x64-musl':
+      specifier: 0.38.0
+      version: 0.38.0
+    '@cipherstash/auth-win32-x64-msvc':
+      specifier: 0.38.0
+      version: 0.38.0
     tsup:
       specifier: 8.5.1
       version: 8.5.1
@@ -224,22 +242,22 @@ importers:
         version: 3.25.76
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-darwin-x64':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-linux-arm64-gnu':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-linux-x64-gnu':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-linux-x64-musl':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-win32-x64-msvc':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
     devDependencies:
       '@cipherstash/stack':
@@ -617,22 +635,22 @@ importers:
         version: 3.25.76
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-darwin-x64':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-linux-arm64-gnu':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-linux-x64-gnu':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-linux-x64-musl':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
       '@cipherstash/auth-win32-x64-msvc':
-        specifier: 0.38.0
+        specifier: catalog:repo
         version: 0.38.0
     devDependencies:
       '@types/pg':
