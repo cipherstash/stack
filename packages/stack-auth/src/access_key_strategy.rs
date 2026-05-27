@@ -46,6 +46,11 @@ impl AccessKeyStrategy {
     /// Create a new `AccessKeyStrategy` for the given workspace CRN and
     /// access key. The auth endpoint is resolved automatically via service
     /// discovery using the region encoded in the CRN.
+    ///
+    /// A CRN with a `service_name` component (e.g.
+    /// `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY:zerokms`) is accepted; the
+    /// `service_name` is ignored. Only the region and workspace ID are
+    /// load-bearing for this strategy.
     pub fn new(workspace_crn: Crn, access_key: AccessKey) -> Result<Self, AuthError> {
         Self::builder(workspace_crn, access_key).build()
     }
@@ -284,6 +289,34 @@ mod workspace_verification_tests {
             }
             .error_code(),
             "WORKSPACE_MISMATCH",
+        );
+    }
+
+    /// A CRN carrying a `service_name` component is accepted; the
+    /// `service_name` is ignored. The strategy uses only the region (for
+    /// service discovery) and the workspace ID (for token verification).
+    /// Pinned as a test rather than left to implementation drift so that a
+    /// future contributor doesn't tighten the constructor into rejecting
+    /// these CRNs without realising the docstring already promises
+    /// acceptance.
+    #[tokio::test]
+    async fn accepts_crn_with_service_name() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+        let crn: Crn = format!("crn:ap-southeast-2.aws:{WS}:zerokms")
+            .parse()
+            .expect("CRN with service_name parses");
+
+        let strategy = AccessKeyStrategy::builder(crn, test_access_key())
+            .base_url(server.url(""))
+            .build()
+            .expect("CRN with service_name should construct a strategy");
+
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "service_name is ignored — verification still uses the workspace ID",
         );
     }
 
