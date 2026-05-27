@@ -285,13 +285,19 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                 guard.defuse();
             }
             Err(err) => {
-                guard.defuse();
                 tracing::warn!(%err, "token refresh failed (token still usable)");
+                // Defer `defuse()` until after the lock acquire so the
+                // CancelGuard's Drop still fires if cancellation lands on
+                // `state.lock().await`. Without this the in-progress flag
+                // would stay set with no `notify_waiters`, wedging every
+                // subsequent caller exactly like the Ok-path bug fixed
+                // earlier in this file.
                 let mut state = self.state.lock().await;
                 if let Some(token) = state.token.as_mut() {
                     self.refresher.restore(token, credential);
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
+                guard.defuse();
             }
         }
 
