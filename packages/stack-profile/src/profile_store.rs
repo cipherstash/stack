@@ -298,13 +298,32 @@ impl ProfileStore {
     /// Atomically write JSON content to an absolute path, optionally setting
     /// Unix file permissions.
     ///
-    /// Writes to a sibling temp file in the same directory, fsyncs the data,
-    /// applies the requested mode, then renames over the target. Two
-    /// concurrent writers cannot produce torn reads, and a crash mid-write
-    /// leaves either the prior file intact or no destination file at all.
-    /// The tmp file name embeds the process ID + a UUID so concurrent
-    /// writers (across processes or threads) don't collide on the staging
-    /// path.
+    /// Sequence:
+    ///   1. Open a uniquely-named sibling tmp file in the same directory.
+    ///   2. Write the bytes and `sync_all` (fsync the data + metadata).
+    ///   3. Apply the requested mode with `set_permissions` (overrides
+    ///      umask).
+    ///   4. Rename the tmp file over the target. `std::fs::rename` uses
+    ///      `MOVEFILE_REPLACE_EXISTING` on Windows and the POSIX `rename`
+    ///      on Unix, so the replacement is atomic on both platforms.
+    ///   5. On Unix, fsync the parent directory so the rename is durable
+    ///      across power loss. Windows doesn't expose directory fsync, so
+    ///      this step is Unix-only — Windows callers get atomicity but
+    ///      slightly weaker crash-durability guarantees.
+    ///
+    /// Two concurrent writers cannot produce torn reads, and a crash
+    /// mid-write leaves either the prior file intact or no destination
+    /// file at all. The tmp file name embeds the process ID + a UUID so
+    /// concurrent writers (across processes or threads) don't collide on
+    /// the staging path.
+    ///
+    /// On Windows the rename can transiently fail with
+    /// `ERROR_SHARING_VIOLATION` when an external (non-Rust) process holds
+    /// the target open without `FILE_SHARE_DELETE`. Rust's own
+    /// `File::open` sets that share flag, so contention between two Rust
+    /// processes won't trip this — but to defend against third-party
+    /// readers we retry the rename a handful of times with brief backoff
+    /// before giving up.
     fn write_to_path(path: &Path, json: &str, _mode: Option<u32>) -> Result<(), ProfileError> {
         use std::io::Write;
 
@@ -350,18 +369,73 @@ impl ProfileStore {
                 std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(mode))?;
             }
 
-            std::fs::rename(&tmp_path, path)?;
+            Self::rename_with_retry(&tmp_path, path)?;
+
+            // Durability: fsync the parent directory so the rename itself
+            // survives a power loss, not just the file contents written
+            // above. Unix-only because Windows has no directory fsync
+            // primitive (and its filesystem metadata journaling makes
+            // this less necessary in practice).
+            #[cfg(unix)]
+            {
+                let dir = std::fs::File::open(parent)?;
+                dir.sync_all()?;
+            }
+
             Ok(())
         })();
 
-        // On failure, the rename never happened, so clean up the staging
-        // file. Best-effort — if cleanup itself fails there's nothing
-        // useful we can do beyond the original error.
+        // On failure, the rename never happened (or was rolled back), so
+        // clean up the staging file. Best-effort — if cleanup itself
+        // fails there's nothing useful we can do beyond the original
+        // error.
         if result.is_err() {
             let _ = std::fs::remove_file(&tmp_path);
         }
 
         result
+    }
+
+    /// Rename `from` to `to`, retrying briefly on Windows
+    /// `ERROR_SHARING_VIOLATION` (a transient failure when an external
+    /// process holds the target open without `FILE_SHARE_DELETE`). On
+    /// Unix the first attempt always succeeds or fails for a permanent
+    /// reason, so the retry loop is a no-op there.
+    fn rename_with_retry(from: &Path, to: &Path) -> std::io::Result<()> {
+        // 5 attempts * 20ms = up to 100ms — long enough to ride out a
+        // typical short-lived external read, short enough not to feel
+        // hung if the contention is real.
+        const MAX_ATTEMPTS: u32 = 5;
+        const BACKOFF: std::time::Duration = std::time::Duration::from_millis(20);
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            match std::fs::rename(from, to) {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < MAX_ATTEMPTS && Self::is_transient_rename_error(&e) => {
+                    std::thread::sleep(BACKOFF);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        // Unreachable — the loop either returns or breaks via the last
+        // attempt's `Err` arm above.
+        unreachable!()
+    }
+
+    /// True if the error is a sharing/access conflict that's worth
+    /// retrying. On Unix `rename` doesn't produce these (the equivalent
+    /// would be `EBUSY` on overlay/network filesystems, but it's rare and
+    /// usually non-transient), so this is effectively a Windows guard.
+    #[cfg(windows)]
+    fn is_transient_rename_error(e: &std::io::Error) -> bool {
+        // ERROR_SHARING_VIOLATION = 32, ERROR_ACCESS_DENIED = 5. Both can
+        // appear transiently when MoveFileEx hits a target that's open.
+        matches!(e.raw_os_error(), Some(32) | Some(5))
+    }
+
+    #[cfg(not(windows))]
+    fn is_transient_rename_error(_e: &std::io::Error) -> bool {
+        false
     }
 
     /// Load a value from a JSON file in the store directory.
