@@ -68,7 +68,7 @@ mod profile_store;
 
 pub use device_identity::DeviceIdentity;
 pub use error::ProfileError;
-pub use profile_store::ProfileStore;
+pub use profile_store::{FileLockGuard, ProfileStore};
 
 /// A type that can be stored in a profile directory.
 pub trait ProfileData: Serialize + DeserializeOwned {
