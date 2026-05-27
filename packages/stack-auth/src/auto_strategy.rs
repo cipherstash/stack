@@ -106,11 +106,9 @@ impl AutoStrategy {
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
-            let region = crn
-                .map(|c| c.region)
-                .ok_or(AuthError::MissingWorkspaceCrn)?;
+            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn)?;
             let key: crate::AccessKey = access_key.parse()?;
-            let strategy = AccessKeyStrategy::new(region, key)?;
+            let strategy = AccessKeyStrategy::new(workspace_crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }
 
@@ -133,11 +131,9 @@ impl AutoStrategy {
     #[cfg(target_arch = "wasm32")]
     fn detect_inner(access_key: Option<String>, crn: Option<Crn>) -> Result<Self, AuthError> {
         if let Some(access_key) = access_key {
-            let region = crn
-                .map(|c| c.region)
-                .ok_or(AuthError::MissingWorkspaceCrn)?;
+            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn)?;
             let key: crate::AccessKey = access_key.parse()?;
-            let strategy = AccessKeyStrategy::new(region, key)?;
+            let strategy = AccessKeyStrategy::new(workspace_crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }
         Err(AuthError::NotAuthenticated)

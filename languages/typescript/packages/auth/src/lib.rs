@@ -156,14 +156,22 @@ pub struct AccessKeyStrategy {
 
 #[napi]
 impl AccessKeyStrategy {
-    /// Create a new `AccessKeyStrategy` for the given region and access key.
+    /// Create a new `AccessKeyStrategy` for the given workspace CRN and
+    /// access key. Region is derived from the CRN — there's no separate
+    /// region argument — so the strategy can't be configured for one
+    /// workspace's region while the CRN says another.
+    ///
+    /// Every issued token's workspace claim is verified against the CRN;
+    /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
     #[napi(factory)]
-    pub fn create(region: String, access_key: String) -> Result<Self> {
-        let region = Region::new(&region).map_err(|e| to_napi_error(AuthError::from(e)))?;
+    pub fn create(workspace_crn: String, access_key: String) -> Result<Self> {
+        let crn: cts_common::Crn = workspace_crn
+            .parse()
+            .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_napi_error(AuthError::from(e)))?;
-        let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_napi_error)?;
+        let inner = stack_auth::AccessKeyStrategy::new(crn, key).map_err(to_napi_error)?;
         Ok(Self { inner })
     }
 

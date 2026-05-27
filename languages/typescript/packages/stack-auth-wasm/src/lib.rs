@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 
-use cts_common::Region;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
@@ -175,13 +174,24 @@ pub struct AccessKeyStrategy {
 
 #[wasm_bindgen]
 impl AccessKeyStrategy {
-    /// Create a new `AccessKeyStrategy` for the given region and access key.
-    pub fn create(region: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
-        let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
+    /// Create a new `AccessKeyStrategy` for the given workspace CRN and
+    /// access key. Region is derived from the CRN — there's no separate
+    /// region argument — so the strategy can't be configured for one
+    /// workspace's region while the CRN says another.
+    ///
+    /// Every issued token's workspace claim is verified against the CRN;
+    /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
+    pub fn create(
+        workspace_crn: String,
+        access_key: String,
+    ) -> Result<AccessKeyStrategy, JsValue> {
+        let crn: cts_common::Crn = workspace_crn
+            .parse()
+            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
-        let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_js_error)?;
+        let inner = stack_auth::AccessKeyStrategy::new(crn, key).map_err(to_js_error)?;
         Ok(AccessKeyStrategy {
             inner: AccessKeyStrategyInner::NoStore(inner),
         })
@@ -200,12 +210,14 @@ impl AccessKeyStrategy {
     #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
-        region: String,
+        workspace_crn: String,
         access_key: String,
         load_token: js_sys::Function,
         save_token: js_sys::Function,
     ) -> Result<AccessKeyStrategy, JsValue> {
-        let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
+        let crn: cts_common::Crn = workspace_crn
+            .parse()
+            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
@@ -213,7 +225,7 @@ impl AccessKeyStrategy {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::AccessKeyStrategy::builder(region, key)
+        let inner = stack_auth::AccessKeyStrategy::builder(crn, key)
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;

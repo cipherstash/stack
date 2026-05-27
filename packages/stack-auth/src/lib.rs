@@ -292,6 +292,16 @@ pub enum AuthError {
     /// The workspace CRN could not be parsed.
     #[error("Invalid workspace CRN: {0}")]
     InvalidCrn(cts_common::InvalidCrn),
+    /// The token issued by the auth server is for a different workspace than
+    /// the one configured on the strategy. Surfaces when the access key was
+    /// minted for a different workspace, or when the wrong CRN was passed.
+    #[error("Workspace mismatch: token issued for {token_workspace}, but strategy is configured for {expected_workspace}")]
+    WorkspaceMismatch {
+        /// The workspace the strategy was configured for (from the CRN).
+        expected_workspace: cts_common::WorkspaceId,
+        /// The workspace the auth server's token actually carries.
+        token_workspace: cts_common::WorkspaceId,
+    },
     /// An access key was provided but the workspace CRN is missing.
     ///
     /// Set the `CS_WORKSPACE_CRN` environment variable or call
@@ -339,6 +349,7 @@ impl AuthError {
             Self::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
             Self::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
             Self::InvalidCrn(_) => "INVALID_CRN",
+            Self::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
             #[cfg(not(target_arch = "wasm32"))]
             Self::Store(_) => "STORE_ERROR",
         }

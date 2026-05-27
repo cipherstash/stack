@@ -12,12 +12,12 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use stack_auth::{AccessKey, AccessKeyStrategy, InMemoryTokenStore};
-//! use cts_common::Region;
+//! use cts_common::Crn;
 //!
-//! let region = Region::aws("ap-southeast-2").unwrap();
+//! let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
 //! let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
 //! let store = Arc::new(InMemoryTokenStore::new());
-//! let strategy = AccessKeyStrategy::builder(region, key)
+//! let strategy = AccessKeyStrategy::builder(crn, key)
 //!     .with_token_store(store)
 //!     .build()
 //!     .unwrap();
