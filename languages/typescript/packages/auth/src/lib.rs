@@ -886,6 +886,28 @@ mod tests {
                 assertions::has_error_code(&err, "INVALID_CRN");
             }
         }
+
+        /// Happy path: explicit access key + explicit valid CRN constructs
+        /// an `AutoStrategy` (specifically the `AccessKey` variant). The
+        /// existing tests only cover the error paths, so a regression in
+        /// the napi → `AutoStrategy::builder` plumbing (e.g. dropping the
+        /// CRN before `detect()`) would slide through.
+        mod given_valid_access_key_and_crn {
+            use super::*;
+
+            #[test]
+            fn constructs_strategy_successfully() {
+                let result = AutoStrategy::detect(Some(AutoStrategyOptions {
+                    access_key: Some("CSAKtestKeyId.testKeySecret".to_string()),
+                    workspace_crn: Some("crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".to_string()),
+                }));
+
+                assert!(
+                    result.is_ok(),
+                    "valid access key + CRN should construct an AutoStrategy",
+                );
+            }
+        }
     }
 
     mod access_key_strategy_create {
