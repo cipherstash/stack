@@ -50,6 +50,15 @@
 		"posthog-node": "^5.34.2",
 		"zod": "^3.25.76"
 	},
+	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies — pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. Bump in lockstep with @cipherstash/auth.",
+	"optionalDependencies": {
+		"@cipherstash/auth-darwin-arm64": "0.38.0",
+		"@cipherstash/auth-darwin-x64": "0.38.0",
+		"@cipherstash/auth-linux-arm64-gnu": "0.38.0",
+		"@cipherstash/auth-linux-x64-gnu": "0.38.0",
+		"@cipherstash/auth-linux-x64-musl": "0.38.0",
+		"@cipherstash/auth-win32-x64-msvc": "0.38.0"
+	},
 	"peerDependencies": {
 		"@cipherstash/stack": ">=0.6.0"
 	},
