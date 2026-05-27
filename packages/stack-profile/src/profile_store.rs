@@ -34,9 +34,30 @@ const CURRENT_WORKSPACE_FILE: &str = "current_workspace";
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProfileStore {
     dir: PathBuf,
+}
+
+/// RAII guard for an advisory file lock acquired via
+/// [`ProfileStore::lock_exclusive`]. Releases on drop.
+///
+/// The guard owns the lock file handle; dropping it calls `unlock` and
+/// closes the descriptor. The lock file itself is left on disk — it's reused
+/// across acquisitions and carries no useful content.
+#[must_use = "the lock is released as soon as this guard is dropped"]
+#[derive(Debug)]
+pub struct FileLockGuard {
+    file: std::fs::File,
+}
+
+impl Drop for FileLockGuard {
+    fn drop(&mut self) {
+        // Best-effort — the kernel releases on close regardless, so a failure
+        // here only matters for diagnostics. Don't log: this runs during
+        // teardown and the file may already be invalid (e.g. on process exit).
+        let _ = self.file.unlock();
+    }
 }
 
 impl ProfileStore {
@@ -274,32 +295,73 @@ impl ProfileStore {
         Self::write_to_path(&path, &json, _mode)
     }
 
-    /// Write JSON content to an absolute path, optionally setting Unix file permissions.
+    /// Atomically write JSON content to an absolute path, optionally setting
+    /// Unix file permissions.
+    ///
+    /// Writes to a sibling temp file in the same directory, fsyncs the data,
+    /// applies the requested mode, then renames over the target. Two
+    /// concurrent writers cannot produce torn reads, and a crash mid-write
+    /// leaves either the prior file intact or no destination file at all.
+    /// The tmp file name embeds the process ID + a UUID so concurrent
+    /// writers (across processes or threads) don't collide on the staging
+    /// path.
     fn write_to_path(path: &Path, json: &str, _mode: Option<u32>) -> Result<(), ProfileError> {
-        #[cfg(unix)]
-        if let Some(mode) = _mode {
-            use std::fs::OpenOptions;
-            use std::io::Write;
-            use std::os::unix::fs::OpenOptionsExt;
+        use std::io::Write;
 
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(mode)
-                .open(path)?;
+        let parent = path.parent().ok_or_else(|| {
+            ProfileError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            ))
+        })?;
+        let file_name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+            ProfileError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "target path has no file name",
+            ))
+        })?;
+        let tmp_path = parent.join(format!(
+            ".{file_name}.tmp.{}.{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+
+        let result = (|| -> Result<(), ProfileError> {
+            let mut file = {
+                let mut opts = std::fs::OpenOptions::new();
+                let _ = opts.write(true).create_new(true);
+                #[cfg(unix)]
+                if let Some(mode) = _mode {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    let _ = opts.mode(mode);
+                }
+                opts.open(&tmp_path)?
+            };
             file.write_all(json.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
 
-            // Ensure permissions are set even if the file already existed,
-            // since OpenOptions::mode() only applies on creation.
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
+            // `OpenOptions::mode()` is masked by the process umask, so an
+            // explicit `set_permissions` is required to guarantee the exact
+            // mode the caller asked for.
+            #[cfg(unix)]
+            if let Some(mode) = _mode {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(mode))?;
+            }
 
-            return Ok(());
+            std::fs::rename(&tmp_path, path)?;
+            Ok(())
+        })();
+
+        // On failure, the rename never happened, so clean up the staging
+        // file. Best-effort — if cleanup itself fails there's nothing
+        // useful we can do beyond the original error.
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp_path);
         }
 
-        std::fs::write(path, json)?;
-        Ok(())
+        result
     }
 
     /// Load a value from a JSON file in the store directory.
@@ -336,6 +398,31 @@ impl ProfileStore {
     /// Check whether a file exists in the store directory.
     pub fn exists(&self, filename: &str) -> bool {
         Self::validate_filename(filename).is_ok() && self.dir.join(filename).exists()
+    }
+
+    /// Acquire an exclusive advisory lock that serialises critical sections
+    /// against other processes sharing this profile directory.
+    ///
+    /// The lock is held on a sibling file (`.<filename>.lock`) so it survives
+    /// atomic rewrites of the target. This is **blocking** — call it from a
+    /// `spawn_blocking` task when invoked from async code. Released when the
+    /// returned [`FileLockGuard`] is dropped.
+    ///
+    /// Intended use is around the read-modify-write window for files like
+    /// `auth.json` where a non-atomic critical section across processes
+    /// causes silent state corruption (in the auth case: refresh-token
+    /// rotation replay).
+    pub fn lock_exclusive(&self, filename: &str) -> Result<FileLockGuard, ProfileError> {
+        Self::validate_filename(filename)?;
+        std::fs::create_dir_all(&self.dir)?;
+        let lock_path = self.dir.join(format!(".{filename}.lock"));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        file.lock()?;
+        Ok(FileLockGuard { file })
     }
 
     /// Save a [`ProfileData`] value using its declared filename and mode.
@@ -650,6 +737,125 @@ mod tests {
         assert_eq!(
             mode, 0o600,
             "permissions should be tightened on existing file"
+        );
+    }
+
+    /// Concurrent writers must never expose torn content to a reader. Each
+    /// write goes through a sibling tmp file + rename, so an interleaved
+    /// reader sees either the prior complete file or a complete new file —
+    /// never a half-written one.
+    #[test]
+    fn concurrent_writes_never_expose_torn_content() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use std::thread;
+
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Big {
+            // Large payload so any non-atomic write would leave an
+            // observably-incomplete file mid-flight.
+            payload: String,
+            writer: usize,
+        }
+
+        fn make_value(writer: usize, payload_size: usize) -> Big {
+            Big {
+                // Encode the writer ID into the payload so any torn
+                // mix-and-match between writers would show up as an
+                // unparseable / inconsistent file.
+                payload: char::from_digit(writer as u32, 16)
+                    .unwrap()
+                    .to_string()
+                    .repeat(payload_size),
+                writer,
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(ProfileStore::new(dir.path()));
+        let writers = 8;
+        let iterations = 50;
+        // 64 KiB per write — well above any sane page/buffer size.
+        let payload_size = 64 * 1024;
+
+        // Pre-seed so the reader always has a file to observe, even before
+        // any concurrent writer completes its first save.
+        store
+            .save("contended.json", &make_value(0, payload_size))
+            .unwrap();
+
+        let done = Arc::new(AtomicBool::new(false));
+
+        let mut handles = Vec::with_capacity(writers);
+        for writer in 0..writers {
+            let store = Arc::clone(&store);
+            handles.push(thread::spawn(move || {
+                for _ in 0..iterations {
+                    store
+                        .save("contended.json", &make_value(writer, payload_size))
+                        .unwrap();
+                }
+            }));
+        }
+
+        // Race reads against the writers. Every successful read must yield a
+        // well-formed JSON whose payload matches the declared writer — proving
+        // we never observed a partial overwrite.
+        let reader_store = Arc::clone(&store);
+        let reader_done = Arc::clone(&done);
+        let reader = thread::spawn(move || {
+            let mut reads = 0;
+            while !reader_done.load(Ordering::Relaxed) {
+                match reader_store.load::<Big>("contended.json") {
+                    Ok(value) => {
+                        let expected_char = char::from_digit(value.writer as u32, 16)
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(
+                            value.payload.len(),
+                            payload_size,
+                            "torn write — payload truncated"
+                        );
+                        assert!(
+                            value
+                                .payload
+                                .chars()
+                                .all(|c| c.to_string() == expected_char),
+                            "torn write — writer {} payload contained foreign content",
+                            value.writer
+                        );
+                        reads += 1;
+                    }
+                    Err(e) => panic!("reader saw IO/parse error: {e}"),
+                }
+            }
+            reads
+        });
+
+        for h in handles {
+            h.join().unwrap();
+        }
+        done.store(true, Ordering::Relaxed);
+        let reads = reader.join().unwrap();
+        assert!(reads > 0, "reader never observed any successful load");
+
+        // Final state should be a clean, complete JSON from one of the writers.
+        let final_value: Big = store.load("contended.json").unwrap();
+        assert_eq!(final_value.payload.len(), payload_size);
+
+        // No staging files should be left behind after all writers finished.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let s = name.to_string_lossy();
+                s.starts_with(".contended.json.tmp.")
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "tmp staging files leaked: {leftovers:?}"
         );
     }
 
