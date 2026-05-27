@@ -286,4 +286,36 @@ mod workspace_verification_tests {
             "WORKSPACE_MISMATCH",
         );
     }
+
+    /// Regression guard — the workspace check runs on *every* `get_token()`
+    /// call, not only on the call that triggers initial authentication.
+    /// A future optimisation that cached the "verified" result, or that
+    /// stashed the token into a field bypassing the wrapper, would let a
+    /// mismatched token slide through on the second call. Verified by
+    /// calling `get_token()` twice against the same mock and asserting
+    /// both fail with `WorkspaceMismatch`.
+    #[tokio::test]
+    async fn errors_on_each_subsequent_get_token_call() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(TOKEN_WS).await;
+        let crn = crn_with_workspace(CRN_WS);
+
+        let strategy = AccessKeyStrategy::builder(crn, test_access_key())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
+
+        for call in 1..=2 {
+            let result = (&strategy).get_token().await;
+            let err = match result {
+                Ok(_) => panic!("call {call}: expected Err, got Ok"),
+                Err(e) => e,
+            };
+            assert!(
+                matches!(err, AuthError::WorkspaceMismatch { .. }),
+                "call {call}: expected WorkspaceMismatch, got {err:?}",
+            );
+        }
+    }
 }
