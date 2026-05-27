@@ -404,6 +404,14 @@ mod tests {
     }
 
     fn test_access_token_jwt() -> String {
+        jwt_with_workspace("ZVATKW3VHMFG27DY")
+    }
+
+    /// Build a JWT carrying the given `workspace` claim. Used by the
+    /// workspace-verification regression tests to mint tokens whose
+    /// workspace claim is deliberately mismatched against the CRN passed
+    /// to the strategy.
+    fn jwt_with_workspace(workspace: &str) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -418,7 +426,7 @@ mod tests {
             "aud": "test-audience",
             "iat": now,
             "exp": now + 3600,
-            "workspace": "ZVATKW3VHMFG27DY",
+            "workspace": workspace,
             "scope": "",
         });
 
@@ -913,6 +921,56 @@ mod tests {
                 ));
 
                 assertions::has_error_code(&err, "INVALID_ACCESS_KEY");
+            }
+        }
+
+        /// End-to-end coverage that the `WorkspaceMismatch` error variant
+        /// surfaces through the napi boundary as `WORKSPACE_MISMATCH` —
+        /// the underlying Rust check is covered in
+        /// `stack_auth::access_key_strategy`, but the FFI mapping has its
+        /// own regression risk (the `error_code` match in this crate).
+        mod given_token_workspace_mismatch {
+            use super::*;
+
+            // Drives the wrapper's inner field directly because the public
+            // `AccessKeyStrategy::create` factory doesn't expose a base-URL
+            // override. The base-URL override lives behind the `test-utils`
+            // feature on `stack-auth` and isn't part of the napi surface.
+            fn build_strategy_against(
+                server: &MockServer,
+                crn_workspace: &str,
+            ) -> AccessKeyStrategy {
+                let crn: cts_common::Crn = format!("crn:ap-southeast-2.aws:{crn_workspace}")
+                    .parse()
+                    .unwrap();
+                let key: stack_auth::AccessKey = "CSAKtestKeyId.testKeySecret".parse().unwrap();
+                let inner = stack_auth::AccessKeyStrategy::builder(crn, key)
+                    .base_url(server.url(""))
+                    .build()
+                    .unwrap();
+                AccessKeyStrategy { inner }
+            }
+
+            #[tokio::test]
+            async fn get_token_returns_workspace_mismatch_error() {
+                const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+                const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+
+                let jwt = jwt_with_workspace(TOKEN_WS);
+                let mut mocks = MockSet::new();
+                mocks.mock(move |when, then| {
+                    when.post().path("/api/authorise");
+                    then.json(serde_json::json!({
+                        "accessToken": jwt,
+                        "expiry": 3600,
+                    }));
+                });
+                let server = start_server(mocks).await;
+
+                let strategy = build_strategy_against(&server, CRN_WS);
+                let err = strategy.get_token().await.unwrap_err();
+
+                assertions::has_error_code(&err, "WORKSPACE_MISMATCH");
             }
         }
     }

@@ -297,6 +297,22 @@ mod tests {
         assert_eq!(error_code_of(&err), "SERVER_ERROR");
     }
 
+    /// Regression for the FFI mapping of the workspace-verification error.
+    /// A full HTTP-roundtrip test isn't viable on wasm32 (no mocktail-style
+    /// fetch interception in the wasm-bindgen test runner), so we exercise
+    /// just the boundary: any `WorkspaceMismatch` reaching `to_js_error`
+    /// must surface as `WORKSPACE_MISMATCH`. The underlying check is
+    /// covered by `stack_auth::access_key_strategy` tests on the native
+    /// target.
+    #[wasm_bindgen_test]
+    fn workspace_mismatch_maps_to_workspace_mismatch_code() {
+        let err = to_js_error(AuthError::WorkspaceMismatch {
+            expected_workspace: "ZVATKW3VHMFG27DY".parse().unwrap(),
+            token_workspace: "AAAAAAAAAAAAAAAA".parse().unwrap(),
+        });
+        assert_eq!(error_code_of(&err), "WORKSPACE_MISMATCH");
+    }
+
     #[wasm_bindgen_test]
     fn token_result_from_extracts_jwt_claims() {
         let token = make_service_token("https://cts.example.com/", "https://zerokms.example.com/");
