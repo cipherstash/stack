@@ -17,10 +17,16 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, Service
 /// The first call to [`get_token`](AuthStrategy::get_token) authenticates
 /// with the server. Subsequent calls return the cached token until it
 /// expires, at which point re-authentication happens automatically. Every
-/// returned token is checked: if the JWT's `workspace` claim does not match
-/// the CRN's workspace ID, [`AuthError::WorkspaceMismatch`] is returned
-/// rather than silently letting the caller operate on a different workspace
-/// than they specified.
+/// returned token is checked against the CRN; post-auth verification can
+/// fail in two ways:
+///
+/// - [`AuthError::WorkspaceMismatch`] — the JWT decoded cleanly but its
+///   `workspace` claim doesn't match the CRN's workspace ID.
+/// - [`AuthError::InvalidToken`] — the JWT is malformed or missing the
+///   `workspace` claim entirely, so verification can't run.
+///
+/// Either outcome is preferred over silently letting the caller operate on
+/// a different workspace than they specified.
 ///
 /// When constructed via [`AccessKeyStrategyBuilder::with_token_store`], the
 /// strategy also persists tokens through an external [`TokenStore`] so that
