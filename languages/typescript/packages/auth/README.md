@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
 
   const strategy = AccessKeyStrategy.create(
-    "ap-southeast-2.aws",
+    Deno.env.get("CS_WORKSPACE_CRN")!,    // e.g. "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
     Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
     { store: cookieStore({ request: req, responseHeaders }) },
   );
@@ -83,8 +83,8 @@ Deno.serve(async (req) => {
 ```jsonc
 {
   "imports": {
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.38/wasm-inline",
-    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.38/cookies"
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.39/wasm-inline",
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.39/cookies"
   }
 }
 ```
@@ -123,7 +123,7 @@ The base64url encoding skirts RFC 6265's cookie-value char range, which would ot
 The `store` field accepts any `{ load, save }`-shaped object — Redis, KV stores, an in-memory `Map`, anything you'd reach for:
 
 ```ts
-const strategy = AccessKeyStrategy.create(region, accessKey, {
+const strategy = AccessKeyStrategy.create(workspaceCrn, accessKey, {
   store: {
     async load() { return await redis.get("cs:token"); /* string | null */ },
     async save(json: string) { await redis.set("cs:token", json); },
@@ -179,7 +179,7 @@ Starts the OAuth 2.0 Device Authorization flow. Returns a `Promise<DeviceCodeRes
 
 | Method | Description |
 |---|---|
-| `AccessKeyStrategy.create(region, accessKey, options?)` | Build a strategy from a region and access key. Pass `{ store }` to back it with a persistent cache. |
+| `AccessKeyStrategy.create(workspaceCrn, accessKey, options?)` | Build a strategy from a workspace CRN and access key. Region is derived from the CRN. Pass `{ store }` to back it with a persistent cache. The strategy verifies every issued token's `workspace` claim against the CRN — mismatch surfaces as `code === "WORKSPACE_MISMATCH"`. |
 | `strategy.getToken()` | Retrieve a valid `TokenResult`, refreshing as needed |
 
 `TokenResult` is `{ token, subject, workspaceId, issuer, services }`.

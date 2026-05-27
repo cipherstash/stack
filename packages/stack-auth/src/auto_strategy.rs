@@ -15,8 +15,11 @@ use crate::{AuthError, AuthStrategy, ServiceToken};
 /// # Detection order
 ///
 /// 1. If the `CS_CLIENT_ACCESS_KEY` environment variable is set, an
-///    [`AccessKeyStrategy`] is created. The region is extracted from the
-///    `CS_WORKSPACE_CRN` environment variable.
+///    [`AccessKeyStrategy`] is created. The workspace CRN is parsed from
+///    `CS_WORKSPACE_CRN` (or the explicit
+///    [`with_workspace_crn`](AutoStrategyBuilder::with_workspace_crn) value);
+///    its region drives service discovery and its workspace ID is used
+///    to verify every issued token.
 /// 2. If a token store file exists at the default location
 ///    (`~/.cipherstash/auth.json`), an [`OAuthStrategy`] is created from it.
 /// 3. Otherwise, [`AuthError::NotAuthenticated`] is returned.
@@ -106,11 +109,9 @@ impl AutoStrategy {
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
-            let region = crn
-                .map(|c| c.region)
-                .ok_or(AuthError::MissingWorkspaceCrn)?;
+            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn)?;
             let key: crate::AccessKey = access_key.parse()?;
-            let strategy = AccessKeyStrategy::new(region, key)?;
+            let strategy = AccessKeyStrategy::new(workspace_crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }
 
@@ -133,11 +134,9 @@ impl AutoStrategy {
     #[cfg(target_arch = "wasm32")]
     fn detect_inner(access_key: Option<String>, crn: Option<Crn>) -> Result<Self, AuthError> {
         if let Some(access_key) = access_key {
-            let region = crn
-                .map(|c| c.region)
-                .ok_or(AuthError::MissingWorkspaceCrn)?;
+            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn)?;
             let key: crate::AccessKey = access_key.parse()?;
-            let strategy = AccessKeyStrategy::new(region, key)?;
+            let strategy = AccessKeyStrategy::new(workspace_crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }
         Err(AuthError::NotAuthenticated)

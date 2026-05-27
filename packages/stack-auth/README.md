@@ -17,7 +17,7 @@ All strategies implement the [`AuthStrategy`] trait, which provides a single
 | Strategy | Use case | Credentials |
 |---|---|---|
 | [`AutoStrategy`] | Recommended default — detects credentials automatically | `CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`, or `~/.cipherstash/auth.json` |
-| [`AccessKeyStrategy`] | Service-to-service / CI | Static access key + region |
+| [`AccessKeyStrategy`] | Service-to-service / CI | Static access key + workspace CRN |
 | [`OAuthStrategy`] | Long-lived sessions with refresh | OAuth token (from device code flow or disk) |
 | [`DeviceCodeStrategy`] | CLI login ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) | User authorizes in browser |
 | `StaticTokenStrategy` | Tests only (`test-utils` feature) | Pre-obtained token used as-is |
@@ -40,12 +40,12 @@ For service-to-service authentication with an access key:
 
 ```no_run
 use stack_auth::AccessKeyStrategy;
-use cts_common::Region;
+use cts_common::Crn;
 
 # fn run() -> Result<(), Box<dyn std::error::Error>> {
-let region = Region::aws("ap-southeast-2")?;
+let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse()?;
 let key = "CSAKkeyId.keySecret".parse()?;
-let strategy = AccessKeyStrategy::new(region, key)?;
+let strategy = AccessKeyStrategy::new(crn, key)?;
 # Ok(())
 # }
 ```

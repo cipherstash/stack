@@ -32,6 +32,7 @@ fn error_code(err: &AuthError) -> &'static str {
         AuthError::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
         AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
         AuthError::InvalidCrn(_) => "INVALID_CRN",
+        AuthError::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
         _ => "UNKNOWN_ERROR",
     }
 }
@@ -156,14 +157,23 @@ pub struct AccessKeyStrategy {
 
 #[napi]
 impl AccessKeyStrategy {
-    /// Create a new `AccessKeyStrategy` for the given region and access key.
+    /// Create a new `AccessKeyStrategy` for the given workspace CRN and
+    /// access key.
+    ///
+    /// The CRN format is `crn:<region>:<workspace-id>` (e.g.
+    /// `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed
+    /// from the CRN and used for service discovery; the workspace ID is
+    /// used to verify every issued token belongs to the right workspace.
+    /// A mismatch fails `getToken()` with `code === "WORKSPACE_MISMATCH"`.
     #[napi(factory)]
-    pub fn create(region: String, access_key: String) -> Result<Self> {
-        let region = Region::new(&region).map_err(|e| to_napi_error(AuthError::from(e)))?;
+    pub fn create(workspace_crn: String, access_key: String) -> Result<Self> {
+        let crn: cts_common::Crn = workspace_crn
+            .parse()
+            .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_napi_error(AuthError::from(e)))?;
-        let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_napi_error)?;
+        let inner = stack_auth::AccessKeyStrategy::new(crn, key).map_err(to_napi_error)?;
         Ok(Self { inner })
     }
 
@@ -395,6 +405,14 @@ mod tests {
     }
 
     fn test_access_token_jwt() -> String {
+        jwt_with_workspace("ZVATKW3VHMFG27DY")
+    }
+
+    /// Build a JWT carrying the given `workspace` claim. Used by the
+    /// workspace-verification regression tests to mint tokens whose
+    /// workspace claim is deliberately mismatched against the CRN passed
+    /// to the strategy.
+    fn jwt_with_workspace(workspace: &str) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -409,7 +427,7 @@ mod tests {
             "aud": "test-audience",
             "iat": now,
             "exp": now + 3600,
-            "workspace": "ZVATKW3VHMFG27DY",
+            "workspace": workspace,
             "scope": "",
         });
 
@@ -869,22 +887,49 @@ mod tests {
                 assertions::has_error_code(&err, "INVALID_CRN");
             }
         }
+
+        /// Happy path: explicit access key + explicit valid CRN constructs
+        /// an `AutoStrategy` (specifically the `AccessKey` variant). The
+        /// existing tests only cover the error paths, so a regression in
+        /// the napi → `AutoStrategy::builder` plumbing (e.g. dropping the
+        /// CRN before `detect()`) would slide through.
+        mod given_valid_access_key_and_crn {
+            use super::*;
+
+            #[test]
+            fn constructs_strategy_successfully() {
+                let result = AutoStrategy::detect(Some(AutoStrategyOptions {
+                    access_key: Some("CSAKtestKeyId.testKeySecret".to_string()),
+                    workspace_crn: Some("crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".to_string()),
+                }));
+
+                assert!(
+                    result.is_ok(),
+                    "valid access key + CRN should construct an AutoStrategy",
+                );
+            }
+        }
     }
 
     mod access_key_strategy_create {
         use super::*;
 
-        mod given_invalid_region {
+        // A syntactically valid CRN to use when the test wants to exercise a
+        // *later* failure path (e.g. invalid access key). Workspace ID is
+        // arbitrary — these tests never reach the workspace-verification step.
+        const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
+
+        mod given_invalid_crn {
             use super::*;
 
             #[test]
-            fn returns_invalid_region_error() {
+            fn returns_invalid_crn_error() {
                 let err = expect_err(AccessKeyStrategy::create(
-                    "not-a-region".to_string(),
+                    "not-a-crn".to_string(),
                     "CSAKid.secret".to_string(),
                 ));
 
-                assertions::has_error_code(&err, "INVALID_REGION");
+                assertions::has_error_code(&err, "INVALID_CRN");
             }
         }
 
@@ -894,11 +939,84 @@ mod tests {
             #[test]
             fn returns_invalid_access_key_error() {
                 let err = expect_err(AccessKeyStrategy::create(
-                    "ap-southeast-2.aws".to_string(),
+                    VALID_CRN.to_string(),
                     "not-a-valid-key".to_string(),
                 ));
 
                 assertions::has_error_code(&err, "INVALID_ACCESS_KEY");
+            }
+        }
+
+        /// Happy path: valid CRN + valid access key constructs a strategy.
+        /// The wasm bindings have an equivalent test
+        /// (`access_key_strategy_accepts_valid_inputs`); the napi seam
+        /// needs the same guard so a future regression in
+        /// `AccessKeyStrategy::create` (e.g. always returning an error) is
+        /// caught.
+        mod given_valid_inputs {
+            use super::*;
+
+            #[test]
+            fn constructs_strategy_successfully() {
+                let result = AccessKeyStrategy::create(
+                    VALID_CRN.to_string(),
+                    "CSAKtestKeyId.testKeySecret".to_string(),
+                );
+
+                assert!(
+                    result.is_ok(),
+                    "valid CRN + access key should construct an AccessKeyStrategy",
+                );
+            }
+        }
+
+        /// End-to-end coverage that the `WorkspaceMismatch` error variant
+        /// surfaces through the napi boundary as `WORKSPACE_MISMATCH` —
+        /// the underlying Rust check is covered in
+        /// `stack_auth::access_key_strategy`, but the FFI mapping has its
+        /// own regression risk (the `error_code` match in this crate).
+        mod given_token_workspace_mismatch {
+            use super::*;
+
+            // Drives the wrapper's inner field directly because the public
+            // `AccessKeyStrategy::create` factory doesn't expose a base-URL
+            // override. The base-URL override lives behind the `test-utils`
+            // feature on `stack-auth` and isn't part of the napi surface.
+            fn build_strategy_against(
+                server: &MockServer,
+                crn_workspace: &str,
+            ) -> AccessKeyStrategy {
+                let crn: cts_common::Crn = format!("crn:ap-southeast-2.aws:{crn_workspace}")
+                    .parse()
+                    .unwrap();
+                let key: stack_auth::AccessKey = "CSAKtestKeyId.testKeySecret".parse().unwrap();
+                let inner = stack_auth::AccessKeyStrategy::builder(crn, key)
+                    .base_url(server.url(""))
+                    .build()
+                    .unwrap();
+                AccessKeyStrategy { inner }
+            }
+
+            #[tokio::test]
+            async fn get_token_returns_workspace_mismatch_error() {
+                const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+                const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+
+                let jwt = jwt_with_workspace(TOKEN_WS);
+                let mut mocks = MockSet::new();
+                mocks.mock(move |when, then| {
+                    when.post().path("/api/authorise");
+                    then.json(serde_json::json!({
+                        "accessToken": jwt,
+                        "expiry": 3600,
+                    }));
+                });
+                let server = start_server(mocks).await;
+
+                let strategy = build_strategy_against(&server, CRN_WS);
+                let err = strategy.get_token().await.unwrap_err();
+
+                assertions::has_error_code(&err, "WORKSPACE_MISMATCH");
             }
         }
     }

@@ -4,7 +4,7 @@
 /*
  * Public TS surface for the `/wasm-inline` entry — the slick wrapper around
  * the raw wasm-bindgen-generated bindings. Consumers see this; the raw
- * `createWithStore(region, key, loadFn, saveFn)` shape stays internal.
+ * `createWithStore(crn, key, loadFn, saveFn)` shape stays internal.
  *
  * `AuthErrorCode`, `AuthError`, and `TokenResult` are shared with the
  * lower-level `/wasm` entry via `wasm-types.d.ts` — re-exported here so
@@ -42,12 +42,27 @@ export interface AccessKeyStrategyOptions {
 
 /**
  * An auth strategy that uses a static access key for service-to-service
- * or CI/CD authentication.
+ * or CI/CD authentication, scoped to a single workspace identified by a
+ * CRN. The region is derived from the CRN, so there's no separate
+ * `region` argument and no chance of the strategy operating against a
+ * region the caller didn't expect.
+ *
+ * Every issued token's `workspace` JWT claim is verified against the
+ * CRN's workspace ID. A mismatch fails the `getToken()` call with an
+ * `AuthError` whose `code` is `"WORKSPACE_MISMATCH"` — the strategy
+ * never silently lets a multi-workspace access key operate on the
+ * wrong workspace.
  */
 export declare class AccessKeyStrategy {
   private constructor();
   /**
-   * Create a new `AccessKeyStrategy` for the given region and access key.
+   * Create a new `AccessKeyStrategy` for the given workspace CRN and
+   * access key.
+   *
+   * The CRN format is `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from
+   * the CRN and used for service discovery; the workspace ID is used
+   * to verify every issued token belongs to the right workspace.
    *
    * Pass `options.store` to back the strategy with a persistent cache —
    * see {@link TokenStore} and the
@@ -55,7 +70,7 @@ export declare class AccessKeyStrategy {
    * helper.
    */
   static create(
-    region: string,
+    workspaceCrn: string,
     accessKey: string,
     options?: AccessKeyStrategyOptions,
   ): AccessKeyStrategy;

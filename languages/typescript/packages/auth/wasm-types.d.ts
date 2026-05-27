@@ -6,8 +6,8 @@
  * sub-path. Most consumers should reach for the slick wrapper at
  * `/wasm-inline` (see `wasm-inline.d.ts`) which exposes the options-object
  * API and the `cookieStore`-friendly shape. This file documents the
- * lower-level surface: a single `create(region, accessKey)` factory with
- * no built-in store wiring.
+ * lower-level surface: a single `create(workspaceCrn, accessKey)` factory
+ * with no built-in store wiring.
  *
  * The wasm-bindgen build emits `wasm/stack_auth_wasm.d.ts` automatically,
  * but its types are looser than we want (`Promise<any>` for `getToken`,
@@ -38,6 +38,7 @@ export type AuthErrorCode =
   | 'MISSING_WORKSPACE_CRN'
   | 'INVALID_ACCESS_KEY'
   | 'INVALID_CRN'
+  | 'WORKSPACE_MISMATCH'
   | 'UNKNOWN_ERROR'
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */
@@ -65,14 +66,25 @@ export interface TokenResult {
 
 /**
  * An auth strategy that uses a static access key for service-to-service
- * or CI/CD authentication. This is the raw bundler-target binding —
- * consumers wanting the options-object / cookie-store-friendly shape
- * should import from `/wasm-inline` instead.
+ * or CI/CD authentication, scoped to a single workspace identified by a
+ * CRN. Region is derived from the CRN. Every issued token's `workspace`
+ * JWT claim is verified against the CRN; mismatch fails the `getToken()`
+ * call with a `WORKSPACE_MISMATCH` error.
+ *
+ * This is the raw bundler-target binding — consumers wanting the
+ * options-object / cookie-store-friendly shape should import from
+ * `/wasm-inline` instead.
  */
 export declare class AccessKeyStrategy {
   private constructor()
-  /** Create a new `AccessKeyStrategy` for the given region and access key. */
-  static create(region: string, accessKey: string): AccessKeyStrategy
+  /**
+   * Create a new `AccessKeyStrategy` for the given workspace CRN and
+   * access key.
+   *
+   * The CRN format is `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`).
+   */
+  static create(workspaceCrn: string, accessKey: string): AccessKeyStrategy
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
   getToken(): Promise<TokenResult>
   /** Release the underlying wasm resources. */

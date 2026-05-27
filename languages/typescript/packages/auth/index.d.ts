@@ -19,6 +19,7 @@ export type AuthErrorCode =
   | 'MISSING_WORKSPACE_CRN'
   | 'INVALID_ACCESS_KEY'
   | 'INVALID_CRN'
+  | 'WORKSPACE_MISMATCH'
   | 'UNKNOWN_ERROR'
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */
@@ -149,11 +150,27 @@ export declare class AutoStrategy {
 }
 /**
  * An auth strategy that uses a static access key for service-to-service
- * or CI/CD authentication.
+ * or CI/CD authentication, scoped to a single workspace identified by a
+ * CRN. Region is derived from the CRN — there is no separate region
+ * argument.
+ *
+ * Every issued token's `workspace` JWT claim is verified against the
+ * CRN. A mismatch fails the `getToken()` call with a
+ * `WORKSPACE_MISMATCH` error rather than silently letting a
+ * multi-workspace access key operate against the wrong workspace.
  */
 export declare class AccessKeyStrategy {
-  /** Create a new `AccessKeyStrategy` for the given region and access key. */
-  static create(region: string, accessKey: string): AccessKeyStrategy
+  /**
+   * Create a new `AccessKeyStrategy` for the given workspace CRN and
+   * access key.
+   *
+   * The CRN format is `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from
+   * the CRN and used for service discovery; the workspace ID is used to
+   * verify every issued token belongs to the right workspace. A mismatch
+   * fails `getToken()` with `code === "WORKSPACE_MISMATCH"`.
+   */
+  static create(workspaceCrn: string, accessKey: string): AccessKeyStrategy
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
   getToken(): Promise<TokenResult>
 }

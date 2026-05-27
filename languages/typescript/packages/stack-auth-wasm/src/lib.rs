@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 
-use cts_common::Region;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
@@ -175,13 +174,21 @@ pub struct AccessKeyStrategy {
 
 #[wasm_bindgen]
 impl AccessKeyStrategy {
-    /// Create a new `AccessKeyStrategy` for the given region and access key.
-    pub fn create(region: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
-        let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
+    /// Create a new `AccessKeyStrategy` for the given workspace CRN and
+    /// access key. Region is derived from the CRN — there's no separate
+    /// region argument — so the strategy can't be configured for one
+    /// workspace's region while the CRN says another.
+    ///
+    /// Every issued token's workspace claim is verified against the CRN;
+    /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
+    pub fn create(workspace_crn: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
+        let crn: cts_common::Crn = workspace_crn
+            .parse()
+            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
-        let inner = stack_auth::AccessKeyStrategy::new(region, key).map_err(to_js_error)?;
+        let inner = stack_auth::AccessKeyStrategy::new(crn, key).map_err(to_js_error)?;
         Ok(AccessKeyStrategy {
             inner: AccessKeyStrategyInner::NoStore(inner),
         })
@@ -200,12 +207,14 @@ impl AccessKeyStrategy {
     #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
-        region: String,
+        workspace_crn: String,
         access_key: String,
         load_token: js_sys::Function,
         save_token: js_sys::Function,
     ) -> Result<AccessKeyStrategy, JsValue> {
-        let region = Region::new(&region).map_err(|e| to_js_error(AuthError::from(e)))?;
+        let crn: cts_common::Crn = workspace_crn
+            .parse()
+            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
@@ -213,7 +222,7 @@ impl AccessKeyStrategy {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::AccessKeyStrategy::builder(region, key)
+        let inner = stack_auth::AccessKeyStrategy::builder(crn, key)
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;
@@ -288,6 +297,22 @@ mod tests {
         assert_eq!(error_code_of(&err), "SERVER_ERROR");
     }
 
+    /// Regression for the FFI mapping of the workspace-verification error.
+    /// A full HTTP-roundtrip test isn't viable on wasm32 (no mocktail-style
+    /// fetch interception in the wasm-bindgen test runner), so we exercise
+    /// just the boundary: any `WorkspaceMismatch` reaching `to_js_error`
+    /// must surface as `WORKSPACE_MISMATCH`. The underlying check is
+    /// covered by `stack_auth::access_key_strategy` tests on the native
+    /// target.
+    #[wasm_bindgen_test]
+    fn workspace_mismatch_maps_to_workspace_mismatch_code() {
+        let err = to_js_error(AuthError::WorkspaceMismatch {
+            expected_workspace: "ZVATKW3VHMFG27DY".parse().unwrap(),
+            token_workspace: "AAAAAAAAAAAAAAAA".parse().unwrap(),
+        });
+        assert_eq!(error_code_of(&err), "WORKSPACE_MISMATCH");
+    }
+
     #[wasm_bindgen_test]
     fn token_result_from_extracts_jwt_claims() {
         let token = make_service_token("https://cts.example.com/", "https://zerokms.example.com/");
@@ -331,19 +356,22 @@ mod tests {
         assert_eq!(error_code_of(&err), "INVALID_TOKEN");
     }
 
+    const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
+    const VALID_KEY: &str = "CSAKtestKeyId.testKeySecret";
+
     #[wasm_bindgen_test]
-    fn access_key_strategy_rejects_invalid_region() {
+    fn access_key_strategy_rejects_invalid_crn() {
         let err = expect_js_err(AccessKeyStrategy::create(
-            "not-a-region".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
+            "not-a-crn".to_string(),
+            VALID_KEY.to_string(),
         ));
-        assert_eq!(error_code_of(&err), "INVALID_REGION");
+        assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn access_key_strategy_rejects_invalid_key() {
         let err = expect_js_err(AccessKeyStrategy::create(
-            "ap-southeast-2.aws".to_string(),
+            VALID_CRN.to_string(),
             "not-a-valid-key".to_string(),
         ));
         assert_eq!(error_code_of(&err), "INVALID_ACCESS_KEY");
@@ -351,10 +379,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn access_key_strategy_accepts_valid_inputs() {
-        let result = AccessKeyStrategy::create(
-            "ap-southeast-2.aws".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
-        );
+        let result = AccessKeyStrategy::create(VALID_CRN.to_string(), VALID_KEY.to_string());
         assert!(result.is_ok());
     }
 
@@ -369,24 +394,24 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn create_with_store_rejects_invalid_region() {
+    fn create_with_store_rejects_invalid_crn() {
         let err = expect_js_err(AccessKeyStrategy::create_with_store(
-            "not-a-region".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
+            "not-a-crn".to_string(),
+            VALID_KEY.to_string(),
             empty_load_fn(),
             noop_save_fn(),
         ));
         assert_eq!(
             error_code_of(&err),
-            "INVALID_REGION",
-            "invalid region should surface INVALID_REGION even on the store variant"
+            "INVALID_CRN",
+            "invalid CRN should surface INVALID_CRN even on the store variant"
         );
     }
 
     #[wasm_bindgen_test]
     fn create_with_store_rejects_invalid_access_key() {
         let err = expect_js_err(AccessKeyStrategy::create_with_store(
-            "ap-southeast-2.aws".to_string(),
+            VALID_CRN.to_string(),
             "not-a-valid-key".to_string(),
             empty_load_fn(),
             noop_save_fn(),
@@ -401,14 +426,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn create_with_store_accepts_valid_inputs() {
         let result = AccessKeyStrategy::create_with_store(
-            "ap-southeast-2.aws".to_string(),
-            "CSAKtestKeyId.testKeySecret".to_string(),
+            VALID_CRN.to_string(),
+            VALID_KEY.to_string(),
             empty_load_fn(),
             noop_save_fn(),
         );
         assert!(
             result.is_ok(),
-            "valid region + key + callbacks should construct successfully"
+            "valid CRN + key + callbacks should construct successfully"
         );
     }
 
