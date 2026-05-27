@@ -287,6 +287,64 @@ mod workspace_verification_tests {
         );
     }
 
+    /// A pre-populated [`TokenStore`] returning a token for a *different*
+    /// workspace must still be rejected by the strategy's wrapper. This
+    /// is the cross-feature interaction the CRN parity work is designed
+    /// to protect — a shared cookie / KV cache between strategies bound
+    /// to different workspaces must never let a load from the store
+    /// bypass workspace verification.
+    ///
+    /// Drives the assertion without any HTTP traffic: a 500-returning
+    /// mock fails the test loudly if the strategy ever reaches the
+    /// authorise endpoint instead of trusting the store.
+    #[tokio::test]
+    async fn rejects_stored_token_for_different_workspace() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "store must satisfy the request"}));
+        });
+        let server =
+            MockServer::new_http("access-key-strategy-store-mismatch-test").with_mocks(mocks);
+        #[allow(clippy::expect_used)]
+        server.start().await.expect("mock server start");
+
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs();
+        let stored = crate::Token {
+            access_token: crate::SecretToken::new(jwt_with_workspace(TOKEN_WS)),
+            token_type: "Bearer".to_string(),
+            expires_at: now + 3600,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        };
+        let store = std::sync::Arc::new(crate::InMemoryTokenStore::new());
+        store.save(&stored).await;
+
+        let strategy = AccessKeyStrategy::builder(crn_with_workspace(CRN_WS), test_access_key())
+            .base_url(server.url(""))
+            .with_token_store(std::sync::Arc::clone(&store))
+            .build()
+            .expect("builder");
+
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected mismatch from stored token");
+        assert!(
+            matches!(err, AuthError::WorkspaceMismatch { .. }),
+            "expected WorkspaceMismatch, got {err:?}",
+        );
+    }
+
     /// Regression guard — the workspace check runs on *every* `get_token()`
     /// call, not only on the call that triggers initial authentication.
     /// A future optimisation that cached the "verified" result, or that
