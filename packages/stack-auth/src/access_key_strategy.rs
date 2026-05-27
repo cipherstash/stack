@@ -79,11 +79,11 @@ impl AccessKeyStrategy {
 impl<S: TokenStore> AuthStrategy for &AccessKeyStrategy<S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
         let token: ServiceToken = self.inner.get_token().await?;
-        let token_workspace = token.workspace_id()?;
-        if token_workspace != &self.expected_workspace {
+        let token_workspace = *token.workspace_id()?;
+        if token_workspace != self.expected_workspace {
             return Err(AuthError::WorkspaceMismatch {
-                expected_workspace: self.expected_workspace.clone(),
-                token_workspace: token_workspace.clone(),
+                expected_workspace: self.expected_workspace,
+                token_workspace,
             });
         }
         Ok(token)
@@ -148,8 +148,8 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
     /// unless overridden with `base_url` (available when the `test-utils`
     /// feature is enabled).
     pub fn build(self) -> Result<AccessKeyStrategy<S>, AuthError> {
-        let expected_workspace = self.workspace_crn.workspace_id.clone();
-        let region = self.workspace_crn.region.clone();
+        let expected_workspace = self.workspace_crn.workspace_id;
+        let region = self.workspace_crn.region;
         let base_url = match self.base_url_override {
             Some(url) => url,
             None => {
