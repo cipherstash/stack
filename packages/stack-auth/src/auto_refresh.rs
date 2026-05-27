@@ -191,9 +191,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         };
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
-                guard.defuse();
                 self.save_refreshed_token(&new_token).await;
-                Ok(self.install_refreshed_token(state, new_token))
+                let token = self.install_refreshed_token(state, new_token);
+                guard.defuse();
+                Ok(token)
             }
             Err(err) => {
                 guard.defuse();
@@ -254,9 +255,14 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     /// Takes `MutexGuard` by value because the lock is dropped before the HTTP
     /// request. Notifies waiters after the refresh completes (success or error).
     ///
-    /// A [`CancelGuard`] ensures that if this future is cancelled during the
-    /// HTTP request, `refresh_in_progress` is cleared, the credential is
-    /// restored (best-effort via `try_lock`), and waiters are notified.
+    /// A [`CancelGuard`] ensures that if this future is cancelled at any point
+    /// before the new token is installed — including the post-HTTP save +
+    /// install window — `refresh_in_progress` is cleared and waiters are
+    /// notified, so subsequent callers don't hang in
+    /// [`wait_for_in_flight_refresh`](Self::wait_for_in_flight_refresh).
+    /// The credential is not restored on cancellation (it's already gone from
+    /// `state.token`), so the next caller will get whatever the cached token
+    /// offers — usable, expired, or absent.
     async fn refresh_non_blocking(
         &self,
         state: MutexGuard<'_, State>,
@@ -273,10 +279,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
 
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
-                guard.defuse();
                 self.save_refreshed_token(&new_token).await;
                 let mut state = self.state.lock().await;
                 let _ = self.install_refreshed_token(&mut state, new_token);
+                guard.defuse();
             }
             Err(err) => {
                 guard.defuse();
@@ -296,9 +302,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     /// Token is fully expired — refresh while holding the lock so concurrent
     /// callers block on `lock().await` until the new token is available.
     ///
-    /// A [`CancelGuard`] ensures that if this future is cancelled during the
-    /// HTTP request, `refresh_in_progress` is cleared and waiters are notified
-    /// so they don't hang indefinitely. (The credential is lost on cancel —
+    /// A [`CancelGuard`] ensures that if this future is cancelled at any point
+    /// before the new token is installed — including the post-HTTP save
+    /// window — `refresh_in_progress` is cleared and waiters are notified so
+    /// they don't hang indefinitely. (The credential is lost on cancel —
     /// see [`CancelGuard`] docs — but subsequent callers will get `Expired`
     /// rather than blocking forever.)
     async fn refresh_blocking(
@@ -313,9 +320,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         };
         match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
-                guard.defuse();
                 self.save_refreshed_token(&new_token).await;
-                Ok(self.install_refreshed_token(state, new_token))
+                let token = self.install_refreshed_token(state, new_token);
+                guard.defuse();
+                Ok(token)
             }
             Err(err) => {
                 guard.defuse();
@@ -1436,6 +1444,78 @@ mod stress_tests {
             assert!(
                 result.is_ok(),
                 "get_token() should not hang after cancelled blocking refresh"
+            );
+        }
+
+        /// Regression test: cancellation in the window *after* the upstream
+        /// HTTP refresh succeeds but *before* the new token is installed must
+        /// still clear `refresh_in_progress` and notify waiters. The previous
+        /// implementation defused the [`CancelGuard`] before
+        /// `save_refreshed_token`, so a drop during the (async) store-save or
+        /// the subsequent state-lock acquire would strand the flag — wedging
+        /// any caller that later hit `wait_for_in_flight_refresh`.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn save_phase_cancellation_does_not_strand_in_progress_flag() {
+            use crate::token_store::TokenStore;
+
+            /// Store that returns a single pre-loaded token from `load()` and
+            /// delays inside `save()` long enough for a test to cancel.
+            struct SlowSaveStore {
+                initial: tokio::sync::Mutex<Option<Token>>,
+                delay: Duration,
+            }
+
+            impl TokenStore for SlowSaveStore {
+                async fn load(&self) -> Option<Token> {
+                    self.initial.lock().await.take()
+                }
+
+                async fn save(&self, _token: &Token) {
+                    tokio::time::sleep(self.delay).await;
+                }
+            }
+
+            // Fast upstream HTTP — refresh succeeds in <50ms.
+            let counting = CountingState::new();
+            let state = DelayedRefreshState {
+                counting: counting.clone(),
+                delay: Duration::from_millis(10),
+            };
+            let (base_url, _) = start_axum_server(delayed_refresh_handler, state).await;
+            let dir = tempfile::tempdir().unwrap();
+            let store = ProfileStore::new(dir.path());
+            store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
+            let ws_store = store.current_workspace_store().unwrap();
+            let refresher =
+                OAuthRefresher::new(Some(ws_store), base_url, "cli", "ap-southeast-2.aws", None);
+            // Slow async save — cancellation reliably lands here, in the
+            // post-HTTP / pre-install window.
+            let slow_store = SlowSaveStore {
+                initial: tokio::sync::Mutex::new(Some(make_token("expired-token", 0, true))),
+                delay: Duration::from_secs(10),
+            };
+            let strategy = Arc::new(AutoRefresh::with_store(refresher, slow_store));
+
+            // Trigger refresh; the task will complete the HTTP exchange and
+            // then block inside store.save (the slow async path).
+            let s = Arc::clone(&strategy);
+            let handle = tokio::spawn(async move { s.get_token().await });
+            // 200ms is comfortably past the 10ms HTTP delay but well inside
+            // the 10s save delay — so abort() lands during save_refreshed_token.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            handle.abort();
+            let _ = handle.await;
+
+            // The CancelGuard must have cleared refresh_in_progress on drop.
+            // If the old (pre-fix) code regresses, the flag stays true and a
+            // subsequent caller wedges on wait_for_in_flight_refresh waiting
+            // for a notify that will never come — the timeout below catches it.
+            let s = Arc::clone(&strategy);
+            let result = tokio::time::timeout(Duration::from_secs(2), s.get_token()).await;
+
+            assert!(
+                result.is_ok(),
+                "get_token() should not hang after cancellation in the save/install window"
             );
         }
 
