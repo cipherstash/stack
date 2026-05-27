@@ -6,9 +6,9 @@
  * any runtime that exposes WHATWG `Request` + `Headers`: Supabase Edge
  * Functions, Cloudflare Workers, Bun, Deno, Node 18+, Next.js App Router.
  *
- * Pair with `AccessKeyStrategy.create(region, key, { store })` from the
- * `/wasm-inline` entry (or, once the napi binding supports it, the main
- * `.` entry).
+ * Pair with `AccessKeyStrategy.create(workspaceCrn, key, { store })` from
+ * the `/wasm-inline` entry (or, once the napi binding supports it, the
+ * main `.` entry).
  */
 
 import type { TokenStore } from "./wasm-inline.d.ts";
@@ -57,7 +57,7 @@ export interface CookieStoreOptions {
  *
  * Deno.serve(async (req) => {
  *   const responseHeaders = new Headers();
- *   const strategy = AccessKeyStrategy.create(region, accessKey, {
+ *   const strategy = AccessKeyStrategy.create(workspaceCrn, accessKey, {
  *     store: cookieStore({ request: req, responseHeaders }),
  *   });
  *   const result = await strategy.getToken();

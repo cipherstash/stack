@@ -1,11 +1,11 @@
 /* @ts-self-types="./wasm-inline.d.ts" */
 
 // Slick wrapper around the wasm-bindgen-generated inline-bytes shim. The raw
-// `createWithStore(region, key, loadFn, saveFn)` factory below is replaced
-// here with a single `create(region, key, { store })` shape — easier to
-// extend with future options (lifecycle hooks, custom logging, etc.) without
-// breaking callers, and matches the options-object pattern most modern JS
-// APIs use.
+// `createWithStore(workspaceCrn, key, loadFn, saveFn)` factory below is
+// replaced here with a single `create(workspaceCrn, key, { store })` shape
+// — easier to extend with future options (lifecycle hooks, custom logging,
+// etc.) without breaking callers, and matches the options-object pattern
+// most modern JS APIs use.
 
 import { AccessKeyStrategy as RawAccessKeyStrategy } from "./wasm/stack_auth_wasm_inline.js";
 
@@ -21,12 +21,12 @@ export class AccessKeyStrategy {
   }
 
   /**
-   * @param {string} region
+   * @param {string} workspaceCrn
    * @param {string} accessKey
    * @param {AccessKeyStrategyOptions} [options]
    * @returns {AccessKeyStrategy}
    */
-  static create(region, accessKey, options) {
+  static create(workspaceCrn, accessKey, options) {
     const store = options?.store;
     if (store) {
       // Wrap the user's `load` / `save` so the wasm binding always sees
@@ -37,10 +37,10 @@ export class AccessKeyStrategy {
       const save = (/** @type {string} */ json) =>
         Promise.resolve(store.save(json));
       return new AccessKeyStrategy(
-        RawAccessKeyStrategy.createWithStore(region, accessKey, load, save),
+        RawAccessKeyStrategy.createWithStore(workspaceCrn, accessKey, load, save),
       );
     }
-    return new AccessKeyStrategy(RawAccessKeyStrategy.create(region, accessKey));
+    return new AccessKeyStrategy(RawAccessKeyStrategy.create(workspaceCrn, accessKey));
   }
 
   /** @returns {Promise<import("./wasm-inline.d.ts").TokenResult>} */

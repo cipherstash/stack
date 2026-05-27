@@ -2,7 +2,7 @@
 
 WebAssembly bindings for [`stack-auth`](../). Consumed by the unified [`@cipherstash/auth`](../node/) npm package — this crate is the upstream source, not a published artifact.
 
-Scoped to `AccessKeyStrategy` (machine-to-machine auth). `AccessKeyStrategy.create(region, accessKey)` returns a strategy; `getToken(): Promise<TokenResult>` resolves to `{ token, subject, workspaceId, issuer, services }`. Errors thrown extend `Error` with a machine-readable `.code` property (`INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, etc.) sourced from `AuthError::error_code()` in the parent `stack-auth` crate.
+Scoped to `AccessKeyStrategy` (machine-to-machine auth). `AccessKeyStrategy.create(workspaceCrn, accessKey)` returns a strategy; `getToken(): Promise<TokenResult>` resolves to `{ token, subject, workspaceId, issuer, services }`. Region is derived from the CRN, and every issued token's `workspace` JWT claim is verified against the CRN — a mismatch surfaces as `code === "WORKSPACE_MISMATCH"`. Errors thrown extend `Error` with a machine-readable `.code` property (`INVALID_CRN`, `INVALID_ACCESS_KEY`, `WORKSPACE_MISMATCH`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, etc.) sourced from `AuthError::error_code()` in the parent `stack-auth` crate.
 
 OAuth strategies, device-code flow, and profile-store loading are deliberately out of scope — they need Node-only APIs (filesystem device identity, browser launching) that can't be ported to wasm32.
 
@@ -28,7 +28,7 @@ Pure-logic coverage — JWT claim extraction, services-as-plain-object serialisa
 
 The `@cipherstash/auth` package exposes three wasm-related entries:
 
-- `@cipherstash/auth/wasm-inline` — hand-written ESM wrapper around the inline-bytes bundle (wasm embedded as base64). Exposes the slick options-object API: `AccessKeyStrategy.create(region, key, { store })`. Zero-config in Supabase Edge, Cloudflare Workers, Deno, Bun.
+- `@cipherstash/auth/wasm-inline` — hand-written ESM wrapper around the inline-bytes bundle (wasm embedded as base64). Exposes the slick options-object API: `AccessKeyStrategy.create(workspaceCrn, key, { store })`. Zero-config in Supabase Edge, Cloudflare Workers, Deno, Bun.
 - `@cipherstash/auth/wasm` — raw sibling-`.wasm` shim from `wasm-pack --target bundler`. Lower-level surface (no options-object wrapper) for consumers using a wasm-aware bundler (Vite/Webpack).
 - `@cipherstash/auth/cookies` — pure-JS helper `cookieStore({ request, responseHeaders, ... })` returning a `TokenStore`-shaped object. No wasm dependency; works in any WHATWG-fetch runtime, and forward-compatible with the future napi binding (CIP-3113).
 

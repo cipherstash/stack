@@ -32,6 +32,7 @@ fn error_code(err: &AuthError) -> &'static str {
         AuthError::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
         AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
         AuthError::InvalidCrn(_) => "INVALID_CRN",
+        AuthError::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
         _ => "UNKNOWN_ERROR",
     }
 }
@@ -882,17 +883,22 @@ mod tests {
     mod access_key_strategy_create {
         use super::*;
 
-        mod given_invalid_region {
+        // A syntactically valid CRN to use when the test wants to exercise a
+        // *later* failure path (e.g. invalid access key). Workspace ID is
+        // arbitrary — these tests never reach the workspace-verification step.
+        const VALID_CRN: &str = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
+
+        mod given_invalid_crn {
             use super::*;
 
             #[test]
-            fn returns_invalid_region_error() {
+            fn returns_invalid_crn_error() {
                 let err = expect_err(AccessKeyStrategy::create(
-                    "not-a-region".to_string(),
+                    "not-a-crn".to_string(),
                     "CSAKid.secret".to_string(),
                 ));
 
-                assertions::has_error_code(&err, "INVALID_REGION");
+                assertions::has_error_code(&err, "INVALID_CRN");
             }
         }
 
@@ -902,7 +908,7 @@ mod tests {
             #[test]
             fn returns_invalid_access_key_error() {
                 let err = expect_err(AccessKeyStrategy::create(
-                    "ap-southeast-2.aws".to_string(),
+                    VALID_CRN.to_string(),
                     "not-a-valid-key".to_string(),
                 ));
 
