@@ -946,6 +946,29 @@ mod tests {
             }
         }
 
+        /// Happy path: valid CRN + valid access key constructs a strategy.
+        /// The wasm bindings have an equivalent test
+        /// (`access_key_strategy_accepts_valid_inputs`); the napi seam
+        /// needs the same guard so a future regression in
+        /// `AccessKeyStrategy::create` (e.g. always returning an error) is
+        /// caught.
+        mod given_valid_inputs {
+            use super::*;
+
+            #[test]
+            fn constructs_strategy_successfully() {
+                let result = AccessKeyStrategy::create(
+                    VALID_CRN.to_string(),
+                    "CSAKtestKeyId.testKeySecret".to_string(),
+                );
+
+                assert!(
+                    result.is_ok(),
+                    "valid CRN + access key should construct an AccessKeyStrategy",
+                );
+            }
+        }
+
         /// End-to-end coverage that the `WorkspaceMismatch` error variant
         /// surfaces through the napi boundary as `WORKSPACE_MISMATCH` —
         /// the underlying Rust check is covered in
