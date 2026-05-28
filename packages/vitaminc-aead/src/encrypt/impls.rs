@@ -13,7 +13,7 @@ impl Encrypt for u32 {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes_vec(Protected::new(self.to_le_bytes().to_vec()), aad)
+        cipher.encrypt_bytes_array(Protected::new(self.to_le_bytes()), aad)
     }
 }
 
