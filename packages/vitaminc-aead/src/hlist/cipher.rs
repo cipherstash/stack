@@ -3,6 +3,8 @@
 // it across each method signature.
 #![allow(clippy::type_complexity)]
 
+use vitaminc_protected::Protected;
+
 use crate::IntoAad;
 
 use super::types::{Absent, Encrypted, Entry, Map, Passthrough};
@@ -22,7 +24,15 @@ pub trait StaticCipher: Sized + Copy {
     type Error;
 
     /// Seal `data` under the supplied AAD.
-    fn encrypt_bytes<'a, A>(self, data: Vec<u8>, aad: A) -> Result<Encrypted, Self::Error>
+    ///
+    /// The plaintext is taken as `Protected<Vec<u8>>` so the chain of custody
+    /// — and the zeroize-on-drop guarantee — survives the trait boundary,
+    /// matching [`Cipher::encrypt_bytes_vec`](crate::Cipher::encrypt_bytes_vec).
+    fn encrypt_bytes<'a, A>(
+        self,
+        data: Protected<Vec<u8>>,
+        aad: A,
+    ) -> Result<Encrypted, Self::Error>
     where
         A: IntoAad<'a>;
 
@@ -61,7 +71,7 @@ where
     pub fn encrypt_entry<'a, A>(
         self,
         key: &'static str,
-        value: Vec<u8>,
+        value: Protected<Vec<u8>>,
         aad: A,
     ) -> Result<StaticMapBuilder<C, HCons<Entry<Encrypted>, L>>, C::Error>
     where
