@@ -1,5 +1,7 @@
 use std::any::Any;
 
+use vitaminc_protected::{Controlled, Protected};
+
 use crate::{Encrypt, IntoAad};
 
 /// An error that provides **no information** about the failure.
@@ -43,23 +45,39 @@ pub trait Cipher: Sized {
     type MapCipher: MapCipher<Ok = Self::Ok, Error = Self::Error>;
 
     /// Encrypt the given byte vector with the supplied associated data.
-    fn encrypt_bytes_vec<'a, A>(self, data: Vec<u8>, aad: A) -> Result<Self::Ok, Self::Error>
+    ///
+    /// The plaintext is taken as `Protected<Vec<u8>>` so the chain of custody
+    /// — and the zeroize-on-drop guarantee — survives the trait boundary.
+    /// Implementations should keep the value inside `Protected` for the
+    /// duration of the encryption and let it drop (and wipe) at end of scope.
+    fn encrypt_bytes_vec<'a, A>(
+        self,
+        data: Protected<Vec<u8>>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>;
 
     /// Encrypt a fixed-size byte array. The default implementation forwards to
     /// [`encrypt_bytes_vec`](Cipher::encrypt_bytes_vec).
+    ///
+    /// As with [`encrypt_bytes_vec`](Cipher::encrypt_bytes_vec), the plaintext
+    /// is taken inside `Protected` so the stack array is wiped on drop after
+    /// `to_vec` has copied its contents onto the heap.
     fn encrypt_bytes_array<'a, const N: usize, A>(
         self,
-        data: [u8; N],
+        data: Protected<[u8; N]>,
         aad: A,
     ) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>,
     {
-        // See https://github.com/cipherstash/vitaminc/issues/170 — verify
-        // `to_vec` behaviour and zeroize the original stack array.
-        self.encrypt_bytes_vec(data.to_vec(), aad)
+        // Borrow the protected array so it stays owned by `data` and is
+        // wiped by ZeroizeOnDrop at end of scope. A `risky_unwrap` here
+        // would partially-move out of `data`, skipping its Drop and
+        // leaving the bare `[u8; N]` on the stack — see issue #170.
+        let copy = Protected::new(data.risky_ref().to_vec());
+        self.encrypt_bytes_vec(copy, aad)
     }
 
     /// Begin encrypting a sequence of values. `size_hint` lets the implementation
@@ -94,6 +112,16 @@ pub trait Cipher: Sized {
     /// The value is typed at the API boundary but stored opaquely by the
     /// cipher; the corresponding [`Decipher::decrypt_passthrough`] checks the
     /// type at runtime.
+    ///
+    /// # ⚠️ Non-sensitive data only
+    ///
+    /// Passthrough values travel **in the clear** alongside the ciphertext.
+    /// Do not use this for secret-bearing data such as keys, plaintexts, or
+    /// credentials — there is no encryption, no zeroize discipline applied
+    /// to the boxed value, and no guarantee about when the storage is freed.
+    /// For secrets, use [`encrypt_with_aad`](crate::Encrypt::encrypt_with_aad)
+    /// (via the [`Encrypt`](crate::Encrypt) trait) or wrap in
+    /// [`vitaminc_protected::Protected`].
     fn passthrough<T>(self, value: T) -> Result<Self::Ok, Self::Error>
     where
         T: Any + Send + 'static;
@@ -117,6 +145,9 @@ pub trait SeqCipher: Sized {
         A: IntoAad<'a>;
 
     /// Append a passthrough (unencrypted) element to the sequence.
+    ///
+    /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
+    /// design and must not carry secret data.
     fn passthrough_next<T>(self, value: T) -> Result<Self, Self::Error>
     where
         T: Any + Send + 'static;
@@ -181,6 +212,9 @@ pub trait MapCipher: Sized {
     /// Insert a passthrough (unencrypted) entry under `key`. Equivalent to
     /// [`encrypt_key`](MapCipher::encrypt_key) followed by storing the value
     /// without AEAD treatment.
+    ///
+    /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
+    /// design and must not carry secret data.
     fn passthrough_entry<T>(self, key: &'static str, value: T) -> Result<Self, Self::Error>
     where
         T: Any + Send + 'static;

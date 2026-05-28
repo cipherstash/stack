@@ -34,6 +34,7 @@ A [`Cipher`] is consumed by the operation it drives — typically you implement 
 ```rust,no_run
 use std::any::Any;
 use vitaminc_aead::{Cipher, IntoAad, MapCipher, SeqCipher, Unspecified};
+use vitaminc_protected::Protected;
 
 pub struct MyCipher { /* key material, nonce generator, ... */ }
 
@@ -47,7 +48,11 @@ impl<'c> Cipher for &'c MyCipher {
     type SeqCipher = MySeqCipher<'c>;
     type MapCipher = MyMapCipher<'c>;
 
-    fn encrypt_bytes_vec<'a, A>(self, data: Vec<u8>, aad: A) -> Result<Self::Ok, Self::Error>
+    fn encrypt_bytes_vec<'a, A>(
+        self,
+        data: Protected<Vec<u8>>,
+        aad: A,
+    ) -> Result<Self::Ok, Self::Error>
     where
         A: IntoAad<'a>,
     {
