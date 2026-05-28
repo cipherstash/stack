@@ -1,5 +1,45 @@
 
 
+### Documentation
+
+- note InvalidToken alongside WorkspaceMismatch
+- add 0.39.0 changelog entry
+- refresh AutoStrategy detection-order comment
+- note CS_CTS_HOST override on AccessKeyStrategy::new
+- align AccessKeyStrategy.create JSDoc
+
+### Features
+
+- AccessKeyStrategy takes workspaceCrn, verifies token
+
+### Fixes
+
+- clippy unnecessary clones + cipherstash-client test prelude
+- address PR review + CI failures
+
+### Miscellaneous
+
+- bump @cipherstash/auth to 0.38.0
+- sync lockfile + README to 0.38.0
+
+### Refactoring
+
+- relocate bounds to stack-auth, drop legacy ServiceToken
+
+### Testing
+
+- cover WORKSPACE_MISMATCH at FFI boundary
+- verify workspace check runs on every get_token call
+- reject stored token bound to wrong workspace
+- cover AutoStrategy happy path with explicit CRN
+- cover AccessKeyStrategy.create happy path
+- pin CRN-with-service_name behaviour on AccessKeyStrategy
+
+### Style
+
+- apply rustfmt
+
+
 
 
 ### Documentation
