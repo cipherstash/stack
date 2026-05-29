@@ -1,4 +1,5 @@
 import type {
+  AuthStrategy,
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
   JsPlaintext,
@@ -14,6 +15,17 @@ import type {
   encryptedColumn,
   encryptedField,
 } from '@/schema'
+
+/**
+ * A pluggable authentication strategy for ZeroKMS requests. Any object
+ * with a `getToken(): Promise<{ token: string }>` method satisfies it —
+ * notably `AccessKeyStrategy` from `@cipherstash/auth`. When supplied to
+ * {@link ClientConfig.strategy}, `getToken()` is invoked on every ZeroKMS
+ * request, taking precedence over the credentials-derived default.
+ *
+ * @see ClientConfig.strategy
+ */
+export type { AuthStrategy }
 
 // ---------------------------------------------------------------------------
 // Branded type utilities
@@ -90,6 +102,22 @@ export type ClientConfig = {
    * Keysets are created and managed in the CipherStash dashboard.
    */
   keyset?: KeysetIdentifier
+
+  /**
+   * An optional authentication strategy for ZeroKMS requests, e.g.
+   * `AccessKeyStrategy` from `@cipherstash/auth`. When provided, its
+   * `getToken()` is invoked on every ZeroKMS request and takes
+   * precedence over the credentials-derived default strategy (the
+   * `clientKey` is still required). Use this to plug in custom token
+   * acquisition / caching (service-to-service, edge runtimes, …).
+   *
+   * Leave unset to let the client build its default strategy from
+   * `workspaceCrn` / `accessKey` / `clientId` / `clientKey` (or the
+   * corresponding `CS_*` environment variables).
+   *
+   * @see {@link AuthStrategy}
+   */
+  strategy?: AuthStrategy
 }
 
 type AtLeastOneCsTable<T> = [T, ...T[]]
