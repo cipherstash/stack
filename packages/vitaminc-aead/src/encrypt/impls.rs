@@ -13,8 +13,7 @@ impl Encrypt for u32 {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        let bytes = self.to_le_bytes().to_vec();
-        cipher.encrypt_bytes_vec(bytes, aad)
+        cipher.encrypt_bytes_array(Protected::new(self.to_le_bytes()), aad)
     }
 }
 
@@ -24,8 +23,7 @@ impl Encrypt for String {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        let bytes = self.into_bytes();
-        cipher.encrypt_bytes_vec(bytes, aad)
+        cipher.encrypt_bytes_vec(Protected::new(self.into_bytes()), aad)
     }
 }
 
@@ -35,8 +33,7 @@ impl Encrypt for &str {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        let bytes = self.as_bytes().to_vec();
-        cipher.encrypt_bytes_vec(bytes, aad)
+        cipher.encrypt_bytes_vec(Protected::new(self.as_bytes().to_vec()), aad)
     }
 }
 
@@ -68,7 +65,7 @@ impl<const N: usize> Encrypt for [u8; N] {
         C: Cipher,
         A: IntoAad<'a>,
     {
-        cipher.encrypt_bytes_array(self, aad)
+        cipher.encrypt_bytes_array(Protected::new(self), aad)
     }
 }
 
@@ -101,24 +98,28 @@ where
         C: Cipher,
         A: IntoAad<'a>,
     {
+        // SAFETY: chain of custody. Every built-in leaf `Encrypt` impl
+        // (`[u8; N]`, `Vec<T>`, `String`, `&str`, `u32`, …) rewraps its byte
+        // payload in `Protected` before crossing the `Cipher` trait
+        // boundary, so the bare-`T` stack window opened here is bounded by
+        // the inner `Encrypt::encrypt_with_aad` call. Custom `Encrypt` impls
+        // are responsible for their own discipline.
         self.risky_unwrap().encrypt_with_aad(cipher, aad)
     }
 }
 
-// Tracked: https://github.com/cipherstash/vitaminc/issues/173
-// (blocked on https://github.com/cipherstash/vitaminc/issues/171)
-// impl<T> Encrypt for Option<T>
-// where
-//     T: Encrypt,
-// {
-//     fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-//     where
-//         C: Cipher,
-//         A: IntoAad<'a>,
-//     {
-//         match self {
-//             Some(v) => v.encrypt_with_aad(cipher, aad),
-//             None => cipher.passthrough(()),
-//         }
-//     }
-// }
+impl<T> Encrypt for Option<T>
+where
+    T: Encrypt,
+{
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        match self {
+            Some(v) => cipher.encrypt_some(v, aad),
+            None => cipher.encrypt_none(aad),
+        }
+    }
+}

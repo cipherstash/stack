@@ -1,5 +1,9 @@
 pub mod impls;
 
+use std::any::Any;
+
+use vitaminc_protected::Protected;
+
 use crate::Unspecified;
 
 /// A trait for types that can decrypt data, driving a [`DecipherVisitor`] to produce values.
@@ -52,6 +56,23 @@ pub trait Decipher<'c>: Sized {
     /// Decrypt a map of ciphertexts, driving the visitor's
     /// [`visit_map`](DecipherVisitor::visit_map).
     fn decrypt_map<V: DecipherVisitor<'c> + Send + 'c>(self, visitor: V) -> Self::Ok<V::Value>;
+
+    /// Recover a value stored via [`Cipher::passthrough`](crate::Cipher::passthrough).
+    /// Returns an error if the ciphertext is not a passthrough or the stored
+    /// type does not match `T`.
+    ///
+    /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
+    /// design and must not be used to carry secret data.
+    fn decrypt_passthrough<T>(self) -> Self::Ok<T>
+    where
+        T: Any + Send + 'static;
+
+    /// Decrypt an `Option<T>`. The decipher inspects the ciphertext shape:
+    /// a `None`-marker variant produces `Ok(None)` (after AAD verification);
+    /// any other shape is decrypted as `T` and wrapped in `Some`.
+    fn decrypt_option<T>(self) -> Self::Ok<Option<T>>
+    where
+        T: Decrypt<'c> + 'c;
 }
 
 /// A visitor over the structural shape of a ciphertext, analogous to serde's
@@ -65,7 +86,17 @@ pub trait DecipherVisitor<'c>: Sized {
     type Value: Send;
 
     /// Called when the decipher produced raw bytes. Default returns an error.
-    fn visit_bytes_vec(self, _data: Vec<u8>) -> Result<Self::Value, Unspecified> {
+    ///
+    /// The plaintext is delivered inside `Protected<Vec<u8>>` so the
+    /// zeroize-on-drop guarantee survives the trait boundary. Visitor
+    /// implementations that need to hand a value of a different shape to
+    /// their caller should extract via [`Controlled::risky_ref`] /
+    /// [`Controlled::risky_unwrap`] only at the explicit boundary where
+    /// ownership leaves the cipher pipeline.
+    ///
+    /// [`Controlled::risky_ref`]: vitaminc_protected::Controlled::risky_ref
+    /// [`Controlled::risky_unwrap`]: vitaminc_protected::Controlled::risky_unwrap
+    fn visit_bytes_vec(self, _data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
         Err(Unspecified)
     }
 

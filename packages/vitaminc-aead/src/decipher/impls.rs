@@ -9,8 +9,11 @@ impl<'c> Decrypt<'c> for Vec<u8> {
         struct BytesVisitor;
         impl<'c> DecipherVisitor<'c> for BytesVisitor {
             type Value = Vec<u8>;
-            fn visit_bytes_vec(self, data: Vec<u8>) -> Result<Self::Value, Unspecified> {
-                Ok(data)
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                // The caller asked for a bare `Vec<u8>` — this is the
+                // explicit extraction boundary where ownership leaves the
+                // cipher pipeline.
+                Ok(data.risky_unwrap())
             }
         }
         decipher.decrypt_bytes(BytesVisitor)
@@ -22,8 +25,8 @@ impl<'c> Decrypt<'c> for String {
         struct StringVisitor;
         impl<'c> DecipherVisitor<'c> for StringVisitor {
             type Value = String;
-            fn visit_bytes_vec(self, data: Vec<u8>) -> Result<Self::Value, Unspecified> {
-                String::from_utf8(data).map_err(|_| Unspecified)
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                String::from_utf8(data.risky_unwrap()).map_err(|_| Unspecified)
             }
         }
         decipher.decrypt_bytes(StringVisitor)
@@ -35,8 +38,8 @@ impl<'c, const N: usize> Decrypt<'c> for [u8; N] {
         struct ArrayVisitor<const N: usize>;
         impl<'c, const N: usize> DecipherVisitor<'c> for ArrayVisitor<N> {
             type Value = [u8; N];
-            fn visit_bytes_vec(self, data: Vec<u8>) -> Result<Self::Value, Unspecified> {
-                data.try_into().map_err(|_| Unspecified)
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                data.risky_unwrap().try_into().map_err(|_| Unspecified)
             }
         }
         decipher.decrypt_bytes(ArrayVisitor::<N>)
@@ -48,8 +51,8 @@ impl<'c> Decrypt<'c> for u32 {
         struct U32Visitor;
         impl<'c> DecipherVisitor<'c> for U32Visitor {
             type Value = u32;
-            fn visit_bytes_vec(self, data: Vec<u8>) -> Result<Self::Value, Unspecified> {
-                let bytes: [u8; 4] = data.try_into().map_err(|_| Unspecified)?;
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                let bytes: [u8; 4] = data.risky_unwrap().try_into().map_err(|_| Unspecified)?;
                 Ok(u32::from_le_bytes(bytes))
             }
         }
@@ -109,5 +112,14 @@ where
 {
     fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
         D::map_ok(T::decrypt(decipher), Protected::init_from_inner)
+    }
+}
+
+impl<'c, T> Decrypt<'c> for Option<T>
+where
+    T: Decrypt<'c> + 'c,
+{
+    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
+        decipher.decrypt_option::<T>()
     }
 }
