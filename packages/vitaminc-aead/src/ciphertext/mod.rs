@@ -74,7 +74,10 @@ mod tests {
             })
             .build()?;
 
-        let (nonce, reader) = ciphertext.into_reader().read_nonce::<12>();
+        let (nonce, reader) = ciphertext
+            .into_reader()
+            .read_nonce::<12>()
+            .map_err(|_| ())?;
 
         let plaintext = reader
             .accepts_plaintext_ok(|data| {

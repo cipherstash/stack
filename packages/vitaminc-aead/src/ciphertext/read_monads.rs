@@ -1,4 +1,4 @@
-use crate::Nonce;
+use crate::{Nonce, Unspecified};
 use bytes::{Buf, Bytes};
 use std::array;
 use vitaminc_protected::{Controlled, Protected};
@@ -10,14 +10,26 @@ impl CipherTextReader {
         Self(bytes)
     }
 
-    pub fn read_nonce<const N: usize>(self) -> (Nonce<N>, CiphertextAndTagReader) {
+    /// Split off the leading `N`-byte nonce, returning it plus a reader over the
+    /// remaining ciphertext-and-tag bytes.
+    ///
+    /// Returns [`Unspecified`] if fewer than `N` bytes are available, rather
+    /// than panicking — the input may be attacker-controlled (e.g. a
+    /// deserialized [`LocalCipherText`](crate::LocalCipherText) built from
+    /// untrusted bytes), so a short buffer must be a recoverable error.
+    pub fn read_nonce<const N: usize>(
+        self,
+    ) -> Result<(Nonce<N>, CiphertextAndTagReader), Unspecified> {
+        if self.0.len() < N {
+            return Err(Unspecified);
+        }
         let mut buf = self.0.take(N);
         let nonce_inner: [u8; N] = array::from_fn(|_| buf.get_u8());
 
-        (
+        Ok((
             Nonce::new(nonce_inner),
             CiphertextAndTagReader::new(buf.into_inner()),
-        )
+        ))
     }
 }
 

@@ -3,12 +3,52 @@ use crate::LocalCipherText;
 use super::HList;
 
 /// A single sealed value (nonce + ciphertext + tag).
+///
+/// The inner `LocalCipherText` is private: leaves are produced by a cipher
+/// backend's `StaticCipher` impl (or, in future, a derive macro) via
+/// [`Encrypted::from_local`] rather than constructed field-wise by arbitrary
+/// callers. This is encapsulation, not unforgeability — `LocalCipherText:
+/// From<Vec<u8>>` is public and the constructor must be reachable cross-crate,
+/// so the cipher's tag verification on `open` remains the real authenticity
+/// guard.
 #[derive(Debug)]
-pub struct Encrypted(pub LocalCipherText);
+pub struct Encrypted(LocalCipherText);
+
+impl Encrypted {
+    /// Wrap a sealed `LocalCipherText`. Plumbing for cipher backends and derive
+    /// macros — not part of the stable public surface.
+    #[doc(hidden)]
+    pub fn from_local(ct: LocalCipherText) -> Self {
+        Self(ct)
+    }
+
+    /// Consume the leaf, yielding the inner `LocalCipherText` for decryption.
+    #[doc(hidden)]
+    pub fn into_local(self) -> LocalCipherText {
+        self.0
+    }
+}
 
 /// An authenticated "no value" marker — empty plaintext sealed under AAD.
+///
+/// Inner field is private for the same reason as [`Encrypted`].
 #[derive(Debug)]
-pub struct Absent(pub LocalCipherText);
+pub struct Absent(LocalCipherText);
+
+impl Absent {
+    /// Wrap a sealed `LocalCipherText`. Plumbing for cipher backends and derive
+    /// macros — not part of the stable public surface.
+    #[doc(hidden)]
+    pub fn from_local(ct: LocalCipherText) -> Self {
+        Self(ct)
+    }
+
+    /// Consume the marker, yielding the inner `LocalCipherText` for verification.
+    #[doc(hidden)]
+    pub fn into_local(self) -> LocalCipherText {
+        self.0
+    }
+}
 
 /// A typed value carried through the ciphertext container without
 /// encryption. Holds `T` directly — no `Box`, no `Any`.

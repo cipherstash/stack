@@ -20,7 +20,6 @@ serde = { workspace = true }
 zeroize = { workspace = true }
 
 [features]
-test-utils = []
 # Opt-in HList-based ciphertext shape. Trades the dynamic `Cipher::Ok` enum
 # (heap-allocated `Vec`s, `Box<dyn Any>` passthrough) for a per-call typed
 # builder where the full structural shape is encoded in the type system —

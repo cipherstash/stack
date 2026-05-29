@@ -26,8 +26,10 @@ pub trait StaticCipher: Sized + Copy {
     /// Seal `data` under the supplied AAD.
     ///
     /// The plaintext is taken as `Protected<Vec<u8>>` so the chain of custody
-    /// — and the zeroize-on-drop guarantee — survives the trait boundary,
-    /// matching [`Cipher::encrypt_bytes_vec`](crate::Cipher::encrypt_bytes_vec).
+    /// survives the trait boundary, matching
+    /// [`Cipher::encrypt_bytes_vec`](crate::Cipher::encrypt_bytes_vec). The
+    /// zeroize-on-drop guarantee is not yet in effect — `Protected<T>` has no
+    /// `Drop` impl today; that is tracked in #181.
     fn encrypt_bytes<'a, A>(
         self,
         data: Protected<Vec<u8>>,
