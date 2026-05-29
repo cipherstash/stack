@@ -168,7 +168,6 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
           column: column.getName(),
           table: table.tableName,
           lockContext: context.data.context,
-          serviceToken: context.data.ctsToken,
           unverifiedContext: metadata,
         })
       },

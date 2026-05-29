@@ -205,7 +205,6 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
 
         const encryptedData = await encryptBulk(client, {
           plaintexts: nonNullPayloads,
-          serviceToken: context.data.ctsToken,
           unverifiedContext: metadata,
         })
 

@@ -154,7 +154,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       return { failure: lockContextResult.failure }
     }
 
-    const { ctsToken, context } = lockContextResult.data
+    const { context } = lockContextResult.data
 
     const result = await withResult(
       async () => {
@@ -182,7 +182,6 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
           indexType,
           queryOp,
           lockContext: context,
-          serviceToken: ctsToken,
           unverifiedContext: metadata,
         })
 

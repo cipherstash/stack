@@ -409,7 +409,6 @@ export async function decryptModelFieldsWithLockContext<
     (items) =>
       decryptBulk(client, {
         ciphertexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -469,7 +468,6 @@ export async function encryptModelFieldsWithLockContext(
     (items) =>
       encryptBulk(client, {
         plaintexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -791,7 +789,6 @@ export async function bulkDecryptModelsWithLockContext<
     (items) =>
       decryptBulk(client, {
         ciphertexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -865,7 +862,6 @@ export async function bulkEncryptModelsWithLockContext(
     (items) =>
       encryptBulk(client, {
         plaintexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,

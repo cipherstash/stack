@@ -21,10 +21,10 @@
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     region:    "us-east-1.aws",
- *     accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
- *     clientId:  Deno.env.get("CS_CLIENT_ID")!,
- *     clientKey: Deno.env.get("CS_CLIENT_KEY")!,
+ *     workspaceCrn: Deno.env.get("CS_WORKSPACE_CRN")!,
+ *     accessKey:    Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+ *     clientId:     Deno.env.get("CS_CLIENT_ID")!,
+ *     clientKey:    Deno.env.get("CS_CLIENT_KEY")!,
  *   },
  * })
  *
@@ -38,7 +38,9 @@
  * For runtimes that need a custom token store (e.g. cookies on a
  * Supabase Edge Function), build the strategy yourself with
  * `AccessKeyStrategy.create(region, accessKey, { store })` from
- * `@cipherstash/auth/wasm-inline` and pass it via `config.strategy`.
+ * `@cipherstash/auth/wasm-inline` — derive `region` from your CRN with
+ * the same `crn:<region>:<workspace-id>` split this module uses — and
+ * pass the strategy via `config.strategy`.
  */
 
 import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
@@ -115,30 +117,29 @@ export type WasmPlaintext =
 /**
  * Config for {@link Encryption} on the WASM entry point.
  *
- * Unlike the Node entry, the WASM path needs the region passed
- * explicitly today (no default — workspace deployment region is a
- * caller concern). For service-to-service / CI use, pass `accessKey`
- * plus the workspace `clientId` / `clientKey` and we construct an
- * `AccessKeyStrategy` for you. To plug in a custom token store
- * (cookies on Supabase Edge, KV on Cloudflare Workers, …) build the
- * strategy with `AccessKeyStrategy.create(region, accessKey, { store })`
- * and hand it to `config.strategy` instead.
+ * The workspace CRN is the single source of truth for workspace
+ * identity and deployment region — matching the Node entry and
+ * protect-ffi 0.25+, which read `CS_WORKSPACE_CRN` and no longer
+ * consult a separate `CS_REGION`. The region the underlying
+ * `AccessKeyStrategy` needs is derived from the CRN's
+ * `crn:<region>:<workspace-id>` form, so there is no `region` field to
+ * keep in sync.
  *
- * NOTE: `region` will be removed in a future release. The strategy
- * will then take a `workspaceCrn` and derive the region from it —
- * single source of truth, with the bearer token's workspace asserted
- * against the CRN. Plan accordingly; the field is required for now
- * because the underlying `@cipherstash/auth/wasm-inline`
- * `AccessKeyStrategy.create()` still takes a region argument.
+ * For service-to-service / CI use, pass `accessKey` plus the workspace
+ * `clientId` / `clientKey` and we construct an `AccessKeyStrategy` for
+ * you. To plug in a custom token store (cookies on Supabase Edge, KV on
+ * Cloudflare Workers, …) build the strategy with
+ * `AccessKeyStrategy.create(region, accessKey, { store })` and hand it
+ * to `config.strategy` instead.
  */
 export type WasmClientConfig = {
   /**
-   * CipherStash region, e.g. `"us-east-1.aws"`. Required for now.
-   * @deprecated will be replaced by `workspaceCrn` once
-   * `@cipherstash/auth` switches `AccessKeyStrategy.create()` to derive
-   * region from a CRN.
+   * CipherStash workspace CRN, e.g.
+   * `"crn:ap-southeast-2.aws:my-workspace-id"`. Required — it is the
+   * single source of truth for workspace identity, and the region the
+   * `AccessKeyStrategy` needs is derived from it.
    */
-  region: string
+  workspaceCrn: string
   /** Workspace client identifier — required by the WASM client. */
   clientId: string
   /** Workspace client key — required by the WASM client. */
@@ -255,14 +256,15 @@ export async function Encryption(
 
   const strategy = resolveStrategy(clientConfig)
 
-  const client = await wasmNewClient(
-    strategy as never,
-    {
-      encryptConfig: normalizeCastAs(encryptConfig),
-      clientId: clientConfig.clientId,
-      clientKey: clientConfig.clientKey,
-    } as never,
-  )
+  // protect-ffi 0.25 takes a single options object with the strategy
+  // nested under `strategy` (0.24 passed the strategy as a separate
+  // first argument).
+  const client = await wasmNewClient({
+    strategy,
+    encryptConfig: normalizeCastAs(encryptConfig),
+    clientId: clientConfig.clientId,
+    clientKey: clientConfig.clientKey,
+  } as never)
 
   // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
   // code that can build a `WasmEncryptionClient` — external callers hit
@@ -331,8 +333,31 @@ function resolveStrategy(cfg: WasmClientConfig): AccessKeyStrategy {
     )
   }
   if (cfg.strategy) return cfg.strategy
-  if (cfg.accessKey) return AccessKeyStrategy.create(cfg.region, cfg.accessKey)
-  throw new Error(
-    '[encryption]: WASM entry requires either `config.accessKey` or `config.strategy`.',
+  // Discriminated union guarantees this branch implies `accessKey` is set.
+  // `AccessKeyStrategy.create` still takes a bare region string, so derive
+  // it from the CRN — keeping the CRN as the single source of truth.
+  return AccessKeyStrategy.create(
+    extractRegionFromCrn(cfg.workspaceCrn),
+    cfg.accessKey as string,
   )
+}
+
+/**
+ * Pull the region out of a workspace CRN (`crn:<region>:<workspace-id>`,
+ * e.g. `crn:ap-southeast-2.aws:my-workspace` → `ap-southeast-2.aws`).
+ *
+ * Defined locally rather than imported from `@/utils/config` so the
+ * WASM entry stays free of that module's Node-only `fs` / `path`
+ * imports.
+ *
+ * @internal exported for unit-test coverage.
+ */
+export function extractRegionFromCrn(crn: string): string {
+  const match = crn.match(/^crn:([^:]+):[^:]+$/)
+  if (!match) {
+    throw new Error(
+      `[encryption]: invalid workspace CRN "${crn}" — expected the form "crn:<region>:<workspace-id>".`,
+    )
+  }
+  return match[1]
 }

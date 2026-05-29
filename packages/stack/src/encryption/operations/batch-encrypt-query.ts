@@ -208,7 +208,7 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
       return { failure: lockContextResult.failure }
     }
 
-    const { ctsToken, context } = lockContextResult.data
+    const { context } = lockContextResult.data
 
     const result = await withResult(
       async () => {
@@ -222,7 +222,6 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
 
         const encrypted = await ffiEncryptQueryBulk(this.client, {
           queries,
-          serviceToken: ctsToken,
           unverifiedContext: metadata,
         })
 

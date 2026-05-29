@@ -131,7 +131,6 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlain
           ciphertext: encryptedData,
           unverifiedContext: metadata,
           lockContext: context.data.context,
-          serviceToken: context.data.ctsToken,
         })
       },
       (error: unknown) => {

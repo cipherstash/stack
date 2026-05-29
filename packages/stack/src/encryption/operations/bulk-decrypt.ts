@@ -169,7 +169,6 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
 
         const decryptedData = await decryptBulkFallible(client, {
           ciphertexts: nonNullPayloads,
-          serviceToken: context.data.ctsToken,
           unverifiedContext: metadata,
         })
 
