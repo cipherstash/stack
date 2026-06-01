@@ -53,6 +53,19 @@ export class MockAuthServer {
    */
   mockTokenEndpointError(code: string, description?: string): void;
 
+  /**
+   * Register a mock for `POST /api/authorise` that returns a successful
+   * federation response (`{ accessToken, expiry }`), as CTS would for an
+   * `OidcFederationStrategy` JWT exchange.
+   *
+   * @param expiry - Seconds until the CTS token expires. Defaults to 3600;
+   *   pass a small value (e.g. 0) to exercise re-federation on expiry.
+   */
+  mockAuthorizeEndpoint(expiry?: number): void;
+
+  /** Register a mock for `POST /api/authorise` that returns a 500 error. */
+  mockAuthorizeEndpointError(): void;
+
   /** Remove all registered mocks. */
   clearMocks(): void;
 }

@@ -3,11 +3,15 @@ use std::sync::Mutex;
 
 use cts_common::Region;
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFunctionCallMode};
+use napi::tokio::sync::oneshot;
 use napi_derive::napi;
 use stack_auth::{
-    AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, PendingDeviceCode, ServiceToken,
+    AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, OidcProvider,
+    PendingDeviceCode, SecretToken, ServiceToken, Token, TokenStore,
 };
 use vitaminc_protected::OpaqueDebug;
+use zeroize::Zeroizing;
 
 #[cfg(feature = "test-utils")]
 mod mock_auth_server;
@@ -33,6 +37,7 @@ fn error_code(err: &AuthError) -> &'static str {
         AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
         AuthError::InvalidCrn(_) => "INVALID_CRN",
         AuthError::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
+        AuthError::InvalidWorkspaceId(_) => "INVALID_WORKSPACE_ID",
         _ => "UNKNOWN_ERROR",
     }
 }
@@ -213,6 +218,193 @@ impl OAuthStrategy {
     #[napi]
     pub async fn get_token(&self) -> Result<TokenResult> {
         let token = (&self.inner).get_token().await.map_err(to_napi_error)?;
+        token_result_from(token)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OidcFederationStrategy — federate a third-party OIDC JWT into a CTS service token
+// ---------------------------------------------------------------------------
+
+/// Parse and validate the `region` + `workspaceId` inputs shared by both
+/// `OidcFederationStrategy` factories.
+fn parse_oidc_inputs(
+    region: &str,
+    workspace_id: &str,
+) -> Result<(Region, cts_common::WorkspaceId)> {
+    let region = Region::new(region).map_err(|e| to_napi_error(AuthError::from(e)))?;
+    let workspace_id = workspace_id
+        .parse::<cts_common::WorkspaceId>()
+        .map_err(|e| to_napi_error(AuthError::from(e)))?;
+    Ok((region, workspace_id))
+}
+
+/// Bridges a JS `getJwt` callback into a Rust [`OidcProvider`].
+///
+/// `getJwt` is a JS function returning `Promise<string>` — the current
+/// third-party OIDC JWT. The threadsafe function lets the Rust refresh engine
+/// (running on napi's tokio pool) schedule the call onto the Node event-loop
+/// thread; the JS-returned `Promise` is ferried back and awaited here.
+struct NapiOidcProvider {
+    get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+}
+
+impl OidcProvider for NapiOidcProvider {
+    async fn fetch(&self) -> std::result::Result<SecretToken, AuthError> {
+        let (tx, rx) = oneshot::channel::<Promise<String>>();
+        let status = self.get_jwt.call_with_return_value(
+            (),
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |promise: Promise<String>| {
+                let _ = tx.send(promise);
+                Ok(())
+            },
+        );
+        if status != Status::Ok {
+            return Err(AuthError::Server(format!(
+                "getJwt callback dispatch failed: {status:?}"
+            )));
+        }
+        let promise = rx
+            .await
+            .map_err(|_| AuthError::Server("getJwt callback did not run".to_string()))?;
+        let jwt = Zeroizing::new(
+            promise
+                .await
+                .map_err(|e| AuthError::Server(format!("getJwt rejected: {e}")))?,
+        );
+        Ok(SecretToken::new(jwt.as_str()))
+    }
+}
+
+/// Bridges JS `loadToken` / `saveToken` callbacks into a Rust [`TokenStore`].
+///
+/// Both are best-effort, mirroring [`stack_auth::TokenStoreFn`] semantics: a
+/// `load` failure becomes a cache miss, a `save` failure is swallowed.
+struct NapiTokenStore {
+    load: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    save: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+}
+
+impl TokenStore for NapiTokenStore {
+    async fn load(&self) -> Option<Token> {
+        let (tx, rx) = oneshot::channel::<Promise<Option<String>>>();
+        let status = self.load.call_with_return_value(
+            (),
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |promise: Promise<Option<String>>| {
+                let _ = tx.send(promise);
+                Ok(())
+            },
+        );
+        if status != Status::Ok {
+            return None;
+        }
+        let json = Zeroizing::new(rx.await.ok()?.await.ok()??);
+        serde_json::from_str(&json).ok()
+    }
+
+    async fn save(&self, token: &Token) {
+        let Ok(json) = serde_json::to_string(token).map(Zeroizing::new) else {
+            return;
+        };
+        let (tx, rx) = oneshot::channel::<Promise<()>>();
+        let status = self.save.call_with_return_value(
+            json.to_string(),
+            ThreadsafeFunctionCallMode::NonBlocking,
+            move |promise: Promise<()>| {
+                let _ = tx.send(promise);
+                Ok(())
+            },
+        );
+        if status != Status::Ok {
+            return;
+        }
+        if let Ok(promise) = rx.await {
+            let _ = promise.await;
+        }
+    }
+}
+
+enum OidcFederationStrategyInner {
+    NoStore(stack_auth::OidcFederationStrategy<NapiOidcProvider>),
+    WithStore(stack_auth::OidcFederationStrategy<NapiOidcProvider, NapiTokenStore>),
+}
+
+/// An auth strategy that federates a third-party OIDC JWT (Clerk, Supabase, …)
+/// into a CipherStash CTS service token via `/api/authorise`.
+#[napi]
+pub struct OidcFederationStrategy {
+    inner: OidcFederationStrategyInner,
+}
+
+#[napi]
+impl OidcFederationStrategy {
+    /// Create an `OidcFederationStrategy` for the given region and workspace.
+    ///
+    /// `getJwt` is called on every federation — initial auth and every
+    /// re-federation after the CTS token expires — and must return
+    /// `Promise<string>` resolving to the *current* third-party OIDC JWT.
+    #[napi(factory)]
+    pub fn create(
+        region: String,
+        workspace_id: String,
+        get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+    ) -> Result<Self> {
+        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(
+            region,
+            workspace_id,
+            NapiOidcProvider { get_jwt },
+        )
+        .build()
+        .map_err(to_napi_error)?;
+        Ok(Self {
+            inner: OidcFederationStrategyInner::NoStore(inner),
+        })
+    }
+
+    /// Create an `OidcFederationStrategy` backed by external token-store callbacks.
+    ///
+    /// Behaves like [`create`](Self::create) but persists the federated CTS
+    /// token through `loadToken` (`() => Promise<string | null | undefined>`)
+    /// and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
+    /// cookie — so a federated token survives across requests without
+    /// re-federating.
+    #[napi(factory)]
+    pub fn create_with_store(
+        region: String,
+        workspace_id: String,
+        get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+        load_token: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+        save_token: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+    ) -> Result<Self> {
+        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
+        let store = NapiTokenStore {
+            load: load_token,
+            save: save_token,
+        };
+        let inner = stack_auth::OidcFederationStrategy::builder(
+            region,
+            workspace_id,
+            NapiOidcProvider { get_jwt },
+        )
+        .with_token_store(store)
+        .build()
+        .map_err(to_napi_error)?;
+        Ok(Self {
+            inner: OidcFederationStrategyInner::WithStore(inner),
+        })
+    }
+
+    /// Retrieve a valid CTS service token, federating or re-federating as needed.
+    #[napi]
+    pub async fn get_token(&self) -> Result<TokenResult> {
+        let token = match &self.inner {
+            OidcFederationStrategyInner::NoStore(s) => s.get_token().await,
+            OidcFederationStrategyInner::WithStore(s) => s.get_token().await,
+        }
+        .map_err(to_napi_error)?;
         token_result_from(token)
     }
 }

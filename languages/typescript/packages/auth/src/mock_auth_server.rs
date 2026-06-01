@@ -104,6 +104,35 @@ impl MockAuthServer {
         });
     }
 
+    /// Register a mock for `POST /api/authorise` that returns a successful
+    /// federation response (`{ accessToken, expiry }`), as CTS would for an
+    /// `OidcFederationStrategy` JWT exchange.
+    ///
+    /// `expiry` (seconds until the CTS token expires) defaults to 3600. Pass a
+    /// small value to exercise re-federation on expiry.
+    #[napi]
+    pub fn mock_authorize_endpoint(&self, expiry: Option<u32>) {
+        let jwt = test_jwt();
+        let expiry = expiry.unwrap_or(3600);
+        self.server.mocks().mock(move |when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({
+                "accessToken": jwt,
+                "expiry": expiry,
+            }));
+        });
+    }
+
+    /// Register a mock for `POST /api/authorise` that returns a 500 error.
+    #[napi]
+    pub fn mock_authorize_endpoint_error(&self) {
+        self.server.mocks().mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "federation failed"}));
+        });
+    }
+
     /// Register a mock for `POST /create-client` that returns a successful
     /// create-client JSON response (as ZeroKMS would).
     #[napi]

@@ -1,21 +1,24 @@
 //! WebAssembly bindings for `stack-auth`.
 //!
-//! Mirrors the wasm-compatible subset of the `stack-auth-node` napi crate,
-//! scoped to `AccessKeyStrategy` (M2M auth). OAuth- and profile-based
-//! strategies are deliberately out of scope for the initial wasm surface —
-//! they need design work around federation and token pinning that hasn't
-//! happened yet.
+//! Mirrors the wasm-compatible subset of the `stack-auth-node` napi crate:
+//! `AccessKeyStrategy` (M2M auth) and `OidcFederationStrategy` (federating a third-party
+//! OIDC JWT into a CTS service token via `/api/authorise`). The interactive
+//! device-code flow and profile-store loading remain out of scope — they need
+//! Node-only APIs (filesystem device identity, browser launching) that can't
+//! be ported to wasm32.
 //!
 //! Targets Supabase Edge Functions and bundler consumers via
 //! `wasm-pack build --target bundler` / `--target deno`.
 
 use std::collections::BTreeMap;
 
+#[cfg(target_arch = "wasm32")]
+use cts_common::Region;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
 #[cfg(target_arch = "wasm32")]
-use stack_auth::{Token, TokenStore};
+use stack_auth::{OidcProvider, SecretToken, Token, TokenStore};
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
@@ -151,6 +154,56 @@ fn warn_callback(name: &str, kind: &str, err: &JsValue) {
     web_sys::console::warn_2(&JsValue::from_str(&msg), err);
 }
 
+/// `OidcProvider` adapter over a JS callback.
+///
+/// `getJwt` is called with no arguments and is expected to return
+/// `Promise<string>` — the current third-party OIDC JWT to federate. Unlike
+/// [`JsTokenStore`], a failure here is fatal: federation can't proceed without
+/// a JWT, so it surfaces as an [`AuthError`] rather than a silent cache miss.
+/// The failure is still logged via [`warn_callback`] so the JS-side cause is
+/// visible.
+#[cfg(target_arch = "wasm32")]
+struct JsOidcProvider {
+    get_jwt: js_sys::Function,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl OidcProvider for JsOidcProvider {
+    async fn fetch(&self) -> Result<SecretToken, AuthError> {
+        let promise = self.get_jwt.call0(&JsValue::NULL).map_err(|err| {
+            warn_callback("getJwt", "synchronous throw", &err);
+            AuthError::Server("getJwt callback threw".to_string())
+        })?;
+        let result = JsFuture::from(js_sys::Promise::from(promise))
+            .await
+            .map_err(|err| {
+                warn_callback("getJwt", "promise rejection", &err);
+                AuthError::Server("getJwt callback rejected".to_string())
+            })?;
+        // Wrap in `Zeroizing` so the JWT heap buffer is wiped on drop — it
+        // carries the bearer credential between the JS boundary and the
+        // federation HTTP request.
+        let jwt = Zeroizing::new(result.as_string().ok_or_else(|| {
+            AuthError::Server("getJwt callback did not return a string".to_string())
+        })?);
+        Ok(SecretToken::new(jwt.as_str()))
+    }
+}
+
+/// Parse and validate the `region` + `workspaceId` inputs shared by both
+/// `OidcFederationStrategy` factories.
+#[cfg(target_arch = "wasm32")]
+fn parse_oidc_inputs(
+    region: &str,
+    workspace_id: &str,
+) -> Result<(Region, cts_common::WorkspaceId), JsValue> {
+    let region = Region::new(region).map_err(|e| to_js_error(AuthError::from(e)))?;
+    let workspace_id = workspace_id
+        .parse::<cts_common::WorkspaceId>()
+        .map_err(|e| to_js_error(AuthError::from(e)))?;
+    Ok((region, workspace_id))
+}
+
 enum AccessKeyStrategyInner {
     NoStore(stack_auth::AccessKeyStrategy),
     #[cfg(target_arch = "wasm32")]
@@ -239,11 +292,107 @@ impl AccessKeyStrategy {
     }
 }
 
+/// Cfg-gated to wasm32: `OidcFederationStrategy` is generic over the JWT provider, and
+/// the only provider the bindings offer (`JsOidcProvider`) wraps a
+/// `js_sys::Function`, which exists only on wasm32. The native build of this
+/// crate (used for `cargo clippy` / host `cargo test`) therefore has no
+/// `OidcFederationStrategy` — there is nothing native-testable about a JS-callback type.
+#[cfg(target_arch = "wasm32")]
+enum OidcFederationStrategyInner {
+    NoStore(stack_auth::OidcFederationStrategy<JsOidcProvider>),
+    WithStore(stack_auth::OidcFederationStrategy<JsOidcProvider, JsTokenStore>),
+}
+
+#[cfg(target_arch = "wasm32")]
+impl OidcFederationStrategyInner {
+    async fn get_token(&self) -> Result<ServiceToken, AuthError> {
+        match self {
+            Self::NoStore(s) => s.get_token().await,
+            Self::WithStore(s) => s.get_token().await,
+        }
+    }
+}
+
+/// Federates a third-party OIDC JWT (Clerk, Supabase, …) into a CTS service
+/// token. See the crate-level docs and `stack_auth::OidcFederationStrategy`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct OidcFederationStrategy {
+    inner: OidcFederationStrategyInner,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl OidcFederationStrategy {
+    /// Create an `OidcFederationStrategy` for the given region and workspace.
+    ///
+    /// `getJwt` is called on every federation — initial auth and every
+    /// re-federation after expiry — and must return `Promise<string>`
+    /// resolving to the *current* third-party OIDC JWT (e.g. by calling
+    /// `clerk.session.getToken()`).
+    pub fn create(
+        region: String,
+        workspace_id: String,
+        get_jwt: js_sys::Function,
+    ) -> Result<OidcFederationStrategy, JsValue> {
+        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(
+            region,
+            workspace_id,
+            JsOidcProvider { get_jwt },
+        )
+        .build()
+        .map_err(to_js_error)?;
+        Ok(OidcFederationStrategy {
+            inner: OidcFederationStrategyInner::NoStore(inner),
+        })
+    }
+
+    /// Create an `OidcFederationStrategy` backed by external token-store callbacks.
+    ///
+    /// Behaves like [`create`](Self::create) but persists the federated CTS
+    /// token through `loadToken` / `saveToken` — see
+    /// [`AccessKeyStrategy::create_with_store`] for the callback contract. Use
+    /// this to back the strategy with an HTTP-only cookie so a federated token
+    /// survives across Edge Function invocations without re-federating.
+    #[wasm_bindgen(js_name = createWithStore)]
+    pub fn create_with_store(
+        region: String,
+        workspace_id: String,
+        get_jwt: js_sys::Function,
+        load_token: js_sys::Function,
+        save_token: js_sys::Function,
+    ) -> Result<OidcFederationStrategy, JsValue> {
+        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
+        let store = JsTokenStore {
+            load: load_token,
+            save: save_token,
+        };
+        let inner = stack_auth::OidcFederationStrategy::builder(
+            region,
+            workspace_id,
+            JsOidcProvider { get_jwt },
+        )
+        .with_token_store(store)
+        .build()
+        .map_err(to_js_error)?;
+        Ok(OidcFederationStrategy {
+            inner: OidcFederationStrategyInner::WithStore(inner),
+        })
+    }
+
+    /// Retrieve a valid CTS service token, federating or re-federating as needed.
+    #[wasm_bindgen(js_name = getToken)]
+    pub async fn get_token(&self) -> Result<JsValue, JsValue> {
+        let token = self.inner.get_token().await.map_err(to_js_error)?;
+        token_result_from(token)
+    }
+}
+
 #[cfg(all(test, target_arch = "wasm32"))]
 mod tests {
     use super::*;
     use base64::Engine;
-    use stack_auth::SecretToken;
     use wasm_bindgen_test::wasm_bindgen_test;
 
     /// Build an unsigned JWT-shaped token: `<header>.<payload>.<sig>`.
@@ -473,5 +622,99 @@ mod tests {
         .unwrap();
         // No assertion needed beyond "this doesn't panic".
         store.save(&token).await;
+    }
+
+    const VALID_WORKSPACE_ID: &str = "ZVATKW3VHMFG27DY";
+
+    fn jwt_fn(jwt: &str) -> js_sys::Function {
+        // `async () => "<jwt>"`
+        js_sys::Function::new_no_args(&format!("return Promise.resolve('{jwt}');"))
+    }
+
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_rejects_invalid_region() {
+        let err = expect_js_err(OidcFederationStrategy::create(
+            "not-a-region".to_string(),
+            VALID_WORKSPACE_ID.to_string(),
+            jwt_fn("h.p.s"),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_REGION");
+    }
+
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_rejects_invalid_workspace_id() {
+        let err = expect_js_err(OidcFederationStrategy::create(
+            "ap-southeast-2.aws".to_string(),
+            "not-a-workspace-id".to_string(),
+            jwt_fn("h.p.s"),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_WORKSPACE_ID");
+    }
+
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_accepts_valid_inputs() {
+        let result = OidcFederationStrategy::create(
+            "ap-southeast-2.aws".to_string(),
+            VALID_WORKSPACE_ID.to_string(),
+            jwt_fn("h.p.s"),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_rejects_invalid_workspace_id() {
+        let err = expect_js_err(OidcFederationStrategy::create_with_store(
+            "ap-southeast-2.aws".to_string(),
+            "not-a-workspace-id".to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_WORKSPACE_ID");
+    }
+
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_accepts_valid_inputs() {
+        let result = OidcFederationStrategy::create_with_store(
+            "ap-southeast-2.aws".to_string(),
+            VALID_WORKSPACE_ID.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[wasm_bindgen_test]
+    async fn js_oidc_provider_returns_jwt() {
+        let provider = JsOidcProvider {
+            get_jwt: jwt_fn("header.payload.signature"),
+        };
+        let jwt = provider.fetch().await.expect("getJwt should succeed");
+        assert_eq!(jwt.as_str(), "header.payload.signature");
+    }
+
+    #[wasm_bindgen_test]
+    async fn js_oidc_provider_errors_on_callback_throw() {
+        let provider = JsOidcProvider {
+            get_jwt: js_sys::Function::new_no_args("throw new Error('boom');"),
+        };
+        let err = match provider.fetch().await {
+            Ok(_) => panic!("expected getJwt throw to surface as an error"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, AuthError::Server(_)), "got: {err:?}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn js_oidc_provider_errors_on_non_string_result() {
+        let provider = JsOidcProvider {
+            get_jwt: js_sys::Function::new_no_args("return Promise.resolve(42);"),
+        };
+        let err = match provider.fetch().await {
+            Ok(_) => panic!("expected non-string getJwt result to surface as an error"),
+            Err(e) => e,
+        };
+        assert!(matches!(err, AuthError::Server(_)), "got: {err:?}");
     }
 }

@@ -19,13 +19,13 @@ The package exposes four entries:
 
 | Entry | Use when | Loads | Surface |
 |---|---|---|---|
-| `@cipherstash/auth` | **Node.js** | Native napi binding for the host platform | Full surface — device-code flow, profile store, OAuth, `AccessKeyStrategy` |
-| `@cipherstash/auth` | **SSR bundlers** (Vite/Webpack/Next.js targeting Node or server-side rendering) | Sibling-`.wasm` shim from `wasm-pack --target bundler` | `AccessKeyStrategy` |
-| `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | Same as bundler entry above | `AccessKeyStrategy` |
-| `@cipherstash/auth/wasm-inline` | **Supabase Edge Functions / Cloudflare Workers / Bun / Deno via `npm:`** — runtimes that can't auto-bundle a sibling `.wasm` | Inline-bytes shim (wasm embedded as base64) | `AccessKeyStrategy` |
+| `@cipherstash/auth` | **Node.js** | Native napi binding for the host platform | Full surface — device-code flow, profile store, OAuth, `AccessKeyStrategy`, `OidcFederationStrategy` |
+| `@cipherstash/auth` | **SSR bundlers** (Vite/Webpack/Next.js targeting Node or server-side rendering) | Sibling-`.wasm` shim from `wasm-pack --target bundler` | `AccessKeyStrategy`, `OidcFederationStrategy` |
+| `@cipherstash/auth/wasm` | Explicit opt-in to the sibling-`.wasm` shim | Same as bundler entry above | `AccessKeyStrategy`, `OidcFederationStrategy` |
+| `@cipherstash/auth/wasm-inline` | **Supabase Edge Functions / Cloudflare Workers / Bun / Deno via `npm:`** — runtimes that can't auto-bundle a sibling `.wasm` | Inline-bytes shim (wasm embedded as base64) | `AccessKeyStrategy`, `OidcFederationStrategy` |
 | `@cipherstash/auth/cookies` | Any runtime with WHATWG `Request`/`Headers` (Edge, Workers, Bun, Deno, Node 18+, Next.js App Router) | Pure-JS helper | `cookieStore(...)` — builds a `TokenStore` from a `Request + Headers` pair |
 
-The wasm bindings are deliberately scoped to `AccessKeyStrategy` — OAuth, device-code flow, and profile-store features depend on Node-only APIs (filesystem, browser launching) that can't be ported.
+The wasm bindings expose `AccessKeyStrategy` (static M2M keys) and `OidcFederationStrategy` (federating a third-party OIDC JWT — Clerk, Supabase, … — into a CTS service token). The interactive device-code flow and profile-store loading stay Node-only — they depend on filesystem and browser-launching APIs that can't be ported to wasm.
 
 The `wasm`, `wasm-inline`, and `cookies` entries are **ESM-only** — they target Edge/Workers/Deno/Bun runtimes that are ESM-native. From a CommonJS context, load them via dynamic `import()` rather than `require()`. Only the default `@cipherstash/auth` entry has a CJS (`node`) build.
 
@@ -94,6 +94,32 @@ Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying,
 `getToken()` resolves to `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`).
 
 For Cloudflare Workers the shape is identical; env access becomes `env.CS_CLIENT_ACCESS_KEY` instead of `Deno.env.get(...)`.
+
+### Federating a third-party OIDC JWT — `OidcFederationStrategy`
+
+When the end user is already signed in with a third-party OIDC provider (Clerk, Supabase, Auth0, …), `OidcFederationStrategy` exchanges their provider JWT for a CTS service token via `/api/authorise` — no access key needed:
+
+```ts
+import { OidcFederationStrategy } from "@cipherstash/auth/wasm-inline";
+import { cookieStore } from "@cipherstash/auth/cookies";
+
+Deno.serve(async (req) => {
+  const responseHeaders = new Headers({ "content-type": "application/json" });
+
+  const strategy = OidcFederationStrategy.create(
+    "ap-southeast-2.aws",
+    workspaceId,
+    // Returns the *current* provider JWT — re-invoked on every re-federation.
+    () => getClerkSessionToken(req),
+    { store: cookieStore({ request: req, responseHeaders }) },
+  );
+
+  const { token, services } = await strategy.getToken();
+  return new Response(JSON.stringify({ services }), { headers: responseHeaders });
+});
+```
+
+`/api/authorise` issues no CTS refresh token, so when the cached CTS token expires `OidcFederationStrategy` re-federates — it calls `getJwt` again for a fresh provider JWT. Pass a `getJwt` that returns a live token each time (e.g. wrapping the provider SDK), not a value captured once. The same API is available on the Node-native entry: `const { OidcFederationStrategy } = require("@cipherstash/auth")`.
 
 ### Caching with `cookieStore`
 

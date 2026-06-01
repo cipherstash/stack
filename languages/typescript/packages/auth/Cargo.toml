@@ -14,9 +14,10 @@ cts-common = { workspace = true }
 vitaminc-protected = { workspace = true }
 napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
+serde_json = "1"
+zeroize = { workspace = true }
 url = { version = "2", optional = true }
 mocktail = { version = "0.3.0", optional = true }
-serde_json = { version = "1", optional = true }
 jsonwebtoken = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 
@@ -33,4 +34,4 @@ url = "2"
 napi-build = "2"
 
 [features]
-test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:serde_json", "dep:jsonwebtoken", "dep:reqwest"]
+test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:jsonwebtoken", "dep:reqwest"]

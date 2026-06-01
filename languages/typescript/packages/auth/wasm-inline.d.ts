@@ -79,3 +79,44 @@ export declare class AccessKeyStrategy {
   /** Release the underlying wasm resources. */
   free(): void;
 }
+
+/**
+ * Supplies the *current* third-party OIDC JWT to federate. Called on every
+ * federation — initial auth and every re-federation after expiry — so it
+ * should return a live token each time (e.g. `() => clerk.session.getToken()`).
+ */
+export type OidcProvider = () => string | Promise<string>;
+
+/** Options accepted by {@link OidcFederationStrategy.create}. */
+export interface OidcFederationStrategyOptions {
+  /**
+   * External persistence for the federated CTS token — see
+   * {@link AccessKeyStrategyOptions.store}.
+   */
+  store?: TokenStore;
+}
+
+/**
+ * An auth strategy that federates a third-party OIDC JWT (Clerk, Supabase, …)
+ * into a CipherStash CTS service token via `/api/authorise`.
+ */
+export declare class OidcFederationStrategy {
+  private constructor();
+  /**
+   * Create an `OidcFederationStrategy` for the given region and workspace.
+   *
+   * `getJwt` must return the current third-party OIDC JWT (it is re-invoked
+   * on every re-federation). Pass `options.store` to back the strategy with a
+   * persistent cache — see {@link TokenStore}.
+   */
+  static create(
+    region: string,
+    workspaceId: string,
+    getJwt: OidcProvider,
+    options?: OidcFederationStrategyOptions,
+  ): OidcFederationStrategy;
+  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  getToken(): Promise<import("./wasm-types.d.ts").TokenResult>;
+  /** Release the underlying wasm resources. */
+  free(): void;
+}

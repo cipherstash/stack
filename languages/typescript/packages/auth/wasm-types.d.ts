@@ -39,6 +39,7 @@ export type AuthErrorCode =
   | 'INVALID_ACCESS_KEY'
   | 'INVALID_CRN'
   | 'WORKSPACE_MISMATCH'
+  | 'INVALID_WORKSPACE_ID'
   | 'UNKNOWN_ERROR'
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */
@@ -86,6 +87,36 @@ export declare class AccessKeyStrategy {
    */
   static create(workspaceCrn: string, accessKey: string): AccessKeyStrategy
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
+  getToken(): Promise<TokenResult>
+  /** Release the underlying wasm resources. */
+  free(): void
+}
+
+/**
+ * Federates a third-party OIDC JWT (Clerk, Supabase, …) into a CipherStash
+ * CTS service token. This is the raw bundler-target binding — consumers
+ * wanting the options-object / cookie-store-friendly shape should import from
+ * `/wasm-inline` instead.
+ *
+ * `getJwt` / `loadToken` / `saveToken` are JS callbacks returning Promises.
+ */
+export declare class OidcFederationStrategy {
+  private constructor()
+  /** Create an `OidcFederationStrategy` for the given region and workspace. */
+  static create(
+    region: string,
+    workspaceId: string,
+    getJwt: () => Promise<string>,
+  ): OidcFederationStrategy
+  /** Create an `OidcFederationStrategy` backed by external token-store callbacks. */
+  static createWithStore(
+    region: string,
+    workspaceId: string,
+    getJwt: () => Promise<string>,
+    loadToken: () => Promise<string | null | undefined>,
+    saveToken: (json: string) => Promise<void>,
+  ): OidcFederationStrategy
+  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<TokenResult>
   /** Release the underlying wasm resources. */
   free(): void

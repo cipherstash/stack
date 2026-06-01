@@ -7,10 +7,15 @@
 // etc.) without breaking callers, and matches the options-object pattern
 // most modern JS APIs use.
 
-import { AccessKeyStrategy as RawAccessKeyStrategy } from "./wasm/stack_auth_wasm_inline.js";
+import {
+  AccessKeyStrategy as RawAccessKeyStrategy,
+  OidcFederationStrategy as RawOidcFederationStrategy,
+} from "./wasm/stack_auth_wasm_inline.js";
 
 /** @typedef {{ load(): Promise<string | null | undefined>; save(json: string): Promise<void> }} TokenStore */
 /** @typedef {{ store?: TokenStore }} AccessKeyStrategyOptions */
+/** @typedef {() => string | Promise<string>} OidcProvider */
+/** @typedef {{ store?: TokenStore }} OidcFederationStrategyOptions */
 
 export class AccessKeyStrategy {
   #inner;
@@ -41,6 +46,56 @@ export class AccessKeyStrategy {
       );
     }
     return new AccessKeyStrategy(RawAccessKeyStrategy.create(workspaceCrn, accessKey));
+  }
+
+  /** @returns {Promise<import("./wasm-inline.d.ts").TokenResult>} */
+  getToken() {
+    return this.#inner.getToken();
+  }
+
+  free() {
+    this.#inner.free();
+  }
+}
+
+export class OidcFederationStrategy {
+  #inner;
+
+  /** @param {RawOidcFederationStrategy} inner */
+  constructor(inner) {
+    this.#inner = inner;
+  }
+
+  /**
+   * @param {string} region
+   * @param {string} workspaceId
+   * @param {OidcProvider} getJwt
+   * @param {OidcFederationStrategyOptions} [options]
+   * @returns {OidcFederationStrategy}
+   */
+  static create(region, workspaceId, getJwt, options) {
+    // Wrap `getJwt` so the wasm binding always sees a Promise-returning
+    // function even if the caller passed a sync one — see the note in
+    // `AccessKeyStrategy.create`.
+    const jwt = () => Promise.resolve(getJwt());
+    const store = options?.store;
+    if (store) {
+      const load = () => Promise.resolve(store.load());
+      const save = (/** @type {string} */ json) =>
+        Promise.resolve(store.save(json));
+      return new OidcFederationStrategy(
+        RawOidcFederationStrategy.createWithStore(
+          region,
+          workspaceId,
+          jwt,
+          load,
+          save,
+        ),
+      );
+    }
+    return new OidcFederationStrategy(
+      RawOidcFederationStrategy.create(region, workspaceId, jwt),
+    );
   }
 
   /** @returns {Promise<import("./wasm-inline.d.ts").TokenResult>} */

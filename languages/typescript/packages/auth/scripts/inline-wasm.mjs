@@ -28,7 +28,7 @@ bgImports.__wbg_set_wasm(instance.exports);
 instance.exports.__wbindgen_start();
 
 export {
-    AccessKeyStrategy, IntoUnderlyingByteSource, IntoUnderlyingSink, IntoUnderlyingSource, module_init
+    AccessKeyStrategy, OidcFederationStrategy, IntoUnderlyingByteSource, IntoUnderlyingSink, IntoUnderlyingSource, module_init
 } from "./stack_auth_wasm_bg.js";
 `;
 

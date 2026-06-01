@@ -20,6 +20,7 @@ export type AuthErrorCode =
   | 'INVALID_ACCESS_KEY'
   | 'INVALID_CRN'
   | 'WORKSPACE_MISMATCH'
+  | 'INVALID_WORKSPACE_ID'
   | 'UNKNOWN_ERROR'
 
 /** An error thrown by this package, enriched with a machine-readable `.code`. */
@@ -119,6 +120,17 @@ export declare class MockAuthServer {
    */
   mockTokenEndpointError(code: string, description?: string | undefined | null): void
   /**
+   * Register a mock for `POST /api/authorise` that returns a successful
+   * federation response (`{ accessToken, expiry }`), as CTS would for an
+   * `OidcFederationStrategy` JWT exchange.
+   *
+   * `expiry` (seconds until the CTS token expires) defaults to 3600. Pass a
+   * small value to exercise re-federation on expiry.
+   */
+  mockAuthorizeEndpoint(expiry?: number | undefined | null): void
+  /** Register a mock for `POST /api/authorise` that returns a 500 error. */
+  mockAuthorizeEndpointError(): void
+  /**
    * Register a mock for `POST /create-client` that returns a successful
    * create-client JSON response (as ZeroKMS would).
    */
@@ -182,6 +194,32 @@ export declare class OAuthStrategy {
   /** Load credentials from the default profile store and create an `OAuthStrategy`. */
   static fromProfile(): OAuthStrategy
   /** Retrieve a valid access token, refreshing as needed. */
+  getToken(): Promise<TokenResult>
+}
+/**
+ * An auth strategy that federates a third-party OIDC JWT (Clerk, Supabase, …)
+ * into a CipherStash CTS service token via `/api/authorise`.
+ */
+export declare class OidcFederationStrategy {
+  /**
+   * Create an `OidcFederationStrategy` for the given region and workspace.
+   *
+   * `getJwt` is called on every federation — initial auth and every
+   * re-federation after the CTS token expires — and must return
+   * `Promise<string>` resolving to the *current* third-party OIDC JWT.
+   */
+  static create(region: string, workspaceId: string, getJwt: () => any): OidcFederationStrategy
+  /**
+   * Create an `OidcFederationStrategy` backed by external token-store callbacks.
+   *
+   * Behaves like [`create`](Self::create) but persists the federated CTS
+   * token through `loadToken` (`() => Promise<string | null | undefined>`)
+   * and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
+   * cookie — so a federated token survives across requests without
+   * re-federating.
+   */
+  static createWithStore(region: string, workspaceId: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any): OidcFederationStrategy
+  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<TokenResult>
 }
 export declare class DeviceCodeResult {

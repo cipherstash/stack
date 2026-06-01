@@ -49,7 +49,12 @@ dcProto.pollForToken = wrapAsync(dcProto.pollForToken);
 dcProto.openInBrowser = wrapSync(dcProto.openInBrowser);
 
 // Patch strategy getToken methods
-for (const Strategy of [native.AutoStrategy, native.AccessKeyStrategy, native.OAuthStrategy]) {
+for (const Strategy of [
+  native.AutoStrategy,
+  native.AccessKeyStrategy,
+  native.OAuthStrategy,
+  native.OidcFederationStrategy,
+]) {
   Strategy.prototype.getToken = wrapAsync(Strategy.prototype.getToken);
 }
 
@@ -63,9 +68,28 @@ native.AccessKeyStrategy.create = wrapSync(origCreate);
 const origFromProfile = native.OAuthStrategy.fromProfile;
 native.OAuthStrategy.fromProfile = wrapSync(origFromProfile);
 
+// napi defines class static methods as non-writable, so a factory's
+// synchronously-thrown errors can't be `.code`-enriched by patching the
+// native class in place. Expose a thin wrapper whose static factories run
+// through `wrapSync`. Instances are the native ones — their async
+// `getToken()` is already enriched via the prototype patch above.
+const NativeOidcFederationStrategy = native.OidcFederationStrategy;
+class OidcFederationStrategy {
+  static create(...args) {
+    return wrapSync(() => NativeOidcFederationStrategy.create(...args))();
+  }
+
+  static createWithStore(...args) {
+    return wrapSync(() =>
+      NativeOidcFederationStrategy.createWithStore(...args),
+    )();
+  }
+}
+
 // Export wrapped top-level functions alongside native re-exports
 module.exports = {
   ...native,
+  OidcFederationStrategy,
   beginDeviceCodeFlow: wrapAsync(native.beginDeviceCodeFlow),
   bindClientDevice: wrapAsync(native.bindClientDevice),
 };
