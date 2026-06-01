@@ -74,7 +74,6 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
             region,
             workspace_id,
             oidc_provider,
-            audience: None,
             base_url_override: None,
             token_store: NoStore,
         }
@@ -102,20 +101,11 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
     region: Region,
     workspace_id: WorkspaceId,
     oidc_provider: P,
-    audience: Option<String>,
     base_url_override: Option<url::Url>,
     token_store: S,
 }
 
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
-    /// Set the audience for token requests.
-    ///
-    /// Defaults to the workspace host FQDN server-side when unset.
-    pub fn audience(mut self, audience: impl Into<String>) -> Self {
-        self.audience = Some(audience.into());
-        self
-    }
-
     /// Override the base URL resolved by service discovery.
     ///
     /// Useful for pointing at a local or mock auth server during testing.
@@ -142,7 +132,6 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
             region: self.region,
             workspace_id: self.workspace_id,
             oidc_provider: self.oidc_provider,
-            audience: self.audience,
             base_url_override: self.base_url_override,
             token_store: store,
         }
@@ -165,7 +154,6 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
             self.oidc_provider,
             self.workspace_id,
             ensure_trailing_slash(base_url),
-            self.audience,
         );
         Ok(OidcFederationStrategy {
             inner: AutoRefresh::with_store(refresher, self.token_store),
