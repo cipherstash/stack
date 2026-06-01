@@ -1,21 +1,14 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { MockAuthServer as MockAuthServerType } from "../test-utils";
-import type {
-  DeviceCodeResult,
-  AuthResult,
-  AuthError,
-} from "../index";
+import type { DeviceCodeResult, AuthResult, AuthError } from "../index";
 
 // Load the CJS module — includes MockAuthServer when built with test-utils.
 const mod = require("../index.js") as typeof import("../index") & {
   MockAuthServer: typeof MockAuthServerType;
 };
 
-const {
-  beginDeviceCodeFlow,
-  beginDeviceCodeFlowWithBaseUrl,
-  MockAuthServer,
-} = mod;
+const { beginDeviceCodeFlow, beginDeviceCodeFlowWithBaseUrl, MockAuthServer } =
+  mod;
 
 // ---------------------------------------------------------------------------
 // Helpers

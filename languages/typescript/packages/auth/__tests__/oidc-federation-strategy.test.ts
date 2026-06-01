@@ -60,7 +60,11 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
   it("federates a third-party JWT into a CTS service token", async () => {
     server.mockAuthorizeEndpoint();
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, jwt.getJwt);
+    const strategy = OidcFederationStrategy.create(
+      REGION,
+      WORKSPACE_ID,
+      jwt.getJwt,
+    );
 
     const result = await strategy.getToken();
 
@@ -75,7 +79,11 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     server.mockAuthorizeEndpoint(0);
     server.mockAuthorizeEndpoint(0);
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, jwt.getJwt);
+    const strategy = OidcFederationStrategy.create(
+      REGION,
+      WORKSPACE_ID,
+      jwt.getJwt,
+    );
 
     await strategy.getToken();
     await strategy.getToken();
@@ -198,7 +206,9 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
 
     try {
       await strategy.getToken();
-      expect.unreachable("getToken should reject on a non-string getJwt result");
+      expect.unreachable(
+        "getToken should reject on a non-string getJwt result",
+      );
     } catch (err) {
       expect((err as AuthError).code).toBe("SERVER_ERROR");
     }

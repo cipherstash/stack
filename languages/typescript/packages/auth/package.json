@@ -59,7 +59,9 @@
     "build:debug": "napi build",
     "build:test": "napi build --features test-utils",
     "build:wasm": "cd ../wasm && wasm-pack build --target bundler --out-dir ../node/wasm && rm -f ../node/wasm/README.md ../node/wasm/LICENSE ../node/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../node/wasm/package.json && node ../node/scripts/inline-wasm.mjs",
-    "test": "npm run build:test && vitest run"
+    "test": "npm run build:test && vitest run",
+    "format": "npx --yes @biomejs/biome@2.3.4 format --write .",
+    "format:check": "npx --yes @biomejs/biome@2.3.4 ci ."
   },
   "peerDependencies": {
     "@cipherstash/auth-darwin-x64": "0.36.0",

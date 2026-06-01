@@ -24,7 +24,9 @@ async function main() {
   // Optionally open the browser automatically
   const opened = pending.openInBrowser();
   if (!opened) {
-    console.log("Could not open browser — please visit the URL above manually.");
+    console.log(
+      "Could not open browser — please visit the URL above manually.",
+    );
   }
 
   // Step 3: Poll until the user authorizes (or the code expires).
