@@ -15,10 +15,22 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken};
 /// fresh CTS token. Supply an `OidcProvider` that returns the live provider
 /// token each time (e.g. wrapping `clerk.session.getToken()`).
 ///
+/// Every returned token is checked against the configured workspace — the
+/// same post-auth verification [`AccessKeyStrategy`](crate::AccessKeyStrategy)
+/// performs — so a token CTS minted for a different workspace (or one loaded
+/// from a poisoned shared cache) is never handed back. Verification can fail
+/// in two ways:
+///
+/// - [`AuthError::WorkspaceMismatch`] — the JWT decoded cleanly but its
+///   `workspace` claim doesn't match the configured workspace ID.
+/// - [`AuthError::InvalidToken`] — the JWT is malformed or missing the
+///   `workspace` claim entirely, so verification can't run.
+///
 /// When constructed via [`OidcFederationStrategyBuilder::with_token_store`], the strategy
 /// also persists tokens through an external [`TokenStore`] so short-lived
 /// instances (e.g. one per Edge Function request) can share a cache and skip
-/// re-federating on every cold start.
+/// re-federating on every cold start. The workspace check runs on cached and
+/// store-loaded tokens too, not just freshly federated ones.
 ///
 /// # Example
 ///
@@ -36,6 +48,7 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken};
 /// ```
 pub struct OidcFederationStrategy<P, S = NoStore> {
     inner: AutoRefresh<OidcRefresher<P>, S>,
+    expected_workspace: WorkspaceId,
 }
 
 impl<P: OidcProvider> OidcFederationStrategy<P> {
@@ -70,7 +83,15 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
 
 impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P, S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        Ok(self.inner.get_token().await?)
+        let token: ServiceToken = self.inner.get_token().await?;
+        let token_workspace = *token.workspace_id()?;
+        if token_workspace != self.expected_workspace {
+            return Err(AuthError::WorkspaceMismatch {
+                expected_workspace: self.expected_workspace,
+                token_workspace,
+            });
+        }
+        Ok(token)
     }
 }
 
@@ -139,6 +160,7 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
             None => crate::cts_base_url_from_env()?
                 .unwrap_or(CtsServiceDiscovery::endpoint(self.region)?),
         };
+        let expected_workspace = self.workspace_id;
         let refresher = OidcRefresher::new(
             self.oidc_provider,
             self.workspace_id,
@@ -147,6 +169,250 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
         );
         Ok(OidcFederationStrategy {
             inner: AutoRefresh::with_store(refresher, self.token_store),
+            expected_workspace,
         })
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use cts_common::Region;
+    use mocktail::prelude::*;
+
+    use super::*;
+    use crate::oidc_refresher::OidcProviderFn;
+    use crate::{InMemoryTokenStore, SecretToken, Token, TokenStore};
+
+    /// Mint an unsigned JWT carrying the given `workspace` claim. The strategy
+    /// decodes claims without verifying the signature (it already holds the
+    /// token), so an unsigned token is sufficient to exercise verification.
+    fn jwt_with_workspace(workspace: &str) -> String {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs();
+        let claims = serde_json::json!({
+            "iss": "https://cts.example.com/",
+            "sub": "CS|test-user",
+            "aud": "test-audience",
+            "iat": now,
+            "exp": now + 3600,
+            "workspace": workspace,
+            "scope": "",
+        });
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret"),
+        )
+        .expect("JWT encode")
+    }
+
+    /// A mock CTS that federates any OIDC token into a CTS token carrying the
+    /// given `workspace` claim.
+    async fn start_mock_server_returning_jwt(workspace: &str) -> MockServer {
+        let mut mocks = MockSet::new();
+        let jwt = jwt_with_workspace(workspace);
+        mocks.mock(move |when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({ "accessToken": jwt, "expiry": 3600 }));
+        });
+        let server =
+            MockServer::new_http("oidc-federation-strategy-workspace-test").with_mocks(mocks);
+        server.start().await.expect("mock server start");
+        server
+    }
+
+    fn test_region() -> Region {
+        Region::aws("ap-southeast-2").expect("region parses")
+    }
+
+    fn provider() -> OidcProviderFn<impl Fn() -> std::future::Ready<Result<SecretToken, AuthError>>>
+    {
+        OidcProviderFn::new(|| {
+            std::future::ready(Ok(SecretToken::new("header.payload.signature".to_string())))
+        })
+    }
+
+    /// Happy path — the federated token's `workspace` claim matches the
+    /// configured workspace: `get_token()` returns the token cleanly.
+    #[tokio::test]
+    async fn returns_token_when_workspace_matches() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+
+        let strategy =
+            OidcFederationStrategy::builder(test_region(), WS.parse().unwrap(), provider())
+                .base_url(server.url(""))
+                .build()
+                .expect("builder");
+
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "happy-path token should carry the expected workspace",
+        );
+    }
+
+    /// Mismatch — CTS federates the OIDC token into a CTS token for a
+    /// *different* workspace than the strategy was configured for. This is the
+    /// security-critical case: the OIDC provider could be authenticated for a
+    /// workspace the caller didn't intend. `get_token()` must return
+    /// `WorkspaceMismatch`, not the token.
+    #[tokio::test]
+    async fn errors_when_token_workspace_differs() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const EXPECTED_WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(TOKEN_WS).await;
+
+        let strategy = OidcFederationStrategy::builder(
+            test_region(),
+            EXPECTED_WS.parse().unwrap(),
+            provider(),
+        )
+        .base_url(server.url(""))
+        .build()
+        .expect("builder");
+
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected mismatch");
+        match err {
+            AuthError::WorkspaceMismatch {
+                expected_workspace,
+                token_workspace,
+            } => {
+                assert_eq!(expected_workspace.as_str(), EXPECTED_WS);
+                assert_eq!(token_workspace.as_str(), TOKEN_WS);
+            }
+            other => panic!("expected WorkspaceMismatch, got {other:?}"),
+        }
+    }
+
+    /// A malformed CTS token (not a JWT) can't be decoded, so verification
+    /// can't run — `get_token()` surfaces `InvalidToken` rather than handing
+    /// back an unverifiable token.
+    #[tokio::test]
+    async fn errors_with_invalid_token_when_jwt_malformed() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({ "accessToken": "not-a-jwt", "expiry": 3600 }));
+        });
+        let server =
+            MockServer::new_http("oidc-federation-strategy-malformed-test").with_mocks(mocks);
+        server.start().await.expect("mock server start");
+
+        let strategy = OidcFederationStrategy::builder(
+            test_region(),
+            "ZVATKW3VHMFG27DY".parse().unwrap(),
+            provider(),
+        )
+        .base_url(server.url(""))
+        .build()
+        .expect("builder");
+
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected invalid-token error");
+        assert!(
+            matches!(err, AuthError::InvalidToken(_)),
+            "expected InvalidToken, got {err:?}",
+        );
+    }
+
+    /// A pre-populated [`TokenStore`] returning a token for a *different*
+    /// workspace must still be rejected by the strategy wrapper — the same
+    /// poisoned-shared-cache interaction `AccessKeyStrategy` guards against.
+    /// A 500-returning mock fails the test loudly if the strategy ever
+    /// re-federates instead of trusting (and rejecting) the stored token.
+    #[tokio::test]
+    async fn rejects_stored_token_for_different_workspace() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const EXPECTED_WS: &str = "ZVATKW3VHMFG27DY";
+
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "store must satisfy the request"}));
+        });
+        let server =
+            MockServer::new_http("oidc-federation-strategy-store-mismatch-test").with_mocks(mocks);
+        server.start().await.expect("mock server start");
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs();
+        let stored = Token {
+            access_token: SecretToken::new(jwt_with_workspace(TOKEN_WS)),
+            token_type: "Bearer".to_string(),
+            expires_at: now + 3600,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        };
+        let store = Arc::new(InMemoryTokenStore::new());
+        store.save(&stored).await;
+
+        let strategy = OidcFederationStrategy::builder(
+            test_region(),
+            EXPECTED_WS.parse().unwrap(),
+            provider(),
+        )
+        .base_url(server.url(""))
+        .with_token_store(Arc::clone(&store))
+        .build()
+        .expect("builder");
+
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected mismatch from stored token");
+        assert!(
+            matches!(err, AuthError::WorkspaceMismatch { .. }),
+            "expected WorkspaceMismatch, got {err:?}",
+        );
+    }
+
+    /// Regression guard — the workspace check runs on *every* `get_token()`
+    /// call, not only the one that triggers initial federation. A future
+    /// optimisation that cached the "verified" verdict would let a mismatched
+    /// token slide through on the second call.
+    #[tokio::test]
+    async fn errors_on_each_subsequent_get_token_call() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const EXPECTED_WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(TOKEN_WS).await;
+
+        let strategy = OidcFederationStrategy::builder(
+            test_region(),
+            EXPECTED_WS.parse().unwrap(),
+            provider(),
+        )
+        .base_url(server.url(""))
+        .build()
+        .expect("builder");
+
+        for call in 1..=2 {
+            let err = match (&strategy).get_token().await {
+                Ok(_) => panic!("call {call}: expected Err, got Ok"),
+                Err(e) => e,
+            };
+            assert!(
+                matches!(err, AuthError::WorkspaceMismatch { .. }),
+                "call {call}: expected WorkspaceMismatch, got {err:?}",
+            );
+        }
     }
 }
