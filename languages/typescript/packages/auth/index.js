@@ -52,7 +52,7 @@ dcProto.openInBrowser = wrapSync(dcProto.openInBrowser);
 for (const Strategy of [
   native.AutoStrategy,
   native.AccessKeyStrategy,
-  native.OAuthStrategy,
+  native.DeviceSessionStrategy,
   native.OidcFederationStrategy,
 ]) {
   Strategy.prototype.getToken = wrapAsync(Strategy.prototype.getToken);
@@ -65,8 +65,8 @@ native.AutoStrategy.detect = wrapSync(origDetect);
 const origCreate = native.AccessKeyStrategy.create;
 native.AccessKeyStrategy.create = wrapSync(origCreate);
 
-const origFromProfile = native.OAuthStrategy.fromProfile;
-native.OAuthStrategy.fromProfile = wrapSync(origFromProfile);
+const origFromProfile = native.DeviceSessionStrategy.fromProfile;
+native.DeviceSessionStrategy.fromProfile = wrapSync(origFromProfile);
 
 // napi defines class static methods as non-writable, so a factory's
 // synchronously-thrown errors can't be `.code`-enriched by patching the
@@ -107,6 +107,9 @@ class OidcFederationStrategy {
 module.exports = {
   ...native,
   OidcFederationStrategy,
+  // Deprecated alias: `OAuthStrategy` was renamed to `DeviceSessionStrategy`.
+  // Kept so existing consumers don't break; remove in a future major.
+  OAuthStrategy: native.DeviceSessionStrategy,
   beginDeviceCodeFlow: wrapAsync(native.beginDeviceCodeFlow),
   bindClientDevice: wrapAsync(native.bindClientDevice),
 };

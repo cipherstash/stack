@@ -5,37 +5,41 @@ use tracing::warn;
 use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
-use crate::oauth_refresher::OAuthRefresher;
+use crate::device_session_refresher::DeviceSessionRefresher;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken, Token};
 
-/// An [`AuthStrategy`] that uses OAuth refresh tokens to maintain a valid access token.
+/// An [`AuthStrategy`] that renews a CTS session minted by an interactive
+/// OAuth login (the device-code flow), using its OAuth refresh token.
+///
+/// This *renews* an existing CTS session — it cannot federate a raw
+/// third-party JWT. For that, see [`OidcFederationStrategy`](crate::OidcFederationStrategy).
 ///
 /// # Construction
 ///
-/// Use [`OAuthStrategy::with_token`] with a token obtained from a device code flow
+/// Use [`DeviceSessionStrategy::with_token`] with a token obtained from a device code flow
 /// (or any other OAuth flow) for in-memory caching only. Use
-/// [`OAuthStrategy::with_profile`] to load a token from disk and persist
+/// [`DeviceSessionStrategy::with_profile`] to load a token from disk and persist
 /// refreshed tokens back to the store.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use stack_auth::{OAuthStrategy, Token};
+/// use stack_auth::{DeviceSessionStrategy, Token};
 /// use cts_common::Region;
 ///
 /// # fn run(token: Token) -> Result<(), Box<dyn std::error::Error>> {
 /// let region = Region::aws("ap-southeast-2")?;
-/// let strategy = OAuthStrategy::with_token(region, "my-client-id", token).build()?;
+/// let strategy = DeviceSessionStrategy::with_token(region, "my-client-id", token).build()?;
 /// # Ok(())
 /// # }
 /// ```
-pub struct OAuthStrategy {
+pub struct DeviceSessionStrategy {
     crn: Option<Crn>,
-    inner: AutoRefresh<OAuthRefresher>,
+    inner: AutoRefresh<DeviceSessionRefresher>,
 }
 
-impl OAuthStrategy {
-    /// Return a builder for configuring an `OAuthStrategy` from a token.
+impl DeviceSessionStrategy {
+    /// Return a builder for configuring a `DeviceSessionStrategy` from a token.
     ///
     /// The token's `region` and `client_id` fields are set before caching.
     /// No token store is used — tokens are not persisted to disk.
@@ -43,8 +47,8 @@ impl OAuthStrategy {
         region: Region,
         client_id: impl Into<String>,
         token: Token,
-    ) -> OAuthStrategyBuilder {
-        OAuthStrategyBuilder {
+    ) -> DeviceSessionStrategyBuilder {
+        DeviceSessionStrategyBuilder {
             source: OAuthTokenSource::Token {
                 region,
                 client_id: client_id.into(),
@@ -54,17 +58,17 @@ impl OAuthStrategy {
         }
     }
 
-    /// Return a builder for configuring an `OAuthStrategy` from a profile store.
+    /// Return a builder for configuring a `DeviceSessionStrategy` from a profile store.
     ///
-    /// The token is loaded from the store when [`OAuthStrategyBuilder::build`] is called.
+    /// The token is loaded from the store when [`DeviceSessionStrategyBuilder::build`] is called.
     /// The builder allows further configuration (e.g. overriding the base URL) before building.
     ///
     /// The token must have `region` and `client_id` set (as saved by
     /// [`DeviceCodeStrategy`](crate::DeviceCodeStrategy) or a prior
-    /// `OAuthStrategy`). The store is used for persisting refreshed tokens.
+    /// `DeviceSessionStrategy`). The store is used for persisting refreshed tokens.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_profile(store: ProfileStore) -> OAuthStrategyBuilder {
-        OAuthStrategyBuilder {
+    pub fn with_profile(store: ProfileStore) -> DeviceSessionStrategyBuilder {
+        DeviceSessionStrategyBuilder {
             source: OAuthTokenSource::Store(store),
             base_url_override: None,
         }
@@ -76,7 +80,7 @@ impl OAuthStrategy {
     }
 }
 
-impl AuthStrategy for &OAuthStrategy {
+impl AuthStrategy for &DeviceSessionStrategy {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
         Ok(self.inner.get_token().await?)
     }
@@ -95,15 +99,15 @@ enum OAuthTokenSource {
     Store(ProfileStore),
 }
 
-/// Builder for [`OAuthStrategy`].
+/// Builder for [`DeviceSessionStrategy`].
 ///
-/// Created via [`OAuthStrategy::with_token`] or [`OAuthStrategy::with_profile`].
-pub struct OAuthStrategyBuilder {
+/// Created via [`DeviceSessionStrategy::with_token`] or [`DeviceSessionStrategy::with_profile`].
+pub struct DeviceSessionStrategyBuilder {
     source: OAuthTokenSource,
     base_url_override: Option<url::Url>,
 }
 
-impl OAuthStrategyBuilder {
+impl DeviceSessionStrategyBuilder {
     /// Override the base URL resolved by service discovery.
     ///
     /// Useful for pointing at a local or mock auth server during testing.
@@ -113,11 +117,11 @@ impl OAuthStrategyBuilder {
         self
     }
 
-    /// Build the [`OAuthStrategy`].
+    /// Build the [`DeviceSessionStrategy`].
     ///
     /// Resolves the base URL via service discovery unless overridden with
     /// `base_url` (available when the `test-utils` feature is enabled).
-    pub fn build(self) -> Result<OAuthStrategy, AuthError> {
+    pub fn build(self) -> Result<DeviceSessionStrategy, AuthError> {
         match self.source {
             OAuthTokenSource::Token {
                 region,
@@ -144,14 +148,14 @@ impl OAuthStrategyBuilder {
                 let device_instance_id = token.device_instance_id().map(String::from);
                 token.set_region(&region_id);
                 token.set_client_id(&client_id);
-                let refresher = OAuthRefresher::new(
+                let refresher = DeviceSessionRefresher::new(
                     None,
                     ensure_trailing_slash(base_url),
                     &client_id,
                     &region_id,
                     device_instance_id,
                 );
-                Ok(OAuthStrategy {
+                Ok(DeviceSessionStrategy {
                     crn,
                     inner: AutoRefresh::with_token(refresher, token),
                 })
@@ -183,14 +187,14 @@ impl OAuthStrategyBuilder {
                     None => crate::cts_base_url_from_env()?.unwrap_or(token.issuer()?),
                 };
 
-                let refresher = OAuthRefresher::new(
+                let refresher = DeviceSessionRefresher::new(
                     Some(ws_store),
                     ensure_trailing_slash(base_url),
                     &client_id,
                     &region_str,
                     device_instance_id,
                 );
-                Ok(OAuthStrategy {
+                Ok(DeviceSessionStrategy {
                     crn,
                     inner: AutoRefresh::with_token(refresher, token),
                 })

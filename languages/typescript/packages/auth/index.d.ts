@@ -190,9 +190,9 @@ export declare class AccessKeyStrategy {
  * An auth strategy that uses OAuth refresh tokens persisted to disk
  * (`~/.cipherstash/auth.json`).
  */
-export declare class OAuthStrategy {
-  /** Load credentials from the default profile store and create an `OAuthStrategy`. */
-  static fromProfile(): OAuthStrategy
+export declare class DeviceSessionStrategy {
+  /** Load credentials from the default profile store and create a `DeviceSessionStrategy`. */
+  static fromProfile(): DeviceSessionStrategy
   /** Retrieve a valid access token, refreshing as needed. */
   getToken(): Promise<TokenResult>
 }

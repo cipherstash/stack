@@ -7,7 +7,7 @@
 //! 1. **Access key** – if `CS_CLIENT_ACCESS_KEY` is set along with
 //!    `CS_WORKSPACE_CRN`, an [`AccessKeyStrategy`] is used.
 //! 2. **OAuth** – if a token store file exists at `~/.cipherstash/auth.json`
-//!    (written by `stash login`), an [`OAuthStrategy`] is used.
+//!    (written by `stash login`), a [`DeviceSessionStrategy`] is used.
 //! 3. If neither is available, an error is returned.
 //!
 //! # Running the example
@@ -34,13 +34,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // AutoStrategy detects credentials automatically:
     //
     //   1. CS_CLIENT_ACCESS_KEY env var  → AccessKeyStrategy
-    //   2. ~/.cipherstash/auth.json file → OAuthStrategy
+    //   2. ~/.cipherstash/auth.json file → DeviceSessionStrategy
     //   3. Neither                       → error
     let strategy = AutoStrategy::detect()?;
 
     match &strategy {
         AutoStrategy::AccessKey(_) => println!("Using access key authentication"),
-        AutoStrategy::OAuth(_) => println!("Using OAuth authentication"),
+        AutoStrategy::DeviceSession(_) => println!("Using OAuth authentication"),
     }
 
     // Obtain a token — refresh happens automatically when needed.

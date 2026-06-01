@@ -18,7 +18,7 @@ All strategies implement the [`AuthStrategy`] trait, which provides a single
 |---|---|---|
 | [`AutoStrategy`] | Recommended default — detects credentials automatically | `CS_CLIENT_ACCESS_KEY` + `CS_WORKSPACE_CRN`, or `~/.cipherstash/auth.json` |
 | [`AccessKeyStrategy`] | Service-to-service / CI | Static access key + workspace CRN |
-| [`OAuthStrategy`] | Long-lived sessions with refresh | OAuth token (from device code flow or disk) |
+| [`DeviceSessionStrategy`] | Long-lived sessions with refresh | OAuth token (from device code flow or disk) |
 | [`DeviceCodeStrategy`] | CLI login ([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)) | User authorizes in browser |
 | `StaticTokenStrategy` | Tests only (`test-utils` feature) | Pre-obtained token used as-is |
 
@@ -58,7 +58,7 @@ let strategy = AccessKeyStrategy::new(crn, key)?;
             ┌──────────────────────────────────────────────────┐
             │  AuthStrategy ─ acquisition layer                │
             │  get_token() -> ServiceToken                     │
-            │  AccessKeyStrategy / OAuthStrategy / AutoStrategy│
+            │  AccessKeyStrategy / DeviceSessionStrategy / AutoStrategy│
             │  ── or ──                                        │
             │  AuthStrategyFn (closure → AuthStrategy)         │
             └────────────────────────┬─────────────────────────┘
@@ -93,7 +93,7 @@ leaks in logs.
 
 ## Token refresh
 
-All strategies that cache tokens ([`AccessKeyStrategy`], [`OAuthStrategy`],
+All strategies that cache tokens ([`AccessKeyStrategy`], [`DeviceSessionStrategy`],
 [`AutoStrategy`]) share the same internal refresh engine. See the
 [`AuthStrategy`] trait docs for a full description of the concurrency model
 and flow diagram.

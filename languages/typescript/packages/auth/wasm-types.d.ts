@@ -19,7 +19,7 @@
  * The Node entry uses `index.d.ts`, which exposes the full surface
  * (including filesystem- and browser-backed features like the device-code
  * flow and profile-store loading) that doesn't compile to wasm32.
- * OAuth-based strategies on wasm (`OAuthStrategy`, `AutoStrategy`) are
+ * OAuth-based strategies on wasm (`DeviceSessionStrategy`, `AutoStrategy`) are
  * deferred to a follow-up — see the Layer 3.5 notes in `wasm-analysis.md`.
  */
 

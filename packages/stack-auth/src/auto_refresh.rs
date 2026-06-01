@@ -348,7 +348,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::oauth_refresher::OAuthRefresher;
+    use crate::device_session_refresher::DeviceSessionRefresher;
     use crate::SecretToken;
     use mocktail::prelude::*;
     use stack_profile::ProfileStore;
@@ -402,12 +402,12 @@ mod tests {
         dir: &tempfile::TempDir,
         server: &MockServer,
         token: Token,
-    ) -> AutoRefresh<OAuthRefresher> {
+    ) -> AutoRefresh<DeviceSessionRefresher> {
         let store = ProfileStore::new(dir.path());
         store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&token).unwrap();
-        let refresher = OAuthRefresher::new(
+        let refresher = DeviceSessionRefresher::new(
             Some(ws_store),
             server.url(""),
             "cli",
@@ -424,7 +424,7 @@ mod tests {
         async fn returns_not_found_for_oauth() {
             let server = start_server(MockSet::new()).await;
             let store = ProfileStore::new("/tmp/nonexistent");
-            let refresher = OAuthRefresher::new(
+            let refresher = DeviceSessionRefresher::new(
                 Some(store),
                 server.url(""),
                 "cli",
@@ -904,7 +904,7 @@ mod tests {
 #[allow(clippy::unwrap_used)]
 mod stress_tests {
     use super::*;
-    use crate::oauth_refresher::OAuthRefresher;
+    use crate::device_session_refresher::DeviceSessionRefresher;
     use crate::SecretToken;
     use stack_profile::ProfileStore;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1028,12 +1028,12 @@ mod stress_tests {
         dir: &tempfile::TempDir,
         base_url: &url::Url,
         token: Token,
-    ) -> AutoRefresh<OAuthRefresher> {
+    ) -> AutoRefresh<DeviceSessionRefresher> {
         let store = ProfileStore::new(dir.path());
         store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&token).unwrap();
-        let refresher = OAuthRefresher::new(
+        let refresher = DeviceSessionRefresher::new(
             Some(ws_store),
             base_url.clone(),
             "cli",
@@ -1492,8 +1492,13 @@ mod stress_tests {
             let store = ProfileStore::new(dir.path());
             store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
             let ws_store = store.current_workspace_store().unwrap();
-            let refresher =
-                OAuthRefresher::new(Some(ws_store), base_url, "cli", "ap-southeast-2.aws", None);
+            let refresher = DeviceSessionRefresher::new(
+                Some(ws_store),
+                base_url,
+                "cli",
+                "ap-southeast-2.aws",
+                None,
+            );
             // Slow async save — cancellation reliably lands here, in the
             // post-HTTP / pre-install window.
             let slow_store = SlowSaveStore {

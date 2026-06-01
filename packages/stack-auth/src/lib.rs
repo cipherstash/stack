@@ -37,8 +37,8 @@ mod auth_strategy_fn;
 mod authorize_dto;
 mod auto_refresh;
 mod auto_strategy;
-mod oauth_refresher;
-mod oauth_strategy;
+mod device_session_refresher;
+mod device_session_strategy;
 mod oidc_federation_strategy;
 mod oidc_refresher;
 mod refresher;
@@ -49,7 +49,7 @@ mod token_store;
 // Filesystem-backed device identity and the interactive device-code flow are
 // native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
 // and the device-code flow launches a browser via `open::that`. Wasm consumers
-// use `OAuthStrategy::with_token` or `AccessKeyStrategy`.
+// use `DeviceSessionStrategy::with_token` or `AccessKeyStrategy`.
 #[cfg(not(target_arch = "wasm32"))]
 mod device_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -62,7 +62,7 @@ pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
-pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
+pub use device_session_strategy::{DeviceSessionStrategy, DeviceSessionStrategyBuilder};
 pub use oidc_federation_strategy::{OidcFederationStrategy, OidcFederationStrategyBuilder};
 pub use oidc_refresher::{OidcProvider, OidcProviderFn};
 pub use service_token::ServiceToken;
@@ -70,6 +70,19 @@ pub use service_token::ServiceToken;
 pub use static_token_strategy::StaticTokenStrategy;
 pub use token::Token;
 pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
+
+/// Deprecated alias for [`DeviceSessionStrategy`].
+///
+/// Renamed to make the *renewal* (existing CTS session) vs *federation*
+/// ([`OidcFederationStrategy`]) distinction explicit. The old name still
+/// resolves so existing code keeps compiling; it will be removed in a future
+/// major release.
+#[deprecated(since = "0.36.0", note = "renamed to `DeviceSessionStrategy`")]
+pub type OAuthStrategy = DeviceSessionStrategy;
+
+/// Deprecated alias for [`DeviceSessionStrategyBuilder`].
+#[deprecated(since = "0.36.0", note = "renamed to `DeviceSessionStrategyBuilder`")]
+pub type OAuthStrategyBuilder = DeviceSessionStrategyBuilder;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use device_client::{bind_client_device, DeviceClientError};
@@ -94,9 +107,10 @@ pub use stack_profile::DeviceIdentity;
 pub mod auth {
     pub use crate::{
         AccessKey, AccessKeyStrategy, AccessKeyStrategyBuilder, AuthError, AuthStrategy,
-        AuthStrategyBounds, AuthStrategyFn, AutoStrategy, AutoStrategyBuilder, InvalidAccessKey,
-        OAuthStrategy, OAuthStrategyBuilder, OidcFederationStrategy, OidcFederationStrategyBuilder,
-        OidcProvider, OidcProviderFn, SecretToken, ServiceToken,
+        AuthStrategyBounds, AuthStrategyFn, AutoStrategy, AutoStrategyBuilder,
+        DeviceSessionStrategy, DeviceSessionStrategyBuilder, InvalidAccessKey,
+        OidcFederationStrategy, OidcFederationStrategyBuilder, OidcProvider, OidcProviderFn,
+        SecretToken, ServiceToken,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -133,11 +147,11 @@ pub mod store {
 /// they need a valid token.
 ///
 /// The trait is designed to be implemented for `&T`, so that callers can use
-/// shared references (e.g. `&OAuthStrategy`) without consuming the strategy.
+/// shared references (e.g. `&DeviceSessionStrategy`) without consuming the strategy.
 ///
 /// # Token refresh
 ///
-/// All strategies that cache tokens ([`AccessKeyStrategy`], [`OAuthStrategy`],
+/// All strategies that cache tokens ([`AccessKeyStrategy`], [`DeviceSessionStrategy`],
 /// [`AutoStrategy`]) share the same internal refresh engine. Understanding the
 /// refresh model helps predict how [`get_token`](AuthStrategy::get_token)
 /// behaves under concurrent access.
