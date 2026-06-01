@@ -34,10 +34,13 @@ mod access_key;
 mod access_key_refresher;
 mod access_key_strategy;
 mod auth_strategy_fn;
+mod authorize_dto;
 mod auto_refresh;
 mod auto_strategy;
 mod oauth_refresher;
 mod oauth_strategy;
+mod oidc_federation_strategy;
+mod oidc_refresher;
 mod refresher;
 mod service_token;
 mod token;
@@ -60,6 +63,8 @@ pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
 pub use auth_strategy_fn::AuthStrategyFn;
 pub use auto_strategy::{AutoStrategy, AutoStrategyBuilder};
 pub use oauth_strategy::{OAuthStrategy, OAuthStrategyBuilder};
+pub use oidc_federation_strategy::{OidcFederationStrategy, OidcFederationStrategyBuilder};
+pub use oidc_refresher::{OidcProvider, OidcProviderFn};
 pub use service_token::ServiceToken;
 #[cfg(any(test, feature = "test-utils"))]
 pub use static_token_strategy::StaticTokenStrategy;
@@ -90,7 +95,8 @@ pub mod auth {
     pub use crate::{
         AccessKey, AccessKeyStrategy, AccessKeyStrategyBuilder, AuthError, AuthStrategy,
         AuthStrategyBounds, AuthStrategyFn, AutoStrategy, AutoStrategyBuilder, InvalidAccessKey,
-        OAuthStrategy, OAuthStrategyBuilder, SecretToken, ServiceToken,
+        OAuthStrategy, OAuthStrategyBuilder, OidcFederationStrategy, OidcFederationStrategyBuilder,
+        OidcProvider, OidcProviderFn, SecretToken, ServiceToken,
     };
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -302,6 +308,9 @@ pub enum AuthError {
         /// The workspace the auth server's token actually carries.
         token_workspace: cts_common::WorkspaceId,
     },
+    /// The workspace ID could not be parsed.
+    #[error("Invalid workspace ID: {0}")]
+    InvalidWorkspaceId(#[from] cts_common::InvalidWorkspaceId),
     /// An access key was provided but the workspace CRN is missing.
     ///
     /// Set the `CS_WORKSPACE_CRN` environment variable or call
@@ -350,6 +359,7 @@ impl AuthError {
             Self::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
             Self::InvalidCrn(_) => "INVALID_CRN",
             Self::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
+            Self::InvalidWorkspaceId(_) => "INVALID_WORKSPACE_ID",
             #[cfg(not(target_arch = "wasm32"))]
             Self::Store(_) => "STORE_ERROR",
         }

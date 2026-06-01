@@ -4,6 +4,7 @@ use web_time::{SystemTime, UNIX_EPOCH};
 
 use url::Url;
 
+use crate::authorize_dto::AuthoriseResponse;
 use crate::refresher::Refresher;
 use crate::{http_client, AuthError, SecretToken, Token};
 
@@ -91,13 +92,6 @@ struct AuthoriseRequest<'a> {
     access_key: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     audience: Option<&'a str>,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AuthoriseResponse {
-    access_token: SecretToken,
-    expiry: u64,
 }
 
 #[cfg(test)]
