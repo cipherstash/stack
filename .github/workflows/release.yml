@@ -49,7 +49,7 @@ jobs:
       # npm OIDC trusted publishing requires npm >= 11.5.1; Node 22 ships
       # npm 10.x. `changeset publish` shells out to this npm to publish.
       - name: Upgrade npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+        run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
         run: pnpm install
