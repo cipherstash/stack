@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 22
           # No `cache:`, and package-manager-cache disabled. release.yml
-          # publishes to npm (NPM_TOKEN + OIDC) and must not restore the
+          # publishes to npm (OIDC trusted publishing) and must not restore the
           # GitHub Actions cache — a cache-poisoning / supply-chain vector.
           # Enforced by .github/workflows/tests-supply-chain.yml.
           package-manager-cache: false
@@ -45,6 +45,11 @@ jobs:
       # node-gyp on PATH, so install it explicitly.
       - name: Install node-gyp
         run: npm install -g node-gyp
+
+      # npm OIDC trusted publishing requires npm >= 11.5.1; Node 22 ships
+      # npm 10.x. `changeset publish` shells out to this npm to publish.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
 
       - name: Install dependencies
         run: pnpm install
@@ -56,5 +61,8 @@ jobs:
           publish: pnpm run release
           commitMode: 'github-api'
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # No NPM_TOKEN — publishing authenticates via npm OIDC trusted
+          # publishing (id-token: write above). If NPM_TOKEN is set,
+          # changesets/action writes a token .npmrc that shadows OIDC and
+          # every publish fails with E404 (see npm/cli#8976).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

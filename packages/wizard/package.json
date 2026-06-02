@@ -2,6 +2,11 @@
 	"name": "@cipherstash/wizard",
 	"version": "0.3.0",
 	"description": "AI-powered encryption setup for CipherStash. Reads your codebase, picks columns to encrypt, and wires everything up.",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "packages/wizard"
+	},
 	"license": "MIT",
 	"author": "CipherStash <hello@cipherstash.com>",
 	"files": [

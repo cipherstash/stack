@@ -9,11 +9,12 @@
 		"nextjs"
 	],
 	"bugs": {
-		"url": "https://github.com/cipherstash/protectjs/issues"
+		"url": "https://github.com/cipherstash/stack/issues"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/cipherstash/protectjs.git"
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "packages/nextjs"
 	},
 	"license": "MIT",
 	"author": "CipherStash <hello@cipherstash.com>",
