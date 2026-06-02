@@ -7,13 +7,13 @@ catalogs:
   repo:
     '@cipherstash/auth': 0.36.0
     tsup: 8.5.1
-    tsx: 4.22.1
+    tsx: 4.22.3
     typescript: 5.9.3
     vitest: 3.2.4
   security:
-    '@clerk/nextjs': 7.3.5
+    '@clerk/nextjs': 7.4.1
     next: 15.5.18
-    vite: 8.0.13
+    vite: 8.0.14
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated

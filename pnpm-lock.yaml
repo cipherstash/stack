@@ -13,8 +13,8 @@ catalogs:
       specifier: 8.5.1
       version: 8.5.1
     tsx:
-      specifier: 4.22.1
-      version: 4.22.1
+      specifier: 4.22.3
+      version: 4.22.3
     typescript:
       specifier: 5.9.3
       version: 5.9.3
@@ -23,8 +23,8 @@ catalogs:
       version: 3.2.4
   security:
     '@clerk/nextjs':
-      specifier: 7.3.5
-      version: 7.3.5
+      specifier: 7.4.1
+      version: 7.4.1
 
 importers:
 
@@ -50,7 +50,7 @@ importers:
         version: 2.9.14
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   e2e:
     dependencies:
@@ -69,7 +69,7 @@ importers:
     devDependencies:
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -83,15 +83,15 @@ importers:
         specifier: ^17.4.2
         version: 17.4.2
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.21.0
+        version: 8.21.0
     devDependencies:
       stash:
         specifier: workspace:*
         version: link:../../packages/cli
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
@@ -105,38 +105,38 @@ importers:
         specifier: workspace:*
         version: link:../../packages/stack
       '@prisma-next/adapter-postgres':
-        specifier: 0.8.0
-        version: 0.8.0(typanion@3.14.0)
+        specifier: 0.11.0
+        version: 0.11.0(typanion@3.14.0)
       '@prisma-next/contract':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/driver-postgres':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/family-sql':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/framework-components':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/postgres':
-        specifier: 0.8.0
-        version: 0.8.0(typanion@3.14.0)
+        specifier: 0.11.0
+        version: 0.11.0(typanion@3.14.0)
       '@prisma-next/sql-contract':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-contract-psl':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-orm-client':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-runtime':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/target-postgres':
-        specifier: 0.8.0
-        version: 0.8.0(typanion@3.14.0)
+        specifier: 0.11.0
+        version: 0.11.0(typanion@3.14.0)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -152,13 +152,13 @@ importers:
         version: 2.0.3
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/bench:
     dependencies:
@@ -167,10 +167,10 @@ importers:
         version: link:../stack
       drizzle-orm:
         specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
       pg:
-        specifier: ^8.20.0
-        version: 8.20.0
+        specifier: ^8.21.0
+        version: 8.21.0
     devDependencies:
       '@types/node':
         specifier: ^22.19.19
@@ -180,13 +180,13 @@ importers:
         version: 8.20.0
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/cli:
     dependencies:
@@ -206,14 +206,14 @@ importers:
         specifier: 2.7.0
         version: 2.7.0
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.21.0
+        version: 8.21.0
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
       posthog-node:
-        specifier: ^5.34.2
-        version: 5.34.2
+        specifier: ^5.35.2
+        version: 5.35.2
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -232,16 +232,16 @@ importers:
         version: 7.2.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/drizzle:
     dependencies:
@@ -275,13 +275,13 @@ importers:
         version: 4.8.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/migrate:
     dependencies:
@@ -299,17 +299,17 @@ importers:
         specifier: ^17.4.2
         version: 17.4.2
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.21.0
+        version: 8.21.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/nextjs:
     dependencies:
@@ -322,19 +322,19 @@ importers:
     devDependencies:
       '@clerk/nextjs':
         specifier: catalog:security
-        version: 7.3.5(next@15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 7.4.1(next@15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.60.4
@@ -346,54 +346,54 @@ importers:
         specifier: workspace:*
         version: link:../stack
       '@prisma-next/contract':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/family-sql':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/framework-components':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/migration-tools':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-contract':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-operations':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-relational-core':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-runtime':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/ts-render':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/utils':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       arktype:
         specifier: ^2.1.29
         version: 2.2.0
     devDependencies:
       '@prisma-next/adapter-postgres':
-        specifier: 0.8.0
-        version: 0.8.0(typanion@3.14.0)
+        specifier: 0.11.0
+        version: 0.11.0(typanion@3.14.0)
       '@prisma-next/cli':
         specifier: 0.8.0
         version: 0.8.0(typanion@3.14.0)
       '@prisma-next/driver-postgres':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/psl-parser':
         specifier: 0.8.0
         version: 0.8.0
       '@prisma-next/sql-contract-psl':
-        specifier: 0.8.0
-        version: 0.8.0
+        specifier: 0.11.0
+        version: 0.11.0
       '@prisma-next/sql-contract-ts':
         specifier: 0.8.0
         version: 0.8.0
@@ -401,20 +401,20 @@ importers:
         specifier: 0.8.0
         version: 0.8.0
       '@prisma-next/target-postgres':
-        specifier: 0.8.0
-        version: 0.8.0(typanion@3.14.0)
+        specifier: 0.11.0
+        version: 0.11.0(typanion@3.14.0)
       pathe:
         specifier: ^2.0.3
         version: 2.0.3
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/protect:
     dependencies:
@@ -451,16 +451,16 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.60.4
@@ -480,16 +480,16 @@ importers:
         version: 17.4.2
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/schema:
     dependencies:
@@ -499,13 +499,13 @@ importers:
     devDependencies:
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/stack:
     dependencies:
@@ -539,7 +539,7 @@ importers:
         version: 17.4.2
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
       execa:
         specifier: ^9.5.2
         version: 9.6.1
@@ -551,22 +551,22 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   packages/wizard:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.143
-        version: 0.3.143(@anthropic-ai/sdk@0.81.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
+        specifier: ^0.3.150
+        version: 0.3.150(@anthropic-ai/sdk@0.81.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
       '@cipherstash/auth':
         specifier: catalog:repo
         version: 0.36.0
@@ -577,14 +577,14 @@ importers:
         specifier: 17.4.2
         version: 17.4.2
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.21.0
+        version: 8.21.0
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
       posthog-node:
-        specifier: ^5.34.2
-        version: 5.34.2
+        specifier: ^5.35.2
+        version: 5.35.2
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -594,65 +594,65 @@ importers:
         version: 8.20.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.22.3
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
 packages:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.143':
-    resolution: {integrity: sha512-41WuTuP+bk4NxrjpG9IJGffsjh1ivyiiAmqgb5QoxPltDAA0p3gs+iZ3lTgDmY4Ga68wDoN05Lt18oCE+DQb7g==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.150':
+    resolution: {integrity: sha512-YVWJ0MHdSy0tobHO2G5/+vd9iRGyosg3wM6sY4pirezsnwZJBkJv/9IeVIaKqdLv83OA6HUcxxOLGzKSBawq2Q==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.143':
-    resolution: {integrity: sha512-3WrJ6MjjwQKvPnPbzUOm08qftlHYobkp/tmM1P/Vk/ldSjoPfFIgLFfzSzUmCKJiKEh2ZlHLJr8ORNrTxXhgQg==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.150':
+    resolution: {integrity: sha512-72M8mKCa7Tfy66G5hr5z9TirKynQa9sFj+4qDxkAp5LAYnyViUzHOqO6mEjVtwDr2aXnjqkhTdBtc5Hmn1m/nA==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.143':
-    resolution: {integrity: sha512-9UeV1W2vjOVwJSJrq9aw3UeMo82Ir59FfJ5mchh7OXZEaevkANvHYn25bTCnIpqfqOx7qFEosJW2ELIoV1nprg==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.150':
+    resolution: {integrity: sha512-KxkrUkGRhVcj4/2LkLrhVcEPl+6McDvtpZlgikHwAczVIf7aCvh01w2meEvuNjvex3dCv0d8CT+WYWxKJUhsbw==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143':
-    resolution: {integrity: sha512-/9oP/FCewrPnwVN+QUS5rlO3kMa07w+hOrpWrz24aEpBYhcHzr0zoNMBriPDAkTr3ao/z1k40UZ2dHmgsSODzA==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.150':
+    resolution: {integrity: sha512-1nhCXjfbxwhQPTgx2+q8lFYHx8DGJEOdaSd4wLvhGJifd/9QJwtnxaill1q+qdggZDroXHDJOTugttP0be6diA==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143':
-    resolution: {integrity: sha512-rr4334GOLl9caYDeyWsbwMaVJCiNvKHE9nLdey8opIkq7/FHHu712U6tDk0tcoCdsGU/S3/BBaZParOgF+s5qw==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.150':
+    resolution: {integrity: sha512-cm+kWR077H4+ZaMPtqrHosjsVba9hjfn31gtK7D96ziz9Mzn/XhkAz68oObDOTBDqj4j+JbmAHSl5JvyGMHcAg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143':
-    resolution: {integrity: sha512-kwqnbHo4Zj6TzO1V/83uLhsTt0xBp/BN5V/aHIX+khM4UuNO6NOKNaZvr8Int3sF0ARF95Hjr4l/hMKxry6DhQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.150':
+    resolution: {integrity: sha512-G7yOB9O6twOhQH3SvZWIvOcjehfA0HD5f/j49Z/yxZK5U72hOxtnbx7GCbcH/8AyB7JFyHjHpR9hxOxFoJNIhQ==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143':
-    resolution: {integrity: sha512-q5UaLZ9ABbqQN8UXpqHUqjW6akI1zMrV5Jvtq0yueKP4nIRbBBZBQ80M4bpdrc0+SiRmjVRV3p8lsCCAd8azgg==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.150':
+    resolution: {integrity: sha512-z9vlm3JdOQ1Vqj9sG8kW+r9miunv4UFQOn0AqoI++J9AgoCBjKGCH2WWmZYhGOvezZqogunXaTciJvhtDhJiWQ==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.143':
-    resolution: {integrity: sha512-46L2mkskvIRfwzHP3p0uUE5u9Oc7Eb/DRVmXuGNk5Z8jiahlDSv0SHP1vnWSWw5nWIu4DWOKyXZelRmYc9LxCg==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.150':
+    resolution: {integrity: sha512-lpAVi7tZdHi3BXRWmCVmOE2O8q7nzbvuMneYKS9rkpIbcjMjOBk6ud/rlp8Cuiqmp4LzZ8ylbbI7vFEiylK6Hg==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.143':
-    resolution: {integrity: sha512-JnxOTRpSBpFqKFMfV5cW4QjpeDOHUNr31rRislmOVWEPsRmCjsy9jYwKxDf7kxcwxyZ6h/YHz1ACvMaUWy6o6A==}
+  '@anthropic-ai/claude-agent-sdk@0.3.150':
+    resolution: {integrity: sha512-/RgkK5eTgIbzw5VRvH+T/hWeC5P7dCoYEO5ZWlwTSqvjfdVFOZhkiUKf4gz0ONpeLORAetqWU4rIfcVjQAH5fg==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -680,6 +680,10 @@ packages:
 
   '@babel/runtime@7.29.2':
     resolution: {integrity: sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==}
+    engines: {node: '>=6.9.0'}
+
+  '@babel/runtime@7.29.7':
+    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
 
   '@biomejs/biome@2.4.15':
@@ -882,27 +886,27 @@ packages:
     resolution: {integrity: sha512-S0My7XPGIgpRWMDG8uRqalbgT+a6FmCUdOW+HaIOVVpUPHOb7RrpvjTjiODadKp06fsrVDJZlIzc6yCTp4AnxA==}
     engines: {node: '>= 20.12.0'}
 
-  '@clerk/backend@3.4.9':
-    resolution: {integrity: sha512-2sbnGrHga3t/IFAkyvWO6H9QG1bnj7KUA13hpRB9utOYGCRdCn6oLxtiSdH6uGUzjX/km1dtw0uwZIxYgHbuVA==}
+  '@clerk/backend@3.4.13':
+    resolution: {integrity: sha512-3BABnKE1YZpQqJ/S8QD5FpzE7jq+mgaMrO7rLiWTI8Bfs/xk11XYSp1lMEf3BTo/rzEtaUsXaVDGvccYogKapg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/nextjs@7.3.5':
-    resolution: {integrity: sha512-Q2VaWLqnZrvWrbyQdji34fIBBHdZtRHjhd+BmW8a70Gxk2MKGgd9S7CzDFUBC/Q9jBjgGeZAZkH47WEK0opZow==}
+  '@clerk/nextjs@7.4.1':
+    resolution: {integrity: sha512-hFdzwF9RwymIdYuIRxNknAu0IiUZmcFweVWUg+Lu/dOZSHeNS/2H8dVa7B4LpAcYg07nEdU/FIdfvWU12lo/IQ==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       next: ^15.2.8 || ^15.3.8 || ^15.4.10 || ^15.5.9 || ^15.6.0-0 || ^16.0.10 || ^16.1.0-0
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/react@6.6.4':
-    resolution: {integrity: sha512-jhXqn1GFv309/gvVOdm3pBbeHDVVolyKbbrnHmvB+sAxEiwT7fIMP1JRUe2Rr1ycevMXRnxDzZmidra5xoFPKw==}
+  '@clerk/react@6.7.1':
+    resolution: {integrity: sha512-OW88xeoTLhYC1CuKDa328BNvY4gA0HM/jpFd8K88YBjRNQ9FGlNRq2bmRiCZOqu7XMqq8ky/tRsjU6ccWvd2rg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/shared@4.12.0':
-    resolution: {integrity: sha512-LEe3lpi1r2DhFH9FuqzVrDQ2UkQJ3TA6XkkqnfHHRBfAJdh+jnYXYiivQpj3znMCihm3FVLOMXcpSqBz80XoQg==}
+  '@clerk/shared@4.13.1':
+    resolution: {integrity: sha512-DyUtvNHgMmqjtTM0q285jKaAXUmCDSyItiGQTt1dNL0M6DZ3bxqsJz7wXPjh9zezmU4BAnLpwhj5gsM3OuNPzA==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -1795,110 +1799,170 @@ packages:
   '@petamoriken/float16@3.9.3':
     resolution: {integrity: sha512-8awtpHXCx/bNpFt4mt2xdkgtgVvKqty8VbjHI/WWWQuEw+KLzFot3f4+LkQY9YmOtq7A5GdOnqoIC8Pdygjk2g==}
 
-  '@posthog/core@1.29.2':
-    resolution: {integrity: sha512-DYhR0Sl7pVdUXa+C9poCVjTj3D6SI9P7RLhIhr74YyHeHuCGL/MZsDEWcz3ul3qHDIhZU9myIUjID890QiQw+g==}
+  '@posthog/core@1.29.9':
+    resolution: {integrity: sha512-DjvuIyBZ2Z/gBhtZlITlM2D8PlnMsHSQ1D78dbUYoVsgGguvanpJTobZObjLlFkybyvfZFYkpoJkFNI/2Pw4IQ==}
 
-  '@posthog/types@1.373.5':
-    resolution: {integrity: sha512-K7STCnRG/WBE1q0BwEkIcrJB5OqECaymsQj6Hp4Ntvaek4dqHkZGfp6hxwIPqQPjlOXwidwPLo+XGsn+CoZUyw==}
+  '@posthog/types@1.376.0':
+    resolution: {integrity: sha512-gbFfxCuZDs/D4QZMwdE+smD1jsuqgGpS6yKGHZZ19foxMy8RYHsU1E47iG1b88n/uN02fAabLibVwuxLtq8juw==}
 
-  '@prisma-next/adapter-postgres@0.8.0':
-    resolution: {integrity: sha512-YLzaPw+DZX9/FdPi3NK8bBEUpATULW+GTkB6v8BIl/upgVp6XkKxJe1rq2JEeDcxYF71JNhI8le7HCrAsfMoEQ==}
+  '@prisma-next/adapter-postgres@0.11.0':
+    resolution: {integrity: sha512-L5nx2kLzBD+0HZ8olvOlVMJohAo0lRcspmPMKNLIFmqdPTQxfdmAHrVbM1tTTw0Q8DcRvO2243oP6ir9eSkoCw==}
+
+  '@prisma-next/cli-telemetry@0.11.0':
+    resolution: {integrity: sha512-Vbhl/4gcch7fMFcuaVSJdhsaqt2aC8uyBZ2q9ZPjAU9QZ2IrG+w2YwfQdC9AXe2sf5BEJ4I/4cXyvV5bCCSYDA==}
+
+  '@prisma-next/cli@0.11.0':
+    resolution: {integrity: sha512-iFtlGtZ+6bb3JrSajnn/2gdnbMWl6d2aj4TkoqMHUyqYRXwPXGYQX/dL3+O1t+K2jnqah0M4tWj7zmJL9Be57w==}
+    hasBin: true
 
   '@prisma-next/cli@0.8.0':
     resolution: {integrity: sha512-3tVU24PDPwQFTEcI4K/RC9eC1aEHsSSNCAcg2/zpl3qH1FcjgRLc7XMkzqWnMH35ifPkPrwxuOjlNXp239643w==}
     hasBin: true
 
+  '@prisma-next/config@0.11.0':
+    resolution: {integrity: sha512-Yza+AB0wps5vP8TozZl1qinY/fm04kb9E7i1FJts+pEDDElZH04iaTNv+NeOcWNCXVNkdPnPSJnXXi1XekFxfw==}
+    engines: {node: '>=20'}
+
   '@prisma-next/config@0.8.0':
     resolution: {integrity: sha512-RMZk/At00KC6tWrdfLnu2yXcWLjfPljiQgd1Ucr5Xfs2Fw5QA1c0/Rp/nb+2hfnCPLjiZ1Q71cNIzFEb3HNkrQ==}
     engines: {node: '>=20'}
 
+  '@prisma-next/contract-authoring@0.11.0':
+    resolution: {integrity: sha512-yJ/CKtr51Xa33ojs5GfdpVk0RvO8MFa/nuiEOr5G1BdQO4H7r8qg448SzEimyjpQy/D8AIPzY5rWIT10P66HlQ==}
+
   '@prisma-next/contract-authoring@0.8.0':
     resolution: {integrity: sha512-LQ4kLO9U/adM9RdtWDOtNlkdq8wzpGs9Yml0yVun0t8zOoULvQkMFKsK1lHOnU9+xwBgHLUTnewU96ll436I9w==}
+
+  '@prisma-next/contract@0.11.0':
+    resolution: {integrity: sha512-PDddWjEtp9E5txyxavUxQ1fjH2pasjh57NZp6103swe9EatJP8LKqz9mBKo6zhuhF3xJasNgPBbNCMc4x4I0gg==}
+    engines: {node: '>=20'}
 
   '@prisma-next/contract@0.8.0':
     resolution: {integrity: sha512-n9mgNwBX1PSNHOFWXAhFihOv7osD+ZbAFlY5fVVPjOKKXpTcCUi0/Hqo5SIjhz8JKXpsGqz/Eq4X23c9Y3C99g==}
     engines: {node: '>=20'}
 
-  '@prisma-next/driver-postgres@0.8.0':
-    resolution: {integrity: sha512-dg5FQ+hFYC3NwyZPoMN6/ppbLdEWnxN+w1z2XkaVSic5VFC/eXRONxMBlE0YNM69/AhXXbavtBmHklFBw0xduQ==}
+  '@prisma-next/driver-postgres@0.11.0':
+    resolution: {integrity: sha512-iNQEeh/3XwGr/MO1nTjos69bgZSfTZsWP2b4aktejMEmev3FicW/MMHNZjbIeQzscWy0XrGEFLmUPAZ0OvjA8A==}
+
+  '@prisma-next/emitter@0.11.0':
+    resolution: {integrity: sha512-ehcN/PpgWVeNjRpBBDCFuRuPfOcTEIiHiNZCrB3U+wpXfaekqLLzDuN6sh4Jj+qp5JuLAMyw+zXvUx6J9+Ualw==}
 
   '@prisma-next/emitter@0.8.0':
     resolution: {integrity: sha512-GU/WGpwNejOUauIY0diE3OMYsIfw3SuzH9FpzEri8nl5jvmzjG44Sa6gMEc/g22D3MSD9Ufn2rsLc2K5RmC9wA==}
+
+  '@prisma-next/errors@0.11.0':
+    resolution: {integrity: sha512-XBqO7Igiym6bL0361KJLpFflcGPXsjBaRAklR3vtH+Js1E1MS0OWRVB+l5AT5E6REN2aVJstafykdaVgMq1B6Q==}
+    engines: {node: '>=20'}
 
   '@prisma-next/errors@0.8.0':
     resolution: {integrity: sha512-/ojKRvq4wYuH2ipTla9BeqGKZRFR6VIloxyXU+G2IILhpcobIepYTiOaafVd1ajx8KgR3Ux/rn8oTemIihdceA==}
     engines: {node: '>=20'}
 
-  '@prisma-next/family-sql@0.8.0':
-    resolution: {integrity: sha512-L2wFXFv2gDFb2E+jm2HIUGSNMNuUwhZRzxDk4YzWEaG4+Xmj1kuv6tdqCLkTzuW9Re1OXMBivqtdIGDS9u4UWA==}
+  '@prisma-next/family-sql@0.11.0':
+    resolution: {integrity: sha512-bLAsWdbTRLn7m6K4J+tj+E4F+4/OjRvnAbg6MKnBN1WOULnZN/SFPSbxIDt+l3RE16lsZmyVS04FjnprRLtesQ==}
+
+  '@prisma-next/framework-components@0.11.0':
+    resolution: {integrity: sha512-yrBN3BOZKBIaKSgTR791ZC8vBLkQRppaAWFm2w5rVseGYElu4x1JVew33exnC2OikR6/AQeRswqA78Kpqiej0w==}
 
   '@prisma-next/framework-components@0.8.0':
     resolution: {integrity: sha512-t0RXECncHX+gby7mCT/WbBXGvayQQ6/JmwmE24dArxFqhj+HqDaTCa6OVPN7MRyuPZ3sAXc3g46EpNsQY3Sx9A==}
 
-  '@prisma-next/ids@0.8.0':
-    resolution: {integrity: sha512-Z8LnSHxtdcX0Fj976zb8dM3PmeRKErWBGUdtExBAgu4aU1So0buG3qOQKkx36Ff1AvD6YhNQFAvTYdSJymPjqg==}
+  '@prisma-next/ids@0.11.0':
+    resolution: {integrity: sha512-5Z3hCDibcuMEGd/Jb8bqhd65x5lLFdExhj9IletPj+b9et3xY/HMDN0ZbUWSiMR97KvvvgcDiI82i/15T1QiWA==}
+
+  '@prisma-next/migration-tools@0.11.0':
+    resolution: {integrity: sha512-QU9QGA1EbNMsi9LC6EMPeeBc9KBI0V3x4ptBoLPuocI6QG7d7fQlmu7qXS2qQUO6DmqMiDptK5InRKLB3uki8A==}
+    engines: {node: '>=20'}
 
   '@prisma-next/migration-tools@0.8.0':
     resolution: {integrity: sha512-MRHV/CcQTHiliG+5jIFgnWrcIC8dfr9/Oh7WgOz9djysNxiytphE0QZAvKwghCC8dCXFTS4giAhimBsNjblv1A==}
+    engines: {node: '>=20'}
+
+  '@prisma-next/operations@0.11.0':
+    resolution: {integrity: sha512-viAM+bmj9dVWdeO3R24TXorKC3v+6SyKyIQjQKmTSe4x1iwj6TjODxHbd6y6VUum/pph5Q79y3Flji+5vPDIcw==}
     engines: {node: '>=20'}
 
   '@prisma-next/operations@0.8.0':
     resolution: {integrity: sha512-zT0DFdXYSDfenBzyAZpkoMXRamw6fN9gcRQeVkaq3EhtCMCbIIj+gTMMYIFEKRLgbzqvdkRmEl3IV0ouyvvCyQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/postgres@0.8.0':
-    resolution: {integrity: sha512-UrUd7SBxgnCGm41+VbeGuYFkWU5ym8IPRO1Uem+M98w4sYk/EYuJCnF/KDpL2scqy3qg22MMc92j1jiz6d2Anw==}
+  '@prisma-next/postgres@0.11.0':
+    resolution: {integrity: sha512-SCjjAJ/ZmhCFG9A8kwvCHlzg6eIy5371AOboDKkithlJPDcaj94Z3ba31bkzgMARb03BA7bb/vann1zNWLK9Ug==}
     engines: {node: '>=20'}
+
+  '@prisma-next/psl-parser@0.11.0':
+    resolution: {integrity: sha512-fMNQJAYsdm+r9MAmdAGzMoGqIqzu9U5LIvXK4OuFNtUispJObhhxprrVvJVLL+sJREbgVhug95+Ahko6XngHxg==}
 
   '@prisma-next/psl-parser@0.8.0':
     resolution: {integrity: sha512-cDsVRqq0SZ3W+du1fFaUOe679dV1Zl35C9wmgSLQQ9LYohiEWsTsWfACDO9oOhLUOzeK6iFJb5WMdEgbvf/6Fg==}
 
+  '@prisma-next/psl-printer@0.11.0':
+    resolution: {integrity: sha512-OP6ipK83ycC6OgtXkcaQgxJvvDPZZvrhO8w4ILhYQdYXdTjUZXTDa0+bJxr9p+KgM3FDYR0oxRKyBFEDNokf4w==}
+
   '@prisma-next/psl-printer@0.8.0':
     resolution: {integrity: sha512-M4jM5ZMVUMYNwmUTnuA3wqtjYVKIRfvh9XA5e26pCPFuBimDtHHN3PdDTciueCTrCqA4/Agl2xRQrACmUPaZ4A==}
 
-  '@prisma-next/sql-builder@0.8.0':
-    resolution: {integrity: sha512-bCCEL7AkfAiGJUX3457YpRqVhfQbjbFbe2BaLD8JyqQPdwQOq7yHyDQuZwtG36zaPgGK9X7VzrFbNfxA+Q+Oww==}
+  '@prisma-next/sql-builder@0.11.0':
+    resolution: {integrity: sha512-iDtZwaQq2wUV6HOB41x4A8rFH/xsk/+OlyKOiPWJV1KKEVbG9ao9ItJlLVtjNrgLtUEcv2xVg4DMY2mECsEv1g==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-contract-emitter@0.8.0':
-    resolution: {integrity: sha512-7OYXFoRrWFN7qfxGnI1CvqqMMwGGffDeazO2JSzOL2rOR8T/SlqQGg8wXRckR6HNgXQisZKFc8aEPTJcLioJew==}
+  '@prisma-next/sql-contract-emitter@0.11.0':
+    resolution: {integrity: sha512-39iWRUR2dZ9NIbv7QAOMUV9qK3HnGweFdTEXnutWJdsGvyDnkxt59FgJZbNwBy01xuIhmh3ZA+l7g+IxyYI/OA==}
 
-  '@prisma-next/sql-contract-psl@0.8.0':
-    resolution: {integrity: sha512-cJFUOyDWwb8FR3YLm1Ye18luofSoVwJiMO1LPmnjAH9W+da8mbkFpH0OuJbppeHAnKkY4lqKj5HPW9Ow0RZ3Jg==}
+  '@prisma-next/sql-contract-psl@0.11.0':
+    resolution: {integrity: sha512-fooOPbsnfEPJwxW+jt5fVEyOn6sT3Q6S5DtmxWwIqwkuJRZk8zAh/FoPq1daTiJT5u7XjJjysdztUzJ0uUK56g==}
+
+  '@prisma-next/sql-contract-ts@0.11.0':
+    resolution: {integrity: sha512-30YBhrj4A4COsOC6Ogz50ONU383sy7NZ/vP/Mb2iw/+6SlVKymg812gSw9+w8a668MzJnDzribJ/stXqPXdXsw==}
 
   '@prisma-next/sql-contract-ts@0.8.0':
     resolution: {integrity: sha512-sjfYhT7nyuBJVVxAztlnLppcouXms71BreCXOvvuGp5nw4CzMECD12qjRt8BHcNDdpVSSYeUIhd/TIeMD/qtcQ==}
 
+  '@prisma-next/sql-contract@0.11.0':
+    resolution: {integrity: sha512-rztm5R0nmumIp6IKPmmQPLFnyzXgq4geOna0/tMRNqNOxvzvtpmVusFOq049Q39Bc05Y9l9NbJ5nq2E0PArWYA==}
+
   '@prisma-next/sql-contract@0.8.0':
     resolution: {integrity: sha512-SJbWPz05GlOrV58Dbk5Tfx88cAbgH7nqd1NWQ66yT5E1OSJ4SGwZCyJbtUnbb9HqLqqphYws6vDBmmMy5NQ77w==}
 
-  '@prisma-next/sql-errors@0.8.0':
-    resolution: {integrity: sha512-e7KCFVmHEHOXNHYx6XOr0xW/kTCwo0yeyE/zR2EZVTyNjDRGTCS7FOkqOSVWyPwGmUosDogY51ojChZYfn/fdw==}
+  '@prisma-next/sql-errors@0.11.0':
+    resolution: {integrity: sha512-FCr89Hofj8dBQ40zaQ+dzCqkrJSQIf7DM6HOm9KdwOjNke7fJLCAwsRGmiaet61MWEYikQjBletRAahyKli+9w==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-operations@0.8.0':
-    resolution: {integrity: sha512-uBTbNPsCjSMQxBw9ZV0K4egON2Vnp/YUe70dVEw/FPczR/w7/NKqiMhZ74qNpfxtFxpkefJ+nfERkMs3bnm1IQ==}
+  '@prisma-next/sql-operations@0.11.0':
+    resolution: {integrity: sha512-ktjE5aLXGGiFjtFXPAQyo9S8+9FilintKGgEy+EJxB7sHKqRezUhT41v329EyZY5WzapCgq2LtCRpCtFBuoeLA==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-orm-client@0.8.0':
-    resolution: {integrity: sha512-UOCWxxY6uIj3FRJur7xztp/lz9Tm0RWaTw0CLxV0sFnoJ+QTHvjkTY3nIvgc/vvqsgtb4EpkthDDJAQjzK5VlQ==}
+  '@prisma-next/sql-orm-client@0.11.0':
+    resolution: {integrity: sha512-i5lsOwUzgCxhLmRGH9WzrgDGgrVvn3iIV352Ibu4UFj1EgLVIOYJOSSYwz8nCjBgpoynn4D2iDyx2lxz0cpPRA==}
     engines: {node: '>=20'}
 
-  '@prisma-next/sql-relational-core@0.8.0':
-    resolution: {integrity: sha512-l+hfL3ChYJI1oBgd9dZqUbf+I1dMpUBqlHzZJG1zyXv5wcTlqXbtOk18EoYe+BXp6jnHBwgQDsiBayLvB+ehpQ==}
+  '@prisma-next/sql-relational-core@0.11.0':
+    resolution: {integrity: sha512-D8LRwBWXZgYGcbMp85LQcecv4KO5ADeg/vgvXXiM1+kisYYrC9lbIEKCUIhmGPWqQ27N335OckqoFceLpoDf2w==}
 
-  '@prisma-next/sql-runtime@0.8.0':
-    resolution: {integrity: sha512-YLqJTzxFcpC5y/2ZPfWqvlHgifqJ/ADAXM8o7PHhrEJ5Z9fivppkEfVUlgnRVDjvPGGwCUY3VbK3FqOL/SbmXw==}
+  '@prisma-next/sql-runtime@0.11.0':
+    resolution: {integrity: sha512-UFwHj69jM0XDlB0YVuXOp+7PayYI9xTGG2l/ecE3aUg4pz79rtKpZ6JqL7IatiISaId6KsRGWtG1/YobwX+XzQ==}
+
+  '@prisma-next/sql-schema-ir@0.11.0':
+    resolution: {integrity: sha512-EcNDZ21o2z3pCe4nSedYjhSAXcSBQ5eK6K33IkGoL+C0Tns62Ks0Sj6oBHHdlu7iWrzdiEs9kMoZ0moh5h9wEg==}
+    engines: {node: '>=20'}
 
   '@prisma-next/sql-schema-ir@0.8.0':
     resolution: {integrity: sha512-8xv+leV0bAK8jaFJN5ngEDUeYZGlvXvP/csiCzz8LHC5M4OTouGpbgyDDXFwC9tJThLaCZUK1zVF4XRYP9hftQ==}
     engines: {node: '>=20'}
 
-  '@prisma-next/target-postgres@0.8.0':
-    resolution: {integrity: sha512-CXkzmyXhtvcfhaBXBDlyb6Aq2wISQuax2pUbK+tq+e9Acz0idDRZk3FtvCkPUkviKv6ZAPA8EpnB9FT3iP3KGw==}
+  '@prisma-next/target-postgres@0.11.0':
+    resolution: {integrity: sha512-ZILsX/yJ99WCUZPi9Dlj3Ww2uvdrFF0BQ6f8pSKOR130WTSyniGTKY176/1zG4aNnZ+dCOqkjL/1eaZ+2/zZ5Q==}
+
+  '@prisma-next/ts-render@0.11.0':
+    resolution: {integrity: sha512-OX//hWyh9KMd2440KjA0R4vkDCZIQbzpgdirEeHnNxOuQ4QKgHCFSjg/3sqIeSRCBG0WnzAtrVBpsFV1qSHBsg==}
+    engines: {node: '>=20'}
 
   '@prisma-next/ts-render@0.8.0':
     resolution: {integrity: sha512-IYx4NLsTaJxVlUWI+QQyY8LgLEHUOqqxTOwAlhSyXbzbTXiz89DN/I/swtapH3cl1Tk/PAJG9c5vKMl3lfAcng==}
+    engines: {node: '>=20'}
+
+  '@prisma-next/utils@0.11.0':
+    resolution: {integrity: sha512-QUA2q5Qw0tFqXea5bK3M0jGVFpFpQ3kgAW51RhENkiShnIyWh0Jjn2TKBrvWBXCzvfF1kJI20/Hr7X8xC9p+3g==}
     engines: {node: '>=20'}
 
   '@prisma-next/utils@0.8.0':
@@ -2461,6 +2525,10 @@ packages:
     resolution: {integrity: sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==}
     engines: {node: '>= 20.19.0'}
 
+  ci-info@4.4.0:
+    resolution: {integrity: sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg==}
+    engines: {node: '>=8'}
+
   client-only@0.0.1:
     resolution: {integrity: sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==}
 
@@ -2697,8 +2765,8 @@ packages:
   es-module-lexer@1.7.0:
     resolution: {integrity: sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==}
 
-  es-object-atoms@1.1.1:
-    resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==}
+  es-object-atoms@1.1.2:
+    resolution: {integrity: sha512-HWcBoN6NileqtSydK2FqHbS/LoDd2pqrnQHLyJzBj4kOp/ky2MWMN694xOfkK8/SnUsW2DH7EfyVlydKCsm1Zw==}
     engines: {node: '>= 0.4'}
 
   esbuild-register@3.6.0:
@@ -2941,8 +3009,8 @@ packages:
     resolution: {integrity: sha512-ej4AhfhfL2Q2zpMmLo7U1Uv9+PyhIZpgQLGT1F9miIGmiCJIoCgSmczFdrc97mWT4kVY72KA+WnnhJ5pghSvSg==}
     engines: {node: '>= 0.4'}
 
-  hono@4.12.19:
-    resolution: {integrity: sha512-xa3eYXYXx68XTT4hZ7dRzsXBhaq85ToSrlUJNoR0gwz/1Ap/CNwX47wfvV7pc/xWhjKVVkLT7zBJy8chhNguqQ==}
+  hono@4.12.23:
+    resolution: {integrity: sha512-eIaZ9qDgu7XV0pxOCrg7/WhnQ6Ivm22UcxhXx/A3dcbqbbYgBEkc6e/J/s7j2tS96zoB0S9VBdLwQNCWwUo4LA==}
     engines: {node: '>=16.9.0'}
 
   http-errors@2.0.1:
@@ -3036,9 +3104,9 @@ packages:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
     engines: {node: '>=10'}
 
-  js-cookie@3.0.5:
-    resolution: {integrity: sha512-cEiJEAEoIbWfCZYKWhVwFuvPX1gETRYPw6LlaTKoxD3s2AkXzkCjnp6h0V77ozyqj0jakteJ4YqDJT830+lVGw==}
-    engines: {node: '>=14'}
+  js-cookie@3.0.7:
+    resolution: {integrity: sha512-z/wZZgDrkNV1eA0ULjM/F9/50Ya8fbzgKneSpoPsXSGd0KnpdtHfOZWK+GcwLk+EZbS4F9RBhU+K2RgzuDaItw==}
+    engines: {node: '>=20'}
 
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
@@ -3383,11 +3451,17 @@ packages:
   pg-cloudflare@1.3.0:
     resolution: {integrity: sha512-6lswVVSztmHiRtD6I8hw4qP/nDm1EJbKMRhf3HCYaqud7frGysPv7FYJ5noZQdhQtN2xJnimfMtvQq21pdbzyQ==}
 
+  pg-cloudflare@1.4.0:
+    resolution: {integrity: sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==}
+
   pg-connection-string@2.12.0:
     resolution: {integrity: sha512-U7qg+bpswf3Cs5xLzRqbXbQl85ng0mfSV/J0nnA31MCLgvEaAo7CIhmeyrmJpOr7o+zm0rXK+hNnT5l9RHkCkQ==}
 
-  pg-cursor@2.19.0:
-    resolution: {integrity: sha512-J5cF1MUz7LRJ9emOqF/06QjabMHMZy587rSPF0UuA8rCwKeeYl2co8Pp+6k5UU9YrAYHMzWkLxilfZB0hqsWWw==}
+  pg-connection-string@2.13.0:
+    resolution: {integrity: sha512-EMnU9E2fSULdsbErBbMaXJvFeD9B4+nPcM3f+4lsiCR0BHLPrLVjv3DbyM2hgQQviKJaTWIRRTjKjWlHg3p2ig==}
+
+  pg-cursor@2.20.0:
+    resolution: {integrity: sha512-HP/EbUafheaUOs7DxlG6tda/rhmsX2hCTJJJ+gCnhljGyNEs6pBHddbNuomlW3DqEhP3zYD+GqBWkYnJPIZ4tA==}
     peerDependencies:
       pg: ^8
 
@@ -3400,8 +3474,16 @@ packages:
     peerDependencies:
       pg: '>=8.0'
 
+  pg-pool@3.14.0:
+    resolution: {integrity: sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==}
+    peerDependencies:
+      pg: '>=8.0'
+
   pg-protocol@1.13.0:
     resolution: {integrity: sha512-zzdvXfS6v89r6v7OcFCHfHlyG/wvry1ALxZo4LqgUoy7W9xhBDMaqOuMiF3qEV45VqsN6rdlcehHrfDtlCPc8w==}
+
+  pg-protocol@1.14.0:
+    resolution: {integrity: sha512-n5taZ1kO3s9ngDTVxsEznOqCyToTgz0FLuPq0B33COy5pPpuWJpY3/2oRBVETuOgzdqRXfWpM9HIhp2LBBT1BA==}
 
   pg-types@2.2.0:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
@@ -3418,6 +3500,15 @@ packages:
 
   pg@8.20.0:
     resolution: {integrity: sha512-ldhMxz2r8fl/6QkXnBD3CR9/xg694oT6DZQ2s6c/RI28OjtSOpxnPrUCGOBJ46RCUxcWdx3p6kw/xnDHjKvaRA==}
+    engines: {node: '>= 16.0.0'}
+    peerDependencies:
+      pg-native: '>=3.0.1'
+    peerDependenciesMeta:
+      pg-native:
+        optional: true
+
+  pg@8.21.0:
+    resolution: {integrity: sha512-AUP1EYJuHraQGsVoCQVIcM7TEJVGtDzxWtGFZd8rds9d+CCXlU5Js1rYgfLNvxy9iJrpHjGrRjoi/3BT9fRyiA==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -3503,8 +3594,8 @@ packages:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
 
-  posthog-node@5.34.2:
-    resolution: {integrity: sha512-lGp7zyyvzNZqrto3CPq3nQzVn9ZUg5tApE8jNh12Cu8kOqT9KTABZ8kMgiybfzxVttSdE3m25RsBPLBHkxCWDg==}
+  posthog-node@5.35.2:
+    resolution: {integrity: sha512-YwzkogTUrsFeUnJJH17p3zoZBFaHIh6swYoLV4Ic5pmd8fIVTz8w7NsHR7eWmJlqYe/+Hqo1acGN1jclNUbz3A==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -3628,6 +3719,11 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
 
+  semver@7.8.1:
+    resolution: {integrity: sha512-rkVq3IXh+4FDGch+KwzX3aV9W3kO54GyEgpvBzSyctDA6Xtd7RJQV1xmXbeQp5v7+VzLOfVqiutSE6GICgPFvg==}
+    engines: {node: '>=10'}
+    hasBin: true
+
   send@1.2.1:
     resolution: {integrity: sha512-1gnZf7DFcoIcajTjTwjwuDjzuz4PPcY2StKPlsGAQ1+YH20IRVrBaXSWmdjowTJ6u8Rc01PoYOGHXfP1mYcZNQ==}
     engines: {node: '>= 18'}
@@ -3657,8 +3753,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  shell-quote@1.8.3:
-    resolution: {integrity: sha512-ObmnIF4hXNg1BqhnHmgbDETF8dLPCggZWBjkQfhZpbszZnYur5DUljTcCHii5LC3J5E0yeO/1LIMyH+UvHQgyw==}
+  shell-quote@1.8.4:
+    resolution: {integrity: sha512-VsC6n6vz1ihYYyZZwX7YZSF5l5x36ca17OC+a69h94YqB7X6XLwf+5MOgynYir2SLFUbl8gIYvBo8K8RoNQ6bQ==}
     engines: {node: '>= 0.4'}
 
   side-channel-list@1.0.1:
@@ -3859,8 +3955,8 @@ packages:
       typescript:
         optional: true
 
-  tsx@4.22.1:
-    resolution: {integrity: sha512-TvncJykhxAzFCk0VQZKBTClall4Pm7qXDSodb6uxi8QFa8X8mT6ABjxxsQ2opDRYxG7AzcRWXaFtruz5HJKuWg==}
+  tsx@4.22.3:
+    resolution: {integrity: sha512-mdoNxBC/cSQObGGVQ5Bpn5i+yv7j68gk3Nfm3wFjcJg3Z0Mix9jzAFfP12prmm5eVGmDKtp0yyArrs0Q+8gZHg==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -4031,44 +4127,44 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.150':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.143(@anthropic-ai/sdk@0.81.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.3.150(@anthropic-ai/sdk@0.81.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.81.0(zod@3.25.76)
       '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
       zod: 3.25.76
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.143
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.150
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.150
 
   '@anthropic-ai/sdk@0.81.0(zod@3.25.76)':
     dependencies:
@@ -4089,6 +4185,8 @@ snapshots:
   '@ark/util@0.56.0': {}
 
   '@babel/runtime@7.29.2': {}
+
+  '@babel/runtime@7.29.7': {}
 
   '@biomejs/biome@2.4.15':
     optionalDependencies:
@@ -4350,39 +4448,39 @@ snapshots:
       fast-wrap-ansi: 0.2.0
       sisteransi: 1.0.5
 
-  '@clerk/backend@3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/backend@3.4.13(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.12.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.13.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.3.5(next@15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/nextjs@7.4.1(next@15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/backend': 3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/react': 6.6.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/shared': 4.12.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/backend': 3.4.13(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/react': 6.7.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.13.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       next: 15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       server-only: 0.0.1
       tslib: 2.8.1
 
-  '@clerk/react@6.6.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/react@6.7.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.12.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.13.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
 
-  '@clerk/shared@4.12.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/shared@4.13.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@tanstack/query-core': 5.100.9
       dequal: 2.0.3
       glob-to-regexp: 0.4.1
-      js-cookie: 3.0.5
+      js-cookie: 3.0.7
       std-env: 3.10.0
     optionalDependencies:
       react: 19.2.3
@@ -4702,9 +4800,9 @@ snapshots:
   '@esbuild/win32-x64@0.28.0':
     optional: true
 
-  '@hono/node-server@1.19.14(hono@4.12.19)':
+  '@hono/node-server@1.19.14(hono@4.12.23)':
     dependencies:
-      hono: 4.12.19
+      hono: 4.12.23
 
   '@img/colour@1.0.0':
     optional: true
@@ -4850,7 +4948,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.29.0(zod@3.25.76)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.19)
+      '@hono/node-server': 1.19.14(hono@4.12.23)
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
       content-type: 1.0.5
@@ -4860,7 +4958,7 @@ snapshots:
       eventsource-parser: 3.0.8
       express: 5.2.1
       express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.19
+      hono: 4.12.23
       jose: 6.2.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
@@ -4914,29 +5012,71 @@ snapshots:
 
   '@petamoriken/float16@3.9.3': {}
 
-  '@posthog/core@1.29.2':
+  '@posthog/core@1.29.9':
     dependencies:
-      '@posthog/types': 1.373.5
+      '@posthog/types': 1.376.0
 
-  '@posthog/types@1.373.5': {}
+  '@posthog/types@1.376.0': {}
 
-  '@prisma-next/adapter-postgres@0.8.0(typanion@3.14.0)':
+  '@prisma-next/adapter-postgres@0.11.0(typanion@3.14.0)':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/contract-authoring': 0.8.0
-      '@prisma-next/family-sql': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/ids': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-contract-psl': 0.8.0
-      '@prisma-next/sql-contract-ts': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/sql-runtime': 0.8.0
-      '@prisma-next/sql-schema-ir': 0.8.0
-      '@prisma-next/target-postgres': 0.8.0(typanion@3.14.0)
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/contract-authoring': 0.11.0
+      '@prisma-next/errors': 0.11.0
+      '@prisma-next/family-sql': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/ids': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-contract-psl': 0.11.0
+      '@prisma-next/sql-contract-ts': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/sql-runtime': 0.11.0
+      '@prisma-next/sql-schema-ir': 0.11.0
+      '@prisma-next/target-postgres': 0.11.0(typanion@3.14.0)
+      '@prisma-next/utils': 0.11.0
       arktype: 2.2.0
+    transitivePeerDependencies:
+      - magicast
+      - typanion
+
+  '@prisma-next/cli-telemetry@0.11.0':
+    dependencies:
+      '@prisma-next/config': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+      c12: 3.3.4
+      pathe: 2.0.3
+    transitivePeerDependencies:
+      - magicast
+
+  '@prisma-next/cli@0.11.0(typanion@3.14.0)':
+    dependencies:
+      '@clack/prompts': 1.4.0
+      '@dagrejs/dagre': 3.0.0
+      '@prisma-next/cli-telemetry': 0.11.0
+      '@prisma-next/config': 0.11.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/emitter': 0.11.0
+      '@prisma-next/errors': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/migration-tools': 0.11.0
+      '@prisma-next/psl-printer': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+      c12: 3.3.4
+      ci-info: 4.4.0
+      clipanion: 4.0.0-rc.4(typanion@3.14.0)
+      closest-match: 1.3.3
+      colorette: 2.0.20
+      commander: 14.0.3
+      esbuild: 0.28.0
+      jsonc-parser: 3.3.1
+      package-manager-detector: 1.6.0
+      pathe: 2.0.3
+      string-width: 8.2.1
+      strip-ansi: 7.2.0
+      wrap-ansi: 10.0.0
     transitivePeerDependencies:
       - magicast
       - typanion
@@ -4970,6 +5110,13 @@ snapshots:
       - magicast
       - typanion
 
+  '@prisma-next/config@0.11.0':
+    dependencies:
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+
   '@prisma-next/config@0.8.0':
     dependencies:
       '@prisma-next/contract': 0.8.0
@@ -4977,7 +5124,17 @@ snapshots:
       '@prisma-next/utils': 0.8.0
       arktype: 2.2.0
 
+  '@prisma-next/contract-authoring@0.11.0':
+    dependencies:
+      '@prisma-next/framework-components': 0.11.0
+
   '@prisma-next/contract-authoring@0.8.0': {}
+
+  '@prisma-next/contract@0.11.0':
+    dependencies:
+      '@prisma-next/utils': 0.11.0
+      '@standard-schema/spec': 1.1.0
+      arktype: 2.2.0
 
   '@prisma-next/contract@0.8.0':
     dependencies:
@@ -4985,21 +5142,30 @@ snapshots:
       '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
 
-  '@prisma-next/driver-postgres@0.8.0':
+  '@prisma-next/driver-postgres@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/errors': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-errors': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/errors': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-errors': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/utils': 0.11.0
       arktype: 2.2.0
       pg: 8.20.0
-      pg-cursor: 2.19.0(pg@8.20.0)
+      pg-cursor: 2.20.0(pg@8.20.0)
     transitivePeerDependencies:
       - pg-native
+
+  '@prisma-next/emitter@0.11.0':
+    dependencies:
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+      prettier: 3.8.3
 
   '@prisma-next/emitter@0.8.0':
     dependencies:
@@ -5010,26 +5176,40 @@ snapshots:
       arktype: 2.2.0
       prettier: 3.8.3
 
+  '@prisma-next/errors@0.11.0':
+    dependencies:
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/utils': 0.11.0
+
   '@prisma-next/errors@0.8.0':
     dependencies:
       '@prisma-next/framework-components': 0.8.0
       '@prisma-next/utils': 0.8.0
 
-  '@prisma-next/family-sql@0.8.0':
+  '@prisma-next/family-sql@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/emitter': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/migration-tools': 0.8.0
-      '@prisma-next/operations': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-contract-emitter': 0.8.0
-      '@prisma-next/sql-contract-ts': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/sql-runtime': 0.8.0
-      '@prisma-next/sql-schema-ir': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/emitter': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/migration-tools': 0.11.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-contract-emitter': 0.11.0
+      '@prisma-next/sql-contract-ts': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/sql-runtime': 0.11.0
+      '@prisma-next/sql-schema-ir': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+
+  '@prisma-next/framework-components@0.11.0':
+    dependencies:
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/ts-render': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
 
   '@prisma-next/framework-components@0.8.0':
@@ -5040,12 +5220,21 @@ snapshots:
       '@prisma-next/utils': 0.8.0
       '@standard-schema/spec': 1.1.0
 
-  '@prisma-next/ids@0.8.0':
+  '@prisma-next/ids@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/utils': 0.11.0
       uniku: 0.0.12
+
+  '@prisma-next/migration-tools@0.11.0':
+    dependencies:
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+      pathe: 2.0.3
+      prettier: 3.8.3
 
   '@prisma-next/migration-tools@0.8.0':
     dependencies:
@@ -5056,26 +5245,28 @@ snapshots:
       pathe: 2.0.3
       prettier: 3.8.3
 
+  '@prisma-next/operations@0.11.0': {}
+
   '@prisma-next/operations@0.8.0': {}
 
-  '@prisma-next/postgres@0.8.0(typanion@3.14.0)':
+  '@prisma-next/postgres@0.11.0(typanion@3.14.0)':
     dependencies:
-      '@prisma-next/adapter-postgres': 0.8.0(typanion@3.14.0)
-      '@prisma-next/cli': 0.8.0(typanion@3.14.0)
-      '@prisma-next/config': 0.8.0
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/driver-postgres': 0.8.0
-      '@prisma-next/family-sql': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/sql-builder': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-contract-psl': 0.8.0
-      '@prisma-next/sql-contract-ts': 0.8.0
-      '@prisma-next/sql-orm-client': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/sql-runtime': 0.8.0
-      '@prisma-next/target-postgres': 0.8.0(typanion@3.14.0)
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/adapter-postgres': 0.11.0(typanion@3.14.0)
+      '@prisma-next/cli': 0.11.0(typanion@3.14.0)
+      '@prisma-next/config': 0.11.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/driver-postgres': 0.11.0
+      '@prisma-next/family-sql': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/sql-builder': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-contract-psl': 0.11.0
+      '@prisma-next/sql-contract-ts': 0.11.0
+      '@prisma-next/sql-orm-client': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/sql-runtime': 0.11.0
+      '@prisma-next/target-postgres': 0.11.0(typanion@3.14.0)
+      '@prisma-next/utils': 0.11.0
       pathe: 2.0.3
       pg: 8.20.0
     transitivePeerDependencies:
@@ -5083,40 +5274,62 @@ snapshots:
       - pg-native
       - typanion
 
+  '@prisma-next/psl-parser@0.11.0':
+    dependencies:
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/utils': 0.11.0
+
   '@prisma-next/psl-parser@0.8.0':
     dependencies:
       '@prisma-next/framework-components': 0.8.0
       '@prisma-next/utils': 0.8.0
 
+  '@prisma-next/psl-printer@0.11.0':
+    dependencies:
+      '@prisma-next/framework-components': 0.11.0
+
   '@prisma-next/psl-printer@0.8.0':
     dependencies:
       '@prisma-next/framework-components': 0.8.0
 
-  '@prisma-next/sql-builder@0.8.0':
+  '@prisma-next/sql-builder@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
 
-  '@prisma-next/sql-contract-emitter@0.8.0':
+  '@prisma-next/sql-contract-emitter@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/emitter': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/emitter': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/utils': 0.11.0
 
-  '@prisma-next/sql-contract-psl@0.8.0':
+  '@prisma-next/sql-contract-psl@0.11.0':
     dependencies:
-      '@prisma-next/config': 0.8.0
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/psl-parser': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-contract-ts': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/config': 0.11.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/psl-parser': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-contract-ts': 0.11.0
+      '@prisma-next/utils': 0.11.0
       pathe: 2.0.3
+
+  '@prisma-next/sql-contract-ts@0.11.0':
+    dependencies:
+      '@prisma-next/config': 0.11.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/contract-authoring': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/utils': 0.11.0
+      arktype: 2.2.0
+      pathe: 2.0.3
+      ts-toolbelt: 9.6.0
 
   '@prisma-next/sql-contract-ts@0.8.0':
     dependencies:
@@ -5130,74 +5343,85 @@ snapshots:
       pathe: 2.0.3
       ts-toolbelt: 9.6.0
 
+  '@prisma-next/sql-contract@0.11.0':
+    dependencies:
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      arktype: 2.2.0
+
   '@prisma-next/sql-contract@0.8.0':
     dependencies:
       '@prisma-next/contract': 0.8.0
       '@prisma-next/framework-components': 0.8.0
       arktype: 2.2.0
 
-  '@prisma-next/sql-errors@0.8.0': {}
+  '@prisma-next/sql-errors@0.11.0': {}
 
-  '@prisma-next/sql-operations@0.8.0':
+  '@prisma-next/sql-operations@0.11.0':
     dependencies:
-      '@prisma-next/operations': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
       arktype: 2.2.0
 
-  '@prisma-next/sql-orm-client@0.8.0':
+  '@prisma-next/sql-orm-client@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/operations': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/sql-runtime': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/sql-runtime': 0.11.0
+      '@prisma-next/utils': 0.11.0
 
-  '@prisma-next/sql-relational-core@0.8.0':
+  '@prisma-next/sql-relational-core@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/operations': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/utils': 0.11.0
       '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
       ts-toolbelt: 9.6.0
 
-  '@prisma-next/sql-runtime@0.8.0':
+  '@prisma-next/sql-runtime@0.11.0':
     dependencies:
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/ids': 0.8.0
-      '@prisma-next/operations': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/ids': 0.11.0
+      '@prisma-next/operations': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/utils': 0.11.0
       arktype: 2.2.0
+
+  '@prisma-next/sql-schema-ir@0.11.0':
+    dependencies:
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
 
   '@prisma-next/sql-schema-ir@0.8.0':
     dependencies:
       '@prisma-next/contract': 0.8.0
 
-  '@prisma-next/target-postgres@0.8.0(typanion@3.14.0)':
+  '@prisma-next/target-postgres@0.11.0(typanion@3.14.0)':
     dependencies:
-      '@prisma-next/cli': 0.8.0(typanion@3.14.0)
-      '@prisma-next/contract': 0.8.0
-      '@prisma-next/errors': 0.8.0
-      '@prisma-next/family-sql': 0.8.0
-      '@prisma-next/framework-components': 0.8.0
-      '@prisma-next/migration-tools': 0.8.0
-      '@prisma-next/sql-contract': 0.8.0
-      '@prisma-next/sql-errors': 0.8.0
-      '@prisma-next/sql-operations': 0.8.0
-      '@prisma-next/sql-relational-core': 0.8.0
-      '@prisma-next/sql-schema-ir': 0.8.0
-      '@prisma-next/ts-render': 0.8.0
-      '@prisma-next/utils': 0.8.0
+      '@prisma-next/cli': 0.11.0(typanion@3.14.0)
+      '@prisma-next/contract': 0.11.0
+      '@prisma-next/errors': 0.11.0
+      '@prisma-next/family-sql': 0.11.0
+      '@prisma-next/framework-components': 0.11.0
+      '@prisma-next/migration-tools': 0.11.0
+      '@prisma-next/sql-contract': 0.11.0
+      '@prisma-next/sql-errors': 0.11.0
+      '@prisma-next/sql-operations': 0.11.0
+      '@prisma-next/sql-relational-core': 0.11.0
+      '@prisma-next/sql-schema-ir': 0.11.0
+      '@prisma-next/ts-render': 0.11.0
+      '@prisma-next/utils': 0.11.0
       '@standard-schema/spec': 1.1.0
       arktype: 2.2.0
       pathe: 2.0.3
@@ -5205,7 +5429,11 @@ snapshots:
       - magicast
       - typanion
 
+  '@prisma-next/ts-render@0.11.0': {}
+
   '@prisma-next/ts-render@0.8.0': {}
+
+  '@prisma-next/utils@0.11.0': {}
 
   '@prisma-next/utils@0.8.0': {}
 
@@ -5473,21 +5701,13 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.4(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))':
+  '@vitest/mocker@3.2.4(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 3.2.4
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
-
-  '@vitest/mocker@3.2.4(vite@7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))':
-    dependencies:
-      '@vitest/spy': 3.2.4
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
 
   '@vitest/pretty-format@3.2.4':
     dependencies:
@@ -5652,6 +5872,8 @@ snapshots:
     dependencies:
       readdirp: 5.0.0
 
+  ci-info@4.4.0: {}
+
   client-only@0.0.1: {}
 
   clipanion@4.0.0-rc.4(typanion@3.14.0):
@@ -5742,12 +5964,12 @@ snapshots:
       pg: 8.13.1
       postgres: 3.4.9
 
-  drizzle-orm@0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9):
+  drizzle-orm@0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9):
     optionalDependencies:
       '@types/pg': 8.20.0
       gel: 2.2.0
       mysql2: 3.16.0
-      pg: 8.20.0
+      pg: 8.21.0
       postgres: 3.4.9
 
   dunder-proto@1.0.1:
@@ -5773,7 +5995,7 @@ snapshots:
 
   es-module-lexer@1.7.0: {}
 
-  es-object-atoms@1.1.1:
+  es-object-atoms@1.1.2:
     dependencies:
       es-errors: 1.3.0
 
@@ -6065,8 +6287,8 @@ snapshots:
       '@petamoriken/float16': 3.9.3
       debug: 4.4.3
       env-paths: 3.0.0
-      semver: 7.8.0
-      shell-quote: 1.8.3
+      semver: 7.8.1
+      shell-quote: 1.8.4
       which: 4.0.0
     transitivePeerDependencies:
       - supports-color
@@ -6083,7 +6305,7 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-define-property: 1.0.1
       es-errors: 1.3.0
-      es-object-atoms: 1.1.1
+      es-object-atoms: 1.1.2
       function-bind: 1.1.2
       get-proto: 1.0.1
       gopd: 1.2.0
@@ -6094,7 +6316,7 @@ snapshots:
   get-proto@1.0.1:
     dependencies:
       dunder-proto: 1.0.1
-      es-object-atoms: 1.1.1
+      es-object-atoms: 1.1.2
 
   get-stream@9.0.1:
     dependencies:
@@ -6138,7 +6360,7 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
-  hono@4.12.19: {}
+  hono@4.12.23: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -6201,7 +6423,7 @@ snapshots:
 
   joycon@3.1.1: {}
 
-  js-cookie@3.0.5: {}
+  js-cookie@3.0.7: {}
 
   js-tokens@9.0.1: {}
 
@@ -6216,7 +6438,7 @@ snapshots:
 
   json-schema-to-ts@3.1.1:
     dependencies:
-      '@babel/runtime': 7.29.2
+      '@babel/runtime': 7.29.7
       ts-algebra: 2.0.0
 
   json-schema-to-typescript@15.0.4:
@@ -6489,9 +6711,14 @@ snapshots:
   pg-cloudflare@1.3.0:
     optional: true
 
+  pg-cloudflare@1.4.0:
+    optional: true
+
   pg-connection-string@2.12.0: {}
 
-  pg-cursor@2.19.0(pg@8.20.0):
+  pg-connection-string@2.13.0: {}
+
+  pg-cursor@2.20.0(pg@8.20.0):
     dependencies:
       pg: 8.20.0
 
@@ -6501,11 +6728,17 @@ snapshots:
     dependencies:
       pg: 8.13.1
 
-  pg-pool@3.13.0(pg@8.20.0):
+  pg-pool@3.14.0(pg@8.20.0):
     dependencies:
       pg: 8.20.0
 
+  pg-pool@3.14.0(pg@8.21.0):
+    dependencies:
+      pg: 8.21.0
+
   pg-protocol@1.13.0: {}
+
+  pg-protocol@1.14.0: {}
 
   pg-types@2.2.0:
     dependencies:
@@ -6527,13 +6760,23 @@ snapshots:
 
   pg@8.20.0:
     dependencies:
-      pg-connection-string: 2.12.0
-      pg-pool: 3.13.0(pg@8.20.0)
-      pg-protocol: 1.13.0
+      pg-connection-string: 2.13.0
+      pg-pool: 3.14.0(pg@8.20.0)
+      pg-protocol: 1.14.0
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
-      pg-cloudflare: 1.3.0
+      pg-cloudflare: 1.4.0
+
+  pg@8.21.0:
+    dependencies:
+      pg-connection-string: 2.13.0
+      pg-pool: 3.14.0(pg@8.21.0)
+      pg-protocol: 1.14.0
+      pg-types: 2.2.0
+      pgpass: 1.0.5
+    optionalDependencies:
+      pg-cloudflare: 1.4.0
 
   pgpass@1.0.5:
     dependencies:
@@ -6563,13 +6806,13 @@ snapshots:
       exsolve: 1.0.8
       pathe: 2.0.3
 
-  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(yaml@2.9.0):
+  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 2.7.0
       postcss: 8.5.14
-      tsx: 4.22.1
+      tsx: 4.22.3
       yaml: 2.9.0
 
   postcss@8.4.31:
@@ -6596,9 +6839,9 @@ snapshots:
 
   postgres@3.4.9: {}
 
-  posthog-node@5.34.2:
+  posthog-node@5.35.2:
     dependencies:
-      '@posthog/core': 1.29.2
+      '@posthog/core': 1.29.9
 
   prettier@2.8.8: {}
 
@@ -6752,6 +6995,8 @@ snapshots:
 
   semver@7.8.0: {}
 
+  semver@7.8.1: {}
+
   send@1.2.1:
     dependencies:
       debug: 4.4.3
@@ -6822,7 +7067,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shell-quote@1.8.3: {}
+  shell-quote@1.8.4: {}
 
   side-channel-list@1.0.1:
     dependencies:
@@ -6984,7 +7229,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0):
+  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(typescript@5.9.3)(yaml@2.9.0):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.27.7)
       cac: 6.7.14
@@ -6995,7 +7240,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(yaml@2.9.0)
+      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.3)(yaml@2.9.0)
       resolve-from: 5.0.0
       rollup: 4.59.0
       source-map: 0.7.6
@@ -7012,7 +7257,7 @@ snapshots:
       - tsx
       - yaml
 
-  tsx@4.22.1:
+  tsx@4.22.3:
     dependencies:
       esbuild: 0.28.0
     optionalDependencies:
@@ -7058,13 +7303,13 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite-node@3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -7079,13 +7324,13 @@ snapshots:
       - tsx
       - yaml
 
-  vite-node@3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -7100,7 +7345,7 @@ snapshots:
       - tsx
       - yaml
 
-  vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       esbuild: 0.27.7
       fdir: 6.5.0(picomatch@4.0.4)
@@ -7114,10 +7359,10 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.2
       terser: 5.44.1
-      tsx: 4.22.1
+      tsx: 4.22.3
       yaml: 2.9.0
 
-  vite@7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite@7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       esbuild: 0.27.7
       fdir: 6.5.0(picomatch@4.0.4)
@@ -7131,14 +7376,14 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.2
       terser: 5.44.1
-      tsx: 4.22.1
+      tsx: 4.22.3
       yaml: 2.9.0
 
-  vitest@3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vitest@3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.4(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.4
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
@@ -7156,8 +7401,8 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.19.19
@@ -7175,11 +7420,11 @@ snapshots:
       - tsx
       - yaml
 
-  vitest@3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vitest@3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.4
-      '@vitest/mocker': 3.2.4(vite@7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.4(vite@7.3.3(@types/node@22.19.19)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.4
       '@vitest/runner': 3.2.4
       '@vitest/snapshot': 3.2.4
@@ -7197,8 +7442,8 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.3(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.3)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 25.8.0
