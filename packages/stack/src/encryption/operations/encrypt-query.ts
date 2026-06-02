@@ -17,9 +17,6 @@ import {
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
-/**
- * @internal Use {@link EncryptionClient.encryptQuery} instead.
- */
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
@@ -114,9 +111,6 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
   }
 }
 
-/**
- * @internal Use {@link EncryptionClient.encryptQuery} with `.withLockContext()` instead.
- */
 export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,

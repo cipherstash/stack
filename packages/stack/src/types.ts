@@ -3,6 +3,9 @@ import type {
   EncryptedField,
   EncryptedTable,
   EncryptedTableColumn,
+  // Imported type-only for the TSDoc {@link} references in the comments below.
+  encryptedColumn,
+  encryptedField,
 } from '@/schema'
 import type {
   Encrypted as CipherStashEncrypted,
