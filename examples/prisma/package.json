@@ -1,7 +1,7 @@
 {
   "name": "@cipherstash/prisma-next-example",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "End-to-end example of @cipherstash/prisma-next: searchable application-layer encryption for Postgres with Prisma Next, using @cipherstash/stack as the SDK.",
   "type": "module",
   "scripts": {
