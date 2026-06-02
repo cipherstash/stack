@@ -658,7 +658,7 @@ export function encryptedField(valueName: string) {
 /**
  * Build an encrypt config from a list of encrypted tables.
  *
- * @param ...tables - The list of encrypted tables to build the config from.
+ * @param protectTables - The list of encrypted tables to build the config from.
  * @returns An encrypt config object.
  *
  * @example

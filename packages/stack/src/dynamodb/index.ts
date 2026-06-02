@@ -97,3 +97,12 @@ export type {
   EncryptedDynamoDBError,
   EncryptedDynamoDBInstance,
 } from './types'
+
+// Re-export the operation classes returned by the DynamoDB instance methods so
+// they are part of the public API and appear in the generated reference.
+export {
+  EncryptModelOperation,
+  DecryptModelOperation,
+  BulkEncryptModelsOperation,
+  BulkDecryptModelsOperation,
+}

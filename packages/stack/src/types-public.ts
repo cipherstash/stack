@@ -11,6 +11,7 @@ export type {
   Client,
   EncryptedValue,
   Encrypted,
+  EncryptedQuery,
 } from '@/types'
 
 // Client configuration
@@ -35,6 +36,7 @@ export type {
   OtherFields,
   DecryptedFields,
   Decrypted,
+  EncryptedFromSchema,
 } from '@/types'
 
 // Bulk operations

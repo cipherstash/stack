@@ -1,10 +1,17 @@
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+// `LockContext` is imported type-only so the TSDoc {@link} references in the
+// comments below resolve; it is erased at compile time.
+import type { LockContext } from '@/identity'
 import {
   type EncryptConfig,
   type EncryptedTable,
   type EncryptedTableColumn,
   buildEncryptConfig,
   encryptConfigSchema,
+  // Imported type-only for the TSDoc {@link} references in the comments below.
+  type encryptedColumn,
+  type encryptedField,
+  type encryptedTable,
 } from '@/schema'
 import type {
   BulkDecryptPayload,
@@ -34,6 +41,22 @@ import { DecryptModelOperation } from './operations/decrypt-model'
 import { EncryptOperation } from './operations/encrypt'
 import { EncryptModelOperation } from './operations/encrypt-model'
 import { EncryptQueryOperation } from './operations/encrypt-query'
+
+// Re-export the operation classes returned by EncryptionClient methods so they
+// are part of the public API and appear in the generated reference, allowing
+// TSDoc {@link} references and method return types to resolve to real pages.
+export {
+  EncryptOperation,
+  EncryptQueryOperation,
+  BatchEncryptQueryOperation,
+  DecryptOperation,
+  EncryptModelOperation,
+  DecryptModelOperation,
+  BulkEncryptOperation,
+  BulkDecryptOperation,
+  BulkEncryptModelsOperation,
+  BulkDecryptModelsOperation,
+}
 
 export const noClientError = () =>
   new Error(
@@ -610,7 +633,7 @@ export class EncryptionClient {
  *   {@link EncryptionClient.encrypt}, {@link EncryptionClient.decrypt}, and related operations.
  *
  * @throws Throws if `schemas` is empty, or if a keyset `id` is supplied but is not a valid UUID.
- *   Also throws if {@link EncryptionClient.init} fails (e.g. invalid credentials or config).
+ *   Also throws if the client fails to initialize (e.g. invalid credentials or config).
  *
  * @example
  * ```typescript

@@ -91,9 +91,6 @@ function assembleResults(
   return results
 }
 
-/**
- * @internal Use {@link EncryptionClient.encryptQuery} with array input instead.
- */
 export class BatchEncryptQueryOperation extends EncryptionOperation<
   EncryptedQueryResult[]
 > {
@@ -168,9 +165,6 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
   }
 }
 
-/**
- * @internal Use {@link EncryptionClient.encryptQuery} with array input and `.withLockContext()` instead.
- */
 export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperation<
   EncryptedQueryResult[]
 > {
