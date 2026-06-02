@@ -13,7 +13,8 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/cipherstash/protectjs.git"
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "packages/nextjs"
 	},
 	"license": "MIT",
 	"author": "CipherStash <hello@cipherstash.com>",
