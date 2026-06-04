@@ -2,6 +2,26 @@
 
 ### Documentation
 
+- point authorize_dto refresher links at structs
+
+### Features
+
+- OidcFederationStrategy — federate a third-party OIDC JWT into a CTS service token
+- verify federated token's workspace in OidcFederationStrategy
+- napi + wasm bindings for OidcFederationStrategy
+
+### Miscellaneous
+
+- adopt biome for JS/TS formatting + CI
+
+### Refactoring
+
+- drop audience from OidcFederationStrategy; clarify provider docs
+- rename OAuthStrategy to DeviceSessionStrategy
+
+
+### Documentation
+
 - note InvalidToken alongside WorkspaceMismatch
 - add 0.39.0 changelog entry
 - refresh AutoStrategy detection-order comment
