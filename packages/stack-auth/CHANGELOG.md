@@ -19,12 +19,6 @@
 - drop audience from OidcFederationStrategy; clarify provider docs
 - rename OAuthStrategy to DeviceSessionStrategy
 
-### Review
-
-- address PR #2004 feedback on wasm bindings
-- address Toby + Lindsay feedback on napi binding
-- address rename PR feedback
-
 
 ### Documentation
 
