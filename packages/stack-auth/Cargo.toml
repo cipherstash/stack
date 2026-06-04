@@ -38,7 +38,7 @@ zeroize = { workspace = true }
 #   compile on wasm32. Workspace dep is `features = ["full"]` so we can't
 #   subtract — split target-conditionally instead.
 #
-# Wasm consumers use `OAuthStrategy::with_token` (in-memory) or
+# Wasm consumers use `DeviceSessionStrategy::with_token` (in-memory) or
 # `AccessKeyStrategy`, and JWT claim decoding falls back to a manual
 # base64+JSON path that doesn't need `ring`.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

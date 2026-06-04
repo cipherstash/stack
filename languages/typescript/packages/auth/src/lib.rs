@@ -178,24 +178,24 @@ impl AccessKeyStrategy {
 }
 
 // ---------------------------------------------------------------------------
-// OAuthStrategy — OAuth with profile store
+// DeviceSessionStrategy — OAuth with profile store
 // ---------------------------------------------------------------------------
 
 /// An auth strategy that uses OAuth refresh tokens persisted to disk
 /// (`~/.cipherstash/auth.json`).
 #[napi]
-pub struct OAuthStrategy {
-    inner: stack_auth::OAuthStrategy,
+pub struct DeviceSessionStrategy {
+    inner: stack_auth::DeviceSessionStrategy,
 }
 
 #[napi]
-impl OAuthStrategy {
-    /// Load credentials from the default profile store and create an `OAuthStrategy`.
+impl DeviceSessionStrategy {
+    /// Load credentials from the default profile store and create a `DeviceSessionStrategy`.
     #[napi(factory)]
     pub fn from_profile() -> Result<Self> {
         let store = stack_profile::ProfileStore::resolve(None)
             .map_err(|e| to_napi_error(AuthError::from(e)))?;
-        let inner = stack_auth::OAuthStrategy::with_profile(store)
+        let inner = stack_auth::DeviceSessionStrategy::with_profile(store)
             .build()
             .map_err(to_napi_error)?;
         Ok(Self { inner })

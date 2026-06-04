@@ -1,7 +1,7 @@
 use cts_common::Crn;
 
 use crate::access_key_strategy::AccessKeyStrategy;
-use crate::oauth_strategy::OAuthStrategy;
+use crate::device_session_strategy::DeviceSessionStrategy;
 #[cfg(not(target_arch = "wasm32"))]
 use stack_profile::ProfileStore;
 
@@ -21,7 +21,7 @@ use crate::{AuthError, AuthStrategy, ServiceToken};
 ///    its region drives service discovery and its workspace ID is used
 ///    to verify every issued token.
 /// 2. If a token store file exists at the default location
-///    (`~/.cipherstash/auth.json`), an [`OAuthStrategy`] is created from it.
+///    (`~/.cipherstash/auth.json`), a [`DeviceSessionStrategy`] is created from it.
 /// 3. Otherwise, [`AuthError::NotAuthenticated`] is returned.
 ///
 /// # Examples
@@ -53,7 +53,7 @@ pub enum AutoStrategy {
     /// Authenticated via a static access key.
     AccessKey(AccessKeyStrategy),
     /// Authenticated via OAuth tokens persisted on disk.
-    OAuth(OAuthStrategy),
+    DeviceSession(DeviceSessionStrategy),
 }
 
 impl AutoStrategy {
@@ -90,7 +90,7 @@ impl AutoStrategy {
     ///
     /// Resolution order:
     /// 1. `CS_CLIENT_ACCESS_KEY` env var → [`AccessKeyStrategy`]
-    /// 2. `~/.cipherstash/auth.json` → [`OAuthStrategy`]
+    /// 2. `~/.cipherstash/auth.json` → [`DeviceSessionStrategy`]
     /// 3. [`AuthError::NotAuthenticated`]
     pub fn detect() -> Result<Self, AuthError> {
         Self::builder().detect()
@@ -122,8 +122,8 @@ impl AutoStrategy {
                 .map(|ws| ws.exists_profile::<Token>())
                 .unwrap_or(false);
             if has_token {
-                let strategy = OAuthStrategy::with_profile(store).build()?;
-                return Ok(Self::OAuth(strategy));
+                let strategy = DeviceSessionStrategy::with_profile(store).build()?;
+                return Ok(Self::DeviceSession(strategy));
             }
         }
 
@@ -225,7 +225,7 @@ impl AuthStrategy for &AutoStrategy {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
         match self {
             AutoStrategy::AccessKey(inner) => inner.get_token().await,
-            AutoStrategy::OAuth(inner) => inner.get_token().await,
+            AutoStrategy::DeviceSession(inner) => inner.get_token().await,
         }
     }
 }
@@ -319,7 +319,7 @@ mod tests {
             let result = AutoStrategy::detect_inner(None, None, Some(store));
 
             assert!(result.is_ok());
-            assert!(matches!(result.unwrap(), AutoStrategy::OAuth(_)));
+            assert!(matches!(result.unwrap(), AutoStrategy::DeviceSession(_)));
         }
 
         #[test]

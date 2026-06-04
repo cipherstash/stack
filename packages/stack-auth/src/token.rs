@@ -260,7 +260,7 @@ impl Token {
             region: None,
             client_id: None,
             // TODO(CIP-2793): The server should include device_instance_id in the
-            // refresh response. Until then, callers (e.g. OAuthRefresher) must
+            // refresh response. Until then, callers (e.g. DeviceSessionRefresher) must
             // re-attach it manually after refresh.
             device_instance_id: None,
         })

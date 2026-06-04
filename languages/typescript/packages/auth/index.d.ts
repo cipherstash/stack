@@ -190,12 +190,20 @@ export declare class AccessKeyStrategy {
  * An auth strategy that uses OAuth refresh tokens persisted to disk
  * (`~/.cipherstash/auth.json`).
  */
-export declare class OAuthStrategy {
-  /** Load credentials from the default profile store and create an `OAuthStrategy`. */
-  static fromProfile(): OAuthStrategy
+export declare class DeviceSessionStrategy {
+  /** Load credentials from the default profile store and create a `DeviceSessionStrategy`. */
+  static fromProfile(): DeviceSessionStrategy
   /** Retrieve a valid access token, refreshing as needed. */
   getToken(): Promise<TokenResult>
 }
+/**
+ * Deprecated alias for {@link DeviceSessionStrategy}, exported at runtime as
+ * `module.exports.OAuthStrategy = DeviceSessionStrategy`. Kept so existing
+ * consumers don't break; will be removed in a future major release.
+ *
+ * @deprecated Renamed to `DeviceSessionStrategy`.
+ */
+export declare const OAuthStrategy: typeof DeviceSessionStrategy
 /**
  * An auth strategy that federates a third-party OIDC JWT (Clerk, Supabase, …)
  * into a CipherStash CTS service token via `/api/authorise`.

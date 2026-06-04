@@ -11,7 +11,7 @@ use crate::{AuthError, SecretToken, Token};
 /// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk
 /// (native targets only). When the store is `None` — or always on wasm32 —
 /// tokens are cached in memory only.
-pub(crate) struct OAuthRefresher {
+pub(crate) struct DeviceSessionRefresher {
     #[cfg(not(target_arch = "wasm32"))]
     store: Option<ProfileStore>,
     base_url: Url,
@@ -20,7 +20,7 @@ pub(crate) struct OAuthRefresher {
     device_instance_id: Option<String>,
 }
 
-impl OAuthRefresher {
+impl DeviceSessionRefresher {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(
         store: Option<ProfileStore>,
@@ -55,7 +55,7 @@ impl OAuthRefresher {
     }
 }
 
-impl Refresher for OAuthRefresher {
+impl Refresher for DeviceSessionRefresher {
     type Credential = SecretToken;
 
     fn save(&self, _token: &Token) {
@@ -126,7 +126,7 @@ impl Refresher for OAuthRefresher {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl OAuthRefresher {
+impl DeviceSessionRefresher {
     /// Acquire the cross-process refresh lock on `auth.json`, off the async
     /// runtime thread so we don't block other tasks. Returns `None` when no
     /// `ProfileStore` is configured (in-memory refreshers can't race against
@@ -214,12 +214,12 @@ mod tests {
         dir: &tempfile::TempDir,
         base_url: Url,
         on_disk: Token,
-    ) -> OAuthRefresher {
+    ) -> DeviceSessionRefresher {
         let store = ProfileStore::new(dir.path());
         store.init_workspace(WORKSPACE_ID).unwrap();
         let ws_store = store.current_workspace_store().unwrap();
         ws_store.save_profile(&on_disk).unwrap();
-        OAuthRefresher::new(Some(ws_store), base_url, "cli", "ap-southeast-2.aws", None)
+        DeviceSessionRefresher::new(Some(ws_store), base_url, "cli", "ap-southeast-2.aws", None)
     }
 
     /// If disk holds a different refresh token than the credential we're
@@ -344,16 +344,16 @@ mod tests {
             .save_profile(&token_on_disk("old-access", "shared-refresh"))
             .unwrap();
 
-        // Two separate OAuthRefresher instances sharing the same on-disk
+        // Two separate DeviceSessionRefresher instances sharing the same on-disk
         // profile — same shape as two processes with the same ~/.cipherstash.
-        let r1 = Arc::new(OAuthRefresher::new(
+        let r1 = Arc::new(DeviceSessionRefresher::new(
             Some(ws_store.clone()),
             base_url.clone(),
             "cli",
             "ap-southeast-2.aws",
             None,
         ));
-        let r2 = Arc::new(OAuthRefresher::new(
+        let r2 = Arc::new(DeviceSessionRefresher::new(
             Some(ws_store),
             base_url,
             "cli",
