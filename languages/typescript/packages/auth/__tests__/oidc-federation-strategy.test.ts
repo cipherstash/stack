@@ -166,4 +166,58 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     const result = await second.getToken();
     expect(result.workspaceId).toBe(WORKSPACE_ID);
   });
+
+  it("re-federates when the stored token JSON is malformed", async () => {
+    // A corrupt cookie/store value must be treated as a cache miss (the
+    // `serde_json::from_str(..).ok()` → None branch), not panic — so federation
+    // runs fresh. A version that `unwrap()`ed the parse would fail this.
+    server.mockAuthorizeEndpoint();
+    const jwt = countingJwt();
+    const strategy = OidcFederationStrategy.createWithStore(
+      REGION,
+      WORKSPACE_ID,
+      jwt.getJwt,
+      () => Promise.resolve("}{ not json"),
+      (_json: string) => Promise.resolve(),
+    );
+
+    await strategy.getToken();
+
+    // Garbage cache discarded → exactly one fresh federation.
+    expect(jwt.calls()).toBe(1);
+  });
+
+  it("surfaces a non-string getJwt result as an error with .code", async () => {
+    // Mirrors the wasm `js_oidc_provider_errors_on_non_string_result` test:
+    // a `Promise<number>` fails napi's `Promise<String>` coercion and must
+    // surface as a clean SERVER_ERROR rejection, not a panic or hung promise.
+    server.mockAuthorizeEndpoint();
+    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, () =>
+      Promise.resolve(42 as unknown as string),
+    );
+
+    try {
+      await strategy.getToken();
+      expect.unreachable("getToken should reject on a non-string getJwt result");
+    } catch (err) {
+      expect((err as AuthError).code).toBe("SERVER_ERROR");
+    }
+  });
+
+  it("surfaces a federation server error with .code", async () => {
+    // Negative twin of the happy path: a real federation request reaching
+    // /api/authorise and getting a 500 must reject with an enriched `.code`,
+    // not resolve or throw an un-coded error.
+    server.mockAuthorizeEndpointError();
+    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, () =>
+      Promise.resolve("header.payload.signature"),
+    );
+
+    try {
+      await strategy.getToken();
+      expect.unreachable("getToken should reject when /api/authorise 500s");
+    } catch (err) {
+      expect(err as AuthError).toHaveProperty("code");
+    }
+  });
 });

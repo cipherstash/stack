@@ -75,13 +75,30 @@ native.OAuthStrategy.fromProfile = wrapSync(origFromProfile);
 // `getToken()` is already enriched via the prototype patch above.
 const NativeOidcFederationStrategy = native.OidcFederationStrategy;
 class OidcFederationStrategy {
-  static create(...args) {
-    return wrapSync(() => NativeOidcFederationStrategy.create(...args))();
+  static create(region, workspaceId, getJwt) {
+    // Wrap `getJwt` so the napi binding always sees a Promise-returning
+    // function even if the caller passed a sync one — the native side coerces
+    // the return to `Promise<string>`. Matches the wasm wrapper (wasm-inline.mjs).
+    const jwt = () => Promise.resolve(getJwt());
+    return wrapSync(() =>
+      NativeOidcFederationStrategy.create(region, workspaceId, jwt),
+    )();
   }
 
-  static createWithStore(...args) {
+  static createWithStore(region, workspaceId, getJwt, loadToken, saveToken) {
+    // Same defensive wrap for all three callbacks, so sync implementations
+    // (e.g. an in-memory store) work without the caller pre-wrapping them.
+    const jwt = () => Promise.resolve(getJwt());
+    const load = () => Promise.resolve(loadToken());
+    const save = (json) => Promise.resolve(saveToken(json));
     return wrapSync(() =>
-      NativeOidcFederationStrategy.createWithStore(...args),
+      NativeOidcFederationStrategy.createWithStore(
+        region,
+        workspaceId,
+        jwt,
+        load,
+        save,
+      ),
     )();
   }
 }

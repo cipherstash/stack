@@ -20,31 +20,18 @@ mod mock_auth_server;
 // Error helpers
 // ---------------------------------------------------------------------------
 
-fn error_code(err: &AuthError) -> &'static str {
-    match err {
-        AuthError::Request(_) => "REQUEST_ERROR",
-        AuthError::AccessDenied => "ACCESS_DENIED",
-        AuthError::TokenExpired => "EXPIRED_TOKEN",
-        AuthError::InvalidGrant => "INVALID_GRANT",
-        AuthError::InvalidClient => "INVALID_CLIENT",
-        AuthError::InvalidUrl(_) => "INVALID_URL",
-        AuthError::Region(_) => "INVALID_REGION",
-        AuthError::InvalidToken(_) => "INVALID_TOKEN",
-        AuthError::Server(_) => "SERVER_ERROR",
-        AuthError::Store(_) => "STORE_ERROR",
-        AuthError::NotAuthenticated => "NOT_AUTHENTICATED",
-        AuthError::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
-        AuthError::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
-        AuthError::InvalidCrn(_) => "INVALID_CRN",
-        AuthError::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
-        AuthError::InvalidWorkspaceId(_) => "INVALID_WORKSPACE_ID",
-        _ => "UNKNOWN_ERROR",
-    }
+fn to_napi_error(err: AuthError) -> napi::Error {
+    // Delegate to the canonical `AuthError::error_code` mapping in `stack-auth`
+    // rather than re-deriving it here — mirrors the wasm binding's `to_js_error`.
+    // The `CODE: message` format is parsed back into an `Error.code` by index.js.
+    let code = err.error_code();
+    napi::Error::new(Status::GenericFailure, format!("{code}: {err}"))
 }
 
-fn to_napi_error(err: AuthError) -> napi::Error {
-    let code = error_code(&err);
-    napi::Error::new(Status::GenericFailure, format!("{code}: {err}"))
+/// Surface a JS callback failure on stderr so it isn't silently swallowed —
+/// the node counterpart to the wasm binding's `warn_callback` (`console.warn`).
+fn warn_callback(name: &str, detail: &str) {
+    eprintln!("stack-auth: {name} {detail}");
 }
 
 // ---------------------------------------------------------------------------
@@ -260,20 +247,26 @@ impl OidcProvider for NapiOidcProvider {
                 Ok(())
             },
         );
+        // A `getJwt` failure is fatal — federation can't proceed without a JWT —
+        // so each arm logs the JS-side cause before surfacing the `AuthError`,
+        // mirroring the wasm binding's `warn_callback`. Without this the error
+        // reaches the caller with no breadcrumb of *why* the callback failed.
         if status != Status::Ok {
-            return Err(AuthError::Server(format!(
-                "getJwt callback dispatch failed: {status:?}"
-            )));
+            let detail = format!("callback dispatch failed: {status:?}");
+            warn_callback("getJwt", &detail);
+            return Err(AuthError::Server(format!("getJwt {detail}")));
         }
-        let promise = rx
-            .await
-            .map_err(|_| AuthError::Server("getJwt callback did not run".to_string()))?;
-        let jwt = Zeroizing::new(
-            promise
-                .await
-                .map_err(|e| AuthError::Server(format!("getJwt rejected: {e}")))?,
-        );
-        Ok(SecretToken::new(jwt.as_str()))
+        let promise = rx.await.map_err(|_| {
+            warn_callback("getJwt", "callback did not run");
+            AuthError::Server("getJwt callback did not run".to_string())
+        })?;
+        // `SecretToken` owns the JWT and zeroes it on drop (it's `ZeroizeOnDrop`),
+        // so the awaited `String` moves straight in — no intermediate `Zeroizing`.
+        let jwt = promise.await.map_err(|e| {
+            warn_callback("getJwt", &format!("promise rejected: {e}"));
+            AuthError::Server(format!("getJwt rejected: {e}"))
+        })?;
+        Ok(SecretToken::new(jwt))
     }
 }
 
@@ -534,7 +527,7 @@ impl DeviceCodeResult {
 fn device_client_error_code(err: &DeviceClientError) -> &'static str {
     match err {
         DeviceClientError::Profile(_) => "STORE_ERROR",
-        DeviceClientError::Auth(auth_err) => error_code(auth_err),
+        DeviceClientError::Auth(auth_err) => auth_err.error_code(),
         DeviceClientError::Request(_) => "REQUEST_ERROR",
         DeviceClientError::Server { .. } => "SERVER_ERROR",
         DeviceClientError::InvalidUrl(_) => "INVALID_URL",
@@ -727,66 +720,69 @@ mod tests {
     mod error_mapping {
         use super::*;
 
+        // Pins the exact `AuthError::error_code` strings the napi FFI contract
+        // depends on: `to_napi_error` embeds them as the `CODE:` prefix that
+        // index.js parses back into `Error.code`. The mapping itself lives in
+        // `stack-auth`; this guards that the codes the JS wrapper keys on can't
+        // drift without a failing test here.
         #[test]
         fn maps_all_auth_error_variants() {
             assert_eq!(
-                error_code(&AuthError::AccessDenied),
+                AuthError::AccessDenied.error_code(),
                 "ACCESS_DENIED",
                 "AccessDenied should map to ACCESS_DENIED"
             );
             assert_eq!(
-                error_code(&AuthError::TokenExpired),
+                AuthError::TokenExpired.error_code(),
                 "EXPIRED_TOKEN",
                 "TokenExpired should map to EXPIRED_TOKEN"
             );
             assert_eq!(
-                error_code(&AuthError::InvalidGrant),
+                AuthError::InvalidGrant.error_code(),
                 "INVALID_GRANT",
                 "InvalidGrant should map to INVALID_GRANT"
             );
             assert_eq!(
-                error_code(&AuthError::InvalidClient),
+                AuthError::InvalidClient.error_code(),
                 "INVALID_CLIENT",
                 "InvalidClient should map to INVALID_CLIENT"
             );
             assert_eq!(
-                error_code(&AuthError::InvalidUrl(
-                    "http://[".parse::<url::Url>().unwrap_err()
-                )),
+                AuthError::InvalidUrl("http://[".parse::<url::Url>().unwrap_err()).error_code(),
                 "INVALID_URL",
                 "InvalidUrl should map to INVALID_URL"
             );
             assert_eq!(
-                error_code(&AuthError::Region(Region::new("invalid").unwrap_err())),
+                AuthError::Region(Region::new("invalid").unwrap_err()).error_code(),
                 "INVALID_REGION",
                 "Region should map to INVALID_REGION"
             );
             assert_eq!(
-                error_code(&AuthError::Server("test".to_string())),
+                AuthError::Server("test".to_string()).error_code(),
                 "SERVER_ERROR",
                 "Server should map to SERVER_ERROR"
             );
             assert_eq!(
-                error_code(&AuthError::NotAuthenticated),
+                AuthError::NotAuthenticated.error_code(),
                 "NOT_AUTHENTICATED",
                 "NotAuthenticated should map to NOT_AUTHENTICATED"
             );
             assert_eq!(
-                error_code(&AuthError::MissingWorkspaceCrn),
+                AuthError::MissingWorkspaceCrn.error_code(),
                 "MISSING_WORKSPACE_CRN",
                 "MissingWorkspaceCrn should map to MISSING_WORKSPACE_CRN"
             );
             assert_eq!(
-                error_code(&AuthError::InvalidAccessKey(
+                AuthError::InvalidAccessKey(
                     "bad-key".parse::<stack_auth::AccessKey>().unwrap_err()
-                )),
+                )
+                .error_code(),
                 "INVALID_ACCESS_KEY",
                 "InvalidAccessKey should map to INVALID_ACCESS_KEY"
             );
             assert_eq!(
-                error_code(&AuthError::InvalidCrn(
-                    "not-a-crn".parse::<cts_common::Crn>().unwrap_err()
-                )),
+                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err())
+                    .error_code(),
                 "INVALID_CRN",
                 "InvalidCrn should map to INVALID_CRN"
             );
