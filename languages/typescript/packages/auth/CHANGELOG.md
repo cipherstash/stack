@@ -2,6 +2,31 @@
 
 ## 0.39.0
 
+### New Features
+
+- **`OidcFederationStrategy`** — federate a third-party OIDC JWT (Clerk,
+  Supabase, …) into a CipherStash CTS service token via `/api/authorise`.
+  Exposed on both the napi and `wasm-inline` entrypoints, with a `getJwt`
+  callback that supplies the current third-party token.
+
+  ```ts
+  const strategy = OidcFederationStrategy.create(
+    "ap-southeast-2.aws",
+    "ZVATKW3VHMFG27DY",
+    getJwt, // () => Promise<string> — your current third-party OIDC JWT
+  );
+  const { token } = await strategy.getToken();
+  ```
+
+  A store-backed variant persists the federated CTS token (e.g. in an HTTP-only
+  cookie) so it survives across requests without re-federating:
+
+  ```ts
+  OidcFederationStrategy.createWithStore(
+    region, workspaceId, getJwt, loadToken, saveToken,
+  );
+  ```
+
 ### Breaking Changes
 
 - **`AccessKeyStrategy.create(workspaceCrn, accessKey)`** — the first argument
@@ -29,11 +54,21 @@
   strategy silently let the caller operate on a different workspace than the
   one they specified.
 
+### Deprecations
+
+- **`OAuthStrategy` is renamed to `DeviceSessionStrategy`** to make its purpose
+  — *renewing an existing CTS device session* via a refresh token — distinct
+  from *federating a third-party JWT* (`OidcFederationStrategy`). `OAuthStrategy`
+  is still exported as a `@deprecated` alias of `DeviceSessionStrategy`, so
+  existing code keeps working; it will be removed in a future major.
+
 ### New Error Codes
 
 - `WORKSPACE_MISMATCH` — the JWT decoded cleanly but its `workspace` claim
   doesn't match the CRN the strategy was configured with. The accompanying
   message identifies both the expected and the token-supplied workspace IDs.
+- `INVALID_WORKSPACE_ID` — the `workspaceId` passed to an
+  `OidcFederationStrategy` factory could not be parsed.
 
 ## 0.35.0
 
