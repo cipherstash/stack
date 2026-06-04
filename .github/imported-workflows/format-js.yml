@@ -1,0 +1,49 @@
+name: "Format JS/TS (biome)"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - packages/stack-auth/node/**
+      - packages/stack-profile/node/**
+      - .github/workflows/format-js.yml
+
+  pull_request:
+    paths:
+      - packages/stack-auth/node/**
+      - packages/stack-profile/node/**
+      - .github/workflows/format-js.yml
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  biome:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+
+      # biome ships as a standalone native binary — it does not run under Node —
+      # so there's no Node toolchain to pin here. The version is pinned to match
+      # each package's `format` / `format:check` scripts so local and CI agree.
+      - name: Setup biome
+        uses: biomejs/setup-biome@v2
+        with:
+          version: 2.3.4
+
+      # `biome ci` checks formatting without writing. The linter is disabled in
+      # `biome.json` — only formatting is enforced for now (lint-rule adoption is
+      # a follow-up). `if: !cancelled()` on the later step ensures every package
+      # is checked even when an earlier one fails, so contributors see all
+      # packages' formatting errors in a single run.
+      - name: biome — stack-auth/node
+        working-directory: packages/stack-auth/node
+        run: biome ci .
+
+      - name: biome — stack-profile/node
+        if: ${{ !cancelled() }}
+        working-directory: packages/stack-profile/node
+        run: biome ci .

@@ -7,17 +7,11 @@ import type { AuthError } from "../index";
 
 const mod = require("../index.js") as typeof import("../index") & {
   MockAuthServer: typeof MockAuthServerType;
-  bindClientDeviceWithProfileDir: (
-    profileDir: string
-  ) => Promise<void>;
+  bindClientDeviceWithProfileDir: (profileDir: string) => Promise<void>;
   saveTestToken: (profileDir: string, zerokmsBaseUrl: string) => void;
 };
 
-const {
-  MockAuthServer,
-  bindClientDeviceWithProfileDir,
-  saveTestToken,
-} = mod;
+const { MockAuthServer, bindClientDeviceWithProfileDir, saveTestToken } = mod;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,9 +53,7 @@ describe("provision device client (TypeScript / vitest)", () => {
 
     const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
-    expect(secretKey.client_id).toBe(
-      "00000000-0000-0000-0000-000000000001"
-    );
+    expect(secretKey.client_id).toBe("00000000-0000-0000-0000-000000000001");
     expect(secretKey.client_key).toBe("dGVzdC1rZXktbWF0ZXJpYWw=");
   });
 

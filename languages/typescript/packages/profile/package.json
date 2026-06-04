@@ -26,7 +26,9 @@
   "scripts": {
     "build": "napi build --release",
     "build:debug": "napi build",
-    "test": "npm run build:debug && vitest run"
+    "test": "npm run build:debug && vitest run",
+    "format": "npx --yes @biomejs/biome@2.3.4 format --write .",
+    "format:check": "npx --yes @biomejs/biome@2.3.4 ci ."
   },
   "optionalDependencies": {
     "@cipherstash/profile-darwin-x64": "0.35.0",

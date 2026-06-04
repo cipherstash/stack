@@ -70,7 +70,16 @@ export function cookieStore(options) {
       const maxAge = maxAgeFromTokenJson(json, expirySafetyMarginSeconds);
       responseHeaders.append(
         "set-cookie",
-        serializeSetCookie({ name, value, domain, path, secure, httpOnly, sameSite, maxAge }),
+        serializeSetCookie({
+          name,
+          value,
+          domain,
+          path,
+          secure,
+          httpOnly,
+          sameSite,
+          maxAge,
+        }),
       );
     },
   };
@@ -115,7 +124,8 @@ function serializeSetCookie(opts) {
   const parts = [`${opts.name}=${opts.value}`];
   if (opts.domain) parts.push(`Domain=${opts.domain}`);
   if (opts.path) parts.push(`Path=${opts.path}`);
-  if (typeof opts.maxAge === "number") parts.push(`Max-Age=${Math.floor(opts.maxAge)}`);
+  if (typeof opts.maxAge === "number")
+    parts.push(`Max-Age=${Math.floor(opts.maxAge)}`);
   if (opts.httpOnly) parts.push("HttpOnly");
   if (opts.secure) parts.push("Secure");
   if (opts.sameSite) parts.push(`SameSite=${opts.sameSite}`);
@@ -131,8 +141,12 @@ function encodeBase64Url(input) {
   // round-trips. Token JSON is ASCII in practice but be defensive.
   const bytes = new TextEncoder().encode(input);
   let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+  for (let i = 0; i < bytes.length; i++)
+    binary += String.fromCharCode(bytes[i]);
+  return btoa(binary)
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
 }
 
 /**
@@ -141,7 +155,8 @@ function encodeBase64Url(input) {
  */
 function decodeBase64Url(input) {
   const padded = input.replaceAll("-", "+").replaceAll("_", "/");
-  const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
+  const pad =
+    padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
   const binary = atob(padded + pad);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

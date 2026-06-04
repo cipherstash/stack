@@ -42,10 +42,17 @@ export class AccessKeyStrategy {
       const save = (/** @type {string} */ json) =>
         Promise.resolve(store.save(json));
       return new AccessKeyStrategy(
-        RawAccessKeyStrategy.createWithStore(workspaceCrn, accessKey, load, save),
+        RawAccessKeyStrategy.createWithStore(
+          workspaceCrn,
+          accessKey,
+          load,
+          save,
+        ),
       );
     }
-    return new AccessKeyStrategy(RawAccessKeyStrategy.create(workspaceCrn, accessKey));
+    return new AccessKeyStrategy(
+      RawAccessKeyStrategy.create(workspaceCrn, accessKey),
+    );
   }
 
   /** @returns {Promise<import("./wasm-inline.d.ts").TokenResult>} */
