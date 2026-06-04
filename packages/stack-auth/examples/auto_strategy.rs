@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &strategy {
         AutoStrategy::AccessKey(_) => println!("Using access key authentication"),
-        AutoStrategy::DeviceSession(_) => println!("Using OAuth authentication"),
+        AutoStrategy::DeviceSession(_) => println!("Using device-session (OAuth) authentication"),
     }
 
     // Obtain a token — refresh happens automatically when needed.

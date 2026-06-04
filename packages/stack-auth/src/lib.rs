@@ -121,6 +121,12 @@ pub mod auth {
 
     #[cfg(any(test, feature = "test-utils"))]
     pub use crate::StaticTokenStrategy;
+
+    // Deprecated aliases, re-exported here too so `stack_auth::auth::OAuthStrategy`
+    // consumers keep compiling alongside the crate-root aliases. See the
+    // `OAuthStrategy` / `OAuthStrategyBuilder` definitions at the crate root.
+    #[allow(deprecated)]
+    pub use crate::{OAuthStrategy, OAuthStrategyBuilder};
 }
 
 /// Token *persistence* — pluggable backends for the service-token cache.

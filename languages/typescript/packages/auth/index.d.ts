@@ -197,6 +197,14 @@ export declare class DeviceSessionStrategy {
   getToken(): Promise<TokenResult>
 }
 /**
+ * Deprecated alias for {@link DeviceSessionStrategy}, exported at runtime as
+ * `module.exports.OAuthStrategy = DeviceSessionStrategy`. Kept so existing
+ * consumers don't break; will be removed in a future major release.
+ *
+ * @deprecated Renamed to `DeviceSessionStrategy`.
+ */
+export declare const OAuthStrategy: typeof DeviceSessionStrategy
+/**
  * An auth strategy that federates a third-party OIDC JWT (Clerk, Supabase, …)
  * into a CipherStash CTS service token via `/api/authorise`.
  */
