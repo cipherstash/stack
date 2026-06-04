@@ -17,7 +17,8 @@ let savedHost: string | undefined;
 
 beforeEach(async () => {
   server = await MockAuthServer.start();
-  // OidcFederationStrategy resolves the CTS base URL from CS_CTS_HOST at build time.
+  // OidcFederationStrategy reads the CTS base URL from CS_CTS_HOST at runtime,
+  // so set it before constructing the strategy.
   savedHost = process.env.CS_CTS_HOST;
   process.env.CS_CTS_HOST = server.baseUrl;
 });

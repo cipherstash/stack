@@ -154,6 +154,20 @@ fn warn_callback(name: &str, kind: &str, err: &JsValue) {
     web_sys::console::warn_2(&JsValue::from_str(&msg), err);
 }
 
+/// Best-effort human-readable detail for a JS error value, for embedding in an
+/// [`AuthError`] message. Prefers a thrown string, then an `Error.message`
+/// property, falling back to the `Debug` representation.
+#[cfg(target_arch = "wasm32")]
+fn js_error_detail(err: &JsValue) -> String {
+    err.as_string()
+        .or_else(|| {
+            js_sys::Reflect::get(err, &JsValue::from_str("message"))
+                .ok()
+                .and_then(|m| m.as_string())
+        })
+        .unwrap_or_else(|| format!("{err:?}"))
+}
+
 /// `OidcProvider` adapter over a JS callback.
 ///
 /// `getJwt` is called with no arguments and is expected to return
@@ -172,21 +186,24 @@ impl OidcProvider for JsOidcProvider {
     async fn fetch(&self) -> Result<SecretToken, AuthError> {
         let promise = self.get_jwt.call0(&JsValue::NULL).map_err(|err| {
             warn_callback("getJwt", "synchronous throw", &err);
-            AuthError::Server("getJwt callback threw".to_string())
+            AuthError::Server(format!("getJwt callback threw: {}", js_error_detail(&err)))
         })?;
         let result = JsFuture::from(js_sys::Promise::from(promise))
             .await
             .map_err(|err| {
                 warn_callback("getJwt", "promise rejection", &err);
-                AuthError::Server("getJwt callback rejected".to_string())
+                AuthError::Server(format!(
+                    "getJwt callback rejected: {}",
+                    js_error_detail(&err)
+                ))
             })?;
-        // Wrap in `Zeroizing` so the JWT heap buffer is wiped on drop — it
-        // carries the bearer credential between the JS boundary and the
-        // federation HTTP request.
-        let jwt = Zeroizing::new(result.as_string().ok_or_else(|| {
+        // `SecretToken` owns the JWT string and zeroes its heap buffer on drop
+        // (it's `ZeroizeOnDrop`) — it carries the bearer credential between the
+        // JS boundary and the federation HTTP request.
+        let jwt = result.as_string().ok_or_else(|| {
             AuthError::Server("getJwt callback did not return a string".to_string())
-        })?);
-        Ok(SecretToken::new(jwt.as_str()))
+        })?;
+        Ok(SecretToken::new(jwt))
     }
 }
 
@@ -384,8 +401,11 @@ impl OidcFederationStrategy {
     /// Retrieve a valid CTS service token, federating or re-federating as needed.
     #[wasm_bindgen(js_name = getToken)]
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
-        let token = self.inner.get_token().await.map_err(to_js_error)?;
-        token_result_from(token)
+        self.inner
+            .get_token()
+            .await
+            .map_err(to_js_error)
+            .and_then(token_result_from)
     }
 }
 
