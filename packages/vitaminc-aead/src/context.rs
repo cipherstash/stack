@@ -158,18 +158,21 @@ impl<Tag> ContextTag<Tag, ()> {
     /// Builds the AAD to supply when **decrypting** a value that was sealed with
     /// `ContextTag::new(value, tag).encrypt_with_aad(cipher, extra_aad)`.
     ///
-    /// Reproduces the `(extra_aad, tag)` layout bound at encrypt time.
+    /// Reproduces the `(extra_aad, tag)` layout bound at encrypt time. The argument order
+    /// mirrors [`encrypt_with_aad`](crate::Encrypt::encrypt_with_aad): the extra AAD comes
+    /// first, then the tag — so the two call sites line up and read in the same order as the
+    /// bound tuple.
     ///
     /// ```rust
     /// use vitaminc_aead::{ContextTag, IntoAad};
     ///
-    /// let decrypt_aad = ContextTag::aad_with("table:users", "row:99");
+    /// let decrypt_aad = ContextTag::aad_with("row:99", "table:users");
     /// assert_eq!(
     ///     decrypt_aad.into_aad().as_bytes(),
     ///     ("row:99", "table:users").into_aad().as_bytes(),
     /// );
     /// ```
-    pub fn aad_with<A>(tag: Tag, extra_aad: A) -> (A, Tag) {
+    pub fn aad_with<A>(extra_aad: A, tag: Tag) -> (A, Tag) {
         (extra_aad, tag)
     }
 }
@@ -420,7 +423,7 @@ mod tests {
             .encrypt_with_aad(&cipher, "row:99")
             .expect("encryption should succeed");
 
-        let decrypt_aad = ContextTag::aad_with("table:users", "row:99").into_aad();
+        let decrypt_aad = ContextTag::aad_with("row:99", "table:users").into_aad();
         assert_eq!(cipher.captured_aad(), decrypt_aad.as_bytes());
     }
 
