@@ -1,0 +1,142 @@
+//! In-memory [`ZeroKMSConnection`] used by unit tests to stub ZeroKMS
+//! responses without touching the network.
+//!
+//! Not every matcher helper is exercised by the current tests, but the full
+//! harness is kept so future key-operation tests can use it.
+#![allow(dead_code)]
+
+use async_mutex::Mutex;
+use zerokms_protocol::{ViturRequest, ViturRequestError};
+
+use crate::connection::{ZeroKMSConnection, ZeroKMSConnectionInit};
+
+type EffectHandlers = Vec<(String, Box<dyn FnOnce(&str) + Send>)>;
+type RequestHandlers = Vec<(String, Result<String, ViturRequestError>)>;
+
+pub struct TestConnectionBuilder {
+    handlers: RequestHandlers,
+    effects: EffectHandlers,
+}
+
+impl TestConnectionBuilder {
+    pub fn new() -> Self {
+        Self {
+            handlers: vec![],
+            effects: vec![],
+        }
+    }
+
+    /// Add a matcher for a particular request, returning a success message.
+    ///
+    /// The matcher is only run once.
+    pub fn add_success_response<R: ViturRequest>(mut self, response: R::Response) -> Self {
+        self.handlers.push((
+            R::ENDPOINT.to_string(),
+            Ok(serde_json::to_string(&response)
+                .expect("Failed to serialise success response. This shouldn't happen.")),
+        ));
+        self
+    }
+
+    /// Add a matcher for a particular request, returning a [`ViturRequestError`].
+    ///
+    /// The matcher is only run once.
+    pub fn add_failed_response<R: ViturRequest>(mut self, error: ViturRequestError) -> Self {
+        self.handlers.push((R::ENDPOINT.to_string(), Err(error)));
+        self
+    }
+
+    /// Add a matcher for a particular request, running an effect on the body of the request.
+    ///
+    /// This matcher is only run once.
+    pub fn add_effect<R: ViturRequest, H: FnOnce(R) + Send + 'static>(
+        mut self,
+        handler: H,
+    ) -> Self {
+        let endpoint = R::ENDPOINT;
+
+        self.effects.push((
+            endpoint.to_string(),
+            Box::new(move |message| {
+                handler(serde_json::from_str(message).expect(
+                    "Failed to parse request from message in test effect. This shouldn't happen.",
+                ))
+            }),
+        ));
+
+        self
+    }
+
+    pub fn build(self) -> TestConnection {
+        TestConnection {
+            handlers: Mutex::new(self.handlers),
+            effects: Mutex::new(self.effects),
+        }
+    }
+}
+
+impl Default for TestConnectionBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct TestConnection {
+    handlers: Mutex<RequestHandlers>,
+    effects: Mutex<EffectHandlers>,
+}
+
+impl TestConnection {
+    pub fn builder() -> TestConnectionBuilder {
+        TestConnectionBuilder::new()
+    }
+
+    pub fn empty() -> Self {
+        Self::builder().build()
+    }
+}
+
+impl ZeroKMSConnectionInit for TestConnection {
+    type ConnectionOpts = TestConnectionBuilder;
+    type Error = std::convert::Infallible;
+
+    fn init(builder: Self::ConnectionOpts) -> Result<Self, Self::Error> {
+        Ok(builder.build())
+    }
+}
+
+impl ZeroKMSConnection for TestConnection {
+    async fn send<Request: ViturRequest>(
+        &self,
+        request: Request,
+        _access_token: &str,
+    ) -> Result<Request::Response, ViturRequestError> {
+        let endpoint = Request::ENDPOINT;
+
+        let mut effect_guard = self.effects.lock().await;
+
+        let effect_position = effect_guard.iter().position(|(x, _)| x == endpoint);
+
+        let body = serde_json::to_string(&request)
+            .expect("Failed to serialise request body in test connection");
+
+        if let Some(index) = effect_position {
+            let (_, effect) = effect_guard.remove(index);
+            effect(&body);
+        }
+
+        let mut handler_guard = self.handlers.lock().await;
+
+        let index = handler_guard
+            .iter()
+            .position(|(x, _)| x == endpoint)
+            .unwrap_or_else(|| panic!("No handler defined for request: {endpoint}"));
+
+        let (_, body) = handler_guard.remove(index);
+
+        body.map(|x| {
+            serde_json::from_str(&x)
+                .expect("Failed to parse response body from handler in test connection")
+        })
+    }
+}

@@ -1,0 +1,56 @@
+[package]
+name = "stack-kms"
+description = "Standalone client for ZeroKMS key generation and retrieval"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+
+[dependencies]
+recipher = { workspace = true }
+stack-auth = { workspace = true }
+zerokms-protocol = { workspace = true }
+
+vitaminc = { workspace = true, features = ["protected"] }
+
+lazy_static = { workspace = true }
+log = { workspace = true }
+miette = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+rand = { workspace = true }
+
+base16ct = { version = "0.2.0", features = ["alloc"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+futures = "0.3.25"
+opaque-debug = "0.3.1"
+serde_cbor = "0.11.2"
+serdect = { version = "0.3.0", features = ["zeroize"] }
+sha2 = "0.10.6"
+
+# Native-only: `stack-profile` is the filesystem-backed profile/config layer
+# used by `SecretKey` (the on-disk `secretkey.json`) and the `ProfileStore`
+# key provider. Wasm consumers source the client key in-memory instead.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+stack-profile = { workspace = true }
+
+[dev-dependencies]
+async-mutex = "1.4.0"
+recipher = { workspace = true }
+stack-auth = { workspace = true, features = ["test-utils"] }
+tempfile = "3.21.0"
+tokio = { workspace = true }
+toml = "0.8.19"
+
+[package.metadata.docs.rs]
+all-features = true
