@@ -7,6 +7,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 
+### Documentation
+
+- rewrite READMEs for revised Cipher/Decipher traits
+- rustdoc public items and link TODOs to tracking issues
+
+### Features
+
+- revised Cipher/Decipher traits with visitor pattern
+- add encrypt_some/encrypt_none/passthrough
+- add HList-based static cipher shape behind `hlist` feature
+
+### Fixes
+
+- enforce MapCipher key→value pairing; route u32 via array path
+- address #175 review on the hlist static cipher
+
+### Refactoring
+
+- address PR #148 review feedback
+- thread Protected<T> through cipher boundary
+- thread Protected<T> through the hlist Cipher boundary
+
+### Style
+
+- cargo fmt
+
+
 ### Features
 
 - add IntoAad impls for [u8; N] and &[u8; N]
