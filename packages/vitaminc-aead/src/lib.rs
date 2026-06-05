@@ -3,6 +3,7 @@
 mod aad;
 mod cipher;
 mod ciphertext;
+mod context;
 mod decipher;
 mod encrypt;
 #[cfg(feature = "hlist")]
@@ -15,6 +16,8 @@ pub use aad::{Aad, IntoAad};
 pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]
 pub use ciphertext::{CipherTextBuilder, LocalCipherText};
+#[doc(inline)]
+pub use context::ContextTag;
 #[doc(inline)]
 pub use decipher::{Decipher, DecipherVisitor, Decrypt, MapAccess, SeqAccess};
 #[doc(inline)]
