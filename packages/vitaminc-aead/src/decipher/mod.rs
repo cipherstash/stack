@@ -4,7 +4,7 @@ use std::any::Any;
 
 use vitaminc_protected::Protected;
 
-use crate::Unspecified;
+use crate::{Aad, IntoAad, Unspecified};
 
 /// A trait for types that can decrypt data, driving a [`DecipherVisitor`] to produce values.
 ///
@@ -47,15 +47,30 @@ pub trait Decipher<'c>: Sized {
         U: Send + 'c,
         F: FnOnce(T) -> U;
 
-    /// Decrypt a single byte-oriented ciphertext, driving the visitor's
-    /// [`visit_bytes_vec`](DecipherVisitor::visit_bytes_vec).
-    fn decrypt_bytes<V: DecipherVisitor<'c> + Send + 'c>(self, visitor: V) -> Self::Ok<V::Value>;
-    /// Decrypt a sequence of ciphertexts, driving the visitor's
-    /// [`visit_seq`](DecipherVisitor::visit_seq).
-    fn decrypt_seq<V: DecipherVisitor<'c> + Send + 'c>(self, visitor: V) -> Self::Ok<V::Value>;
-    /// Decrypt a map of ciphertexts, driving the visitor's
-    /// [`visit_map`](DecipherVisitor::visit_map).
-    fn decrypt_map<V: DecipherVisitor<'c> + Send + 'c>(self, visitor: V) -> Self::Ok<V::Value>;
+    /// Decrypt a single byte-oriented ciphertext authenticated against `aad`,
+    /// driving the visitor's [`visit_bytes_vec`](DecipherVisitor::visit_bytes_vec).
+    ///
+    /// `aad` mirrors [`Cipher::encrypt_bytes_vec`](crate::Cipher::encrypt_bytes_vec): it must
+    /// match the associated data bound at encrypt time or decryption fails.
+    fn decrypt_bytes<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
+    where
+        V: DecipherVisitor<'c> + Send + 'c,
+        A: IntoAad<'a>;
+    /// Decrypt a sequence of ciphertexts authenticated against `aad`, driving the
+    /// visitor's [`visit_seq`](DecipherVisitor::visit_seq). `aad` is applied to every
+    /// element, mirroring how [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next)
+    /// binds it per element.
+    fn decrypt_seq<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
+    where
+        V: DecipherVisitor<'c> + Send + 'c,
+        A: IntoAad<'a>;
+    /// Decrypt a map of ciphertexts authenticated against `aad`, driving the visitor's
+    /// [`visit_map`](DecipherVisitor::visit_map). `aad` is applied to every value,
+    /// mirroring [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value).
+    fn decrypt_map<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
+    where
+        V: DecipherVisitor<'c> + Send + 'c,
+        A: IntoAad<'a>;
 
     /// Recover a value stored via [`Cipher::passthrough`](crate::Cipher::passthrough).
     /// Returns an error if the ciphertext is not a passthrough or the stored
@@ -67,12 +82,13 @@ pub trait Decipher<'c>: Sized {
     where
         T: Any + Send + 'static;
 
-    /// Decrypt an `Option<T>`. The decipher inspects the ciphertext shape:
-    /// a `None`-marker variant produces `Ok(None)` (after AAD verification);
-    /// any other shape is decrypted as `T` and wrapped in `Some`.
-    fn decrypt_option<T>(self) -> Self::Ok<Option<T>>
+    /// Decrypt an `Option<T>`, authenticating against `aad`. The decipher inspects the
+    /// ciphertext shape: a `None`-marker variant produces `Ok(None)` (after AAD
+    /// verification); any other shape is decrypted as `T` and wrapped in `Some`.
+    fn decrypt_option<'a, T, A>(self, aad: A) -> Self::Ok<Option<T>>
     where
-        T: Decrypt<'c> + 'c;
+        T: Decrypt<'c> + 'c,
+        A: IntoAad<'a>;
 }
 
 /// A visitor over the structural shape of a ciphertext, analogous to serde's
@@ -130,7 +146,21 @@ pub trait MapAccess<'c> {
 /// The counterpart to `Encrypt` — a type that knows how to decrypt itself using a `Decipher`.
 /// Analogous to serde's `Deserialize`.
 pub trait Decrypt<'c>: Sized + Send {
-    /// Decrypt `Self` from the given decipher, returning the decipher's
-    /// `Ok` container.
-    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self>;
+    /// Decrypt `Self` from the given decipher with no associated data.
+    ///
+    /// Convenience wrapper around [`decrypt_with_aad`](Decrypt::decrypt_with_aad), mirroring
+    /// [`Encrypt::encrypt`](crate::Encrypt::encrypt).
+    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
+        Self::decrypt_with_aad(decipher, Aad::empty())
+    }
+
+    /// Decrypt `Self` from the given decipher, authenticating against `aad`.
+    ///
+    /// This is the method implementations provide; it mirrors
+    /// [`Encrypt::encrypt_with_aad`](crate::Encrypt::encrypt_with_aad). The `aad` must match
+    /// the associated data bound at encrypt time or decryption fails.
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>;
 }
