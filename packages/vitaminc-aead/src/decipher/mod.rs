@@ -34,11 +34,16 @@ pub trait Decipher<'c>: Sized {
     /// Transform the inner value of an [`Ok`](Decipher::Ok) container.
     ///
     /// This enables `Decrypt` implementations for wrapper types (e.g., `Box<T>`, `Protected<T>`)
-    /// to decrypt the inner type and then wrap the result:
+    /// to decrypt the inner type and then wrap the result. Note the AAD is threaded into the
+    /// inner [`decrypt_with_aad`](Decrypt::decrypt_with_aad) — a wrapper must not drop it:
     ///
     /// ```ignore
-    /// fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
-    ///     D::map_ok(T::decrypt(decipher), Wrapper::new)
+    /// fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    /// where
+    ///     D: Decipher<'c>,
+    ///     A: IntoAad<'a>,
+    /// {
+    ///     D::map_ok(T::decrypt_with_aad(decipher, aad), Wrapper::new)
     /// }
     /// ```
     fn map_ok<T, U, F>(ok: Self::Ok<T>, f: F) -> Self::Ok<U>
@@ -132,6 +137,13 @@ pub trait SeqAccess<'c> {
     /// The error type returned by [`next_element`](SeqAccess::next_element).
     type Error;
     /// Returns the next decrypted element, or `None` when the sequence is exhausted.
+    ///
+    /// Implementations **must authenticate each element against the sequence's associated
+    /// data** — thread the AAD supplied to [`Decipher::decrypt_seq`] into the element's
+    /// [`Decrypt::decrypt_with_aad`]. This mirrors how
+    /// [`SeqCipher::encrypt_next`](crate::SeqCipher::encrypt_next) binds the AAD to each
+    /// element at encrypt time; an implementation that decrypts elements with empty AAD
+    /// produces a silently unauthenticated sequence.
     fn next_element<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<T>, Self::Error>;
 }
 
@@ -140,6 +152,11 @@ pub trait MapAccess<'c> {
     /// The error type returned by [`next_entry`](MapAccess::next_entry).
     type Error;
     /// Returns the next decrypted `(key, value)` entry, or `None` when the map is exhausted.
+    ///
+    /// As with [`SeqAccess::next_element`], implementations **must authenticate each value
+    /// against the map's associated data** — thread the AAD supplied to
+    /// [`Decipher::decrypt_map`] into the value's [`Decrypt::decrypt_with_aad`], mirroring
+    /// [`MapCipher::encrypt_value`](crate::MapCipher::encrypt_value).
     fn next_entry<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<(String, T)>, Self::Error>;
 }
 
