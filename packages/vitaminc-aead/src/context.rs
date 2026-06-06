@@ -14,15 +14,19 @@
 //! # Where AAD lives in the revised API
 //!
 //! Encryption threads AAD through [`Encrypt::encrypt_with_aad`](crate::Encrypt::encrypt_with_aad),
-//! so `ContextTag` participates by implementing [`Encrypt`]. Decryption is different: the revised
-//! [`Decrypt`]/[`Decipher`] traits do **not** thread AAD through the type being decrypted — the
-//! concrete cipher injects the AAD when it constructs the decipher (e.g.
-//! `cipher.decrypt_with_aad::<T, _>(ciphertext, aad)`). There is therefore nothing for a
-//! `ContextTag` *type* to enforce on the decrypt path; the recovered value is simply `T`.
+//! so `ContextTag` participates by implementing [`Encrypt`]. Decryption is symmetric: the
+//! [`Decrypt`]/[`Decipher`] traits thread AAD through the type being decrypted via
+//! [`Decrypt::decrypt_with_aad`](crate::Decrypt::decrypt_with_aad), so `ContextTag` mirrors its
+//! `Encrypt` impl with [`ContextTag::decrypt`] / [`ContextTag::decrypt_with_aad`].
 //!
-//! To keep the two sides symmetric without guessing the tuple layout, [`ContextTag::aad`] and
-//! [`ContextTag::aad_with`] build the exact AAD the wrapper bound at encrypt time, ready to hand to
-//! a concrete cipher's decrypt entry point.
+//! Rebuild the decrypt context with [`ContextTag::context`] (and the same
+//! [`refine`](ContextTag::refine) chain used at encrypt time), then drive a [`Decipher`] obtained
+//! from the concrete cipher — e.g. `ContextTag::context(tag).decrypt(cipher.decipher(ciphertext))`.
+//! Because the tag (and any refinement) is reconstructed by the same code path that bound it, it is
+//! never re-typed by hand.
+//!
+//! For lower-level use directly against a cipher's own decrypt entry point, [`ContextTag::aad`] /
+//! [`ContextTag::aad_with`] build the raw AAD tuple the wrapper bound at encrypt time.
 //!
 //! # AAD encoding
 //!
@@ -46,6 +50,23 @@
 //! ```
 
 use crate::{Aad, Cipher, Decipher, Decrypt, Encrypt, IntoAad};
+
+/// Folds a context `tag` and `extra_aad` into the AAD layout bound by `ContextTag`.
+///
+/// This is the **single source** of the encrypt/decrypt AAD layout: both the [`Encrypt`] impl and
+/// [`ContextTag::decrypt_with_aad`] go through it, so the two sides cannot drift out of sync (a
+/// divergence would silently break authentication). The tag is encoded into an owned/`'static`
+/// `Aad` and re-borrowed for the call's `'a` lifetime (`Aad` is covariant in its lifetime, so
+/// `'static: 'a` permits the narrowing); the result is `(extra_aad, tag)`, which [`IntoAad`]
+/// PAE-encodes.
+fn fold_tag_aad<'a, Tag, A>(tag: Tag, extra_aad: A) -> (A, Aad<'a>)
+where
+    Tag: IntoAad<'static>,
+{
+    let tag_aad: Aad<'static> = tag.into_aad();
+    let tag_aad: Aad<'a> = tag_aad;
+    (extra_aad, tag_aad)
+}
 
 /// A wrapper that pairs a plaintext value with a context tag used as additional authenticated
 /// data (AAD).
@@ -139,12 +160,16 @@ impl<Tag, T> ContextTag<Tag, T> {
 }
 
 impl<Tag> ContextTag<Tag, ()> {
-    /// Builds the AAD to supply when **decrypting** a value that was sealed with
+    /// Low-level: builds the raw AAD tuple for **decrypting** a value sealed with
     /// `ContextTag::new(value, tag).encrypt(cipher)` (i.e. with no extra AAD).
     ///
-    /// This is the symmetric counterpart of the binding performed by [`Encrypt`]: it reproduces
-    /// the `(empty, tag)` layout so a concrete cipher's decrypt entry point authenticates against
-    /// exactly the same bytes.
+    /// Prefer [`ContextTag::context`] + [`decrypt`](ContextTag::decrypt) where a
+    /// [`Decipher`] is available — it folds the AAD for you and reconstructs nested
+    /// [`refine`](ContextTag::refine) tags via the same path used at encrypt time. Reach for `aad`
+    /// only to drive a cipher's own decrypt entry point directly.
+    ///
+    /// This reproduces the `(empty, tag)` layout the [`Encrypt`] impl binds, so a concrete cipher's
+    /// decrypt entry point authenticates against exactly the same bytes.
     ///
     /// ```rust
     /// use vitaminc_aead::{ContextTag, IntoAad};
@@ -160,13 +185,16 @@ impl<Tag> ContextTag<Tag, ()> {
         (Aad::empty(), tag)
     }
 
-    /// Builds the AAD to supply when **decrypting** a value that was sealed with
+    /// Low-level: builds the raw AAD tuple for **decrypting** a value sealed with
     /// `ContextTag::new(value, tag).encrypt_with_aad(cipher, extra_aad)`.
     ///
-    /// Reproduces the `(extra_aad, tag)` layout bound at encrypt time. The argument order
-    /// mirrors [`encrypt_with_aad`](crate::Encrypt::encrypt_with_aad): the extra AAD comes
-    /// first, then the tag — so the two call sites line up and read in the same order as the
-    /// bound tuple.
+    /// Prefer [`ContextTag::context`] + [`decrypt_with_aad`](ContextTag::decrypt_with_aad), which
+    /// puts the tag in the receiver so it can't be transposed with `extra_aad`. This builder takes
+    /// **both** as positional, same-typed args (`extra_aad` first, then `tag`) — swapping them
+    /// silently produces the wrong AAD, so reach for it only to drive a cipher's own decrypt entry
+    /// point directly.
+    ///
+    /// Reproduces the `(extra_aad, tag)` layout bound at encrypt time.
     ///
     /// ```rust
     /// use vitaminc_aead::{ContextTag, IntoAad};
@@ -232,11 +260,7 @@ where
         T: Decrypt<'c> + 'c,
         A: IntoAad<'a>,
     {
-        // Encode the tag into an owned/`'static` `Aad`, then re-borrow it for the
-        // call's `'a` lifetime (covariance), exactly as the `Encrypt` impl does.
-        let tag_aad: Aad<'static> = self.tag.into_aad();
-        let tag_aad: Aad<'a> = tag_aad;
-        T::decrypt_with_aad(decipher, (extra_aad, tag_aad))
+        T::decrypt_with_aad(decipher, fold_tag_aad(self.tag, extra_aad))
     }
 }
 
@@ -260,11 +284,7 @@ where
         A: IntoAad<'a>,
     {
         let ContextTag { inner, tag } = self;
-        // Encode the tag into an owned/`'static` `Aad`, then re-borrow it for the call's `'a`
-        // lifetime (`Aad` is covariant in its lifetime, so `'static: 'a` permits the narrowing).
-        let tag_aad: Aad<'static> = tag.into_aad();
-        let tag_aad: Aad<'a> = tag_aad;
-        inner.encrypt_with_aad(cipher, (extra_aad, tag_aad))
+        inner.encrypt_with_aad(cipher, fold_tag_aad(tag, extra_aad))
     }
 }
 
@@ -273,10 +293,11 @@ mod tests {
     use super::*;
     use crate::{
         cipher::{MapCipher, SeqCipher},
-        Unspecified,
+        DecipherVisitor, Unspecified,
     };
     use std::any::Any;
     use std::cell::RefCell;
+    use std::rc::Rc;
     use vitaminc_protected::{Controlled, Protected};
 
     /// A minimal [`Cipher`] that records the AAD bytes it is handed and echoes the plaintext back
@@ -511,5 +532,126 @@ mod tests {
         let (inner, tag) = tagged.into_parts();
         assert_eq!(inner, "secret");
         assert_eq!(tag, "ctx");
+    }
+
+    /// A minimal [`Decipher`] that records the AAD bytes it is handed via `decrypt_bytes` and
+    /// yields nothing. Lets the decrypt-side `ContextTag` helper's folded AAD be pinned
+    /// byte-for-byte against an independent expected layout (and against the encrypt binding).
+    struct CapturingDecipher {
+        captured_aad: Rc<RefCell<Vec<u8>>>,
+    }
+
+    impl<'c> Decipher<'c> for CapturingDecipher {
+        type Ok<T>
+            = Option<T>
+        where
+            T: Send + 'c;
+
+        fn map_ok<T, U, F>(ok: Self::Ok<T>, f: F) -> Self::Ok<U>
+        where
+            T: Send + 'c,
+            U: Send + 'c,
+            F: FnOnce(T) -> U,
+        {
+            ok.map(f)
+        }
+
+        fn decrypt_bytes<'a, V, A>(self, _visitor: V, aad: A) -> Self::Ok<V::Value>
+        where
+            V: DecipherVisitor<'c> + Send + 'c,
+            A: IntoAad<'a>,
+        {
+            *self.captured_aad.borrow_mut() = aad.into_aad().as_bytes().to_vec();
+            None
+        }
+
+        fn decrypt_seq<'a, V, A>(self, _visitor: V, _aad: A) -> Self::Ok<V::Value>
+        where
+            V: DecipherVisitor<'c> + Send + 'c,
+            A: IntoAad<'a>,
+        {
+            None
+        }
+
+        fn decrypt_map<'a, V, A>(self, _visitor: V, _aad: A) -> Self::Ok<V::Value>
+        where
+            V: DecipherVisitor<'c> + Send + 'c,
+            A: IntoAad<'a>,
+        {
+            None
+        }
+
+        fn decrypt_passthrough<T>(self) -> Self::Ok<T>
+        where
+            T: Any + Send + 'static,
+        {
+            None
+        }
+
+        fn decrypt_option<'a, T, A>(self, _aad: A) -> Self::Ok<Option<T>>
+        where
+            T: Decrypt<'c> + 'c,
+            A: IntoAad<'a>,
+        {
+            None
+        }
+    }
+
+    fn captured_helper_aad<F>(build: F) -> Vec<u8>
+    where
+        F: FnOnce(CapturingDecipher) -> Option<String>,
+    {
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let _ = build(CapturingDecipher {
+            captured_aad: Rc::clone(&captured),
+        });
+        let bytes = captured.borrow().clone();
+        bytes
+    }
+
+    // The decrypt helper must fold byte-identical AAD to what the `Encrypt` impl binds. These pin
+    // the helper against an *independent* expected layout (not the shared `fold_tag_aad`), so a
+    // reorder of the fold would be caught even though both sides share it.
+
+    #[test]
+    fn decrypt_helper_folds_empty_extra_plus_tag() {
+        let captured =
+            captured_helper_aad(|d| ContextTag::context("user:42").decrypt::<String, _>(d));
+        assert_eq!(captured, ((), "user:42").into_aad().as_bytes());
+    }
+
+    #[test]
+    fn decrypt_helper_folds_extra_then_tag() {
+        let captured = captured_helper_aad(|d| {
+            ContextTag::context("table:users").decrypt_with_aad::<String, _, _>(d, "row:99")
+        });
+        assert_eq!(captured, ("row:99", "table:users").into_aad().as_bytes());
+    }
+
+    #[test]
+    fn decrypt_helper_refine_folds_nested_tag() {
+        let captured = captured_helper_aad(|d| {
+            ContextTag::context("table:users")
+                .refine("column:email")
+                .decrypt::<String, _>(d)
+        });
+        assert_eq!(
+            captured,
+            ((), ("table:users", "column:email")).into_aad().as_bytes()
+        );
+    }
+
+    #[test]
+    fn decrypt_helper_matches_encrypt_binding() {
+        // Cross-check: the helper's fold equals what the `Encrypt` impl actually binds.
+        let cipher = MockCipher::new();
+        ContextTag::new("secret", "table:users")
+            .encrypt_with_aad(&cipher, "row:99")
+            .expect("encryption should succeed");
+
+        let captured = captured_helper_aad(|d| {
+            ContextTag::context("table:users").decrypt_with_aad::<String, _, _>(d, "row:99")
+        });
+        assert_eq!(captured, cipher.captured_aad());
     }
 }
