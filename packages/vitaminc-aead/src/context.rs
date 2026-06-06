@@ -45,7 +45,7 @@
 //!   ──► final_aad = PAE(extra_aad, PAE("a", "b"))
 //! ```
 
-use crate::{Aad, Cipher, Encrypt, IntoAad};
+use crate::{Aad, Cipher, Decipher, Decrypt, Encrypt, IntoAad};
 
 /// A wrapper that pairs a plaintext value with a context tag used as additional authenticated
 /// data (AAD).
@@ -76,16 +76,21 @@ use crate::{Aad, Cipher, Encrypt, IntoAad};
 ///
 /// # Decrypting
 ///
-/// The revised decrypt path takes its AAD from the cipher, not the type, so you recover the plain
-/// `T` and supply the matching AAD via [`ContextTag::aad`] / [`ContextTag::aad_with`]:
+/// Mirror the encrypt side: rebuild the context with [`ContextTag::context`] (and the same
+/// [`refine`](ContextTag::refine) chain, if any), then recover the value with
+/// [`decrypt`](ContextTag::decrypt) / [`decrypt_with_aad`](ContextTag::decrypt_with_aad),
+/// driving a [`Decipher`] obtained from the concrete cipher:
 ///
 /// ```rust,ignore
 /// use vitaminc_aead::ContextTag;
 ///
 /// let plaintext: String =
-///     cipher.decrypt_with_aad(ciphertext, ContextTag::aad("user:42"))?;
+///     ContextTag::context("user:42").decrypt(cipher.decipher(ciphertext))?;
 /// # Ok::<(), vitaminc_aead::Unspecified>(())
 /// ```
+///
+/// For lower-level control you can instead build the raw AAD with [`ContextTag::aad`] /
+/// [`ContextTag::aad_with`] and pass it to a cipher's own decrypt entry point.
 pub struct ContextTag<Tag, T> {
     inner: T,
     tag: Tag,
@@ -174,6 +179,64 @@ impl<Tag> ContextTag<Tag, ()> {
     /// ```
     pub fn aad_with<A>(extra_aad: A, tag: Tag) -> (A, Tag) {
         (extra_aad, tag)
+    }
+
+    /// Begins a decrypt-side context carrying `tag` (and no value yet).
+    ///
+    /// This is the decrypt mirror of [`ContextTag::new`]: build (and
+    /// [`refine`](ContextTag::refine)) the tag exactly as you did at encrypt time,
+    /// then call [`decrypt`](ContextTag::decrypt) /
+    /// [`decrypt_with_aad`](ContextTag::decrypt_with_aad) to recover the value —
+    /// so the tag (and any nested refinement) is reconstructed by the same code
+    /// path that bound it, never re-typed by hand.
+    ///
+    /// ```rust
+    /// use vitaminc_aead::ContextTag;
+    ///
+    /// // mirrors `ContextTag::new(value, "table:users").refine("column:email")`
+    /// let ctx = ContextTag::context("table:users").refine("column:email");
+    /// # let _ = ctx;
+    /// ```
+    pub fn context(tag: Tag) -> Self {
+        ContextTag { inner: (), tag }
+    }
+}
+
+impl<Tag> ContextTag<Tag, ()>
+where
+    Tag: IntoAad<'static>,
+{
+    /// Decrypts a value sealed against this context, authenticating against the
+    /// embedded tag (no extra AAD). The decrypt mirror of
+    /// [`ContextTag::encrypt`](Encrypt::encrypt).
+    ///
+    /// Obtain `decipher` from a concrete cipher (e.g. `cipher.decipher(ciphertext)`).
+    pub fn decrypt<'c, T, D>(self, decipher: D) -> D::Ok<T>
+    where
+        D: Decipher<'c>,
+        T: Decrypt<'c> + 'c,
+    {
+        self.decrypt_with_aad(decipher, Aad::empty())
+    }
+
+    /// Decrypts a value sealed against this context plus `extra_aad`, mirroring
+    /// [`ContextTag::encrypt_with_aad`](Encrypt::encrypt_with_aad).
+    ///
+    /// The tag lives in the receiver and `extra_aad` is the lone argument, so the
+    /// two cannot be swapped; the bound AAD is `(extra_aad, tag)` — byte-identical
+    /// to what the [`Encrypt`] impl folds in at seal time. Obtain `decipher` from
+    /// a concrete cipher (e.g. `cipher.decipher(ciphertext)`).
+    pub fn decrypt_with_aad<'c, 'a, T, D, A>(self, decipher: D, extra_aad: A) -> D::Ok<T>
+    where
+        D: Decipher<'c>,
+        T: Decrypt<'c> + 'c,
+        A: IntoAad<'a>,
+    {
+        // Encode the tag into an owned/`'static` `Aad`, then re-borrow it for the
+        // call's `'a` lifetime (covariance), exactly as the `Encrypt` impl does.
+        let tag_aad: Aad<'static> = self.tag.into_aad();
+        let tag_aad: Aad<'a> = tag_aad;
+        T::decrypt_with_aad(decipher, (extra_aad, tag_aad))
     }
 }
 
