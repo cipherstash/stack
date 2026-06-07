@@ -29,7 +29,7 @@
     "dotenv": "^17.4.2"
   },
   "devDependencies": {
-    "@prisma-next/cli": "0.8.0",
+    "@prisma-next/cli": "0.11.0",
     "@types/node": "^22.19.19",
     "pathe": "^2.0.3",
     "tsx": "catalog:repo",
