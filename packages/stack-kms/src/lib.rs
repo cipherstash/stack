@@ -47,6 +47,7 @@ mod errors;
 mod futures;
 mod key;
 mod key_provider;
+mod key_source;
 mod payload;
 mod secret_key;
 mod user_agent;
@@ -69,6 +70,11 @@ pub use errors::{Error, GenerateKeyError, RetrieveKeyError};
 
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, V1KeySet};
+
+// Data key source abstraction (production = `StackKms`; tests = `FakeDataKeySource`)
+pub use key_source::DataKeySource;
+#[cfg(feature = "test-support")]
+pub use key_source::FakeDataKeySource;
 
 // Key providers
 pub use key_provider::{

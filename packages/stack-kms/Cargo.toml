@@ -10,6 +10,12 @@ keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
 
+[features]
+# Exposes `FakeDataKeySource`, a deterministic in-memory `DataKeySource` for
+# downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
+# ZeroKMS credentials or network access.
+test-support = []
+
 [dependencies]
 recipher = { workspace = true }
 stack-auth = { workspace = true }
