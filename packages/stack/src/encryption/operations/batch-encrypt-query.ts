@@ -11,7 +11,11 @@ import {
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { Context, LockContext } from '@/identity'
+import {
+  type Context,
+  type LockContextInput,
+  resolveLockContext,
+} from '@/identity'
 import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
@@ -102,7 +106,7 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): BatchEncryptQueryOperationWithLockContext {
     return new BatchEncryptQueryOperationWithLockContext(
       this.client,
@@ -171,7 +175,7 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
   constructor(
     private client: Client,
     private terms: readonly ScalarQueryTerm[],
-    private lockContext: LockContext,
+    private lockContext: LockContextInput,
     auditMetadata?: Record<string, unknown>,
   ) {
     super()
@@ -193,8 +197,6 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
       return { data: [] }
     }
 
-    // Check for all-null terms BEFORE fetching lockContext to avoid an
-    // unnecessary network call.
     const { nonNullTerms } = filterNullTerms(this.terms)
 
     if (nonNullTerms.length === 0) {
@@ -202,13 +204,7 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
       return { data: this.terms.map(() => null) }
     }
 
-    const lockContextResult = await this.lockContext.getLockContext()
-    if (lockContextResult.failure) {
-      log.emit()
-      return { failure: lockContextResult.failure }
-    }
-
-    const { context } = lockContextResult.data
+    const context = resolveLockContext(this.lockContext)
 
     const result = await withResult(
       async () => {

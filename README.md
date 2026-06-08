@@ -69,7 +69,7 @@ bun add @cipherstash/stack
 - **[Searchable encryption](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption)**: query encrypted data with equality, free text search, range, and [JSONB queries](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption#jsonb-queries-with-searchablejson).
 - **[Type-safe schema](https://cipherstash.com/docs/stack/cipherstash/encryption/schema)**: define encrypted tables and columns with `encryptedTable` / `encryptedColumn`
 - **[Model & bulk operations](https://cipherstash.com/docs/stack/cipherstash/encryption/encrypt-decrypt#model-operations)**: encrypt and decrypt entire objects or batches with `encryptModel` / `bulkEncryptModels`.
-- **[Identity-aware encryption](https://cipherstash.com/docs/stack/cipherstash/encryption/identity)**: bind encryption to user identity with lock contexts for policy-based access control.
+- **[Identity-aware encryption](https://cipherstash.com/docs/stack/cipherstash/encryption/identity)**: authenticate as the end user with `OidcFederationStrategy` and bind the data key to their identity with `.withLockContext({ identityClaim })` for policy-based access control.
 
 ## Integrations
 

@@ -6,7 +6,11 @@ import {
 } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { Context, LockContext } from '@/identity'
+import {
+  type Context,
+  type LockContextInput,
+  resolveLockContext,
+} from '@/identity'
 import type { BulkDecryptedData, BulkDecryptPayload, Client } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
@@ -64,7 +68,7 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): BulkDecryptOperationWithLockContext {
     return new BulkDecryptOperationWithLockContext(this, lockContext)
   }
@@ -124,9 +128,9 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
 
 export class BulkDecryptOperationWithLockContext extends EncryptionOperation<BulkDecryptedData> {
   private operation: BulkDecryptOperation
-  private lockContext: LockContext
+  private lockContext: LockContextInput
 
-  constructor(operation: BulkDecryptOperation, lockContext: LockContext) {
+  constructor(operation: BulkDecryptOperation, lockContext: LockContextInput) {
     super()
     this.operation = operation
     this.lockContext = lockContext
@@ -151,14 +155,11 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
         if (!client) throw noClientError()
         if (!encryptedPayloads || encryptedPayloads.length === 0) return []
 
-        const context = await this.lockContext.getLockContext()
-        if (context.failure) {
-          throw new Error(`[encryption]: ${context.failure.message}`)
-        }
+        const lockContext = resolveLockContext(this.lockContext)
 
         const nonNullPayloads = createDecryptPayloads(
           encryptedPayloads,
-          context.data.context,
+          lockContext,
         )
 
         if (nonNullPayloads.length === 0) {

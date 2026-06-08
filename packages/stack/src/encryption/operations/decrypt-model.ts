@@ -1,7 +1,7 @@
 import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { LockContext } from '@/identity'
+import { type LockContextInput, resolveLockContext } from '@/identity'
 import type { Client, Decrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import {
@@ -24,7 +24,7 @@ export class DecryptModelOperation<
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): DecryptModelOperationWithLockContext<T> {
     return new DecryptModelOperationWithLockContext(this, lockContext)
   }
@@ -74,9 +74,12 @@ export class DecryptModelOperationWithLockContext<
   T extends Record<string, unknown>,
 > extends EncryptionOperation<Decrypted<T>> {
   private operation: DecryptModelOperation<T>
-  private lockContext: LockContext
+  private lockContext: LockContextInput
 
-  constructor(operation: DecryptModelOperation<T>, lockContext: LockContext) {
+  constructor(
+    operation: DecryptModelOperation<T>,
+    lockContext: LockContextInput,
+  ) {
     super()
     this.operation = operation
     this.lockContext = lockContext
@@ -101,18 +104,14 @@ export class DecryptModelOperationWithLockContext<
           throw noClientError()
         }
 
-        const context = await this.lockContext.getLockContext()
-
-        if (context.failure) {
-          throw new Error(`[encryption]: ${context.failure.message}`)
-        }
+        const context = resolveLockContext(this.lockContext)
 
         const auditData = this.getAuditData()
 
         return await decryptModelFieldsWithLockContext<T>(
           model,
           client,
-          context.data,
+          context,
           auditData,
         )
       },

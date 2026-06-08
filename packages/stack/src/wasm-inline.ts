@@ -35,15 +35,32 @@
  * const dec = await client.decrypt(enc)
  * ```
  *
- * For runtimes that need a custom token store (e.g. cookies on a
- * Supabase Edge Function), build the strategy yourself with
- * `AccessKeyStrategy.create(region, accessKey, { store })` from
- * `@cipherstash/auth/wasm-inline` — derive `region` from your CRN with
- * the same `crn:<region>:<workspace-id>` split this module uses — and
- * pass the strategy via `config.strategy`.
+ * For per-user, identity-bound encryption on the edge, build an
+ * `OidcFederationStrategy` (federates an end user's OIDC JWT — Clerk,
+ * Supabase, … — into a CTS service token) and pass it via
+ * `config.strategy`:
+ *
+ * ```ts
+ * import { OidcFederationStrategy } from "@cipherstash/stack/wasm-inline"
+ * import { cookieStore } from "@cipherstash/auth/cookies"
+ *
+ * const strategy = OidcFederationStrategy.create(
+ *   "ap-southeast-2.aws", workspaceId, () => getClerkSessionToken(req),
+ *   { store: cookieStore({ request: req, responseHeaders }) },
+ * )
+ * const client = await Encryption({ schemas, config: { strategy, clientId, clientKey } })
+ * ```
+ *
+ * For service-to-service / CI use with a custom token store, build an
+ * `AccessKeyStrategy.create(region, accessKey, { store })` the same way —
+ * derive `region` from your CRN with the `crn:<region>:<workspace-id>`
+ * split this module uses. Both strategies are re-exported from this entry.
  */
 
-import { AccessKeyStrategy } from '@cipherstash/auth/wasm-inline'
+import {
+  AccessKeyStrategy,
+  OidcFederationStrategy,
+} from '@cipherstash/auth/wasm-inline'
 import {
   decrypt as wasmDecrypt,
   encrypt as wasmEncrypt,
@@ -83,18 +100,27 @@ export {
 
 export type { Encrypted } from '@/types'
 
+// Auth strategies for `config.strategy` — `OidcFederationStrategy` for
+// per-user identity-bound encryption, `AccessKeyStrategy` for M2M / CI.
+// Re-exported so edge consumers don't need a separate `@cipherstash/auth`
+// import (pair `OidcFederationStrategy` with `cookieStore` from
+// `@cipherstash/auth/cookies` for cross-invocation token caching).
+export {
+  AccessKeyStrategy,
+  OidcFederationStrategy,
+} from '@cipherstash/auth/wasm-inline'
+
 /** Re-exported convenience predicate — same as the raw protect-ffi one. */
 export function isEncrypted(value: unknown): boolean {
   return wasmIsEncrypted(value as never)
 }
 
 // Note: the raw `newClient` / `encrypt` / `decrypt` from
-// `@cipherstash/protect-ffi/wasm-inline` and `AccessKeyStrategy` from
-// `@cipherstash/auth/wasm-inline` are intentionally NOT re-exported. The
-// raw `newClient` does not normalise SDK-facing `cast_as` values (see
-// `normalizeCastAs` below) and a re-export would invite consumers to
-// build configs that this normaliser rejects. Import those names
-// directly from their source packages if you need raw access.
+// `@cipherstash/protect-ffi/wasm-inline` are intentionally NOT
+// re-exported. The raw `newClient` does not normalise SDK-facing
+// `cast_as` values (see `normalizeCastAs` below) and a re-export would
+// invite consumers to build configs that this normaliser rejects. Import
+// those names directly from their source package if you need raw access.
 
 // -----------------------------------------------------------------------
 // High-level `Encryption` factory + client.
@@ -128,9 +154,9 @@ export type WasmPlaintext =
  * For service-to-service / CI use, pass `accessKey` plus the workspace
  * `clientId` / `clientKey` and we construct an `AccessKeyStrategy` for
  * you. To plug in a custom token store (cookies on Supabase Edge, KV on
- * Cloudflare Workers, …) build the strategy with
- * `AccessKeyStrategy.create(region, accessKey, { store })` and hand it
- * to `config.strategy` instead.
+ * Cloudflare Workers, …) or to bind encryption to an end user, build the
+ * strategy yourself — `AccessKeyStrategy` or `OidcFederationStrategy` —
+ * and hand it to `config.strategy` instead.
  */
 export type WasmClientConfig = {
   /**
@@ -153,9 +179,20 @@ export type WasmClientConfig = {
     }
   | {
       accessKey?: never
-      strategy: AccessKeyStrategy
+      strategy: WasmAuthStrategy
     }
 )
+
+/**
+ * Any auth strategy accepted on the WASM path. Both expose
+ * `getToken(): Promise<{ token }>`, which is all protect-ffi's WASM
+ * `newClient` requires:
+ *
+ * - {@link AccessKeyStrategy} — static M2M / CI access key.
+ * - {@link OidcFederationStrategy} — federates an end-user OIDC JWT into a
+ *   CTS service token, for per-user identity-bound encryption.
+ */
+export type WasmAuthStrategy = AccessKeyStrategy | OidcFederationStrategy
 
 export type WasmEncryptionConfig = {
   schemas: [
@@ -322,7 +359,7 @@ function getColumnName(col: EncryptOptions['column']): string {
   )
 }
 
-function resolveStrategy(cfg: WasmClientConfig): AccessKeyStrategy {
+function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   // The discriminated union rejects `accessKey` + `strategy` together at
   // compile time, but JS callers (Deno / plain JS) bypass that — guard at
   // runtime so a conflicting config fails loudly instead of silently

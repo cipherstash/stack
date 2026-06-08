@@ -2,19 +2,22 @@
  * Offline wiring tests for the lock-context path.
  *
  * protect-ffi 0.25 removed the per-operation `serviceToken` option — the
- * CTS token is no longer forwarded; lock contexts travel as
- * `lockContext.identityClaim` only. The live `lock-context.test.ts`
- * exercises a real CTS round-trip but skips without a `USER_JWT`, so it
- * can't guard this wiring in CI. These tests mock `@cipherstash/protect-ffi`
- * and assert, for every operation, that:
- *   1. the lock context's `identityClaim` reaches protect-ffi, and
+ * CTS token is no longer forwarded. Auth now flows through the client
+ * strategy (e.g. `OidcFederationStrategy`); the lock context carries only
+ * `identityClaim`, supplied per-operation with no token and no `identify()`
+ * call. The live `lock-context.test.ts` exercises a real CTS round-trip but
+ * skips without a `USER_JWT`, so it can't guard this wiring in CI. These
+ * tests mock `@cipherstash/protect-ffi` and assert, for every operation, that:
+ *   1. the `identityClaim` reaches protect-ffi — whether supplied as a
+ *      `LockContext` or as a plain `{ identityClaim }` object, and
  *   2. no `serviceToken` is ever passed (the removed field must not creep
  *      back in).
  */
-import { Encryption } from '@/index'
-import { LockContext } from '@/identity'
-import { encryptedColumn, encryptedTable } from '@/schema'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { LockContext } from '@/identity'
+import { Encryption } from '@/index'
+import { encryptedColumn, encryptedTable } from '@/schema'
 
 // A protect-ffi-shaped encrypted payload (passes the SDK's
 // `isEncryptedPayload` check so model decrypt detects encrypted fields).
@@ -48,13 +51,10 @@ const users = encryptedTable('users', {
 
 const IDENTITY_CLAIM = { identityClaim: ['sub'] }
 
-// Build a lock context without a network round-trip: a pre-supplied CTS
-// token short-circuits `identify()`, and the default context is
-// `{ identityClaim: ['sub'] }`.
-const lockCtx = () =>
-  new LockContext({
-    ctsToken: { accessToken: 'test-cts-token', expiry: 9_999_999_999 },
-  })
+// A lock context needs no network round-trip or CTS token: the default
+// context is `{ identityClaim: ['sub'] }` and `.withLockContext()` reads it
+// synchronously. Operations also accept a plain `{ identityClaim }` object.
+const lockCtx = () => new LockContext()
 
 /** Deep scan for a `serviceToken` key anywhere in a value. */
 function hasServiceToken(value: unknown): boolean {
@@ -95,6 +95,28 @@ describe('lock-context wiring: identityClaim forwarded, serviceToken never sent'
     )
 
     const opts = lastOpts(ffi.encrypt)
+    expect(opts.lockContext).toEqual(IDENTITY_CLAIM)
+    expect(hasServiceToken(opts)).toBe(false)
+  })
+
+  it('encrypt accepts a plain { identityClaim } object (no LockContext needed)', async () => {
+    unwrap(
+      await client
+        .encrypt('alice@example.com', { column: users.email, table: users })
+        .withLockContext({ identityClaim: ['sub'] }),
+    )
+
+    const opts = lastOpts(ffi.encrypt)
+    expect(opts.lockContext).toEqual(IDENTITY_CLAIM)
+    expect(hasServiceToken(opts)).toBe(false)
+  })
+
+  it('decrypt accepts a plain { identityClaim } object and omits serviceToken', async () => {
+    unwrap(
+      await client.decrypt(enc()).withLockContext({ identityClaim: ['sub'] }),
+    )
+
+    const opts = lastOpts(ffi.decrypt)
     expect(opts.lockContext).toEqual(IDENTITY_CLAIM)
     expect(hasServiceToken(opts)).toBe(false)
   })

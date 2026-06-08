@@ -634,9 +634,11 @@ export class EncryptionClient {
  * columns to use. Credentials are read from the optional `config` or from the environment
  * (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`).
  *
- * For custom token acquisition (service-to-service, edge runtimes, …) pass a `config.strategy`
- * (e.g. `AccessKeyStrategy` from `@cipherstash/auth`); its `getToken()` is then used for every
- * ZeroKMS request in place of the credentials-derived default. See {@link ClientConfig.strategy}.
+ * Pass a `config.strategy` to control how ZeroKMS requests are authenticated; its `getToken()`
+ * is then used for every request in place of the credentials-derived default. Use
+ * `OidcFederationStrategy` for per-user, identity-bound encryption (federates an end user's OIDC
+ * JWT into a CTS service token) or `AccessKeyStrategy` for service-to-service / CI. Both are
+ * re-exported from `@cipherstash/stack`. See {@link ClientConfig.strategy}.
  *
  * @param config - Initialization options. Must include `schemas`; optionally include `config` for
  *   workspace/keys. Logging is configured via the `STASH_STACK_LOG` environment variable
@@ -656,6 +658,24 @@ export class EncryptionClient {
  * })
  * const client = await Encryption({ schemas: [users] })
  * const result = await client.encrypt("alice@example.com", { column: users.email, table: users })
+ * ```
+ *
+ * @example Per-user, identity-bound encryption
+ * ```typescript
+ * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
+ *
+ * // Authenticate every ZeroKMS request as the signed-in user.
+ * const client = await Encryption({
+ *   schemas: [users],
+ *   config: {
+ *     strategy: OidcFederationStrategy.create(region, workspaceId, () => getUserJwt()),
+ *   },
+ * })
+ *
+ * // Bind the data key to the user's `sub` claim.
+ * const result = await client
+ *   .encrypt("alice@example.com", { column: users.email, table: users })
+ *   .withLockContext({ identityClaim: ["sub"] })
  * ```
  *
  * @see {@link EncryptionClientConfig} for full config options.
