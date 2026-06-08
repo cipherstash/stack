@@ -606,6 +606,25 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+    optionalDependencies:
+      '@cipherstash/auth-darwin-arm64':
+        specifier: catalog:repo
+        version: 0.39.0
+      '@cipherstash/auth-darwin-x64':
+        specifier: catalog:repo
+        version: 0.39.0
+      '@cipherstash/auth-linux-arm64-gnu':
+        specifier: catalog:repo
+        version: 0.39.0
+      '@cipherstash/auth-linux-x64-gnu':
+        specifier: catalog:repo
+        version: 0.39.0
+      '@cipherstash/auth-linux-x64-musl':
+        specifier: catalog:repo
+        version: 0.39.0
+      '@cipherstash/auth-win32-x64-msvc':
+        specifier: catalog:repo
+        version: 0.39.0
 
   packages/wizard:
     dependencies:
