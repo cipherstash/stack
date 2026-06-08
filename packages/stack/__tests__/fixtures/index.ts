@@ -1,4 +1,4 @@
-import { expect, vi } from 'vitest'
+import { expect } from 'vitest'
 import { encryptedColumn, encryptedTable } from '@/schema'
 
 // ============ Schema Fixtures ============
@@ -54,57 +54,16 @@ export const mixedSchema = encryptedTable('records', {
 // ============ Mock Factories ============
 
 /**
- * Creates a mock LockContext with successful response
+ * Creates a lock-context input for `.withLockContext()`.
+ *
+ * Since protect-ffi 0.25 dropped the per-operation CTS token, a lock context
+ * is just an identity-claim spec — `.withLockContext()` accepts this plain
+ * object directly (no `LockContext` instance or `identify()` call needed).
  */
 export function createMockLockContext(overrides?: {
-  accessToken?: string
-  expiry?: number
   identityClaim?: string[]
 }) {
-  return {
-    getLockContext: vi.fn().mockResolvedValue({
-      data: {
-        ctsToken: {
-          accessToken: overrides?.accessToken ?? 'mock-token',
-          expiry: overrides?.expiry ?? Date.now() + 3600000,
-        },
-        context: {
-          identityClaim: overrides?.identityClaim ?? ['sub'],
-        },
-      },
-    }),
-  }
-}
-
-/**
- * Creates a mock LockContext with explicit null context (simulates runtime edge case)
- */
-export function createMockLockContextWithNullContext() {
-  return {
-    getLockContext: vi.fn().mockResolvedValue({
-      data: {
-        ctsToken: {
-          accessToken: 'mock-token',
-          expiry: Date.now() + 3600000,
-        },
-        context: null, // Explicit null - simulating runtime edge case
-      },
-    }),
-  }
-}
-
-/**
- * Creates a mock LockContext that returns a failure
- */
-export function createFailingMockLockContext(
-  errorType: string,
-  message: string,
-) {
-  return {
-    getLockContext: vi.fn().mockResolvedValue({
-      failure: { type: errorType, message },
-    }),
-  }
+  return { identityClaim: overrides?.identityClaim ?? ['sub'] }
 }
 
 // ============ Test Helpers ============

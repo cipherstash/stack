@@ -5,9 +5,7 @@ import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
 import {
   articles,
-  createFailingMockLockContext,
   createMockLockContext,
-  createMockLockContextWithNullContext,
   expectFailure,
   metadata,
   products,
@@ -647,23 +645,19 @@ describe('encryptQuery', () => {
   })
 
   describe('LockContext support', () => {
-    it('single query with LockContext calls getLockContext', async () => {
-      const mockLockContext = createMockLockContext()
-
+    it('single query with a lock context builds an executable operation', async () => {
       const operation = protectClient.encryptQuery('test@example.com', {
         column: users.email,
         table: users,
         queryType: 'equality',
       })
 
-      const withContext = operation.withLockContext(mockLockContext as any)
+      const withContext = operation.withLockContext(createMockLockContext())
       expect(withContext).toHaveProperty('execute')
       expect(typeof withContext.execute).toBe('function')
     }, 30000)
 
-    it('bulk query with LockContext calls getLockContext', async () => {
-      const mockLockContext = createMockLockContext()
-
+    it('bulk query with a lock context builds an executable operation', async () => {
       const operation = protectClient.encryptQuery([
         {
           value: 'test@example.com',
@@ -673,24 +667,20 @@ describe('encryptQuery', () => {
         },
       ])
 
-      const withContext = operation.withLockContext(mockLockContext as any)
+      const withContext = operation.withLockContext(createMockLockContext())
       expect(withContext).toHaveProperty('execute')
       expect(typeof withContext.execute).toBe('function')
     }, 30000)
 
-    it('executes single query with LockContext mock', async () => {
-      const mockLockContext = createMockLockContext()
-
+    it('executes a single query bound to an identity claim', async () => {
       const operation = protectClient.encryptQuery('test@example.com', {
         column: users.email,
         table: users,
         queryType: 'equality',
       })
 
-      const withContext = operation.withLockContext(mockLockContext as any)
+      const withContext = operation.withLockContext(createMockLockContext())
       const result = await withContext.execute()
-
-      expect(mockLockContext.getLockContext).toHaveBeenCalledTimes(1)
 
       const data = unwrapResult(result)
       expect(data).toMatchObject({
@@ -700,9 +690,7 @@ describe('encryptQuery', () => {
       expect(data).toHaveProperty('hm')
     }, 30000)
 
-    it('executes bulk query with LockContext mock', async () => {
-      const mockLockContext = createMockLockContext()
-
+    it('executes a bulk query bound to an identity claim', async () => {
       const operation = protectClient.encryptQuery([
         {
           value: 'test@example.com',
@@ -718,59 +706,13 @@ describe('encryptQuery', () => {
         },
       ])
 
-      const withContext = operation.withLockContext(mockLockContext as any)
+      const withContext = operation.withLockContext(createMockLockContext())
       const result = await withContext.execute()
-
-      expect(mockLockContext.getLockContext).toHaveBeenCalledTimes(1)
 
       const data = unwrapResult(result)
       expect(data).toHaveLength(2)
       expect(data[0]).toHaveProperty('hm')
       expect(data[1]).toHaveProperty('ob')
-    }, 30000)
-
-    it('handles LockContext failure gracefully', async () => {
-      const mockLockContext = createFailingMockLockContext(
-        EncryptionErrorTypes.CtsTokenError,
-        'Mock LockContext failure',
-      )
-
-      const operation = protectClient.encryptQuery('test@example.com', {
-        column: users.email,
-        table: users,
-        queryType: 'equality',
-      })
-
-      const withContext = operation.withLockContext(mockLockContext as any)
-      const result = await withContext.execute()
-
-      expectFailure(
-        result,
-        'Mock LockContext failure',
-        EncryptionErrorTypes.CtsTokenError,
-      )
-    }, 30000)
-
-    it('handles explicit null context from getLockContext gracefully', async () => {
-      // Simulate a runtime scenario where context is null (bypasses TypeScript)
-      const mockLockContext = createMockLockContextWithNullContext()
-
-      const operation = protectClient.encryptQuery([
-        {
-          value: 'test@example.com',
-          column: users.email,
-          table: users,
-          queryType: 'equality',
-        },
-      ])
-
-      const withContext = operation.withLockContext(mockLockContext as any)
-      const result = await withContext.execute()
-
-      // Should succeed - null context should not be passed to FFI
-      const data = unwrapResult(result)
-      expect(data).toHaveLength(1)
-      expect(data[0]).toHaveProperty('hm')
     }, 30000)
   })
 })
