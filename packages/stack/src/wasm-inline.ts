@@ -52,14 +52,14 @@
  * ```
  *
  * For service-to-service / CI use with a custom token store, build an
- * `AccessKeyStrategy.create(region, accessKey, { store })` the same way —
- * derive `region` from your CRN with the `crn:<region>:<workspace-id>`
- * split this module uses. Both strategies are re-exported from this entry.
+ * `AccessKeyStrategy.create(workspaceCrn, accessKey, { store })` the same
+ * way (it derives the region from the CRN). Both strategies are
+ * re-exported from this entry.
  */
 
 import {
   AccessKeyStrategy,
-  OidcFederationStrategy,
+  type OidcFederationStrategy,
 } from '@cipherstash/auth/wasm-inline'
 import {
   decrypt as wasmDecrypt,
@@ -84,6 +84,15 @@ import type { Encrypted, EncryptOptions } from '@/types'
 // Schema + type re-exports
 // -----------------------------------------------------------------------
 
+// Auth strategies for `config.strategy` — `OidcFederationStrategy` for
+// per-user identity-bound encryption, `AccessKeyStrategy` for M2M / CI.
+// Re-exported so edge consumers don't need a separate `@cipherstash/auth`
+// import (pair `OidcFederationStrategy` with `cookieStore` from
+// `@cipherstash/auth/cookies` for cross-invocation token caching).
+export {
+  AccessKeyStrategy,
+  OidcFederationStrategy,
+} from '@cipherstash/auth/wasm-inline'
 export type {
   EncryptedColumn,
   EncryptedField,
@@ -97,18 +106,7 @@ export {
   encryptedField,
   encryptedTable,
 } from '@/schema'
-
 export type { Encrypted } from '@/types'
-
-// Auth strategies for `config.strategy` — `OidcFederationStrategy` for
-// per-user identity-bound encryption, `AccessKeyStrategy` for M2M / CI.
-// Re-exported so edge consumers don't need a separate `@cipherstash/auth`
-// import (pair `OidcFederationStrategy` with `cookieStore` from
-// `@cipherstash/auth/cookies` for cross-invocation token caching).
-export {
-  AccessKeyStrategy,
-  OidcFederationStrategy,
-} from '@cipherstash/auth/wasm-inline'
 
 /** Re-exported convenience predicate — same as the raw protect-ffi one. */
 export function isEncrypted(value: unknown): boolean {
@@ -146,10 +144,9 @@ export type WasmPlaintext =
  * The workspace CRN is the single source of truth for workspace
  * identity and deployment region — matching the Node entry and
  * protect-ffi 0.25+, which read `CS_WORKSPACE_CRN` and no longer
- * consult a separate `CS_REGION`. The region the underlying
- * `AccessKeyStrategy` needs is derived from the CRN's
- * `crn:<region>:<workspace-id>` form, so there is no `region` field to
- * keep in sync.
+ * consult a separate `CS_REGION`. The CRN is passed straight to the
+ * underlying `AccessKeyStrategy`, which derives the region from it, so
+ * there is no `region` field to keep in sync.
  *
  * For service-to-service / CI use, pass `accessKey` plus the workspace
  * `clientId` / `clientKey` and we construct an `AccessKeyStrategy` for
@@ -162,8 +159,8 @@ export type WasmClientConfig = {
   /**
    * CipherStash workspace CRN, e.g.
    * `"crn:ap-southeast-2.aws:my-workspace-id"`. Required — it is the
-   * single source of truth for workspace identity, and the region the
-   * `AccessKeyStrategy` needs is derived from it.
+   * single source of truth for workspace identity; the `AccessKeyStrategy`
+   * derives the region from it.
    */
   workspaceCrn: string
   /** Workspace client identifier — required by the WASM client. */
@@ -371,30 +368,8 @@ function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   }
   if (cfg.strategy) return cfg.strategy
   // Discriminated union guarantees this branch implies `accessKey` is set.
-  // `AccessKeyStrategy.create` still takes a bare region string, so derive
-  // it from the CRN — keeping the CRN as the single source of truth.
-  return AccessKeyStrategy.create(
-    extractRegionFromCrn(cfg.workspaceCrn),
-    cfg.accessKey as string,
-  )
-}
-
-/**
- * Pull the region out of a workspace CRN (`crn:<region>:<workspace-id>`,
- * e.g. `crn:ap-southeast-2.aws:my-workspace` → `ap-southeast-2.aws`).
- *
- * Defined locally rather than imported from `@/utils/config` so the
- * WASM entry stays free of that module's Node-only `fs` / `path`
- * imports.
- *
- * @internal exported for unit-test coverage.
- */
-export function extractRegionFromCrn(crn: string): string {
-  const match = crn.match(/^crn:([^:]+):[^:]+$/)
-  if (!match) {
-    throw new Error(
-      `[encryption]: invalid workspace CRN "${crn}" — expected the form "crn:<region>:<workspace-id>".`,
-    )
-  }
-  return match[1]
+  // `AccessKeyStrategy.create` takes the full workspace CRN (region is
+  // derived from it inside `@cipherstash/auth`), so the CRN stays the
+  // single source of truth — no manual region split.
+  return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey as string)
 }

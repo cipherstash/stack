@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { castAsEnum, toEqlCastAs } from '../src/schema'
-import { extractRegionFromCrn, normalizeCastAs } from '../src/wasm-inline'
+import { normalizeCastAs } from '../src/wasm-inline'
 
 // Exhaustive mapping the wasm-inline normaliser is expected to produce.
 // If you add a variant to `castAsEnum`, add the corresponding EQL value
@@ -91,32 +91,6 @@ describe('wasm-inline normalizeCastAs', () => {
 
     expect(() => normalizeCastAs(config)).toThrowError(
       /unrecognised cast_as value "uuid" on users\.weird/,
-    )
-  })
-})
-
-describe('wasm-inline extractRegionFromCrn', () => {
-  it('pulls the region out of a well-formed workspace CRN', () => {
-    expect(
-      extractRegionFromCrn('crn:ap-southeast-2.aws:my-workspace-id'),
-    ).toBe('ap-southeast-2.aws')
-  })
-
-  it('handles a plain region segment (no .aws suffix)', () => {
-    expect(extractRegionFromCrn('crn:us-east-1:envWorkspace')).toBe(
-      'us-east-1',
-    )
-  })
-
-  it('throws on a CRN missing the workspace-id segment', () => {
-    expect(() => extractRegionFromCrn('crn:ap-southeast-2.aws')).toThrowError(
-      /invalid workspace CRN/,
-    )
-  })
-
-  it('throws on a value that is not a CRN at all', () => {
-    expect(() => extractRegionFromCrn('ap-southeast-2.aws')).toThrowError(
-      /invalid workspace CRN/,
     )
   })
 })
