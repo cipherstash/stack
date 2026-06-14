@@ -47,12 +47,12 @@
 	"dependencies": {
 		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/migrate": "workspace:*",
-		"@clack/prompts": "1.4.0",
+		"@clack/prompts": "1.5.1",
 		"dotenv": "17.4.2",
 		"jiti": "2.7.0",
-		"pg": "8.20.0",
+		"pg": "8.21.0",
 		"picocolors": "^1.1.1",
-		"posthog-node": "^5.34.2",
+		"posthog-node": "^5.36.4",
 		"zod": "^3.25.76"
 	},
 	"peerDependencies": {
