@@ -16,7 +16,7 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
-    "@types/node": "^22.19.19",
+    "@types/node": "^22.19.20",
     "@types/pg": "^8.20.0",
     "tsx": "catalog:repo",
     "typescript": "catalog:repo",
