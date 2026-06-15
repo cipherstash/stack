@@ -1,5 +1,6 @@
 import type { CastAs, MatchIndexOpts, TokenFilter } from '@cipherstash/schema'
 import { customType } from 'drizzle-orm/pg-core'
+import { ALL_V3_DOMAINS } from './v3/domain-map.js'
 
 export type { CastAs, MatchIndexOpts, TokenFilter }
 
@@ -31,13 +32,44 @@ export type EncryptedColumnConfig = {
 }
 
 /**
- * Map to store configuration for encrypted columns
- * Keyed by column name (the name passed to encryptedType)
+ * Map to store configuration for encrypted columns, keyed by column name (the
+ * name passed to encryptedType / eqlV3Type).
+ *
+ * Anchored on a global-registry Symbol so every copy of this module shares ONE
+ * map. The CJS build emits separate bundles for ./pg and ./pg/v3 (no code
+ * splitting), so a CJS consumer importing eqlV3Type from ./pg/v3 but
+ * extractProtectSchema/operators from ./pg would otherwise register into one
+ * bundle's private map and read the other's — schema extraction would then find
+ * no encrypted columns and operators could emit unencrypted SQL.
  */
-const columnConfigMap = new Map<
-  string,
-  EncryptedColumnConfig & { name: string }
->()
+const COLUMN_CONFIG_MAP_KEY = Symbol.for(
+  '@cipherstash/drizzle/pg:columnConfigMap',
+)
+type ColumnConfigMap = Map<string, EncryptedColumnConfig & { name: string }>
+const globalStore = globalThis as unknown as {
+  [COLUMN_CONFIG_MAP_KEY]?: ColumnConfigMap
+}
+const columnConfigMap: ColumnConfigMap =
+  globalStore[COLUMN_CONFIG_MAP_KEY] ?? new Map()
+// Idempotent write-back: stores the new map on first load, no-ops thereafter.
+globalStore[COLUMN_CONFIG_MAP_KEY] = columnConfigMap
+
+/**
+ * Returns true if a Drizzle column's sql-name is an encrypted type we manage —
+ * either the v2 composite or a v3 domain. Shared by the builder and extraction.
+ * The v3 domain set is owned by domain-map.ts (no second hand-maintained list).
+ */
+export function isEncryptedSqlName(name: unknown): boolean {
+  if (typeof name !== 'string') return false
+  return name === 'eql_v2_encrypted' || ALL_V3_DOMAINS.has(name)
+}
+
+/** @internal Register a column config for later extraction lookup. */
+export function registerColumnConfig(
+  config: EncryptedColumnConfig & { name: string },
+): void {
+  columnConfigMap.set(config.name, config)
+}
 
 /**
  * Creates an encrypted column type for Drizzle ORM with configurable searchable encryption options.
@@ -168,11 +200,10 @@ export function getEncryptedColumnConfig(
     // Check if it's an encrypted column by checking sqlName or dataType
     // After pgTable processes it, sqlName will be 'eql_v2_encrypted'
     const isEncrypted =
-      columnAny.sqlName === 'eql_v2_encrypted' ||
-      columnAny.dataType === 'eql_v2_encrypted' ||
-      (columnAny.dataType &&
-        typeof columnAny.dataType === 'function' &&
-        columnAny.dataType() === 'eql_v2_encrypted')
+      isEncryptedSqlName(columnAny.sqlName) ||
+      isEncryptedSqlName(columnAny.dataType) ||
+      (typeof columnAny.dataType === 'function' &&
+        isEncryptedSqlName(columnAny.dataType()))
 
     if (isEncrypted) {
       // Try to get config from property (if still there)
