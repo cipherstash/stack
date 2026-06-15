@@ -38,21 +38,31 @@ describe('extractProtectSchema with v3 columns', () => {
   // separate private copies — otherwise mixed-import CJS consumers would see no
   // encrypted columns.
   it('registers v3 column config on the shared global map (cross-bundle safe)', () => {
-    const table = pgTable('v3_shared', {
-      t_eq: eqlV3Type<string>('t_eq', { dataType: 'text', index: 'equality' }),
-    })
     const mapKey = Symbol.for('@cipherstash/drizzle/pg:columnConfigMap')
     const sharedMap = (globalThis as Record<symbol, unknown>)[mapKey] as Map<
       string,
       { name: string }
     >
+    // Use a column name unique to this test so the global, name-keyed registry
+    // can't yield a false positive from another test's prior registration.
+    sharedMap.delete('v3_shared_t_eq')
+    const table = pgTable('v3_shared', {
+      v3_shared_t_eq: eqlV3Type<string>('v3_shared_t_eq', {
+        dataType: 'text',
+        index: 'equality',
+      }),
+    })
     expect(sharedMap).toBeInstanceOf(Map)
-    expect(sharedMap.get('t_eq')?.name).toBe('t_eq')
+    expect(sharedMap.get('v3_shared_t_eq')?.name).toBe('v3_shared_t_eq')
 
     // Simulate pgTable having stripped _protectConfig: resolution must still
     // succeed via the shared map, not the per-column property.
-    const column = table.t_eq as unknown as { _protectConfig?: unknown }
+    const column = table.v3_shared_t_eq as unknown as {
+      _protectConfig?: unknown
+    }
     column._protectConfig = undefined
-    expect(getEncryptedColumnConfig('t_eq', table.t_eq)?.name).toBe('t_eq')
+    expect(
+      getEncryptedColumnConfig('v3_shared_t_eq', table.v3_shared_t_eq)?.name,
+    ).toBe('v3_shared_t_eq')
   })
 })

@@ -33,13 +33,14 @@ describe.skipIf(!HAS_DB)('v3 DB provisioning', () => {
 
   it('the v3 extractor functions were installed (eq_term, ord_term, match_term)', async () => {
     const fns = await sql`
-      SELECT proname FROM pg_proc p
+      SELECT DISTINCT proname FROM pg_proc p
       JOIN pg_namespace n ON n.oid = p.pronamespace
       WHERE n.nspname = 'eql_v3' AND p.proname IN ('eq_term','ord_term','match_term')
     `
-    // >= 3, not == 3: each extractor is overloaded per scalar (text/int2/int4/int8/
-    // date/timestamptz/…), so there are many rows. At least one per name proves the
-    // DDL executed rather than silently no-op'ing.
-    expect(fns.length).toBeGreaterThanOrEqual(3)
+    // Assert the exact set of distinct names: overloads-per-scalar mean a single
+    // name could otherwise satisfy a bare count, hiding a missing extractor.
+    expect(new Set(fns.map((r) => r.proname))).toEqual(
+      new Set(['eq_term', 'ord_term', 'match_term']),
+    )
   })
 })
