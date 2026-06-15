@@ -1,0 +1,4 @@
+# Vendored EQL installer: codegen output from cipherstash/encrypt-query-language,
+# not hand-written. Exclude from language stats and collapse in diffs.
+# Refresh process: scripts/refresh-eql-v3-sql.md
+__tests__/fixtures/cipherstash-encrypt-v3.sql linguist-vendored
