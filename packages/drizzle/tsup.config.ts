@@ -2,7 +2,13 @@ import { defineConfig } from 'tsup'
 
 export default defineConfig([
   {
-    entry: ['src/pg/index.ts'],
+    // Keyed entry-object form: a flat array of two `index.ts` basenames would
+    // collide both onto dist/pg/index.js. The keyed form pins the output paths so
+    // src/pg/v3/index.ts lands at dist/pg/v3/index.js (not dist/pg/index.js).
+    entry: {
+      index: 'src/pg/index.ts',
+      'v3/index': 'src/pg/v3/index.ts',
+    },
     outDir: 'dist/pg',
     format: ['cjs', 'esm'],
     sourcemap: true,

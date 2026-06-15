@@ -29,6 +29,11 @@
 			"types": "./dist/pg/index.d.ts",
 			"import": "./dist/pg/index.js",
 			"require": "./dist/pg/index.cjs"
+		},
+		"./pg/v3": {
+			"types": "./dist/pg/v3/index.d.ts",
+			"import": "./dist/pg/v3/index.js",
+			"require": "./dist/pg/v3/index.cjs"
 		}
 	},
 	"files": [
