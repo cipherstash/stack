@@ -39,6 +39,13 @@ import type { PgTable } from 'drizzle-orm/pg-core'
 import type { EncryptedColumnConfig } from './index.js'
 import { getEncryptedColumnConfig } from './index.js'
 import { extractProtectSchema } from './schema-extraction.js'
+import {
+  type ComparisonOp,
+  type EqualityOp,
+  type MatchOp,
+  type SqlDialect,
+  v2Dialect,
+} from './sql-dialect.js'
 
 // ============================================================================
 // Type Definitions and Type Guards
@@ -661,6 +668,7 @@ function createComparisonOperator(
   protectClient: ProtectClient,
   defaultProtectTable: ProtectTable<ProtectTableColumn> | undefined,
   protectTableCache: Map<string, ProtectTable<ProtectTableColumn>>,
+  dialect: SqlDialect,
 ): Promise<SQL> | SQL {
   const { config } = columnInfo
 
@@ -694,7 +702,11 @@ function createComparisonOperator(
           },
         )
       }
-      return sql`eql_v2.${sql.raw(operator)}(${left}, ${bindIfParam(encrypted, left)})`
+      return dialect.comparison(
+        operator as ComparisonOp,
+        sql`${left}`,
+        sql`${bindIfParam(encrypted, left)}`,
+      )
     }
 
     return createLazyOperator(
@@ -728,7 +740,11 @@ function createComparisonOperator(
           },
         )
       }
-      return operator === 'eq' ? eq(left, encrypted) : ne(left, encrypted)
+      return dialect.equality(
+        operator as EqualityOp,
+        sql`${left}`,
+        sql`${bindIfParam(encrypted, left)}`,
+      )
     }
 
     return createLazyOperator(
@@ -763,6 +779,7 @@ function createRangeOperator(
   protectClient: ProtectClient,
   defaultProtectTable: ProtectTable<ProtectTableColumn> | undefined,
   protectTableCache: Map<string, ProtectTable<ProtectTableColumn>>,
+  dialect: SqlDialect,
 ): Promise<SQL> | SQL {
   const { config } = columnInfo
 
@@ -788,7 +805,11 @@ function createRangeOperator(
       )
     }
 
-    const rangeCondition = sql`eql_v2.gte(${left}, ${bindIfParam(encryptedMin, left)}) AND eql_v2.lte(${left}, ${bindIfParam(encryptedMax, left)})`
+    const rangeCondition = dialect.range(
+      sql`${left}`,
+      sql`${bindIfParam(encryptedMin, left)}`,
+      sql`${bindIfParam(encryptedMax, left)}`,
+    )
 
     return operator === 'between'
       ? rangeCondition
@@ -822,6 +843,7 @@ function createTextSearchOperator(
   protectClient: ProtectClient,
   defaultProtectTable: ProtectTable<ProtectTableColumn> | undefined,
   protectTableCache: Map<string, ProtectTable<ProtectTableColumn>>,
+  dialect: SqlDialect,
 ): Promise<SQL> | SQL {
   const { config } = columnInfo
 
@@ -850,7 +872,11 @@ function createTextSearchOperator(
       )
     }
 
-    const sqlFn = sql`eql_v2.${sql.raw(operator === 'notIlike' ? 'ilike' : operator)}(${left}, ${bindIfParam(encrypted, left)})`
+    const sqlFn = dialect.match(
+      (operator === 'notIlike' ? 'ilike' : operator) as MatchOp,
+      sql`${left}`,
+      sql`${bindIfParam(encrypted, left)}`,
+    )
     return operator === 'notIlike' ? sql`NOT (${sqlFn})` : sqlFn
   }
 
@@ -985,7 +1011,10 @@ function createJsonbOperator(
  *   .where(await protectOps.gte(usersTable.age, 25))
  * ```
  */
-export function createProtectOperators(protectClient: ProtectClient): {
+export function createProtectOperators(
+  protectClient: ProtectClient,
+  dialect: SqlDialect = v2Dialect,
+): {
   // Comparison operators
   /**
    * Equality operator - encrypts value for encrypted columns.
@@ -1228,6 +1257,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1248,6 +1278,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1268,6 +1299,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1288,6 +1320,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1308,6 +1341,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1328,6 +1362,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1353,6 +1388,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1378,6 +1414,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1401,6 +1438,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1424,6 +1462,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1447,6 +1486,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectClient,
       defaultProtectTable,
       protectTableCache,
+      dialect,
     )
   }
 
@@ -1559,10 +1599,19 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectTableCache,
     )
 
-    // Use regular eq for each encrypted value - PostgreSQL operators handle it
+    // Route each value through the dialect seam (not Drizzle's bare `eq`): under v3
+    // equality compares eql_v3.eq_term(col) to eql_v3.hmac_256(term), since a native
+    // `=` would coerce the term into text_eq and fail the domain CHECK (SQLSTATE
+    // 23514). v2Dialect emits the identical native `=`, so v2 is unaffected.
     const conditions = encryptedValues
       .filter((encrypted) => encrypted !== undefined)
-      .map((encrypted) => eq(left, encrypted))
+      .map((encrypted) =>
+        dialect.equality(
+          'eq',
+          sql`${left}`,
+          sql`${bindIfParam(encrypted, left)}`,
+        ),
+      )
 
     if (conditions.length === 0) {
       return sql`false`
@@ -1609,10 +1658,17 @@ export function createProtectOperators(protectClient: ProtectClient): {
       protectTableCache,
     )
 
-    // Use regular ne for each encrypted value - PostgreSQL operators handle it
+    // Route each value through the dialect seam (not Drizzle's bare `ne`) — same
+    // reason as protectInArray: v3 inequality is eql_v3.eq_term(col) <> hmac_256(term).
     const conditions = encryptedValues
       .filter((encrypted) => encrypted !== undefined)
-      .map((encrypted) => ne(left, encrypted))
+      .map((encrypted) =>
+        dialect.equality(
+          'ne',
+          sql`${left}`,
+          sql`${bindIfParam(encrypted, left)}`,
+        ),
+      )
 
     if (conditions.length === 0) {
       return sql`true`
@@ -1633,7 +1689,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
     )
 
     if (columnInfo.config?.orderAndRange) {
-      return asc(sql`eql_v2.order_by(${column})`)
+      return asc(dialect.orderBy(sql`${column}`))
     }
 
     return asc(column)
@@ -1650,7 +1706,7 @@ export function createProtectOperators(protectClient: ProtectClient): {
     )
 
     if (columnInfo.config?.orderAndRange) {
-      return desc(sql`eql_v2.order_by(${column})`)
+      return desc(dialect.orderBy(sql`${column}`))
     }
 
     return desc(column)
