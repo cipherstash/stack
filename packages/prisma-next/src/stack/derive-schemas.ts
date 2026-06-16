@@ -31,7 +31,9 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
   isCipherstashCodecId,
+  isCipherstashV3CodecId,
 } from '../extension-metadata/constants'
+import { type V3Index, v3CastAs } from '../v3/domain-map'
 
 /**
  * Structural shape of the subset of `contract.json` this derivation
@@ -98,7 +100,19 @@ export function deriveStackSchemas(
     const builders: Record<string, EncryptedColumn> = {}
     for (const [columnName, column] of Object.entries(columns)) {
       const codecId = column.codecId
-      if (codecId == null || !isCipherstashCodecId(codecId)) continue
+      if (codecId == null || !(isCipherstashCodecId(codecId) || isCipherstashV3CodecId(codecId))) continue
+
+      // v3 columns take a SINGLE index (one domain per column), carried as
+      // `typeParams.index`; the v2 boolean-flag walk does not apply.
+      if (isCipherstashV3CodecId(codecId)) {
+        builders[columnName] = applyV3Index(
+          encryptedColumn(columnName).dataType(v3CastAs('text')),
+          column.typeParams,
+          tableName,
+          columnName,
+        )
+        continue
+      }
 
       const dataType = CODEC_ID_TO_DATA_TYPE[codecId]
       builders[columnName] = applyTypeParams(
@@ -139,4 +153,34 @@ function applyTypeParams(
 
 function isCipherstashFlag(value: string): value is CipherstashFlag {
   return value in FLAG_DISPATCH
+}
+
+const V3_INDEX_VALUES = ['equality', 'freeTextSearch', 'orderAndRange'] as const
+
+function isV3Index(value: unknown): value is V3Index {
+  return typeof value === 'string' && (V3_INDEX_VALUES as readonly string[]).includes(value)
+}
+
+/**
+ * Apply a v3 column's single index. `typeParams.index` is `unknown` (the contract
+ * view types typeParams as `Record<string, unknown> | null`), so narrow with
+ * `isV3Index` before dispatching. A v3 column is exactly one domain ⇒ exactly one
+ * index builder.
+ */
+function applyV3Index(
+  builder: EncryptedColumn,
+  typeParams: Readonly<Record<string, unknown>> | null | undefined,
+  tableName: string,
+  columnName: string,
+): EncryptedColumn {
+  const index = typeParams?.['index']
+  if (!isV3Index(index)) {
+    throw new Error(
+      `deriveStackSchemas: v3 column "${tableName}"."${columnName}" requires a valid 'index' typeParam ` +
+        `(one of ${V3_INDEX_VALUES.join(', ')}), got ${String(index)}.`,
+    )
+  }
+  if (index === 'equality') return builder.equality()
+  if (index === 'freeTextSearch') return builder.freeTextSearch()
+  return builder.orderAndRange()
 }
