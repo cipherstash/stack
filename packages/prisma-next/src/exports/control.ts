@@ -38,6 +38,12 @@ import baselineMetadata from '../../migrations/20260601T0000_install_eql_bundle/
 import baselineOps from '../../migrations/20260601T0000_install_eql_bundle/ops.json' with {
   type: 'json',
 };
+import baselineV3Metadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
+  type: 'json',
+};
+import baselineV3Ops from '../../migrations/20260601T0100_install_eql_v3_bundle/ops.json' with {
+  type: 'json',
+};
 import headRef from '../../migrations/refs/head.json' with { type: 'json' };
 import contractJson from '../contract.json' with { type: 'json' };
 import {
@@ -48,6 +54,8 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
+  CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
 } from '../extension-metadata/constants';
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta';
 import {
@@ -58,6 +66,7 @@ import {
   cipherstashJsonCodecHooks,
   cipherstashStringCodecHooks,
 } from '../migration/cipherstash-codec';
+import { cipherstashStringV3CodecHooks } from '../migration/codec-hooks-v3';
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
@@ -66,6 +75,12 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
       dirName: CIPHERSTASH_BASELINE_MIGRATION_NAME,
       metadata: baselineMetadata,
       ops: baselineOps,
+    },
+    {
+      // EQL v3 baseline — installs the eql_v3 bundle. Sorts after the v2 baseline.
+      dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+      metadata: baselineV3Metadata,
+      ops: baselineV3Ops,
     },
   ],
   headRef,
@@ -98,6 +113,8 @@ const cipherstashExtensionDescriptor: SqlControlExtensionDescriptor<'postgres'> 
         [CIPHERSTASH_DATE_CODEC_ID]: cipherstashDateCodecHooks,
         [CIPHERSTASH_BOOLEAN_CODEC_ID]: cipherstashBooleanCodecHooks,
         [CIPHERSTASH_JSON_CODEC_ID]: cipherstashJsonCodecHooks,
+        // v3: expandNativeType → per-index domain; onFieldEvent emits no search-config.
+        [CIPHERSTASH_STRING_V3_CODEC_ID]: cipherstashStringV3CodecHooks,
       },
     },
   },

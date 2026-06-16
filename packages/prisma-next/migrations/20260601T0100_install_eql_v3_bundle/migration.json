@@ -1,0 +1,21 @@
+{
+  "from": null,
+  "to": "sha256:efa685171bebbb8f078f08d12be3578bb5d96b71669dccc6cc9e4be96af8cdb4",
+  "labels": [],
+  "providedInvariants": [
+    "cipherstash:install-eql-v3-bundle-v1"
+  ],
+  "createdAt": "2026-06-16T23:32:09.463Z",
+  "fromContract": null,
+  "toContract": {
+    "storage": {
+      "storageHash": "sha256:efa685171bebbb8f078f08d12be3578bb5d96b71669dccc6cc9e4be96af8cdb4"
+    }
+  },
+  "hints": {
+    "used": [],
+    "applied": [],
+    "plannerVersion": "2.0.0"
+  },
+  "migrationHash": "sha256:997f0460ad5ad14530144f6c031104966b7cf90052ebf794cc2cf0f7c264e0ee"
+}

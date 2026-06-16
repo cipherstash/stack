@@ -29,6 +29,7 @@ import {
   CIPHERSTASH_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_INVARIANTS,
   CIPHERSTASH_SPACE_ID,
+  CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   EQL_V2_CONFIGURATION_TABLE,
 } from '../src/extension-metadata/constants';
 import { EQL_BUNDLE_SQL } from '../src/migration/eql-bundle';
@@ -49,13 +50,19 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(Object.keys(space!.contractJson.storage.tables)).toEqual([EQL_V2_CONFIGURATION_TABLE]);
   });
 
-  it('publishes one baseline migration sourced from the on-disk emit pipeline', () => {
+  it('publishes the v2 + v3 baseline migrations sourced from the on-disk emit pipeline', () => {
     const space = cipherstashExtensionDescriptor.contractSpace!;
-    expect(space.migrations).toHaveLength(1);
+    expect(space.migrations).toHaveLength(2);
     const baseline = space.migrations[0]!;
     expect(baseline.dirName).toBe(CIPHERSTASH_BASELINE_MIGRATION_NAME);
     expect(baseline.metadata.from).toBeNull();
     expect(baseline.metadata.to).toBe(space.contractJson.storage.storageHash);
+    // The v3 baseline installs the eql_v3 bundle; it adds no contract-IR object,
+    // so it resolves to the SAME storage hash (a parallel install baseline).
+    const v3 = space.migrations[1]!;
+    expect(v3.dirName).toBe(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME);
+    expect(v3.metadata.from).toBeNull();
+    expect(v3.metadata.to).toBe(space.contractJson.storage.storageHash);
   });
 
   it('baseline ops carry the installEqlBundle op + structural create-* ops', () => {
@@ -83,12 +90,13 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(installOp?.execute?.[0]?.sql).toBe(EQL_BUNDLE_SQL);
   });
 
-  it("points the head ref at the latest migration's destination hash", () => {
+  it("points the head ref at the baseline destination hash + the union of every baseline's invariants", () => {
     const space = cipherstashExtensionDescriptor.contractSpace!;
+    // Both baselines resolve to the same storage hash (v3 adds no IR object).
     expect(space.headRef.hash).toBe(space.migrations[0]!.metadata.to);
-    expect([...space.headRef.invariants].sort()).toEqual(
-      [...space.migrations[0]!.metadata.providedInvariants].sort(),
-    );
+    // The head invariant set is the union of all applied baselines' invariants.
+    const union = space.migrations.flatMap((m) => [...m.metadata.providedInvariants]).sort();
+    expect([...space.headRef.invariants].sort()).toEqual(union);
   });
 
   it('self-consistency check passes — headRef.hash matches re-derived storage hash', () => {

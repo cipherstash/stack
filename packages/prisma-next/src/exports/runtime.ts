@@ -43,6 +43,7 @@ export {
   createCipherstashDoubleCodec,
   createCipherstashJsonCodec,
   createCipherstashStringCodec,
+  createCipherstashStringV3Codec,
 } from '../execution/codec-runtime';
 export type { DecryptAllOptions } from '../execution/decrypt-all';
 export { decryptAll } from '../execution/decrypt-all';
@@ -82,6 +83,7 @@ export {
   cipherstashJsonbGet,
   cipherstashJsonbPathQueryFirst,
 } from '../execution/helpers';
+export { queryTypeForIndex } from '../execution/operators';
 export type {
   CipherstashAnyParams,
   CipherstashBooleanParams,
@@ -89,6 +91,7 @@ export type {
   CipherstashJsonParams,
   CipherstashNumericParams,
   CipherstashStringParams,
+  CipherstashStringV3Params,
 } from '../execution/parameterized';
 export {
   createParameterizedCodecDescriptors,
@@ -98,26 +101,31 @@ export {
   encryptedDoubleParamsSchema,
   encryptedJsonParamsSchema,
   encryptedStringParamsSchema,
+  encryptedStringV3ParamsSchema,
   renderEncryptedBigIntOutputType,
   renderEncryptedBooleanOutputType,
   renderEncryptedDateOutputType,
   renderEncryptedDoubleOutputType,
   renderEncryptedJsonOutputType,
   renderEncryptedStringOutputType,
+  renderEncryptedStringV3OutputType,
 } from '../execution/parameterized';
 export type {
   CipherstashBulkDecryptArgs,
   CipherstashBulkEncryptArgs,
+  CipherstashBulkEncryptQueryArgs,
   CipherstashRoutingKey,
   CipherstashSdk,
   CipherstashSingleDecryptArgs,
 } from '../execution/sdk';
+export type { V3DataType, V3Index } from '../v3/domain-map';
 export {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
 } from '../extension-metadata/constants';
 
 export { CIPHERSTASH_EXTENSION_VERSION };

@@ -22,3 +22,6 @@
  */
 
 export { bulkEncryptMiddleware } from '../middleware/bulk-encrypt';
+// EQL v3 storage-vs-search-term split middleware. Register ALONGSIDE
+// bulkEncryptMiddleware (disjoint codec-id sets — each ignores the other's params).
+export { bulkEncryptV3Middleware } from '../middleware/bulk-encrypt-v3';

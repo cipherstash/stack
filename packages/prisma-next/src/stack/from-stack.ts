@@ -36,6 +36,7 @@ import type { SqlMiddleware, SqlRuntimeExtensionDescriptor } from '@prisma-next/
 
 import { createCipherstashRuntimeDescriptor } from '../exports/runtime'
 import { bulkEncryptMiddleware } from '../middleware/bulk-encrypt'
+import { bulkEncryptV3Middleware } from '../middleware/bulk-encrypt-v3'
 import {
   type ContractStorageView,
   deriveStackSchemas,
@@ -91,7 +92,10 @@ export async function cipherstashFromStack(
 
   return {
     extensions: [createCipherstashRuntimeDescriptor({ sdk })],
-    middleware: [bulkEncryptMiddleware(sdk)],
+    // Two middlewares over one sdk: v2 filters CIPHERSTASH_CODEC_ID_SET, v3 filters
+    // CIPHERSTASH_V3_CODEC_ID_SET — disjoint, so order is irrelevant and each ignores
+    // the other's params.
+    middleware: [bulkEncryptMiddleware(sdk), bulkEncryptV3Middleware(sdk)],
     encryptionClient,
   }
 }
