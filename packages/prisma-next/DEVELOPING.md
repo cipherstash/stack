@@ -41,12 +41,18 @@ packages/3-extensions/cipherstash/
     │   └── descriptor-meta.ts        cipherstashPackMeta + authoring + storage + codec instances
     ├── middleware/
     │   └── bulk-encrypt.ts           bulkEncryptMiddleware(sdk) + stampRoutingKeysFromAst
+    ├── v3/                           EQL v3 (domain-based; text/String scalar)
+    │   ├── domain-map.ts             (scalar, index) → eql_v3 domain SSOT
+    │   └── wire-codec.ts             plain-jsonb wire (encode/decodeEqlV3Wire)
     ├── migration/
     │   ├── codec-hooks-factory.ts    makeCipherstashCodecHooks({...}) factory (per codec)
+    │   ├── codec-hooks-v3.ts         v3 hooks: expandNativeType → per-index domain
     │   ├── cipherstash-codec.ts      cipherstashStringCodecHooks string-only hook bundle
     │   ├── call-classes.ts           CipherstashAddSearchConfigCall / RemoveSearchConfigCall
-    │   ├── eql-bundle.ts             EQL install SQL (vendored byte-for-byte)
-    │   └── eql-install.generated.ts  generated EQL install op definitions
+    │   ├── eql-bundle.ts             EQL v2 install SQL (vendored byte-for-byte)
+    │   ├── eql-install.generated.ts  generated EQL v2 install op definitions
+    │   ├── eql-v3-bundle.ts          EQL v3 install SQL (vendored byte-for-byte)
+    │   └── eql-v3-install.generated.ts  GENERATED — see scripts/REFRESH_EQL_V3.md
     ├── types/
     │   ├── codec-types.ts            CipherstashCodecTypes interface (decode return types)
     │   └── operation-types.ts        QueryOperationTypes augmentation (column-method surface)
