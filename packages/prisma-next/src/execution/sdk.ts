@@ -62,6 +62,21 @@ export interface CipherstashBulkDecryptArgs {
 }
 
 /**
+ * EQL v3 search-term batch encrypt. Distinct from `bulkEncrypt`: v3 WHERE clauses
+ * compare extracted index terms, so a WHERE needle is a SEARCH TERM (index-only,
+ * NO ciphertext `c`) produced by the stack client's `encryptQuery`, not a stored
+ * value. The `queryType` selects which index term to extract
+ * (`equality`/`freeTextSearch`/`orderAndRange`). Used only by
+ * `bulkEncryptV3Middleware`.
+ */
+export interface CipherstashBulkEncryptQueryArgs {
+  readonly routingKey: CipherstashRoutingKey;
+  readonly queryType: string;
+  readonly values: ReadonlyArray<unknown>;
+  readonly signal?: AbortSignal;
+}
+
+/**
  * The framework-native CipherStash SDK contract consumed by the envelope,
  * codec, middleware, and `decryptAll` surfaces. Real implementations wrap
  * a CipherStash `EncryptionClient`; tests construct mock SDKs that
@@ -71,4 +86,14 @@ export interface CipherstashSdk {
   decrypt(args: CipherstashSingleDecryptArgs): Promise<string>;
   bulkEncrypt(args: CipherstashBulkEncryptArgs): Promise<ReadonlyArray<unknown>>;
   bulkDecrypt(args: CipherstashBulkDecryptArgs): Promise<ReadonlyArray<unknown>>;
+  /**
+   * EQL v3 search-term batch encrypt (maps to the stack client's
+   * `encryptQuery(terms: ScalarQueryTerm[])`). Returns the search-term array
+   * directly — unlike `bulkEncrypt`, the terms are NOT wrapped in `{ data }`.
+   *
+   * OPTIONAL: a v2-only SDK (and the many v2 test stubs) need not implement it.
+   * `bulkEncryptV3Middleware` asserts its presence before routing any v3 search
+   * param; the real `createCipherstashSdk` adapter always provides it.
+   */
+  bulkEncryptQuery?(args: CipherstashBulkEncryptQueryArgs): Promise<ReadonlyArray<unknown>>;
 }

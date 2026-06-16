@@ -33,6 +33,7 @@ import {
   type EncryptedTable,
   type EncryptedTableColumn,
 } from '@cipherstash/stack/schema'
+import type { QueryTypeName, ScalarQueryTerm } from '@cipherstash/stack/types'
 
 import type {
   CipherstashRoutingKey,
@@ -81,6 +82,26 @@ export function createCipherstashSdk(
         { column, table },
       )
       return unwrap(result, 'bulkEncrypt').map((entry) => entry.data)
+    },
+
+    async bulkEncryptQuery({ values, routingKey, queryType }) {
+      const { table, column } = lookup(registry, routingKey)
+      // `column` is always an EncryptedColumn for v3 scalar columns (EncryptedField
+      // is for nested JSON paths, which v3 String never produces); ScalarQueryTerm
+      // requires EncryptedColumn specifically.
+      const terms: ScalarQueryTerm[] = values.map((plaintext) => ({
+        value: toJsPlaintext(plaintext),
+        column: column as EncryptedColumn,
+        table,
+        queryType: queryType as QueryTypeName,
+        // 'eql' → the search term is returned as the bare plain-jsonb Encrypted
+        // shape (no composite-literal wrapping), which v3's plain-jsonb wire wants.
+        returnType: 'eql',
+      }))
+      const result = await encryptionClient.encryptQuery(terms)
+      // NO `.data` map here (unlike bulkEncrypt): `encryptQuery` returns the search
+      // terms directly — a search term IS the result, not wrapped in `{ data }`.
+      return unwrap(result, 'bulkEncryptQuery')
     },
 
     async bulkDecrypt({ ciphertexts }) {
