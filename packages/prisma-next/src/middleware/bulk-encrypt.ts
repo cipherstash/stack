@@ -185,7 +185,10 @@ function collectTargets(
   return targets;
 }
 
-function stampRoutingKeysFromAst(ast: AnyQueryAst | undefined): void {
+// Exported for reuse by `bulkEncryptV3Middleware` — the v3 storage-write path
+// needs the identical INSERT/UPDATE routing stamp (v3 search params are stamped
+// at lowering time by the operators, not here).
+export function stampRoutingKeysFromAst(ast: AnyQueryAst | undefined): void {
   if (!ast) return;
   switch (ast.kind) {
     case 'insert':
