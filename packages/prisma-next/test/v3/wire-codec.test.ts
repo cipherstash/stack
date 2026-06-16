@@ -29,11 +29,15 @@ describe('decodeEqlV3Wire', () => {
 })
 
 describe('wire round-trip (property)', () => {
-  it('decode∘encode is identity for arbitrary JSON objects', () => {
+  it('decode∘encode is a faithful JSON round-trip for arbitrary JSON objects', () => {
     fc.assert(
       fc.property(fc.dictionary(fc.string(), fc.jsonValue()), (obj) => {
         const wire = encodeEqlV3Wire(obj)
-        expect(decodeEqlV3Wire(wire as string)).toEqual(obj)
+        // JSON cannot represent -0 (it serialises to "0"), so the round-trip is
+        // identity *up to* JSON normalisation. Compare against the JSON-normalised
+        // input rather than the raw value — the codec is a faithful JSON
+        // round-trip, not a structural clone that preserves -0.
+        expect(decodeEqlV3Wire(wire as string)).toEqual(JSON.parse(JSON.stringify(obj)))
       }),
     )
   })
