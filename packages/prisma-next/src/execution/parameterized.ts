@@ -111,6 +111,14 @@ export const encryptedJsonParamsSchema = arktype({
   searchableJson: 'boolean',
 });
 
+// v3 params is a SINGLE index choice (one domain per column), NOT the v2 boolean
+// flags. Bare arktype value handed directly to the descriptor's paramsSchema
+// (matches the encryptedStringParamsSchema idiom).
+export const encryptedStringV3ParamsSchema = arktype({
+  index: '"equality" | "freeTextSearch" | "orderAndRange"',
+});
+export type CipherstashStringV3Params = typeof encryptedStringV3ParamsSchema.infer;
+
 export function renderEncryptedStringOutputType(_params: CipherstashStringParams): string {
   return 'EncryptedString';
 }
@@ -135,8 +143,21 @@ export function renderEncryptedJsonOutputType(_params: CipherstashJsonParams): s
   return 'EncryptedJson';
 }
 
+// Returns the TS output-type LABEL (like renderEncryptedStringOutputType), not
+// the SQL native type. The SQL domain is emitted per-column by the codec hook's
+// expandNativeType (codec-hooks-v3.ts). v3 reuses the EncryptedString envelope.
+export function renderEncryptedStringV3OutputType(_params: CipherstashStringV3Params): string {
+  return 'EncryptedString';
+}
+
 const ENCRYPTED_TARGET_TYPES = ['eql_v2_encrypted'] as const;
 const ENCRYPTED_META = { db: { sql: { postgres: { nativeType: 'eql_v2_encrypted' } } } } as const;
+
+// v3 domains the codec binds to. Base meta.nativeType is the storage domain;
+// expandNativeType (codec-hooks-v3.ts) narrows it to text_eq/text_match/text_ord
+// per column at migration time.
+const ENCRYPTED_V3_TARGET_TYPES = ['eql_v3.text', 'eql_v3.text_eq', 'eql_v3.text_match', 'eql_v3.text_ord'] as const;
+const ENCRYPTED_V3_META = { db: { sql: { postgres: { nativeType: 'eql_v3.text' } } } } as const;
 // Per-codec traits live in `CIPHERSTASH_CODEC_TRAITS` and use the
 // `cipherstash:*` namespace so the cipherstash-namespaced operators
 // (`cipherstashEq`, `cipherstashGt`, etc.) can register against
