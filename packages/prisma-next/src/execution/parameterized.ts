@@ -47,6 +47,7 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
 } from '../extension-metadata/constants';
 import {
   createCipherstashBigIntCodec,
@@ -55,6 +56,7 @@ import {
   createCipherstashDoubleCodec,
   createCipherstashJsonCodec,
   createCipherstashStringCodec,
+  createCipherstashStringV3Codec,
 } from './codec-runtime';
 import type { CipherstashSdk } from './sdk';
 
@@ -171,7 +173,8 @@ export type CipherstashAnyParams =
   | CipherstashNumericParams
   | CipherstashDateParams
   | CipherstashBooleanParams
-  | CipherstashJsonParams;
+  | CipherstashJsonParams
+  | CipherstashStringV3Params;
 
 export function createParameterizedCodecDescriptors(
   sdk: CipherstashSdk,
@@ -182,6 +185,7 @@ export function createParameterizedCodecDescriptors(
   const dateCodec = createCipherstashDateCodec(sdk);
   const booleanCodec = createCipherstashBooleanCodec(sdk);
   const jsonCodec = createCipherstashJsonCodec(sdk);
+  const stringV3Codec = createCipherstashStringV3Codec(sdk);
 
   const stringDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashStringParams> = {
     codecId: CIPHERSTASH_STRING_CODEC_ID,
@@ -249,6 +253,21 @@ export function createParameterizedCodecDescriptors(
     factory: (_params: CipherstashJsonParams) => (_ctx: CodecInstanceContext) => jsonCodec,
   };
 
+  // EQL v3 string descriptor. Carries its OWN v3 domains as targetTypes/meta
+  // (NOT eql_v2_encrypted); the per-column index domain is emitted at migration
+  // time by the codec hook's expandNativeType (codec-hooks-v3.ts). renderOutputType
+  // returns the TS label 'EncryptedString' (v3 reuses the v2 envelope).
+  const stringV3Descriptor: RuntimeParameterizedCodecDescriptor<CipherstashStringV3Params> = {
+    codecId: CIPHERSTASH_STRING_V3_CODEC_ID,
+    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_STRING_V3_CODEC_ID] ?? [],
+    targetTypes: ENCRYPTED_V3_TARGET_TYPES,
+    meta: ENCRYPTED_V3_META,
+    paramsSchema: encryptedStringV3ParamsSchema,
+    isParameterized: true as const,
+    renderOutputType: renderEncryptedStringV3OutputType,
+    factory: (_params: CipherstashStringV3Params) => (_ctx: CodecInstanceContext) => stringV3Codec,
+  };
+
   return [
     stringDescriptor,
     doubleDescriptor,
@@ -256,5 +275,6 @@ export function createParameterizedCodecDescriptors(
     dateDescriptor,
     booleanDescriptor,
     jsonDescriptor,
+    stringV3Descriptor,
   ] as ReadonlyArray<RuntimeParameterizedCodecDescriptor<CipherstashAnyParams>>;
 }

@@ -44,6 +44,9 @@ export { CIPHERSTASH_STRING_CODEC_ID };
 /** @deprecated Re-exported for source compatibility; new call sites should use `CipherstashCellCodec`. */
 export type CipherstashStringCodec = CipherstashCellCodec<EncryptedString>;
 
+// EQL v3 plain-jsonb string codec — see ./codec-v3.ts.
+export { createCipherstashStringV3Codec } from './codec-v3';
+
 export function createCipherstashStringCodec(
   sdk: CipherstashSdk,
 ): CipherstashCellCodec<EncryptedString> {

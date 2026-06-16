@@ -42,6 +42,7 @@ import {
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
 } from '../src/extension-metadata/constants';
 
 function emptySdk(): CipherstashSdk {
@@ -230,11 +231,11 @@ describe('eql_v2_encrypted wire-format round-trip — wire-format fix', () => {
 });
 
 describe('createParameterizedCodecDescriptors', () => {
-  // Pins the full six-descriptor surface — string + double +
-  // bigint + date + boolean + json — in stable order.
-  it('exposes the cipherstash/{string,double,bigint,date,boolean,json}@1 descriptors in stable order', () => {
+  // Pins the full descriptor surface — string + double + bigint + date +
+  // boolean + json (v2) + string-v3 — in stable order.
+  it('exposes the cipherstash/{string,double,bigint,date,boolean,json}@1 + string-v3@1 descriptors in stable order', () => {
     const descriptors = createParameterizedCodecDescriptors(emptySdk());
-    expect(descriptors).toHaveLength(6);
+    expect(descriptors).toHaveLength(7);
     expect(descriptors.map((d) => d.codecId)).toEqual([
       CIPHERSTASH_STRING_CODEC_ID,
       CIPHERSTASH_DOUBLE_CODEC_ID,
@@ -242,9 +243,15 @@ describe('createParameterizedCodecDescriptors', () => {
       CIPHERSTASH_DATE_CODEC_ID,
       CIPHERSTASH_BOOLEAN_CODEC_ID,
       CIPHERSTASH_JSON_CODEC_ID,
+      CIPHERSTASH_STRING_V3_CODEC_ID,
     ]);
     for (const descriptor of descriptors) {
-      expect(descriptor.targetTypes).toEqual(['eql_v2_encrypted']);
+      // v2 codecs target eql_v2_encrypted; the v3 codec carries its own jsonb domains.
+      if (descriptor.codecId === CIPHERSTASH_STRING_V3_CODEC_ID) {
+        expect(descriptor.targetTypes).toEqual(['eql_v3.text', 'eql_v3.text_eq', 'eql_v3.text_match', 'eql_v3.text_ord']);
+      } else {
+        expect(descriptor.targetTypes).toEqual(['eql_v2_encrypted']);
+      }
       // Per-codec `cipherstash:*` traits drive the multi-codec
       // operator dispatch (see `extension-metadata/constants.ts`); the
       // framework `'equality'` trait is intentionally absent across

@@ -101,6 +101,19 @@ export interface CipherstashCellCodecOptions<E extends EncryptedEnvelopeBase<unk
     readonly column: string;
     readonly sdk: CipherstashSdk;
   }) => E;
+  /**
+   * Wire-format codec. Defaults to the v2 `eql_v2_encrypted` composite literal
+   * (`encodeEqlV2EncryptedWire` / `decodeEqlV2EncryptedWire`). EQL v3 columns are
+   * `CREATE DOMAIN … AS jsonb` (plain-jsonb wire), so the v3 codec overrides both.
+   */
+  readonly encodeWire?: (payload: unknown) => unknown;
+  readonly decodeWire?: (wire: unknown) => unknown;
+  /** Native DB type(s) for the auxiliary descriptor. Default: `[eql_v2_encrypted]`. */
+  readonly targetTypes?: readonly string[];
+  /** Postgres `nativeType` for the auxiliary descriptor's meta. Default: `eql_v2_encrypted`. */
+  readonly nativeType?: string;
+  /** Middleware fn name used in the encode-time misconfig diagnostic. Default: `bulkEncryptMiddleware`. */
+  readonly middlewareName?: string;
 }
 
 export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> extends CodecImpl<
@@ -112,6 +125,9 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
   readonly sdk: CipherstashSdk | undefined;
   readonly #fromInternal: CipherstashCellCodecOptions<E>['fromInternal'];
   readonly #typeName: string;
+  readonly #encodeWire: (payload: unknown) => unknown;
+  readonly #decodeWire: (wire: unknown) => unknown;
+  readonly #middlewareName: string;
   // One-shot cache so the per-encode WeakSet lookup only runs until the
   // first time we observe a registered middleware on this codec's SDK.
   // WeakSet entries are append-only (the registry never un-registers an
@@ -128,6 +144,9 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
     this.sdk = sdk;
     this.#fromInternal = options.fromInternal;
     this.#typeName = options.typeName;
+    this.#encodeWire = options.encodeWire ?? encodeEqlV2EncryptedWire;
+    this.#decodeWire = options.decodeWire ?? decodeEqlV2EncryptedWire;
+    this.#middlewareName = options.middlewareName ?? 'bulkEncryptMiddleware';
   }
 
   async encode(value: E, _ctx: SqlCodecCallContext): Promise<unknown> {
@@ -157,12 +176,12 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
           throw runtimeError(
             'RUNTIME.ENCODE_FAILED',
             `cipherstash ${this.descriptor.codecId}: encrypted column value has not been encrypted, ` +
-              'and no `bulkEncryptMiddleware(sdk)` has been registered with this SDK. ' +
+              `and no \`${this.#middlewareName}(sdk)\` has been registered with this SDK. ` +
               'Wire it up alongside the extension descriptor:\n\n' +
               '  postgres<Contract>({\n' +
               '    contractJson,\n' +
               '    extensions: [createCipherstashRuntimeDescriptor({ sdk })],\n' +
-              '    middleware:  [bulkEncryptMiddleware(sdk)],\n' +
+              `    middleware:  [${this.#middlewareName}(sdk)],\n` +
               '  });\n\n' +
               'Both must close over the SAME `sdk` reference. See the @cipherstash/prisma-next README for the full wiring example.',
             {
@@ -176,7 +195,7 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
       }
       return value;
     }
-    return encodeEqlV2EncryptedWire(handle.ciphertext);
+    return this.#encodeWire(handle.ciphertext);
   }
 
   async decode(wire: unknown, ctx: SqlCodecCallContext): Promise<E> {
@@ -208,7 +227,7 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
       );
     }
     return this.#fromInternal({
-      ciphertext: decodeEqlV2EncryptedWire(wire),
+      ciphertext: this.#decodeWire(wire),
       table: column.table,
       column: column.name,
       sdk: this.sdk,
@@ -257,9 +276,9 @@ function makeAuxiliaryDescriptor<E extends EncryptedEnvelopeBase<unknown>>(
   return {
     codecId: options.codecId,
     traits: CIPHERSTASH_CODEC_TRAITS[options.codecId] ?? [],
-    targetTypes: CIPHERSTASH_TARGET_TYPES,
+    targetTypes: options.targetTypes ?? CIPHERSTASH_TARGET_TYPES,
     meta: {
-      db: { sql: { postgres: { nativeType: EQL_V2_ENCRYPTED_TYPE } } },
+      db: { sql: { postgres: { nativeType: options.nativeType ?? EQL_V2_ENCRYPTED_TYPE } } },
     },
     paramsSchema: {
       '~standard': {

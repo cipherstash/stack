@@ -22,6 +22,7 @@ import {
 import {
   CIPHERSTASH_SPACE_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
 } from '../src/extension-metadata/constants';
 
 function emptySdk(): CipherstashSdk {
@@ -43,19 +44,20 @@ describe('createCipherstashRuntimeDescriptor — descriptor shape', () => {
   });
 
   it('exposes the cipherstash codec descriptors under types.codecTypes.codecDescriptors', () => {
-    // The descriptor wires the full six-codec surface (string +
-    // double + bigint + date + boolean + json). The current count +
-    // ordering is pinned here so a missed wiring surfaces in unit
-    // tests instead of leaking through e2e.
+    // The descriptor wires the full codec surface (string + double + bigint +
+    // date + boolean + json (v2) + string-v3). The current count + ordering is
+    // pinned here so a missed wiring surfaces in unit tests instead of leaking
+    // through e2e.
     const descriptor = createCipherstashRuntimeDescriptor({ sdk: emptySdk() });
     const codecDescriptors = descriptor.types?.codecTypes?.codecDescriptors ?? [];
-    expect(codecDescriptors).toHaveLength(6);
+    expect(codecDescriptors).toHaveLength(7);
     expect(codecDescriptors[0]?.codecId).toBe(CIPHERSTASH_STRING_CODEC_ID);
     expect(codecDescriptors[1]?.codecId).toBe('cipherstash/double@1');
     expect(codecDescriptors[2]?.codecId).toBe('cipherstash/bigint@1');
     expect(codecDescriptors[3]?.codecId).toBe('cipherstash/date@1');
     expect(codecDescriptors[4]?.codecId).toBe('cipherstash/boolean@1');
     expect(codecDescriptors[5]?.codecId).toBe('cipherstash/json@1');
+    expect(codecDescriptors[6]?.codecId).toBe(CIPHERSTASH_STRING_V3_CODEC_ID);
   });
 });
 
@@ -63,7 +65,7 @@ describe('createCipherstashRuntimeDescriptor — codecs()', () => {
   it('returns the parameterized codec descriptors in stable order', () => {
     const descriptor = createCipherstashRuntimeDescriptor({ sdk: emptySdk() });
     const codecs = descriptor.codecs?.() ?? [];
-    expect(codecs).toHaveLength(6);
+    expect(codecs).toHaveLength(7);
     expect(codecs.map((c) => c.codecId)).toEqual([
       CIPHERSTASH_STRING_CODEC_ID,
       'cipherstash/double@1',
@@ -71,8 +73,14 @@ describe('createCipherstashRuntimeDescriptor — codecs()', () => {
       'cipherstash/date@1',
       'cipherstash/boolean@1',
       'cipherstash/json@1',
+      CIPHERSTASH_STRING_V3_CODEC_ID,
     ]);
     for (const c of codecs) {
+      // v2 codecs target eql_v2_encrypted; the v3 codec carries its own jsonb domains.
+      if (c.codecId === CIPHERSTASH_STRING_V3_CODEC_ID) {
+        expect(c.targetTypes).toEqual(['eql_v3.text', 'eql_v3.text_eq', 'eql_v3.text_match', 'eql_v3.text_ord']);
+        continue;
+      }
       expect(c.targetTypes).toEqual(['eql_v2_encrypted']);
       // Per-codec `cipherstash:*` namespaced traits drive the
       // multi-codec operator dispatch (see
