@@ -118,6 +118,31 @@ export function isCipherstashCodecId(codecId: string): codecId is CipherstashCod
   return CIPHERSTASH_CODEC_ID_SET.has(codecId);
 }
 
+// --- EQL v3 (additive; coexists with v2) -------------------------------------
+
+/** Schema CipherStash installs its v3 domains/functions into. */
+export const EQL_V3_SCHEMA = 'eql_v3';
+
+/**
+ * v3 text/String codec id. Distinct from `cipherstash/string@1`: v3 columns are
+ * `CREATE DOMAIN … AS jsonb` with a per-index domain native type, a plain-jsonb
+ * wire, and extracted-index-term operator SQL. The per-column index lives in
+ * `typeParams.index`. Deliberately kept OUT of {@link CIPHERSTASH_CODEC_IDS} /
+ * {@link CIPHERSTASH_CODEC_ID_SET} so the v2 bulk-encrypt middleware ignores it;
+ * the v3 middleware filters {@link CIPHERSTASH_V3_CODEC_ID_SET} instead.
+ */
+export const CIPHERSTASH_STRING_V3_CODEC_ID = 'cipherstash/string-v3@1';
+
+/** Closed list/set/union of the v3 codec ids this package owns. */
+export const CIPHERSTASH_V3_CODEC_IDS = [CIPHERSTASH_STRING_V3_CODEC_ID] as const;
+export const CIPHERSTASH_V3_CODEC_ID_SET: ReadonlySet<string> = new Set(CIPHERSTASH_V3_CODEC_IDS);
+export type CipherstashV3CodecId = (typeof CIPHERSTASH_V3_CODEC_IDS)[number];
+
+/** Type-guard form of {@link CIPHERSTASH_V3_CODEC_ID_SET}. */
+export function isCipherstashV3CodecId(codecId: string): codecId is CipherstashV3CodecId {
+  return CIPHERSTASH_V3_CODEC_ID_SET.has(codecId);
+}
+
 /**
  * Cipherstash-namespaced codec traits. Used as the dispatch key for
  * the multi-codec predicate operators in `src/execution/operators.ts`
@@ -153,6 +178,17 @@ export const CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH = 'cipherstash:free-text-search'
 export const CIPHERSTASH_TRAIT_SEARCHABLE_JSON = 'cipherstash:searchable-json' as const;
 
 /**
+ * Shared string trait — carried by BOTH `cipherstash/string@1` AND
+ * `cipherstash/string-v3@1`, and ONLY by those two. It gives the legacy
+ * single-codec `cipherstashEq` / `cipherstashIlike` operators a SINGLE shared
+ * trait so they attach to both the v2 and v3 string columns (trait dispatch is
+ * AND over `self.traits`, so a single trait is required) WITHOUT exposing them
+ * on double/bigint/date/boolean. Rides the same `cipherstash:` namespace and
+ * the same `as unknown as` cast as the other cipherstash traits below.
+ */
+export const CIPHERSTASH_TRAIT_STRING = 'cipherstash:string' as const;
+
+/**
  * Per-codec trait sets keyed by codec id. Each codec descriptor in
  * `parameterized.ts` / `codec-runtime.ts` / `codec-metadata.ts` reads
  * the traits for its codec id from this map; the
@@ -167,6 +203,7 @@ type FrameworkCodecTrait = import('@prisma-next/framework-components/codec').Cod
 
 const CIPHERSTASH_CODEC_TRAITS_RAW: Readonly<Record<string, readonly string[]>> = {
   [CIPHERSTASH_STRING_CODEC_ID]: [
+    CIPHERSTASH_TRAIT_STRING,
     CIPHERSTASH_TRAIT_EQUALITY,
     CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
     CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
@@ -176,6 +213,17 @@ const CIPHERSTASH_CODEC_TRAITS_RAW: Readonly<Record<string, readonly string[]>> 
   [CIPHERSTASH_DATE_CODEC_ID]: [CIPHERSTASH_TRAIT_EQUALITY, CIPHERSTASH_TRAIT_ORDER_AND_RANGE],
   [CIPHERSTASH_BOOLEAN_CODEC_ID]: [CIPHERSTASH_TRAIT_EQUALITY],
   [CIPHERSTASH_JSON_CODEC_ID]: [CIPHERSTASH_TRAIT_SEARCHABLE_JSON],
+  // v3 codec carries the v2 cipherstash traits so the existing single-trait
+  // operators (eq/ne/gt/.../ilike) attach to it automatically; the v2/v3 SQL
+  // split is decided inside the operator `impl` by `dialectForCodecId`, NOT by
+  // a distinct trait. `cipherstash:string` gives the legacy eq/ilike a shared
+  // single trait across both string versions (round-2 fix 8).
+  [CIPHERSTASH_STRING_V3_CODEC_ID]: [
+    CIPHERSTASH_TRAIT_STRING,
+    CIPHERSTASH_TRAIT_EQUALITY,
+    CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
+    CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
+  ],
 };
 
 // `CodecDescriptor.traits` is typed `readonly CodecTrait[]` where
@@ -232,4 +280,11 @@ export const CIPHERSTASH_BASELINE_MIGRATION_NAME = '20260601T0000_install_eql_bu
  */
 export const CIPHERSTASH_INVARIANTS = {
   installBundle: 'cipherstash:install-eql-bundle-v1',
+  installBundleV3: 'cipherstash:install-eql-v3-bundle-v1',
 } as const;
+
+/**
+ * Migration directory name for the v3 baseline (installs the eql_v3 bundle).
+ * Sorts after the v2 baseline so both install in order.
+ */
+export const CIPHERSTASH_V3_BASELINE_MIGRATION_NAME = '20260601T0100_install_eql_v3_bundle';
