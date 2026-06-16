@@ -26,8 +26,11 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
+  EQL_V3_TEXT_TYPE,
 } from '../extension-metadata/constants';
+import { eqlV3Domain, type V3Index } from '../v3/domain-map';
 
 /**
  * Search-mode parameters for `encryptedString({...})`. Every flag is
@@ -73,6 +76,40 @@ export function encryptedString(
       freeTextSearch: options.freeTextSearch ?? true,
       orderAndRange: options.orderAndRange ?? true,
     },
+  };
+}
+
+/**
+ * Options for `encryptedStringV3({ index })`. v3 columns carry exactly ONE index
+ * capability (one Postgres domain), chosen here. Mirrors drizzle's `eqlV3Type`.
+ */
+export interface EncryptedStringV3Options {
+  readonly index: V3Index;
+}
+
+export interface EncryptedStringV3ColumnDescriptor {
+  readonly codecId: typeof CIPHERSTASH_STRING_V3_CODEC_ID;
+  readonly nativeType: typeof EQL_V3_TEXT_TYPE;
+  readonly typeParams: { readonly index: V3Index };
+}
+
+/**
+ * `encryptedStringV3({ index })` — TS contract factory for an EQL v3 String
+ * column. Lowers to the `cipherstash/string-v3@1` codec with the base storage
+ * domain `eql_v3.text` as nativeType; the per-column index domain
+ * (`text_eq`/`text_match`/`text_ord`) is emitted at migration time by the codec
+ * hook's `expandNativeType`. The chosen index lands in `typeParams.index`.
+ */
+export function encryptedStringV3(options: EncryptedStringV3Options): EncryptedStringV3ColumnDescriptor {
+  // Validate the index by resolving its domain — eqlV3Domain throws on an unknown
+  // index (mirrors drizzle's eqlV3Type). The v2 factories run no arktype
+  // validation here (the framework validates paramsSchema separately), so we
+  // don't add arktype theatre — the throw-on-resolve is the guard.
+  eqlV3Domain('text', options.index);
+  return {
+    codecId: CIPHERSTASH_STRING_V3_CODEC_ID,
+    nativeType: EQL_V3_TEXT_TYPE,
+    typeParams: { index: options.index },
   };
 }
 

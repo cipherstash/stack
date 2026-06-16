@@ -124,6 +124,14 @@ export function isCipherstashCodecId(codecId: string): codecId is CipherstashCod
 export const EQL_V3_SCHEMA = 'eql_v3';
 
 /**
+ * Base v3 storage domain (the `CREATE DOMAIN eql_v3.text AS jsonb` type). v3
+ * `Encrypted<string>` columns declare this as their nativeType; the migration
+ * codec hook's `expandNativeType` narrows it to the per-index domain
+ * (`eql_v3.text_eq` / `text_match` / `text_ord`) at DDL time.
+ */
+export const EQL_V3_TEXT_TYPE = 'eql_v3.text';
+
+/**
  * v3 text/String codec id. Distinct from `cipherstash/string@1`: v3 columns are
  * `CREATE DOMAIN … AS jsonb` with a per-index domain native type, a plain-jsonb
  * wire, and extracted-index-term operator SQL. The per-column index lives in

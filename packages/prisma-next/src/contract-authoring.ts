@@ -31,7 +31,9 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
+  EQL_V3_TEXT_TYPE,
 } from './extension-metadata/constants';
 
 export const cipherstashAuthoringTypes = {
@@ -193,6 +195,29 @@ export const cipherstashAuthoringTypes = {
             path: ['searchableJson'],
             default: true,
           },
+        },
+      },
+    },
+    // EQL v3 (additive). One required `index` capability per column (no boolean
+    // flags, no defaults). Lowers to the v3 codec with the base storage domain
+    // eql_v3.text; the migration hook narrows it per index at DDL time.
+    EncryptedStringV3: {
+      kind: 'typeConstructor',
+      args: [
+        {
+          kind: 'object',
+          name: 'options',
+          optional: false,
+          properties: {
+            index: { kind: 'string', optional: false },
+          },
+        },
+      ],
+      output: {
+        codecId: CIPHERSTASH_STRING_V3_CODEC_ID,
+        nativeType: EQL_V3_TEXT_TYPE,
+        typeParams: {
+          index: { kind: 'arg', index: 0, path: ['index'] },
         },
       },
     },
