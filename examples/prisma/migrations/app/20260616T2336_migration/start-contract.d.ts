@@ -35,7 +35,7 @@ import type {
 } from '@prisma-next/contract/types';
 
 export type StorageHash =
-  StorageHashBase<'sha256:4e951512096c6bb3dbfa55779a34474176fc6f925f97087ca341b28681a1e7e3'>;
+  StorageHashBase<'sha256:7475191ce0d78258ce5586265bcdfd12202f5daf90690b902890e58eb7508373'>;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash =
   ProfileHashBase<'sha256:1a8dbe044289f30a1de958fe800cc5a8378b285d2e126a8c44b58864bac2c18e'>;
@@ -58,12 +58,6 @@ export type FieldOutputTypes = {
     readonly emailVerified: CodecTypes['cipherstash/boolean@1']['output'];
     readonly preferences: CodecTypes['cipherstash/json@1']['output'];
   };
-  readonly UserV3: {
-    readonly id: CodecTypes['pg/text@1']['output'];
-    readonly email: CodecTypes['cipherstash/string-v3@1']['output'];
-    readonly bio: CodecTypes['cipherstash/string-v3@1']['output'];
-    readonly name: CodecTypes['cipherstash/string-v3@1']['output'];
-  };
 };
 export type FieldInputTypes = {
   readonly User: {
@@ -74,12 +68,6 @@ export type FieldInputTypes = {
     readonly birthday: CodecTypes['cipherstash/date@1']['input'];
     readonly emailVerified: CodecTypes['cipherstash/boolean@1']['input'];
     readonly preferences: CodecTypes['cipherstash/json@1']['input'];
-  };
-  readonly UserV3: {
-    readonly id: CodecTypes['pg/text@1']['input'];
-    readonly email: CodecTypes['cipherstash/string-v3@1']['input'];
-    readonly bio: CodecTypes['cipherstash/string-v3@1']['input'];
-    readonly name: CodecTypes['cipherstash/string-v3@1']['input'];
   };
 };
 export type TypeMaps = TypeMapsType<
@@ -92,37 +80,6 @@ export type TypeMaps = TypeMapsType<
 type ContractBase = ContractType<
   {
     readonly tables: {
-      readonly user_v3: {
-        columns: {
-          readonly id: {
-            readonly nativeType: 'text';
-            readonly codecId: 'pg/text@1';
-            readonly nullable: false;
-          };
-          readonly email: {
-            readonly nativeType: 'eql_v3.text';
-            readonly codecId: 'cipherstash/string-v3@1';
-            readonly nullable: false;
-            readonly typeParams: { readonly index: 'equality' };
-          };
-          readonly bio: {
-            readonly nativeType: 'eql_v3.text';
-            readonly codecId: 'cipherstash/string-v3@1';
-            readonly nullable: false;
-            readonly typeParams: { readonly index: 'freeTextSearch' };
-          };
-          readonly name: {
-            readonly nativeType: 'eql_v3.text';
-            readonly codecId: 'cipherstash/string-v3@1';
-            readonly nullable: false;
-            readonly typeParams: { readonly index: 'orderAndRange' };
-          };
-        };
-        primaryKey: { readonly columns: readonly ['id'] };
-        uniques: readonly [];
-        indexes: readonly [];
-        foreignKeys: readonly [];
-      };
       readonly users: {
         columns: {
           readonly id: {
@@ -254,53 +211,11 @@ type ContractBase = ContractType<
         };
       };
     };
-    readonly UserV3: {
-      readonly fields: {
-        readonly id: {
-          readonly nullable: false;
-          readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
-        };
-        readonly email: {
-          readonly nullable: false;
-          readonly type: {
-            readonly kind: 'scalar';
-            readonly codecId: 'cipherstash/string-v3@1';
-            readonly typeParams: { readonly index: 'equality' };
-          };
-        };
-        readonly bio: {
-          readonly nullable: false;
-          readonly type: {
-            readonly kind: 'scalar';
-            readonly codecId: 'cipherstash/string-v3@1';
-            readonly typeParams: { readonly index: 'freeTextSearch' };
-          };
-        };
-        readonly name: {
-          readonly nullable: false;
-          readonly type: {
-            readonly kind: 'scalar';
-            readonly codecId: 'cipherstash/string-v3@1';
-            readonly typeParams: { readonly index: 'orderAndRange' };
-          };
-        };
-      };
-      readonly relations: Record<string, never>;
-      readonly storage: {
-        readonly table: 'user_v3';
-        readonly fields: {
-          readonly id: { readonly column: 'id' };
-          readonly email: { readonly column: 'email' };
-          readonly bio: { readonly column: 'bio' };
-          readonly name: { readonly column: 'name' };
-        };
-      };
-    };
   }
 > & {
   readonly target: 'postgres';
   readonly targetFamily: 'sql';
-  readonly roots: { readonly users: 'User'; readonly user_v3: 'UserV3' };
+  readonly roots: { readonly users: 'User' };
   readonly capabilities: {
     readonly postgres: {
       readonly jsonAgg: true;
@@ -346,7 +261,6 @@ type ContractBase = ContractType<
                 readonly renderOutputType: unknown;
                 readonly targetTypes: readonly ['eql_v2_encrypted'];
                 readonly traits: readonly [
-                  'cipherstash:string',
                   'cipherstash:equality',
                   'cipherstash:free-text-search',
                   'cipherstash:order-and-range',

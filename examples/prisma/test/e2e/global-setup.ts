@@ -108,9 +108,9 @@ export default async function setup(): Promise<() => Promise<void>> {
     throw new Error(describeSpawnFailure('`prisma-next migration apply`', apply));
   }
 
-  // Clean slate for the suite. The `users` table is the only data-bearing
-  // application table; the EQL bundle tables (`eql_v2_configuration` etc.)
-  // are state we want to keep.
+  // Clean slate for the suite. `users` (v2) and `user_v3` (v3) are the
+  // data-bearing application tables; the EQL bundle tables
+  // (`eql_v2_configuration`, the `eql_v3.*` domains) are state we want to keep.
   const truncate = spawnSync(
     'docker',
     [
@@ -122,12 +122,12 @@ export default async function setup(): Promise<() => Promise<void>> {
       '-d',
       'cipherstash_e2e',
       '-c',
-      'TRUNCATE TABLE users',
+      'TRUNCATE TABLE users, user_v3',
     ],
     { stdio: 'pipe', timeout: TRUNCATE_TIMEOUT_MS },
   );
   if (truncate.error || truncate.signal || truncate.status !== 0) {
-    throw new Error(describeSpawnFailure('TRUNCATE TABLE users', truncate));
+    throw new Error(describeSpawnFailure('TRUNCATE TABLE users, user_v3', truncate));
   }
 
   return async () => {};

@@ -78,4 +78,31 @@ export function truncateUsers(): void {
   }
 }
 
+/**
+ * Truncate the `user_v3` table (EQL v3 String e2e). Mirrors {@link truncateUsers}.
+ */
+export function truncateUserV3(): void {
+  const result = spawnSync(
+    'docker',
+    [
+      'exec',
+      'cipherstash-e2e-postgres',
+      'psql',
+      '-U',
+      'cipherstash',
+      '-d',
+      'cipherstash_e2e',
+      '-c',
+      'TRUNCATE TABLE user_v3',
+    ],
+    { stdio: 'pipe' },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `cipherstash e2e harness: TRUNCATE user_v3 failed (exit ${result.status}):\n` +
+        `${result.stderr?.toString() ?? ''}\n${result.stdout?.toString() ?? ''}`,
+    );
+  }
+}
+
 export { db };

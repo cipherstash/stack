@@ -1,0 +1,34 @@
+[
+  {
+    "id": "table.user_v3",
+    "label": "Create table \"user_v3\"",
+    "summary": "Creates table \"user_v3\"",
+    "operationClass": "additive",
+    "target": {
+      "id": "postgres",
+      "details": {
+        "schema": "public",
+        "objectType": "table",
+        "name": "user_v3"
+      }
+    },
+    "precheck": [
+      {
+        "description": "ensure table \"user_v3\" does not exist",
+        "sql": "SELECT to_regclass('\"public\".\"user_v3\"') IS NULL"
+      }
+    ],
+    "execute": [
+      {
+        "description": "create table \"user_v3\"",
+        "sql": "CREATE TABLE \"public\".\"user_v3\" (\n  \"bio\" eql_v3.text_match NOT NULL,\n  \"email\" eql_v3.text_eq NOT NULL,\n  \"id\" text NOT NULL,\n  \"name\" eql_v3.text_ord NOT NULL,\n  PRIMARY KEY (\"id\")\n)"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify table \"user_v3\" exists",
+        "sql": "SELECT to_regclass('\"public\".\"user_v3\"') IS NOT NULL"
+      }
+    ]
+  }
+]

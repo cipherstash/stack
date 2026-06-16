@@ -42,3 +42,16 @@ model User {
   // overrides once the upstream bundle bug is fixed.
   @@map("users")
 }
+
+// EQL v3 (experimental). One index capability per column (domain-based). v3
+// columns emit NO `add_encrypted_constraint` (the domain type encodes the
+// capability), so the v2 quoting workaround does not apply — but the table is
+// mapped to lowercase `user_v3` defensively.
+model UserV3 {
+  id    String @id
+  email cipherstash.EncryptedStringV3({ index: "equality" })
+  bio   cipherstash.EncryptedStringV3({ index: "freeTextSearch" })
+  name  cipherstash.EncryptedStringV3({ index: "orderAndRange" })
+
+  @@map("user_v3")
+}

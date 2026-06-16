@@ -4,7 +4,6 @@
   "target": "postgres",
   "profileHash": "sha256:1a8dbe044289f30a1de958fe800cc5a8378b285d2e126a8c44b58864bac2c18e",
   "roots": {
-    "user_v3": "UserV3",
     "users": "User"
   },
   "models": {
@@ -110,111 +109,11 @@
         },
         "table": "users"
       }
-    },
-    "UserV3": {
-      "fields": {
-        "bio": {
-          "nullable": false,
-          "type": {
-            "codecId": "cipherstash/string-v3@1",
-            "kind": "scalar",
-            "typeParams": {
-              "index": "freeTextSearch"
-            }
-          }
-        },
-        "email": {
-          "nullable": false,
-          "type": {
-            "codecId": "cipherstash/string-v3@1",
-            "kind": "scalar",
-            "typeParams": {
-              "index": "equality"
-            }
-          }
-        },
-        "id": {
-          "nullable": false,
-          "type": {
-            "codecId": "pg/text@1",
-            "kind": "scalar"
-          }
-        },
-        "name": {
-          "nullable": false,
-          "type": {
-            "codecId": "cipherstash/string-v3@1",
-            "kind": "scalar",
-            "typeParams": {
-              "index": "orderAndRange"
-            }
-          }
-        }
-      },
-      "relations": {},
-      "storage": {
-        "fields": {
-          "bio": {
-            "column": "bio"
-          },
-          "email": {
-            "column": "email"
-          },
-          "id": {
-            "column": "id"
-          },
-          "name": {
-            "column": "name"
-          }
-        },
-        "table": "user_v3"
-      }
     }
   },
   "storage": {
-    "storageHash": "sha256:4e951512096c6bb3dbfa55779a34474176fc6f925f97087ca341b28681a1e7e3",
+    "storageHash": "sha256:7475191ce0d78258ce5586265bcdfd12202f5daf90690b902890e58eb7508373",
     "tables": {
-      "user_v3": {
-        "columns": {
-          "bio": {
-            "codecId": "cipherstash/string-v3@1",
-            "nativeType": "eql_v3.text",
-            "nullable": false,
-            "typeParams": {
-              "index": "freeTextSearch"
-            }
-          },
-          "email": {
-            "codecId": "cipherstash/string-v3@1",
-            "nativeType": "eql_v3.text",
-            "nullable": false,
-            "typeParams": {
-              "index": "equality"
-            }
-          },
-          "id": {
-            "codecId": "pg/text@1",
-            "nativeType": "text",
-            "nullable": false
-          },
-          "name": {
-            "codecId": "cipherstash/string-v3@1",
-            "nativeType": "eql_v3.text",
-            "nullable": false,
-            "typeParams": {
-              "index": "orderAndRange"
-            }
-          }
-        },
-        "foreignKeys": [],
-        "indexes": [],
-        "primaryKey": {
-          "columns": [
-            "id"
-          ]
-        },
-        "uniques": []
-      },
       "users": {
         "columns": {
           "accountid": {
@@ -332,7 +231,6 @@
                   "eql_v2_encrypted"
                 ],
                 "traits": [
-                  "cipherstash:string",
                   "cipherstash:equality",
                   "cipherstash:free-text-search",
                   "cipherstash:order-and-range"
