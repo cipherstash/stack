@@ -159,7 +159,12 @@ const ENCRYPTED_META = { db: { sql: { postgres: { nativeType: 'eql_v2_encrypted'
 // expandNativeType (codec-hooks-v3.ts) narrows it to text_eq/text_match/text_ord
 // per column at migration time.
 const ENCRYPTED_V3_TARGET_TYPES = ['eql_v3.text', 'eql_v3.text_eq', 'eql_v3.text_match', 'eql_v3.text_ord'] as const;
-const ENCRYPTED_V3_META = { db: { sql: { postgres: { nativeType: 'eql_v3.text' } } } } as const;
+// meta.nativeType is the PARAM cast type (renderTypedParam emits `$N::<nativeType>`),
+// NOT the column DDL type. v3 bind params are plain `jsonb` (a search term would
+// fail the full-payload `eql_v3.text*` domain CHECK; a storage value casts jsonb→
+// domain implicitly on INSERT). The per-column DDL domain is emitted by the
+// migration hook's expandNativeType (codec-hooks-v3.ts). See operators-v3.test.ts.
+const ENCRYPTED_V3_META = { db: { sql: { postgres: { nativeType: 'jsonb' } } } } as const;
 // Per-codec traits live in `CIPHERSTASH_CODEC_TRAITS` and use the
 // `cipherstash:*` namespace so the cipherstash-namespaced operators
 // (`cipherstashEq`, `cipherstashGt`, etc.) can register against

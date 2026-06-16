@@ -55,6 +55,16 @@ export interface EncryptedEnvelopeHandle<T> {
   table: string | undefined;
   column: string | undefined;
   sdk: CipherstashSdk | undefined;
+  /**
+   * v3-only: the protect query-type marker (`equality`/`freeTextSearch`/
+   * `orderAndRange`). Stamped ONLY by v3 predicate operators (the search path)
+   * so `bulkEncryptV3Middleware` routes this param to `encryptQuery` (a search
+   * term) instead of `bulkEncrypt` (a storage value). v2 never sets it; an
+   * ABSENT slot means "storage value". Typed `string` (not `V3Index`) so this
+   * lowest-layer module stays free of a v3 import — see Round-3 §A2. Optional so
+   * the per-subclass `from`/`fromInternal` factories need not set it.
+   */
+  queryType?: string;
 }
 
 export interface EncryptedEnvelopeFromInternalArgs {
@@ -296,6 +306,30 @@ export function setHandleRoutingKey<T>(
       `cipherstash envelope: routing-key column conflict on table "${handle.table}" — handle already bound to "${handle.column}", refusing to rebind to "${column}". Re-encode the value or construct a fresh envelope for the new routing target.`,
     );
   }
+}
+
+/**
+ * v3-only: stamps the protect queryType so `bulkEncryptV3Middleware` routes this
+ * param to `encryptQuery` (a search term) rather than `bulkEncrypt` (a storage
+ * value). v2 never sets it; an ABSENT slot means "storage value". Stamped only by
+ * v3 predicate operators (the search path), never on a write/insert param. Typed
+ * `string` (not `V3Index`) to keep this base module free of a v3 import; callers
+ * in v3-aware code pass a `V3Index`, which widens to `string`. Write-once-wins:
+ * a conflicting re-stamp throws (a reused envelope across query types is a bug).
+ */
+export function setHandleQueryType<T>(envelope: EncryptedEnvelopeBase<T>, queryType: string): void {
+  const handle = envelope.expose();
+  if (handle.queryType !== undefined && handle.queryType !== queryType) {
+    throw new Error(
+      `cipherstash envelope: queryType already set to "${handle.queryType}", refusing to rebind to "${queryType}".`,
+    );
+  }
+  handle.queryType = queryType;
+}
+
+/** Read the v3 query-type marker (undefined ⇒ storage value). */
+export function readHandleQueryType<T>(envelope: EncryptedEnvelopeBase<T>): string | undefined {
+  return envelope.expose().queryType;
 }
 
 /**

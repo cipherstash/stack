@@ -227,8 +227,14 @@ describe('createCipherstashRuntimeDescriptor — queryOperations registration', 
       'cipherstashNotIlike',
       'cipherstashNotInArray',
     ]);
+    // cipherstashEq / cipherstashIlike were single-codec (`{ codecId: string@1 }`)
+    // until EQL v3 (ADR 214 / round-2 fix 9). They now dispatch on the shared
+    // `cipherstash:string` trait — carried ONLY by `cipherstash/string@1` and
+    // `cipherstash/string-v3@1` — so they attach to BOTH string versions while
+    // staying off double/bigint/date/boolean (v2 string-only visibility preserved).
+    // The emitted SQL is unchanged; only the `self` selector shape changed.
     for (const method of ['cipherstashEq', 'cipherstashIlike']) {
-      expect(ops[method]?.self).toEqual({ codecId: CIPHERSTASH_STRING_CODEC_ID });
+      expect(ops[method]?.self).toEqual({ traits: ['cipherstash:string'] });
     }
     for (const method of ['cipherstashNe', 'cipherstashInArray', 'cipherstashNotInArray']) {
       expect(ops[method]?.self).toEqual({ traits: ['cipherstash:equality'] });

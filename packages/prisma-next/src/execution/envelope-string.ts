@@ -72,7 +72,9 @@ export class EncryptedString extends EncryptedEnvelopeBase<string> {
 
 export {
   isHandleDecrypted,
+  readHandleQueryType,
   setHandleCiphertext,
   setHandlePlaintextCache,
+  setHandleQueryType,
   setHandleRoutingKey,
 } from './envelope-base';

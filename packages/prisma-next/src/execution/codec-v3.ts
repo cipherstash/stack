@@ -36,7 +36,13 @@ export function createCipherstashStringV3Codec(sdk: CipherstashSdk): Cipherstash
     encodeWire: encodeEqlV3Wire,
     decodeWire: decodeEqlV3Wire,
     targetTypes: V3_TARGET_TYPES,
-    nativeType: 'eql_v3.text',
+    // Param cast type — plain `jsonb`, NOT the column domain. v3 bind params are
+    // plain-jsonb for BOTH search terms (encryptQuery: an index-only object that
+    // would FAIL the `eql_v3.text*` full-payload domain CHECK) and storage values
+    // (bulkEncrypt: a full payload that implicitly casts jsonb→domain on INSERT).
+    // The per-column DDL domain comes from the migration hook's expandNativeType
+    // (codec-hooks-v3.ts), not from this runtime param-cast nativeType.
+    nativeType: 'jsonb',
     middlewareName: 'bulkEncryptV3Middleware',
   })
 }

@@ -86,20 +86,26 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  CIPHERSTASH_STRING_V3_CODEC_ID,
   CIPHERSTASH_TRAIT_EQUALITY,
   CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
   CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
   CIPHERSTASH_TRAIT_SEARCHABLE_JSON,
+  CIPHERSTASH_TRAIT_STRING,
   type CipherstashCodecId,
+  type CipherstashV3CodecId,
   isCipherstashCodecId,
+  isCipherstashV3CodecId,
 } from '../extension-metadata/constants';
+import type { V3Index } from '../v3/domain-map';
+import { type SqlDialect, dialectForCodecId } from './dialect';
 import type { EncryptedEnvelopeBase } from './envelope-base';
 import { EncryptedBigInt } from './envelope-bigint';
 import { EncryptedBoolean } from './envelope-boolean';
 import { EncryptedDate } from './envelope-date';
 import { EncryptedDouble } from './envelope-double';
 import { EncryptedJson } from './envelope-json';
-import { EncryptedString, setHandleRoutingKey } from './envelope-string';
+import { EncryptedString, setHandleQueryType, setHandleRoutingKey } from './envelope-string';
 
 /**
  * Codec ID of the framework's Postgres boolean codec. Referenced as a
@@ -134,13 +140,53 @@ type PgBoolReturn = { readonly codecId: typeof PG_BOOL_CODEC_ID; readonly nullab
  * require their search-index `typeParams` (`equality`,
  * `freeTextSearch`, `orderAndRange`) to be present.
  */
-function asEncryptedParam(selfAst: AnyExpression, selfCodec: CodecRef, value: unknown): ParamRef {
+function asEncryptedParam(
+  selfAst: AnyExpression,
+  selfCodec: CodecRef,
+  value: unknown,
+  v3?: { readonly queryType: V3Index; readonly publicMethod: string },
+): ParamRef {
   const envelope = coerceToEnvelope(selfCodec.codecId, value);
+  // v3 search path: a v3 column is exactly one index domain, so an operator
+  // whose required query-type does not match the column's index is invalid.
+  // Reject here for a clear error rather than a downstream domain CHECK / "function
+  // does not exist" failure. On a match, stamp the queryType so the v3 middleware
+  // routes this param through encryptQuery (a search term), not bulkEncrypt.
+  if (v3 !== undefined && isCipherstashV3CodecId(selfCodec.codecId)) {
+    const columnIndex = readV3ColumnIndex(selfCodec);
+    if (columnIndex !== v3.queryType) {
+      throw new TypeError(
+        `cipherstash ${v3.publicMethod}: this operator needs a "${v3.queryType}" index, but the column's ` +
+          `index is "${String(columnIndex)}". A v3 column has exactly one index capability — declare the ` +
+          `column with \`cipherstash.EncryptedStringV3({ index: "${v3.queryType}" })\` to use this operator.`,
+      );
+    }
+    setHandleQueryType(envelope, queryTypeForIndex(v3.queryType));
+  }
   const columnRef = extractColumnRef(selfAst);
   if (columnRef !== undefined) {
     setHandleRoutingKey(envelope, columnRef.table, columnRef.column);
   }
   return ParamRef.of(envelope, { codec: selfCodec });
+}
+
+/**
+ * Centralises the column-index → protect query-type mapping. Identity today
+ * (V3Index ⊂ the protect `QueryTypeName` union: `equality` | `freeTextSearch` |
+ * `orderAndRange`); kept as a function so a future divergence has one edit site.
+ * Pinned against the real protect query-type strings by the Task 10 adapter test.
+ */
+export function queryTypeForIndex(index: V3Index): string {
+  return index;
+}
+
+/** Read a v3 column's single index off its CodecRef typeParams (`JsonValue`). */
+function readV3ColumnIndex(selfCodec: CodecRef): unknown {
+  const params = selfCodec.typeParams;
+  if (params !== null && typeof params === 'object' && !Array.isArray(params)) {
+    return (params as { index?: unknown }).index;
+  }
+  return undefined;
 }
 
 /**
@@ -214,7 +260,22 @@ const ENVELOPE_COERCERS: Readonly<Record<CipherstashCodecId, EnvelopeCoercer>> =
   },
 };
 
+// Parallel coercer table for the v3 codec ids. Kept SEPARATE from
+// ENVELOPE_COERCERS (a `Record<CipherstashCodecId, …>` whose exhaustiveness guard
+// over the v2 union must not be widened). v3 string reuses the EncryptedString
+// envelope, so the body matches the v2 string coercer.
+const V3_ENVELOPE_COERCERS: Readonly<Record<CipherstashV3CodecId, EnvelopeCoercer>> = {
+  [CIPHERSTASH_STRING_V3_CODEC_ID]: (value) => {
+    if (value instanceof EncryptedString) return value;
+    if (typeof value === 'string') return EncryptedString.from(value);
+    throw envelopeTypeError('EncryptedString', 'string', value);
+  },
+};
+
 function coerceToEnvelope(columnCodecId: string, value: unknown): EncryptedEnvelopeBase<unknown> {
+  if (isCipherstashV3CodecId(columnCodecId)) {
+    return V3_ENVELOPE_COERCERS[columnCodecId](value);
+  }
   if (!isCipherstashCodecId(columnCodecId)) {
     throw new Error(
       `cipherstash operator: column codec id "${columnCodecId}" is not a cipherstash codec; ` +
@@ -274,19 +335,29 @@ function extractColumnRef(selfAst: AnyExpression): ColumnRef | undefined {
  *   Embedded into the SQL lowering template as `eql_v2.<eqlFunction>(...)`.
  */
 function eqlOperator(publicMethod: string, eqlFunction: 'eq' | 'ilike'): SqlOperationDescriptor {
+  // `eq` carries an equality index; `ilike` (free-text containment) carries the
+  // freeTextSearch index. Used on v3 columns to enforce the index/operator match.
+  const queryType: V3Index = eqlFunction === 'eq' ? 'equality' : 'freeTextSearch';
   return {
-    self: { codecId: CIPHERSTASH_STRING_CODEC_ID },
+    // Single-trait dispatch on `cipherstash:string` (carried by BOTH string
+    // codecs and ONLY those two) preserves v2 string-only visibility while
+    // attaching to v3 string columns too. The v2/v3 SQL split happens below via
+    // dialectForCodecId. See ADR 214 + round-2 fix 9 (this changed the pinned
+    // `self` shape in operator-lowering.test.ts from `{codecId}` to `{traits}`).
+    self: { traits: [CIPHERSTASH_TRAIT_STRING] as unknown as readonly CodecTrait[] },
     impl: (self: Expression<ScopeField>, value: unknown): Expression<PgBoolReturn> => {
       const selfCodec = requireSelfCodec(self, publicMethod);
       const selfAst = toExpr(self, selfCodec);
+      const dialect = dialectForCodecId(selfCodec.codecId);
+      const template = eqlFunction === 'eq' ? dialect.equality('eq') : dialect.match('like');
       return buildOperation({
         method: publicMethod,
-        args: [selfAst, asEncryptedParam(selfAst, selfCodec, value)],
+        args: [selfAst, asEncryptedParam(selfAst, selfCodec, value, { queryType, publicMethod })],
         returns: { codecId: PG_BOOL_CODEC_ID, nullable: false },
         lowering: {
           targetFamily: 'sql',
           strategy: 'function',
-          template: `eql_v2.${eqlFunction}({{self}}, {{arg0}})`,
+          template,
         },
       });
     },
@@ -324,16 +395,19 @@ function envelopeOperator(
   publicMethod: string,
   trait: string,
   arity: number,
-  template: string,
+  buildTemplate: (dialect: SqlDialect) => string,
+  queryType: V3Index,
 ): SqlOperationDescriptor {
   return {
     // Cipherstash trait identifiers (`cipherstash:equality`, ...)
     // intentionally live outside the framework`s closed `CodecTrait`
     // union; the runtime dispatcher widens to `readonly string[]`
-    // before matching, so the namespace round-trips unchanged. See
+    // before matching, so the namespace round-trips unchanged
+    // (`cipherstash:string` now shares this namespace too). See
     // `extension-metadata/constants.ts:CIPHERSTASH_CODEC_TRAITS` for
     // the full rationale; AGENTS.md requires the rationale comment
-    // alongside any `as unknown as` cast.
+    // alongside any `as unknown as` cast. The template is computed inside
+    // `impl` from the column's dialect (v2 vs v3) — same trait, two emissions.
     self: { traits: [trait] as unknown as readonly CodecTrait[] },
     impl: (self: Expression<ScopeField>, ...userArgs: unknown[]): Expression<PgBoolReturn> => {
       if (userArgs.length !== arity) {
@@ -343,7 +417,9 @@ function envelopeOperator(
       }
       const selfCodec = requireSelfCodec(self, publicMethod);
       const selfAst = toExpr(self, selfCodec);
-      const argRefs = userArgs.map((value) => asEncryptedParam(selfAst, selfCodec, value));
+      const argRefs = userArgs.map((value) =>
+        asEncryptedParam(selfAst, selfCodec, value, { queryType, publicMethod }),
+      );
       return buildOperation({
         method: publicMethod,
         args: [selfAst, ...argRefs],
@@ -351,7 +427,7 @@ function envelopeOperator(
         lowering: {
           targetFamily: 'sql',
           strategy: 'function',
-          template,
+          template: buildTemplate(dialectForCodecId(selfCodec.codecId)),
         },
       });
     },
@@ -385,7 +461,8 @@ function envelopeOperator(
 function variableArityEnvelopeOperator(
   publicMethod: string,
   trait: string,
-  buildTemplate: (arity: number) => string,
+  buildTemplate: (dialect: SqlDialect, arity: number) => string,
+  queryType: V3Index,
 ): SqlOperationDescriptor {
   return {
     // See `envelopeOperator` for the cast rationale.
@@ -407,7 +484,9 @@ function variableArityEnvelopeOperator(
       }
       const selfCodec = requireSelfCodec(self, publicMethod);
       const selfAst = toExpr(self, selfCodec);
-      const argRefs = values.map((value) => asEncryptedParam(selfAst, selfCodec, value));
+      const argRefs = values.map((value) =>
+        asEncryptedParam(selfAst, selfCodec, value, { queryType, publicMethod }),
+      );
       return buildOperation({
         method: publicMethod,
         args: [selfAst, ...argRefs],
@@ -415,7 +494,7 @@ function variableArityEnvelopeOperator(
         lowering: {
           targetFamily: 'sql',
           strategy: 'function',
-          template: buildTemplate(values.length),
+          template: buildTemplate(dialectForCodecId(selfCodec.codecId), values.length),
         },
       });
     },
@@ -423,21 +502,25 @@ function variableArityEnvelopeOperator(
 }
 
 /**
- * Build the OR-of-equalities lowering template for an `n`-element
- * array: `(eql_v2.eq({{self}}, {{arg0}}) OR eql_v2.eq({{self}}, {{arg1}}) OR ...)`.
- * The single-element form collapses to one `eql_v2.eq` call with
- * outer parentheses retained for shape stability.
+ * Build the OR-of-equalities lowering template for an `n`-element array:
+ * `(eql_v2.eq({{self}}, {{arg0}}) OR eql_v2.eq({{self}}, {{arg1}}) OR ...)` for v2,
+ * or `(eql_v3.eq_term({{self}}) = eql_v3.hmac_256({{arg0}}::jsonb) OR ...)` for v3.
+ * The single-element form collapses to one equality call with outer parentheses
+ * retained for shape stability. The per-element template is the dialect's
+ * `equality('eq')` with its `{{arg0}}` placeholder renumbered per element — the
+ * `SqlDialect` interface models single-arg equality, not the n-ary OR fan-out.
  */
-function buildInArrayTemplate(n: number): string {
+function buildInArrayTemplate(dialect: SqlDialect, n: number): string {
+  const base = dialect.equality('eq');
   const terms: string[] = [];
   for (let i = 0; i < n; i++) {
-    terms.push(`eql_v2.eq({{self}}, {{arg${i}}})`);
+    terms.push(base.replaceAll('{{arg0}}', `{{arg${i}}}`));
   }
   return `(${terms.join(' OR ')})`;
 }
 
-function buildNotInArrayTemplate(n: number): string {
-  return `NOT ${buildInArrayTemplate(n)}`;
+function buildNotInArrayTemplate(dialect: SqlDialect, n: number): string {
+  return `NOT ${buildInArrayTemplate(dialect, n)}`;
 }
 
 /**
@@ -533,59 +616,41 @@ export function cipherstashQueryOperations(): SqlOperationDescriptors {
       'cipherstashNe',
       CIPHERSTASH_TRAIT_EQUALITY,
       1,
-      'NOT eql_v2.eq({{self}}, {{arg0}})',
+      (d) => d.equality('ne'),
+      'equality',
     ),
     cipherstashInArray: variableArityEnvelopeOperator(
       'cipherstashInArray',
       CIPHERSTASH_TRAIT_EQUALITY,
       buildInArrayTemplate,
+      'equality',
     ),
     cipherstashNotInArray: variableArityEnvelopeOperator(
       'cipherstashNotInArray',
       CIPHERSTASH_TRAIT_EQUALITY,
       buildNotInArrayTemplate,
+      'equality',
     ),
     cipherstashNotIlike: envelopeOperator(
       'cipherstashNotIlike',
       CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
       1,
-      'NOT eql_v2.ilike({{self}}, {{arg0}})',
+      // v2: `NOT eql_v2.ilike(...)` (no parens — preserves byte-for-byte). v3:
+      // `NOT eql_v3.match_term(...) @> ...` (postgres binds `@>` tighter than NOT).
+      (d) => `NOT ${d.match('like')}`,
+      'freeTextSearch',
     ),
-    cipherstashGt: envelopeOperator(
-      'cipherstashGt',
-      CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
-      1,
-      'eql_v2.gt({{self}}, {{arg0}})',
-    ),
-    cipherstashGte: envelopeOperator(
-      'cipherstashGte',
-      CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
-      1,
-      'eql_v2.gte({{self}}, {{arg0}})',
-    ),
-    cipherstashLt: envelopeOperator(
-      'cipherstashLt',
-      CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
-      1,
-      'eql_v2.lt({{self}}, {{arg0}})',
-    ),
-    cipherstashLte: envelopeOperator(
-      'cipherstashLte',
-      CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
-      1,
-      'eql_v2.lte({{self}}, {{arg0}})',
-    ),
-    cipherstashBetween: envelopeOperator(
-      'cipherstashBetween',
-      CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
-      2,
-      'eql_v2.gte({{self}}, {{arg0}}) AND eql_v2.lte({{self}}, {{arg1}})',
-    ),
+    cipherstashGt: envelopeOperator('cipherstashGt', CIPHERSTASH_TRAIT_ORDER_AND_RANGE, 1, (d) => d.comparison('gt'), 'orderAndRange'),
+    cipherstashGte: envelopeOperator('cipherstashGte', CIPHERSTASH_TRAIT_ORDER_AND_RANGE, 1, (d) => d.comparison('gte'), 'orderAndRange'),
+    cipherstashLt: envelopeOperator('cipherstashLt', CIPHERSTASH_TRAIT_ORDER_AND_RANGE, 1, (d) => d.comparison('lt'), 'orderAndRange'),
+    cipherstashLte: envelopeOperator('cipherstashLte', CIPHERSTASH_TRAIT_ORDER_AND_RANGE, 1, (d) => d.comparison('lte'), 'orderAndRange'),
+    cipherstashBetween: envelopeOperator('cipherstashBetween', CIPHERSTASH_TRAIT_ORDER_AND_RANGE, 2, (d) => d.range(), 'orderAndRange'),
     cipherstashNotBetween: envelopeOperator(
       'cipherstashNotBetween',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       2,
-      'NOT (eql_v2.gte({{self}}, {{arg0}}) AND eql_v2.lte({{self}}, {{arg1}}))',
+      (d) => `NOT (${d.range()})`,
+      'orderAndRange',
     ),
     cipherstashJsonbPathExists: jsonbPathExistsOperator(),
   };
