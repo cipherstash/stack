@@ -101,6 +101,7 @@
 		"@prisma-next/sql-contract-ts": "0.8.0",
 		"@prisma-next/sql-schema-ir": "0.8.0",
 		"@prisma-next/target-postgres": "0.8.0",
+		"fast-check": "^4.8.0",
 		"pathe": "^2.0.3",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
