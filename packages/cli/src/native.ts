@@ -10,11 +10,20 @@
 // that case and turn it into actionable guidance.
 
 import * as p from '@clack/prompts'
+import {
+  detectPackageManager,
+  type PackageManager,
+  runnerCommand,
+} from './commands/init/utils.js'
 
 interface ModuleError extends Error {
   code?: string
   requireStack?: string[]
 }
+
+// Matches the platform-suffixed optional package, e.g.
+// `@cipherstash/protect-ffi-darwin-arm64` or `@cipherstash/auth-linux-x64-gnu`.
+const PLATFORM_PKG = /@cipherstash\/[a-z0-9-]+-(?:darwin|linux|win32)-[a-z0-9-]+/i
 
 /** `<platform>-<arch>` for the current process, e.g. `darwin-arm64`. */
 export function currentTarget(): string {
@@ -36,15 +45,33 @@ export function isNativeBinaryMissing(err: unknown): err is ModuleError {
   const haystack = `${e.message}\n${(e.requireStack ?? []).join('\n')}`
   // A platform-suffixed @cipherstash package, or a failure surfaced from the
   // neon loader, both mean the optional native binary wasn't installed.
-  return (
-    /@cipherstash\/[a-z0-9-]+-(?:darwin|linux|win32)-[a-z0-9-]+/i.test(
-      haystack,
-    ) || /[\\/]@neon-rs[\\/]load[\\/]/.test(haystack)
-  )
+  return PLATFORM_PKG.test(haystack) || /[\\/]@neon-rs[\\/]load[\\/]/.test(haystack)
 }
 
 function missingModuleName(err: ModuleError): string | undefined {
-  return /Cannot find module '([^']+)'/.exec(err.message)?.[1]
+  const haystack = `${err.message}\n${(err.requireStack ?? []).join('\n')}`
+  // Prefer the real platform package name wherever it appears — on Linux it
+  // carries a libc/toolchain suffix (e.g. `-linux-x64-gnu`) that a generic
+  // `<platform>-<arch>` guess would miss.
+  const pkg = PLATFORM_PKG.exec(haystack)?.[0]
+  if (pkg) return pkg
+  // Fall back to the quoted name. CJS says "Cannot find module 'X'"; ESM
+  // (ERR_MODULE_NOT_FOUND) says "Cannot find package 'X'".
+  return /Cannot find (?:module|package) '([^']+)'/.exec(err.message)?.[1]
+}
+
+// Recovery command to reinstall a project's dependencies from scratch.
+function reinstallCommand(pm: PackageManager): string {
+  switch (pm) {
+    case 'bun':
+      return 'rm -rf node_modules bun.lock && bun install'
+    case 'pnpm':
+      return 'rm -rf node_modules pnpm-lock.yaml && pnpm install'
+    case 'yarn':
+      return 'rm -rf node_modules yarn.lock && yarn install'
+    case 'npm':
+      return 'rm -rf node_modules package-lock.json && npm install'
+  }
 }
 
 /**
@@ -55,28 +82,35 @@ export function reportNativeBinaryMissing(err: unknown): void {
   const e = err instanceof Error ? (err as ModuleError) : undefined
   const missing = e ? missingModuleName(e) : undefined
   const target = currentTarget()
+  const pm = detectPackageManager()
+  // Runner-aware so we don't hardcode `npx` (see scripts/lint-no-hardcoded-runners.mjs):
+  // npm → `npx`, bun → `bunx`, pnpm/yarn → `… dlx`.
+  const rerun = `${runnerCommand(pm, 'stash@latest')} <command>`
+  // The one-shot runner cache is npm-specific (`_npx`); for other package
+  // managers a clean re-run is the equivalent first step.
+  const rerunStep =
+    pm === 'npm'
+      ? `  rm -rf "$(npm config get cache)/_npx" && ${rerun}`
+      : `  ${rerun}`
 
   p.log.error("stash couldn't load its native module for this platform.")
   p.note(
     [
       missing
         ? `Missing package: ${missing}`
-        : `Missing the @cipherstash/*-${target} native binary.`,
+        : `No native binary was loaded for ${target}.`,
       `Platform:        ${target}`,
       '',
-      'stash ships prebuilt binaries as optional npm packages. npm sometimes',
-      'skips them due to a known bug (https://github.com/npm/cli/issues/4828).',
+      'stash ships prebuilt binaries as optional packages. Package managers',
+      'sometimes skip them — a known npm bug: https://github.com/npm/cli/issues/4828',
       '',
       'Fix it with one of:',
       '',
-      '  # ran via npx',
-      '  rm -rf "$(npm config get cache)/_npx" && npx stash@latest <command>',
+      '  # re-run, clearing a stale runner cache',
+      rerunStep,
       '',
-      '  # stash is a project dependency',
-      '  rm -rf node_modules package-lock.json && npm install',
-      '',
-      '  # installed globally',
-      '  npm install -g stash@latest --force',
+      '  # if stash is a project dependency, reinstall',
+      `  ${reinstallCommand(pm)}`,
       '',
       'Then run `stash doctor` to confirm.',
     ].join('\n'),
