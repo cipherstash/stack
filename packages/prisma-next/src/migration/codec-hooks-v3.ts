@@ -15,13 +15,7 @@
  */
 
 import type { CodecControlHooks } from '@prisma-next/family-sql/control'
-import { type V3Index, eqlV3Domain } from '../v3/domain-map'
-
-const V3_INDEX_VALUES = ['equality', 'freeTextSearch', 'orderAndRange'] as const
-
-function isV3Index(value: unknown): value is V3Index {
-  return typeof value === 'string' && (V3_INDEX_VALUES as readonly string[]).includes(value)
-}
+import { eqlV3Domain, isV3Index } from '../v3/domain-map'
 
 const expandNativeType: NonNullable<CodecControlHooks['expandNativeType']> = ({ typeParams }) => {
   const index = typeParams?.['index']

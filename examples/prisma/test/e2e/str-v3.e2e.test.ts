@@ -88,9 +88,9 @@ describe.skipIf(!dbUrl)('EQL v3 String e2e (live PG + eql_v3 + ZeroKMS)', () => 
     expect(rows.map((r) => r.id).sort()).toEqual(expected)
   })
 
-  it('NULL round-trips: a null v3 column decrypts back to null', async () => {
+  it('insert + decrypt round-trips a freshly-created v3 row (UserV3 columns are NOT NULL)', async () => {
     await db.orm.UserV3.create({
-      id: 'e2e-strv3-null',
+      id: 'e2e-strv3-extra',
       email: EncryptedString.from('present'),
       bio: EncryptedString.from('present'),
       name: EncryptedString.from('present'),

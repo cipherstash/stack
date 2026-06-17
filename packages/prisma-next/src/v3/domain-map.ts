@@ -18,6 +18,14 @@ export type V3DataType = 'text'
 /** v3 single-capability index choices for the text scalar. */
 export type V3Index = 'equality' | 'freeTextSearch' | 'orderAndRange'
 
+/** The closed set of v3 index values, as a runtime array (SSOT for {@link isV3Index}). */
+export const V3_INDEX_VALUES = ['equality', 'freeTextSearch', 'orderAndRange'] as const
+
+/** Narrow an `unknown` (e.g. a `typeParams.index` read from a contract) to {@link V3Index}. */
+export function isV3Index(value: unknown): value is V3Index {
+  return typeof value === 'string' && (V3_INDEX_VALUES as readonly string[]).includes(value)
+}
+
 /**
  * Per-scalar capability table. Keyed by scalar so adding int/date/timestamptz is
  * a type-shape extension (new key + its valid index subset), not a row append

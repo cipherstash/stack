@@ -1,7 +1,8 @@
 // Regenerates src/migration/eql-v3-install.generated.ts from the vendored
 // __tests__/fixtures/cipherstash-encrypt-v3.sql installer.
 //
-// Run: pnpm tsx scripts/vendor-eql-v3-install.ts
+// Run (tsx is not installed in this workspace; Node 22+ runs the TS directly):
+//   node --experimental-strip-types scripts/vendor-eql-v3-install.ts
 //
 // See scripts/REFRESH_EQL_V3.md for the full refresh procedure (which EQL commit
 // the fixture is built from, the cross-package duplication hazard, etc.).

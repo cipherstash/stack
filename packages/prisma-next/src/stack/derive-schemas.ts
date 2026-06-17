@@ -33,7 +33,7 @@ import {
   isCipherstashCodecId,
   isCipherstashV3CodecId,
 } from '../extension-metadata/constants'
-import { type V3Index, v3CastAs } from '../v3/domain-map'
+import { V3_INDEX_VALUES, isV3Index, v3CastAs } from '../v3/domain-map'
 
 /**
  * Structural shape of the subset of `contract.json` this derivation
@@ -153,12 +153,6 @@ function applyTypeParams(
 
 function isCipherstashFlag(value: string): value is CipherstashFlag {
   return value in FLAG_DISPATCH
-}
-
-const V3_INDEX_VALUES = ['equality', 'freeTextSearch', 'orderAndRange'] as const
-
-function isV3Index(value: unknown): value is V3Index {
-  return typeof value === 'string' && (V3_INDEX_VALUES as readonly string[]).includes(value)
 }
 
 /**
