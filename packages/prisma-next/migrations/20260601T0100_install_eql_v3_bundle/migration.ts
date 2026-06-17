@@ -12,7 +12,8 @@
  * (applied via the codec hook's `expandNativeType`) encodes the index capability.
  *
  * Authoring loop: hand-edited; re-emit `ops.json` / `migration.json` after edits
- * via `node migration.ts`.
+ * by running this file through a TypeScript loader (the imports below are
+ * extensionless TS) — e.g. `pnpm dlx tsx migration.ts`.
  */
 import { Migration, MigrationCLI, rawSql } from '@prisma-next/target-postgres/migration';
 import { CIPHERSTASH_INVARIANTS } from '../../src/extension-metadata/constants';

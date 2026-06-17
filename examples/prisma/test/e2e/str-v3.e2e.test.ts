@@ -6,7 +6,10 @@
  * index columns:
  *   - email (text_eq)    — cipherstashEq / Ne / InArray / NotInArray
  *   - bio   (text_match) — cipherstashIlike / NotIlike (containment)
- *   - name  (text_ord)   — cipherstashLt/Lte/Gt/Gte/Between + asc/desc order
+ *   - name  (text_ord)   — cipherstashLt / Lte / Gt / Between (ORE comparison)
+ *
+ * (Ordered `ORDER BY` sort is not yet wired for v3 — see the package README — so
+ * this matrix covers the range/comparison predicates only.)
  *
  * Gated on DATABASE_URL (set by global-setup once the harness Postgres + ZeroKMS
  * credentials are configured); skips cleanly otherwise.
@@ -18,8 +21,10 @@ import {
   oracleBetween,
   oracleContains,
   oracleEq,
+  oracleGt,
   oracleInArray,
   oracleLt,
+  oracleLte,
   oracleNe,
   v3Seed,
 } from './helpers/eql-v3-seed'
@@ -69,9 +74,13 @@ describe.skipIf(!dbUrl)('EQL v3 String e2e (live PG + eql_v3 + ZeroKMS)', () => 
     )
   })
 
-  it('lt / between on text_ord match the ord oracle', async () => {
+  it('lt / lte / gt / between on text_ord match the ORE comparison oracles', async () => {
     const lt = await db.orm.UserV3.where((u) => u.name.cipherstashLt('banana')).all()
     expect(lt.map((r) => r.id).sort()).toEqual(oracleLt('banana'))
+    const lte = await db.orm.UserV3.where((u) => u.name.cipherstashLte('banana')).all()
+    expect(lte.map((r) => r.id).sort()).toEqual(oracleLte('banana'))
+    const gt = await db.orm.UserV3.where((u) => u.name.cipherstashGt('banana')).all()
+    expect(gt.map((r) => r.id).sort()).toEqual(oracleGt('banana'))
     const between = await db.orm.UserV3.where((u) => u.name.cipherstashBetween('aardvark', 'cherry')).all()
     expect(between.map((r) => r.id).sort()).toEqual(oracleBetween('aardvark', 'cherry'))
   })

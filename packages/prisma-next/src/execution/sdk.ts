@@ -83,7 +83,7 @@ export interface CipherstashBulkEncryptQueryArgs {
  * implement these three methods directly.
  */
 export interface CipherstashSdk {
-  decrypt(args: CipherstashSingleDecryptArgs): Promise<string>;
+  decrypt(args: CipherstashSingleDecryptArgs): Promise<unknown>;
   bulkEncrypt(args: CipherstashBulkEncryptArgs): Promise<ReadonlyArray<unknown>>;
   bulkDecrypt(args: CipherstashBulkDecryptArgs): Promise<ReadonlyArray<unknown>>;
   /**

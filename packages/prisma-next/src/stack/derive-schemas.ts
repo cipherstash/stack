@@ -174,7 +174,7 @@ function applyV3Index(
         `(one of ${V3_INDEX_VALUES.join(', ')}), got ${String(index)}.`,
     )
   }
-  if (index === 'equality') return builder.equality()
-  if (index === 'freeTextSearch') return builder.freeTextSearch()
-  return builder.orderAndRange()
+  // The three v3 index names are exactly three FLAG_DISPATCH keys, so reuse the
+  // same index→builder table the v2 path uses (no parallel if-chain to drift).
+  return FLAG_DISPATCH[index](builder)
 }

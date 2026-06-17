@@ -27,7 +27,8 @@ writeFileSync(
     `//\n` +
     `// This file is committed to source control so dev environments and offline\n` +
     `// builds work without network access. Regenerate with\n` +
-    `// \`pnpm tsx scripts/vendor-eql-v3-install.ts\` after refreshing the fixture.\n` +
+    `// \`node --experimental-strip-types scripts/vendor-eql-v3-install.ts\` after\n` +
+    `// refreshing the fixture (see scripts/REFRESH_EQL_V3.md).\n` +
     `export const EQL_V3_INSTALL_VERSION = '${VERSION}' as const\n` +
     `export const EQL_V3_INSTALL_SQL: string = \`${escaped}\`\n`,
 )

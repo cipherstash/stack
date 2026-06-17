@@ -1,5 +1,5 @@
 /**
- * Control hooks for the `cipherstash:string@1` codec.
+ * Control hooks for the `cipherstash/string@1` codec.
  *
  * Implements `CodecControlHooks.onFieldEvent` via the shared
  * {@link makeCipherstashCodecHooks} factory (see
@@ -12,7 +12,7 @@
  * `cipherstashRemoveSearchConfig({...})` calls in the user's
  * `migration.ts` (ADR 195 two-renderer pattern).
  *
- * Trigger: a field uses the `cipherstash:string@1` codec. The planner
+ * Trigger: a field uses the `cipherstash/string@1` codec. The planner
  * already dispatches per `(table, field)` based on the field's
  * `codecId` (new field for `'added'` / `'altered'`, prior field for
  * `'dropped'`), so this hook only fires when a cipherstash field is

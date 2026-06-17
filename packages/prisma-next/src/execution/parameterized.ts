@@ -10,23 +10,26 @@
  * so each `createParameterizedCodecDescriptors(sdk)` call produces a
  * fresh descriptor list closed over the SDK so multi-tenant
  * deployments can compose multiple cipherstash extensions side-by-side
- * without cross-talk; and the cipherstash family ships six codecs
- * (one per encrypted column type) which all share the same
- * `eql_v2_encrypted` Postgres native type.
+ * without cross-talk; and the cipherstash family ships SEVEN codecs.
+ * The six v2 codecs (one per encrypted column type) all share the same
+ * `eql_v2_encrypted` Postgres native type; the seventh — the EQL v3
+ * string codec — uses its OWN `jsonb` param-cast type backed by the
+ * per-column `eql_v3.text*` domains (NOT `eql_v2_encrypted`).
  *
  * Per-codec params shape (every flag defaults to `true` because
  * searchable encryption is the legitimate default for an extension
  * whose entire reason for existing is to make encrypted columns
  * queryable):
  *
- * | Codec               | Params                              |
- * |---------------------|-------------------------------------|
- * | `cipherstash/string@1`  | `{ equality, freeTextSearch, orderAndRange }` |
- * | `cipherstash/double@1`  | `{ equality, orderAndRange }`   |
- * | `cipherstash/bigint@1`  | `{ equality, orderAndRange }`   |
- * | `cipherstash/date@1`    | `{ equality, orderAndRange }`   |
- * | `cipherstash/boolean@1` | `{ equality }`                  |
- * | `cipherstash/json@1`    | `{ searchableJson }`            |
+ * | Codec                      | Params                              |
+ * |----------------------------|-------------------------------------|
+ * | `cipherstash/string@1`     | `{ equality, freeTextSearch, orderAndRange }` |
+ * | `cipherstash/double@1`     | `{ equality, orderAndRange }`   |
+ * | `cipherstash/bigint@1`     | `{ equality, orderAndRange }`   |
+ * | `cipherstash/date@1`       | `{ equality, orderAndRange }`   |
+ * | `cipherstash/boolean@1`    | `{ equality }`                  |
+ * | `cipherstash/json@1`       | `{ searchableJson }`            |
+ * | `cipherstash/string-v3@1`  | `{ index }` (single v3 index choice; native type `jsonb`/`eql_v3.text*`, NOT `eql_v2_encrypted`) |
  *
  * The codec runtimes are per-cell stateless across params on the write
  * side (encode reads ciphertext from the handle, independent of the

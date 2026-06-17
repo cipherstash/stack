@@ -116,7 +116,10 @@ export function createCipherstashSdk(
       const result = await encryptionClient.decrypt(
         ensureEncryptedEnvelope(ciphertext, 'decrypt'),
       )
-      return asSdkPlaintext(unwrap(result, 'decrypt'))
+      // `CipherstashSdk.decrypt` is typed `Promise<unknown>`; each envelope's
+      // `parseDecryptedValue` hook re-narrows the raw value to its concrete
+      // plaintext type, so no cast is needed at this boundary.
+      return unwrap(result, 'decrypt')
     },
   }
 }
@@ -135,11 +138,13 @@ function unwrap<T>(result: StackResult<T>, op: string): T {
   return result.data
 }
 
-function unwrapBulkDecryptEntry(entry: { data?: unknown; error?: unknown }): string {
+function unwrapBulkDecryptEntry(entry: { data?: unknown; error?: unknown }): unknown {
   if ('error' in entry && entry.error !== undefined) {
     throw new Error(`cipherstash bulkDecrypt entry failed: ${String(entry.error)}`)
   }
-  return asSdkPlaintext(entry.data)
+  // `CipherstashSdk.bulkDecrypt` is typed `Promise<ReadonlyArray<unknown>>`; the
+  // per-envelope `parseDecryptedValue` hook re-narrows each value downstream.
+  return entry.data
 }
 
 function buildRegistry(
@@ -224,12 +229,4 @@ function toJsPlaintext(value: unknown): JsPlaintext {
   }
   if (value instanceof Date) return value.toISOString()
   return value as JsPlaintext
-}
-
-// The framework's `CipherstashSdk.decrypt` is typed `Promise<string>`
-// but every envelope's `parseDecryptedValue` hook narrows the raw value
-// to its concrete plaintext type. Forwarding through this cast keeps the
-// codec-side polymorphism intact across the SDK contract.
-function asSdkPlaintext(value: unknown): string {
-  return value as string
 }

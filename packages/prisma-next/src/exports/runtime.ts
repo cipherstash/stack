@@ -2,9 +2,11 @@
  * Runtime-plane entry point for the CipherStash extension.
  *
  * Consumed at query time by application runtimes that need to encode /
- * decode `cipherstash/string@1` columns (envelope class) and talk to the
- * CipherStash SDK shape the codec runtime + bulk-encrypt middleware
- * depend on.
+ * decode any cipherstash encrypted column — the six v2 storage codecs
+ * (`cipherstash/string@1`, `double@1`, `bigint@1`, `date@1`, `boolean@1`,
+ * `json@1`) PLUS the EQL v3 string codec (`cipherstash/string-v3@1`) —
+ * via their envelope classes, and talk to the CipherStash SDK shape the
+ * codec runtime + bulk-encrypt middleware depend on.
  *
  * The runtime entry point is deliberately separate from `./control`
  * (descriptor, codec lifecycle hook, contract-space artefacts) so apps
@@ -18,7 +20,7 @@
  * codec descriptor, and the runtime-plane `codecInstances` slot into a
  * single `SqlRuntimeExtensionDescriptor<'postgres'>` mirroring
  * pgvector's `runtime.ts` precedent. The bulk-encrypt middleware ships
- * separately at `@prisma-next/extension-cipherstash/middleware` because
+ * separately at `@cipherstash/prisma-next/middleware` because
  * `SqlRuntimeExtensionDescriptor` does not own a middleware slot;
  * consumers register it via `createRuntime({ middleware:
  * [bulkEncryptMiddleware(sdk)] })`.

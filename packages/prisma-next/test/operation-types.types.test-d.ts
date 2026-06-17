@@ -9,11 +9,13 @@
  *
  * The tests pin two surface contracts:
  *
- *   1. **Codec-id dispatch (positive/negative)** for the legacy and
- *      single-codec entries (`cipherstashEq`, `cipherstashIlike`,
- *      `cipherstashNotIlike`, `cipherstashJsonbPathExists`):
- *      the operator must surface on its target codec id and on no
- *      other.
+ *   1. **Shared-string-trait dispatch (positive/negative)** for the
+ *      legacy `cipherstashEq` / `cipherstashIlike` entries: they gate on
+ *      the `cipherstash:string` trait carried by BOTH the v2
+ *      (`cipherstash/string@1`) and v3 (`cipherstash/string-v3@1`)
+ *      string codecs, so they must surface on both and on no non-string
+ *      codec. `cipherstashNotIlike` / `cipherstashJsonbPathExists`
+ *      similarly gate on their own single traits.
  *
  *   2. **Trait dispatch (positive/negative)** for the multi-codec
  *      entries (`cipherstashNe`, `cipherstashInArray`,
@@ -49,12 +51,25 @@ type CSEq = 'cipherstash:equality';
 type CSOR = 'cipherstash:order-and-range';
 type CSFTS = 'cipherstash:free-text-search';
 type CSSJ = 'cipherstash:searchable-json';
+// Shared string trait carried by BOTH the v2 and v3 string codecs (per
+// `extension-metadata/constants.ts:CIPHERSTASH_TRAIT_STRING`). The legacy
+// `cipherstashEq` / `cipherstashIlike` gate on it, so both string codec
+// entries below advertise it.
+type CSStr = 'cipherstash:string';
 
 type CT = {
   readonly 'cipherstash/string@1': {
     readonly input: string;
     readonly output: string;
-    readonly traits: CSEq | CSOR | CSFTS;
+    readonly traits: CSStr | CSEq | CSOR | CSFTS;
+  };
+  // EQL v3 string codec — reuses the EncryptedString envelope but carries its
+  // own codec id, sharing the `cipherstash:string` trait with the v2 codec so
+  // the legacy eq/ilike surface on it too.
+  readonly 'cipherstash/string-v3@1': {
+    readonly input: string;
+    readonly output: string;
+    readonly traits: CSStr | CSEq | CSOR | CSFTS;
   };
   readonly 'cipherstash/double@1': {
     readonly input: number;
@@ -119,14 +134,18 @@ type M<N extends keyof Ops, C extends string> = OpMatchesField<Ops[N], C, CT>;
 // -- cipherstashEq (string only) --------------------------------------------
 
 type _eq_string_pos = Expect<M<'cipherstashEq', 'cipherstash/string@1'>>;
+// v3 string columns also surface cipherstashEq via the shared cipherstash:string trait.
+type _eq_string_v3_pos = Expect<M<'cipherstashEq', 'cipherstash/string-v3@1'>>;
 // @ts-expect-error cipherstashEq must not surface on cipherstash/double@1.
 type _eq_double_neg = Expect<M<'cipherstashEq', 'cipherstash/double@1'>>;
 // @ts-expect-error cipherstashEq must not surface on pg/text@1.
 type _eq_text_neg = Expect<M<'cipherstashEq', 'pg/text@1'>>;
 
-// -- cipherstashIlike (string only) -----------------------------------------
+// -- cipherstashIlike (shared string trait — v2 + v3) -----------------------
 
 type _ilike_string_pos = Expect<M<'cipherstashIlike', 'cipherstash/string@1'>>;
+// v3 string columns also surface cipherstashIlike via the shared cipherstash:string trait.
+type _ilike_string_v3_pos = Expect<M<'cipherstashIlike', 'cipherstash/string-v3@1'>>;
 // @ts-expect-error cipherstashIlike must not surface on cipherstash/double@1.
 type _ilike_double_neg = Expect<M<'cipherstashIlike', 'cipherstash/double@1'>>;
 
@@ -210,9 +229,11 @@ type _jpe_text_neg = Expect<M<'cipherstashJsonbPathExists', 'pg/text@1'>>;
 
 export type _Anchors = [
   _eq_string_pos,
+  _eq_string_v3_pos,
   _eq_double_neg,
   _eq_text_neg,
   _ilike_string_pos,
+  _ilike_string_v3_pos,
   _ilike_double_neg,
   _notilike_string_pos,
   _notilike_double_neg,

@@ -15,8 +15,8 @@ import {
   TableSource,
 } from '@prisma-next/sql-relational-core/ast'
 import { describe, expect, it } from 'vitest'
-import { readHandleQueryType } from '../../src/execution/envelope-base'
 import type { EncryptedEnvelopeBase } from '../../src/execution/envelope-base'
+import { EncryptedString, readHandleQueryType, setHandleQueryType } from '../../src/execution/envelope-string'
 import { cipherstashQueryOperations, queryTypeForIndex } from '../../src/execution/operators'
 import { CIPHERSTASH_STRING_V3_CODEC_ID } from '../../src/extension-metadata/constants'
 import type { V3Index } from '../../src/v3/domain-map'
@@ -138,11 +138,8 @@ describe('v3 operator lowering (cipherstash/string-v3@1)', () => {
     )
   })
 
-  it('rejects index/operator mismatch with a clear TypeError', () => {
-    // cipherstashGt needs orderAndRange; the email column is text_eq (equality).
-    expect(() => lowerSql('cipherstashGt', 'email', 'equality', 'x')).toThrow(/orderAndRange/)
-    // cipherstashIlike needs freeTextSearch; email is text_eq.
-    expect(() => lowerSql('cipherstashIlike', 'email', 'equality', '%x%')).toThrow(/freeTextSearch/)
+  it('rejects a non-string / non-envelope arg on a v3 column (V3_ENVELOPE_COERCERS reject path)', () => {
+    expect(() => predicateAst('cipherstashEq', 'email', 'equality', 123)).toThrow(/EncryptedString|string/)
   })
 
   it('stamps the protect queryType on the v3 search-term param', () => {
@@ -167,5 +164,59 @@ describe('queryTypeForIndex', () => {
     expect(queryTypeForIndex('equality')).toBe('equality')
     expect(queryTypeForIndex('orderAndRange')).toBe('orderAndRange')
     expect(queryTypeForIndex('freeTextSearch')).toBe('freeTextSearch')
+  })
+})
+
+// Full index/operator mismatch matrix: an operator whose required query-type ≠ the
+// column's single declared index must throw at build time (the runtime guard is the
+// only thing standing between a wrong-domain term and an opaque CHECK / "function
+// does not exist" failure). Each operator is exercised against BOTH columns it does
+// NOT belong to.
+describe('v3 index/operator mismatch matrix', () => {
+  // [method, requiredIndex, args]
+  const OPS: ReadonlyArray<readonly [string, V3Index, unknown[]]> = [
+    ['cipherstashEq', 'equality', ['x']],
+    ['cipherstashNe', 'equality', ['x']],
+    ['cipherstashInArray', 'equality', [['a', 'b']]],
+    ['cipherstashNotInArray', 'equality', [['a', 'b']]],
+    ['cipherstashGt', 'orderAndRange', ['x']],
+    ['cipherstashGte', 'orderAndRange', ['x']],
+    ['cipherstashLt', 'orderAndRange', ['x']],
+    ['cipherstashLte', 'orderAndRange', ['x']],
+    ['cipherstashBetween', 'orderAndRange', ['a', 'z']],
+    ['cipherstashNotBetween', 'orderAndRange', ['a', 'z']],
+    ['cipherstashIlike', 'freeTextSearch', ['%x%']],
+    ['cipherstashNotIlike', 'freeTextSearch', ['%x%']],
+  ]
+  const COLUMNS: ReadonlyArray<readonly [string, V3Index]> = [
+    ['email', 'equality'],
+    ['name', 'orderAndRange'],
+    ['bio', 'freeTextSearch'],
+  ]
+
+  for (const [method, requiredIndex, args] of OPS) {
+    for (const [column, columnIndex] of COLUMNS) {
+      if (columnIndex === requiredIndex) continue
+      it(`${method} on a ${columnIndex} column throws (needs ${requiredIndex})`, () => {
+        expect(() => predicateAst(method, column, columnIndex, ...args)).toThrow(new RegExp(requiredIndex))
+      })
+    }
+  }
+
+  // Sanity: the matching pair does NOT throw (one representative per index).
+  it('allows the matching index/operator pair', () => {
+    expect(() => predicateAst('cipherstashEq', 'email', 'equality', 'x')).not.toThrow()
+    expect(() => predicateAst('cipherstashGt', 'name', 'orderAndRange', 'x')).not.toThrow()
+    expect(() => predicateAst('cipherstashIlike', 'bio', 'freeTextSearch', '%x%')).not.toThrow()
+  })
+})
+
+describe('setHandleQueryType (envelope-base) write-once-wins', () => {
+  it('is idempotent for the same queryType but throws on a conflicting rebind', () => {
+    const env = EncryptedString.from('alice')
+    setHandleQueryType(env, 'equality')
+    expect(() => setHandleQueryType(env, 'equality')).not.toThrow() // idempotent
+    expect(readHandleQueryType(env)).toBe('equality')
+    expect(() => setHandleQueryType(env, 'orderAndRange')).toThrow(/queryType already set/)
   })
 })

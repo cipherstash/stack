@@ -33,6 +33,3 @@ export const oracleBetween = (lo: string, hi: string) =>
   ids(v3Seed.filter((r) => r.label >= lo && r.label <= hi))
 export const oracleInArray = (targets: ReadonlyArray<string>) =>
   ids(v3Seed.filter((r) => targets.includes(r.label)))
-
-// Ascending labels (text_ord) — for the order-by assertion.
-export const oracleAscLabels = () => [...v3Seed].map((r) => r.label).sort((a, b) => a.localeCompare(b))

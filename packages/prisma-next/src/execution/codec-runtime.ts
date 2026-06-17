@@ -2,14 +2,18 @@
  * Cipherstash storage codec runtimes — wrap each `Encrypted*` envelope
  * at the SQL codec boundary.
  *
- * Every cipherstash codec has identical encode/decode bodies (the
- * `eql_v2_encrypted` composite-literal wire format is determined by
- * the EQL type definition, not by the plaintext type). The shared body
- * lives in `./cell-codec-factory.ts`; the per-codec wrappers below
- * supply only the per-type discriminators (codec id, user-facing type
- * name, envelope `fromInternal` factory) and re-export the codec class
- * for backwards compatibility with consumers that imported it directly
- * from this module.
+ * The six v2 cipherstash codecs share identical encode/decode bodies
+ * (the `eql_v2_encrypted` composite-literal wire format is determined
+ * by the EQL type definition, not by the plaintext type). The v3 string
+ * codec (re-exported below from `./codec-v3.ts`) reuses the same shared
+ * body but OVERRIDES `encodeWire`/`decodeWire` for the plain-jsonb v3
+ * domain wire (`eql_v3.text*` columns are `CREATE DOMAIN … AS jsonb`,
+ * not the v2 composite literal). The shared body lives in
+ * `./cell-codec-factory.ts`; the per-codec wrappers below supply only
+ * the per-type discriminators (codec id, user-facing type name, envelope
+ * `fromInternal` factory) and re-export the codec class for backwards
+ * compatibility with consumers that imported it directly from this
+ * module.
  *
  * Mirrors the `makeCipherstashCodecHooks` pattern on the migration
  * plane (see `../migration/codec-hooks-factory.ts`) — same shape,

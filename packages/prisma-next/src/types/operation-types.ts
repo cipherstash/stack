@@ -6,21 +6,19 @@
  * `../execution/operators.ts`. Every entry's `self` dispatch shape
  * mirrors the runtime registration 1:1:
  *
- *   - Single-codec entries (`cipherstashEq`, `cipherstashIlike`,
- *     `cipherstashNotIlike`, `cipherstashJsonbPathExists`) declare
- *     `self: { codecId: '<id>' }`. The framework's `OpMatchesField`
- *     direct-codec-id branch surfaces the method on columns whose
- *     codec id is the literal — no consumer-side `CodecTypes`
- *     augmentation needed.
- *
- *   - Multi-codec entries (the equality / order-and-range operators)
- *     declare `self: { traits: ['cipherstash:<x>'] }`. Trait dispatch
- *     surfaces the method on every column whose codec id resolves to
- *     a `CodecTypes` entry whose `traits` set includes the same
- *     identifier. The cipherstash-namespaced `cipherstash:` prefix
- *     isolates these from the framework's closed `CodecTrait` union
- *     so adding the trait to a cipherstash codec descriptor cannot
- *     silently re-attach a framework built-in.
+ *   - Every entry is trait-gated and declares
+ *     `self: { traits: ['cipherstash:<x>'] }`. Trait dispatch surfaces
+ *     the method on every column whose codec id resolves to a
+ *     `CodecTypes` entry whose `traits` set includes the same
+ *     identifier. The legacy `cipherstashEq` / `cipherstashIlike`
+ *     operators gate on the shared `cipherstash:string` trait — carried
+ *     by BOTH the v2 (`cipherstash/string@1`) and v3
+ *     (`cipherstash/string-v3@1`) string codecs — so they surface on v3
+ *     string columns too, matching their runtime trait dispatch in
+ *     `../execution/operators.ts`. The cipherstash-namespaced
+ *     `cipherstash:` prefix isolates these from the framework's closed
+ *     `CodecTrait` union so adding the trait to a cipherstash codec
+ *     descriptor cannot silently re-attach a framework built-in.
  *
  * Both surfaces (codec-keyed `OperationTypes` and flat
  * `QueryOperationTypes`) get composed into the consuming
@@ -38,9 +36,6 @@
 import type { CodecExpression, Expression } from '@prisma-next/sql-relational-core/expression';
 
 type CodecTypesBase = Record<string, { readonly input: unknown; readonly output: unknown }>;
-
-const CIPHERSTASH_STRING_CODEC = 'cipherstash/string@1';
-type CipherstashStringCodec = typeof CIPHERSTASH_STRING_CODEC;
 
 type PgBoolReturn = Expression<{ codecId: 'pg/bool@1'; nullable: false }>;
 
@@ -76,6 +71,14 @@ type EqualityTraits = readonly ['cipherstash:equality'];
 type OrderAndRangeTraits = readonly ['cipherstash:order-and-range'];
 type FreeTextSearchTraits = readonly ['cipherstash:free-text-search'];
 type SearchableJsonTraits = readonly ['cipherstash:searchable-json'];
+// Shared string trait carried by BOTH `cipherstash/string@1` AND
+// `cipherstash/string-v3@1` (and only those two). The legacy `cipherstashEq` /
+// `cipherstashIlike` operators dispatch on it at runtime
+// (`../execution/operators.ts`), so the type surface must gate on the trait —
+// not the v2-only `cipherstash/string@1` codecId — for the methods to surface on
+// v3 string columns too. Mirrors `extension-metadata/constants.ts`'s
+// `CIPHERSTASH_TRAIT_STRING`.
+type StringTraits = readonly ['cipherstash:string'];
 
 /**
  * Schematic constraint on `self` for a multi-codec cipherstash
@@ -114,16 +117,16 @@ type AnyExpressionLike = Expression<{ readonly codecId: string; readonly nullabl
 export type QueryOperationTypes<CT extends CodecTypesBase> = CT extends CodecTypesBase
   ? {
       readonly cipherstashEq: {
-        readonly self: { readonly codecId: CipherstashStringCodec };
+        readonly self: { readonly traits: StringTraits };
         readonly impl: (
-          self: CodecExpression<CipherstashStringCodec, boolean, CT>,
+          self: AnyExpressionLike,
           other: CodecExpression<'pg/text@1', boolean, CT>,
         ) => PgBoolReturn;
       };
       readonly cipherstashIlike: {
-        readonly self: { readonly codecId: CipherstashStringCodec };
+        readonly self: { readonly traits: StringTraits };
         readonly impl: (
-          self: CodecExpression<CipherstashStringCodec, boolean, CT>,
+          self: AnyExpressionLike,
           pattern: CodecExpression<'pg/text@1', boolean, CT>,
         ) => PgBoolReturn;
       };

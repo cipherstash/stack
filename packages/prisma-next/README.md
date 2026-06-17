@@ -125,7 +125,7 @@ model Doc {
 | `orderAndRange`   | `eql_v3.text_ord`  | `cipherstashGt` / `cipherstashGte` / `cipherstashLt` / `cipherstashLte` / `cipherstashBetween` / `cipherstashNotBetween` |
 | `freeTextSearch`  | `eql_v3.text_match`| `cipherstashIlike` / `cipherstashNotIlike` (containment)                            |
 
-Applying an operator that needs a different index than the column declares (e.g. `cipherstashGt` on an `equality` column) is rejected with a clear `TypeError` at **query-build time** — a runtime guard, not compile-time gating (milestone-1 trade-off; per-index codec ids could restore compile-time gating later). The v3 baseline migration installs the `eql_v3` bundle alongside the v2 bundle; both `bulkEncryptMiddleware` and `bulkEncryptV3Middleware` register over the same SDK and ignore each other's columns.
+Ordered `ORDER BY` sort (`cipherstashAsc` / `cipherstashDesc`) is **not yet wired for v3** — those helpers currently accept v2 columns only. Applying an operator that needs a different index than the column declares (e.g. `cipherstashGt` on an `equality` column) is rejected with a clear `TypeError` at **query-build time** — a runtime guard, not compile-time gating (milestone-1 trade-off; per-index codec ids could restore compile-time gating later). The v3 baseline migration installs the `eql_v3` bundle alongside the v2 bundle; both `bulkEncryptMiddleware` and `bulkEncryptV3Middleware` register over the same SDK and ignore each other's columns.
 
 ## Authentication
 

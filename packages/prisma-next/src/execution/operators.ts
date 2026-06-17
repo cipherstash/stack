@@ -323,16 +323,18 @@ function extractColumnRef(selfAst: AnyExpression): ColumnRef | undefined {
 }
 
 /**
- * Build a single-codec cipherstash operator descriptor — the
- * original shape used by `cipherstashEq` / `cipherstashIlike`,
- * pinned to `cipherstash/string@1`. Multi-codec operators use
- * {@link envelopeOperator} with trait-based dispatch instead.
+ * Build the single-ARG cipherstash operator descriptor used by
+ * `cipherstashEq` / `cipherstashIlike`. Dispatches on the shared
+ * `cipherstash:string` trait (carried by BOTH `cipherstash/string@1` and
+ * `cipherstash/string-v3@1`, and only those), so it attaches to v2 AND v3 string
+ * columns; the v2/v3 SQL split is chosen at `impl` time via
+ * {@link dialectForCodecId}. Multi-codec operators use {@link envelopeOperator}.
  *
- * @param publicMethod - The user-facing method name on the column
- *   accessor (e.g. `cipherstashEq`). Must not collide with any
- *   framework- or adapter-shipped method name.
- * @param eqlFunction - The EQL function to lower to (`eq`, `ilike`).
- *   Embedded into the SQL lowering template as `eql_v2.<eqlFunction>(...)`.
+ * @param publicMethod - The user-facing method name on the column accessor (e.g.
+ *   `cipherstashEq`). Must not collide with any framework- or adapter-shipped name.
+ * @param eqlFunction - Selects the dialect template (`equality('eq')` for `eq`,
+ *   `match('like')` for `ilike`), lowered to `eql_v2.*` or `eql_v3.*` per the
+ *   column's codec. Also selects the v3 `queryType` for the index/operator guard.
  */
 function eqlOperator(publicMethod: string, eqlFunction: 'eq' | 'ilike'): SqlOperationDescriptor {
   // `eq` carries an equality index; `ilike` (free-text containment) carries the

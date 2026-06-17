@@ -15,7 +15,6 @@ describe('v2Dialect (must match current operators.ts templates byte-for-byte)', 
     expect(v2Dialect.comparison('lte')).toBe('eql_v2.lte({{self}}, {{arg0}})')
     expect(v2Dialect.range()).toBe('eql_v2.gte({{self}}, {{arg0}}) AND eql_v2.lte({{self}}, {{arg1}})')
     expect(v2Dialect.match('like')).toBe('eql_v2.ilike({{self}}, {{arg0}})')
-    expect(v2Dialect.orderBy()).toBe('eql_v2.order_by({{self}})')
   })
 })
 
@@ -30,13 +29,12 @@ describe('v3Dialect (extracted-index-term form, mirrors drizzle v3Dialect)', () 
     expect(v3Dialect.comparison('lt')).toBe('eql_v3.ord_term({{self}}) < eql_v3.ore_block_u64_8_256({{arg0}}::jsonb)')
     expect(v3Dialect.comparison('lte')).toBe('eql_v3.ord_term({{self}}) <= eql_v3.ore_block_u64_8_256({{arg0}}::jsonb)')
   })
-  it('range / match / orderBy', () => {
+  it('range / match', () => {
     expect(v3Dialect.range()).toBe(
       'eql_v3.ord_term({{self}}) >= eql_v3.ore_block_u64_8_256({{arg0}}::jsonb) AND ' +
         'eql_v3.ord_term({{self}}) <= eql_v3.ore_block_u64_8_256({{arg1}}::jsonb)',
     )
     expect(v3Dialect.match('like')).toBe('eql_v3.match_term({{self}}) @> eql_v3.bloom_filter({{arg0}}::jsonb)')
-    expect(v3Dialect.orderBy()).toBe('eql_v3.ord_term({{self}})')
   })
 })
 

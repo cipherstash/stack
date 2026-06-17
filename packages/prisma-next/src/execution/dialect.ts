@@ -15,7 +15,6 @@ export interface SqlDialect {
   comparison(op: ComparisonOp): string
   range(): string
   match(op: MatchOp): string
-  orderBy(): string
 }
 
 export const v2Dialect: SqlDialect = {
@@ -23,7 +22,6 @@ export const v2Dialect: SqlDialect = {
   comparison: (op) => `eql_v2.${op}({{self}}, {{arg0}})`,
   range: () => 'eql_v2.gte({{self}}, {{arg0}}) AND eql_v2.lte({{self}}, {{arg1}})',
   match: (op) => `eql_v2.${op === 'like' ? 'ilike' : op}({{self}}, {{arg0}})`,
-  orderBy: () => 'eql_v2.order_by({{self}})',
 }
 
 const ORD_SYMBOL: Record<ComparisonOp, string> = { gt: '>', gte: '>=', lt: '<', lte: '<=' }
@@ -47,7 +45,6 @@ export const v3Dialect: SqlDialect = {
     'eql_v3.ord_term({{self}}) >= eql_v3.ore_block_u64_8_256({{arg0}}::jsonb) AND ' +
     'eql_v3.ord_term({{self}}) <= eql_v3.ore_block_u64_8_256({{arg1}}::jsonb)',
   match: () => 'eql_v3.match_term({{self}}) @> eql_v3.bloom_filter({{arg0}}::jsonb)',
-  orderBy: () => 'eql_v3.ord_term({{self}})',
 }
 
 // Route by codec id: a column's wire/operator family is fixed by its codec id,
