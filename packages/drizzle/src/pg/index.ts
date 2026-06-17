@@ -189,12 +189,11 @@ export function getEncryptedColumnConfig(
   return undefined
 }
 
-// Re-export schema extraction utility
-export { extractProtectSchema } from './schema-extraction.js'
-
 // Re-export operators
 export {
   createProtectOperators,
-  ProtectOperatorError,
   ProtectConfigError,
+  ProtectOperatorError,
 } from './operators.js'
+// Re-export schema extraction utility
+export { extractProtectSchema } from './schema-extraction.js'

@@ -1,14 +1,14 @@
+import { type Result, withResult } from '@byteslice/result'
+import {
+  encryptQuery as ffiEncryptQuery,
+  type JsPlaintext,
+} from '@cipherstash/protect-ffi'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContext } from '@/identity'
-import type { Client, EncryptQueryOptions, EncryptedQueryResult } from '@/types'
+import type { Client, EncryptedQueryResult, EncryptQueryOptions } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
-import {
-  type JsPlaintext,
-  encryptQuery as ffiEncryptQuery,
-} from '@cipherstash/protect-ffi'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
   assertValueIndexCompatibility,

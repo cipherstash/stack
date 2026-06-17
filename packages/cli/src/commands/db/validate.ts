@@ -1,7 +1,7 @@
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadEncryptConfig, loadStashConfig } from '@/config/index.js'
 import type { EncryptConfig } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadEncryptConfig, loadStashConfig } from '@/config/index.js'
 
 type Severity = 'error' | 'warning' | 'info'
 

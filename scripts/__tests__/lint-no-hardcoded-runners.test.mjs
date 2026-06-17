@@ -13,12 +13,16 @@ function run(target) {
     execFileSync('node', [SCRIPT, target], { encoding: 'utf8' })
     return { exitCode: 0, output: '' }
   } catch (err) {
-    return { exitCode: err.status, output: String(err.stdout) + String(err.stderr) }
+    return {
+      exitCode: err.status,
+      output: String(err.stdout) + String(err.stderr),
+    }
   }
 }
 
 describe('lint-no-hardcoded-runners', () => {
-  const fx = (name) => resolve(fileURLToPath(import.meta.url), `../fixtures/${name}`)
+  const fx = (name) =>
+    resolve(fileURLToPath(import.meta.url), `../fixtures/${name}`)
 
   it('passes on a clean file', () => {
     expect(run(fx('clean.ts')).exitCode).toBe(0)

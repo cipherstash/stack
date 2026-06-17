@@ -1,3 +1,8 @@
+import { type Result, withResult } from '@byteslice/result'
+import {
+  encrypt as ffiEncrypt,
+  type JsPlaintext,
+} from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContext } from '@/identity'
@@ -7,13 +12,8 @@ import type {
   EncryptedTable,
   EncryptedTableColumn,
 } from '@/schema'
-import type { Client, EncryptOptions, Encrypted } from '@/types'
+import type { Client, Encrypted, EncryptOptions } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
-import {
-  type JsPlaintext,
-  encrypt as ffiEncrypt,
-} from '@cipherstash/protect-ffi'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 

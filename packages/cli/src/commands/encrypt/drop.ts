@@ -1,8 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { detectDrizzle } from '@/commands/db/detect.js'
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
 import {
   appendEvent,
   progress,
@@ -10,6 +7,9 @@ import {
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectDrizzle } from '@/commands/db/detect.js'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadStashConfig } from '@/config/index.js'
 import { scaffoldDrizzleMigration } from './drizzle-helper.js'
 
 /**

@@ -32,13 +32,16 @@
  * factory as one of the substrate calls a new codec invocation needs.
  */
 
-import type { CodecControlHooks, FieldEventContext } from '@prisma-next/family-sql/control';
-import type { OpFactoryCall } from '@prisma-next/framework-components/control';
+import type {
+  CodecControlHooks,
+  FieldEventContext,
+} from '@prisma-next/family-sql/control'
+import type { OpFactoryCall } from '@prisma-next/framework-components/control'
 import {
   type CipherstashSearchIndex,
   cipherstashAddSearchConfig,
   cipherstashRemoveSearchConfig,
-} from './call-classes';
+} from './call-classes'
 
 export interface MakeCipherstashCodecHooksOptions {
   /**
@@ -48,20 +51,20 @@ export interface MakeCipherstashCodecHooksOptions {
    * because the planner re-canonicalises the call list, but stable
    * key ordering keeps debug output predictable.
    */
-  readonly flagToIndex: Readonly<Record<string, CipherstashSearchIndex>>;
+  readonly flagToIndex: Readonly<Record<string, CipherstashSearchIndex>>
   /**
    * EQL `cast_as` argument for every `add_search_config` call this
    * codec emits. Static per codec (`'text'` for string, `'double'` for
    * IEEE-754, `'big_int'`, `'date'`, `'boolean'`, `'jsonb'`).
    */
-  readonly castAs: string;
+  readonly castAs: string
 }
 
 function isEnabled(
   typeParams: Readonly<Record<string, unknown>> | undefined,
   flag: string,
 ): boolean {
-  return typeParams !== undefined && typeParams[flag] === true;
+  return typeParams !== undefined && typeParams[flag] === true
 }
 
 /**
@@ -74,18 +77,18 @@ function isEnabled(
 export function makeCipherstashCodecHooks(
   options: MakeCipherstashCodecHooksOptions,
 ): CodecControlHooks {
-  const { flagToIndex, castAs } = options;
-  const allFlags = Object.keys(flagToIndex);
+  const { flagToIndex, castAs } = options
+  const allFlags = Object.keys(flagToIndex)
 
   function onFieldEvent(
     event: 'added' | 'dropped' | 'altered',
     ctx: FieldEventContext,
   ): readonly OpFactoryCall[] {
-    const { tableName, fieldName, priorField, newField } = ctx;
+    const { tableName, fieldName, priorField, newField } = ctx
 
     if (event === 'added') {
-      if (newField === undefined) return [];
-      const calls: OpFactoryCall[] = [];
+      if (newField === undefined) return []
+      const calls: OpFactoryCall[] = []
       for (const flag of allFlags) {
         if (isEnabled(newField.typeParams, flag)) {
           calls.push(
@@ -95,15 +98,15 @@ export function makeCipherstashCodecHooks(
               index: flagToIndex[flag] as CipherstashSearchIndex,
               castAs,
             }),
-          );
+          )
         }
       }
-      return calls;
+      return calls
     }
 
     if (event === 'dropped') {
-      if (priorField === undefined) return [];
-      const calls: OpFactoryCall[] = [];
+      if (priorField === undefined) return []
+      const calls: OpFactoryCall[] = []
       for (const flag of allFlags) {
         if (isEnabled(priorField.typeParams, flag)) {
           calls.push(
@@ -112,17 +115,17 @@ export function makeCipherstashCodecHooks(
               column: fieldName,
               index: flagToIndex[flag] as CipherstashSearchIndex,
             }),
-          );
+          )
         }
       }
-      return calls;
+      return calls
     }
 
-    if (priorField === undefined || newField === undefined) return [];
-    const calls: OpFactoryCall[] = [];
+    if (priorField === undefined || newField === undefined) return []
+    const calls: OpFactoryCall[] = []
     for (const flag of allFlags) {
-      const before = isEnabled(priorField.typeParams, flag);
-      const after = isEnabled(newField.typeParams, flag);
+      const before = isEnabled(priorField.typeParams, flag)
+      const after = isEnabled(newField.typeParams, flag)
       if (after && !before) {
         calls.push(
           cipherstashAddSearchConfig({
@@ -131,7 +134,7 @@ export function makeCipherstashCodecHooks(
             index: flagToIndex[flag] as CipherstashSearchIndex,
             castAs,
           }),
-        );
+        )
       } else if (before && !after) {
         calls.push(
           cipherstashRemoveSearchConfig({
@@ -139,10 +142,10 @@ export function makeCipherstashCodecHooks(
             column: fieldName,
             index: flagToIndex[flag] as CipherstashSearchIndex,
           }),
-        );
+        )
       }
     }
-    return calls;
+    return calls
   }
 
   /**
@@ -157,8 +160,9 @@ export function makeCipherstashCodecHooks(
    * which only requires this hook to *exist* for any column carrying
    * `typeParams`.
    */
-  const expandNativeType: NonNullable<CodecControlHooks['expandNativeType']> = ({ nativeType }) =>
-    nativeType;
+  const expandNativeType: NonNullable<
+    CodecControlHooks['expandNativeType']
+  > = ({ nativeType }) => nativeType
 
-  return { onFieldEvent, expandNativeType };
+  return { onFieldEvent, expandNativeType }
 }

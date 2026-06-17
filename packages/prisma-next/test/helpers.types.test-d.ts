@@ -16,22 +16,25 @@
  * `helpers.test.ts`.
  */
 
-import type { OrderByItem } from '@prisma-next/sql-relational-core/ast';
-import type { Expression, ScopeField } from '@prisma-next/sql-relational-core/expression';
-import { expectTypeOf } from 'vitest';
+import type { OrderByItem } from '@prisma-next/sql-relational-core/ast'
+import type {
+  Expression,
+  ScopeField,
+} from '@prisma-next/sql-relational-core/expression'
+import { expectTypeOf } from 'vitest'
 import {
   cipherstashAsc,
   cipherstashDesc,
   cipherstashJsonbGet,
   cipherstashJsonbPathQueryFirst,
-} from '../src/execution/helpers';
+} from '../src/execution/helpers'
 
-declare const anyCol: Expression<ScopeField>;
+declare const anyCol: Expression<ScopeField>
 
-expectTypeOf(cipherstashAsc(anyCol)).toEqualTypeOf<OrderByItem>();
-expectTypeOf(cipherstashDesc(anyCol)).toEqualTypeOf<OrderByItem>();
+expectTypeOf(cipherstashAsc(anyCol)).toEqualTypeOf<OrderByItem>()
+expectTypeOf(cipherstashDesc(anyCol)).toEqualTypeOf<OrderByItem>()
 
-type JsonReturn = Expression<{ codecId: 'cipherstash/json@1'; nullable: false }>;
+type JsonReturn = Expression<{ codecId: 'cipherstash/json@1'; nullable: false }>
 
 // Bidirectional assignability check. `JsonReturn` is the
 // `Expression<{codecId: 'cipherstash/json@1', nullable: false}>` type
@@ -47,17 +50,17 @@ type JsonReturn = Expression<{ codecId: 'cipherstash/json@1'; nullable: false }>
 // the helper output is interchangeable with the typed slot — the
 // stronger `toEqualTypeOf` shape would not catch any additional
 // drift in practice.
-declare const expectedJson: JsonReturn;
-const pathQuery = cipherstashJsonbPathQueryFirst(anyCol, '$.foo');
-const pathGet = cipherstashJsonbGet(anyCol, 'foo');
-const _assignA: JsonReturn = pathQuery;
-const _assignB: JsonReturn = pathGet;
-const _assignC: typeof pathQuery = expectedJson;
-const _assignD: typeof pathGet = expectedJson;
-void _assignA;
-void _assignB;
-void _assignC;
-void _assignD;
+declare const expectedJson: JsonReturn
+const pathQuery = cipherstashJsonbPathQueryFirst(anyCol, '$.foo')
+const pathGet = cipherstashJsonbGet(anyCol, 'foo')
+const _assignA: JsonReturn = pathQuery
+const _assignB: JsonReturn = pathGet
+const _assignC: typeof pathQuery = expectedJson
+const _assignD: typeof pathGet = expectedJson
+void _assignA
+void _assignB
+void _assignC
+void _assignD
 
 // The path must be a string (compile-time error on number / null /
 // undefined). `@ts-expect-error` directives keep the negative
@@ -65,6 +68,6 @@ void _assignD;
 // widens its `path` parameter, the directive becomes a noop and the
 // test fails.
 // @ts-expect-error path is required to be a string
-cipherstashJsonbPathQueryFirst(anyCol, 42);
+cipherstashJsonbPathQueryFirst(anyCol, 42)
 // @ts-expect-error path is required to be a string
-cipherstashJsonbGet(anyCol, null);
+cipherstashJsonbGet(anyCol, null)

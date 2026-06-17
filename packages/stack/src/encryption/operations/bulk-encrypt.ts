@@ -1,3 +1,5 @@
+import { type Result, withResult } from '@byteslice/result'
+import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { Context, LockContext } from '@/identity'
@@ -8,15 +10,13 @@ import type {
   EncryptedTableColumn,
 } from '@/schema'
 import type {
-  BulkEncryptPayload,
   BulkEncryptedData,
+  BulkEncryptPayload,
   Client,
   Encrypted,
   EncryptOptions,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
-import { type JsPlaintext, encryptBulk } from '@cipherstash/protect-ffi'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
@@ -40,9 +40,8 @@ const createEncryptPayloads = (
     }))
 }
 
-const createNullResult = (
-  plaintexts: BulkEncryptPayload,
-): BulkEncryptedData => plaintexts.map(({ id }) => ({ id, data: null }))
+const createNullResult = (plaintexts: BulkEncryptPayload): BulkEncryptedData =>
+  plaintexts.map(({ id }) => ({ id, data: null }))
 
 const mapEncryptedDataToResult = (
   plaintexts: BulkEncryptPayload,

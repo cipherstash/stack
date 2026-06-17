@@ -21,4 +21,4 @@
  * once per cipherstash SDK binding.
  */
 
-export { bulkEncryptMiddleware } from '../middleware/bulk-encrypt';
+export { bulkEncryptMiddleware } from '../middleware/bulk-encrypt'

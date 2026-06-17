@@ -1,4 +1,11 @@
 import type {
+  Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
+  JsPlaintext,
+  newClient,
+  QueryOpName,
+} from '@cipherstash/protect-ffi'
+import type {
   EncryptedColumn,
   EncryptedField,
   EncryptedTable,
@@ -7,13 +14,6 @@ import type {
   encryptedColumn,
   encryptedField,
 } from '@/schema'
-import type {
-  Encrypted as CipherStashEncrypted,
-  EncryptedQuery as CipherStashEncryptedQuery,
-  JsPlaintext,
-  QueryOpName,
-  newClient,
-} from '@cipherstash/protect-ffi'
 
 // ---------------------------------------------------------------------------
 // Branded type utilities
@@ -139,11 +139,7 @@ export type EncryptedSearchTerm = Encrypted | EncryptedQuery | string
 // null elements appear in the batch path when a term has a null/undefined
 // value — the operation preserves position so callers can correlate results
 // with their input array.
-export type EncryptedQueryResult =
-  | Encrypted
-  | EncryptedQuery
-  | string
-  | null
+export type EncryptedQueryResult = Encrypted | EncryptedQuery | string | null
 
 // ---------------------------------------------------------------------------
 // Model field types (encrypted vs decrypted views)

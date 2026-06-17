@@ -1,13 +1,13 @@
+import { type Result, withResult } from '@byteslice/result'
+import {
+  decrypt as ffiDecrypt,
+  type JsPlaintext,
+} from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { Client, Encrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
-import {
-  type JsPlaintext,
-  decrypt as ffiDecrypt,
-} from '@cipherstash/protect-ffi'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 

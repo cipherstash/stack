@@ -214,13 +214,13 @@ export interface SupabaseClientLike {
 // ---------------------------------------------------------------------------
 
 export type { EncryptionClient } from '@/encryption'
+export type { AuditConfig } from '@/encryption/operations/base-operation'
+export type { LockContext } from '@/identity'
 export type {
-  EncryptedTable,
   EncryptedColumn,
+  EncryptedTable,
   EncryptedTableColumn,
 } from '@/schema'
-export type { LockContext } from '@/identity'
-export type { AuditConfig } from '@/encryption/operations/base-operation'
 
 // ---------------------------------------------------------------------------
 // Forward declaration for query builder (avoids circular)

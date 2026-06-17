@@ -23,7 +23,7 @@
  *       `cipherstash.EncryptedString({ equality: false, freeTextSearch: false })`.
  */
 
-import type { AuthoringTypeNamespace } from '@prisma-next/framework-components/authoring';
+import type { AuthoringTypeNamespace } from '@prisma-next/framework-components/authoring'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -32,7 +32,7 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
-} from './extension-metadata/constants';
+} from './extension-metadata/constants'
 
 export const cipherstashAuthoringTypes = {
   cipherstash: {
@@ -54,7 +54,12 @@ export const cipherstashAuthoringTypes = {
         codecId: CIPHERSTASH_STRING_CODEC_ID,
         nativeType: EQL_V2_ENCRYPTED_TYPE,
         typeParams: {
-          equality: { kind: 'arg', index: 0, path: ['equality'], default: true },
+          equality: {
+            kind: 'arg',
+            index: 0,
+            path: ['equality'],
+            default: true,
+          },
           freeTextSearch: {
             kind: 'arg',
             index: 0,
@@ -87,7 +92,12 @@ export const cipherstashAuthoringTypes = {
         codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
         nativeType: EQL_V2_ENCRYPTED_TYPE,
         typeParams: {
-          equality: { kind: 'arg', index: 0, path: ['equality'], default: true },
+          equality: {
+            kind: 'arg',
+            index: 0,
+            path: ['equality'],
+            default: true,
+          },
           orderAndRange: {
             kind: 'arg',
             index: 0,
@@ -114,7 +124,12 @@ export const cipherstashAuthoringTypes = {
         codecId: CIPHERSTASH_BIGINT_CODEC_ID,
         nativeType: EQL_V2_ENCRYPTED_TYPE,
         typeParams: {
-          equality: { kind: 'arg', index: 0, path: ['equality'], default: true },
+          equality: {
+            kind: 'arg',
+            index: 0,
+            path: ['equality'],
+            default: true,
+          },
           orderAndRange: {
             kind: 'arg',
             index: 0,
@@ -141,7 +156,12 @@ export const cipherstashAuthoringTypes = {
         codecId: CIPHERSTASH_DATE_CODEC_ID,
         nativeType: EQL_V2_ENCRYPTED_TYPE,
         typeParams: {
-          equality: { kind: 'arg', index: 0, path: ['equality'], default: true },
+          equality: {
+            kind: 'arg',
+            index: 0,
+            path: ['equality'],
+            default: true,
+          },
           orderAndRange: {
             kind: 'arg',
             index: 0,
@@ -167,7 +187,12 @@ export const cipherstashAuthoringTypes = {
         codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
         nativeType: EQL_V2_ENCRYPTED_TYPE,
         typeParams: {
-          equality: { kind: 'arg', index: 0, path: ['equality'], default: true },
+          equality: {
+            kind: 'arg',
+            index: 0,
+            path: ['equality'],
+            default: true,
+          },
         },
       },
     },
@@ -197,4 +222,4 @@ export const cipherstashAuthoringTypes = {
       },
     },
   },
-} as const satisfies AuthoringTypeNamespace;
+} as const satisfies AuthoringTypeNamespace

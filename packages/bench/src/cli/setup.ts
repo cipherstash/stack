@@ -1,6 +1,6 @@
+import { buildBench, teardownBench } from '../drizzle/setup.js'
 import { applySchema } from '../harness/db.js'
 import { seed } from '../harness/seed.js'
-import { buildBench, teardownBench } from '../drizzle/setup.js'
 
 async function main() {
   const handle = await buildBench()

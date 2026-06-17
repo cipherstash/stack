@@ -62,19 +62,23 @@
  * dispatch that the predicate operators rely on.
  */
 
-import { type AnyExpression, OrderByItem, ParamRef } from '@prisma-next/sql-relational-core/ast';
+import {
+  type AnyExpression,
+  OrderByItem,
+  ParamRef,
+} from '@prisma-next/sql-relational-core/ast'
 import {
   buildOperation,
   type Expression,
   type ScopeField,
-} from '@prisma-next/sql-relational-core/expression';
+} from '@prisma-next/sql-relational-core/expression'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-} from '../extension-metadata/constants';
+} from '../extension-metadata/constants'
 
 /** Cipherstash codec ids that carry the `cipherstash:order-and-range` trait. */
 const ORDER_AND_RANGE_CODEC_IDS = [
@@ -82,27 +86,29 @@ const ORDER_AND_RANGE_CODEC_IDS = [
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_DATE_CODEC_ID,
-] as const;
+] as const
 
-const ORDER_AND_RANGE_SET: ReadonlySet<string> = new Set(ORDER_AND_RANGE_CODEC_IDS);
+const ORDER_AND_RANGE_SET: ReadonlySet<string> = new Set(
+  ORDER_AND_RANGE_CODEC_IDS,
+)
 
 type CipherstashJsonReturn = {
-  readonly codecId: typeof CIPHERSTASH_JSON_CODEC_ID;
-  readonly nullable: false;
-};
+  readonly codecId: typeof CIPHERSTASH_JSON_CODEC_ID
+  readonly nullable: false
+}
 
 function getCodecId(col: Expression<ScopeField>, helperName: string): string {
-  const codecId = col.returnType?.codecId;
+  const codecId = col.returnType?.codecId
   if (typeof codecId !== 'string') {
     throw new TypeError(
       `${helperName}: argument is missing a codec id; expected an Expression bound to a cipherstash column.`,
-    );
+    )
   }
-  return codecId;
+  return codecId
 }
 
 function describeOrderAndRangeCodecs(): string {
-  return ORDER_AND_RANGE_CODEC_IDS.join(', ');
+  return ORDER_AND_RANGE_CODEC_IDS.join(', ')
 }
 
 /**
@@ -113,14 +119,14 @@ function describeOrderAndRangeCodecs(): string {
  * `eql_v2_encrypted` to compute the sort.
  */
 export function cipherstashAsc(col: Expression<ScopeField>): OrderByItem {
-  const codecId = getCodecId(col, 'cipherstashAsc');
+  const codecId = getCodecId(col, 'cipherstashAsc')
   if (!ORDER_AND_RANGE_SET.has(codecId)) {
     throw new TypeError(
       `cipherstashAsc: column codec id "${codecId}" does not support order-and-range sort; ` +
         `cipherstashAsc accepts cipherstash columns whose codec id is one of: ${describeOrderAndRangeCodecs()}.`,
-    );
+    )
   }
-  return OrderByItem.asc(col.buildAst());
+  return OrderByItem.asc(col.buildAst())
 }
 
 /**
@@ -129,25 +135,28 @@ export function cipherstashAsc(col: Expression<ScopeField>): OrderByItem {
  * for the lowering rationale.
  */
 export function cipherstashDesc(col: Expression<ScopeField>): OrderByItem {
-  const codecId = getCodecId(col, 'cipherstashDesc');
+  const codecId = getCodecId(col, 'cipherstashDesc')
   if (!ORDER_AND_RANGE_SET.has(codecId)) {
     throw new TypeError(
       `cipherstashDesc: column codec id "${codecId}" does not support order-and-range sort; ` +
         `cipherstashDesc accepts cipherstash columns whose codec id is one of: ${describeOrderAndRangeCodecs()}.`,
-    );
+    )
   }
-  return OrderByItem.desc(col.buildAst());
+  return OrderByItem.desc(col.buildAst())
 }
 
-function requireJsonColumn(col: Expression<ScopeField>, helperName: string): AnyExpression {
-  const codecId = getCodecId(col, helperName);
+function requireJsonColumn(
+  col: Expression<ScopeField>,
+  helperName: string,
+): AnyExpression {
+  const codecId = getCodecId(col, helperName)
   if (codecId !== CIPHERSTASH_JSON_CODEC_ID) {
     throw new TypeError(
       `${helperName}: column codec id "${codecId}" is not "${CIPHERSTASH_JSON_CODEC_ID}"; ` +
         `${helperName} only accepts cipherstash JSON columns.`,
-    );
+    )
   }
-  return col.buildAst();
+  return col.buildAst()
 }
 
 function requirePathString(path: unknown, helperName: string): string {
@@ -156,9 +165,9 @@ function requirePathString(path: unknown, helperName: string): string {
       `${helperName}: expected a string path argument, got ${
         path === null ? 'null' : typeof path
       }.`,
-    );
+    )
   }
-  return path;
+  return path
 }
 
 /**
@@ -176,8 +185,8 @@ export function cipherstashJsonbPathQueryFirst(
   col: Expression<ScopeField>,
   path: string,
 ): Expression<CipherstashJsonReturn> {
-  const selfAst = requireJsonColumn(col, 'cipherstashJsonbPathQueryFirst');
-  const checked = requirePathString(path, 'cipherstashJsonbPathQueryFirst');
+  const selfAst = requireJsonColumn(col, 'cipherstashJsonbPathQueryFirst')
+  const checked = requirePathString(path, 'cipherstashJsonbPathQueryFirst')
   return buildOperation({
     method: 'cipherstashJsonbPathQueryFirst',
     args: [selfAst, ParamRef.of(checked, { codec: { codecId: 'pg/text@1' } })],
@@ -187,7 +196,7 @@ export function cipherstashJsonbPathQueryFirst(
       strategy: 'function',
       template: 'eql_v2.jsonb_path_query_first({{self}}, {{arg0}})',
     },
-  });
+  })
 }
 
 /**
@@ -208,8 +217,8 @@ export function cipherstashJsonbGet(
   col: Expression<ScopeField>,
   path: string,
 ): Expression<CipherstashJsonReturn> {
-  const selfAst = requireJsonColumn(col, 'cipherstashJsonbGet');
-  const checked = requirePathString(path, 'cipherstashJsonbGet');
+  const selfAst = requireJsonColumn(col, 'cipherstashJsonbGet')
+  const checked = requirePathString(path, 'cipherstashJsonbGet')
   return buildOperation({
     method: 'cipherstashJsonbGet',
     args: [selfAst, ParamRef.of(checked, { codec: { codecId: 'pg/text@1' } })],
@@ -219,5 +228,5 @@ export function cipherstashJsonbGet(
       strategy: 'function',
       template: 'eql_v2."->"({{self}}, {{arg0}})',
     },
-  });
+  })
 }

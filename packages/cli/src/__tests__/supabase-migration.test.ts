@@ -135,7 +135,9 @@ describe('writeSupabaseEqlMigration', () => {
 
     const contents = fs.readFileSync(result.path, 'utf-8')
     // Header comment block includes the detected runner instruction
-    expect(contents).toMatch(/-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash db install --supabase --migration`/)
+    expect(contents).toMatch(
+      /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash db install --supabase --migration`/,
+    )
     expect(contents).toContain('CipherStash')
     // EQL SQL body — the bundled supabase variant defines eql_v2.
     expect(contents).toContain('eql_v2')
@@ -250,7 +252,9 @@ describe('validateInstallFlags', () => {
 describe('migrationHeader', () => {
   it('renders the header with the provided runner for npx', () => {
     const header = migrationHeader('npx')
-    expect(header).toContain('-- CipherStash EQL — installed by `npx stash db install --supabase --migration`.')
+    expect(header).toContain(
+      '-- CipherStash EQL — installed by `npx stash db install --supabase --migration`.',
+    )
   })
 
   it('renders the header with the provided runner for bunx', () => {
@@ -266,7 +270,9 @@ describe('migrationHeader', () => {
   it('includes all expected documentation lines', () => {
     const header = migrationHeader('npx')
     expect(header).toContain('eql_v2_encrypted')
-    expect(header).toContain('https://cipherstash.com/docs/stack/cipherstash/supabase')
+    expect(header).toContain(
+      'https://cipherstash.com/docs/stack/cipherstash/supabase',
+    )
   })
 })
 

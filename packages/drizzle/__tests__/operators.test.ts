@@ -1,7 +1,7 @@
 import {
+  encryptedType,
   ProtectConfigError,
   ProtectOperatorError,
-  encryptedType,
 } from '@cipherstash/drizzle/pg'
 import type { SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'

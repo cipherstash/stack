@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -85,64 +85,62 @@ describe('CJS consumers can require the built bundles', () => {
     expect(cjsEntries).toContain('dist/encryption/index.cjs')
   })
 
-  it.each(cjsEntries)(
-    'dist bundle does not externalize an ESM-only module: %s',
-    (entry) => {
-      const bundlePath = path.join(packageRoot, entry)
-      const source = readFileSync(bundlePath, 'utf8')
+  it.each(
+    cjsEntries,
+  )('dist bundle does not externalize an ESM-only module: %s', (entry) => {
+    const bundlePath = path.join(packageRoot, entry)
+    const source = readFileSync(bundlePath, 'utf8')
 
-      // Match `require("foo")` or `require('foo')` where `foo` is a bare
-      // specifier (not a relative path or `node:` builtin) — those are the
-      // cases that hit Node's CJS module resolver at runtime.
-      const requireRegex = /\brequire\(\s*['"]([^'".\\/][^'"]*)['"]\s*\)/g
-      const externalized = new Set<string>()
-      for (const match of source.matchAll(requireRegex)) {
-        externalized.add(match[1])
-      }
+    // Match `require("foo")` or `require('foo')` where `foo` is a bare
+    // specifier (not a relative path or `node:` builtin) — those are the
+    // cases that hit Node's CJS module resolver at runtime.
+    const requireRegex = /\brequire\(\s*['"]([^'".\\/][^'"]*)['"]\s*\)/g
+    const externalized = new Set<string>()
+    for (const match of source.matchAll(requireRegex)) {
+      externalized.add(match[1])
+    }
 
-      for (const dep of ESM_ONLY_DEPENDENCIES) {
-        expect(
-          externalized.has(dep),
-          `${entry} externalizes "${dep}" via require(), which is ESM-only and will crash CJS consumers with ERR_REQUIRE_ESM. Add it to noExternal in packages/stack/tsup.config.ts.`,
-        ).toBe(false)
-      }
-    },
-  )
+    for (const dep of ESM_ONLY_DEPENDENCIES) {
+      expect(
+        externalized.has(dep),
+        `${entry} externalizes "${dep}" via require(), which is ESM-only and will crash CJS consumers with ERR_REQUIRE_ESM. Add it to noExternal in packages/stack/tsup.config.ts.`,
+      ).toBe(false)
+    }
+  })
 
-  it.each(cjsEntries)(
-    'CJS bundle loads in a real Node CJS process: %s',
-    (entry) => {
-      const bundlePath = path.join(packageRoot, entry)
-      // Spawn a fresh Node process so this is a true CJS load — vitest's
-      // own module graph and any test-time aliasing don't apply.
-      // `--no-experimental-require-module` forces the legacy CJS-cannot-
-      // require-ESM behavior, reproducing the exact ERR_REQUIRE_ESM that
-      // downstream apps hit in production runtimes that don't enable
-      // require(esm) (Node <22.12, Bun, Deno-as-Node, locked-down CI).
-      try {
-        execFileSync(
-          process.execPath,
-          [
-            '--no-experimental-require-module',
-            '-e',
-            `require(${JSON.stringify(bundlePath)})`,
-          ],
-          {
-            cwd: packageRoot,
-            stdio: 'pipe',
-            encoding: 'utf8',
-          },
-        )
-      } catch (err) {
-        const e = err as NodeJS.ErrnoException & {
-          stderr?: string
-          stdout?: string
-        }
-        throw new Error(
-          `require("${entry}") failed in a Node CJS process:\n` +
-            `${e.stderr ?? ''}\n${e.stdout ?? ''}`,
-        )
+  it.each(
+    cjsEntries,
+  )('CJS bundle loads in a real Node CJS process: %s', (entry) => {
+    const bundlePath = path.join(packageRoot, entry)
+    // Spawn a fresh Node process so this is a true CJS load — vitest's
+    // own module graph and any test-time aliasing don't apply.
+    // `--no-experimental-require-module` forces the legacy CJS-cannot-
+    // require-ESM behavior, reproducing the exact ERR_REQUIRE_ESM that
+    // downstream apps hit in production runtimes that don't enable
+    // require(esm) (Node <22.12, Bun, Deno-as-Node, locked-down CI).
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          '--no-experimental-require-module',
+          '-e',
+          `require(${JSON.stringify(bundlePath)})`,
+        ],
+        {
+          cwd: packageRoot,
+          stdio: 'pipe',
+          encoding: 'utf8',
+        },
+      )
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException & {
+        stderr?: string
+        stdout?: string
       }
-    },
-  )
+      throw new Error(
+        `require("${entry}") failed in a Node CJS process:\n` +
+          `${e.stderr ?? ''}\n${e.stdout ?? ''}`,
+      )
+    }
+  })
 })

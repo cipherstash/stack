@@ -20,6 +20,8 @@ export function markBulkEncryptMiddlewareRegistered(sdk: CipherstashSdk): void {
   REGISTERED.add(sdk)
 }
 
-export function isBulkEncryptMiddlewareRegistered(sdk: CipherstashSdk): boolean {
+export function isBulkEncryptMiddlewareRegistered(
+  sdk: CipherstashSdk,
+): boolean {
   return REGISTERED.has(sdk)
 }

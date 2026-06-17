@@ -1,15 +1,15 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  type JsPlaintext,
-  type QueryPayload,
-  encryptQueryBulk as ffiEncryptQueryBulk,
-} from '@cipherstash/protect-ffi'
 import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
 } from '@cipherstash/protect-ffi'
-import { type ProtectError, ProtectErrorTypes } from '../..'
+import {
+  encryptQueryBulk as ffiEncryptQueryBulk,
+  type JsPlaintext,
+  type QueryPayload,
+} from '@cipherstash/protect-ffi'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import { formatEncryptedResult } from '../../helpers'
 import type { Context, LockContext } from '../../identify'
 import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '../../types'

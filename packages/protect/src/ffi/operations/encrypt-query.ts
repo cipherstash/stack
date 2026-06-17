@@ -1,16 +1,16 @@
 import { type Result, withResult } from '@byteslice/result'
 import {
-  type JsPlaintext,
   encryptQuery as ffiEncryptQuery,
+  type JsPlaintext,
 } from '@cipherstash/protect-ffi'
-import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import { formatEncryptedResult } from '../../helpers'
 import type { LockContext } from '../../identify'
 import type {
   Client,
-  EncryptQueryOptions,
   EncryptedQueryResult,
+  EncryptQueryOptions,
 } from '../../types'
 import { getErrorCode } from '../helpers/error-code'
 import { resolveIndexType } from '../helpers/infer-index-type'

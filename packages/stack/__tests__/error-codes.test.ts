@@ -1,10 +1,10 @@
 import 'dotenv/config'
+import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
+import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
-import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
-import { beforeAll, describe, expect, it } from 'vitest'
 
 /** FFI tests require longer timeout due to client initialization */
 const FFI_TEST_TIMEOUT = 30_000

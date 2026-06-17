@@ -2,8 +2,8 @@ import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
   JsPlaintext,
-  QueryOpName,
   newClient,
+  QueryOpName,
 } from '@cipherstash/protect-ffi'
 import type {
   ProtectColumn,

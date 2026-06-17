@@ -1,8 +1,8 @@
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
 import { activateConfig, migrateConfig } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadStashConfig } from '@/config/index.js'
 
 /**
  * `stash db activate` — promote the pending EQL configuration to active

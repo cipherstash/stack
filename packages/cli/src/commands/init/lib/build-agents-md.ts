@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import * as p from '@clack/prompts'
 import type { Integration } from '../types.js'
 import { findBundledDir } from './bundled-paths.js'
-import { SKILL_MAP, readBundledSkill } from './install-skills.js'
+import { readBundledSkill, SKILL_MAP } from './install-skills.js'
 
 export type AgentsMdMode = 'doctrine-only' | 'doctrine-plus-skills'
 

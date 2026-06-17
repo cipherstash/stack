@@ -1,5 +1,5 @@
-import type { EncryptionError } from '@/errors'
 import type { Result } from '@byteslice/result'
+import type { EncryptionError } from '@/errors'
 
 export type AuditConfig = {
   metadata?: Record<string, unknown>

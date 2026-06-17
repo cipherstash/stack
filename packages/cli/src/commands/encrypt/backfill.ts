@@ -1,8 +1,6 @@
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
 import {
-  type ManifestColumn,
   appendEvent,
+  type ManifestColumn,
   progress,
   runBackfill,
   upsertManifestColumn,
@@ -14,6 +12,8 @@ import {
 } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadStashConfig } from '@/config/index.js'
 import { loadEncryptionContext, requireTable } from './context.js'
 
 /**

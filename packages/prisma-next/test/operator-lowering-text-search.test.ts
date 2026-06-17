@@ -14,8 +14,8 @@
  * `operator-lowering.helpers.ts`.
  */
 
-import { describe, expect, it } from 'vitest';
-import { EncryptedString } from '../src/execution/envelope-string';
+import { describe, expect, it } from 'vitest'
+import { EncryptedString } from '../src/execution/envelope-string'
 import {
   COLUMN,
   callOperator,
@@ -25,45 +25,47 @@ import {
   makeAdapter,
   selectWithWhere,
   TABLE,
-} from './operator-lowering.helpers';
+} from './operator-lowering.helpers'
 
 describe('cipherstash operator lowering — cipherstashIlike', () => {
   it('lowers email.cipherstashIlike(pattern) to eql_v2.ilike("email", $1::eql_v2_encrypted)', () => {
-    const op = getOperator('cipherstashIlike');
-    const predicate = callOperator(op, columnAccessor(TABLE, COLUMN), '%alice%');
-    const ast = selectWithWhere(predicate);
+    const op = getOperator('cipherstashIlike')
+    const predicate = callOperator(op, columnAccessor(TABLE, COLUMN), '%alice%')
+    const ast = selectWithWhere(predicate)
 
-    const lowered = makeAdapter().lower(ast, { contract });
+    const lowered = makeAdapter().lower(ast, { contract })
 
     expect(lowered.sql).toMatchInlineSnapshot(
       `"SELECT "user"."id" AS "id" FROM "user" WHERE eql_v2.ilike("user"."email", $1::eql_v2_encrypted)"`,
-    );
-  });
+    )
+  })
 
   it('binds the pattern as an EncryptedString envelope tagged with the cipherstash routing key', () => {
-    const op = getOperator('cipherstashIlike');
-    const predicate = callOperator(op, columnAccessor(TABLE, COLUMN), '%alice%');
-    const ast = selectWithWhere(predicate);
+    const op = getOperator('cipherstashIlike')
+    const predicate = callOperator(op, columnAccessor(TABLE, COLUMN), '%alice%')
+    const ast = selectWithWhere(predicate)
 
-    const lowered = makeAdapter().lower(ast, { contract });
+    const lowered = makeAdapter().lower(ast, { contract })
 
-    expect(lowered.params).toHaveLength(1);
-    const envelope = lowered.params[0];
-    expect(envelope).toBeInstanceOf(EncryptedString);
-    const handle = (envelope as EncryptedString).expose();
-    expect(handle.plaintext).toBe('%alice%');
-    expect(handle.table).toBe(TABLE);
-    expect(handle.column).toBe(COLUMN);
-  });
-});
+    expect(lowered.params).toHaveLength(1)
+    const envelope = lowered.params[0]
+    expect(envelope).toBeInstanceOf(EncryptedString)
+    const handle = (envelope as EncryptedString).expose()
+    expect(handle.plaintext).toBe('%alice%')
+    expect(handle.table).toBe(TABLE)
+    expect(handle.column).toBe(COLUMN)
+  })
+})
 
 describe('cipherstash operator lowering — free-text-search extensions', () => {
   it('lowers cipherstashNotIlike(pattern) to NOT eql_v2.ilike(...)', () => {
-    const op = getOperator('cipherstashNotIlike');
-    const predicate = callOperator(op, columnAccessor(TABLE, COLUMN), '%alice%');
-    const lowered = makeAdapter().lower(selectWithWhere(predicate), { contract });
+    const op = getOperator('cipherstashNotIlike')
+    const predicate = callOperator(op, columnAccessor(TABLE, COLUMN), '%alice%')
+    const lowered = makeAdapter().lower(selectWithWhere(predicate), {
+      contract,
+    })
     expect(lowered.sql).toMatchInlineSnapshot(
       `"SELECT "user"."id" AS "id" FROM "user" WHERE NOT eql_v2.ilike("user"."email", $1::eql_v2_encrypted)"`,
-    );
-  });
-});
+    )
+  })
+})

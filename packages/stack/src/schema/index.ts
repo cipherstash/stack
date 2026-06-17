@@ -1,5 +1,5 @@
-import type { Encrypted } from '@/types'
 import { z } from 'zod'
+import type { Encrypted } from '@/types'
 
 // ------------------------
 // Zod schemas

@@ -5,14 +5,14 @@
 // any FFI call. See `fix(stack): restore runtime null guards in
 // encryption operations` for context.
 
+import { describe, expect, it } from 'vitest'
 import { BatchEncryptQueryOperation } from '@/encryption/operations/batch-encrypt-query'
 import { BulkDecryptOperation } from '@/encryption/operations/bulk-decrypt'
 import { BulkEncryptOperation } from '@/encryption/operations/bulk-encrypt'
 import { DecryptOperation } from '@/encryption/operations/decrypt'
-import { EncryptQueryOperation } from '@/encryption/operations/encrypt-query'
 import { EncryptOperation } from '@/encryption/operations/encrypt'
+import { EncryptQueryOperation } from '@/encryption/operations/encrypt-query'
 import { encryptedColumn, encryptedTable } from '@/schema'
-import { describe, expect, it } from 'vitest'
 
 const table = encryptedTable('null-guards-test', {
   metadata: encryptedColumn('metadata').searchableJson(),

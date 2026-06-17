@@ -1,3 +1,4 @@
-let npxResult = 0
+const npxResult = 0
 const npxLikeFunc = () => npxResult + 1
-export { npxResult, npxLikeFunc }
+
+export { npxLikeFunc, npxResult }

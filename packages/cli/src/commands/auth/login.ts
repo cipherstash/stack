@@ -1,6 +1,7 @@
 import auth from '@cipherstash/auth'
 import * as p from '@clack/prompts'
 import { messages } from '../../messages.js'
+
 const { beginDeviceCodeFlow, bindClientDevice } = auth
 
 // TODO: pull from the CTS API

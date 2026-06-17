@@ -27,7 +27,7 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
-} from '../extension-metadata/constants';
+} from '../extension-metadata/constants'
 
 /**
  * Search-mode parameters for `encryptedString({...})`. Every flag is
@@ -37,19 +37,19 @@ import {
  * date codecs already had.
  */
 export interface EncryptedStringOptions {
-  readonly equality?: boolean;
-  readonly freeTextSearch?: boolean;
-  readonly orderAndRange?: boolean;
+  readonly equality?: boolean
+  readonly freeTextSearch?: boolean
+  readonly orderAndRange?: boolean
 }
 
 export interface EncryptedStringColumnDescriptor {
-  readonly codecId: typeof CIPHERSTASH_STRING_CODEC_ID;
-  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE;
+  readonly codecId: typeof CIPHERSTASH_STRING_CODEC_ID
+  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE
   readonly typeParams: {
-    readonly equality: boolean;
-    readonly freeTextSearch: boolean;
-    readonly orderAndRange: boolean;
-  };
+    readonly equality: boolean
+    readonly freeTextSearch: boolean
+    readonly orderAndRange: boolean
+  }
 }
 
 /**
@@ -73,7 +73,7 @@ export function encryptedString(
       freeTextSearch: options.freeTextSearch ?? true,
       orderAndRange: options.orderAndRange ?? true,
     },
-  };
+  }
 }
 
 /**
@@ -83,26 +83,26 @@ export function encryptedString(
  * default.
  */
 export interface EncryptedNumericOptions {
-  readonly equality?: boolean;
-  readonly orderAndRange?: boolean;
+  readonly equality?: boolean
+  readonly orderAndRange?: boolean
 }
 
 export interface EncryptedDoubleColumnDescriptor {
-  readonly codecId: typeof CIPHERSTASH_DOUBLE_CODEC_ID;
-  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE;
+  readonly codecId: typeof CIPHERSTASH_DOUBLE_CODEC_ID
+  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE
   readonly typeParams: {
-    readonly equality: boolean;
-    readonly orderAndRange: boolean;
-  };
+    readonly equality: boolean
+    readonly orderAndRange: boolean
+  }
 }
 
 export interface EncryptedBigIntColumnDescriptor {
-  readonly codecId: typeof CIPHERSTASH_BIGINT_CODEC_ID;
-  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE;
+  readonly codecId: typeof CIPHERSTASH_BIGINT_CODEC_ID
+  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE
   readonly typeParams: {
-    readonly equality: boolean;
-    readonly orderAndRange: boolean;
-  };
+    readonly equality: boolean
+    readonly orderAndRange: boolean
+  }
 }
 
 /**
@@ -122,7 +122,7 @@ export function encryptedDouble(
       equality: options.equality ?? true,
       orderAndRange: options.orderAndRange ?? true,
     },
-  };
+  }
 }
 
 /**
@@ -139,7 +139,7 @@ export function encryptedBigInt(
       equality: options.equality ?? true,
       orderAndRange: options.orderAndRange ?? true,
     },
-  };
+  }
 }
 
 /**
@@ -147,24 +147,26 @@ export function encryptedBigInt(
  * optional and default to `true`.
  */
 export interface EncryptedDateOptions {
-  readonly equality?: boolean;
-  readonly orderAndRange?: boolean;
+  readonly equality?: boolean
+  readonly orderAndRange?: boolean
 }
 
 export interface EncryptedDateColumnDescriptor {
-  readonly codecId: typeof CIPHERSTASH_DATE_CODEC_ID;
-  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE;
+  readonly codecId: typeof CIPHERSTASH_DATE_CODEC_ID
+  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE
   readonly typeParams: {
-    readonly equality: boolean;
-    readonly orderAndRange: boolean;
-  };
+    readonly equality: boolean
+    readonly orderAndRange: boolean
+  }
 }
 
 /**
  * `encryptedDate({ equality?, orderAndRange? })` — TS contract factory
  * matching `cipherstash.EncryptedDate({...})`.
  */
-export function encryptedDate(options: EncryptedDateOptions = {}): EncryptedDateColumnDescriptor {
+export function encryptedDate(
+  options: EncryptedDateOptions = {},
+): EncryptedDateColumnDescriptor {
   return {
     codecId: CIPHERSTASH_DATE_CODEC_ID,
     nativeType: EQL_V2_ENCRYPTED_TYPE,
@@ -172,7 +174,7 @@ export function encryptedDate(options: EncryptedDateOptions = {}): EncryptedDate
       equality: options.equality ?? true,
       orderAndRange: options.orderAndRange ?? true,
     },
-  };
+  }
 }
 
 /**
@@ -181,15 +183,15 @@ export function encryptedDate(options: EncryptedDateOptions = {}): EncryptedDate
  * search (no meaningful range predicate over a 2-value domain).
  */
 export interface EncryptedBooleanOptions {
-  readonly equality?: boolean;
+  readonly equality?: boolean
 }
 
 export interface EncryptedBooleanColumnDescriptor {
-  readonly codecId: typeof CIPHERSTASH_BOOLEAN_CODEC_ID;
-  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE;
+  readonly codecId: typeof CIPHERSTASH_BOOLEAN_CODEC_ID
+  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE
   readonly typeParams: {
-    readonly equality: boolean;
-  };
+    readonly equality: boolean
+  }
 }
 
 /**
@@ -205,7 +207,7 @@ export function encryptedBoolean(
     typeParams: {
       equality: options.equality ?? true,
     },
-  };
+  }
 }
 
 /**
@@ -214,27 +216,29 @@ export function encryptedBoolean(
  * + path-extraction predicates). Defaults to `true`.
  */
 export interface EncryptedJsonOptions {
-  readonly searchableJson?: boolean;
+  readonly searchableJson?: boolean
 }
 
 export interface EncryptedJsonColumnDescriptor {
-  readonly codecId: typeof CIPHERSTASH_JSON_CODEC_ID;
-  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE;
+  readonly codecId: typeof CIPHERSTASH_JSON_CODEC_ID
+  readonly nativeType: typeof EQL_V2_ENCRYPTED_TYPE
   readonly typeParams: {
-    readonly searchableJson: boolean;
-  };
+    readonly searchableJson: boolean
+  }
 }
 
 /**
  * `encryptedJson({ searchableJson? })` — TS contract factory matching
  * `cipherstash.EncryptedJson({...})`.
  */
-export function encryptedJson(options: EncryptedJsonOptions = {}): EncryptedJsonColumnDescriptor {
+export function encryptedJson(
+  options: EncryptedJsonOptions = {},
+): EncryptedJsonColumnDescriptor {
   return {
     codecId: CIPHERSTASH_JSON_CODEC_ID,
     nativeType: EQL_V2_ENCRYPTED_TYPE,
     typeParams: {
       searchableJson: options.searchableJson ?? true,
     },
-  };
+  }
 }

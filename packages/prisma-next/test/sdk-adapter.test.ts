@@ -7,8 +7,8 @@
  * boundary.
  */
 
-import { encryptedColumn, encryptedTable } from '@cipherstash/stack/schema'
 import type { EncryptionClient } from '@cipherstash/stack/client'
+import { encryptedColumn, encryptedTable } from '@cipherstash/stack/schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import { createCipherstashSdk } from '../src/stack/sdk-adapter'
@@ -32,23 +32,31 @@ function makeFakeClient(): FakeClientHandle {
   const decryptCalls: unknown[] = []
 
   const client = {
-    bulkEncrypt: vi.fn(async (plaintexts: ReadonlyArray<{ plaintext: unknown }>, opts: { column: unknown; table: unknown }) => {
-      bulkEncryptCalls.push({
-        plaintexts: plaintexts.map((p) => p.plaintext),
-        column: opts.column,
-        table: opts.table,
-      })
-      return {
-        failure: null,
-        data: plaintexts.map((_, i) => ({ data: `ct-${i}` as unknown })),
-      } as { failure: null; data: ReadonlyArray<{ data: unknown }> }
-    }),
+    bulkEncrypt: vi.fn(
+      async (
+        plaintexts: ReadonlyArray<{ plaintext: unknown }>,
+        opts: { column: unknown; table: unknown },
+      ) => {
+        bulkEncryptCalls.push({
+          plaintexts: plaintexts.map((p) => p.plaintext),
+          column: opts.column,
+          table: opts.table,
+        })
+        return {
+          failure: null,
+          data: plaintexts.map((_, i) => ({ data: `ct-${i}` as unknown })),
+        } as { failure: null; data: ReadonlyArray<{ data: unknown }> }
+      },
+    ),
     bulkDecrypt: vi.fn(async (payload: ReadonlyArray<{ data: unknown }>) => {
       bulkDecryptCalls.push(payload.map((p) => p.data))
       return {
         failure: null,
         data: payload.map((p, i) => ({ id: i, data: `pt-${i}` as unknown })),
-      } as { failure: null; data: ReadonlyArray<{ id?: number; data?: unknown; error?: unknown }> }
+      } as {
+        failure: null
+        data: ReadonlyArray<{ id?: number; data?: unknown; error?: unknown }>
+      }
     }),
     decrypt: vi.fn(async (ciphertext: unknown) => {
       decryptCalls.push(ciphertext)

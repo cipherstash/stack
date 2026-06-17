@@ -1,8 +1,8 @@
 import { type Result, withResult } from '@byteslice/result'
 import {
+  isEncryptedScalarQuery,
   type ProtectClient,
   type SearchTerm,
-  isEncryptedScalarQuery,
 } from '@cipherstash/protect'
 import { handleError } from '../helpers'
 import type { ProtectDynamoDBError } from '../types'

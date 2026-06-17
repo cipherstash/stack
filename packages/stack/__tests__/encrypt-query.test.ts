@@ -1,8 +1,8 @@
 import 'dotenv/config'
+import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
-import { beforeAll, describe, expect, it } from 'vitest'
 import {
   articles,
   createFailingMockLockContext,

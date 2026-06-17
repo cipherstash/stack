@@ -1,8 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { checkEnvKeys, setEnvValues, detectPackageManagerTool } from '../tools/wizard-tools.js'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  checkEnvKeys,
+  detectPackageManagerTool,
+  setEnvValues,
+} from '../tools/wizard-tools.js'
 
 describe('checkEnvKeys', () => {
   let tmp: string
@@ -27,7 +31,10 @@ describe('checkEnvKeys', () => {
   })
 
   it('detects present and missing keys', () => {
-    writeFileSync(join(tmp, '.env'), 'DATABASE_URL=postgres://localhost/test\nSECRET=foo\n')
+    writeFileSync(
+      join(tmp, '.env'),
+      'DATABASE_URL=postgres://localhost/test\nSECRET=foo\n',
+    )
     const result = checkEnvKeys(tmp, {
       filePath: '.env',
       keys: ['DATABASE_URL', 'API_KEY', 'SECRET'],
@@ -166,7 +173,7 @@ describe('security: regex injection', () => {
     writeFileSync(join(tmp, '.env'), 'SAFE_KEY=value\n')
     const result = checkEnvKeys(tmp, {
       filePath: '.env',
-      keys: ['.*'],  // Should NOT match SAFE_KEY
+      keys: ['.*'], // Should NOT match SAFE_KEY
     })
     expect(result['.*']).toBe('missing')
   })
@@ -175,7 +182,7 @@ describe('security: regex injection', () => {
     writeFileSync(join(tmp, '.env'), 'NORMAL_KEY=value\n')
     const result = checkEnvKeys(tmp, {
       filePath: '.env',
-      keys: ['.*'],  // Should NOT match NORMAL_KEY
+      keys: ['.*'], // Should NOT match NORMAL_KEY
     })
     // ".*" is not literally in the file as a key
     // Actually, we just wrote "DANGER.*=other" above, different test

@@ -126,61 +126,55 @@ export const protect = async (
 }
 
 export type { Result } from '@byteslice/result'
-export type { ProtectClient } from './ffi'
-export type { ProtectOperation } from './ffi/operations/base-operation'
-export type { BulkEncryptOperation } from './ffi/operations/bulk-encrypt'
-export type { BulkDecryptOperation } from './ffi/operations/bulk-decrypt'
-export type { BulkEncryptModelsOperation } from './ffi/operations/bulk-encrypt-models'
-export type { BulkDecryptModelsOperation } from './ffi/operations/bulk-decrypt-models'
-export type { DecryptOperation } from './ffi/operations/decrypt'
-export type { DecryptModelOperation } from './ffi/operations/decrypt-model'
-export type { EncryptModelOperation } from './ffi/operations/encrypt-model'
-export type { EncryptOperation } from './ffi/operations/encrypt'
-
-// Operations
-export {
-  EncryptQueryOperation,
-  EncryptQueryOperationWithLockContext,
-} from './ffi/operations/encrypt-query'
-export {
-  BatchEncryptQueryOperation,
-  BatchEncryptQueryOperationWithLockContext,
-} from './ffi/operations/batch-encrypt-query'
-
-// Helpers
-export {
-  inferIndexType,
-  validateIndexType,
-} from './ffi/helpers/infer-index-type'
-
-// Types
-export type {
-  QueryTypeName,
-  FfiIndexTypeName,
-  EncryptQueryOptions,
-  ScalarQueryTerm,
-} from './types'
-
-export { queryTypes, queryTypeToFfi } from './types'
-
-export { csTable, csColumn, csValue } from '@cipherstash/schema'
 export type {
   ProtectColumn,
   ProtectTable,
   ProtectTableColumn,
   ProtectValue,
 } from '@cipherstash/schema'
-// LockContext class export (value export for instantiation)
-export { LockContext } from './identify'
-
+export { csColumn, csTable, csValue } from '@cipherstash/schema'
+export type { ProtectClient } from './ffi'
+// Helpers
+export {
+  inferIndexType,
+  validateIndexType,
+} from './ffi/helpers/infer-index-type'
+export type { ProtectOperation } from './ffi/operations/base-operation'
+export {
+  BatchEncryptQueryOperation,
+  BatchEncryptQueryOperationWithLockContext,
+} from './ffi/operations/batch-encrypt-query'
+export type { BulkDecryptOperation } from './ffi/operations/bulk-decrypt'
+export type { BulkDecryptModelsOperation } from './ffi/operations/bulk-decrypt-models'
+export type { BulkEncryptOperation } from './ffi/operations/bulk-encrypt'
+export type { BulkEncryptModelsOperation } from './ffi/operations/bulk-encrypt-models'
+export type { DecryptOperation } from './ffi/operations/decrypt'
+export type { DecryptModelOperation } from './ffi/operations/decrypt-model'
+export type { EncryptOperation } from './ffi/operations/encrypt'
+export type { EncryptModelOperation } from './ffi/operations/encrypt-model'
+// Operations
+export {
+  EncryptQueryOperation,
+  EncryptQueryOperationWithLockContext,
+} from './ffi/operations/encrypt-query'
+export * from './helpers'
 // LockContext related type exports
 export type {
-  CtsRegions,
-  IdentifyOptions,
-  CtsToken,
   Context,
-  LockContextOptions,
+  CtsRegions,
+  CtsToken,
   GetLockContextResponse,
+  IdentifyOptions,
+  LockContextOptions,
 } from './identify'
-export * from './helpers'
+// LockContext class export (value export for instantiation)
+export { LockContext } from './identify'
+// Types
+export type {
+  EncryptQueryOptions,
+  FfiIndexTypeName,
+  QueryTypeName,
+  ScalarQueryTerm,
+} from './types'
 export * from './types'
+export { queryTypes, queryTypeToFfi } from './types'

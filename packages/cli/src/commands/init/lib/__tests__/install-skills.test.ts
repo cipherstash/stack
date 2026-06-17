@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
-  SKILL_MAP,
   installSkills,
   readBundledSkill,
+  SKILL_MAP,
 } from '../install-skills.js'
 
 describe('SKILL_MAP', () => {

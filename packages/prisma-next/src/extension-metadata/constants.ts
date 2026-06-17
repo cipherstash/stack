@@ -13,7 +13,7 @@
  * `space` column carries for CipherStash-owned rows.
  */
 
-export const CIPHERSTASH_SPACE_ID = 'cipherstash';
+export const CIPHERSTASH_SPACE_ID = 'cipherstash'
 
 /**
  * Version advertised by both `cipherstashPackMeta.version` (control plane)
@@ -23,7 +23,7 @@ export const CIPHERSTASH_SPACE_ID = 'cipherstash';
  * pack metadata cannot drift apart; consumed downstream by capability
  * gating and contract round-trips.
  */
-export const CIPHERSTASH_EXTENSION_VERSION = '0.0.1' as const;
+export const CIPHERSTASH_EXTENSION_VERSION = '0.0.1' as const
 
 /**
  * Codec id the application-side `Encrypted<string>` lowering targets.
@@ -31,7 +31,7 @@ export const CIPHERSTASH_EXTENSION_VERSION = '0.0.1' as const;
  * `add_search_config` / `remove_search_config` ops on field events) and
  * the descriptor's `controlPlaneHooks` wiring share the same constant.
  */
-export const CIPHERSTASH_STRING_CODEC_ID = 'cipherstash/string@1';
+export const CIPHERSTASH_STRING_CODEC_ID = 'cipherstash/string@1'
 
 /**
  * Codec id for the `cipherstash/double@1` codec — IEEE-754 double
@@ -40,35 +40,35 @@ export const CIPHERSTASH_STRING_CODEC_ID = 'cipherstash/string@1';
  * type) so each cipherstash envelope class binds 1:1 with a codec
  * id.
  */
-export const CIPHERSTASH_DOUBLE_CODEC_ID = 'cipherstash/double@1';
+export const CIPHERSTASH_DOUBLE_CODEC_ID = 'cipherstash/double@1'
 
 /**
  * Codec id for the `cipherstash/bigint@1` codec — JS `bigint`
  * plaintext lowering to `eql_v2_encrypted` with EQL
  * `cast_as = 'big_int'`.
  */
-export const CIPHERSTASH_BIGINT_CODEC_ID = 'cipherstash/bigint@1';
+export const CIPHERSTASH_BIGINT_CODEC_ID = 'cipherstash/bigint@1'
 
 /**
  * Codec id for the `cipherstash/date@1` codec — `Date` plaintext
  * (calendar date) lowering to `eql_v2_encrypted` with EQL
  * `cast_as = 'date'`.
  */
-export const CIPHERSTASH_DATE_CODEC_ID = 'cipherstash/date@1';
+export const CIPHERSTASH_DATE_CODEC_ID = 'cipherstash/date@1'
 
 /**
  * Codec id for the `cipherstash/boolean@1` codec — `boolean`
  * plaintext lowering to `eql_v2_encrypted` with EQL
  * `cast_as = 'boolean'`.
  */
-export const CIPHERSTASH_BOOLEAN_CODEC_ID = 'cipherstash/boolean@1';
+export const CIPHERSTASH_BOOLEAN_CODEC_ID = 'cipherstash/boolean@1'
 
 /**
  * Codec id for the `cipherstash/json@1` codec — JSON-serialisable
  * `unknown` plaintext lowering to `eql_v2_encrypted` with EQL
  * `cast_as = 'jsonb'`.
  */
-export const CIPHERSTASH_JSON_CODEC_ID = 'cipherstash/json@1';
+export const CIPHERSTASH_JSON_CODEC_ID = 'cipherstash/json@1'
 
 /**
  * The closed set of every codec id this package owns. Single source of
@@ -92,13 +92,15 @@ export const CIPHERSTASH_CODEC_IDS = [
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
-] as const;
+] as const
 
 /**
  * Set form of {@link CIPHERSTASH_CODEC_IDS} for `O(1)` membership
  * tests (the bulk-encrypt middleware's hot per-`ParamRef` filter).
  */
-export const CIPHERSTASH_CODEC_ID_SET: ReadonlySet<string> = new Set(CIPHERSTASH_CODEC_IDS);
+export const CIPHERSTASH_CODEC_ID_SET: ReadonlySet<string> = new Set(
+  CIPHERSTASH_CODEC_IDS,
+)
 
 /**
  * Closed union of every cipherstash codec id this package owns.
@@ -107,15 +109,17 @@ export const CIPHERSTASH_CODEC_ID_SET: ReadonlySet<string> = new Set(CIPHERSTASH
  * and for the free-standing helpers in `src/execution/helpers.ts`
  * that validate a column's codec id against the cipherstash set.
  */
-export type CipherstashCodecId = (typeof CIPHERSTASH_CODEC_IDS)[number];
+export type CipherstashCodecId = (typeof CIPHERSTASH_CODEC_IDS)[number]
 
 /**
  * Type-guard form of {@link CIPHERSTASH_CODEC_ID_SET}. Narrows
  * `string` to {@link CipherstashCodecId} for downstream
  * cipherstash-only branches (e.g. helper-side codec validation).
  */
-export function isCipherstashCodecId(codecId: string): codecId is CipherstashCodecId {
-  return CIPHERSTASH_CODEC_ID_SET.has(codecId);
+export function isCipherstashCodecId(
+  codecId: string,
+): codecId is CipherstashCodecId {
+  return CIPHERSTASH_CODEC_ID_SET.has(codecId)
 }
 
 /**
@@ -147,10 +151,13 @@ export function isCipherstashCodecId(codecId: string): codecId is CipherstashCod
  * traits; the codec ↔ operator visibility surface follows from the
  * trait set declared on each codec descriptor.
  */
-export const CIPHERSTASH_TRAIT_EQUALITY = 'cipherstash:equality' as const;
-export const CIPHERSTASH_TRAIT_ORDER_AND_RANGE = 'cipherstash:order-and-range' as const;
-export const CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH = 'cipherstash:free-text-search' as const;
-export const CIPHERSTASH_TRAIT_SEARCHABLE_JSON = 'cipherstash:searchable-json' as const;
+export const CIPHERSTASH_TRAIT_EQUALITY = 'cipherstash:equality' as const
+export const CIPHERSTASH_TRAIT_ORDER_AND_RANGE =
+  'cipherstash:order-and-range' as const
+export const CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH =
+  'cipherstash:free-text-search' as const
+export const CIPHERSTASH_TRAIT_SEARCHABLE_JSON =
+  'cipherstash:searchable-json' as const
 
 /**
  * Per-codec trait sets keyed by codec id. Each codec descriptor in
@@ -163,20 +170,32 @@ export const CIPHERSTASH_TRAIT_SEARCHABLE_JSON = 'cipherstash:searchable-json' a
 // Local re-alias of the framework's `CodecTrait` union, used solely as
 // the cast target below. Type-only import — adds no runtime
 // dependency.
-type FrameworkCodecTrait = import('@prisma-next/framework-components/codec').CodecTrait;
+type FrameworkCodecTrait =
+  import('@prisma-next/framework-components/codec').CodecTrait
 
-const CIPHERSTASH_CODEC_TRAITS_RAW: Readonly<Record<string, readonly string[]>> = {
+const CIPHERSTASH_CODEC_TRAITS_RAW: Readonly<
+  Record<string, readonly string[]>
+> = {
   [CIPHERSTASH_STRING_CODEC_ID]: [
     CIPHERSTASH_TRAIT_EQUALITY,
     CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
     CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
   ],
-  [CIPHERSTASH_DOUBLE_CODEC_ID]: [CIPHERSTASH_TRAIT_EQUALITY, CIPHERSTASH_TRAIT_ORDER_AND_RANGE],
-  [CIPHERSTASH_BIGINT_CODEC_ID]: [CIPHERSTASH_TRAIT_EQUALITY, CIPHERSTASH_TRAIT_ORDER_AND_RANGE],
-  [CIPHERSTASH_DATE_CODEC_ID]: [CIPHERSTASH_TRAIT_EQUALITY, CIPHERSTASH_TRAIT_ORDER_AND_RANGE],
+  [CIPHERSTASH_DOUBLE_CODEC_ID]: [
+    CIPHERSTASH_TRAIT_EQUALITY,
+    CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
+  ],
+  [CIPHERSTASH_BIGINT_CODEC_ID]: [
+    CIPHERSTASH_TRAIT_EQUALITY,
+    CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
+  ],
+  [CIPHERSTASH_DATE_CODEC_ID]: [
+    CIPHERSTASH_TRAIT_EQUALITY,
+    CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
+  ],
   [CIPHERSTASH_BOOLEAN_CODEC_ID]: [CIPHERSTASH_TRAIT_EQUALITY],
   [CIPHERSTASH_JSON_CODEC_ID]: [CIPHERSTASH_TRAIT_SEARCHABLE_JSON],
-};
+}
 
 // `CodecDescriptor.traits` is typed `readonly CodecTrait[]` where
 // `CodecTrait` is a closed union of framework built-ins
@@ -194,21 +213,22 @@ const CIPHERSTASH_CODEC_TRAITS_RAW: Readonly<Record<string, readonly string[]>> 
 // here is purely a type-level adapter from an extension namespace
 // into the framework union. AGENTS.md requires the rationale comment
 // alongside any `as unknown as` cast.
-export const CIPHERSTASH_CODEC_TRAITS = CIPHERSTASH_CODEC_TRAITS_RAW as unknown as Readonly<
-  Record<string, readonly FrameworkCodecTrait[]>
->;
+export const CIPHERSTASH_CODEC_TRAITS =
+  CIPHERSTASH_CODEC_TRAITS_RAW as unknown as Readonly<
+    Record<string, readonly FrameworkCodecTrait[]>
+  >
 
 /** Schema CipherStash installs its functions/operators/casts/types into. */
-export const EQL_V2_SCHEMA = 'eql_v2';
+export const EQL_V2_SCHEMA = 'eql_v2'
 
 /** Configuration table used by EQL's per-column index configuration. */
-export const EQL_V2_CONFIGURATION_TABLE = 'eql_v2_configuration';
+export const EQL_V2_CONFIGURATION_TABLE = 'eql_v2_configuration'
 
 /** Enum type backing the `state` column on `eql_v2_configuration`. */
-export const EQL_V2_CONFIGURATION_STATE_TYPE = 'eql_v2_configuration_state';
+export const EQL_V2_CONFIGURATION_STATE_TYPE = 'eql_v2_configuration_state'
 
 /** JSONB-domain composite type user `Encrypted<string>` columns reference. */
-export const EQL_V2_ENCRYPTED_TYPE = 'eql_v2_encrypted';
+export const EQL_V2_ENCRYPTED_TYPE = 'eql_v2_encrypted'
 
 /**
  * Migration directory name for the baseline.
@@ -217,7 +237,8 @@ export const EQL_V2_ENCRYPTED_TYPE = 'eql_v2_encrypted';
  * preserved verbatim when the framework writes the package to
  * `migrations/cipherstash/<this-name>/` in the user's repo.
  */
-export const CIPHERSTASH_BASELINE_MIGRATION_NAME = '20260601T0000_install_eql_bundle';
+export const CIPHERSTASH_BASELINE_MIGRATION_NAME =
+  '20260601T0000_install_eql_bundle'
 
 /**
  * `cipherstash:*` invariantIds emitted by the baseline migration. Each
@@ -232,4 +253,4 @@ export const CIPHERSTASH_BASELINE_MIGRATION_NAME = '20260601T0000_install_eql_bu
  */
 export const CIPHERSTASH_INVARIANTS = {
   installBundle: 'cipherstash:install-eql-bundle-v1',
-} as const;
+} as const

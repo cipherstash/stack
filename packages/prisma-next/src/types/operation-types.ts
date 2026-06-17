@@ -35,14 +35,20 @@
  * for a WHERE clause.
  */
 
-import type { CodecExpression, Expression } from '@prisma-next/sql-relational-core/expression';
+import type {
+  CodecExpression,
+  Expression,
+} from '@prisma-next/sql-relational-core/expression'
 
-type CodecTypesBase = Record<string, { readonly input: unknown; readonly output: unknown }>;
+type CodecTypesBase = Record<
+  string,
+  { readonly input: unknown; readonly output: unknown }
+>
 
-const CIPHERSTASH_STRING_CODEC = 'cipherstash/string@1';
-type CipherstashStringCodec = typeof CIPHERSTASH_STRING_CODEC;
+const CIPHERSTASH_STRING_CODEC = 'cipherstash/string@1'
+type CipherstashStringCodec = typeof CIPHERSTASH_STRING_CODEC
 
-type PgBoolReturn = Expression<{ codecId: 'pg/bool@1'; nullable: false }>;
+type PgBoolReturn = Expression<{ codecId: 'pg/bool@1'; nullable: false }>
 
 /**
  * Trait tuples used to gate multi-codec operators (see ADR 214).
@@ -72,10 +78,10 @@ type PgBoolReturn = Expression<{ codecId: 'pg/bool@1'; nullable: false }>;
  * twin of `extension-metadata/constants.ts:CIPHERSTASH_CODEC_TRAITS`,
  * which carries the runtime-side rationale for the same pattern.
  */
-type EqualityTraits = readonly ['cipherstash:equality'];
-type OrderAndRangeTraits = readonly ['cipherstash:order-and-range'];
-type FreeTextSearchTraits = readonly ['cipherstash:free-text-search'];
-type SearchableJsonTraits = readonly ['cipherstash:searchable-json'];
+type EqualityTraits = readonly ['cipherstash:equality']
+type OrderAndRangeTraits = readonly ['cipherstash:order-and-range']
+type FreeTextSearchTraits = readonly ['cipherstash:free-text-search']
+type SearchableJsonTraits = readonly ['cipherstash:searchable-json']
 
 /**
  * Schematic constraint on `self` for a multi-codec cipherstash
@@ -87,7 +93,10 @@ type SearchableJsonTraits = readonly ['cipherstash:searchable-json'];
  * the gating trait; this `self` argument type is irrelevant to that
  * dispatch.
  */
-type AnyExpressionLike = Expression<{ readonly codecId: string; readonly nullable: boolean }>;
+type AnyExpressionLike = Expression<{
+  readonly codecId: string
+  readonly nullable: boolean
+}>
 
 /**
  * Flat operation signatures consumed by the SQL query builder. Read
@@ -111,65 +120,98 @@ type AnyExpressionLike = Expression<{ readonly codecId: string; readonly nullabl
  * column; the comparand is plaintext the operator encrypts on the
  * user's behalf.
  */
-export type QueryOperationTypes<CT extends CodecTypesBase> = CT extends CodecTypesBase
-  ? {
-      readonly cipherstashEq: {
-        readonly self: { readonly codecId: CipherstashStringCodec };
-        readonly impl: (
-          self: CodecExpression<CipherstashStringCodec, boolean, CT>,
-          other: CodecExpression<'pg/text@1', boolean, CT>,
-        ) => PgBoolReturn;
-      };
-      readonly cipherstashIlike: {
-        readonly self: { readonly codecId: CipherstashStringCodec };
-        readonly impl: (
-          self: CodecExpression<CipherstashStringCodec, boolean, CT>,
-          pattern: CodecExpression<'pg/text@1', boolean, CT>,
-        ) => PgBoolReturn;
-      };
-      readonly cipherstashNotIlike: {
-        readonly self: { readonly traits: FreeTextSearchTraits };
-        readonly impl: (self: AnyExpressionLike, pattern: string) => PgBoolReturn;
-      };
-      readonly cipherstashNe: {
-        readonly self: { readonly traits: EqualityTraits };
-        readonly impl: (self: AnyExpressionLike, other: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashInArray: {
-        readonly self: { readonly traits: EqualityTraits };
-        readonly impl: (self: AnyExpressionLike, values: readonly unknown[]) => PgBoolReturn;
-      };
-      readonly cipherstashNotInArray: {
-        readonly self: { readonly traits: EqualityTraits };
-        readonly impl: (self: AnyExpressionLike, values: readonly unknown[]) => PgBoolReturn;
-      };
-      readonly cipherstashGt: {
-        readonly self: { readonly traits: OrderAndRangeTraits };
-        readonly impl: (self: AnyExpressionLike, other: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashGte: {
-        readonly self: { readonly traits: OrderAndRangeTraits };
-        readonly impl: (self: AnyExpressionLike, other: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashLt: {
-        readonly self: { readonly traits: OrderAndRangeTraits };
-        readonly impl: (self: AnyExpressionLike, other: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashLte: {
-        readonly self: { readonly traits: OrderAndRangeTraits };
-        readonly impl: (self: AnyExpressionLike, other: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashBetween: {
-        readonly self: { readonly traits: OrderAndRangeTraits };
-        readonly impl: (self: AnyExpressionLike, low: unknown, high: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashNotBetween: {
-        readonly self: { readonly traits: OrderAndRangeTraits };
-        readonly impl: (self: AnyExpressionLike, low: unknown, high: unknown) => PgBoolReturn;
-      };
-      readonly cipherstashJsonbPathExists: {
-        readonly self: { readonly traits: SearchableJsonTraits };
-        readonly impl: (self: AnyExpressionLike, path: string) => PgBoolReturn;
-      };
-    }
-  : never;
+export type QueryOperationTypes<CT extends CodecTypesBase> =
+  CT extends CodecTypesBase
+    ? {
+        readonly cipherstashEq: {
+          readonly self: { readonly codecId: CipherstashStringCodec }
+          readonly impl: (
+            self: CodecExpression<CipherstashStringCodec, boolean, CT>,
+            other: CodecExpression<'pg/text@1', boolean, CT>,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashIlike: {
+          readonly self: { readonly codecId: CipherstashStringCodec }
+          readonly impl: (
+            self: CodecExpression<CipherstashStringCodec, boolean, CT>,
+            pattern: CodecExpression<'pg/text@1', boolean, CT>,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashNotIlike: {
+          readonly self: { readonly traits: FreeTextSearchTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            pattern: string,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashNe: {
+          readonly self: { readonly traits: EqualityTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashInArray: {
+          readonly self: { readonly traits: EqualityTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            values: readonly unknown[],
+          ) => PgBoolReturn
+        }
+        readonly cipherstashNotInArray: {
+          readonly self: { readonly traits: EqualityTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            values: readonly unknown[],
+          ) => PgBoolReturn
+        }
+        readonly cipherstashGt: {
+          readonly self: { readonly traits: OrderAndRangeTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashGte: {
+          readonly self: { readonly traits: OrderAndRangeTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashLt: {
+          readonly self: { readonly traits: OrderAndRangeTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashLte: {
+          readonly self: { readonly traits: OrderAndRangeTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashBetween: {
+          readonly self: { readonly traits: OrderAndRangeTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            low: unknown,
+            high: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashNotBetween: {
+          readonly self: { readonly traits: OrderAndRangeTraits }
+          readonly impl: (
+            self: AnyExpressionLike,
+            low: unknown,
+            high: unknown,
+          ) => PgBoolReturn
+        }
+        readonly cipherstashJsonbPathExists: {
+          readonly self: { readonly traits: SearchableJsonTraits }
+          readonly impl: (self: AnyExpressionLike, path: string) => PgBoolReturn
+        }
+      }
+    : never

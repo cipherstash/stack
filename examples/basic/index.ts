@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import readline from 'node:readline'
 import { client, users } from './encrypt'
-import { getAllContacts, createContact } from './src/queries/contacts'
+import { createContact, getAllContacts } from './src/queries/contacts'
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -78,7 +78,7 @@ async function main() {
     const newContact = {
       name: 'John Doe',
       email: 'john@example.com',
-      role: 'Developer'  // This field will be encrypted using CipherStash
+      role: 'Developer', // This field will be encrypted using CipherStash
     }
 
     // Note: This would fail in this basic example since we don't have actual Supabase setup
@@ -89,9 +89,10 @@ async function main() {
     console.log('Fetching encrypted contacts...')
     // const contacts = await getAllContacts()
     // console.log('Decrypted contacts:', contacts.data)
-
   } catch (error) {
-    console.log('Supabase demo skipped (no actual Supabase connection in this basic example)')
+    console.log(
+      'Supabase demo skipped (no actual Supabase connection in this basic example)',
+    )
   }
 
   rl.close()

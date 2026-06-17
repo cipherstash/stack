@@ -59,11 +59,11 @@ export function encryptedSupabase(
 }
 
 export type {
+  EncryptedQueryBuilder,
   EncryptedSupabaseConfig,
+  EncryptedSupabaseError,
   EncryptedSupabaseInstance,
   EncryptedSupabaseResponse,
-  EncryptedSupabaseError,
-  EncryptedQueryBuilder,
   PendingOrCondition,
   SupabaseClientLike,
 } from './types'

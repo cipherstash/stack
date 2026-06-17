@@ -7,12 +7,12 @@
  * Use this import path: `@cipherstash/protect/client`
  */
 
-// Schema types and utilities - client-safe
-export { csTable, csColumn, csValue } from '@cipherstash/schema'
 export type {
   ProtectColumn,
   ProtectTable,
   ProtectTableColumn,
   ProtectValue,
 } from '@cipherstash/schema'
+// Schema types and utilities - client-safe
+export { csColumn, csTable, csValue } from '@cipherstash/schema'
 export type { ProtectClient } from './ffi'

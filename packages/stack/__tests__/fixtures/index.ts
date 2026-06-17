@@ -1,5 +1,5 @@
-import { encryptedColumn, encryptedTable } from '@/schema'
 import { expect, vi } from 'vitest'
+import { encryptedColumn, encryptedTable } from '@/schema'
 
 // ============ Schema Fixtures ============
 

@@ -28,18 +28,18 @@
  *   (contract-space package layout convention).
  */
 
-import type { Contract } from '@prisma-next/contract/types';
-import type { SqlControlExtensionDescriptor } from '@prisma-next/family-sql/control';
-import { contractSpaceFromJson } from '@prisma-next/migration-tools/spaces';
-import type { SqlStorage } from '@prisma-next/sql-contract/types';
+import type { Contract } from '@prisma-next/contract/types'
+import type { SqlControlExtensionDescriptor } from '@prisma-next/family-sql/control'
+import { contractSpaceFromJson } from '@prisma-next/migration-tools/spaces'
+import type { SqlStorage } from '@prisma-next/sql-contract/types'
 import baselineMetadata from '../../migrations/20260601T0000_install_eql_bundle/migration.json' with {
   type: 'json',
-};
+}
 import baselineOps from '../../migrations/20260601T0000_install_eql_bundle/ops.json' with {
   type: 'json',
-};
-import headRef from '../../migrations/refs/head.json' with { type: 'json' };
-import contractJson from '../contract.json' with { type: 'json' };
+}
+import headRef from '../../migrations/refs/head.json' with { type: 'json' }
+import contractJson from '../contract.json' with { type: 'json' }
 import {
   CIPHERSTASH_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_BIGINT_CODEC_ID,
@@ -48,8 +48,8 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-} from '../extension-metadata/constants';
-import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta';
+} from '../extension-metadata/constants'
+import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
 import {
   cipherstashBigIntCodecHooks,
   cipherstashBooleanCodecHooks,
@@ -57,7 +57,7 @@ import {
   cipherstashDoubleCodecHooks,
   cipherstashJsonCodecHooks,
   cipherstashStringCodecHooks,
-} from '../migration/cipherstash-codec';
+} from '../migration/cipherstash-codec'
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
@@ -69,43 +69,44 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
     },
   ],
   headRef,
-});
+})
 
-const cipherstashExtensionDescriptor: SqlControlExtensionDescriptor<'postgres'> = {
-  // Spread pack-meta first so it contributes `kind` / `id` / `familyId`
-  // / `targetId` / `version` / `authoring` / `types.{codecTypes,storage}`
-  // — then overlay the contract-space block and the codec lifecycle
-  // hook on top. The two `types.codecTypes` slots (`codecInstances`
-  // from pack-meta, `controlPlaneHooks` from this descriptor) coexist
-  // on the same path and are merged below.
-  ...cipherstashPackMeta,
-  contractSpace: cipherstashContractSpace,
-  /**
-   * Free-form `types.codecTypes.controlPlaneHooks` block — the SQL
-   * family's `extractCodecControlHooks` (in `@prisma-next/family-sql/
-   * control`) finds hooks via duck-typing on this exact path. Mirrors
-   * pgvector's wiring at `packages/3-extensions/pgvector/src/exports/
-   * control.ts`.
-   */
-  types: {
-    ...cipherstashPackMeta.types,
-    codecTypes: {
-      ...cipherstashPackMeta.types.codecTypes,
-      controlPlaneHooks: {
-        [CIPHERSTASH_STRING_CODEC_ID]: cipherstashStringCodecHooks,
-        [CIPHERSTASH_DOUBLE_CODEC_ID]: cipherstashDoubleCodecHooks,
-        [CIPHERSTASH_BIGINT_CODEC_ID]: cipherstashBigIntCodecHooks,
-        [CIPHERSTASH_DATE_CODEC_ID]: cipherstashDateCodecHooks,
-        [CIPHERSTASH_BOOLEAN_CODEC_ID]: cipherstashBooleanCodecHooks,
-        [CIPHERSTASH_JSON_CODEC_ID]: cipherstashJsonCodecHooks,
+const cipherstashExtensionDescriptor: SqlControlExtensionDescriptor<'postgres'> =
+  {
+    // Spread pack-meta first so it contributes `kind` / `id` / `familyId`
+    // / `targetId` / `version` / `authoring` / `types.{codecTypes,storage}`
+    // — then overlay the contract-space block and the codec lifecycle
+    // hook on top. The two `types.codecTypes` slots (`codecInstances`
+    // from pack-meta, `controlPlaneHooks` from this descriptor) coexist
+    // on the same path and are merged below.
+    ...cipherstashPackMeta,
+    contractSpace: cipherstashContractSpace,
+    /**
+     * Free-form `types.codecTypes.controlPlaneHooks` block — the SQL
+     * family's `extractCodecControlHooks` (in `@prisma-next/family-sql/
+     * control`) finds hooks via duck-typing on this exact path. Mirrors
+     * pgvector's wiring at `packages/3-extensions/pgvector/src/exports/
+     * control.ts`.
+     */
+    types: {
+      ...cipherstashPackMeta.types,
+      codecTypes: {
+        ...cipherstashPackMeta.types.codecTypes,
+        controlPlaneHooks: {
+          [CIPHERSTASH_STRING_CODEC_ID]: cipherstashStringCodecHooks,
+          [CIPHERSTASH_DOUBLE_CODEC_ID]: cipherstashDoubleCodecHooks,
+          [CIPHERSTASH_BIGINT_CODEC_ID]: cipherstashBigIntCodecHooks,
+          [CIPHERSTASH_DATE_CODEC_ID]: cipherstashDateCodecHooks,
+          [CIPHERSTASH_BOOLEAN_CODEC_ID]: cipherstashBooleanCodecHooks,
+          [CIPHERSTASH_JSON_CODEC_ID]: cipherstashJsonCodecHooks,
+        },
       },
     },
-  },
-  create: () => ({
-    familyId: 'sql' as const,
-    targetId: 'postgres' as const,
-  }),
-};
+    create: () => ({
+      familyId: 'sql' as const,
+      targetId: 'postgres' as const,
+    }),
+  }
 
-export { cipherstashExtensionDescriptor };
-export default cipherstashExtensionDescriptor;
+export { cipherstashExtensionDescriptor }
+export default cipherstashExtensionDescriptor

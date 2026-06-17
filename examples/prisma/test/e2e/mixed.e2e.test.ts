@@ -25,7 +25,7 @@
  *     (one per `(table, column)` group spanning the result set).
  */
 
-import { bulkEncryptMiddleware } from '@cipherstash/prisma-next/middleware';
+import { bulkEncryptMiddleware } from '@cipherstash/prisma-next/middleware'
 import {
   cipherstashAsc,
   createCipherstashRuntimeDescriptor,
@@ -36,18 +36,18 @@ import {
   EncryptedDouble,
   EncryptedJson,
   EncryptedString,
-} from '@cipherstash/prisma-next/runtime';
+} from '@cipherstash/prisma-next/runtime'
 import {
   cipherstashFromStack,
   createCipherstashSdk,
   deriveStackSchemas,
-} from '@cipherstash/prisma-next/stack';
-import postgres from '@prisma-next/postgres/runtime';
-import { and } from '@prisma-next/sql-orm-client';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Contract } from '../../src/prisma/contract.d';
-import contractJson from '../../src/prisma/contract.json' with { type: 'json' };
-import { truncateUsers } from './harness';
+} from '@cipherstash/prisma-next/stack'
+import postgres from '@prisma-next/postgres/runtime'
+import { and } from '@prisma-next/sql-orm-client'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import type { Contract } from '../../src/prisma/contract.d'
+import contractJson from '../../src/prisma/contract.json' with { type: 'json' }
+import { truncateUsers } from './harness'
 
 const SEED = [
   {
@@ -78,7 +78,7 @@ const SEED = [
     birthday: new Date('1978-11-30'),
     emailVerified: true,
   },
-] as const;
+] as const
 
 function seedRow(s: (typeof SEED)[number]) {
   return {
@@ -89,7 +89,7 @@ function seedRow(s: (typeof SEED)[number]) {
     birthday: EncryptedDate.from(s.birthday),
     emailVerified: EncryptedBoolean.from(s.emailVerified),
     preferences: EncryptedJson.from({ marker: 'mixed' }),
-  };
+  }
 }
 
 /**
@@ -98,33 +98,33 @@ function seedRow(s: (typeof SEED)[number]) {
  * harness's shared `db` instance.
  */
 function wrapWithCounting(base: ReturnType<typeof createCipherstashSdk>) {
-  let bulkEncryptCalls = 0;
-  let bulkDecryptCalls = 0;
+  let bulkEncryptCalls = 0
+  let bulkDecryptCalls = 0
   return {
     sdk: {
       ...base,
       async bulkEncrypt(args: Parameters<typeof base.bulkEncrypt>[0]) {
-        bulkEncryptCalls += 1;
-        return base.bulkEncrypt(args);
+        bulkEncryptCalls += 1
+        return base.bulkEncrypt(args)
       },
       async bulkDecrypt(args: Parameters<typeof base.bulkDecrypt>[0]) {
-        bulkDecryptCalls += 1;
-        return base.bulkDecrypt(args);
+        bulkDecryptCalls += 1
+        return base.bulkDecrypt(args)
       },
     },
     counts: {
       get bulkEncrypt() {
-        return bulkEncryptCalls;
+        return bulkEncryptCalls
       },
       get bulkDecrypt() {
-        return bulkDecryptCalls;
+        return bulkDecryptCalls
       },
       reset() {
-        bulkEncryptCalls = 0;
-        bulkDecryptCalls = 0;
+        bulkEncryptCalls = 0
+        bulkDecryptCalls = 0
       },
     },
-  };
+  }
 }
 
 describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
@@ -133,10 +133,10 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
   // mutated the harness's shared client.
   const url =
     process.env['DATABASE_URL'] ??
-    'postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e';
-  let counting: ReturnType<typeof wrapWithCounting>;
-  let db: ReturnType<typeof postgres<Contract>>;
-  let runtime: { close(): Promise<void> } | undefined;
+    'postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e'
+  let counting: ReturnType<typeof wrapWithCounting>
+  let db: ReturnType<typeof postgres<Contract>>
+  let runtime: { close(): Promise<void> } | undefined
 
   beforeAll(async () => {
     // Reuse the encryption client from `cipherstashFromStack` so the
@@ -144,26 +144,26 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
     // surface the example app would in production. Re-derive the stack
     // schemas from `contractJson` to satisfy `createCipherstashSdk`'s
     // `(client, schemas)` contract.
-    const { encryptionClient } = await cipherstashFromStack({ contractJson });
-    const schemas = deriveStackSchemas(contractJson);
-    const baseSdk = createCipherstashSdk(encryptionClient, schemas);
-    counting = wrapWithCounting(baseSdk);
+    const { encryptionClient } = await cipherstashFromStack({ contractJson })
+    const schemas = deriveStackSchemas(contractJson)
+    const baseSdk = createCipherstashSdk(encryptionClient, schemas)
+    counting = wrapWithCounting(baseSdk)
     db = postgres<Contract>({
       contractJson,
       extensions: [createCipherstashRuntimeDescriptor({ sdk: counting.sdk })],
       middleware: [bulkEncryptMiddleware(counting.sdk)],
-    });
-    runtime = (await db.connect({ url })) as { close(): Promise<void> };
-    await truncateUsers();
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))));
-    counting.counts.reset();
-  });
+    })
+    runtime = (await db.connect({ url })) as { close(): Promise<void> }
+    await truncateUsers()
+    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    counting.counts.reset()
+  })
 
   afterAll(async () => {
     if (runtime) {
-      await runtime.close();
+      await runtime.close()
     }
-  });
+  })
 
   it('executes a four-column WHERE + ordered read end-to-end', async () => {
     const rows = await db.orm.User.where((u) =>
@@ -175,16 +175,16 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
       ),
     )
       .orderBy((u) => cipherstashAsc(u.salary))
-      .all();
+      .all()
 
     // Only bob (e2e-mixed-1) survives all four predicates: alice's
     // salary is below the 75k cutoff, carol is unverified, and
     // dave's email `dave@otherorg.test` doesn't match `%@example.com`.
-    expect(rows.map((r) => r.id)).toEqual(['e2e-mixed-1']);
-  });
+    expect(rows.map((r) => r.id)).toEqual(['e2e-mixed-1'])
+  })
 
   it('groups search-term encrypts: one bulkEncrypt per (table, column)', async () => {
-    counting.counts.reset();
+    counting.counts.reset()
     await db.orm.User.where((u) =>
       and(
         u.email.cipherstashIlike('%@example.com'),
@@ -194,20 +194,20 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
       ),
     )
       .orderBy((u) => cipherstashAsc(u.salary))
-      .all();
+      .all()
     // Four distinct (users, <column>) groups in the WHERE — one
     // `bulkEncrypt` round-trip per group. ORDER BY is a column ref
     // (no envelope to encrypt). No row writes, so no additional
     // bulk-encrypt calls beyond the search-term batches.
-    expect(counting.counts.bulkEncrypt).toBe(4);
-  });
+    expect(counting.counts.bulkEncrypt).toBe(4)
+  })
 
   it('groups result decrypts: one bulkDecrypt per (table, column)', async () => {
-    counting.counts.reset();
-    const rows = await db.orm.User.all();
-    await decryptAll(rows);
+    counting.counts.reset()
+    const rows = await db.orm.User.all()
+    await decryptAll(rows)
     // Six encrypted columns × N rows ⇒ exactly 6 `bulkDecrypt` calls
     // (one per `(users, <column>)` group).
-    expect(counting.counts.bulkDecrypt).toBe(6);
-  });
-});
+    expect(counting.counts.bulkDecrypt).toBe(6)
+  })
+})

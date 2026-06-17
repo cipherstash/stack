@@ -20,7 +20,7 @@ import {
   detectPackageManager,
   detectTypeScript,
 } from './lib/detect.js'
-import { type WizardMode, gatherContext } from './lib/gather.js'
+import { gatherContext, type WizardMode } from './lib/gather.js'
 import { maybeInstallSkills } from './lib/install-skills.js'
 import { runPostAgentSteps } from './lib/post-agent.js'
 import { checkPrerequisites } from './lib/prerequisites.js'

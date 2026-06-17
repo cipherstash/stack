@@ -1,20 +1,20 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type JsPlaintext, encryptBulk } from '@cipherstash/protect-ffi'
+import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
 import type {
   ProtectColumn,
   ProtectTable,
   ProtectTableColumn,
   ProtectValue,
 } from '@cipherstash/schema'
-import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import type { Context, LockContext } from '../../identify'
 import type {
-  BulkEncryptPayload,
   BulkEncryptedData,
+  BulkEncryptPayload,
   Client,
-  EncryptOptions,
   Encrypted,
+  EncryptOptions,
 } from '../../types'
 import { getErrorCode } from '../helpers/error-code'
 import { noClientError } from '../index'

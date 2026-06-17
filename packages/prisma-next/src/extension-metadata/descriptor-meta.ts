@@ -21,7 +21,7 @@
  * by the codec lifecycle hook block.
  */
 
-import { cipherstashAuthoringTypes } from '../contract-authoring';
+import { cipherstashAuthoringTypes } from '../contract-authoring'
 import {
   cipherstashBigIntCodecMetadata,
   cipherstashBooleanCodecMetadata,
@@ -29,7 +29,7 @@ import {
   cipherstashDoubleCodecMetadata,
   cipherstashJsonCodecMetadata,
   cipherstashStringCodecMetadata,
-} from './codec-metadata';
+} from './codec-metadata'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -40,9 +40,9 @@ import {
   CIPHERSTASH_SPACE_ID,
   CIPHERSTASH_STRING_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
-} from './constants';
+} from './constants'
 
-export { CIPHERSTASH_EXTENSION_VERSION };
+export { CIPHERSTASH_EXTENSION_VERSION }
 
 export const cipherstashPackMeta = {
   kind: 'extension',
@@ -161,4 +161,4 @@ export const cipherstashPackMeta = {
       },
     ],
   },
-} as const;
+} as const

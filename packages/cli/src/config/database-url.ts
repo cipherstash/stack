@@ -39,8 +39,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import * as p from '@clack/prompts'
 import { detectSupabaseProject } from '../commands/db/detect.js'
-import { messages } from '../messages.js'
 import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
+import { messages } from '../messages.js'
 
 export interface ResolveDatabaseUrlOptions {
   /** Value of `--database-url` if the user passed one. */

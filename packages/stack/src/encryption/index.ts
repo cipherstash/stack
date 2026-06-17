@@ -1,12 +1,15 @@
+import { type Result, withResult } from '@byteslice/result'
+import { type JsPlaintext, newClient } from '@cipherstash/protect-ffi'
+import { validate as uuidValidate } from 'uuid'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
 // comments below resolve; it is erased at compile time.
 import type { LockContext } from '@/identity'
 import {
+  buildEncryptConfig,
   type EncryptConfig,
   type EncryptedTable,
   type EncryptedTableColumn,
-  buildEncryptConfig,
   encryptConfigSchema,
   // Imported type-only for the TSDoc {@link} references in the comments below.
   type encryptedColumn,
@@ -17,18 +20,15 @@ import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
-  EncryptOptions,
-  EncryptQueryOptions,
   Encrypted,
   EncryptedFromSchema,
+  EncryptionClientConfig,
+  EncryptOptions,
+  EncryptQueryOptions,
   KeysetIdentifier,
   ScalarQueryTerm,
 } from '@/types'
-import type { EncryptionClientConfig } from '@/types'
 import { logger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
-import { type JsPlaintext, newClient } from '@cipherstash/protect-ffi'
-import { validate as uuidValidate } from 'uuid'
 import { toFfiKeysetIdentifier } from './helpers'
 import { isScalarQueryTermArray } from './helpers/type-guards'
 import { BatchEncryptQueryOperation } from './operations/batch-encrypt-query'
@@ -46,16 +46,16 @@ import { EncryptQueryOperation } from './operations/encrypt-query'
 // are part of the public API and appear in the generated reference, allowing
 // TSDoc {@link} references and method return types to resolve to real pages.
 export {
-  EncryptOperation,
-  EncryptQueryOperation,
   BatchEncryptQueryOperation,
-  DecryptOperation,
-  EncryptModelOperation,
-  DecryptModelOperation,
-  BulkEncryptOperation,
+  BulkDecryptModelsOperation,
   BulkDecryptOperation,
   BulkEncryptModelsOperation,
-  BulkDecryptModelsOperation,
+  BulkEncryptOperation,
+  DecryptModelOperation,
+  DecryptOperation,
+  EncryptModelOperation,
+  EncryptOperation,
+  EncryptQueryOperation,
 }
 
 export const noClientError = () =>

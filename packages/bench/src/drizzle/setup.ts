@@ -1,9 +1,9 @@
 import { Encryption } from '@cipherstash/stack'
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import {
   encryptedType,
   extractEncryptionSchema,
 } from '@cipherstash/stack/drizzle'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { pgTable, serial } from 'drizzle-orm/pg-core'
 import pg from 'pg'

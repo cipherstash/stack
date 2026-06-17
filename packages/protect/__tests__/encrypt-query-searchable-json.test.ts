@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { ProtectErrorTypes, protect } from '../src'
 
 type ProtectClient = Awaited<ReturnType<typeof protect>>
+
 import {
   createFailingMockLockContext,
   createMockLockContext,

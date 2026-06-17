@@ -34,12 +34,15 @@ describe('supply chain — pnpm configuration', () => {
   })
 
   it('pnpm-workspace.yaml sets blockExoticSubdeps: true', () => {
-    const ws = readYaml('pnpm-workspace.yaml') as { blockExoticSubdeps?: boolean }
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      blockExoticSubdeps?: boolean
+    }
     expect(ws.blockExoticSubdeps).toBe(true)
   })
 
   it('onlyBuiltDependencies remains a small explicit allowlist (≤3 entries)', () => {
-    const allow = (readJson('package.json').pnpm?.onlyBuiltDependencies ?? []) as string[]
+    const allow = (readJson('package.json').pnpm?.onlyBuiltDependencies ??
+      []) as string[]
     expect(Array.isArray(allow)).toBe(true)
     expect(allow.length).toBeLessThanOrEqual(3)
   })
@@ -48,7 +51,9 @@ describe('supply chain — pnpm configuration', () => {
 describe('supply chain — registry pinning (.npmrc)', () => {
   it('pins @cipherstash scope and default registry to npmjs', () => {
     const npmrc = read('.npmrc')
-    expect(npmrc).toMatch(/^@cipherstash:registry=https:\/\/registry\.npmjs\.org\/$/m)
+    expect(npmrc).toMatch(
+      /^@cipherstash:registry=https:\/\/registry\.npmjs\.org\/$/m,
+    )
     expect(npmrc).toMatch(/^registry=https:\/\/registry\.npmjs\.org\/$/m)
   })
 
@@ -62,7 +67,10 @@ describe('supply chain — registry pinning (.npmrc)', () => {
 describe('supply chain — pnpm-lock.yaml integrity', () => {
   it('every resolved package comes from registry.npmjs.org (no git/tarball deps)', () => {
     const lock = readYaml('pnpm-lock.yaml') as {
-      packages?: Record<string, { resolution?: { tarball?: string; type?: string } }>
+      packages?: Record<
+        string,
+        { resolution?: { tarball?: string; type?: string } }
+      >
     }
     const offenders: string[] = []
     for (const [name, entry] of Object.entries(lock.packages ?? {})) {
@@ -90,7 +98,11 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
       string,
       {
         strategy?: { matrix?: Record<string, unknown> }
-        steps: Array<{ run?: string; uses?: string; with?: Record<string, unknown> }>
+        steps: Array<{
+          run?: string
+          uses?: string
+          with?: Record<string, unknown>
+        }>
       }
     >
   }
@@ -105,7 +117,9 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
         (s) => typeof s.run === 'string' && PNPM_INSTALL.test(s.run),
       )
       for (const step of installSteps) {
-        expect(step.run, `${jobName} step "${step.run}"`).toMatch(/--frozen-lockfile/)
+        expect(step.run, `${jobName} step "${step.run}"`).toMatch(
+          /--frozen-lockfile/,
+        )
       }
     }
   })
@@ -114,21 +128,29 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
     for (const [jobName, job] of Object.entries(workflow.jobs)) {
       const usesPnpm = job.steps.some(
         (s) =>
-          (typeof s.uses === 'string' && s.uses.startsWith('pnpm/action-setup')) ||
+          (typeof s.uses === 'string' &&
+            s.uses.startsWith('pnpm/action-setup')) ||
           (typeof s.run === 'string' && /\bpnpm\b/.test(s.run)),
       )
       if (!usesPnpm) continue
       const setup = job.steps.find(
-        (s) => typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node'),
+        (s) =>
+          typeof s.uses === 'string' && s.uses.startsWith('actions/setup-node'),
       )
-      expect(setup, `${jobName} uses pnpm but lacks actions/setup-node`).toBeTruthy()
+      expect(
+        setup,
+        `${jobName} uses pnpm but lacks actions/setup-node`,
+      ).toBeTruthy()
       const nv = String(setup?.with?.['node-version'])
       if (nv === '22') continue
       // Allow `${{ matrix.<key> }}` only when that matrix key resolves to
       // an array of versions that includes 22 — so the matrix can broaden
       // coverage without ever dropping the Node 22 hardening baseline.
       const matrixRef = nv.match(/^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/)
-      expect(matrixRef, `${jobName} node version: expected '22' or matrix expression, got '${nv}'`).toBeTruthy()
+      expect(
+        matrixRef,
+        `${jobName} node version: expected '22' or matrix expression, got '${nv}'`,
+      ).toBeTruthy()
       const matrixKey = matrixRef![1]
       const versions = job.strategy?.matrix?.[matrixKey]
       expect(
@@ -136,7 +158,10 @@ describe('supply chain — CI hardening (.github/workflows/tests.yml)', () => {
         `${jobName} references matrix.${matrixKey} but no such array on strategy.matrix`,
       ).toBe(true)
       const versionStrings = (versions as unknown[]).map((v) => String(v))
-      expect(versionStrings, `${jobName} matrix.${matrixKey} must include 22`).toContain('22')
+      expect(
+        versionStrings,
+        `${jobName} matrix.${matrixKey} must include 22`,
+      ).toContain('22')
     }
   })
 })
@@ -156,7 +181,9 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
   })
 
   it('github-actions ecosystem is also covered with a ≥ 3 day cooldown', () => {
-    const gha = db.updates.find((u) => u['package-ecosystem'] === 'github-actions')
+    const gha = db.updates.find(
+      (u) => u['package-ecosystem'] === 'github-actions',
+    )
     expect(gha).toBeDefined()
     expect(gha?.cooldown?.['default-days']).toBeGreaterThanOrEqual(3)
   })
@@ -183,7 +210,9 @@ describe('supply chain — governance (CODEOWNERS)', () => {
       const rule = rules.find((l) => l.includes(path))
       expect(rule, `no CODEOWNERS rule covers ${path}`).toBeDefined()
       const owners = rule!.split(/\s+/).slice(1)
-      expect(owners, `${path} CODEOWNERS owners`).toContain('@cipherstash/developers')
+      expect(owners, `${path} CODEOWNERS owners`).toContain(
+        '@cipherstash/developers',
+      )
     }
   })
 })

@@ -28,18 +28,23 @@
  * `rawSql({...})` block.
  */
 
-import type { SqlMigrationPlanOperation } from '@prisma-next/family-sql/control';
+import type { SqlMigrationPlanOperation } from '@prisma-next/family-sql/control'
 import type {
   MigrationOperationClass,
   OpFactoryCall,
-} from '@prisma-next/framework-components/control';
-import { type ImportRequirement, jsonToTsSource, TsExpression } from '@prisma-next/ts-render';
-import { ifDefined } from '@prisma-next/utils/defined';
+} from '@prisma-next/framework-components/control'
+import {
+  type ImportRequirement,
+  jsonToTsSource,
+  TsExpression,
+} from '@prisma-next/ts-render'
+import { ifDefined } from '@prisma-next/utils/defined'
 
-const CIPHERSTASH_MIGRATION_MODULE = '@prisma-next/extension-cipherstash/migration';
+const CIPHERSTASH_MIGRATION_MODULE =
+  '@prisma-next/extension-cipherstash/migration'
 
 /** Mirrors `eql_v2.add_search_config(table, column, index_name, cast_as)`. */
-const DEFAULT_CAST_AS = 'text';
+const DEFAULT_CAST_AS = 'text'
 
 /**
  * EQL search-config indices the cipherstash codecs emit — one per
@@ -58,7 +63,7 @@ const DEFAULT_CAST_AS = 'text';
  * `cipherstashAddSearchConfig` / `cipherstashRemoveSearchConfig`
  * factories accept any of the four without further changes.
  */
-export type CipherstashSearchIndex = 'unique' | 'match' | 'ore' | 'ste_vec';
+export type CipherstashSearchIndex = 'unique' | 'match' | 'ore' | 'ste_vec'
 
 /**
  * Args shape accepted by the public `cipherstashAddSearchConfig` /
@@ -70,14 +75,14 @@ export type CipherstashSearchIndex = 'unique' | 'match' | 'ore' | 'ste_vec';
  * cast for your column differs.
  */
 export interface CipherstashSearchConfigArgs {
-  readonly table: string;
-  readonly column: string;
-  readonly index: CipherstashSearchIndex;
-  readonly castAs?: string;
+  readonly table: string
+  readonly column: string
+  readonly index: CipherstashSearchIndex
+  readonly castAs?: string
 }
 
-type CipherstashOp = SqlMigrationPlanOperation<unknown>;
-type OpStep = CipherstashOp['execute'][number];
+type CipherstashOp = SqlMigrationPlanOperation<unknown>
+type OpStep = CipherstashOp['execute'][number]
 
 /**
  * Escape a string so it can be embedded inside a Postgres single-quoted
@@ -86,7 +91,7 @@ type OpStep = CipherstashOp['execute'][number];
  * relaxation.
  */
 function sqlLiteral(value: string): string {
-  return `'${value.replace(/'/g, "''")}'`;
+  return `'${value.replace(/'/g, "''")}'`
 }
 
 function invariantIdFor(
@@ -95,7 +100,7 @@ function invariantIdFor(
   action: 'add-search-config' | 'remove-search-config',
   indexName: CipherstashSearchIndex,
 ): string {
-  return `cipherstash-codec:${tableName}.${fieldName}:${action}:${indexName}@v1`;
+  return `cipherstash-codec:${tableName}.${fieldName}:${action}:${indexName}@v1`
 }
 
 /**
@@ -120,19 +125,27 @@ function invariantIdFor(
  * `Object.keys(call)` and `canonicalizeJson(...)` see only the op
  * fields — `ops.json` and `migrationHash` stay byte-stable.
  */
-abstract class CipherstashOpFactoryCallNode extends TsExpression implements OpFactoryCall {
-  abstract get factoryName(): string;
-  abstract readonly operationClass: MigrationOperationClass;
-  abstract readonly label: string;
-  abstract readonly id: string;
-  abstract readonly invariantId: string;
-  abstract readonly target: { readonly id: string };
-  abstract readonly precheck: readonly OpStep[];
-  abstract readonly execute: readonly OpStep[];
-  abstract readonly postcheck: readonly OpStep[];
+abstract class CipherstashOpFactoryCallNode
+  extends TsExpression
+  implements OpFactoryCall
+{
+  abstract get factoryName(): string
+  abstract readonly operationClass: MigrationOperationClass
+  abstract readonly label: string
+  abstract readonly id: string
+  abstract readonly invariantId: string
+  abstract readonly target: { readonly id: string }
+  abstract readonly precheck: readonly OpStep[]
+  abstract readonly execute: readonly OpStep[]
+  abstract readonly postcheck: readonly OpStep[]
 
   importRequirements(): readonly ImportRequirement[] {
-    return [{ moduleSpecifier: CIPHERSTASH_MIGRATION_MODULE, symbol: this.factoryName }];
+    return [
+      {
+        moduleSpecifier: CIPHERSTASH_MIGRATION_MODULE,
+        symbol: this.factoryName,
+      },
+    ]
   }
 
   /**
@@ -151,11 +164,11 @@ abstract class CipherstashOpFactoryCallNode extends TsExpression implements OpFa
       precheck: this.precheck,
       execute: this.execute,
       postcheck: this.postcheck,
-    };
+    }
   }
 
   protected freeze(): void {
-    Object.freeze(this);
+    Object.freeze(this)
   }
 }
 
@@ -166,27 +179,27 @@ abstract class CipherstashOpFactoryCallNode extends TsExpression implements OpFa
  * '<castAs>')` op, classified `'additive'`.
  */
 interface AddArgs {
-  readonly table: string;
-  readonly column: string;
-  readonly index: CipherstashSearchIndex;
-  readonly castAs: string;
+  readonly table: string
+  readonly column: string
+  readonly index: CipherstashSearchIndex
+  readonly castAs: string
 }
 
 export class CipherstashAddSearchConfigCall extends CipherstashOpFactoryCallNode {
-  readonly id: string;
-  readonly label: string;
-  readonly operationClass: 'additive';
-  readonly invariantId: string;
-  readonly target: { readonly id: string };
-  readonly precheck: readonly OpStep[];
-  readonly execute: readonly OpStep[];
-  readonly postcheck: readonly OpStep[];
+  readonly id: string
+  readonly label: string
+  readonly operationClass: 'additive'
+  readonly invariantId: string
+  readonly target: { readonly id: string }
+  readonly precheck: readonly OpStep[]
+  readonly execute: readonly OpStep[]
+  readonly postcheck: readonly OpStep[]
 
   // Private slot keeps the renderer-side args off the enumerable
   // own-property surface; the public accessors below expose them
   // read-only on the prototype, so neither `Object.keys` nor
   // `canonicalizeJson` walks them.
-  readonly #args: AddArgs;
+  readonly #args: AddArgs
 
   constructor(
     table: string,
@@ -194,46 +207,46 @@ export class CipherstashAddSearchConfigCall extends CipherstashOpFactoryCallNode
     index: CipherstashSearchIndex,
     castAs: string = DEFAULT_CAST_AS,
   ) {
-    super();
-    this.#args = { table, column, index, castAs };
+    super()
+    this.#args = { table, column, index, castAs }
     // Property assignment order is fixed (id → label → operationClass
     // → invariantId → target → precheck → execute → postcheck) so
     // `JSON.stringify(call)` lays out keys in the byte order the
     // baseline `ops.json` carries.
-    this.id = `cipherstash-codec.${table}.${column}.add-search-config.${index}`;
-    this.label = `Enable cipherstash search on ${table}.${column}`;
-    this.operationClass = 'additive';
-    this.invariantId = invariantIdFor(table, column, 'add-search-config', index);
-    this.target = { id: 'postgres' };
-    this.precheck = [];
+    this.id = `cipherstash-codec.${table}.${column}.add-search-config.${index}`
+    this.label = `Enable cipherstash search on ${table}.${column}`
+    this.operationClass = 'additive'
+    this.invariantId = invariantIdFor(table, column, 'add-search-config', index)
+    this.target = { id: 'postgres' }
+    this.precheck = []
     this.execute = [
       {
         description: `Register cipherstash ${index} search config for ${table}.${column}`,
         sql: `SELECT eql_v2.add_search_config(${sqlLiteral(table)}, ${sqlLiteral(column)}, ${sqlLiteral(index)}, ${sqlLiteral(castAs)});`,
       },
-    ];
-    this.postcheck = [];
-    this.freeze();
+    ]
+    this.postcheck = []
+    this.freeze()
   }
 
   get factoryName(): 'cipherstashAddSearchConfig' {
-    return 'cipherstashAddSearchConfig';
+    return 'cipherstashAddSearchConfig'
   }
 
   get table(): string {
-    return this.#args.table;
+    return this.#args.table
   }
 
   get column(): string {
-    return this.#args.column;
+    return this.#args.column
   }
 
   get index(): CipherstashSearchIndex {
-    return this.#args.index;
+    return this.#args.index
   }
 
   get castAs(): string {
-    return this.#args.castAs;
+    return this.#args.castAs
   }
 
   renderTypeScript(): string {
@@ -241,9 +254,12 @@ export class CipherstashAddSearchConfigCall extends CipherstashOpFactoryCallNode
       table: this.#args.table,
       column: this.#args.column,
       index: this.#args.index,
-      ...ifDefined('castAs', this.#args.castAs !== DEFAULT_CAST_AS ? this.#args.castAs : undefined),
-    };
-    return `cipherstashAddSearchConfig(${jsonToTsSource(args)})`;
+      ...ifDefined(
+        'castAs',
+        this.#args.castAs !== DEFAULT_CAST_AS ? this.#args.castAs : undefined,
+      ),
+    }
+    return `cipherstashAddSearchConfig(${jsonToTsSource(args)})`
   }
 }
 
@@ -258,56 +274,61 @@ export class CipherstashAddSearchConfigCall extends CipherstashOpFactoryCallNode
  * site.
  */
 interface RemoveArgs {
-  readonly table: string;
-  readonly column: string;
-  readonly index: CipherstashSearchIndex;
+  readonly table: string
+  readonly column: string
+  readonly index: CipherstashSearchIndex
 }
 
 export class CipherstashRemoveSearchConfigCall extends CipherstashOpFactoryCallNode {
-  readonly id: string;
-  readonly label: string;
-  readonly operationClass: 'destructive';
-  readonly invariantId: string;
-  readonly target: { readonly id: string };
-  readonly precheck: readonly OpStep[];
-  readonly execute: readonly OpStep[];
-  readonly postcheck: readonly OpStep[];
+  readonly id: string
+  readonly label: string
+  readonly operationClass: 'destructive'
+  readonly invariantId: string
+  readonly target: { readonly id: string }
+  readonly precheck: readonly OpStep[]
+  readonly execute: readonly OpStep[]
+  readonly postcheck: readonly OpStep[]
 
-  readonly #args: RemoveArgs;
+  readonly #args: RemoveArgs
 
   constructor(table: string, column: string, index: CipherstashSearchIndex) {
-    super();
-    this.#args = { table, column, index };
-    this.id = `cipherstash-codec.${table}.${column}.remove-search-config.${index}`;
-    this.label = `Disable cipherstash search on ${table}.${column}`;
-    this.operationClass = 'destructive';
-    this.invariantId = invariantIdFor(table, column, 'remove-search-config', index);
-    this.target = { id: 'postgres' };
-    this.precheck = [];
+    super()
+    this.#args = { table, column, index }
+    this.id = `cipherstash-codec.${table}.${column}.remove-search-config.${index}`
+    this.label = `Disable cipherstash search on ${table}.${column}`
+    this.operationClass = 'destructive'
+    this.invariantId = invariantIdFor(
+      table,
+      column,
+      'remove-search-config',
+      index,
+    )
+    this.target = { id: 'postgres' }
+    this.precheck = []
     this.execute = [
       {
         description: `Remove cipherstash ${index} search config for ${table}.${column}`,
         sql: `SELECT eql_v2.remove_search_config(${sqlLiteral(table)}, ${sqlLiteral(column)}, ${sqlLiteral(index)});`,
       },
-    ];
-    this.postcheck = [];
-    this.freeze();
+    ]
+    this.postcheck = []
+    this.freeze()
   }
 
   get factoryName(): 'cipherstashRemoveSearchConfig' {
-    return 'cipherstashRemoveSearchConfig';
+    return 'cipherstashRemoveSearchConfig'
   }
 
   get table(): string {
-    return this.#args.table;
+    return this.#args.table
   }
 
   get column(): string {
-    return this.#args.column;
+    return this.#args.column
   }
 
   get index(): CipherstashSearchIndex {
-    return this.#args.index;
+    return this.#args.index
   }
 
   renderTypeScript(): string {
@@ -315,7 +336,7 @@ export class CipherstashRemoveSearchConfigCall extends CipherstashOpFactoryCallN
       table: this.#args.table,
       column: this.#args.column,
       index: this.#args.index,
-    })})`;
+    })})`
   }
 }
 
@@ -342,7 +363,7 @@ export function cipherstashAddSearchConfig(
     args.column,
     args.index,
     args.castAs ?? DEFAULT_CAST_AS,
-  );
+  )
 }
 
 /**
@@ -355,5 +376,9 @@ export function cipherstashAddSearchConfig(
 export function cipherstashRemoveSearchConfig(
   args: CipherstashSearchConfigArgs,
 ): CipherstashRemoveSearchConfigCall {
-  return new CipherstashRemoveSearchConfigCall(args.table, args.column, args.index);
+  return new CipherstashRemoveSearchConfigCall(
+    args.table,
+    args.column,
+    args.index,
+  )
 }

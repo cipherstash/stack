@@ -3,17 +3,14 @@ import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { type AgentEnvironment, detectAgents } from '../init/detect-agents.js'
 import {
+  effectiveStep,
   type PlanStep,
   type PlanSummary,
-  effectiveStep,
   parsePlanSummary,
   renderPlanSummary,
 } from '../init/lib/parse-plan.js'
 import { readContextFile } from '../init/lib/read-context.js'
-import {
-  classifyPhase,
-  detectColumnStates,
-} from '../init/lib/rollout-state.js'
+import { classifyPhase, detectColumnStates } from '../init/lib/rollout-state.js'
 import { PLAN_REL_PATH } from '../init/lib/setup-prompt.js'
 import {
   CONTEXT_REL_PATH,

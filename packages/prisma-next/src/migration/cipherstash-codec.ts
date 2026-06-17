@@ -38,8 +38,8 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-} from '../extension-metadata/constants';
-import { makeCipherstashCodecHooks } from './codec-hooks-factory';
+} from '../extension-metadata/constants'
+import { makeCipherstashCodecHooks } from './codec-hooks-factory'
 
 export const cipherstashStringCodecHooks = makeCipherstashCodecHooks({
   flagToIndex: {
@@ -48,7 +48,7 @@ export const cipherstashStringCodecHooks = makeCipherstashCodecHooks({
     orderAndRange: 'ore',
   },
   castAs: 'text',
-});
+})
 
 /**
  * Codec lifecycle hooks for `cipherstash/double@1`. The numeric codecs
@@ -64,7 +64,7 @@ export const cipherstashDoubleCodecHooks = makeCipherstashCodecHooks({
     orderAndRange: 'ore',
   },
   castAs: 'double',
-});
+})
 
 /** Codec lifecycle hooks for `cipherstash/bigint@1`. */
 export const cipherstashBigIntCodecHooks = makeCipherstashCodecHooks({
@@ -73,7 +73,7 @@ export const cipherstashBigIntCodecHooks = makeCipherstashCodecHooks({
     orderAndRange: 'ore',
   },
   castAs: 'big_int',
-});
+})
 
 /**
  * Codec lifecycle hooks for `cipherstash/date@1`. Calendar-date plaintext
@@ -87,7 +87,7 @@ export const cipherstashDateCodecHooks = makeCipherstashCodecHooks({
     orderAndRange: 'ore',
   },
   castAs: 'date',
-});
+})
 
 /**
  * Codec lifecycle hooks for `cipherstash/boolean@1`. Booleans only
@@ -99,7 +99,7 @@ export const cipherstashBooleanCodecHooks = makeCipherstashCodecHooks({
     equality: 'unique',
   },
   castAs: 'boolean',
-});
+})
 
 /**
  * Codec lifecycle hooks for `cipherstash/json@1`. EQL exposes structured
@@ -112,7 +112,7 @@ export const cipherstashJsonCodecHooks = makeCipherstashCodecHooks({
     searchableJson: 'ste_vec',
   },
   castAs: 'jsonb',
-});
+})
 
 /** Re-export the codec ids alongside the hooks so wiring sites import them together. */
 export {
@@ -122,4 +122,4 @@ export {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-};
+}

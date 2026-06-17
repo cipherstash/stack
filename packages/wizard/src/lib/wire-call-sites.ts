@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { glob } from 'node:fs/promises'
+import { glob, readFile } from 'node:fs/promises'
 import { relative } from 'node:path'
 import type { Integration } from './types.js'
 

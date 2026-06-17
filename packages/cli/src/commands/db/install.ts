@@ -2,26 +2,26 @@ import { execSync } from 'node:child_process'
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
 import {
-  EQLInstaller,
-  downloadEqlSql,
-  loadBundledEqlSql,
-} from '@/installer/index.js'
-import {
-  MIGRATIONS_SCHEMA_SQL,
   installMigrationsSchema,
+  MIGRATIONS_SCHEMA_SQL,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadStashConfig } from '@/config/index.js'
+import {
+  downloadEqlSql,
+  EQLInstaller,
+  loadBundledEqlSql,
+} from '@/installer/index.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
 import { ensureStashConfig } from './config-scaffold.js'
 import {
-  type SupabaseProjectInfo,
   detectDrizzle,
   detectSupabase,
   detectSupabaseProject,
+  type SupabaseProjectInfo,
 } from './detect.js'
 import { rewriteEncryptedAlterColumns } from './rewrite-migrations.js'
 import {

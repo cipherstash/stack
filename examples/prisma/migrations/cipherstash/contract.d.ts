@@ -7,4 +7,4 @@
  * until that ships, consumers should import `contract.json`
  * directly with `validateContract<…>(…)`.
  */
-export {};
+export {}

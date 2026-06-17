@@ -201,7 +201,7 @@ export function isEncryptedScalarQuery(
 }
 
 export {
-  toJsonPath,
   buildNestedObject,
   parseJsonbPath,
+  toJsonPath,
 } from './jsonb'

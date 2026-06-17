@@ -259,23 +259,25 @@ describe('resolveDatabaseUrl — prompt source', () => {
 })
 
 describe('resolveDatabaseUrl — CI guard', () => {
-  it.each(['true', 'TRUE', '1', ' true '])(
-    'does not prompt and exits 1 when CI=%j (truthy)',
-    async (ciValue) => {
-      process.env.CI = ciValue
-      Object.defineProperty(process.stdin, 'isTTY', {
-        value: true,
-        configurable: true,
-      })
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-        throw new Error('process.exit')
-      }) as never)
-      await expect(resolveDatabaseUrl()).rejects.toThrow('process.exit')
-      expect(exitSpy).toHaveBeenCalledWith(1)
-      expect(clack.text).not.toHaveBeenCalled()
-      expect(clack.log.error).toHaveBeenCalledWith(messages.db.urlMissingCi)
-    },
-  )
+  it.each([
+    'true',
+    'TRUE',
+    '1',
+    ' true ',
+  ])('does not prompt and exits 1 when CI=%j (truthy)', async (ciValue) => {
+    process.env.CI = ciValue
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: true,
+      configurable: true,
+    })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit')
+    }) as never)
+    await expect(resolveDatabaseUrl()).rejects.toThrow('process.exit')
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(clack.text).not.toHaveBeenCalled()
+    expect(clack.log.error).toHaveBeenCalledWith(messages.db.urlMissingCi)
+  })
 
   it('does not prompt when stdin is not a TTY (e.g. piped)', async () => {
     Object.defineProperty(process.stdin, 'isTTY', {

@@ -47,9 +47,9 @@ import {
   EncryptedDouble,
   EncryptedJson,
   EncryptedString,
-} from '@cipherstash/prisma-next/runtime';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { db, ensureConnected, truncateUsers } from './harness';
+} from '@cipherstash/prisma-next/runtime'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { db, ensureConnected, truncateUsers } from './harness'
 
 const SEED = [
   {
@@ -64,7 +64,7 @@ const SEED = [
     id: 'e2e-json-2',
     preferences: { theme: 'system', notifications: true },
   },
-] as const;
+] as const
 
 function seedRow(s: (typeof SEED)[number]) {
   return {
@@ -75,34 +75,34 @@ function seedRow(s: (typeof SEED)[number]) {
     birthday: EncryptedDate.from(new Date('1990-01-01')),
     emailVerified: EncryptedBoolean.from(true),
     preferences: EncryptedJson.from(s.preferences),
-  };
+  }
 }
 
 describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
-    await ensureConnected();
-    await truncateUsers();
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))));
-  });
+    await ensureConnected()
+    await truncateUsers()
+    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+  })
 
   it('round-trips an EncryptedJson through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all();
-    expect(rows).toHaveLength(SEED.length);
-    await decryptAll(rows);
-    const byId = new Map(rows.map((r) => [r.id, r] as const));
+    const rows = await db.orm.User.all()
+    expect(rows).toHaveLength(SEED.length)
+    await decryptAll(rows)
+    const byId = new Map(rows.map((r) => [r.id, r] as const))
     for (const s of SEED) {
-      const r = byId.get(s.id);
-      expect(r, `seed row ${s.id} present`).toBeDefined();
-      expect(await r!.preferences.decrypt()).toEqual(s.preferences);
+      const r = byId.get(s.id)
+      expect(r, `seed row ${s.id} present`).toBeDefined()
+      expect(await r!.preferences.decrypt()).toEqual(s.preferences)
     }
-  });
+  })
 
   it.skip('cipherstashJsonbPathExists filters by JSON path (KNOWN LIMITATION: needs client-side selector hashing)', async () => {
     const rows = await db.orm.User.where((u) =>
       u.preferences.cipherstashJsonbPathExists('$.locale'),
-    ).all();
-    expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-1']);
-  });
+    ).all()
+    expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-1'])
+  })
 
   it('exposes cipherstashJsonbPathQueryFirst as a typed SELECT-expression helper', () => {
     // Type-level: the helper accepts an `Expression<ScopeField>` and
@@ -115,9 +115,9 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
         id: f.id,
         themeNode: cipherstashJsonbPathQueryFirst(f.preferences, '$.theme'),
       }))
-      .build();
-    expect(projection).toBeDefined();
-  });
+      .build()
+    expect(projection).toBeDefined()
+  })
 
   it('exposes cipherstashJsonbGet as a typed SELECT-expression helper', () => {
     const projection = db.sql.users
@@ -125,7 +125,7 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
         id: f.id,
         themeNode: cipherstashJsonbGet(f.preferences, 'theme'),
       }))
-      .build();
-    expect(projection).toBeDefined();
-  });
-});
+      .build()
+    expect(projection).toBeDefined()
+  })
+})

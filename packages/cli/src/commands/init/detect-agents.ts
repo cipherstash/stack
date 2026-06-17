@@ -1,6 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
-import { delimiter, resolve } from 'node:path'
 import { platform } from 'node:os'
+import { delimiter, resolve } from 'node:path'
 
 export type Editor = 'vscode' | 'cursor' | 'unknown'
 

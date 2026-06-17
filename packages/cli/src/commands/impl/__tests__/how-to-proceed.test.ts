@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { AgentEnvironment } from '../../init/detect-agents.js'
 import type { InitState } from '../../init/types.js'
 import {
-  HANDOFF_CHOICES,
   buildOptions,
   defaultChoice,
+  HANDOFF_CHOICES,
   resolveTarget,
 } from '../steps/how-to-proceed.js'
 

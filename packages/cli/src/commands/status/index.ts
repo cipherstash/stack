@@ -16,9 +16,9 @@ import {
 } from '../init/lib/write-context.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 import {
+  buildQuestLog,
   type ColumnObservation,
   type QuestLog,
-  buildQuestLog,
 } from './quest.js'
 import {
   renderQuestLogJSON,

@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { type ResolvedStashConfig, loadStashConfig } from '@/config/index.js'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import { loadStashConfig, type ResolvedStashConfig } from '@/config/index.js'
 
 /**
  * Structural shape of `@cipherstash/stack`'s `EncryptedTable` class.

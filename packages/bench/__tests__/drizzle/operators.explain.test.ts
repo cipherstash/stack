@@ -1,5 +1,5 @@
-import { writeFileSync, mkdirSync } from 'node:fs'
-import { resolve, dirname } from 'node:path'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createEncryptionOperators } from '@cipherstash/stack/drizzle'
 import type { SQL } from 'drizzle-orm'
@@ -10,14 +10,14 @@ import {
   buildBench,
   teardownBench,
 } from '../../src/drizzle/setup.js'
+import { applySchema } from '../../src/harness/db.js'
 import {
-  type PlanNode,
   explain,
   hasSeqScan,
+  type PlanNode,
   summarize,
   topScan,
 } from '../../src/harness/explain.js'
-import { applySchema } from '../../src/harness/db.js'
 import { seed } from '../../src/harness/seed.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))

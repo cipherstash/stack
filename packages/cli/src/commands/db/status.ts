@@ -1,8 +1,8 @@
+import * as p from '@clack/prompts'
+import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { EQLInstaller } from '@/installer/index.js'
-import * as p from '@clack/prompts'
-import pg from 'pg'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const pm = detectPackageManager()

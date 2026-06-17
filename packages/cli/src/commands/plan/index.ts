@@ -8,9 +8,12 @@ import {
   resolveTarget,
 } from '../impl/steps/how-to-proceed.js'
 import { type AgentEnvironment, detectAgents } from '../init/detect-agents.js'
-import { readContextFile } from '../init/lib/read-context.js'
-import { detectColumnStates, rollupPlanStep } from '../init/lib/rollout-state.js'
 import type { PlanStep } from '../init/lib/parse-plan.js'
+import { readContextFile } from '../init/lib/read-context.js'
+import {
+  detectColumnStates,
+  rollupPlanStep,
+} from '../init/lib/rollout-state.js'
 import { PLAN_REL_PATH } from '../init/lib/setup-prompt.js'
 import {
   CONTEXT_REL_PATH,

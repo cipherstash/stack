@@ -62,24 +62,27 @@ import type {
   InsertAst,
   ParamRef,
   UpdateAst,
-} from '@prisma-next/sql-relational-core/ast';
+} from '@prisma-next/sql-relational-core/ast'
 import type {
   ParamRefHandle,
   SqlParamRefMutator,
-} from '@prisma-next/sql-relational-core/middleware';
-import type { SqlMiddleware } from '@prisma-next/sql-runtime';
-import { ifDefined } from '@prisma-next/utils/defined';
-import { checkCipherstashAborted, raceCipherstashAbort } from '../execution/abort';
+} from '@prisma-next/sql-relational-core/middleware'
+import type { SqlMiddleware } from '@prisma-next/sql-runtime'
+import { ifDefined } from '@prisma-next/utils/defined'
+import {
+  checkCipherstashAborted,
+  raceCipherstashAbort,
+} from '../execution/abort'
+import { encodeEqlV2EncryptedWire } from '../execution/cell-codec-factory'
 import {
   EncryptedEnvelopeBase,
   setHandleCiphertext,
   setHandleRoutingKey,
-} from '../execution/envelope-base';
-import { encodeEqlV2EncryptedWire } from '../execution/cell-codec-factory';
-import { markBulkEncryptMiddlewareRegistered } from '../execution/middleware-registry';
-import { type BulkEncryptTarget, groupByRoutingKey } from '../execution/routing';
-import type { CipherstashSdk } from '../execution/sdk';
-import { CIPHERSTASH_CODEC_ID_SET } from '../extension-metadata/constants';
+} from '../execution/envelope-base'
+import { markBulkEncryptMiddlewareRegistered } from '../execution/middleware-registry'
+import { type BulkEncryptTarget, groupByRoutingKey } from '../execution/routing'
+import type { CipherstashSdk } from '../execution/sdk'
+import { CIPHERSTASH_CODEC_ID_SET } from '../extension-metadata/constants'
 
 /**
  * Construct the bulk-encrypt middleware. The returned middleware is
@@ -91,29 +94,29 @@ export function bulkEncryptMiddleware(sdk: CipherstashSdk): SqlMiddleware {
   // "happy path: middleware will run later and fill in the ciphertext"
   // from "misconfig: this sdk has no middleware registered". See
   // `../execution/middleware-registry.ts`.
-  markBulkEncryptMiddlewareRegistered(sdk);
+  markBulkEncryptMiddlewareRegistered(sdk)
   return {
     name: 'cipherstash.bulk-encrypt',
     familyId: 'sql',
     async beforeExecute(plan, ctx, params) {
       if (!params) {
-        return;
+        return
       }
 
-      stampRoutingKeysFromAst(plan.ast);
+      stampRoutingKeysFromAst(plan.ast)
 
-      const targets = collectTargets(params);
+      const targets = collectTargets(params)
       if (targets.length === 0) {
-        return;
+        return
       }
 
-      const groups = groupByRoutingKey(targets);
+      const groups = groupByRoutingKey(targets)
       for (const [groupKey, group] of groups) {
-        const first = group[0];
-        if (!first) continue;
-        const routingKey = first.routingKey;
+        const first = group[0]
+        if (!first) continue
+        const routingKey = first.routingKey
 
-        checkCipherstashAborted(ctx.signal, 'bulk-encrypt');
+        checkCipherstashAborted(ctx.signal, 'bulk-encrypt')
         const ciphertexts = await raceCipherstashAbort(
           sdk.bulkEncrypt({
             routingKey,
@@ -122,13 +125,13 @@ export function bulkEncryptMiddleware(sdk: CipherstashSdk): SqlMiddleware {
           }),
           ctx.signal,
           'bulk-encrypt',
-        );
+        )
 
         if (ciphertexts.length !== group.length) {
           throw new Error(
             `cipherstash bulk-encrypt: SDK returned ${ciphertexts.length} ciphertexts ` +
               `for routing key ${groupKey} but ${group.length} were requested.`,
-          );
+          )
         }
 
         // Replace each ParamRef's value with the **wire-format**
@@ -142,30 +145,37 @@ export function bulkEncryptMiddleware(sdk: CipherstashSdk): SqlMiddleware {
         // follow-on query) work without a re-encrypt round-trip.
         params.replaceValues(
           group.map((t, i) => {
-            const ciphertext = ciphertexts[i];
-            setHandleCiphertext(t.envelope, ciphertext);
-            return { ref: t.ref, newValue: encodeEqlV2EncryptedWire(ciphertext) };
+            const ciphertext = ciphertexts[i]
+            setHandleCiphertext(t.envelope, ciphertext)
+            return {
+              ref: t.ref,
+              newValue: encodeEqlV2EncryptedWire(ciphertext),
+            }
           }),
-        );
+        )
       }
     },
-  };
+  }
 }
 
 function collectTargets(
   params: SqlParamRefMutator,
 ): BulkEncryptTarget<ParamRefHandle<string | undefined>>[] {
-  const targets: BulkEncryptTarget<ParamRefHandle<string | undefined>>[] = [];
+  const targets: BulkEncryptTarget<ParamRefHandle<string | undefined>>[] = []
   for (const entry of params.entries()) {
-    if (entry.codecId === undefined || !CIPHERSTASH_CODEC_ID_SET.has(entry.codecId)) continue;
-    const value = entry.value;
-    if (!(value instanceof EncryptedEnvelopeBase)) continue;
-    const handle = value.expose();
+    if (
+      entry.codecId === undefined ||
+      !CIPHERSTASH_CODEC_ID_SET.has(entry.codecId)
+    )
+      continue
+    const value = entry.value
+    if (!(value instanceof EncryptedEnvelopeBase)) continue
+    const handle = value.expose()
     if (handle.plaintext === undefined) {
       throw new Error(
         'cipherstash bulk-encrypt: encountered an envelope with no plaintext on the write path. ' +
           'Use the relevant `Encrypted*.from(plaintext)` factory to construct write-side envelopes.',
-      );
+      )
     }
     if (handle.table === undefined || handle.column === undefined) {
       throw new Error(
@@ -173,50 +183,50 @@ function collectTargets(
           "routing context. The middleware's AST walk only handles `InsertAst` and `UpdateAst`; " +
           'cipherstash envelopes embedded in other plan shapes (e.g. raw SQL) must stamp routing ' +
           'context explicitly via `setHandleRoutingKey` before execute.',
-      );
+      )
     }
     targets.push({
       ref: entry.ref,
       plaintext: handle.plaintext,
       envelope: value,
       routingKey: { table: handle.table, column: handle.column },
-    });
+    })
   }
-  return targets;
+  return targets
 }
 
 function stampRoutingKeysFromAst(ast: AnyQueryAst | undefined): void {
-  if (!ast) return;
+  if (!ast) return
   switch (ast.kind) {
     case 'insert':
-      stampInsert(ast);
-      return;
+      stampInsert(ast)
+      return
     case 'update':
-      stampUpdate(ast);
-      return;
+      stampUpdate(ast)
+      return
     default:
-      return;
+      return
   }
 }
 
 function stampInsert(ast: InsertAst): void {
-  const tableName = ast.table.name;
+  const tableName = ast.table.name
   for (const row of ast.rows) {
     for (const [column, value] of Object.entries(row)) {
-      stampParamRefIfEnvelope(value, tableName, column);
+      stampParamRefIfEnvelope(value, tableName, column)
     }
   }
   if (ast.onConflict?.action.kind === 'do-update-set') {
     for (const [column, value] of Object.entries(ast.onConflict.action.set)) {
-      stampParamRefIfEnvelope(value, tableName, column);
+      stampParamRefIfEnvelope(value, tableName, column)
     }
   }
 }
 
 function stampUpdate(ast: UpdateAst): void {
-  const tableName = ast.table.name;
+  const tableName = ast.table.name
   for (const [column, value] of Object.entries(ast.set)) {
-    stampParamRefIfEnvelope(value, tableName, column);
+    stampParamRefIfEnvelope(value, tableName, column)
   }
 }
 
@@ -225,9 +235,9 @@ function stampParamRefIfEnvelope(
   table: string,
   column: string,
 ): void {
-  if (value.kind !== 'param-ref') return;
-  const inner = value.value;
+  if (value.kind !== 'param-ref') return
+  const inner = value.value
   if (inner instanceof EncryptedEnvelopeBase) {
-    setHandleRoutingKey(inner, table, column);
+    setHandleRoutingKey(inner, table, column)
   }
 }

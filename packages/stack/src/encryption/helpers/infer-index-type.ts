@@ -1,5 +1,5 @@
-import type { EncryptedColumn } from '@/schema'
 import type { JsPlaintext, QueryOpName } from '@cipherstash/protect-ffi'
+import type { EncryptedColumn } from '@/schema'
 import type { FfiIndexTypeName, QueryTypeName } from '../../types'
 import { queryTypeToFfi, queryTypeToQueryOp } from '../../types'
 

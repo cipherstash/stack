@@ -7,4 +7,4 @@
  * Mirrors `packages/3-extensions/pgvector/src/exports/codec-types.ts`.
  */
 
-export type { CodecTypes } from '../types/codec-types';
+export type { CodecTypes } from '../types/codec-types'

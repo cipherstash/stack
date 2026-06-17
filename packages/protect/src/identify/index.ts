@@ -1,7 +1,7 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type ProtectError, ProtectErrorTypes } from '..'
 import { loadWorkSpaceId } from '../../../utils/config'
 import { logger } from '../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '..'
 
 export type CtsRegions = 'ap-southeast-2'
 

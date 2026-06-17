@@ -19,17 +19,17 @@
  *   - `cipherstash-codec-other-codecs.test.ts`
  */
 
-import type { Contract, StorageHashBase } from '@prisma-next/contract/types';
-import { profileHash } from '@prisma-next/contract/types';
+import type { Contract, StorageHashBase } from '@prisma-next/contract/types'
+import { profileHash } from '@prisma-next/contract/types'
 import {
   extractCodecControlHooks,
   planFieldEventOperations,
-} from '@prisma-next/family-sql/control';
-import type { TargetBoundComponentDescriptor } from '@prisma-next/framework-components/components';
-import type { SqlStorage, StorageTable } from '@prisma-next/sql-contract/types';
-import { ifDefined } from '@prisma-next/utils/defined';
-import { describe, expect, it } from 'vitest';
-import cipherstashExtensionDescriptor from '../src/exports/control';
+} from '@prisma-next/family-sql/control'
+import type { TargetBoundComponentDescriptor } from '@prisma-next/framework-components/components'
+import type { SqlStorage, StorageTable } from '@prisma-next/sql-contract/types'
+import { ifDefined } from '@prisma-next/utils/defined'
+import { describe, expect, it } from 'vitest'
+import cipherstashExtensionDescriptor from '../src/exports/control'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -37,7 +37,7 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-} from '../src/extension-metadata/constants';
+} from '../src/extension-metadata/constants'
 import {
   cipherstashBigIntCodecHooks,
   cipherstashBooleanCodecHooks,
@@ -45,35 +45,54 @@ import {
   cipherstashDoubleCodecHooks,
   cipherstashJsonCodecHooks,
   cipherstashStringCodecHooks,
-} from '../src/migration/cipherstash-codec';
+} from '../src/migration/cipherstash-codec'
 
 describe('cipherstash descriptor wiring', () => {
   it('exposes every codec hook under types.codecTypes.controlPlaneHooks', () => {
     const hooks = (
       cipherstashExtensionDescriptor as {
-        types?: { codecTypes?: { controlPlaneHooks?: Record<string, unknown> } };
+        types?: { codecTypes?: { controlPlaneHooks?: Record<string, unknown> } }
       }
-    ).types?.codecTypes?.controlPlaneHooks;
-    expect(hooks?.[CIPHERSTASH_STRING_CODEC_ID]).toBe(cipherstashStringCodecHooks);
-    expect(hooks?.[CIPHERSTASH_DOUBLE_CODEC_ID]).toBe(cipherstashDoubleCodecHooks);
-    expect(hooks?.[CIPHERSTASH_BIGINT_CODEC_ID]).toBe(cipherstashBigIntCodecHooks);
-    expect(hooks?.[CIPHERSTASH_DATE_CODEC_ID]).toBe(cipherstashDateCodecHooks);
-    expect(hooks?.[CIPHERSTASH_BOOLEAN_CODEC_ID]).toBe(cipherstashBooleanCodecHooks);
-    expect(hooks?.[CIPHERSTASH_JSON_CODEC_ID]).toBe(cipherstashJsonCodecHooks);
-  });
+    ).types?.codecTypes?.controlPlaneHooks
+    expect(hooks?.[CIPHERSTASH_STRING_CODEC_ID]).toBe(
+      cipherstashStringCodecHooks,
+    )
+    expect(hooks?.[CIPHERSTASH_DOUBLE_CODEC_ID]).toBe(
+      cipherstashDoubleCodecHooks,
+    )
+    expect(hooks?.[CIPHERSTASH_BIGINT_CODEC_ID]).toBe(
+      cipherstashBigIntCodecHooks,
+    )
+    expect(hooks?.[CIPHERSTASH_DATE_CODEC_ID]).toBe(cipherstashDateCodecHooks)
+    expect(hooks?.[CIPHERSTASH_BOOLEAN_CODEC_ID]).toBe(
+      cipherstashBooleanCodecHooks,
+    )
+    expect(hooks?.[CIPHERSTASH_JSON_CODEC_ID]).toBe(cipherstashJsonCodecHooks)
+  })
 
   it('extractCodecControlHooks finds every cipherstash hook on the descriptor', () => {
     const map = extractCodecControlHooks([
-      cipherstashExtensionDescriptor as unknown as TargetBoundComponentDescriptor<'sql', string>,
-    ]);
-    expect(map.get(CIPHERSTASH_STRING_CODEC_ID)).toBe(cipherstashStringCodecHooks);
-    expect(map.get(CIPHERSTASH_DOUBLE_CODEC_ID)).toBe(cipherstashDoubleCodecHooks);
-    expect(map.get(CIPHERSTASH_BIGINT_CODEC_ID)).toBe(cipherstashBigIntCodecHooks);
-    expect(map.get(CIPHERSTASH_DATE_CODEC_ID)).toBe(cipherstashDateCodecHooks);
-    expect(map.get(CIPHERSTASH_BOOLEAN_CODEC_ID)).toBe(cipherstashBooleanCodecHooks);
-    expect(map.get(CIPHERSTASH_JSON_CODEC_ID)).toBe(cipherstashJsonCodecHooks);
-  });
-});
+      cipherstashExtensionDescriptor as unknown as TargetBoundComponentDescriptor<
+        'sql',
+        string
+      >,
+    ])
+    expect(map.get(CIPHERSTASH_STRING_CODEC_ID)).toBe(
+      cipherstashStringCodecHooks,
+    )
+    expect(map.get(CIPHERSTASH_DOUBLE_CODEC_ID)).toBe(
+      cipherstashDoubleCodecHooks,
+    )
+    expect(map.get(CIPHERSTASH_BIGINT_CODEC_ID)).toBe(
+      cipherstashBigIntCodecHooks,
+    )
+    expect(map.get(CIPHERSTASH_DATE_CODEC_ID)).toBe(cipherstashDateCodecHooks)
+    expect(map.get(CIPHERSTASH_BOOLEAN_CODEC_ID)).toBe(
+      cipherstashBooleanCodecHooks,
+    )
+    expect(map.get(CIPHERSTASH_JSON_CODEC_ID)).toBe(cipherstashJsonCodecHooks)
+  })
+})
 
 describe('planFieldEventOperations driving the cipherstash hook', () => {
   function userTable(typeParams?: Record<string, unknown>): StorageTable {
@@ -90,7 +109,7 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       uniques: [],
       indexes: [],
       foreignKeys: [],
-    };
+    }
   }
 
   function build(tables: Record<string, StorageTable>): Contract<SqlStorage> {
@@ -107,47 +126,60 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       capabilities: {},
       extensionPacks: {},
       meta: {},
-    };
+    }
   }
 
   const codecHooks = extractCodecControlHooks([
-    cipherstashExtensionDescriptor as unknown as TargetBoundComponentDescriptor<'sql', string>,
-  ]);
+    cipherstashExtensionDescriptor as unknown as TargetBoundComponentDescriptor<
+      'sql',
+      string
+    >,
+  ])
 
   it('inlines per-flag add ops on first emit (priorContract null) when flags are enabled', () => {
     const ops = planFieldEventOperations({
       priorContract: null,
-      newContract: build({ User: userTable({ equality: true, freeTextSearch: true }) }),
+      newContract: build({
+        User: userTable({ equality: true, freeTextSearch: true }),
+      }),
       codecHooks,
-    });
-    expect(ops).toHaveLength(2);
-    const ids = ops.map((c) => c.toOp().invariantId).sort();
+    })
+    expect(ops).toHaveLength(2)
+    const ids = ops.map((c) => c.toOp().invariantId).sort()
     expect(ids).toEqual([
       'cipherstash-codec:User.email:add-search-config:match@v1',
       'cipherstash-codec:User.email:add-search-config:unique@v1',
-    ]);
-  });
+    ])
+  })
 
   it('inlines per-flag remove ops when previously-flagged column is dropped', () => {
-    const prior = build({ User: userTable({ equality: true, freeTextSearch: true }) });
+    const prior = build({
+      User: userTable({ equality: true, freeTextSearch: true }),
+    })
     const newer = build({
       User: { ...userTable(), columns: { id: userTable().columns['id']! } },
-    });
+    })
     const ops = planFieldEventOperations({
       priorContract: prior,
       newContract: newer,
       codecHooks,
-    });
-    expect(ops).toHaveLength(2);
-    const ids = ops.map((c) => c.toOp().invariantId).sort();
+    })
+    expect(ops).toHaveLength(2)
+    const ids = ops.map((c) => c.toOp().invariantId).sort()
     expect(ids).toEqual([
       'cipherstash-codec:User.email:remove-search-config:match@v1',
       'cipherstash-codec:User.email:remove-search-config:unique@v1',
-    ]);
-  });
+    ])
+  })
 
   it('emits nothing when contract is unchanged', () => {
-    const c = build({ User: userTable({ equality: true }) });
-    expect(planFieldEventOperations({ priorContract: c, newContract: c, codecHooks })).toEqual([]);
-  });
-});
+    const c = build({ User: userTable({ equality: true }) })
+    expect(
+      planFieldEventOperations({
+        priorContract: c,
+        newContract: c,
+        codecHooks,
+      }),
+    ).toEqual([])
+  })
+})

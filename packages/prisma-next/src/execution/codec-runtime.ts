@@ -29,20 +29,23 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-} from '../extension-metadata/constants';
-import { CipherstashCellCodec, makeCipherstashCellCodec } from './cell-codec-factory';
-import { EncryptedBigInt } from './envelope-bigint';
-import { EncryptedBoolean } from './envelope-boolean';
-import { EncryptedDate } from './envelope-date';
-import { EncryptedDouble } from './envelope-double';
-import { EncryptedJson } from './envelope-json';
-import { EncryptedString } from './envelope-string';
-import type { CipherstashSdk } from './sdk';
+} from '../extension-metadata/constants'
+import {
+  CipherstashCellCodec,
+  makeCipherstashCellCodec,
+} from './cell-codec-factory'
+import { EncryptedBigInt } from './envelope-bigint'
+import { EncryptedBoolean } from './envelope-boolean'
+import { EncryptedDate } from './envelope-date'
+import { EncryptedDouble } from './envelope-double'
+import { EncryptedJson } from './envelope-json'
+import { EncryptedString } from './envelope-string'
+import type { CipherstashSdk } from './sdk'
 
-export { CIPHERSTASH_STRING_CODEC_ID };
+export { CIPHERSTASH_STRING_CODEC_ID }
 
 /** @deprecated Re-exported for source compatibility; new call sites should use `CipherstashCellCodec`. */
-export type CipherstashStringCodec = CipherstashCellCodec<EncryptedString>;
+export type CipherstashStringCodec = CipherstashCellCodec<EncryptedString>
 
 export function createCipherstashStringCodec(
   sdk: CipherstashSdk,
@@ -51,7 +54,7 @@ export function createCipherstashStringCodec(
     codecId: CIPHERSTASH_STRING_CODEC_ID,
     typeName: 'EncryptedString',
     fromInternal: EncryptedString.fromInternal,
-  });
+  })
 }
 
 export function createCipherstashDoubleCodec(
@@ -61,7 +64,7 @@ export function createCipherstashDoubleCodec(
     codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
     typeName: 'EncryptedDouble',
     fromInternal: EncryptedDouble.fromInternal,
-  });
+  })
 }
 
 export function createCipherstashBigIntCodec(
@@ -71,7 +74,7 @@ export function createCipherstashBigIntCodec(
     codecId: CIPHERSTASH_BIGINT_CODEC_ID,
     typeName: 'EncryptedBigInt',
     fromInternal: EncryptedBigInt.fromInternal,
-  });
+  })
 }
 
 export function createCipherstashDateCodec(
@@ -81,7 +84,7 @@ export function createCipherstashDateCodec(
     codecId: CIPHERSTASH_DATE_CODEC_ID,
     typeName: 'EncryptedDate',
     fromInternal: EncryptedDate.fromInternal,
-  });
+  })
 }
 
 export function createCipherstashBooleanCodec(
@@ -91,7 +94,7 @@ export function createCipherstashBooleanCodec(
     codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
     typeName: 'EncryptedBoolean',
     fromInternal: EncryptedBoolean.fromInternal,
-  });
+  })
 }
 
 export function createCipherstashJsonCodec(
@@ -101,7 +104,7 @@ export function createCipherstashJsonCodec(
     codecId: CIPHERSTASH_JSON_CODEC_ID,
     typeName: 'EncryptedJson',
     fromInternal: EncryptedJson.fromInternal,
-  });
+  })
 }
 
-export { CipherstashCellCodec };
+export { CipherstashCellCodec }

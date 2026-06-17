@@ -1,8 +1,8 @@
+import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
+import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
-import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
-import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
 import type { EncryptedDynamoDBError } from './types'
 
 export const ciphertextAttrSuffix = '__source'

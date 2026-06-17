@@ -47,48 +47,48 @@
 // JS module under tsdown (every import below is elided), so importing
 // the envelope classes by type carries no runtime cost in the
 // generated `codec-types.mjs` chunk.
-import type { EncryptedBigInt } from '../execution/envelope-bigint';
-import type { EncryptedBoolean } from '../execution/envelope-boolean';
-import type { EncryptedDate } from '../execution/envelope-date';
-import type { EncryptedDouble } from '../execution/envelope-double';
-import type { EncryptedJson } from '../execution/envelope-json';
-import type { EncryptedString } from '../execution/envelope-string';
+import type { EncryptedBigInt } from '../execution/envelope-bigint'
+import type { EncryptedBoolean } from '../execution/envelope-boolean'
+import type { EncryptedDate } from '../execution/envelope-date'
+import type { EncryptedDouble } from '../execution/envelope-double'
+import type { EncryptedJson } from '../execution/envelope-json'
+import type { EncryptedString } from '../execution/envelope-string'
 
 export type CodecTypes = {
   readonly 'cipherstash/string@1': {
-    readonly input: string | EncryptedString;
-    readonly output: EncryptedString;
+    readonly input: string | EncryptedString
+    readonly output: EncryptedString
     readonly traits:
       | 'cipherstash:equality'
       | 'cipherstash:free-text-search'
-      | 'cipherstash:order-and-range';
-  };
+      | 'cipherstash:order-and-range'
+  }
   readonly 'cipherstash/double@1': {
-    readonly input: number | EncryptedDouble;
-    readonly output: EncryptedDouble;
-    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range';
-  };
+    readonly input: number | EncryptedDouble
+    readonly output: EncryptedDouble
+    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range'
+  }
   readonly 'cipherstash/bigint@1': {
-    readonly input: bigint | EncryptedBigInt;
-    readonly output: EncryptedBigInt;
-    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range';
-  };
+    readonly input: bigint | EncryptedBigInt
+    readonly output: EncryptedBigInt
+    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range'
+  }
   readonly 'cipherstash/date@1': {
-    readonly input: Date | EncryptedDate;
-    readonly output: EncryptedDate;
-    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range';
-  };
+    readonly input: Date | EncryptedDate
+    readonly output: EncryptedDate
+    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range'
+  }
   readonly 'cipherstash/boolean@1': {
-    readonly input: boolean | EncryptedBoolean;
-    readonly output: EncryptedBoolean;
-    readonly traits: 'cipherstash:equality';
-  };
+    readonly input: boolean | EncryptedBoolean
+    readonly output: EncryptedBoolean
+    readonly traits: 'cipherstash:equality'
+  }
   readonly 'cipherstash/json@1': {
     // `unknown` already subsumes `EncryptedJson`, but the alias is kept in
     // scope (via the import above) so the codec entry still flags JSON as
     // an envelope-bearing codec at the type-import layer.
-    readonly input: unknown;
-    readonly output: EncryptedJson;
-    readonly traits: 'cipherstash:searchable-json';
-  };
-};
+    readonly input: unknown
+    readonly output: EncryptedJson
+    readonly traits: 'cipherstash:searchable-json'
+  }
+}

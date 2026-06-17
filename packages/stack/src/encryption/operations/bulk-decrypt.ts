@@ -1,14 +1,14 @@
-import { getErrorCode } from '@/encryption/helpers/error-code'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { Context, LockContext } from '@/identity'
-import type { BulkDecryptPayload, BulkDecryptedData, Client } from '@/types'
-import { createRequestLogger } from '@/utils/logger'
 import { type Result, withResult } from '@byteslice/result'
 import {
   type Encrypted as CipherStashEncrypted,
   type DecryptResult,
   decryptBulkFallible,
 } from '@cipherstash/protect-ffi'
+import { getErrorCode } from '@/encryption/helpers/error-code'
+import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import type { Context, LockContext } from '@/identity'
+import type { BulkDecryptedData, BulkDecryptPayload, Client } from '@/types'
+import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
@@ -29,8 +29,7 @@ const createDecryptPayloads = (
 
 const createNullResult = (
   encryptedPayloads: BulkDecryptPayload,
-): BulkDecryptedData =>
-  encryptedPayloads.map(({ id }) => ({ id, data: null }))
+): BulkDecryptedData => encryptedPayloads.map(({ id }) => ({ id, data: null }))
 
 const mapDecryptedDataToResult = (
   encryptedPayloads: BulkDecryptPayload,

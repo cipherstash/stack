@@ -1,5 +1,5 @@
-import type { CastAs, MatchIndexOpts, TokenFilter } from '@/schema'
 import { customType } from 'drizzle-orm/pg-core'
+import type { CastAs, MatchIndexOpts, TokenFilter } from '@/schema'
 
 export type { CastAs, MatchIndexOpts, TokenFilter }
 
@@ -185,7 +185,8 @@ export function getEncryptedColumnConfig(
     // 0.15.0 briefly emitted, for back-compat with tables built against that
     // release.
     const isEncryptedTypeString = (value: unknown): boolean =>
-      value === EQL_ENCRYPTED_DATA_TYPE || value === '"public"."eql_v2_encrypted"'
+      value === EQL_ENCRYPTED_DATA_TYPE ||
+      value === '"public"."eql_v2_encrypted"'
 
     const isEncrypted =
       isEncryptedTypeString(columnAny.sqlName) ||
@@ -210,14 +211,6 @@ export function getEncryptedColumnConfig(
 }
 
 /**
- * Extract a CipherStash encryption schema from a Drizzle table definition.
- *
- * Inspects columns created with {@link encryptedType} and builds the equivalent
- * `encryptedTable` / `encryptedColumn` schema automatically.
- */
-export { extractEncryptionSchema } from './schema-extraction.js'
-
-/**
  * Create Drizzle query operators (`eq`, `lt`, `gt`, etc.) that work with
  * encrypted columns. The returned operators encrypt query values before
  * passing them to Drizzle, enabling searchable encryption in standard
@@ -225,6 +218,13 @@ export { extractEncryptionSchema } from './schema-extraction.js'
  */
 export {
   createEncryptionOperators,
-  EncryptionOperatorError,
   EncryptionConfigError,
+  EncryptionOperatorError,
 } from './operators.js'
+/**
+ * Extract a CipherStash encryption schema from a Drizzle table definition.
+ *
+ * Inspects columns created with {@link encryptedType} and builds the equivalent
+ * `encryptedTable` / `encryptedColumn` schema automatically.
+ */
+export { extractEncryptionSchema } from './schema-extraction.js'

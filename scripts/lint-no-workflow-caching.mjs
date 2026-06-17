@@ -8,7 +8,10 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // argv[2..] for tests / ad-hoc multi-file checks.
 const TARGETS = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ['.github/workflows/release.yml', '.github/workflows/tests-supply-chain.yml']
+  : [
+      '.github/workflows/release.yml',
+      '.github/workflows/tests-supply-chain.yml',
+    ]
 
 // `uses:` values that pull in the GitHub Actions cache directly.
 const CACHE_ACTION = /^actions\/cache(\/(restore|save))?@/

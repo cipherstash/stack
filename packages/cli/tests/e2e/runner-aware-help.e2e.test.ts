@@ -23,33 +23,37 @@ const cases = [
 ] as const
 
 describe('--help — runner-aware Usage + Examples', () => {
-  it.each(cases)(
-    'with npm_config_user_agent=$ua, renders "$label stash"',
-    async ({ ua, label }) => {
-      const r = render(['--help'], { env: { npm_config_user_agent: ua } })
-      const { exitCode } = await r.exit
-      expect(exitCode).toBe(0)
-      // Usage line must use the right runner. The leader is stable
-      // (`messages.cli.usagePrefix === 'Usage: '`) so we assert on the
-      // suffix the renderer composes at runtime.
-      expect(r.output).toContain(`Usage: ${label} stash`)
-      // At least one of the Examples lines must surface the same runner.
-      expect(r.output).toContain(`${label} stash init`)
-      expect(r.output).toContain(`${label} stash db install`)
-    },
-  )
+  it.each(
+    cases,
+  )('with npm_config_user_agent=$ua, renders "$label stash"', async ({
+    ua,
+    label,
+  }) => {
+    const r = render(['--help'], { env: { npm_config_user_agent: ua } })
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(0)
+    // Usage line must use the right runner. The leader is stable
+    // (`messages.cli.usagePrefix === 'Usage: '`) so we assert on the
+    // suffix the renderer composes at runtime.
+    expect(r.output).toContain(`Usage: ${label} stash`)
+    // At least one of the Examples lines must surface the same runner.
+    expect(r.output).toContain(`${label} stash init`)
+    expect(r.output).toContain(`${label} stash db install`)
+  })
 })
 
 describe('auth — runner-aware Usage + Examples', () => {
-  it.each(cases)(
-    'with npm_config_user_agent=$ua, renders "$label stash auth"',
-    async ({ ua, label }) => {
-      // `auth` with no subcommand prints the auth HELP and exits 0.
-      const r = render(['auth'], { env: { npm_config_user_agent: ua } })
-      const { exitCode } = await r.exit
-      expect(exitCode).toBe(0)
-      expect(r.output).toContain(`Usage: ${label} stash auth`)
-      expect(r.output).toContain(`${label} stash auth login`)
-    },
-  )
+  it.each(
+    cases,
+  )('with npm_config_user_agent=$ua, renders "$label stash auth"', async ({
+    ua,
+    label,
+  }) => {
+    // `auth` with no subcommand prints the auth HELP and exits 0.
+    const r = render(['auth'], { env: { npm_config_user_agent: ua } })
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(0)
+    expect(r.output).toContain(`Usage: ${label} stash auth`)
+    expect(r.output).toContain(`${label} stash auth login`)
+  })
 })

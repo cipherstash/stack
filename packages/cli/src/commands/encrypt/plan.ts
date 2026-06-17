@@ -1,8 +1,8 @@
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
 import { latestByColumn, readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadStashConfig } from '@/config/index.js'
 
 /**
  * CLI handler for `stash encrypt plan`. Reads the repo manifest and the

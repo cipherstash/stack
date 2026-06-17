@@ -1,7 +1,7 @@
+import { type Result, withResult } from '@byteslice/result'
 import type { EncryptionClient } from '@/encryption'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import { logger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
 import { deepClone, handleError, toEncryptedDynamoItem } from '../helpers'
 import type { EncryptedDynamoDBError } from '../types'
 import {

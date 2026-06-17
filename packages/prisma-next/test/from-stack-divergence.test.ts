@@ -72,7 +72,7 @@ describe('cipherstashFromStack — divergence check', () => {
     ).rejects.toThrow(/schema divergence on table "users"/)
   })
 
-  it('throws when an override changes a column\'s cast_as', async () => {
+  it("throws when an override changes a column's cast_as", async () => {
     const override = encryptedTable('users', {
       email: encryptedColumn('email').dataType('number').equality(),
       verified: encryptedColumn('verified').dataType('boolean').equality(),
@@ -88,7 +88,7 @@ describe('cipherstashFromStack — divergence check', () => {
     )
   })
 
-  it('throws when an override changes a column\'s installed index set', async () => {
+  it("throws when an override changes a column's installed index set", async () => {
     const override = encryptedTable('users', {
       // dropped `.freeTextSearch()` — contract declared it
       email: encryptedColumn('email').equality(),
@@ -105,8 +105,8 @@ describe('cipherstashFromStack — divergence check', () => {
 
   it('throws when the contract has no cipherstash columns and no override is supplied', async () => {
     const emptyContract = { storage: { tables: { users: { columns: {} } } } }
-    await expect(cipherstashFromStack({ contractJson: emptyContract })).rejects.toThrow(
-      /no cipherstash columns found/,
-    )
+    await expect(
+      cipherstashFromStack({ contractJson: emptyContract }),
+    ).rejects.toThrow(/no cipherstash columns found/)
   })
 })

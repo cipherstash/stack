@@ -1,11 +1,10 @@
+import type { PgCustomColumn, PgTable } from 'drizzle-orm/pg-core'
 import {
   type EncryptedColumn,
   type EncryptedTable,
   encryptedColumn,
   encryptedTable,
 } from '@/schema'
-import type { PgCustomColumn } from 'drizzle-orm/pg-core'
-import type { PgTable } from 'drizzle-orm/pg-core'
 import { getEncryptedColumnConfig } from './index.js'
 
 /**
@@ -15,7 +14,9 @@ import { getEncryptedColumnConfig } from './index.js'
  */
 // biome-ignore lint/suspicious/noExplicitAny: PgCustomColumn requires a wide generic
 type DrizzleEncryptedSchema<T> = {
-  [K in keyof T as T[K] extends PgCustomColumn<any> ? K : never]: EncryptedColumn
+  [K in keyof T as T[K] extends PgCustomColumn<any>
+    ? K
+    : never]: EncryptedColumn
 }
 
 /**

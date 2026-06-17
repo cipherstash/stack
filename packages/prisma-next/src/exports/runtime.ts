@@ -24,16 +24,16 @@
  * [bulkEncryptMiddleware(sdk)] })`.
  */
 
-import type { SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime';
-import { cipherstashQueryOperations } from '../execution/operators';
-import { createParameterizedCodecDescriptors } from '../execution/parameterized';
-import type { CipherstashSdk } from '../execution/sdk';
+import type { SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime'
+import { cipherstashQueryOperations } from '../execution/operators'
+import { createParameterizedCodecDescriptors } from '../execution/parameterized'
+import type { CipherstashSdk } from '../execution/sdk'
 import {
   CIPHERSTASH_EXTENSION_VERSION,
   CIPHERSTASH_SPACE_ID,
-} from '../extension-metadata/constants';
+} from '../extension-metadata/constants'
 
-export type { CipherstashStringCodec } from '../execution/codec-runtime';
+export type { CipherstashStringCodec } from '../execution/codec-runtime'
 export {
   CIPHERSTASH_STRING_CODEC_ID,
   CipherstashCellCodec,
@@ -43,45 +43,45 @@ export {
   createCipherstashDoubleCodec,
   createCipherstashJsonCodec,
   createCipherstashStringCodec,
-} from '../execution/codec-runtime';
-export type { DecryptAllOptions } from '../execution/decrypt-all';
-export { decryptAll } from '../execution/decrypt-all';
+} from '../execution/codec-runtime'
+export type { DecryptAllOptions } from '../execution/decrypt-all'
+export { decryptAll } from '../execution/decrypt-all'
 export type {
   EncryptedBigIntFromInternalArgs,
   EncryptedBigIntHandle,
-} from '../execution/envelope-bigint';
-export { EncryptedBigInt } from '../execution/envelope-bigint';
+} from '../execution/envelope-bigint'
+export { EncryptedBigInt } from '../execution/envelope-bigint'
 export type {
   EncryptedBooleanFromInternalArgs,
   EncryptedBooleanHandle,
-} from '../execution/envelope-boolean';
-export { EncryptedBoolean } from '../execution/envelope-boolean';
+} from '../execution/envelope-boolean'
+export { EncryptedBoolean } from '../execution/envelope-boolean'
 export type {
   EncryptedDateFromInternalArgs,
   EncryptedDateHandle,
-} from '../execution/envelope-date';
-export { EncryptedDate } from '../execution/envelope-date';
+} from '../execution/envelope-date'
+export { EncryptedDate } from '../execution/envelope-date'
 export type {
   EncryptedDoubleFromInternalArgs,
   EncryptedDoubleHandle,
-} from '../execution/envelope-double';
-export { EncryptedDouble } from '../execution/envelope-double';
+} from '../execution/envelope-double'
+export { EncryptedDouble } from '../execution/envelope-double'
 export type {
   EncryptedJsonFromInternalArgs,
   EncryptedJsonHandle,
-} from '../execution/envelope-json';
-export { EncryptedJson } from '../execution/envelope-json';
+} from '../execution/envelope-json'
+export { EncryptedJson } from '../execution/envelope-json'
 export type {
   EncryptedStringFromInternalArgs,
   EncryptedStringHandle,
-} from '../execution/envelope-string';
-export { EncryptedString } from '../execution/envelope-string';
+} from '../execution/envelope-string'
+export { EncryptedString } from '../execution/envelope-string'
 export {
   cipherstashAsc,
   cipherstashDesc,
   cipherstashJsonbGet,
   cipherstashJsonbPathQueryFirst,
-} from '../execution/helpers';
+} from '../execution/helpers'
 export type {
   CipherstashAnyParams,
   CipherstashBooleanParams,
@@ -89,7 +89,7 @@ export type {
   CipherstashJsonParams,
   CipherstashNumericParams,
   CipherstashStringParams,
-} from '../execution/parameterized';
+} from '../execution/parameterized'
 export {
   createParameterizedCodecDescriptors,
   encryptedBigIntParamsSchema,
@@ -104,26 +104,26 @@ export {
   renderEncryptedDoubleOutputType,
   renderEncryptedJsonOutputType,
   renderEncryptedStringOutputType,
-} from '../execution/parameterized';
+} from '../execution/parameterized'
 export type {
   CipherstashBulkDecryptArgs,
   CipherstashBulkEncryptArgs,
   CipherstashRoutingKey,
   CipherstashSdk,
   CipherstashSingleDecryptArgs,
-} from '../execution/sdk';
+} from '../execution/sdk'
 export {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
-} from '../extension-metadata/constants';
+} from '../extension-metadata/constants'
 
-export { CIPHERSTASH_EXTENSION_VERSION };
+export { CIPHERSTASH_EXTENSION_VERSION }
 
 export interface CreateCipherstashRuntimeDescriptorOptions {
-  readonly sdk: CipherstashSdk;
+  readonly sdk: CipherstashSdk
 }
 
 /**
@@ -145,8 +145,8 @@ export interface CreateCipherstashRuntimeDescriptorOptions {
 export function createCipherstashRuntimeDescriptor(
   opts: CreateCipherstashRuntimeDescriptorOptions,
 ): SqlRuntimeExtensionDescriptor<'postgres'> {
-  const { sdk } = opts;
-  const parameterizedDescriptors = createParameterizedCodecDescriptors(sdk);
+  const { sdk } = opts
+  const parameterizedDescriptors = createParameterizedCodecDescriptors(sdk)
 
   return {
     kind: 'extension' as const,
@@ -165,7 +165,7 @@ export function createCipherstashRuntimeDescriptor(
       return {
         familyId: 'sql' as const,
         targetId: 'postgres' as const,
-      };
+      }
     },
-  };
+  }
 }

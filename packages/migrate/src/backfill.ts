@@ -6,7 +6,7 @@ import {
   qualifyTable,
 } from './cursor.js'
 import { quoteIdent } from './sql.js'
-import { type MigrationPhase, appendEvent, progress } from './state.js'
+import { appendEvent, type MigrationPhase, progress } from './state.js'
 
 // Loose structural types — keep this library decoupled from @cipherstash/stack
 // so @cipherstash/migrate can be built and tested without pulling the full

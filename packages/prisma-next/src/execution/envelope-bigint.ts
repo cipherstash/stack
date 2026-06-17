@@ -18,15 +18,15 @@ import {
   EncryptedEnvelopeBase,
   type EncryptedEnvelopeFromInternalArgs,
   type EncryptedEnvelopeHandle,
-} from './envelope-base';
+} from './envelope-base'
 
-export type EncryptedBigIntHandle = EncryptedEnvelopeHandle<bigint>;
+export type EncryptedBigIntHandle = EncryptedEnvelopeHandle<bigint>
 
-export type EncryptedBigIntFromInternalArgs = EncryptedEnvelopeFromInternalArgs;
+export type EncryptedBigIntFromInternalArgs = EncryptedEnvelopeFromInternalArgs
 
 export class EncryptedBigInt extends EncryptedEnvelopeBase<bigint> {
   protected override get typeName(): string {
-    return 'EncryptedBigInt';
+    return 'EncryptedBigInt'
   }
 
   /**
@@ -46,29 +46,29 @@ export class EncryptedBigInt extends EncryptedEnvelopeBase<bigint> {
    */
   protected override parseDecryptedValue(sdkResult: unknown): bigint {
     if (typeof sdkResult === 'bigint') {
-      return sdkResult;
+      return sdkResult
     }
     if (typeof sdkResult === 'number') {
       if (!Number.isSafeInteger(sdkResult)) {
         throw new Error(
           'EncryptedBigInt.parseDecryptedValue: SDK returned a number that is not a safe integer; ' +
             'expected an integer plaintext within Number.MAX_SAFE_INTEGER or a bigint.',
-        );
+        )
       }
-      return BigInt(sdkResult);
+      return BigInt(sdkResult)
     }
     if (typeof sdkResult === 'string') {
       try {
-        return BigInt(sdkResult);
+        return BigInt(sdkResult)
       } catch {
         throw new Error(
           'EncryptedBigInt.parseDecryptedValue: SDK returned a string plaintext that is not a valid bigint literal.',
-        );
+        )
       }
     }
     throw new Error(
       `EncryptedBigInt.parseDecryptedValue: unsupported SDK plaintext type "${typeof sdkResult}"; expected bigint | number | string.`,
-    );
+    )
   }
 
   /**
@@ -83,7 +83,7 @@ export class EncryptedBigInt extends EncryptedEnvelopeBase<bigint> {
       table: undefined,
       column: undefined,
       sdk: undefined,
-    });
+    })
   }
 
   /**
@@ -98,6 +98,6 @@ export class EncryptedBigInt extends EncryptedEnvelopeBase<bigint> {
       table: args.table,
       column: args.column,
       sdk: args.sdk,
-    });
+    })
   }
 }

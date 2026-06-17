@@ -7,8 +7,7 @@ import { detectRunner } from './runner.js'
 // EQL release, pinned to match the EQL payload format this package emits.
 // Bump in lockstep with @cipherstash/protect-ffi.
 const EQL_VERSION = 'eql-2.3.1'
-const EQL_INSTALL_URL =
-  `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
+const EQL_INSTALL_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
 
 type CliArgs = {
   migrationName: string
@@ -72,9 +71,12 @@ async function main(): Promise<void> {
 
   try {
     console.log(`📝 Generating custom migration: ${args.migrationName}`)
-    execSync(`${runner} drizzle-kit generate --custom --name=${args.migrationName}`, {
-      stdio: 'inherit',
-    })
+    execSync(
+      `${runner} drizzle-kit generate --custom --name=${args.migrationName}`,
+      {
+        stdio: 'inherit',
+      },
+    )
   } catch (error) {
     console.error('❌ Failed to generate custom migration')
     console.error('Make sure drizzle-kit is installed in your project.')
@@ -85,7 +87,9 @@ async function main(): Promise<void> {
     console.log(`📥 Downloading latest EQL from GitHub...`)
     const response = await fetch(EQL_INSTALL_URL)
     if (!response.ok) {
-      throw new Error(`Failed to download EQL: ${response.status} ${response.statusText}`)
+      throw new Error(
+        `Failed to download EQL: ${response.status} ${response.statusText}`,
+      )
     }
     const eqlSql = await response.text()
 

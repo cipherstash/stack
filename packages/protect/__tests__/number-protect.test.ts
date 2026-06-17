@@ -50,29 +50,25 @@ const cases = [
 ]
 
 describe('Number encryption and decryption', () => {
-  test.each(cases)(
-    'should encrypt and decrypt a number: %d',
-    async (age) => {
-      const ciphertext = await protectClient.encrypt(age, {
-        column: users.age,
-        table: users,
-      })
+  test.each(cases)('should encrypt and decrypt a number: %d', async (age) => {
+    const ciphertext = await protectClient.encrypt(age, {
+      column: users.age,
+      table: users,
+    })
 
-      if (ciphertext.failure) {
-        throw new Error(`[protect]: ${ciphertext.failure.message}`)
-      }
+    if (ciphertext.failure) {
+      throw new Error(`[protect]: ${ciphertext.failure.message}`)
+    }
 
-      // Verify encrypted field
-      expect(ciphertext.data).toHaveProperty('c')
+    // Verify encrypted field
+    expect(ciphertext.data).toHaveProperty('c')
 
-      const plaintext = await protectClient.decrypt(ciphertext.data)
+    const plaintext = await protectClient.decrypt(ciphertext.data)
 
-      expect(plaintext).toEqual({
-        data: age,
-      })
-    },
-    30000,
-  )
+    expect(plaintext).toEqual({
+      data: age,
+    })
+  }, 30000)
 
   it('should handle null integer', async () => {
     const ciphertext = await protectClient.encrypt(null, {
@@ -815,17 +811,13 @@ const invalidPlaintexts = [
 ]
 
 describe('Invalid or uncoercable values', () => {
-  test.each(invalidPlaintexts)(
-    'should fail to encrypt',
-    async (input) => {
-      const result = await protectClient.encrypt(input, {
-        column: users.age,
-        table: users,
-      })
+  test.each(invalidPlaintexts)('should fail to encrypt', async (input) => {
+    const result = await protectClient.encrypt(input, {
+      column: users.age,
+      table: users,
+    })
 
-      expect(result.failure).toBeDefined()
-      expect(result.failure?.message).toContain('Cannot convert')
-    },
-    30000,
-  )
+    expect(result.failure).toBeDefined()
+    expect(result.failure?.message).toContain('Cannot convert')
+  }, 30000)
 })

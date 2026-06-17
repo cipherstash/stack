@@ -1,9 +1,9 @@
+import { describe, expect, it } from 'vitest'
 import {
   buildNestedObject,
   parseJsonbPath,
   toJsonPath,
 } from '@/encryption/helpers/jsonb'
-import { describe, expect, it } from 'vitest'
 
 describe('toJsonPath', () => {
   it('converts simple path to JSONPath format', () => {

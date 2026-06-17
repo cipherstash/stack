@@ -23,26 +23,26 @@
  * bundle.
  */
 
-import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime';
-import type { PostgresContract } from '@prisma-next/adapter-postgres/types';
-import { emptyCodecLookup } from '@prisma-next/framework-components/codec';
+import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime'
+import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
+import { emptyCodecLookup } from '@prisma-next/framework-components/codec'
 import type {
   RuntimeExtensionDescriptor,
   RuntimeTargetDescriptor,
-} from '@prisma-next/framework-components/execution';
-import { validateContract } from '@prisma-next/sql-contract/validate';
-import type { SqlOperationDescriptor } from '@prisma-next/sql-operations';
+} from '@prisma-next/framework-components/execution'
+import { validateContract } from '@prisma-next/sql-contract/validate'
+import type { SqlOperationDescriptor } from '@prisma-next/sql-operations'
 import {
   type AnyExpression,
   ColumnRef,
   ProjectionItem,
   SelectAst,
   TableSource,
-} from '@prisma-next/sql-relational-core/ast';
-import { vi } from 'vitest';
-import { cipherstashQueryOperations } from '../src/execution/operators';
-import type { CipherstashSdk } from '../src/execution/sdk';
-import { createCipherstashRuntimeDescriptor } from '../src/exports/runtime';
+} from '@prisma-next/sql-relational-core/ast'
+import { vi } from 'vitest'
+import { cipherstashQueryOperations } from '../src/execution/operators'
+import type { CipherstashSdk } from '../src/execution/sdk'
+import { createCipherstashRuntimeDescriptor } from '../src/exports/runtime'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -51,7 +51,7 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
-} from '../src/extension-metadata/constants';
+} from '../src/extension-metadata/constants'
 
 // Minimal SDK stub. Operator lowering doesn't talk to the SDK — the codec
 // captures it lazily for the read-side decrypt path — but
@@ -61,11 +61,11 @@ export function emptySdk(): CipherstashSdk {
     decrypt: vi.fn(),
     bulkEncrypt: vi.fn(),
     bulkDecrypt: vi.fn(),
-  };
+  }
 }
 
-export const TABLE = 'user';
-export const COLUMN = 'email';
+export const TABLE = 'user'
+export const COLUMN = 'email'
 
 export const contract = validateContract<PostgresContract>(
   {
@@ -127,7 +127,7 @@ export const contract = validateContract<PostgresContract>(
     models: {},
   },
   emptyCodecLookup,
-);
+)
 
 // Stub runtime target — the Postgres adapter only consults `familyId` /
 // `targetId` on the target during `create`. Replicates the helper at
@@ -140,9 +140,9 @@ const stubRuntimeTarget: RuntimeTargetDescriptor<'sql', 'postgres'> = {
   familyId: 'sql',
   targetId: 'postgres',
   create() {
-    return { familyId: 'sql', targetId: 'postgres' };
+    return { familyId: 'sql', targetId: 'postgres' }
   },
-};
+}
 
 export function makeAdapter() {
   // Compose the Postgres runtime adapter with the cipherstash runtime
@@ -152,23 +152,25 @@ export function makeAdapter() {
   // `$N::eql_v2_encrypted`; without the cipherstash pack in the stack
   // the codec lookup would throw with a "missing extension pack" hint.
   const cipherstash: RuntimeExtensionDescriptor<'sql', 'postgres'> =
-    createCipherstashRuntimeDescriptor({ sdk: emptySdk() });
+    createCipherstashRuntimeDescriptor({ sdk: emptySdk() })
   return postgresRuntimeAdapter.create({
     target: stubRuntimeTarget,
     adapter: postgresRuntimeAdapter,
     driver: undefined,
     extensionPacks: [cipherstash],
-  });
+  })
 }
 
-const cipherstashOperatorsByMethod = cipherstashQueryOperations();
+const cipherstashOperatorsByMethod = cipherstashQueryOperations()
 
 export function getOperator(method: string): SqlOperationDescriptor {
-  const op = cipherstashOperatorsByMethod[method];
+  const op = cipherstashOperatorsByMethod[method]
   if (!op) {
-    throw new Error(`cipherstash operator descriptor for method "${method}" not found`);
+    throw new Error(
+      `cipherstash operator descriptor for method "${method}" not found`,
+    )
   }
-  return op;
+  return op
 }
 
 /**
@@ -180,13 +182,18 @@ export function getOperator(method: string): SqlOperationDescriptor {
  * `AnyExpression`. Mirrors the cast in
  * `packages/3-extensions/sql-orm-client/src/model-accessor.ts:170`.
  */
-export function callOperator(op: SqlOperationDescriptor, ...args: unknown[]): AnyExpression {
+export function callOperator(
+  op: SqlOperationDescriptor,
+  ...args: unknown[]
+): AnyExpression {
   // `op.impl` is typed `(...args: never[]) => QueryOperationReturn` to
   // block accidental direct invocation; the practical shape is
   // `(self, ...args) => Expression<...>`. Cast through `unknown` to
   // bridge the framework's intentionally-narrow declared type.
-  const impl = op.impl as unknown as (...args: unknown[]) => { buildAst(): AnyExpression };
-  return impl(...args).buildAst();
+  const impl = op.impl as unknown as (...args: unknown[]) => {
+    buildAst(): AnyExpression
+  }
+  return impl(...args).buildAst()
 }
 
 /**
@@ -202,15 +209,15 @@ export function columnAccessor(
   column: string,
   codecId: string = CIPHERSTASH_STRING_CODEC_ID,
 ) {
-  const ref = ColumnRef.of(table, column);
+  const ref = ColumnRef.of(table, column)
   return {
     returnType: { codecId, nullable: true },
     buildAst: () => ref,
-  };
+  }
 }
 
 export function selectWithWhere(whereExpr: AnyExpression) {
   return SelectAst.from(TableSource.named(TABLE))
     .withProjection([ProjectionItem.of('id', ColumnRef.of(TABLE, 'id'))])
-    .withWhere(whereExpr);
+    .withWhere(whereExpr)
 }

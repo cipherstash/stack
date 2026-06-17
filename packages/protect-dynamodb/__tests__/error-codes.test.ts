@@ -1,11 +1,11 @@
 import 'dotenv/config'
+import type { ProtectClient } from '@cipherstash/protect'
 import {
-  FfiProtectError,
   csColumn,
   csTable,
+  FfiProtectError,
   protect,
 } from '@cipherstash/protect'
-import type { ProtectClient } from '@cipherstash/protect'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { protectDynamoDB } from '../src'
 import type { ProtectDynamoDBError } from '../src/types'

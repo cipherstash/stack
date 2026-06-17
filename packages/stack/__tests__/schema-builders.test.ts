@@ -1,13 +1,13 @@
+import { describe, expect, it } from 'vitest'
 import {
+  buildEncryptConfig,
   EncryptedColumn,
   EncryptedField,
   EncryptedTable,
-  buildEncryptConfig,
   encryptedColumn,
   encryptedField,
   encryptedTable,
 } from '@/schema'
-import { describe, expect, it } from 'vitest'
 
 describe('schema builders', () => {
   // -------------------------------------------------------
@@ -114,7 +114,10 @@ describe('schema builders', () => {
       const built = col.build()
       expect(built.cast_as).toBe('json')
       expect(built.indexes).toHaveProperty('ste_vec')
-      expect(built.indexes.ste_vec).toEqual({ prefix: 'enabled', array_index_mode: 'all' })
+      expect(built.indexes.ste_vec).toEqual({
+        prefix: 'enabled',
+        array_index_mode: 'all',
+      })
     })
 
     it('chaining multiple indexes: .equality().freeTextSearch().orderAndRange()', () => {
