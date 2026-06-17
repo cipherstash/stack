@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { messages } from '../../src/messages.js'
 import { render } from '../helpers/pty.js'
 
 // `doctor` is dispatched by the thin launcher (src/bin/stash.ts) *before* the
@@ -9,10 +10,12 @@ describe('stash doctor — E2E', () => {
     const r = render(['doctor'])
     const { exitCode } = await r.exit
     expect(exitCode).toBe(0)
-    expect(r.output).toContain('stash doctor')
+    expect(r.output).toContain(messages.doctor.title)
     // Platform line is always emitted regardless of which probes are present.
-    expect(r.output).toContain(`Platform ${process.platform}-${process.arch}`)
-    expect(r.output).toContain('All checks passed')
+    expect(r.output).toContain(
+      `${messages.doctor.platformLabel} ${process.platform}-${process.arch}`,
+    )
+    expect(r.output).toContain(messages.doctor.allChecksPassed)
   })
 
   it('is dispatched even though it is not registered in the help command list', async () => {
@@ -21,6 +24,6 @@ describe('stash doctor — E2E', () => {
     const r = render(['doctor'])
     const { exitCode } = await r.exit
     expect(exitCode).toBe(0)
-    expect(r.output).not.toContain('Unknown command')
+    expect(r.output).not.toContain(messages.cli.unknownCommand)
   })
 })

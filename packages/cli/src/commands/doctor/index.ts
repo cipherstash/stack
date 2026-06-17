@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { messages } from '../../messages.js'
 import {
   currentTarget,
   isNativeBinaryMissing,
@@ -34,7 +35,7 @@ function isPackageMissing(err: unknown, pkg: string): boolean {
 }
 
 export async function doctorCommand(): Promise<void> {
-  p.intro('stash doctor')
+  p.intro(messages.doctor.title)
 
   let failed = false
   let nativeError: unknown
@@ -44,7 +45,7 @@ export async function doctorCommand(): Promise<void> {
   report(nodeOk, `Node.js ${process.versions.node}`, nodeOk ? '' : 'requires >= 22')
   if (!nodeOk) failed = true
 
-  report(true, `Platform ${currentTarget()}`)
+  report(true, `${messages.doctor.platformLabel} ${currentTarget()}`)
 
   for (const probe of PROBES) {
     try {
@@ -78,5 +79,5 @@ export async function doctorCommand(): Promise<void> {
     p.outro('stash doctor found problems.')
     process.exit(1)
   }
-  p.outro('All checks passed.')
+  p.outro(messages.doctor.allChecksPassed)
 }

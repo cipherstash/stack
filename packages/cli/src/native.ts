@@ -60,18 +60,21 @@ function missingModuleName(err: ModuleError): string | undefined {
   return /Cannot find (?:module|package) '([^']+)'/.exec(err.message)?.[1]
 }
 
-// Recovery command to reinstall a project's dependencies from scratch.
+const LOCKFILE: Record<PackageManager, string> = {
+  bun: 'bun.lock',
+  pnpm: 'pnpm-lock.yaml',
+  yarn: 'yarn.lock',
+  npm: 'package-lock.json',
+}
+
+// Recovery command to reinstall a project's dependencies from scratch. win32 is
+// a supported target, so emit PowerShell there rather than non-runnable POSIX.
 function reinstallCommand(pm: PackageManager): string {
-  switch (pm) {
-    case 'bun':
-      return 'rm -rf node_modules bun.lock && bun install'
-    case 'pnpm':
-      return 'rm -rf node_modules pnpm-lock.yaml && pnpm install'
-    case 'yarn':
-      return 'rm -rf node_modules yarn.lock && yarn install'
-    case 'npm':
-      return 'rm -rf node_modules package-lock.json && npm install'
+  const lock = LOCKFILE[pm]
+  if (process.platform === 'win32') {
+    return `Remove-Item -Recurse -Force node_modules, ${lock}; ${pm} install`
   }
+  return `rm -rf node_modules ${lock} && ${pm} install`
 }
 
 /**
@@ -87,11 +90,13 @@ export function reportNativeBinaryMissing(err: unknown): void {
   // npm → `npx`, bun → `bunx`, pnpm/yarn → `… dlx`.
   const rerun = `${runnerCommand(pm, 'stash@latest')} <command>`
   // The one-shot runner cache is npm-specific (`_npx`); for other package
-  // managers a clean re-run is the equivalent first step.
-  const rerunStep =
-    pm === 'npm'
-      ? `  rm -rf "$(npm config get cache)/_npx" && ${rerun}`
-      : `  ${rerun}`
+  // managers a clean re-run is the equivalent first step. Shell syntax differs
+  // on Windows (PowerShell), which is a supported target.
+  const clearNpxCache =
+    process.platform === 'win32'
+      ? `Remove-Item -Recurse -Force "$(npm config get cache)\\_npx"; ${rerun}`
+      : `rm -rf "$(npm config get cache)/_npx" && ${rerun}`
+  const rerunStep = pm === 'npm' ? `  ${clearNpxCache}` : `  ${rerun}`
 
   p.log.error("stash couldn't load its native module for this platform.")
   p.note(

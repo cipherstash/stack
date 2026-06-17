@@ -22,6 +22,12 @@ export const messages = {
     usagePrefix: 'Usage: ',
     unknownCommand: 'Unknown command',
   },
+  doctor: {
+    title: 'stash doctor',
+    /** Leader of the platform check line; the `<platform>-<arch>` is appended. */
+    platformLabel: 'Platform',
+    allChecksPassed: 'All checks passed.',
+  },
   auth: {
     /** Same shape as `cli.usagePrefix` — leader only. */
     usagePrefix: 'Usage: ',
