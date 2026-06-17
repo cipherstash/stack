@@ -1,1 +1,9 @@
-__tests__/fixtures/cipherstash-encrypt-v3.sql linguist-vendored
+# Vendored EQL SQL bundles — copied byte-for-byte from upstream
+# cipherstash/encrypt-query-language. Collapse in diffs + exclude from language stats.
+__tests__/fixtures/*.sql linguist-vendored
+
+# Generated artifacts that embed the vendored bundle (each ~0.5 MB). The `.generated.ts`
+# is produced by scripts/vendor-eql-*-install.ts; the migration `ops.json` is emitted by
+# `migration plan`. Mark generated so GitHub collapses them and reviewers see real source.
+src/migration/*.generated.ts linguist-generated
+migrations/**/ops.json linguist-generated
