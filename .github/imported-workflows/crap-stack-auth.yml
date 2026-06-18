@@ -1,0 +1,94 @@
+name: "stack-auth CRAP report"
+
+# Posts the CRAP (Change Risk Anti-Patterns) metric for stack-auth as a sticky
+# PR comment on every PR that touches the package. CRAP = cyclomatic complexity
+# weighted by test coverage, so it surfaces complex, under-tested functions —
+# the kind of code where a subtle bug like CIP-3233 (#2036) can hide.
+#
+# Report-only: this never fails the build. To turn it into a gate later, add
+# `--fail-above` (absolute threshold) or `--baseline`/`--fail-regression`
+# (fail only when a PR makes an existing function's CRAP score worse).
+on:
+  pull_request:
+    paths:
+      - packages/stack-auth/**
+      - .cargo-crap.toml
+      - .github/workflows/crap-stack-auth.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+# Needed to post/update the report comment on the PR.
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  NEXTEST_PROFILE: ci
+
+jobs:
+  crap-stack-auth:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust
+
+      - name: Install llvm-tools-preview (required by cargo-llvm-cov)
+        run: rustup component add --toolchain "$(rustup show active-toolchain | cut -d' ' -f1)" llvm-tools-preview
+
+      - name: Fix permissions on target directory
+        run: |
+          mkdir -p ./target
+          sudo chown -R "$(id -u):$(id -g)" ./target
+
+      - name: Generate coverage and CRAP report
+        run: |
+          # Exclude `stress_tests`: wall-clock timing/concurrency tests that become
+          # flaky under llvm-cov's instrumentation slowdown. They still run in the
+          # normal stack-auth test gate, and excluding them here does not change the
+          # CRAP report (the deterministic unit tests cover the same lines).
+          mise x --env test -- cargo llvm-cov nextest -p stack-auth --all-features \
+            -E 'not test(stress_tests)' \
+            --lcov --output-path target/stack-auth-lcov.info
+          cargo crap \
+            --path packages/stack-auth \
+            --lcov target/stack-auth-lcov.info \
+            --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' \
+            --exclude '**/tests.rs' --exclude '**/tests/**' \
+            --format pr-comment \
+            --repo-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --commit-ref "${{ github.event.pull_request.head.sha }}" \
+            --output target/crap-comment.md
+
+      - name: Post CRAP report as a sticky PR comment
+        # Only PRs have a comment thread; on workflow_dispatch the report is
+        # still generated above and visible in the job logs.
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('target/crap-comment.md', 'utf8');
+            // cargo crap's pr-comment output starts with this marker.
+            const marker = '<!-- cargo-crap-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
