@@ -21,5 +21,8 @@ run = [
   # Score every production function. Excludes test code, examples and the node/wasm
   # binding crates so the report reflects the core library. Thresholds come from
   # the workspace-root .cargo-crap.toml. Add --fail-above here to turn it into a gate.
+  # NOTE: this must stay the LAST command — the crap-stack-auth.yml CI workflow runs
+  # this task and relies on mise appending its trailing args (--format pr-comment etc.)
+  # to this `cargo crap` invocation.
   "cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**'",
 ]
