@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::{Mutex, MutexGuard, Notify};
 
+use crate::clock::{system_clock, SharedClock};
 use crate::refresher::Refresher;
 use crate::token_store::{NoStore, TokenStore};
 use crate::{ServiceToken, Token};
@@ -50,6 +51,9 @@ pub(crate) struct AutoRefresh<R, S = NoStore> {
     /// the mutex.
     refresh_in_progress: AtomicBool,
     refresh_notify: Notify,
+    /// Source of "now" for token-expiry checks. [`SystemClock`](crate::clock::SystemClock)
+    /// in production; an injected clock in tests so expiry is deterministic.
+    clock: SharedClock,
 }
 
 struct State {
@@ -88,9 +92,9 @@ impl State {
         Ok(ServiceToken::new(token.access_token().clone()))
     }
 
-    fn require_usable_token(&self) -> Result<ServiceToken, AutoRefreshError> {
+    fn require_usable_token(&self, now: u64) -> Result<ServiceToken, AutoRefreshError> {
         let token = self.token.as_ref().ok_or(AutoRefreshError::NotFound)?;
-        if token.is_usable() {
+        if token.is_usable_at(now) {
             Ok(ServiceToken::new(token.access_token().clone()))
         } else {
             Err(AutoRefreshError::Expired)
@@ -110,6 +114,21 @@ impl<R> AutoRefresh<R, NoStore> {
             store: NoStore,
             refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
+            clock: system_clock(),
+        }
+    }
+
+    /// Like [`with_token`](Self::with_token) but with an injected clock, so tests
+    /// can drive token expiry deterministically.
+    #[cfg(test)]
+    pub(crate) fn with_token_and_clock(refresher: R, token: Token, clock: SharedClock) -> Self {
+        Self {
+            refresher,
+            state: Mutex::new(State { token: Some(token) }),
+            store: NoStore,
+            refresh_in_progress: AtomicBool::new(false),
+            refresh_notify: Notify::new(),
+            clock,
         }
     }
 }
@@ -129,6 +148,7 @@ impl<R, S: TokenStore> AutoRefresh<R, S> {
             store,
             refresh_in_progress: AtomicBool::new(false),
             refresh_notify: Notify::new(),
+            clock: system_clock(),
         }
     }
 }
@@ -155,21 +175,26 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             return self.initial_auth(&mut state).await;
         }
 
-        if !state.token.as_ref().is_some_and(|t| t.is_expired()) {
+        // Read "now" once from the injected clock and use it for every expiry
+        // decision in this call, so the checks are mutually consistent and
+        // deterministic under test.
+        let now = self.clock.now_unix_secs();
+
+        if !state.token.as_ref().is_some_and(|t| t.is_expired_at(now)) {
             return state.service_token();
         }
 
         if self.refresh_in_progress.load(Ordering::Acquire) {
-            return self.wait_for_in_flight_refresh(state).await;
+            return self.wait_for_in_flight_refresh(state, now).await;
         }
 
         let Some(credential) = self.refresher.try_credential(state.token.as_mut()) else {
-            return state.require_usable_token();
+            return state.require_usable_token(now);
         };
 
         self.refresh_in_progress.store(true, Ordering::Release);
 
-        if state.token.as_ref().is_some_and(|t| t.is_usable()) {
+        if state.token.as_ref().is_some_and(|t| t.is_usable_at(now)) {
             self.refresh_non_blocking(state, credential).await
         } else {
             self.refresh_blocking(&mut state, credential).await
@@ -233,9 +258,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     async fn wait_for_in_flight_refresh(
         &self,
         state: MutexGuard<'_, State>,
+        now: u64,
     ) -> Result<ServiceToken, AutoRefreshError> {
         if let Ok(token) = state.service_token() {
-            if state.token.as_ref().is_some_and(|t| t.is_usable()) {
+            if state.token.as_ref().is_some_and(|t| t.is_usable_at(now)) {
                 return Ok(token);
             }
         }
@@ -244,9 +270,11 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         let notified = self.refresh_notify.notified();
         drop(state);
         notified.await;
-        // Re-check after wake — refresh may have failed.
+        // Re-check after wake — refresh may have failed. Re-read the clock: an
+        // arbitrary amount of time may have passed while awaiting the refresh.
+        let now = self.clock.now_unix_secs();
         let state = self.state.lock().await;
-        state.require_usable_token()
+        state.require_usable_token(now)
     }
 
     /// Token is expiring but still usable — drop the lock, refresh in the
@@ -354,6 +382,24 @@ mod tests {
     use stack_profile::ProfileStore;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn auto_refresh_error_maps_to_public_auth_error() {
+        use crate::AuthError;
+        assert!(matches!(
+            AuthError::from(AutoRefreshError::NotFound),
+            AuthError::NotAuthenticated
+        ));
+        assert!(matches!(
+            AuthError::from(AutoRefreshError::Expired),
+            AuthError::TokenExpired
+        ));
+        // The `Auth` variant passes the inner error through unchanged.
+        assert!(matches!(
+            AuthError::from(AutoRefreshError::Auth(AuthError::AccessDenied)),
+            AuthError::AccessDenied
+        ));
+    }
 
     fn make_token(access: &str, expires_in: u64, refresh: bool) -> Token {
         let now = SystemTime::now()
@@ -1157,74 +1203,6 @@ mod stress_tests {
             assert_eq!(stats.peak(), 1, "peak concurrency to refresh endpoint");
             assert_eq!(stats.total(), 1, "total refresh requests");
         }
-
-        /// Reproduces the race condition where a token crosses real expiry during
-        /// an in-flight non-blocking refresh. Before the fix, late-arriving callers
-        /// would see `refresh_in_progress = true` + `!is_usable()` and return
-        /// `Err(Expired)` instead of waiting for the refresh to complete.
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn waiters_receive_token_when_expiry_crosses() {
-            // Token with 1s until real expiry (minimum granularity since
-            // expires_at is in seconds). is_expired() = true (within 90s leeway),
-            // is_usable() = true (1s remaining). Refresh takes 1.5s so the token
-            // crosses real expiry mid-refresh.
-            let refresh_delay = Duration::from_millis(1500);
-            let counting = CountingState::new();
-            let state = DelayedRefreshState {
-                counting: counting.clone(),
-                delay: refresh_delay,
-            };
-            let (base_url, stats) = start_axum_server(delayed_refresh_handler, state).await;
-            let dir = tempfile::tempdir().unwrap();
-            let strategy = Arc::new(auto_refresh_with_token(
-                &dir,
-                &base_url,
-                make_token("expiring-soon", 1, true),
-            ));
-
-            // First caller triggers the non-blocking refresh and gets the old token.
-            let first = strategy.get_token().await.unwrap();
-            assert_eq!(
-                first.as_str(),
-                "expiring-soon",
-                "first caller should receive the expiring token"
-            );
-
-            // Wait for the token to cross real expiry (but refresh is still in-flight).
-            tokio::time::sleep(Duration::from_millis(1100)).await;
-
-            // Launch 50 concurrent callers. Without the fix, these would all get
-            // Err(Expired) because refresh_in_progress = true and !is_usable().
-            let mut handles = Vec::with_capacity(CONCURRENCY);
-            for _ in 0..CONCURRENCY {
-                let s = Arc::clone(&strategy);
-                handles.push(tokio::spawn(async move { s.get_token().await }));
-            }
-
-            let results: Vec<_> = {
-                let mut results = Vec::with_capacity(handles.len());
-                for handle in handles {
-                    results.push(handle.await.unwrap());
-                }
-                results
-            };
-
-            // All callers must succeed — none should get Expired.
-            for (i, result) in results.iter().enumerate() {
-                assert!(
-                    result.is_ok(),
-                    "caller {i} got Err({:?}), expected Ok",
-                    result.as_ref().unwrap_err()
-                );
-                assert_eq!(
-                    result.as_ref().unwrap().as_str(),
-                    "refreshed-token",
-                    "caller {i} should receive the refreshed token"
-                );
-            }
-
-            assert_eq!(stats.total(), 1, "only one refresh request should be made");
-        }
     }
 
     mod given_fully_expired_token {
@@ -1575,5 +1553,167 @@ mod stress_tests {
                 result.unwrap_err()
             );
         }
+    }
+}
+
+/// Deterministic regression test for the "token crosses real expiry while a
+/// non-blocking refresh is in flight" race.
+///
+/// Before the fix, late-arriving callers saw `refresh_in_progress = true` +
+/// `!is_usable()` and returned `Err(Expired)` instead of waiting for the
+/// in-flight refresh. The original reproduction (a wall-clock stress test) hung
+/// the outcome on a ~1-second window — token expiry has whole-second
+/// granularity — which made it latently flaky and broke outright under coverage
+/// instrumentation. This version drives expiry with a [`TestClock`] and gates
+/// the refresh with a [`Notify`], so it is fully deterministic: no real sleeps,
+/// no network.
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod expiry_crossing_regression {
+    use super::*;
+    use crate::clock::TestClock;
+    use crate::{AuthError, SecretToken};
+    use std::future::Future;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    /// Number of callers that arrive after the token crosses real expiry.
+    const WAITERS: usize = 8;
+
+    /// A [`Refresher`] whose `refresh` blocks on a test-controlled gate, so the
+    /// test can hold a refresh "in flight" while it advances the clock and
+    /// launches waiters — with no wall-clock timing involved.
+    struct GatedRefresher {
+        /// Notified once `refresh` is entered (the refresh is now in flight).
+        started: Arc<Notify>,
+        /// `refresh` awaits this; the test releases it to complete the refresh.
+        gate: Arc<Notify>,
+        /// Counts `refresh` invocations — asserts exactly one refresh happens.
+        calls: Arc<AtomicUsize>,
+        /// Absolute expiry stamped on the refreshed token.
+        refreshed_expires_at: u64,
+    }
+
+    impl Refresher for GatedRefresher {
+        type Credential = ();
+
+        fn save(&self, _token: &Token) {}
+
+        fn try_credential(&self, token: Option<&mut Token>) -> Option<Self::Credential> {
+            // Refresh only when there's a token to refresh, matching the real
+            // refreshers' "needs a prior token" contract.
+            token.map(|_| ())
+        }
+
+        fn restore(&self, _token: &mut Token, _credential: Self::Credential) {}
+
+        fn refresh(
+            &self,
+            _credential: &Self::Credential,
+        ) -> impl Future<Output = Result<Token, AuthError>> + Send {
+            let started = Arc::clone(&self.started);
+            let gate = Arc::clone(&self.gate);
+            let calls = Arc::clone(&self.calls);
+            let refreshed_expires_at = self.refreshed_expires_at;
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                started.notify_one();
+                gate.notified().await;
+                Ok(make_token("refreshed-token", refreshed_expires_at))
+            }
+        }
+    }
+
+    fn make_token(access: &str, expires_at: u64) -> Token {
+        Token {
+            access_token: SecretToken::new(access),
+            refresh_token: Some(SecretToken::new("refresh-token")),
+            token_type: "Bearer".to_string(),
+            expires_at,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn waiters_wait_for_refresh_when_token_crosses_expiry() {
+        let clock = TestClock::new(1_000_000);
+        let started = Arc::new(Notify::new());
+        let gate = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let refresher = GatedRefresher {
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            calls: Arc::clone(&calls),
+            refreshed_expires_at: clock.now() + 3600,
+        };
+
+        // Within the 90s leeway (so a refresh is triggered) but still usable at
+        // the current clock value (so the first caller takes the non-blocking
+        // path and gets the old token).
+        let token = make_token("expiring-soon", clock.now() + 10);
+        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
+            refresher,
+            token,
+            clock.shared(),
+        ));
+
+        // 1. First caller starts the non-blocking refresh.
+        let first = {
+            let s = Arc::clone(&strategy);
+            tokio::spawn(async move { s.get_token().await })
+        };
+        // Wait until the refresh is actually in flight (gated; won't complete yet).
+        started.notified().await;
+
+        // 2. Advance the clock past real expiry while the refresh is still gated.
+        //    The token is now both expired and unusable.
+        clock.advance(20);
+
+        // 3. Launch waiters. They observe refresh_in_progress + !is_usable, so they
+        //    must wait for the in-flight refresh rather than returning Expired.
+        let waiters: Vec<_> = (0..WAITERS)
+            .map(|_| {
+                let s = Arc::clone(&strategy);
+                tokio::spawn(async move { s.get_token().await })
+            })
+            .collect();
+
+        // Let the waiters reach their wait point. This is cooperative scheduling
+        // on the current-thread runtime (yielding lets the spawned waiters run
+        // until they park on the refresh notification), not a wall-clock delay.
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+
+        // 4. Release the refresh. The first caller installs the new token and
+        //    notifies the waiters, which then return the refreshed token.
+        gate.notify_one();
+
+        let first = first.await.unwrap().unwrap();
+        assert_eq!(
+            first.as_str(),
+            "expiring-soon",
+            "first caller receives the old token (still usable when it was called)"
+        );
+
+        for (i, waiter) in waiters.into_iter().enumerate() {
+            let token = waiter.await.unwrap().unwrap_or_else(|e| {
+                panic!("waiter {i} returned Err({e:?}), expected the refreshed token")
+            });
+            assert_eq!(
+                token.as_str(),
+                "refreshed-token",
+                "waiter {i} should receive the refreshed token, not Expired"
+            );
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "exactly one refresh should occur for all callers combined"
+        );
     }
 }
