@@ -1,5 +1,11 @@
 
 
+### CI
+
+- add cargo-crap (CRAP metric) coverage report
+- reuse crap:stack-auth mise task in CRAP workflow
+
+
 ### Documentation
 
 - point authorize_dto refresher links at structs
