@@ -1716,4 +1716,120 @@ mod expiry_crossing_regression {
             "exactly one refresh should occur for all callers combined"
         );
     }
+
+    /// A [`Refresher`] like [`GatedRefresher`], but whose gated `refresh`
+    /// resolves to `Err` once released — so the test can exercise the *failure*
+    /// axis of the in-flight-refresh race.
+    struct FailingGatedRefresher {
+        started: Arc<Notify>,
+        gate: Arc<Notify>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Refresher for FailingGatedRefresher {
+        type Credential = ();
+
+        fn save(&self, _token: &Token) {}
+
+        fn try_credential(&self, token: Option<&mut Token>) -> Option<Self::Credential> {
+            token.map(|_| ())
+        }
+
+        fn restore(&self, _token: &mut Token, _credential: Self::Credential) {}
+
+        fn refresh(
+            &self,
+            _credential: &Self::Credential,
+        ) -> impl Future<Output = Result<Token, AuthError>> + Send {
+            let started = Arc::clone(&self.started);
+            let gate = Arc::clone(&self.gate);
+            let calls = Arc::clone(&self.calls);
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                started.notify_one();
+                gate.notified().await;
+                Err(AuthError::TokenExpired)
+            }
+        }
+    }
+
+    /// The failure counterpart to
+    /// [`waiters_wait_for_refresh_when_token_crosses_expiry`]: when the in-flight
+    /// refresh *fails* and the clock has crossed real expiry, waiters waking in
+    /// [`AutoRefresh::wait_for_in_flight_refresh`] must re-read the clock, find
+    /// the cached token unusable via `require_usable_token(now)`, and return
+    /// `Expired` — they must not hang, and must not hand back a stale token. This
+    /// is exactly the branch the post-wake clock re-read (the `now` re-read after
+    /// `notified().await`) exists to make correct.
+    #[tokio::test]
+    async fn waiters_get_expired_when_in_flight_refresh_fails() {
+        let clock = TestClock::new(1_000_000);
+        let started = Arc::new(Notify::new());
+        let gate = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let refresher = FailingGatedRefresher {
+            started: Arc::clone(&started),
+            gate: Arc::clone(&gate),
+            calls: Arc::clone(&calls),
+        };
+
+        // Within the 90s leeway (triggers a refresh) but still usable now, so the
+        // first caller takes the non-blocking path and captures the old token.
+        let token = make_token("expiring-soon", clock.now() + 10);
+        let strategy = Arc::new(AutoRefresh::with_token_and_clock(
+            refresher,
+            token,
+            clock.shared(),
+        ));
+
+        // 1. First caller starts the (gated) non-blocking refresh.
+        let first = {
+            let s = Arc::clone(&strategy);
+            tokio::spawn(async move { s.get_token().await })
+        };
+        started.notified().await;
+
+        // 2. Advance the clock past real expiry while the refresh is still gated.
+        //    The cached token is now both expired and unusable.
+        clock.advance(20);
+
+        // 3. Launch waiters. They observe refresh_in_progress + !is_usable, so
+        //    they park in wait_for_in_flight_refresh rather than returning early.
+        let waiters: Vec<_> = (0..WAITERS)
+            .map(|_| {
+                let s = Arc::clone(&strategy);
+                tokio::spawn(async move { s.get_token().await })
+            })
+            .collect();
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+
+        // 4. Release the refresh → it returns Err. The first caller still returns
+        //    the old token it captured while it was usable; the waiters re-read
+        //    the now-advanced clock, find the token unusable, and get Expired.
+        gate.notify_one();
+
+        let first = first.await.unwrap();
+        assert_eq!(
+            first.unwrap().as_str(),
+            "expiring-soon",
+            "first caller keeps the old token it captured before the refresh failed"
+        );
+
+        for (i, waiter) in waiters.into_iter().enumerate() {
+            let result = waiter.await.unwrap();
+            assert!(
+                matches!(result, Err(AutoRefreshError::Expired)),
+                "waiter {i} should get Expired after the failed refresh, got: {result:?}"
+            );
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "exactly one refresh attempt for all callers combined"
+        );
+    }
 }

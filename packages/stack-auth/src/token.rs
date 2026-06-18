@@ -354,6 +354,62 @@ mod tests {
         );
     }
 
+    // ---- is_expired_at / is_usable_at boundary tests ----
+
+    /// A token with an explicit absolute `expires_at`, for driving the `*_at`
+    /// predicates against precise boundary values (unlike `make_token`, which is
+    /// relative to the wall clock).
+    fn token_expiring_at(expires_at: u64) -> Token {
+        Token {
+            access_token: SecretToken::new("t"),
+            token_type: "Bearer".to_string(),
+            expires_at,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+    }
+
+    #[test]
+    fn is_usable_at_boundary() {
+        let t = token_expiring_at(1000);
+        assert!(t.is_usable_at(999), "before expiry → usable");
+        assert!(!t.is_usable_at(1000), "exactly at expiry → not usable");
+        assert!(!t.is_usable_at(1001), "past expiry → not usable");
+    }
+
+    #[test]
+    fn is_expired_at_leeway_window() {
+        // EXPIRY_LEEWAY_SECS == 90: `is_expired_at` flips to true 90s ahead of
+        // the real expiry timestamp so refresh is triggered preemptively.
+        let t = token_expiring_at(1000);
+        assert!(
+            !t.is_expired_at(909),
+            "just outside the 90s leeway → not expired"
+        );
+        assert!(t.is_expired_at(910), "exactly at the leeway edge → expired");
+        // Inside the leeway window the token reads as "expired" (so a refresh is
+        // triggered) yet is still usable — this is the expired-but-usable state
+        // that drives AutoRefresh's non-blocking refresh path.
+        assert!(
+            t.is_expired_at(950) && t.is_usable_at(950),
+            "inside the leeway: expired but still usable"
+        );
+    }
+
+    #[test]
+    fn is_expired_at_saturates_near_u64_max() {
+        // `is_expired_at` computes `now + EXPIRY_LEEWAY_SECS`; a plain add would
+        // overflow and panic in debug builds. `test_support::raw_token` mints
+        // tokens with `expires_at == u64::MAX`, so the saturating add must hold.
+        let t = token_expiring_at(u64::MAX);
+        assert!(
+            t.is_expired_at(u64::MAX),
+            "saturating_add must not overflow at the u64 ceiling"
+        );
+    }
+
     // ---- refresh() tests ----
 
     #[tokio::test]
