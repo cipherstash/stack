@@ -122,83 +122,152 @@ impl DeviceSessionStrategyBuilder {
     /// Resolves the base URL via service discovery unless overridden with
     /// `base_url` (available when the `test-utils` feature is enabled).
     pub fn build(self) -> Result<DeviceSessionStrategy, AuthError> {
-        match self.source {
+        let Self {
+            source,
+            base_url_override,
+        } = self;
+        match source {
             OAuthTokenSource::Token {
                 region,
                 client_id,
-                mut token,
-            } => {
-                let base_url = match self.base_url_override {
-                    Some(url) => url,
-                    None => crate::cts_base_url_from_env()?
-                        .unwrap_or(CtsServiceDiscovery::endpoint(region)?),
-                };
-                // Derive CRN from the explicit region parameter and the token's
-                // workspace claim. We can't use token.workspace_crn() here
-                // because set_region() hasn't been called on the token yet.
-                let crn = token
-                    .workspace_id()
-                    .map(|ws| Crn::new(region, ws))
-                    .map_err(|e| {
-                        warn!("Could not extract workspace CRN from token: {e}");
-                        e
-                    })
-                    .ok();
-                let region_id = region.identifier();
-                let device_instance_id = token.device_instance_id().map(String::from);
-                token.set_region(&region_id);
-                token.set_client_id(&client_id);
-                let refresher = DeviceSessionRefresher::new(
-                    None,
-                    ensure_trailing_slash(base_url),
-                    &client_id,
-                    &region_id,
-                    device_instance_id,
-                );
-                Ok(DeviceSessionStrategy {
-                    crn,
-                    inner: AutoRefresh::with_token(refresher, token),
-                })
-            }
+                token,
+            } => Self::build_from_token(region, client_id, token, base_url_override),
             #[cfg(not(target_arch = "wasm32"))]
-            OAuthTokenSource::Store(store) => {
-                let ws_store = store.current_workspace_store()?;
-                let token: Token = ws_store.load_profile()?;
-
-                let region_str = token
-                    .region()
-                    .ok_or(AuthError::NotAuthenticated)?
-                    .to_string();
-                let client_id = token
-                    .client_id()
-                    .ok_or(AuthError::NotAuthenticated)?
-                    .to_string();
-                let crn = token
-                    .workspace_crn()
-                    .map_err(|e| {
-                        warn!("Could not extract workspace CRN from token: {e}");
-                        e
-                    })
-                    .ok();
-                let device_instance_id = token.device_instance_id().map(String::from);
-
-                let base_url = match self.base_url_override {
-                    Some(url) => url,
-                    None => crate::cts_base_url_from_env()?.unwrap_or(token.issuer()?),
-                };
-
-                let refresher = DeviceSessionRefresher::new(
-                    Some(ws_store),
-                    ensure_trailing_slash(base_url),
-                    &client_id,
-                    &region_str,
-                    device_instance_id,
-                );
-                Ok(DeviceSessionStrategy {
-                    crn,
-                    inner: AutoRefresh::with_token(refresher, token),
-                })
-            }
+            OAuthTokenSource::Store(store) => Self::build_from_store(store, base_url_override),
         }
+    }
+
+    /// Build from a token supplied directly (in-memory only, no store).
+    fn build_from_token(
+        region: Region,
+        client_id: String,
+        mut token: Token,
+        base_url_override: Option<url::Url>,
+    ) -> Result<DeviceSessionStrategy, AuthError> {
+        let base_url = match base_url_override {
+            Some(url) => url,
+            None => {
+                crate::cts_base_url_from_env()?.unwrap_or(CtsServiceDiscovery::endpoint(region)?)
+            }
+        };
+        // Derive CRN from the explicit region parameter and the token's
+        // workspace claim. We can't use token.workspace_crn() here
+        // because set_region() hasn't been called on the token yet.
+        let crn = token
+            .workspace_id()
+            .map(|ws| Crn::new(region, ws))
+            .map_err(|e| {
+                warn!("Could not extract workspace CRN from token: {e}");
+                e
+            })
+            .ok();
+        let region_id = region.identifier();
+        let device_instance_id = token.device_instance_id().map(String::from);
+        token.set_region(&region_id);
+        token.set_client_id(&client_id);
+        let refresher = DeviceSessionRefresher::new(
+            None,
+            ensure_trailing_slash(base_url),
+            &client_id,
+            &region_id,
+            device_instance_id,
+        );
+        Ok(DeviceSessionStrategy {
+            crn,
+            inner: AutoRefresh::with_token(refresher, token),
+        })
+    }
+
+    /// Build from a token persisted in a [`ProfileStore`].
+    #[cfg(not(target_arch = "wasm32"))]
+    fn build_from_store(
+        store: ProfileStore,
+        base_url_override: Option<url::Url>,
+    ) -> Result<DeviceSessionStrategy, AuthError> {
+        let ws_store = store.current_workspace_store()?;
+        let token: Token = ws_store.load_profile()?;
+
+        let region_str = token
+            .region()
+            .ok_or(AuthError::NotAuthenticated)?
+            .to_string();
+        let client_id = token
+            .client_id()
+            .ok_or(AuthError::NotAuthenticated)?
+            .to_string();
+        let crn = token
+            .workspace_crn()
+            .map_err(|e| {
+                warn!("Could not extract workspace CRN from token: {e}");
+                e
+            })
+            .ok();
+        let device_instance_id = token.device_instance_id().map(String::from);
+
+        let base_url = match base_url_override {
+            Some(url) => url,
+            None => crate::cts_base_url_from_env()?.unwrap_or(token.issuer()?),
+        };
+
+        let refresher = DeviceSessionRefresher::new(
+            Some(ws_store),
+            ensure_trailing_slash(base_url),
+            &client_id,
+            &region_str,
+            device_instance_id,
+        );
+        Ok(DeviceSessionStrategy {
+            crn,
+            inner: AutoRefresh::with_token(refresher, token),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{claims_with_workspace, jwt_token, raw_token};
+
+    fn base_url() -> url::Url {
+        "https://cts.example.com".parse().expect("valid url")
+    }
+
+    #[test]
+    fn build_from_token_derives_crn_from_the_jwt_workspace_claim() {
+        let region = Region::aws("ap-southeast-2").expect("valid region");
+        let token = jwt_token(claims_with_workspace("7366ITCXSAPCH5TN"));
+
+        let strategy = DeviceSessionStrategy::with_token(region, "my-client", token)
+            .base_url(base_url())
+            .build()
+            .expect("build should succeed for a valid token");
+
+        let crn = strategy
+            .workspace_crn()
+            .expect("CRN should be derived from the workspace claim")
+            .to_string();
+        assert!(crn.starts_with("crn:"), "unexpected CRN: {crn}");
+        assert!(
+            crn.contains("7366ITCXSAPCH5TN"),
+            "CRN should carry the token's workspace, got: {crn}"
+        );
+    }
+
+    #[test]
+    fn build_from_token_succeeds_without_a_crn_when_the_workspace_claim_is_absent() {
+        let region = Region::aws("ap-southeast-2").expect("valid region");
+        // A non-JWT access token: the workspace claim can't be decoded, so CRN
+        // derivation is skipped (it is best-effort) but the build still succeeds.
+        let token = raw_token("not-a-jwt");
+
+        let strategy = DeviceSessionStrategy::with_token(region, "my-client", token)
+            .base_url(base_url())
+            .build()
+            .expect("build should succeed even when the CRN can't be derived");
+
+        assert!(
+            strategy.workspace_crn().is_none(),
+            "CRN should be None when the token has no decodable workspace claim"
+        );
     }
 }

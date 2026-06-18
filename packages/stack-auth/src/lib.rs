@@ -37,6 +37,7 @@ mod auth_strategy_fn;
 mod authorize_dto;
 mod auto_refresh;
 mod auto_strategy;
+mod clock;
 mod device_session_refresher;
 mod device_session_strategy;
 mod oidc_federation_strategy;
@@ -57,6 +58,9 @@ mod device_code;
 
 #[cfg(any(test, feature = "test-utils"))]
 mod static_token_strategy;
+
+#[cfg(test)]
+mod test_support;
 
 pub use access_key::{AccessKey, InvalidAccessKey};
 pub use access_key_strategy::{AccessKeyStrategy, AccessKeyStrategyBuilder};
@@ -473,24 +477,65 @@ pub(crate) fn http_client() -> reqwest::Client {
 mod tests {
     use super::*;
 
+    /// The `error_code` strings are a stable contract surfaced across FFI
+    /// (JS `Error.code`, Node-API codes), so pin every variant's code. Covers
+    /// all variants except `Request`, whose inner `reqwest::Error` has no public
+    /// constructor; if a new variant is added without a code, `error_code`'s
+    /// exhaustive match fails to compile, so the contract can't silently drift.
     #[test]
-    fn auth_error_code_known_variants() {
-        assert_eq!(AuthError::AccessDenied.error_code(), "ACCESS_DENIED");
-        assert_eq!(AuthError::TokenExpired.error_code(), "EXPIRED_TOKEN");
-        assert_eq!(AuthError::InvalidGrant.error_code(), "INVALID_GRANT");
-        assert_eq!(AuthError::InvalidClient.error_code(), "INVALID_CLIENT");
-        assert_eq!(
-            AuthError::NotAuthenticated.error_code(),
-            "NOT_AUTHENTICATED"
-        );
-        assert_eq!(
-            AuthError::MissingWorkspaceCrn.error_code(),
-            "MISSING_WORKSPACE_CRN"
-        );
-        assert_eq!(AuthError::Server("x".into()).error_code(), "SERVER_ERROR");
-        assert_eq!(
-            AuthError::InvalidToken("malformed".into()).error_code(),
-            "INVALID_TOKEN"
-        );
+    #[allow(clippy::unwrap_used)]
+    fn auth_error_code_is_stable_for_every_variant() {
+        let workspace = "ZVATKW3VHMFG27DY"
+            .parse::<cts_common::WorkspaceId>()
+            .unwrap();
+
+        let cases: Vec<(AuthError, &str)> = vec![
+            (AuthError::AccessDenied, "ACCESS_DENIED"),
+            (AuthError::TokenExpired, "EXPIRED_TOKEN"),
+            (AuthError::InvalidGrant, "INVALID_GRANT"),
+            (AuthError::InvalidClient, "INVALID_CLIENT"),
+            (AuthError::NotAuthenticated, "NOT_AUTHENTICATED"),
+            (AuthError::MissingWorkspaceCrn, "MISSING_WORKSPACE_CRN"),
+            (AuthError::Server("boom".into()), "SERVER_ERROR"),
+            (AuthError::InvalidToken("malformed".into()), "INVALID_TOKEN"),
+            (
+                AuthError::InvalidUrl("not a url".parse::<url::Url>().unwrap_err()),
+                "INVALID_URL",
+            ),
+            (
+                AuthError::Region("not-a-region".parse::<cts_common::Region>().unwrap_err()),
+                "INVALID_REGION",
+            ),
+            (
+                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
+                "INVALID_CRN",
+            ),
+            (
+                AuthError::InvalidWorkspaceId("!".parse::<cts_common::WorkspaceId>().unwrap_err()),
+                "INVALID_WORKSPACE_ID",
+            ),
+            (
+                AuthError::InvalidAccessKey(
+                    "".parse::<crate::access_key::AccessKey>().unwrap_err(),
+                ),
+                "INVALID_ACCESS_KEY",
+            ),
+            (
+                AuthError::WorkspaceMismatch {
+                    expected_workspace: workspace,
+                    token_workspace: workspace,
+                },
+                "WORKSPACE_MISMATCH",
+            ),
+            #[cfg(not(target_arch = "wasm32"))]
+            (
+                AuthError::Store(stack_profile::ProfileError::HomeDirNotFound),
+                "STORE_ERROR",
+            ),
+        ];
+
+        for (err, expected) in cases {
+            assert_eq!(err.error_code(), expected, "error_code for {err:?}");
+        }
     }
 }

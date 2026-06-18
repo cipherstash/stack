@@ -1,5 +1,3 @@
-use web_time::{SystemTime, UNIX_EPOCH};
-
 use cts_common::claims::Claims;
 use cts_common::{Crn, Region, WorkspaceId};
 use url::Url;
@@ -18,6 +16,16 @@ impl stack_profile::ProfileData for Token {
 /// unusable, giving the HTTP refresh call time to complete while concurrent
 /// callers can still use the current token.
 const EXPIRY_LEEWAY_SECS: u64 = 90;
+
+/// The current Unix time in whole seconds, from the system wall clock.
+///
+/// Delegates to [`SystemClock`](crate::clock::SystemClock) so the crate has a
+/// single definition of "now"; the `*_at` methods take an explicit `now` for
+/// tests that drive a [`Clock`](crate::clock::Clock).
+fn now_unix_secs() -> u64 {
+    use crate::clock::{Clock, SystemClock};
+    SystemClock.now_unix_secs()
+}
 
 /// An access token returned by a successful authentication flow.
 ///
@@ -59,11 +67,7 @@ impl Token {
 
     /// How many seconds until the token expires (computed from the current time).
     pub fn expires_in(&self) -> u64 {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        self.expires_at.saturating_sub(now)
+        self.expires_at.saturating_sub(now_unix_secs())
     }
 
     /// Returns `true` if the token has expired (with 90 seconds of leeway).
@@ -75,11 +79,16 @@ impl Token {
     /// For checking whether the token is still usable as a bearer credential,
     /// use [`is_usable`](Self::is_usable) instead.
     pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now + EXPIRY_LEEWAY_SECS >= self.expires_at
+        self.is_expired_at(now_unix_secs())
+    }
+
+    /// [`is_expired`](Self::is_expired) evaluated against an explicit `now`
+    /// (seconds since the Unix epoch) rather than the wall clock.
+    ///
+    /// Used internally so [`AutoRefresh`](crate::auto_refresh::AutoRefresh) can
+    /// drive expiry from an injected [`Clock`](crate::clock::Clock).
+    pub(crate) fn is_expired_at(&self, now: u64) -> bool {
+        now.saturating_add(EXPIRY_LEEWAY_SECS) >= self.expires_at
     }
 
     /// Returns `true` if the token is still usable (before the actual expiry timestamp).
@@ -87,10 +96,12 @@ impl Token {
     /// Unlike [`is_expired`](Self::is_expired) which includes 90s leeway for preemptive
     /// refresh, this only returns `false` when the token has genuinely expired.
     pub fn is_usable(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        self.is_usable_at(now_unix_secs())
+    }
+
+    /// [`is_usable`](Self::is_usable) evaluated against an explicit `now`
+    /// (seconds since the Unix epoch) rather than the wall clock.
+    pub(crate) fn is_usable_at(&self, now: u64) -> bool {
         now < self.expires_at
     }
 
@@ -247,15 +258,11 @@ impl Token {
         }
 
         let token_resp: RefreshResponse = resp.json().await?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
 
         Ok(Token {
             access_token: token_resp.access_token,
             token_type: token_resp.token_type,
-            expires_at: now + token_resp.expires_in,
+            expires_at: now_unix_secs() + token_resp.expires_in,
             refresh_token: token_resp.refresh_token,
             region: None,
             client_id: None,
@@ -295,19 +302,15 @@ struct RefreshErrorResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{claims_with_workspace, jwt_token, raw_token};
     use crate::AuthError;
     use mocktail::prelude::*;
 
     fn make_token(expires_in: u64, refresh: bool) -> Token {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
         Token {
             access_token: SecretToken::new("test-access-token"),
             token_type: "Bearer".to_string(),
-            expires_at: now + expires_in,
+            expires_at: now_unix_secs() + expires_in,
             refresh_token: if refresh {
                 Some(SecretToken::new("test-refresh-token"))
             } else {
@@ -348,6 +351,62 @@ mod tests {
         assert!(
             !debug.contains("super_secret_value"),
             "SecretToken Debug should not contain the secret, got: {debug}"
+        );
+    }
+
+    // ---- is_expired_at / is_usable_at boundary tests ----
+
+    /// A token with an explicit absolute `expires_at`, for driving the `*_at`
+    /// predicates against precise boundary values (unlike `make_token`, which is
+    /// relative to the wall clock).
+    fn token_expiring_at(expires_at: u64) -> Token {
+        Token {
+            access_token: SecretToken::new("t"),
+            token_type: "Bearer".to_string(),
+            expires_at,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+    }
+
+    #[test]
+    fn is_usable_at_boundary() {
+        let t = token_expiring_at(1000);
+        assert!(t.is_usable_at(999), "before expiry → usable");
+        assert!(!t.is_usable_at(1000), "exactly at expiry → not usable");
+        assert!(!t.is_usable_at(1001), "past expiry → not usable");
+    }
+
+    #[test]
+    fn is_expired_at_leeway_window() {
+        // EXPIRY_LEEWAY_SECS == 90: `is_expired_at` flips to true 90s ahead of
+        // the real expiry timestamp so refresh is triggered preemptively.
+        let t = token_expiring_at(1000);
+        assert!(
+            !t.is_expired_at(909),
+            "just outside the 90s leeway → not expired"
+        );
+        assert!(t.is_expired_at(910), "exactly at the leeway edge → expired");
+        // Inside the leeway window the token reads as "expired" (so a refresh is
+        // triggered) yet is still usable — this is the expired-but-usable state
+        // that drives AutoRefresh's non-blocking refresh path.
+        assert!(
+            t.is_expired_at(950) && t.is_usable_at(950),
+            "inside the leeway: expired but still usable"
+        );
+    }
+
+    #[test]
+    fn is_expired_at_saturates_near_u64_max() {
+        // `is_expired_at` computes `now + EXPIRY_LEEWAY_SECS`; a plain add would
+        // overflow and panic in debug builds. `test_support::raw_token` mints
+        // tokens with `expires_at == u64::MAX`, so the saturating add must hold.
+        let t = token_expiring_at(u64::MAX);
+        assert!(
+            t.is_expired_at(u64::MAX),
+            "saturating_add must not overflow at the u64 ceiling"
         );
     }
 
@@ -489,84 +548,41 @@ mod tests {
 
     // ---- decode_claims / workspace_id / issuer tests ----
 
-    /// Build a Token whose access_token is a real (unsigned) JWT containing the
-    /// given claims JSON.
-    fn make_jwt_token(claims_json: serde_json::Value) -> Token {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        let jwt = encode(
-            &Header::default(),
-            &claims_json,
-            &EncodingKey::from_secret(b"test-secret"),
-        )
-        .expect("failed to encode JWT");
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        Token {
-            access_token: SecretToken::new(jwt),
-            token_type: "Bearer".to_string(),
-            expires_at: now + 3600,
-            refresh_token: None,
-            region: None,
-            client_id: None,
-            device_instance_id: None,
-        }
-    }
-
     fn valid_claims_json() -> serde_json::Value {
-        serde_json::json!({
-            "workspace": "7366ITCXSAPCH5TN",
-            "iss": "https://cts.example.com",
-            "sub": "user-123",
-            "aud": "https://cts.example.com",
-            "iat": 1700000000u64,
-            "exp": 1700003600u64,
-            "scope": "dataset:create"
-        })
+        claims_with_workspace("7366ITCXSAPCH5TN")
     }
 
     #[test]
     fn test_workspace_id_extracts_from_jwt() {
-        let token = make_jwt_token(valid_claims_json());
+        let token = jwt_token(valid_claims_json());
         let ws = token.workspace_id().expect("should extract workspace ID");
         assert_eq!(ws.to_string(), "7366ITCXSAPCH5TN");
     }
 
     #[test]
     fn test_issuer_extracts_url_from_jwt() {
-        let token = make_jwt_token(valid_claims_json());
+        let token = jwt_token(valid_claims_json());
         let issuer = token.issuer().expect("should extract issuer");
         assert_eq!(issuer.as_str(), "https://cts.example.com/");
     }
 
     #[test]
     fn test_workspace_id_fails_on_invalid_jwt() {
-        let token = Token {
-            access_token: SecretToken::new("not-a-jwt"),
-            token_type: "Bearer".to_string(),
-            expires_at: 0,
-            refresh_token: None,
-            region: None,
-            client_id: None,
-            device_instance_id: None,
-        };
+        let token = raw_token("not-a-jwt");
         let err = token.workspace_id().unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)));
     }
 
     #[test]
     fn test_issuer_fails_on_missing_claims() {
-        let token = make_jwt_token(serde_json::json!({"sub": "user-123"}));
+        let token = jwt_token(serde_json::json!({"sub": "user-123"}));
         let err = token.issuer().unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)));
     }
 
     #[test]
     fn test_workspace_crn_derives_from_region_and_workspace() {
-        let mut token = make_jwt_token(valid_claims_json());
+        let mut token = jwt_token(valid_claims_json());
         token.set_region("ap-southeast-2.aws");
         let crn = token.workspace_crn().expect("should derive workspace CRN");
         assert_eq!(crn.to_string(), "crn:ap-southeast-2.aws:7366ITCXSAPCH5TN");
@@ -574,14 +590,14 @@ mod tests {
 
     #[test]
     fn test_workspace_crn_fails_without_region() {
-        let token = make_jwt_token(valid_claims_json());
+        let token = jwt_token(valid_claims_json());
         let err = token.workspace_crn().unwrap_err();
         assert!(matches!(err, AuthError::NotAuthenticated));
     }
 
     #[test]
     fn test_workspace_crn_fails_with_invalid_region() {
-        let mut token = make_jwt_token(valid_claims_json());
+        let mut token = jwt_token(valid_claims_json());
         token.set_region("invalid-region");
         let err = token.workspace_crn().unwrap_err();
         assert!(matches!(err, AuthError::Server(_)));
