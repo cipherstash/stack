@@ -53,6 +53,10 @@ tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
 
 [features]
 test-utils = []
+# Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
+# harnesses in `fuzz/`. A Cargo feature (not `#[cfg(fuzzing)]`) so it is a known
+# cfg and never trips the `unexpected_cfgs` lint under `-D warnings`.
+fuzz = []
 
 [[example]]
 name = "auto_strategy"

@@ -19,10 +19,19 @@ libfuzzer-sys = "0.4"
 
 [dependencies.stack-auth]
 path = ".."
+# `fuzz` exposes the fuzz-only entry points (e.g. `Token::fuzz_decode_claims`).
+features = ["fuzz"]
 
 [[bin]]
 name = "access_key_parse"
 path = "fuzz_targets/access_key_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jwt_decode"
+path = "fuzz_targets/jwt_decode.rs"
 test = false
 doc = false
 bench = false
