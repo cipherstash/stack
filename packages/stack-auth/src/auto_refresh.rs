@@ -1832,4 +1832,53 @@ mod expiry_crossing_regression {
             "exactly one refresh attempt for all callers combined"
         );
     }
+
+    /// A [`Refresher`] whose `refresh` panics if it is ever called, so a test can
+    /// assert that no refresh is triggered.
+    struct NeverRefresher;
+
+    impl Refresher for NeverRefresher {
+        type Credential = ();
+
+        fn save(&self, _token: &Token) {}
+
+        fn try_credential(&self, token: Option<&mut Token>) -> Option<Self::Credential> {
+            token.map(|_| ())
+        }
+
+        fn restore(&self, _token: &mut Token, _credential: Self::Credential) {}
+
+        // Keep the explicit `impl Future + Send` form to match the sibling test
+        // refreshers; the trivial body would otherwise trip `manual_async_fn`.
+        #[allow(clippy::manual_async_fn)]
+        fn refresh(
+            &self,
+            _credential: &Self::Credential,
+        ) -> impl Future<Output = Result<Token, AuthError>> + Send {
+            async { panic!("refresh must not be called while the token reads as fresh") }
+        }
+    }
+
+    /// A wall clock running *backwards* (NTP step, VM snapshot restore) must not
+    /// panic or spuriously force a refresh. Each `get_token` call samples `now`
+    /// once and re-evaluates the pure `is_expired_at`/`is_usable_at` predicates,
+    /// and the only time subtraction in the crate (`Token::expires_in`) saturates
+    /// — so there is no cross-call delta to underflow. A rewind simply makes the
+    /// token read as fresh again.
+    #[tokio::test]
+    async fn backwards_clock_does_not_panic_or_force_refresh() {
+        let clock = TestClock::new(1_000_000);
+        // Fresh token: expires well beyond the 90s leeway.
+        let token = make_token("fresh", clock.now() + 3600);
+        let strategy = AutoRefresh::with_token_and_clock(NeverRefresher, token, clock.shared());
+
+        // Forward reading returns the cached token without refreshing.
+        assert_eq!(strategy.get_token().await.unwrap().as_str(), "fresh");
+
+        // The wall clock jumps 100_000s into the past.
+        clock.set(900_000);
+
+        // Still fresh, still no refresh (NeverRefresher would panic), no hang.
+        assert_eq!(strategy.get_token().await.unwrap().as_str(), "fresh");
+    }
 }

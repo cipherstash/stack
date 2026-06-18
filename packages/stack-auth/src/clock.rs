@@ -70,6 +70,13 @@ impl TestClock {
         self.0.fetch_add(secs, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Set the clock to an arbitrary value, including one earlier than the
+    /// current reading — used to simulate the wall clock jumping backwards
+    /// (NTP step, VM snapshot restore, manual clock change).
+    pub(crate) fn set(&self, now: u64) {
+        self.0.store(now, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// The current value of the clock.
     pub(crate) fn now(&self) -> u64 {
         self.0.load(std::sync::atomic::Ordering::SeqCst)
