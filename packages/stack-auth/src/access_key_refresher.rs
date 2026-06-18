@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use web_time::{SystemTime, UNIX_EPOCH};
-
 use url::Url;
 
 use crate::authorize_dto::AuthoriseResponse;
@@ -69,15 +67,17 @@ impl Refresher for AccessKeyRefresher {
         }
 
         let auth_resp: AuthoriseResponse = resp.json().await?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
 
         Ok(Token {
             access_token: auth_resp.access_token,
             token_type: "Bearer".to_string(),
-            expires_at: now + auth_resp.expiry,
+            // CTS `/api/authorise` returns `expiry` as an ABSOLUTE Unix epoch (it is
+            // the JWT `exp` claim), NOT a relative duration. The previous `now + expiry`
+            // pushed the local expiry decades into the future, so `AutoRefresh` never
+            // considered the token expired and never refreshed it — the token then
+            // silently died at its real (~15 min) `exp` and every request failed until
+            // the process restarted. Use the value as-is. See CIP-3233.
+            expires_at: auth_resp.expiry,
             refresh_token: None,
             region: None,
             client_id: None,
@@ -103,10 +103,17 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn auth_response_json(access: &str, expiry: u64) -> serde_json::Value {
+    /// Build a mock `/api/authorise` response. CTS returns `expiry` as an
+    /// ABSOLUTE Unix epoch (the JWT `exp` claim), so model that faithfully: the
+    /// token is valid for `expires_in_secs` from now.
+    fn auth_response_json(access: &str, expires_in_secs: u64) -> serde_json::Value {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         serde_json::json!({
             "accessToken": access,
-            "expiry": expiry
+            "expiry": now + expires_in_secs
         })
     }
 
@@ -151,6 +158,50 @@ mod tests {
 
     fn make_fresh_token(access: &str) -> Token {
         make_token(access, 3600)
+    }
+
+    // ---- Regression: CTS `expiry` is an absolute epoch (CIP-3233) ----
+
+    /// CTS `/api/authorise` returns `expiry` as an ABSOLUTE Unix epoch (the JWT
+    /// `exp` claim), not a relative duration. The refresher must use it as-is.
+    ///
+    /// Pre-fix (`expires_at = now + expiry`), this token's `expires_at` lands
+    /// ~decades in the future, so `is_expired()` is never true — the token never
+    /// refreshes and silently dies at its real ~15-minute `exp`. The assertion
+    /// below fails under the pre-fix arithmetic (`expires_in()` ≈ 1.7e9) and
+    /// passes with the fix (`expires_in()` ≈ 900).
+    #[tokio::test]
+    async fn access_key_expiry_is_absolute_epoch_not_relative() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let absolute_expiry = now + 900; // a 15-minute token, as an absolute epoch
+
+        let mut mocks = MockSet::new();
+        mocks.mock(move |when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({
+                "accessToken": "tok",
+                "expiry": absolute_expiry
+            }));
+        });
+        let server = start_server(mocks).await;
+
+        let refresher =
+            AccessKeyRefresher::new(SecretToken::new("CSAKid.secret"), server.url(""), None);
+        let token = refresher.refresh(&()).await.unwrap();
+
+        assert!(
+            token.expires_in() <= 1000,
+            "expires_in should be ~900s (absolute `expiry` used as-is); got {} \
+             — pre-fix `now + expiry` yields ~1.7e9",
+            token.expires_in()
+        );
+        assert!(
+            !token.is_expired(),
+            "a fresh 15-minute token must not be reported as already expired"
+        );
     }
 
     // ---- Initial auth tests ----
@@ -558,9 +609,15 @@ mod tests {
         state.counting.enter();
         tokio::time::sleep(state.delay).await;
         state.counting.exit();
+        // CTS returns `expiry` as an absolute epoch (JWT `exp`); model a token
+        // valid for 1 hour from now.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         axum::Json(serde_json::json!({
             "accessToken": "refreshed-token",
-            "expiry": 3600
+            "expiry": now + 3600
         }))
     }
 
