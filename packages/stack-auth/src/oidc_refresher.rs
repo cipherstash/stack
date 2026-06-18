@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use cts_common::WorkspaceId;
 use url::Url;
-use web_time::{SystemTime, UNIX_EPOCH};
 
 use crate::authorize_dto::AuthoriseResponse;
 use crate::refresher::Refresher;
@@ -167,15 +166,17 @@ impl<P: OidcProvider> Refresher for OidcRefresher<P> {
         }
 
         let auth_resp: AuthoriseResponse = resp.json().await?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
 
         Ok(Token {
             access_token: auth_resp.access_token,
             token_type: "Bearer".to_string(),
-            expires_at: now + auth_resp.expiry,
+            // CTS `/api/authorise` returns `expiry` as an ABSOLUTE Unix epoch (it is
+            // the JWT `exp` claim), NOT a relative duration. The previous `now + expiry`
+            // pushed the local expiry decades into the future, so `AutoRefresh` never
+            // considered the token expired and never re-federated it — the token then
+            // silently died at its real (~15 min) `exp` and every request failed until
+            // the process restarted. Use the value as-is. See CIP-3233.
+            expires_at: auth_resp.expiry,
             refresh_token: None,
             region: None,
             client_id: None,
@@ -210,8 +211,18 @@ mod tests {
         WORKSPACE_ID.parse().unwrap()
     }
 
-    fn auth_response_json(access: &str, expiry: u64) -> serde_json::Value {
-        serde_json::json!({ "accessToken": access, "expiry": expiry })
+    /// Build a mock `/api/authorise` response. CTS returns `expiry` as an
+    /// ABSOLUTE Unix epoch (the JWT `exp` claim), so model that faithfully: the
+    /// token is valid for `expires_in_secs` from now.
+    fn auth_response_json(access: &str, expires_in_secs: u64) -> serde_json::Value {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        serde_json::json!({
+            "accessToken": access,
+            "expiry": now + expires_in_secs
+        })
     }
 
     async fn start_server(mocks: MockSet) -> MockServer {
@@ -257,6 +268,51 @@ mod tests {
             client_id: None,
             device_instance_id: None,
         }
+    }
+
+    // ---- Regression: CTS `expiry` is an absolute epoch (CIP-3233) ----
+
+    /// CTS `/api/authorise` returns `expiry` as an ABSOLUTE Unix epoch (the JWT
+    /// `exp` claim), not a relative duration — identical to the access-key path
+    /// fixed in CIP-3233. The OIDC refresher must use it as-is.
+    ///
+    /// Pre-fix (`expires_at = now + expiry`), this token's `expires_at` lands
+    /// ~decades in the future, so `is_expired()` is never true — the federated
+    /// token never re-federates and silently dies at its real ~15-minute `exp`.
+    /// The assertion below fails under the pre-fix arithmetic (`expires_in()` ≈
+    /// 1.7e9) and passes with the fix (`expires_in()` ≈ 900). See CIP-3233.
+    #[tokio::test]
+    async fn oidc_expiry_is_absolute_epoch_not_relative() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let absolute_expiry = now + 900; // a 15-minute token, as an absolute epoch
+
+        let mut mocks = MockSet::new();
+        mocks.mock(move |when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({
+                "accessToken": "tok",
+                "expiry": absolute_expiry
+            }));
+        });
+        let server = start_server(mocks).await;
+
+        let (_calls, provider) = counting_provider();
+        let refresher = OidcRefresher::new(provider, workspace_id(), server.url(""));
+        let token = refresher.refresh(&()).await.unwrap();
+
+        assert!(
+            token.expires_in() <= 1000,
+            "expires_in should be ~900s (absolute `expiry` used as-is); got {} \
+             — pre-fix `now + expiry` yields ~1.7e9",
+            token.expires_in()
+        );
+        assert!(
+            !token.is_expired(),
+            "a freshly federated 15-minute token must not be reported as already expired"
+        );
     }
 
     #[tokio::test]
