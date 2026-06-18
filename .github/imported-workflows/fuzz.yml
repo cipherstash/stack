@@ -1,0 +1,95 @@
+name: "Fuzz (cargo-fuzz)"
+
+# libFuzzer fuzzing for the public string parsers (see packages/*/fuzz/ and the
+# `fuzz:*` mise tasks). Two jobs with deliberately different roles:
+#
+#   * fuzz-regression (pull_request, blocking): builds every harness — which
+#     catches harness/API drift, e.g. a changed `FromStr` signature — and
+#     replays the committed seed corpus with `-runs=0`. This is deterministic
+#     (no fuzzing), so it is safe to gate PRs: it fails only if a harness stops
+#     compiling or a committed corpus input crashes.
+#
+#   * fuzz-campaign (schedule + manual, non-blocking on PRs): the actual
+#     time-boxed bug-finding run. A timed fuzz run is nondeterministic, so it
+#     must NOT gate PRs; it runs nightly against the default branch and on
+#     demand, and uploads any crash reproducer as an artifact.
+on:
+  pull_request:
+    paths:
+      - packages/cts-common/**
+      - packages/stack-auth/**
+      - .github/workflows/fuzz.yml
+      # Ordering matters: keep these excludes last so docs-only changes are skipped.
+      - "!**.md"
+      - "!**.example"
+  schedule:
+    # Nightly at 04:27 UTC. Scheduled runs only fire from the default branch.
+    - cron: "27 4 * * *"
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: "Seconds to fuzz each target (campaign job)"
+        default: "120"
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  fuzz-regression:
+    name: "fuzz regression (${{ matrix.slug }})"
+    if: github.event_name == 'pull_request'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { task: "fuzz:crn", slug: crn }
+          - { task: "fuzz:workspace-id", slug: workspace-id }
+          - { task: "fuzz:region", slug: region }
+          - { task: "fuzz:access-key", slug: access-key }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust
+      - name: Install nightly toolchain (cargo-fuzz requires it)
+        run: rustup toolchain install nightly --profile minimal
+      - name: "Build harness + replay seed corpus (${{ matrix.slug }})"
+        # `-runs=0` replays the committed seed corpus once and exits without
+        # fuzzing. The trailing args override the task's default `-max_total_time`.
+        run: mise run ${{ matrix.task }} -- -runs=0
+
+  fuzz-campaign:
+    name: "fuzz campaign (${{ matrix.slug }})"
+    if: github.event_name != 'pull_request'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { task: "fuzz:crn", slug: crn }
+          - { task: "fuzz:workspace-id", slug: workspace-id }
+          - { task: "fuzz:region", slug: region }
+          - { task: "fuzz:access-key", slug: access-key }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust
+      - name: Install nightly toolchain (cargo-fuzz requires it)
+        run: rustup toolchain install nightly --profile minimal
+      - name: "Fuzz ${{ matrix.slug }}"
+        # The trailing `-max_total_time` (last value wins) overrides the task default.
+        run: mise run ${{ matrix.task }} -- -max_total_time=${{ github.event.inputs.max_total_time || '120' }}
+      - name: Upload crash reproducer
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ matrix.slug }}
+          path: packages/*/fuzz/artifacts/**
+          if-no-files-found: ignore
