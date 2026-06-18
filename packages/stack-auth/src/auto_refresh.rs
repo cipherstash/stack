@@ -1882,3 +1882,122 @@ mod expiry_crossing_regression {
         assert_eq!(strategy.get_token().await.unwrap().as_str(), "fresh");
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod regression_cip_3159 {
+    use super::*;
+    use crate::access_key_refresher::AccessKeyRefresher;
+    use crate::SecretToken;
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// `/api/authorise` handler that sleeps `delay` before returning a valid
+    /// access-key token response (with an ABSOLUTE-epoch `expiry`, as CTS
+    /// returns), giving the test a window to cancel in.
+    async fn delayed_authorise_handler(
+        axum::extract::State(delay): axum::extract::State<Duration>,
+    ) -> axum::Json<serde_json::Value> {
+        tokio::time::sleep(delay).await;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        axum::Json(serde_json::json!({
+            "accessToken": "refreshed-token",
+            "expiry": now + 3600
+        }))
+    }
+
+    async fn start_authorise_server(delay: Duration) -> url::Url {
+        let app = axum::Router::new()
+            .route(
+                "/api/authorise",
+                axum::routing::post(delayed_authorise_handler),
+            )
+            .with_state(delay);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        url::Url::parse(&format!("http://{addr}")).unwrap()
+    }
+
+    /// is_expired() == true (within the 90s leeway, so `get_token` refreshes),
+    /// but is_usable() == true for `secs_until_expiry` (so it takes the
+    /// non-blocking path).
+    fn expiring_but_usable_token(access: &str, secs_until_expiry: u64) -> Token {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        Token {
+            access_token: SecretToken::new(access),
+            token_type: "Bearer".to_string(),
+            expires_at: now + secs_until_expiry,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn cancellation_in_relock_window_does_not_strand_refresh() {
+        let http_delay = Duration::from_millis(400);
+        let base_url = start_authorise_server(http_delay).await;
+
+        let strategy = Arc::new(AutoRefresh::with_token(
+            AccessKeyRefresher::new(
+                SecretToken::new("CSAKtestKeyId.testKeySecret"),
+                base_url,
+                None,
+            ),
+            expiring_but_usable_token("old-usable", 2),
+        ));
+
+        // Caller A drives the refresh: it locks state, sets the in-progress
+        // flag, drops the lock, then awaits the (slow) HTTP authorise call.
+        let a = Arc::clone(&strategy);
+        let handle = tokio::spawn(async move { a.get_token().await });
+
+        // Let A reach the HTTP await, then take the state lock so that when A's
+        // request completes it parks on its post-HTTP `state.lock().await`
+        // instead of installing the new token.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let held = strategy.state.lock().await;
+
+        // A's HTTP completes (~400ms) and blocks on the lock we hold.
+        tokio::time::sleep(http_delay + Duration::from_millis(200)).await;
+        assert!(
+            strategy.refresh_in_progress.load(Ordering::Acquire),
+            "precondition: a refresh should be in flight while caller A is parked",
+        );
+
+        // Cancel A precisely in the post-HTTP, pre-install window.
+        handle.abort();
+        let _ = handle.await;
+        drop(held);
+
+        // The CancelGuard's Drop must have cleared the flag on cancellation.
+        // Pre-fix, defuse() ran before the re-lock, so this stays `true`.
+        assert!(
+            !strategy.refresh_in_progress.load(Ordering::Acquire),
+            "refresh_in_progress stranded `true` after cancellation in the re-lock window (CIP-3159)",
+        );
+
+        // End-to-end: once the cached token crosses real expiry, a stranded flag
+        // would route the next caller into wait_for_in_flight_refresh and hang on
+        // a notify that never comes. With the fix, the caller re-authenticates.
+        tokio::time::sleep(Duration::from_millis(2100)).await;
+        let b = Arc::clone(&strategy);
+        let result =
+            tokio::time::timeout(Duration::from_secs(3), async move { b.get_token().await }).await;
+        assert!(
+            matches!(result, Ok(Ok(_))),
+            "get_token() hung or failed after cancellation — refresh wedged (CIP-3159): {result:?}",
+        );
+    }
+}
