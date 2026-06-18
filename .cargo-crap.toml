@@ -1,0 +1,23 @@
+# Configuration for `cargo crap` — the CRAP (Change Risk Anti-Patterns) metric.
+#
+# CRAP rewards complex code that is well tested and penalises complex code that
+# is not:
+#
+#     CRAP = CC^2 * (1 - coverage)^3 + CC      (CC = cyclomatic complexity)
+#
+# A simple or fully covered function scores roughly its complexity; a complex,
+# untested one scores into the hundreds. It surfaces exactly the kind of risky,
+# under-tested logic where a subtle mistake can hide (see CIP-3233 / #2036).
+#
+# Run it via `mise run crap:stack-auth` (generates coverage first, then scores).
+# Config discovery walks up from the working directory, so this single root file
+# applies anywhere in the workspace.
+
+# CRAP score above which a function is flagged for refactoring or more tests.
+# 30 is the long-standing Crap4J default: a CC-10 function needs ~42% coverage,
+# a CC-15 function ~59%, to fall below it.
+threshold = 30
+
+# Functions with complexity but no coverage data are scored as 0% covered
+# (worst case) rather than silently skipped — uninstrumented code is risk too.
+missing = "pessimistic"

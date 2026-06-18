@@ -7,3 +7,22 @@ run = [
   "cp ../../../target/debug/libstack_auth_node.dylib stack-auth-node.node 2>/dev/null || cp ../../../target/debug/libstack_auth_node.so stack-auth-node.node",
   "npx vitest run",
 ]
+
+["crap:stack-auth"]
+description = "Report the CRAP (Change Risk Anti-Patterns) metric for stack-auth — flags complex, under-tested functions"
+run = [
+  # Instrument and run the unit tests, emitting LCOV coverage that `cargo crap` consumes.
+  # `stress_tests` are excluded: they are wall-clock timing/concurrency tests (real
+  # axum servers, real sleeps, sub-second expiry windows) that become flaky under
+  # llvm-cov's ~2-5x slowdown. They still run in the normal `cargo nextest` gate, and
+  # excluding them here has zero effect on the report — the deterministic unit tests
+  # already cover the same lines.
+  "mise x --env test -- cargo llvm-cov nextest -p stack-auth --all-features -E 'not test(stress_tests)' --lcov --output-path {{config_root}}/target/stack-auth-lcov.info",
+  # Score every production function. Excludes test code, examples and the node/wasm
+  # binding crates so the report reflects the core library. Thresholds come from
+  # the workspace-root .cargo-crap.toml. Add --fail-above here to turn it into a gate.
+  # NOTE: this must stay the LAST command — the crap-stack-auth.yml CI workflow runs
+  # this task and relies on mise appending its trailing args (--format pr-comment etc.)
+  # to this `cargo crap` invocation.
+  "cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**'",
+]
