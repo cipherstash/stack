@@ -211,7 +211,7 @@ impl Token {
         crate::decode_jwt_payload_wasm(self.access_token.as_str())
     }
 
-    /// Fuzz-only entry point: run the JWT claims decode ([`Token::decode_claims`])
+    /// Fuzz-only entry point: run the JWT claims decode (`Token::decode_claims`)
     /// over an arbitrary string, discarding the claims and keeping only whether it
     /// succeeded. Gated on the `fuzz` feature so it never appears in normal builds.
     /// Reading claims from a token we already hold must never panic on a malformed
