@@ -15,6 +15,14 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
+    // protect-ffi 0.24+ uses conditional exports — `node` picks the NAPI
+    // bindings, `default` picks the WASM bundle. Bundler resolution doesn't
+    // include `node` by default, so without this stack's main entry would
+    // resolve to the WASM types (which have a different `newClient`
+    // signature). The `/wasm-inline` subpath has unconditional types so it
+    // is unaffected.
+    "customConditions": ["node"],
+
     // Best practices
     "strict": true,
     "skipLibCheck": true,
