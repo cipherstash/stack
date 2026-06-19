@@ -216,7 +216,11 @@ impl Token {
     /// succeeded. Gated on the `fuzz` feature so it never appears in normal builds.
     /// Reading claims from a token we already hold must never panic on a malformed
     /// token — only return `Err`. See `packages/stack-auth/fuzz`.
+    ///
+    /// `#[doc(hidden)]`: the `doc:stack-auth` task builds with `--all-features`,
+    /// which enables `fuzz` — this keeps the shim out of the generated public docs.
     #[cfg(feature = "fuzz")]
+    #[doc(hidden)]
     pub fn fuzz_decode_claims(token: &str) -> Result<(), AuthError> {
         Token {
             access_token: SecretToken::new(token),
