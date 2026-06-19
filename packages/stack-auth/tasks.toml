@@ -27,3 +27,16 @@ run = [
   # to this `cargo crap` invocation.
   "cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**' --fail-above",
 ]
+
+# Fuzz stack-auth's public AccessKey string parser (libFuzzer via cargo-fuzz).
+# Requires the nightly toolchain. Runs 60s by default; override by appending a
+# libFuzzer flag, e.g. `mise run fuzz:access-key -- -max_total_time=300` (the
+# last repeated value wins). `--sanitizer none` is safe — the parser is pure
+# safe Rust. `--target $(rustc … host)` forces the native host triple (the
+# cargo-fuzz binary may be x86_64 under Rosetta on Apple Silicon, which
+# otherwise misdetects the target). The fuzz crate lives in
+# `packages/stack-auth/fuzz/` (detached).
+["fuzz:access-key"]
+description = "Fuzz stack-auth's AccessKey string parser (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-auth"
+run = "cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"

@@ -1,0 +1,31 @@
+# Fuzz crate for stack-auth's public string parsers.
+#
+# This is a DETACHED crate: the `[workspace]` table at the bottom makes it its
+# own workspace root so the libfuzzer-sys dependency and the nightly-only build
+# never touch the main monorepo workspace. It is not a member of the root
+# workspace (see the root Cargo.toml `members` list). Run via the `fuzz:*`
+# mise tasks, which invoke `cargo +nightly fuzz run`.
+[package]
+name = "stack-auth-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.stack-auth]
+path = ".."
+
+[[bin]]
+name = "access_key_parse"
+path = "fuzz_targets/access_key_parse.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+resolver = "2"
