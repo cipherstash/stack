@@ -42,7 +42,11 @@ export async function doctorCommand(): Promise<void> {
 
   const nodeMajor = Number(process.versions.node.split('.')[0])
   const nodeOk = Number.isFinite(nodeMajor) && nodeMajor >= 22
-  report(nodeOk, `Node.js ${process.versions.node}`, nodeOk ? '' : 'requires >= 22')
+  report(
+    nodeOk,
+    `Node.js ${process.versions.node}`,
+    nodeOk ? '' : 'requires >= 22',
+  )
   if (!nodeOk) failed = true
 
   report(true, `${messages.doctor.platformLabel} ${currentTarget()}`)

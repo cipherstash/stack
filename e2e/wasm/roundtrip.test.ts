@@ -60,7 +60,10 @@ Deno.test({
   async fn() {
     // Sanity: we really are in Deno, and WASM is available.
     assertExists(globalThis.WebAssembly, 'WebAssembly global missing')
-    assertExists(globalThis.Deno, 'Deno global missing (test framework misconfigured)')
+    assertExists(
+      globalThis.Deno,
+      'Deno global missing (test framework misconfigured)',
+    )
 
     const users = encryptedTable('protect-ci', {
       email: encryptedColumn('email'),
@@ -86,7 +89,11 @@ Deno.test({
       table: users,
     })
 
-    assertEquals(isEncrypted(encrypted), true, 'encrypt() did not return a recognised EQL payload')
+    assertEquals(
+      isEncrypted(encrypted),
+      true,
+      'encrypt() did not return a recognised EQL payload',
+    )
 
     const decrypted = await client.decrypt(encrypted)
     assertEquals(decrypted, plaintext, 'round-trip plaintext mismatch')

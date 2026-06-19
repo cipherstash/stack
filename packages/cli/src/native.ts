@@ -23,7 +23,8 @@ interface ModuleError extends Error {
 
 // Matches the platform-suffixed optional package, e.g.
 // `@cipherstash/protect-ffi-darwin-arm64` or `@cipherstash/auth-linux-x64-gnu`.
-const PLATFORM_PKG = /@cipherstash\/[a-z0-9-]+-(?:darwin|linux|win32)-[a-z0-9-]+/i
+const PLATFORM_PKG =
+  /@cipherstash\/[a-z0-9-]+-(?:darwin|linux|win32)-[a-z0-9-]+/i
 
 /** `<platform>-<arch>` for the current process, e.g. `darwin-arm64`. */
 export function currentTarget(): string {
@@ -45,7 +46,9 @@ export function isNativeBinaryMissing(err: unknown): err is ModuleError {
   const haystack = `${e.message}\n${(e.requireStack ?? []).join('\n')}`
   // A platform-suffixed @cipherstash package, or a failure surfaced from the
   // neon loader, both mean the optional native binary wasn't installed.
-  return PLATFORM_PKG.test(haystack) || /[\\/]@neon-rs[\\/]load[\\/]/.test(haystack)
+  return (
+    PLATFORM_PKG.test(haystack) || /[\\/]@neon-rs[\\/]load[\\/]/.test(haystack)
+  )
 }
 
 function missingModuleName(err: ModuleError): string | undefined {

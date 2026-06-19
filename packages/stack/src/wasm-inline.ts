@@ -49,13 +49,13 @@ import {
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
 import {
+  buildEncryptConfig,
   type CastAs,
   type EncryptConfig,
   EncryptedColumn,
   EncryptedField,
   type EncryptedTable,
   type EncryptedTableColumn,
-  buildEncryptConfig,
   encryptConfigSchema,
   toEqlCastAs,
 } from '@/schema'
@@ -65,12 +65,6 @@ import type { Encrypted, EncryptOptions } from '@/types'
 // Schema + type re-exports
 // -----------------------------------------------------------------------
 
-export {
-  encryptedColumn,
-  encryptedField,
-  encryptedTable,
-} from '@/schema'
-
 export type {
   EncryptedColumn,
   EncryptedField,
@@ -78,6 +72,11 @@ export type {
   EncryptedTableColumn,
   InferEncrypted,
   InferPlaintext,
+} from '@/schema'
+export {
+  encryptedColumn,
+  encryptedField,
+  encryptedTable,
 } from '@/schema'
 
 export type { Encrypted } from '@/types'
@@ -144,8 +143,9 @@ export type WasmClientConfig = {
   clientId: string
   /** Workspace client key — required by the WASM client. */
   clientKey: string
-} & ( // Either pass an accessKey (we build the strategy) or hand in
-  // your own pre-built one — never both, never neither.
+  // Provide exactly one of `accessKey` (we build the strategy) or a
+  // pre-built `strategy` — never both, never neither.
+} & (
   | {
       accessKey: string
       strategy?: never
@@ -218,9 +218,12 @@ export class WasmEncryptionClient {
   }
 
   async decrypt(encrypted: Encrypted): Promise<WasmPlaintext> {
-    return (await wasmDecrypt(this.client as never, {
-      ciphertext: encrypted,
-    } as never)) as WasmPlaintext
+    return (await wasmDecrypt(
+      this.client as never,
+      {
+        ciphertext: encrypted,
+      } as never,
+    )) as WasmPlaintext
   }
 
   isEncrypted(value: unknown): boolean {
@@ -252,11 +255,14 @@ export async function Encryption(
 
   const strategy = resolveStrategy(clientConfig)
 
-  const client = await wasmNewClient(strategy as never, {
-    encryptConfig: normalizeCastAs(encryptConfig),
-    clientId: clientConfig.clientId,
-    clientKey: clientConfig.clientKey,
-  } as never)
+  const client = await wasmNewClient(
+    strategy as never,
+    {
+      encryptConfig: normalizeCastAs(encryptConfig),
+      clientId: clientConfig.clientId,
+      clientKey: clientConfig.clientKey,
+    } as never,
+  )
 
   // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
   // code that can build a `WasmEncryptionClient` — external callers hit
@@ -305,9 +311,7 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
   return { ...config, tables }
 }
 
-function getColumnName(
-  col: EncryptOptions['column'],
-): string {
+function getColumnName(col: EncryptOptions['column']): string {
   if (col instanceof EncryptedColumn || col instanceof EncryptedField) {
     return col.getName()
   }
