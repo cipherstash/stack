@@ -109,6 +109,7 @@ export type WasmPlaintext =
   | string
   | number
   | boolean
+  | null
   | Record<string, unknown>
   | WasmPlaintext[]
 
@@ -186,18 +187,19 @@ export class WasmEncryptionClient {
   /** @internal */
   private readonly client: unknown
 
-  private constructor(token: symbol, client: unknown) {
+  /**
+   * @internal Gated by the module-scoped {@link INTERNAL_CONSTRUCT}
+   * symbol: external callers can't obtain it, so {@link Encryption} is
+   * effectively the only constructor. (A `private` constructor would
+   * block {@link Encryption} too, since it lives outside the class.)
+   */
+  constructor(token: symbol, client: unknown) {
     if (token !== INTERNAL_CONSTRUCT) {
       throw new Error(
         '[encryption]: WasmEncryptionClient cannot be constructed directly — use the Encryption() factory.',
       )
     }
     this.client = client
-  }
-
-  /** @internal */
-  static __construct(client: unknown): WasmEncryptionClient {
-    return new WasmEncryptionClient(INTERNAL_CONSTRUCT, client)
   }
 
   async encrypt(
@@ -256,7 +258,10 @@ export async function Encryption(
     clientKey: clientConfig.clientKey,
   } as never)
 
-  return WasmEncryptionClient.__construct(client)
+  // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
+  // code that can build a `WasmEncryptionClient` — external callers hit
+  // the constructor guard.
+  return new WasmEncryptionClient(INTERNAL_CONSTRUCT, client)
 }
 
 /**
@@ -312,7 +317,18 @@ function getColumnName(
 }
 
 function resolveStrategy(cfg: WasmClientConfig): AccessKeyStrategy {
+  // The discriminated union rejects `accessKey` + `strategy` together at
+  // compile time, but JS callers (Deno / plain JS) bypass that — guard at
+  // runtime so a conflicting config fails loudly instead of silently
+  // preferring one.
+  if (cfg.strategy && cfg.accessKey) {
+    throw new Error(
+      '[encryption]: `config.strategy` and `config.accessKey` are mutually exclusive — pass exactly one.',
+    )
+  }
   if (cfg.strategy) return cfg.strategy
-  // Discriminated union guarantees this branch implies `accessKey` is set.
-  return AccessKeyStrategy.create(cfg.region, cfg.accessKey as string)
+  if (cfg.accessKey) return AccessKeyStrategy.create(cfg.region, cfg.accessKey)
+  throw new Error(
+    '[encryption]: WASM entry requires either `config.accessKey` or `config.strategy`.',
+  )
 }
