@@ -109,11 +109,21 @@ impl MockAuthServer {
     /// `OidcFederationStrategy` JWT exchange.
     ///
     /// `expiry` (seconds until the CTS token expires) defaults to 3600. Pass a
-    /// small value to exercise re-federation on expiry.
+    /// small value (e.g. 0) to exercise re-federation on expiry.
     #[napi]
     pub fn mock_authorize_endpoint(&self, expiry: Option<u32>) {
         let jwt = test_jwt();
-        let expiry = expiry.unwrap_or(3600);
+        let expires_in = expiry.unwrap_or(3600);
+        // CTS returns `expiry` as an ABSOLUTE Unix epoch (the JWT `exp` claim),
+        // NOT a relative duration — see CIP-3233. The ergonomic `expiry` argument
+        // is "seconds from now", so convert it to the absolute epoch the wire
+        // actually carries; otherwise the mock no longer matches production and a
+        // freshly federated token reads as already expired.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expiry = now + u64::from(expires_in);
         self.server.mocks().mock(move |when, then| {
             when.post().path("/api/authorise");
             then.json(serde_json::json!({

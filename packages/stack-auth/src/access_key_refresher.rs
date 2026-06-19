@@ -68,21 +68,9 @@ impl Refresher for AccessKeyRefresher {
 
         let auth_resp: AuthoriseResponse = resp.json().await?;
 
-        Ok(Token {
-            access_token: auth_resp.access_token,
-            token_type: "Bearer".to_string(),
-            // CTS `/api/authorise` returns `expiry` as an ABSOLUTE Unix epoch (it is
-            // the JWT `exp` claim), NOT a relative duration. The previous `now + expiry`
-            // pushed the local expiry decades into the future, so `AutoRefresh` never
-            // considered the token expired and never refreshed it — the token then
-            // silently died at its real (~15 min) `exp` and every request failed until
-            // the process restarted. Use the value as-is. See CIP-3233.
-            expires_at: auth_resp.expiry,
-            refresh_token: None,
-            region: None,
-            client_id: None,
-            device_instance_id: None,
-        })
+        // The response → Token mapping (including the absolute-epoch `expiry`
+        // handling that CIP-3233 fixed) lives on `From<AuthoriseResponse>`.
+        Ok(auth_resp.into())
     }
 }
 
