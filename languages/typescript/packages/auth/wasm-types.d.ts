@@ -111,7 +111,12 @@ export declare class OidcFederationStrategy {
     workspaceCrn: string,
     getJwt: () => Promise<string>,
   ): OidcFederationStrategy
-  /** Create an `OidcFederationStrategy` backed by external token-store callbacks. */
+  /**
+   * Create an `OidcFederationStrategy` backed by external token-store
+   * callbacks. Takes the same `workspaceCrn` as {@link create} (region for
+   * service discovery, workspace ID for verification) plus `loadToken` /
+   * `saveToken` to persist the federated CTS token across requests.
+   */
   static createWithStore(
     workspaceCrn: string,
     getJwt: () => Promise<string>,

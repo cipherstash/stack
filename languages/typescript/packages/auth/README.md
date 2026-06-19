@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
 
   const strategy = OidcFederationStrategy.create(
-    workspaceCrn, // e.g. "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
+    Deno.env.get("CS_WORKSPACE_CRN")!, // e.g. "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
     // Returns the *current* provider JWT — re-invoked on every re-federation.
     () => getClerkSessionToken(req),
     { store: cookieStore({ request: req, responseHeaders }) },

@@ -108,6 +108,23 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     }
   });
 
+  it("rejects a CRN whose workspace segment is malformed with .code", () => {
+    // "not-a-crn" above fails at the `crn:` prefix; this is the distinct path
+    // where the prefix/region parse but the workspace segment fails validation
+    // — what the old INVALID_WORKSPACE_ID case covered before the CRN switch.
+    try {
+      OidcFederationStrategy.create(
+        "crn:ap-southeast-2.aws:not-a-valid-workspace",
+        () => Promise.resolve("h.p.s"),
+      );
+      expect.unreachable(
+        "create should throw on a malformed workspace segment",
+      );
+    } catch (err) {
+      expect((err as AuthError).code).toBe("INVALID_CRN");
+    }
+  });
+
   it("persists the federated token to the store", async () => {
     server.mockAuthorizeEndpoint();
     const store = memStore();

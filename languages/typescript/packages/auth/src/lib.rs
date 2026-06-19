@@ -34,6 +34,15 @@ fn warn_callback(name: &str, detail: &str) {
     eprintln!("stack-auth: {name} {detail}");
 }
 
+/// Parse a workspace CRN string, mapping a parse failure to the `INVALID_CRN`
+/// error code. Shared by every factory that takes a workspace CRN
+/// (`AccessKeyStrategy`, `AutoStrategy`, `OidcFederationStrategy`).
+fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn> {
+    workspace_crn
+        .parse()
+        .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))
+}
+
 // ---------------------------------------------------------------------------
 // TokenResult — returned by strategy.getToken()
 // ---------------------------------------------------------------------------
@@ -117,10 +126,7 @@ impl AutoStrategy {
                 builder = builder.with_access_key(key);
             }
             if let Some(crn_str) = opts.workspace_crn {
-                let crn = crn_str
-                    .parse()
-                    .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
-                builder = builder.with_workspace_crn(crn);
+                builder = builder.with_workspace_crn(parse_workspace_crn(&crn_str)?);
             }
         }
 
@@ -159,9 +165,7 @@ impl AccessKeyStrategy {
     /// A mismatch fails `getToken()` with `code === "WORKSPACE_MISMATCH"`.
     #[napi(factory)]
     pub fn create(workspace_crn: String, access_key: String) -> Result<Self> {
-        let crn: cts_common::Crn = workspace_crn
-            .parse()
-            .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_napi_error(AuthError::from(e)))?;
@@ -212,13 +216,6 @@ impl DeviceSessionStrategy {
 // ---------------------------------------------------------------------------
 // OidcFederationStrategy — federate a third-party OIDC JWT into a CTS service token
 // ---------------------------------------------------------------------------
-
-/// Parse the workspace CRN shared by both `OidcFederationStrategy` factories.
-fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn> {
-    workspace_crn
-        .parse()
-        .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))
-}
 
 /// Bridges a JS `getJwt` callback into a Rust [`OidcProvider`].
 ///

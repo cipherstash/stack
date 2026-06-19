@@ -205,8 +205,9 @@ impl OidcProvider for JsOidcProvider {
     }
 }
 
-/// Parse the workspace CRN shared by both `OidcFederationStrategy` factories.
-#[cfg(target_arch = "wasm32")]
+/// Parse a workspace CRN string, mapping a parse failure to the `INVALID_CRN`
+/// error code. Shared by every factory that takes a workspace CRN
+/// (`AccessKeyStrategy`, `OidcFederationStrategy`).
 fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn, JsValue> {
     workspace_crn
         .parse()
@@ -244,9 +245,7 @@ impl AccessKeyStrategy {
     /// Every issued token's workspace claim is verified against the CRN;
     /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
     pub fn create(workspace_crn: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
-        let crn: cts_common::Crn = workspace_crn
-            .parse()
-            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
@@ -274,9 +273,7 @@ impl AccessKeyStrategy {
         load_token: js_sys::Function,
         save_token: js_sys::Function,
     ) -> Result<AccessKeyStrategy, JsValue> {
-        let crn: cts_common::Crn = workspace_crn
-            .parse()
-            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
@@ -640,6 +637,20 @@ mod tests {
     fn oidc_federation_strategy_rejects_invalid_crn() {
         let err = expect_js_err(OidcFederationStrategy::create(
             "not-a-crn".to_string(),
+            jwt_fn("h.p.s"),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_CRN");
+    }
+
+    /// A structurally well-formed CRN whose workspace segment fails
+    /// `WorkspaceId` validation is rejected with `INVALID_CRN` — the path the
+    /// old `INVALID_WORKSPACE_ID` test covered before the factory took a CRN.
+    /// "not-a-crn" above fails at the `crn:` prefix; this exercises the
+    /// workspace sub-parser instead.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_rejects_crn_with_malformed_workspace() {
+        let err = expect_js_err(OidcFederationStrategy::create(
+            "crn:ap-southeast-2.aws:not-a-valid-workspace".to_string(),
             jwt_fn("h.p.s"),
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");

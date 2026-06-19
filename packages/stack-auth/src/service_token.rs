@@ -91,6 +91,33 @@ impl ServiceToken {
             .map_err(|reason| AuthError::InvalidToken(reason.clone()))
     }
 
+    /// Verify the token's `workspace` claim matches `expected`, returning the
+    /// token unchanged on a match.
+    ///
+    /// This is the shared post-auth check that every strategy bound to a
+    /// workspace CRN ([`AccessKeyStrategy`](crate::AccessKeyStrategy),
+    /// [`OidcFederationStrategy`](crate::OidcFederationStrategy)) runs on each
+    /// [`get_token`](crate::AuthStrategy::get_token), so a token CTS minted for
+    /// a different workspace (or loaded from a poisoned shared cache) is never
+    /// handed back.
+    ///
+    /// # Errors
+    ///
+    /// - [`AuthError::WorkspaceMismatch`] if the token's `workspace` claim is a
+    ///   different workspace than `expected`.
+    /// - [`AuthError::InvalidToken`] if the token is not a valid JWT or its
+    ///   `workspace` claim could not be decoded, so verification can't run.
+    pub(crate) fn verify_workspace(self, expected: WorkspaceId) -> Result<Self, AuthError> {
+        let token_workspace = *self.workspace_id()?;
+        if token_workspace != expected {
+            return Err(AuthError::WorkspaceMismatch {
+                expected_workspace: expected,
+                token_workspace,
+            });
+        }
+        Ok(self)
+    }
+
     /// Return the `iss` (issuer) URL from the JWT claims.
     ///
     /// In CipherStash tokens the issuer is the CTS host URL for the workspace.
@@ -375,6 +402,65 @@ mod tests {
         assert!(
             token.workspace_id().is_err(),
             "workspace_id should error for non-JWT token"
+        );
+    }
+
+    #[test]
+    fn verify_workspace_returns_token_when_workspace_matches() {
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        let expected: WorkspaceId = "ZVATKW3VHMFG27DY".parse().unwrap();
+
+        let verified = token
+            .verify_workspace(expected)
+            .expect("matching workspace should pass verification");
+        assert_eq!(
+            verified.workspace_id().unwrap().to_string(),
+            "ZVATKW3VHMFG27DY",
+            "verified token should still carry its workspace claim",
+        );
+    }
+
+    #[test]
+    fn verify_workspace_errors_with_mismatch_when_workspace_differs() {
+        // make_jwt mints a token for workspace ZVATKW3VHMFG27DY.
+        let jwt = make_jwt(
+            "https://cts.example.com/",
+            services_with_zerokms("https://zerokms.example.com/"),
+        );
+        let token = ServiceToken::new(SecretToken::new(jwt));
+        let expected: WorkspaceId = "AAAAAAAAAAAAAAAA".parse().unwrap();
+
+        let err = token
+            .verify_workspace(expected)
+            .expect_err("a different expected workspace must be rejected");
+        match err {
+            AuthError::WorkspaceMismatch {
+                expected_workspace,
+                token_workspace,
+            } => {
+                assert_eq!(expected_workspace.to_string(), "AAAAAAAAAAAAAAAA");
+                assert_eq!(token_workspace.to_string(), "ZVATKW3VHMFG27DY");
+            }
+            other => panic!("expected WorkspaceMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_workspace_errors_with_invalid_token_for_non_jwt() {
+        // A non-JWT can't be decoded, so verification can't run.
+        let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
+        let expected: WorkspaceId = "ZVATKW3VHMFG27DY".parse().unwrap();
+
+        let err = token
+            .verify_workspace(expected)
+            .expect_err("a non-JWT token must surface InvalidToken");
+        assert!(
+            matches!(err, AuthError::InvalidToken(_)),
+            "expected InvalidToken, got {err:?}",
         );
     }
 

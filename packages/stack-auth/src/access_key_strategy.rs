@@ -93,15 +93,10 @@ impl AccessKeyStrategy {
 
 impl<S: TokenStore> AuthStrategy for &AccessKeyStrategy<S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        let token: ServiceToken = self.inner.get_token().await?;
-        let token_workspace = *token.workspace_id()?;
-        if token_workspace != self.expected_workspace {
-            return Err(AuthError::WorkspaceMismatch {
-                expected_workspace: self.expected_workspace,
-                token_workspace,
-            });
-        }
-        Ok(token)
+        self.inner
+            .get_token()
+            .await?
+            .verify_workspace(self.expected_workspace)
     }
 }
 
@@ -186,35 +181,9 @@ impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
 #[cfg(test)]
 mod workspace_verification_tests {
     use super::*;
+    use crate::test_support::{crn_with_workspace, jwt_with_workspace};
     use mocktail::prelude::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    /// Build a JWT carrying the given `workspace` claim. Mirrors the
-    /// helper in `node/src/mock_auth_server.rs`.
-    fn jwt_with_workspace(workspace: &str) -> String {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        #[allow(clippy::expect_used)]
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_secs();
-        let claims = serde_json::json!({
-            "iss": "https://cts.example.com/",
-            "sub": "CS|test-access-key",
-            "aud": "test-audience",
-            "iat": now,
-            "exp": now + 3600,
-            "workspace": workspace,
-            "scope": "",
-        });
-        #[allow(clippy::expect_used)]
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(b"test-secret"),
-        )
-        .expect("JWT encode")
-    }
+    use std::time::UNIX_EPOCH;
 
     async fn start_mock_server_returning_jwt(workspace: &str) -> MockServer {
         let mut mocks = MockSet::new();
@@ -230,11 +199,6 @@ mod workspace_verification_tests {
         #[allow(clippy::expect_used)]
         server.start().await.expect("mock server start");
         server
-    }
-
-    fn crn_with_workspace(workspace: &str) -> Crn {
-        let s = format!("crn:ap-southeast-2.aws:{workspace}");
-        s.parse().expect("test CRN parses")
     }
 
     fn test_access_key() -> AccessKey {

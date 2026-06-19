@@ -11,19 +11,22 @@
 
   ```ts
   const strategy = OidcFederationStrategy.create(
-    "ap-southeast-2.aws",
-    "ZVATKW3VHMFG27DY",
+    "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
     getJwt, // () => Promise<string> — your current third-party OIDC JWT
   );
   const { token } = await strategy.getToken();
   ```
+
+  The first argument is a workspace CRN: region is derived from it for service
+  discovery, and the workspace ID is used to verify every federated token —
+  the same shape as `AccessKeyStrategy`.
 
   A store-backed variant persists the federated CTS token (e.g. in an HTTP-only
   cookie) so it survives across requests without re-federating:
 
   ```ts
   OidcFederationStrategy.createWithStore(
-    region, workspaceId, getJwt, loadToken, saveToken,
+    workspaceCrn, getJwt, loadToken, saveToken,
   );
   ```
 
@@ -67,8 +70,11 @@
 - `WORKSPACE_MISMATCH` — the JWT decoded cleanly but its `workspace` claim
   doesn't match the CRN the strategy was configured with. The accompanying
   message identifies both the expected and the token-supplied workspace IDs.
-- `INVALID_WORKSPACE_ID` — the `workspaceId` passed to an
-  `OidcFederationStrategy` factory could not be parsed.
+- `INVALID_WORKSPACE_ID` — a token's `workspace` claim could not be parsed
+  while extracting or verifying it.
+
+Both `AccessKeyStrategy` and `OidcFederationStrategy` take a workspace CRN, so a
+malformed CRN argument is rejected with the existing `INVALID_CRN` code.
 
 ## 0.35.0
 

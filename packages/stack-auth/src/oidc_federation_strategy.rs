@@ -84,15 +84,10 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
 
 impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P, S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        let token: ServiceToken = self.inner.get_token().await?;
-        let token_workspace = *token.workspace_id()?;
-        if token_workspace != self.expected_workspace {
-            return Err(AuthError::WorkspaceMismatch {
-                expected_workspace: self.expected_workspace,
-                token_workspace,
-            });
-        }
-        Ok(token)
+        self.inner
+            .get_token()
+            .await?
+            .verify_workspace(self.expected_workspace)
     }
 }
 
@@ -175,33 +170,8 @@ mod tests {
 
     use super::*;
     use crate::oidc_refresher::OidcProviderFn;
+    use crate::test_support::{crn_with_workspace, jwt_with_workspace};
     use crate::{InMemoryTokenStore, SecretToken, Token, TokenStore};
-
-    /// Mint an unsigned JWT carrying the given `workspace` claim. The strategy
-    /// decodes claims without verifying the signature (it already holds the
-    /// token), so an unsigned token is sufficient to exercise verification.
-    fn jwt_with_workspace(workspace: &str) -> String {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_secs();
-        let claims = serde_json::json!({
-            "iss": "https://cts.example.com/",
-            "sub": "CS|test-user",
-            "aud": "test-audience",
-            "iat": now,
-            "exp": now + 3600,
-            "workspace": workspace,
-            "scope": "",
-        });
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(b"test-secret"),
-        )
-        .expect("JWT encode")
-    }
 
     /// A mock CTS that federates any OIDC token into a CTS token carrying the
     /// given `workspace` claim.
@@ -216,12 +186,6 @@ mod tests {
             MockServer::new_http("oidc-federation-strategy-workspace-test").with_mocks(mocks);
         server.start().await.expect("mock server start");
         server
-    }
-
-    fn crn_with_workspace(workspace: &str) -> Crn {
-        format!("crn:ap-southeast-2.aws:{workspace}")
-            .parse()
-            .expect("test CRN parses")
     }
 
     fn provider() -> OidcProviderFn<impl Fn() -> std::future::Ready<Result<SecretToken, AuthError>>>
@@ -248,6 +212,33 @@ mod tests {
             token.workspace_id().expect("workspace_id").as_str(),
             WS,
             "happy-path token should carry the expected workspace",
+        );
+    }
+
+    /// A CRN carrying a `service_name` component is accepted; the
+    /// `service_name` is ignored, exactly as for
+    /// [`AccessKeyStrategy`](crate::AccessKeyStrategy). Pinned as a test —
+    /// matching `access_key_strategy::accepts_crn_with_service_name` — so a
+    /// future contributor doesn't tighten the constructor into rejecting these
+    /// CRNs without realising the docstring already promises acceptance.
+    #[tokio::test]
+    async fn accepts_crn_with_service_name() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+        let crn: Crn = format!("crn:ap-southeast-2.aws:{WS}:zerokms")
+            .parse()
+            .expect("CRN with service_name parses");
+
+        let strategy = OidcFederationStrategy::builder(crn, provider())
+            .base_url(server.url(""))
+            .build()
+            .expect("CRN with service_name should construct a strategy");
+
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "service_name is ignored — verification still uses the workspace ID",
         );
     }
 
