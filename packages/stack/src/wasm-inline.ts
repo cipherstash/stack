@@ -21,7 +21,7 @@
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     region:    "ap-southeast-2.aws",
+ *     region:    "us-east-1.aws",
  *     accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
  *     clientId:  Deno.env.get("CS_CLIENT_ID")!,
  *     clientKey: Deno.env.get("CS_CLIENT_KEY")!,
@@ -134,7 +134,7 @@ export type WasmPlaintext =
  */
 export type WasmClientConfig = {
   /**
-   * CipherStash region, e.g. `"ap-southeast-2.aws"`. Required for now.
+   * CipherStash region, e.g. `"us-east-1.aws"`. Required for now.
    * @deprecated will be replaced by `workspaceCrn` once
    * `@cipherstash/auth` switches `AccessKeyStrategy.create()` to derive
    * region from a CRN.

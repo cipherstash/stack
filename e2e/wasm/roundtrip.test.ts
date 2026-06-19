@@ -69,8 +69,9 @@ Deno.test({
     const client = await Encryption({
       schemas: [users],
       config: {
-        // Default region in the stack is ap-southeast-2.aws; the WASM
-        // entry needs an explicit region for AccessKeyStrategy.
+        // The WASM entry needs an explicit region for AccessKeyStrategy.
+        // This is the region of the CI test workspace the CS_* secrets
+        // target — not the documented default (see wasm-inline.ts).
         region: 'ap-southeast-2.aws',
         accessKey: env!.CS_CLIENT_ACCESS_KEY,
         clientId: env!.CS_CLIENT_ID,

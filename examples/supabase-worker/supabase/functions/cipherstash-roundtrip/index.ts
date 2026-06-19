@@ -28,7 +28,7 @@ Deno.serve(async (_req: Request) => {
   const accessKey = Deno.env.get('CS_CLIENT_ACCESS_KEY')
   const clientId = Deno.env.get('CS_CLIENT_ID')
   const clientKey = Deno.env.get('CS_CLIENT_KEY')
-  const region = Deno.env.get('CS_REGION') ?? 'ap-southeast-2.aws'
+  const region = Deno.env.get('CS_REGION') ?? 'us-east-1.aws'
 
   const missing = Object.entries({
     CS_CLIENT_ACCESS_KEY: accessKey,
