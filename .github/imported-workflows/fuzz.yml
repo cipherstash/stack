@@ -58,6 +58,7 @@ jobs:
           - { task: "fuzz:workspace-id", slug: workspace-id }
           - { task: "fuzz:region", slug: region }
           - { task: "fuzz:access-key", slug: access-key }
+          - { task: "fuzz:jwt-decode", slug: jwt-decode }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
@@ -81,6 +82,7 @@ jobs:
           - { task: "fuzz:workspace-id", slug: workspace-id, dir: packages/cts-common, target: workspace_id_parse }
           - { task: "fuzz:region",       slug: region,       dir: packages/cts-common, target: region_parse }
           - { task: "fuzz:access-key",   slug: access-key,   dir: packages/stack-auth, target: access_key_parse }
+          - { task: "fuzz:jwt-decode",   slug: jwt-decode,   dir: packages/stack-auth, target: jwt_decode }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust

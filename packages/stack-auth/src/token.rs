@@ -211,6 +211,30 @@ impl Token {
         crate::decode_jwt_payload_wasm(self.access_token.as_str())
     }
 
+    /// Fuzz-only entry point: run the JWT claims decode (`Token::decode_claims`)
+    /// over an arbitrary string, discarding the claims and keeping only whether it
+    /// succeeded. Gated on the `fuzz` feature so it never appears in normal builds.
+    /// Reading claims from a token we already hold must never panic on a malformed
+    /// token — only return `Err`. See `packages/stack-auth/fuzz`.
+    ///
+    /// `#[doc(hidden)]`: the `doc:stack-auth` task builds with `--all-features`,
+    /// which enables `fuzz` — this keeps the shim out of the generated public docs.
+    #[cfg(feature = "fuzz")]
+    #[doc(hidden)]
+    pub fn fuzz_decode_claims(token: &str) -> Result<(), AuthError> {
+        Token {
+            access_token: SecretToken::new(token),
+            token_type: String::new(),
+            expires_at: 0,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        }
+        .decode_claims()
+        .map(|_| ())
+    }
+
     /// Exchange a refresh token for a new [`Token`] via the `/oauth/token`
     /// endpoint.
     ///

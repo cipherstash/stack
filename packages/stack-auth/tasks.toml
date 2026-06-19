@@ -40,3 +40,11 @@ run = [
 description = "Fuzz stack-auth's AccessKey string parser (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-auth"
 run = "cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the JWT claims decode path (Token::fuzz_decode_claims, behind the `fuzz`
+# feature). On native this is the jsonwebtoken-based decode with signature
+# validation disabled. Same flags/rationale as fuzz:access-key.
+["fuzz:jwt-decode"]
+description = "Fuzz stack-auth's JWT claims decode path (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-auth"
+run = "cargo +nightly fuzz run jwt_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
