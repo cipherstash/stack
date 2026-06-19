@@ -12,22 +12,22 @@
  *   `cipherstash-codec:<table>.<field>:<action>:<index>@v1`
  */
 
-import type { SqlMigrationPlanOperation } from '@prisma-next/family-sql/control';
-import type { StorageColumn } from '@prisma-next/sql-contract/types';
-import { describe, expect, it } from 'vitest';
+import type { SqlMigrationPlanOperation } from '@prisma-next/family-sql/control'
+import type { StorageColumn } from '@prisma-next/sql-contract/types'
+import { describe, expect, it } from 'vitest'
 import {
   CIPHERSTASH_BOOLEAN_CODEC_ID,
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
-} from '../src/extension-metadata/constants';
+} from '../src/extension-metadata/constants'
 import {
   cipherstashBooleanCodecHooks,
   cipherstashDateCodecHooks,
   cipherstashJsonCodecHooks,
-} from '../src/migration/cipherstash-codec';
+} from '../src/migration/cipherstash-codec'
 
-const TABLE = 'User';
-const FIELD = 'email';
+const TABLE = 'User'
+const FIELD = 'email'
 
 describe('cipherstashDateCodecHooks — cast_as=date', () => {
   it("emits add_search_config(unique) with cast_as='date' when equality flips on", () => {
@@ -40,17 +40,17 @@ describe('cipherstashDateCodecHooks — cast_as=date', () => {
         nullable: false,
         typeParams: { equality: true, orderAndRange: true },
       } as StorageColumn,
-    };
+    }
     const ops = cipherstashDateCodecHooks.onFieldEvent!('added', ctxArg).map(
       (c) => c.toOp() as SqlMigrationPlanOperation<unknown>,
-    );
-    expect(ops).toHaveLength(2);
-    const sqls = ops.map((o) => o.execute[0]!.sql);
-    expect(sqls.some((s) => s.includes(`'unique'`))).toBe(true);
-    expect(sqls.some((s) => s.includes(`'ore'`))).toBe(true);
-    for (const s of sqls) expect(s).toContain(`'date'`);
-  });
-});
+    )
+    expect(ops).toHaveLength(2)
+    const sqls = ops.map((o) => o.execute[0]!.sql)
+    expect(sqls.some((s) => s.includes(`'unique'`))).toBe(true)
+    expect(sqls.some((s) => s.includes(`'ore'`))).toBe(true)
+    for (const s of sqls) expect(s).toContain(`'date'`)
+  })
+})
 
 describe('cipherstashBooleanCodecHooks — equality-only, cast_as=boolean', () => {
   it('emits a single add_search_config(unique) with cast_as=boolean when equality flips on', () => {
@@ -63,14 +63,14 @@ describe('cipherstashBooleanCodecHooks — equality-only, cast_as=boolean', () =
         nullable: false,
         typeParams: { equality: true },
       } as StorageColumn,
-    };
+    }
     const ops = cipherstashBooleanCodecHooks.onFieldEvent!('added', ctxArg).map(
       (c) => c.toOp() as SqlMigrationPlanOperation<unknown>,
-    );
-    expect(ops).toHaveLength(1);
-    expect(ops[0]!.execute[0]!.sql).toContain(`'unique'`);
-    expect(ops[0]!.execute[0]!.sql).toContain(`'boolean'`);
-  });
+    )
+    expect(ops).toHaveLength(1)
+    expect(ops[0]!.execute[0]!.sql).toContain(`'unique'`)
+    expect(ops[0]!.execute[0]!.sql).toContain(`'boolean'`)
+  })
 
   it('does not emit ore ops — booleans have no orderAndRange flag', () => {
     const ctxArg = {
@@ -82,14 +82,14 @@ describe('cipherstashBooleanCodecHooks — equality-only, cast_as=boolean', () =
         nullable: false,
         typeParams: { equality: true, orderAndRange: true },
       } as StorageColumn,
-    };
+    }
     const ops = cipherstashBooleanCodecHooks.onFieldEvent!('added', ctxArg).map(
       (c) => c.toOp() as SqlMigrationPlanOperation<unknown>,
-    );
-    expect(ops).toHaveLength(1);
-    expect(ops[0]!.execute[0]!.sql).not.toContain(`'ore'`);
-  });
-});
+    )
+    expect(ops).toHaveLength(1)
+    expect(ops[0]!.execute[0]!.sql).not.toContain(`'ore'`)
+  })
+})
 
 describe('cipherstashJsonCodecHooks — searchableJson → ste_vec, cast_as=jsonb', () => {
   it('emits add_search_config(ste_vec) with cast_as=jsonb when searchableJson flips on', () => {
@@ -102,14 +102,14 @@ describe('cipherstashJsonCodecHooks — searchableJson → ste_vec, cast_as=json
         nullable: false,
         typeParams: { searchableJson: true },
       } as StorageColumn,
-    };
+    }
     const ops = cipherstashJsonCodecHooks.onFieldEvent!('added', ctxArg).map(
       (c) => c.toOp() as SqlMigrationPlanOperation<unknown>,
-    );
-    expect(ops).toHaveLength(1);
-    expect(ops[0]!.execute[0]!.sql).toContain(`'ste_vec'`);
-    expect(ops[0]!.execute[0]!.sql).toContain(`'jsonb'`);
-  });
+    )
+    expect(ops).toHaveLength(1)
+    expect(ops[0]!.execute[0]!.sql).toContain(`'ste_vec'`)
+    expect(ops[0]!.execute[0]!.sql).toContain(`'jsonb'`)
+  })
 
   it('emits remove_search_config(ste_vec) on drop when searchableJson was previously enabled', () => {
     const ctxArg = {
@@ -121,12 +121,12 @@ describe('cipherstashJsonCodecHooks — searchableJson → ste_vec, cast_as=json
         nullable: false,
         typeParams: { searchableJson: true },
       } as StorageColumn,
-    };
+    }
     const ops = cipherstashJsonCodecHooks.onFieldEvent!('dropped', ctxArg).map(
       (c) => c.toOp() as SqlMigrationPlanOperation<unknown>,
-    );
-    expect(ops).toHaveLength(1);
-    expect(ops[0]!.execute[0]!.sql).toContain('eql_v2.remove_search_config');
-    expect(ops[0]!.execute[0]!.sql).toContain(`'ste_vec'`);
-  });
-});
+    )
+    expect(ops).toHaveLength(1)
+    expect(ops[0]!.execute[0]!.sql).toContain('eql_v2.remove_search_config')
+    expect(ops[0]!.execute[0]!.sql).toContain(`'ste_vec'`)
+  })
+})

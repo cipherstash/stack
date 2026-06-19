@@ -13,13 +13,13 @@ import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { userSeedData } from './fixtures/user-seed-data'
 import {
-  type EncryptedUserRow,
-  type PlaintextUser,
   decryptUserRow,
   decryptUserRows,
+  type EncryptedUserRow,
   expectRowsToBeEncrypted,
-  expectUserToMatchPlaintext,
   expectUsersToMatchPlaintext,
+  expectUserToMatchPlaintext,
+  type PlaintextUser,
   unwrapResult,
 } from './integration-test-helpers'
 

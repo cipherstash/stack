@@ -43,11 +43,14 @@
  * cipherstash-internal — no widening of the framework union.
  */
 
-import type { RuntimeErrorEnvelope } from '@prisma-next/framework-components/runtime';
-import { RUNTIME_ABORTED, runtimeError } from '@prisma-next/framework-components/runtime';
+import type { RuntimeErrorEnvelope } from '@prisma-next/framework-components/runtime'
+import {
+  RUNTIME_ABORTED,
+  runtimeError,
+} from '@prisma-next/framework-components/runtime'
 
 /** Discriminator placed in `details.phase` of cipherstash-issued aborts. */
-export type CipherstashAbortPhase = 'bulk-encrypt' | 'decrypt' | 'decrypt-all';
+export type CipherstashAbortPhase = 'bulk-encrypt' | 'decrypt' | 'decrypt-all'
 
 /**
  * Construct a `RUNTIME.ABORTED` envelope tagged with a cipherstash
@@ -61,8 +64,12 @@ export function cipherstashAborted(
   phase: CipherstashAbortPhase,
   cause?: unknown,
 ): RuntimeErrorEnvelope {
-  const envelope = runtimeError(RUNTIME_ABORTED, `Operation aborted during ${phase}`, { phase });
-  return Object.assign(envelope, { cause });
+  const envelope = runtimeError(
+    RUNTIME_ABORTED,
+    `Operation aborted during ${phase}`,
+    { phase },
+  )
+  return Object.assign(envelope, { cause })
 }
 
 /**
@@ -79,7 +86,7 @@ export function checkCipherstashAborted(
   phase: CipherstashAbortPhase,
 ): void {
   if (signal?.aborted) {
-    throw cipherstashAborted(phase, signal.reason);
+    throw cipherstashAborted(phase, signal.reason)
   }
 }
 
@@ -110,34 +117,34 @@ export async function raceCipherstashAbort<T>(
   phase: CipherstashAbortPhase,
 ): Promise<T> {
   if (signal === undefined) {
-    return await work;
+    return await work
   }
-  const sentinel: { reason: unknown } = { reason: undefined };
-  let onAbort: (() => void) | undefined;
+  const sentinel: { reason: unknown } = { reason: undefined }
+  let onAbort: (() => void) | undefined
 
   const abortPromise = new Promise<never>((_, reject) => {
     if (signal.aborted) {
-      sentinel.reason = signal.reason;
-      reject(sentinel);
-      return;
+      sentinel.reason = signal.reason
+      reject(sentinel)
+      return
     }
     onAbort = () => {
-      sentinel.reason = signal.reason;
-      reject(sentinel);
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
+      sentinel.reason = signal.reason
+      reject(sentinel)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 
   try {
-    return await Promise.race([work, abortPromise]);
+    return await Promise.race([work, abortPromise])
   } catch (error) {
     if (error === sentinel) {
-      throw cipherstashAborted(phase, sentinel.reason);
+      throw cipherstashAborted(phase, sentinel.reason)
     }
-    throw error;
+    throw error
   } finally {
     if (onAbort) {
-      signal.removeEventListener('abort', onAbort);
+      signal.removeEventListener('abort', onAbort)
     }
   }
 }

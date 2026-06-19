@@ -29,7 +29,9 @@ export const HANDOFF_CHOICES: readonly HandoffChoice[] = [
  * (flag absent) returns `null` too — callers distinguish absence from
  * invalidity before calling this.
  */
-export function resolveTarget(target: string | undefined): HandoffChoice | null {
+export function resolveTarget(
+  target: string | undefined,
+): HandoffChoice | null {
   if (!target) return null
   return (HANDOFF_CHOICES as readonly string[]).includes(target)
     ? (target as HandoffChoice)

@@ -1,8 +1,8 @@
+import { type Result, withResult } from '@byteslice/result'
 import type { EncryptionClient } from '@/encryption'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { Decrypted, EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
 import { handleError, toItemWithEqlPayloads } from '../helpers'
 import type { EncryptedDynamoDBError } from '../types'
 import {

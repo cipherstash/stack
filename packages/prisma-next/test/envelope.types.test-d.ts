@@ -11,32 +11,36 @@
  * `AGENTS.md § Typesafety rules`.
  */
 
-import type { EncryptedEnvelopePlaceholder } from '../src/execution/envelope-base';
-import { EncryptedString, type EncryptedStringHandle } from '../src/exports/runtime';
+import type { EncryptedEnvelopePlaceholder } from '../src/execution/envelope-base'
+import {
+  EncryptedString,
+  type EncryptedStringHandle,
+} from '../src/exports/runtime'
 
-const envelope = EncryptedString.from('alice@example.com');
+const envelope = EncryptedString.from('alice@example.com')
 
 // -- Negative: no direct property accessors (forces explicit expose()) ---
 
 // @ts-expect-error — direct `.handle` accessor is not part of the public surface.
-envelope.handle;
+envelope.handle
 // @ts-expect-error — direct `.plaintext` accessor is not part of the public surface.
-envelope.plaintext;
+envelope.plaintext
 // @ts-expect-error — direct `.ciphertext` accessor is not part of the public surface.
-envelope.ciphertext;
+envelope.ciphertext
 
 // -- Positive: explicit access via expose() returns the handle type -----
 
-const _expose: () => EncryptedStringHandle = envelope.expose.bind(envelope);
+const _expose: () => EncryptedStringHandle = envelope.expose.bind(envelope)
 
 const _decrypt: (opts?: { signal?: AbortSignal }) => Promise<string> =
-  envelope.decrypt.bind(envelope);
+  envelope.decrypt.bind(envelope)
 // `toJSON` returns the per-type placeholder object (see envelope-base
 // for the rationale). Pinning the shape here catches a regression
 // that would re-flatten it back to a bare string and lose the
 // machine-readable marker.
-const _toJson: () => EncryptedEnvelopePlaceholder = envelope.toJSON.bind(envelope);
+const _toJson: () => EncryptedEnvelopePlaceholder =
+  envelope.toJSON.bind(envelope)
 
-void _expose;
-void _decrypt;
-void _toJson;
+void _expose
+void _decrypt
+void _toJson

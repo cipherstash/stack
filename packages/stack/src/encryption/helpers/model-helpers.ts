@@ -1,13 +1,13 @@
-import { isEncryptedPayload } from '@/encryption/helpers'
-import type { AuditData } from '@/encryption/operations/base-operation'
-import type { GetLockContextResponse } from '@/identity'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
-import type { Client, Decrypted, Encrypted } from '@/types'
 import {
   type Encrypted as CipherStashEncrypted,
   decryptBulk,
   encryptBulk,
 } from '@cipherstash/protect-ffi'
+import { isEncryptedPayload } from '@/encryption/helpers'
+import type { AuditData } from '@/encryption/operations/base-operation'
+import type { GetLockContextResponse } from '@/identity'
+import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
+import type { Client, Decrypted, Encrypted } from '@/types'
 
 /**
  * Sets a value at a nested path in an object, creating intermediate objects as needed.

@@ -8,8 +8,13 @@
  * with .env files only through these tools, not through direct file access.
  */
 
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
-import { resolve, relative } from 'node:path'
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { relative, resolve } from 'node:path'
 import pg from 'pg'
 
 // --- Security helpers ---
@@ -26,8 +31,13 @@ function escapeRegex(str: string): string {
 function assertWithinCwd(cwd: string, filePath: string): void {
   const resolved = resolve(cwd, filePath)
   const rel = relative(cwd, resolved)
-  if (rel.startsWith('..') || resolve(resolved) !== resolved.replace(/\/$/, '')) {
-    throw new Error(`Path traversal blocked: ${filePath} resolves outside the project directory.`)
+  if (
+    rel.startsWith('..') ||
+    resolve(resolved) !== resolved.replace(/\/$/, '')
+  ) {
+    throw new Error(
+      `Path traversal blocked: ${filePath} resolves outside the project directory.`,
+    )
   }
 }
 
@@ -70,10 +80,7 @@ interface SetEnvValuesInput {
   values: Record<string, string>
 }
 
-export function setEnvValues(
-  cwd: string,
-  input: SetEnvValuesInput,
-): string {
+export function setEnvValues(cwd: string, input: SetEnvValuesInput): string {
   assertWithinCwd(cwd, input.filePath)
   const envPath = resolve(cwd, input.filePath)
 

@@ -7,17 +7,16 @@
  */
 
 import {
+  closeSync,
   existsSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
-  readdirSync,
 } from 'node:fs'
-import { closeSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import * as p from '@clack/prompts'
-import { introspectDatabase } from '../tools/wizard-tools.js'
-import { checkEnvKeys } from '../tools/wizard-tools.js'
+import { checkEnvKeys, introspectDatabase } from '../tools/wizard-tools.js'
 import type {
   DetectedPackageManager,
   Integration,

@@ -16,20 +16,20 @@
 
 import {
   type EncryptedColumn,
-  encryptedColumn,
-  encryptedTable,
   type EncryptedTable,
   type EncryptedTableColumn,
+  encryptedColumn,
+  encryptedTable,
 } from '@cipherstash/stack/schema'
 
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
-  type CipherstashCodecId,
   CIPHERSTASH_DATE_CODEC_ID,
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
+  type CipherstashCodecId,
   isCipherstashCodecId,
 } from '../extension-metadata/constants'
 

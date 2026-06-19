@@ -14,15 +14,15 @@ import {
   EncryptedEnvelopeBase,
   type EncryptedEnvelopeFromInternalArgs,
   type EncryptedEnvelopeHandle,
-} from './envelope-base';
+} from './envelope-base'
 
-export type EncryptedDoubleHandle = EncryptedEnvelopeHandle<number>;
+export type EncryptedDoubleHandle = EncryptedEnvelopeHandle<number>
 
-export type EncryptedDoubleFromInternalArgs = EncryptedEnvelopeFromInternalArgs;
+export type EncryptedDoubleFromInternalArgs = EncryptedEnvelopeFromInternalArgs
 
 export class EncryptedDouble extends EncryptedEnvelopeBase<number> {
   protected override get typeName(): string {
-    return 'EncryptedDouble';
+    return 'EncryptedDouble'
   }
 
   /**
@@ -37,7 +37,7 @@ export class EncryptedDouble extends EncryptedEnvelopeBase<number> {
       table: undefined,
       column: undefined,
       sdk: undefined,
-    });
+    })
   }
 
   /**
@@ -52,6 +52,6 @@ export class EncryptedDouble extends EncryptedEnvelopeBase<number> {
       table: args.table,
       column: args.column,
       sdk: args.sdk,
-    });
+    })
   }
 }

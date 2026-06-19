@@ -11,11 +11,11 @@
  *     byte-for-byte (PSL/TS parity).
  */
 
-import { parsePslDocument } from '@prisma-next/psl-parser';
-import { interpretPslDocumentToSqlContract } from '@prisma-next/sql-contract-psl';
-import { describe, expect, it } from 'vitest';
-import cipherstashControl from '../src/exports/control';
-import cipherstashPack from '../src/exports/pack';
+import { parsePslDocument } from '@prisma-next/psl-parser'
+import { interpretPslDocumentToSqlContract } from '@prisma-next/sql-contract-psl'
+import { describe, expect, it } from 'vitest'
+import cipherstashControl from '../src/exports/control'
+import cipherstashPack from '../src/exports/pack'
 
 const postgresTarget = {
   kind: 'target' as const,
@@ -24,13 +24,13 @@ const postgresTarget = {
   id: 'postgres',
   version: '0.0.1',
   capabilities: {},
-};
+}
 
 const postgresScalarTypeDescriptors = new Map([
   ['String', { codecId: 'pg/text@1', nativeType: 'text' }],
   ['Boolean', { codecId: 'pg/bool@1', nativeType: 'bool' }],
   ['Int', { codecId: 'pg/int4@1', nativeType: 'int4' }],
-]);
+])
 
 function interpret(schema: string) {
   return interpretPslDocumentToSqlContract({
@@ -39,7 +39,7 @@ function interpret(schema: string) {
     scalarTypeDescriptors: postgresScalarTypeDescriptors,
     composedExtensionPacks: [cipherstashControl.id],
     authoringContributions: { type: cipherstashPack.authoring.type, field: {} },
-  });
+  })
 }
 
 // The interpreter returns `Result<Contract, ContractSourceDiagnostics>` and
@@ -50,12 +50,12 @@ type StorageView = {
   readonly tables: Record<
     string,
     {
-      readonly columns: Record<string, Record<string, unknown>>;
+      readonly columns: Record<string, Record<string, unknown>>
     }
-  >;
-  readonly types?: Record<string, Record<string, unknown>>;
-};
-const asStorage = (storage: unknown): StorageView => storage as StorageView;
+  >
+  readonly types?: Record<string, Record<string, unknown>>
+}
+const asStorage = (storage: unknown): StorageView => storage as StorageView
 
 describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
   it('lowers full args to a column with cipherstash/double@1 codec, eql_v2_encrypted nativeType', () => {
@@ -63,39 +63,43 @@ describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
   id Int @id
   value cipherstash.EncryptedDouble({ equality: true, orderAndRange: true })
 }
-`);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(asStorage(result.value.storage).tables['metric']?.columns['value']).toMatchObject({
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['metric']?.columns['value'],
+    ).toMatchObject({
       codecId: 'cipherstash/double@1',
       nativeType: 'eql_v2_encrypted',
       typeParams: { equality: true, orderAndRange: true },
       nullable: false,
-    });
-  });
+    })
+  })
 
   it('defaults both flags to true for an empty options literal', () => {
     const result = interpret(`model Metric {
   id Int @id
   value cipherstash.EncryptedDouble({})
 }
-`);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(asStorage(result.value.storage).tables['metric']?.columns['value']).toMatchObject({
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['metric']?.columns['value'],
+    ).toMatchObject({
       codecId: 'cipherstash/double@1',
       typeParams: { equality: true, orderAndRange: true },
-    });
-  });
+    })
+  })
 
   it('rejects unknown argument names with PSL_INVALID_ATTRIBUTE_ARGUMENT', () => {
     const result = interpret(`model Metric {
   id Int @id
   value cipherstash.EncryptedDouble({ freeTextSearch: true })
 }
-`);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
+`)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
     expect(result.failure.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -103,27 +107,29 @@ describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
           message: expect.stringContaining('freeTextSearch'),
         }),
       ]),
-    );
-  });
+    )
+  })
 
   it('produces an inline-form descriptor structurally identical to the TS factory output', () => {
     const result = interpret(`model Metric {
   id Int @id
   value cipherstash.EncryptedDouble({ equality: true, orderAndRange: false })
 }
-`);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const col = asStorage(result.value.storage).tables['metric']?.columns['value'];
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const col = asStorage(result.value.storage).tables['metric']?.columns[
+      'value'
+    ]
     // Stripping `nullable` (PSL-specific) the column descriptor mirrors
     // the TS factory's lowered shape byte-for-byte (PSL/TS parity).
     expect(col).toMatchObject({
       codecId: 'cipherstash/double@1',
       nativeType: 'eql_v2_encrypted',
       typeParams: { equality: true, orderAndRange: false },
-    });
-  });
-});
+    })
+  })
+})
 
 describe('PSL interpretation: cipherstash.EncryptedBigInt constructor', () => {
   it('lowers full args to a column with cipherstash/bigint@1 codec, eql_v2_encrypted nativeType', () => {
@@ -131,38 +137,42 @@ describe('PSL interpretation: cipherstash.EncryptedBigInt constructor', () => {
   id Int @id
   amount cipherstash.EncryptedBigInt({ equality: true, orderAndRange: true })
 }
-`);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(asStorage(result.value.storage).tables['ledger']?.columns['amount']).toMatchObject({
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['ledger']?.columns['amount'],
+    ).toMatchObject({
       codecId: 'cipherstash/bigint@1',
       nativeType: 'eql_v2_encrypted',
       typeParams: { equality: true, orderAndRange: true },
-    });
-  });
+    })
+  })
 
   it('defaults both flags to true with no arguments', () => {
     const result = interpret(`model Ledger {
   id Int @id
   amount cipherstash.EncryptedBigInt()
 }
-`);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(asStorage(result.value.storage).tables['ledger']?.columns['amount']).toMatchObject({
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['ledger']?.columns['amount'],
+    ).toMatchObject({
       codecId: 'cipherstash/bigint@1',
       typeParams: { equality: true, orderAndRange: true },
-    });
-  });
+    })
+  })
 
   it('rejects unknown argument names with PSL_INVALID_ATTRIBUTE_ARGUMENT', () => {
     const result = interpret(`model Ledger {
   id Int @id
   amount cipherstash.EncryptedBigInt({ freeTextSearch: true })
 }
-`);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
+`)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
     expect(result.failure.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -170,6 +180,6 @@ describe('PSL interpretation: cipherstash.EncryptedBigInt constructor', () => {
           message: expect.stringContaining('freeTextSearch'),
         }),
       ]),
-    );
-  });
-});
+    )
+  })
+})

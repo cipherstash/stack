@@ -1,7 +1,7 @@
+import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import type { EncryptionClient } from '@/encryption'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { EncryptedValue } from '@/types'
-import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import type { BulkDecryptModelsOperation } from './operations/bulk-decrypt-models'
 import type { BulkEncryptModelsOperation } from './operations/bulk-encrypt-models'
 import type { DecryptModelOperation } from './operations/decrypt-model'

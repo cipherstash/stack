@@ -53,10 +53,11 @@ export async function seed(
     plaintexts.push(makePlaintextRow(rowsBefore + i))
   }
 
-  const encResult = await h.encryptionClient.bulkEncryptModels<BenchPlaintextRow>(
-    plaintexts,
-    encryptionBenchTable,
-  )
+  const encResult =
+    await h.encryptionClient.bulkEncryptModels<BenchPlaintextRow>(
+      plaintexts,
+      encryptionBenchTable,
+    )
   if (encResult.failure) {
     throw new Error(
       `[bench:seed] bulkEncryptModels failed: ${encResult.failure.message}`,

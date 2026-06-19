@@ -12,15 +12,15 @@ import {
   EncryptedEnvelopeBase,
   type EncryptedEnvelopeFromInternalArgs,
   type EncryptedEnvelopeHandle,
-} from './envelope-base';
+} from './envelope-base'
 
-export type EncryptedBooleanHandle = EncryptedEnvelopeHandle<boolean>;
+export type EncryptedBooleanHandle = EncryptedEnvelopeHandle<boolean>
 
-export type EncryptedBooleanFromInternalArgs = EncryptedEnvelopeFromInternalArgs;
+export type EncryptedBooleanFromInternalArgs = EncryptedEnvelopeFromInternalArgs
 
 export class EncryptedBoolean extends EncryptedEnvelopeBase<boolean> {
   protected override get typeName(): string {
-    return 'EncryptedBoolean';
+    return 'EncryptedBoolean'
   }
 
   static from(plaintext: boolean): EncryptedBoolean {
@@ -30,16 +30,18 @@ export class EncryptedBoolean extends EncryptedEnvelopeBase<boolean> {
       table: undefined,
       column: undefined,
       sdk: undefined,
-    });
+    })
   }
 
-  static fromInternal(args: EncryptedBooleanFromInternalArgs): EncryptedBoolean {
+  static fromInternal(
+    args: EncryptedBooleanFromInternalArgs,
+  ): EncryptedBoolean {
     return new EncryptedBoolean({
       plaintext: undefined,
       ciphertext: args.ciphertext,
       table: args.table,
       column: args.column,
       sdk: args.sdk,
-    });
+    })
   }
 }

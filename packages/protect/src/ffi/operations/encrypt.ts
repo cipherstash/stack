@@ -1,7 +1,7 @@
 import { type Result, withResult } from '@byteslice/result'
 import {
-  type JsPlaintext,
   encrypt as ffiEncrypt,
+  type JsPlaintext,
 } from '@cipherstash/protect-ffi'
 import type {
   ProtectColumn,
@@ -9,10 +9,10 @@ import type {
   ProtectTableColumn,
   ProtectValue,
 } from '@cipherstash/schema'
-import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import type { LockContext } from '../../identify'
-import type { Client, EncryptOptions, Encrypted } from '../../types'
+import type { Client, Encrypted, EncryptOptions } from '../../types'
 import { getErrorCode } from '../helpers/error-code'
 import { noClientError } from '../index'
 import { ProtectOperation } from './base-operation'

@@ -7,12 +7,12 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // Files that legitimately contain a `npx` literal — keep this list
 // short and explicit so additions require deliberate review.
 const ALLOWLISTED_PATHS = new Set([
-  'packages/wizard/src/lib/detect.ts',          // npm row of the PM table
-  'packages/cli/src/commands/init/utils.ts',    // runnerCommand `case 'npm'`
+  'packages/wizard/src/lib/detect.ts', // npm row of the PM table
+  'packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
   'packages/cli/src/commands/init/lib/setup-prompt.ts', // execCommand `case 'npm':` switch
-  'packages/protect/src/bin/runner.ts',         // Pre-allowlisted: helper for Task 11
-  'packages/drizzle/src/bin/runner.ts',         // Pre-allowlisted: helper for Task 13
-  'scripts/lint-no-hardcoded-runners.mjs',      // this script's own docs
+  'packages/protect/src/bin/runner.ts', // Pre-allowlisted: helper for Task 11
+  'packages/drizzle/src/bin/runner.ts', // Pre-allowlisted: helper for Task 13
+  'scripts/lint-no-hardcoded-runners.mjs', // this script's own docs
 ])
 
 // Default scan root; override with argv[2] for tests.
@@ -35,7 +35,13 @@ async function* walk(dir) {
   for (const entry of entries) {
     const full = join(dir, entry.name)
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.turbo' || entry.name === '__tests__') continue
+      if (
+        entry.name === 'node_modules' ||
+        entry.name === 'dist' ||
+        entry.name === '.turbo' ||
+        entry.name === '__tests__'
+      )
+        continue
       yield* walk(full)
     } else if (/\.(ts|tsx|mts|cts)$/.test(entry.name)) {
       if (/\.(test|spec)\.(ts|tsx|mts|cts)$/.test(entry.name)) continue

@@ -25,23 +25,23 @@
  * vitest is done.
  */
 
-import { spawnSync } from 'node:child_process';
-import { db } from '../../src/db';
+import { spawnSync } from 'node:child_process'
+import { db } from '../../src/db'
 
-let connection: Promise<unknown> | undefined;
+let connection: Promise<unknown> | undefined
 
 export function ensureConnected(): Promise<unknown> {
   if (!connection) {
-    const url = process.env['DATABASE_URL'];
+    const url = process.env['DATABASE_URL']
     if (!url) {
       throw new Error(
         'cipherstash e2e harness: `DATABASE_URL` is not set; ' +
           'global-setup.ts should have populated it from the harness Postgres URL.',
-      );
+      )
     }
-    connection = db.connect({ url });
+    connection = db.connect({ url })
   }
-  return connection;
+  return connection
 }
 
 /**
@@ -69,13 +69,13 @@ export function truncateUsers(): void {
       'TRUNCATE TABLE users',
     ],
     { stdio: 'pipe' },
-  );
+  )
   if (result.status !== 0) {
     throw new Error(
       `cipherstash e2e harness: TRUNCATE failed (exit ${result.status}):\n` +
         `${result.stderr?.toString() ?? ''}\n${result.stdout?.toString() ?? ''}`,
-    );
+    )
   }
 }
 
-export { db };
+export { db }

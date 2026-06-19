@@ -4,10 +4,10 @@ import {
   type DecryptResult,
   decryptBulkFallible,
 } from '@cipherstash/protect-ffi'
-import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import type { Context, LockContext } from '../../identify'
-import type { BulkDecryptPayload, BulkDecryptedData, Client } from '../../types'
+import type { BulkDecryptedData, BulkDecryptPayload, Client } from '../../types'
 import { getErrorCode } from '../helpers/error-code'
 import { noClientError } from '../index'
 import { ProtectOperation } from './base-operation'

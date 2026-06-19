@@ -6,14 +6,13 @@ import type {
   ProtectTableColumn,
 } from '@cipherstash/protect/client'
 import {
-  type SQL,
-  type SQLWrapper,
   and,
   arrayContained,
   arrayContains,
   arrayOverlaps,
   asc,
   between,
+  bindIfParam,
   desc,
   eq,
   exists,
@@ -33,8 +32,10 @@ import {
   notIlike,
   notInArray,
   or,
+  type SQL,
+  type SQLWrapper,
+  sql,
 } from 'drizzle-orm'
-import { bindIfParam, sql } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
 import type { EncryptedColumnConfig } from './index.js'
 import { getEncryptedColumnConfig } from './index.js'

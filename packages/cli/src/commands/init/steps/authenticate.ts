@@ -1,5 +1,5 @@
-import * as p from '@clack/prompts'
 import auth from '@cipherstash/auth'
+import * as p from '@clack/prompts'
 import { bindDevice, login, regions, selectRegion } from '../../auth/login.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 

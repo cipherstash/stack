@@ -35,9 +35,9 @@
  * override is what stops that re-exposure path.
  */
 
-import { ifDefined } from '@prisma-next/utils/defined';
-import { checkCipherstashAborted, raceCipherstashAbort } from './abort';
-import type { CipherstashSdk } from './sdk';
+import { ifDefined } from '@prisma-next/utils/defined'
+import { checkCipherstashAborted, raceCipherstashAbort } from './abort'
+import type { CipherstashSdk } from './sdk'
 
 /**
  * The mutable state shared by every envelope. The plaintext slot's `T`
@@ -50,21 +50,21 @@ import type { CipherstashSdk } from './sdk';
  * path.
  */
 export interface EncryptedEnvelopeHandle<T> {
-  plaintext: T | undefined;
-  ciphertext: unknown;
-  table: string | undefined;
-  column: string | undefined;
-  sdk: CipherstashSdk | undefined;
+  plaintext: T | undefined
+  ciphertext: unknown
+  table: string | undefined
+  column: string | undefined
+  sdk: CipherstashSdk | undefined
 }
 
 export interface EncryptedEnvelopeFromInternalArgs {
-  readonly ciphertext: unknown;
-  readonly table: string;
-  readonly column: string;
-  readonly sdk: CipherstashSdk;
+  readonly ciphertext: unknown
+  readonly table: string
+  readonly column: string
+  readonly sdk: CipherstashSdk
 }
 
-const REDACTED = '[REDACTED]';
+const REDACTED = '[REDACTED]'
 
 /**
  * Placeholder shape returned by `JSON.stringify(envelope)` for every
@@ -81,11 +81,12 @@ const REDACTED = '[REDACTED]';
  * `decryptAll` use to recognise an opaque envelope.
  */
 export interface EncryptedEnvelopePlaceholder {
-  readonly [marker: `$${string}`]: '<opaque>';
+  readonly [marker: `$${string}`]: '<opaque>'
 }
 
 function placeholderFor(typeName: string): EncryptedEnvelopePlaceholder {
-  const marker = `$${typeName.charAt(0).toLowerCase()}${typeName.slice(1)}` as const;
+  const marker =
+    `$${typeName.charAt(0).toLowerCase()}${typeName.slice(1)}` as const
   // The marker key is constructed at runtime from `typeName`, so TS
   // widens the literal-form `{ [marker]: '<opaque>' }` to
   // `{ [k: string]: string }` rather than the template-literal-keyed
@@ -94,14 +95,14 @@ function placeholderFor(typeName: string): EncryptedEnvelopePlaceholder {
   // but the type system can't follow the dynamic key derivation, so a
   // last-resort `unknown` cast bridges the two. AGENTS.md requires
   // this rationale comment alongside any `as unknown as` cast.
-  return { [marker]: '<opaque>' } as unknown as EncryptedEnvelopePlaceholder;
+  return { [marker]: '<opaque>' } as unknown as EncryptedEnvelopePlaceholder
 }
 
 export abstract class EncryptedEnvelopeBase<T> {
-  readonly #handle: EncryptedEnvelopeHandle<T>;
+  readonly #handle: EncryptedEnvelopeHandle<T>
 
   protected constructor(handle: EncryptedEnvelopeHandle<T>) {
-    this.#handle = handle;
+    this.#handle = handle
   }
 
   /**
@@ -109,7 +110,7 @@ export abstract class EncryptedEnvelopeBase<T> {
    * so each subclass surfaces under its own identity (e.g.
    * `EncryptedString.decrypt(): ...` rather than the base class name).
    */
-  protected abstract get typeName(): string;
+  protected abstract get typeName(): string
 
   /**
    * Narrow the SDK's `unknown` plaintext to the subclass's `T`. The
@@ -127,7 +128,7 @@ export abstract class EncryptedEnvelopeBase<T> {
    * arbitrary out-of-package callers.
    */
   protected parseDecryptedValue(sdkResult: unknown): T {
-    return sdkResult as T;
+    return sdkResult as T
   }
 
   /**
@@ -149,10 +150,13 @@ export abstract class EncryptedEnvelopeBase<T> {
    * (`setHandleCiphertext`) and the decrypt path
    * (`EncryptedEnvelopeBase.applyDecryptedSdkResult`).
    */
-  static applyDecryptedSdkResult<U>(envelope: EncryptedEnvelopeBase<U>, sdkResult: unknown): U {
-    const plaintext = envelope.parseDecryptedValue(sdkResult);
-    envelope.expose().plaintext = plaintext;
-    return plaintext;
+  static applyDecryptedSdkResult<U>(
+    envelope: EncryptedEnvelopeBase<U>,
+    sdkResult: unknown,
+  ): U {
+    const plaintext = envelope.parseDecryptedValue(sdkResult)
+    envelope.expose().plaintext = plaintext
+    return plaintext
   }
 
   /**
@@ -168,7 +172,7 @@ export abstract class EncryptedEnvelopeBase<T> {
    * encrypt / decrypt flow.
    */
   expose(): EncryptedEnvelopeHandle<T> {
-    return this.#handle;
+    return this.#handle
   }
 
   /**
@@ -190,7 +194,7 @@ export abstract class EncryptedEnvelopeBase<T> {
    */
   async decrypt(opts?: { signal?: AbortSignal }): Promise<T> {
     if (this.#handle.plaintext !== undefined) {
-      return this.#handle.plaintext;
+      return this.#handle.plaintext
     }
     if (
       !this.#handle.sdk ||
@@ -200,9 +204,9 @@ export abstract class EncryptedEnvelopeBase<T> {
       throw new Error(
         `${this.typeName}.decrypt(): envelope has no cached plaintext and no SDK binding. ` +
           'This typically means the bulk-encrypt middleware did not run before the encode site.',
-      );
+      )
     }
-    checkCipherstashAborted(opts?.signal, 'decrypt');
+    checkCipherstashAborted(opts?.signal, 'decrypt')
     const sdkResult = await raceCipherstashAbort(
       this.#handle.sdk.decrypt({
         ciphertext: this.#handle.ciphertext,
@@ -212,30 +216,30 @@ export abstract class EncryptedEnvelopeBase<T> {
       }),
       opts?.signal,
       'decrypt',
-    );
-    const plaintext = this.parseDecryptedValue(sdkResult);
-    this.#handle.plaintext = plaintext;
-    return plaintext;
+    )
+    const plaintext = this.parseDecryptedValue(sdkResult)
+    this.#handle.plaintext = plaintext
+    return plaintext
   }
 
   toJSON(): EncryptedEnvelopePlaceholder {
-    return placeholderFor(this.typeName);
+    return placeholderFor(this.typeName)
   }
 
   toString(): string {
-    return REDACTED;
+    return REDACTED
   }
 
   valueOf(): string {
-    return REDACTED;
+    return REDACTED
   }
 
   [Symbol.toPrimitive](): string {
-    return REDACTED;
+    return REDACTED
   }
 
   [Symbol.for('nodejs.util.inspect.custom')](): string {
-    return REDACTED;
+    return REDACTED
   }
 }
 
@@ -251,7 +255,7 @@ export function setHandleCiphertext<T>(
   envelope: EncryptedEnvelopeBase<T>,
   ciphertext: unknown,
 ): void {
-  envelope.expose().ciphertext = ciphertext;
+  envelope.expose().ciphertext = ciphertext
 }
 
 /**
@@ -259,8 +263,11 @@ export function setHandleCiphertext<T>(
  * (read-side caching path used by `decryptAll` and by `decrypt()`'s own
  * memoization).
  */
-export function setHandlePlaintextCache<T>(envelope: EncryptedEnvelopeBase<T>, plaintext: T): void {
-  envelope.expose().plaintext = plaintext;
+export function setHandlePlaintextCache<T>(
+  envelope: EncryptedEnvelopeBase<T>,
+  plaintext: T,
+): void {
+  envelope.expose().plaintext = plaintext
 }
 
 /**
@@ -281,20 +288,20 @@ export function setHandleRoutingKey<T>(
   table: string,
   column: string,
 ): void {
-  const handle = envelope.expose();
+  const handle = envelope.expose()
   if (handle.table === undefined) {
-    handle.table = table;
+    handle.table = table
   } else if (handle.table !== table) {
     throw new Error(
       `cipherstash envelope: routing-key table conflict — handle already bound to "${handle.table}", refusing to rebind to "${table}". Re-encode the value or construct a fresh envelope for the new routing target.`,
-    );
+    )
   }
   if (handle.column === undefined) {
-    handle.column = column;
+    handle.column = column
   } else if (handle.column !== column) {
     throw new Error(
       `cipherstash envelope: routing-key column conflict on table "${handle.table}" — handle already bound to "${handle.column}", refusing to rebind to "${column}". Re-encode the value or construct a fresh envelope for the new routing target.`,
-    );
+    )
   }
 }
 
@@ -303,6 +310,8 @@ export function setHandleRoutingKey<T>(
  * construction or post-`decrypt` caching). Used by `decryptAll` to skip
  * envelopes that don't need a round-trip.
  */
-export function isHandleDecrypted<T>(envelope: EncryptedEnvelopeBase<T>): boolean {
-  return envelope.expose().plaintext !== undefined;
+export function isHandleDecrypted<T>(
+  envelope: EncryptedEnvelopeBase<T>,
+): boolean {
+  return envelope.expose().plaintext !== undefined
 }

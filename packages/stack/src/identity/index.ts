@@ -1,7 +1,7 @@
+import { type Result, withResult } from '@byteslice/result'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { loadWorkSpaceId } from '@/utils/config'
 import { logger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
 
 export type CtsRegions = 'ap-southeast-2'
 

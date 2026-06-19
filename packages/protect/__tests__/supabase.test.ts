@@ -1,17 +1,16 @@
 import 'dotenv/config'
 import { csColumn, csTable } from '@cipherstash/schema'
+import { createClient } from '@supabase/supabase-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
-  type Encrypted,
   bulkModelsToEncryptedPgComposites,
+  type Encrypted,
   encryptedToPgComposite,
   isEncryptedPayload,
   modelToEncryptedPgComposites,
   protect,
 } from '../src'
-
-import { createClient } from '@supabase/supabase-js'
 
 // supabase.test.ts needs a live Supabase project, so the suite is skipped
 // when the Supabase environment is not configured (e.g. in CI, pending a

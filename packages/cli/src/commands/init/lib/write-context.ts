@@ -8,12 +8,12 @@ import type {
   SchemaDef,
 } from '../types.js'
 import {
-  type PackageManager,
   detectPackageManager,
+  type PackageManager,
   prodInstallCommand,
 } from '../utils.js'
 import type { PlanStep } from './parse-plan.js'
-import { type SetupPromptContext, renderSetupPrompt } from './setup-prompt.js'
+import { renderSetupPrompt, type SetupPromptContext } from './setup-prompt.js'
 
 export const CONTEXT_REL_PATH = '.cipherstash/context.json'
 export const SETUP_PROMPT_REL_PATH = '.cipherstash/setup-prompt.md'

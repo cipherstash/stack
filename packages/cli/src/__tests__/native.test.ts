@@ -6,7 +6,10 @@ interface ModuleError extends Error {
   requireStack?: string[]
 }
 
-function moduleError(message: string, requireStack: string[] = []): ModuleError {
+function moduleError(
+  message: string,
+  requireStack: string[] = [],
+): ModuleError {
   const err = new Error(message) as ModuleError
   err.code = 'MODULE_NOT_FOUND'
   err.requireStack = requireStack

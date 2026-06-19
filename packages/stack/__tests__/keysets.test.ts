@@ -1,8 +1,8 @@
 import 'dotenv/config'
-import { Encryption } from '@/index'
-import { encryptedColumn, encryptedTable } from '@/schema'
 import { ensureKeyset } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { Encryption } from '@/index'
+import { encryptedColumn, encryptedTable } from '@/schema'
 
 const users = encryptedTable('users', {
   email: encryptedColumn('email'),

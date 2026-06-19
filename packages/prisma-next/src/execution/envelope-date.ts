@@ -24,15 +24,15 @@ import {
   EncryptedEnvelopeBase,
   type EncryptedEnvelopeFromInternalArgs,
   type EncryptedEnvelopeHandle,
-} from './envelope-base';
+} from './envelope-base'
 
-export type EncryptedDateHandle = EncryptedEnvelopeHandle<Date>;
+export type EncryptedDateHandle = EncryptedEnvelopeHandle<Date>
 
-export type EncryptedDateFromInternalArgs = EncryptedEnvelopeFromInternalArgs;
+export type EncryptedDateFromInternalArgs = EncryptedEnvelopeFromInternalArgs
 
 export class EncryptedDate extends EncryptedEnvelopeBase<Date> {
   protected override get typeName(): string {
-    return 'EncryptedDate';
+    return 'EncryptedDate'
   }
 
   /**
@@ -53,22 +53,22 @@ export class EncryptedDate extends EncryptedEnvelopeBase<Date> {
       if (Number.isNaN(sdkResult.getTime())) {
         throw new Error(
           'EncryptedDate.parseDecryptedValue: SDK returned an invalid Date instance (NaN time).',
-        );
+        )
       }
-      return sdkResult;
+      return sdkResult
     }
     if (typeof sdkResult === 'string' || typeof sdkResult === 'number') {
-      const parsed = new Date(sdkResult);
+      const parsed = new Date(sdkResult)
       if (Number.isNaN(parsed.getTime())) {
         throw new Error(
           `EncryptedDate.parseDecryptedValue: SDK returned a ${typeof sdkResult} plaintext that does not parse to a valid Date.`,
-        );
+        )
       }
-      return parsed;
+      return parsed
     }
     throw new Error(
       `EncryptedDate.parseDecryptedValue: unsupported SDK plaintext type "${typeof sdkResult}"; expected Date | string | number.`,
-    );
+    )
   }
 
   /**
@@ -80,7 +80,7 @@ export class EncryptedDate extends EncryptedEnvelopeBase<Date> {
     if (!(plaintext instanceof Date) || !Number.isFinite(plaintext.getTime())) {
       throw new Error(
         'EncryptedDate.from: plaintext must be a valid Date instance (got an invalid Date or non-Date value).',
-      );
+      )
     }
     return new EncryptedDate({
       plaintext,
@@ -88,7 +88,7 @@ export class EncryptedDate extends EncryptedEnvelopeBase<Date> {
       table: undefined,
       column: undefined,
       sdk: undefined,
-    });
+    })
   }
 
   /**
@@ -103,6 +103,6 @@ export class EncryptedDate extends EncryptedEnvelopeBase<Date> {
       table: args.table,
       column: args.column,
       sdk: args.sdk,
-    });
+    })
   }
 }

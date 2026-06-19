@@ -4,10 +4,11 @@
  * The seed/encryption path is covered separately by `harness.test.ts`, which
  * does require credentials.
  */
+
+import type pg from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { applySchema, connect, countBenchRows } from '../src/harness/db.js'
 import { explain, hasNodeType, summarize } from '../src/harness/explain.js'
-import type pg from 'pg'
 
 let client: pg.Client
 

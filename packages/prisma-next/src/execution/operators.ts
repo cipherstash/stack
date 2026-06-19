@@ -68,17 +68,24 @@
  * regardless of codec — pinned by `test/operator-lowering.test.ts`.
  */
 
-import type { CodecTrait } from '@prisma-next/framework-components/codec';
-import type { SqlOperationDescriptor, SqlOperationDescriptors } from '@prisma-next/sql-operations';
-import type { CodecRef } from '@prisma-next/sql-relational-core/ast';
-import { type AnyExpression, type ColumnRef, ParamRef } from '@prisma-next/sql-relational-core/ast';
+import type { CodecTrait } from '@prisma-next/framework-components/codec'
+import type {
+  SqlOperationDescriptor,
+  SqlOperationDescriptors,
+} from '@prisma-next/sql-operations'
+import type { CodecRef } from '@prisma-next/sql-relational-core/ast'
+import {
+  type AnyExpression,
+  type ColumnRef,
+  ParamRef,
+} from '@prisma-next/sql-relational-core/ast'
 import {
   buildOperation,
   codecOf,
   type Expression,
   type ScopeField,
   toExpr,
-} from '@prisma-next/sql-relational-core/expression';
+} from '@prisma-next/sql-relational-core/expression'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -92,14 +99,14 @@ import {
   CIPHERSTASH_TRAIT_SEARCHABLE_JSON,
   type CipherstashCodecId,
   isCipherstashCodecId,
-} from '../extension-metadata/constants';
-import type { EncryptedEnvelopeBase } from './envelope-base';
-import { EncryptedBigInt } from './envelope-bigint';
-import { EncryptedBoolean } from './envelope-boolean';
-import { EncryptedDate } from './envelope-date';
-import { EncryptedDouble } from './envelope-double';
-import { EncryptedJson } from './envelope-json';
-import { EncryptedString, setHandleRoutingKey } from './envelope-string';
+} from '../extension-metadata/constants'
+import type { EncryptedEnvelopeBase } from './envelope-base'
+import { EncryptedBigInt } from './envelope-bigint'
+import { EncryptedBoolean } from './envelope-boolean'
+import { EncryptedDate } from './envelope-date'
+import { EncryptedDouble } from './envelope-double'
+import { EncryptedJson } from './envelope-json'
+import { EncryptedString, setHandleRoutingKey } from './envelope-string'
 
 /**
  * Codec ID of the framework's Postgres boolean codec. Referenced as a
@@ -108,9 +115,12 @@ import { EncryptedString, setHandleRoutingKey } from './envelope-string';
  * just to identify a return-codec id. Mirrors the same pattern in the
  * reference cipherstash integration's `operation-templates.ts:RETURN_BOOL`.
  */
-const PG_BOOL_CODEC_ID = 'pg/bool@1' as const;
+const PG_BOOL_CODEC_ID = 'pg/bool@1' as const
 
-type PgBoolReturn = { readonly codecId: typeof PG_BOOL_CODEC_ID; readonly nullable: false };
+type PgBoolReturn = {
+  readonly codecId: typeof PG_BOOL_CODEC_ID
+  readonly nullable: false
+}
 
 /**
  * Convert a user-supplied value (raw plaintext or an existing
@@ -134,13 +144,17 @@ type PgBoolReturn = { readonly codecId: typeof PG_BOOL_CODEC_ID; readonly nullab
  * require their search-index `typeParams` (`equality`,
  * `freeTextSearch`, `orderAndRange`) to be present.
  */
-function asEncryptedParam(selfAst: AnyExpression, selfCodec: CodecRef, value: unknown): ParamRef {
-  const envelope = coerceToEnvelope(selfCodec.codecId, value);
-  const columnRef = extractColumnRef(selfAst);
+function asEncryptedParam(
+  selfAst: AnyExpression,
+  selfCodec: CodecRef,
+  value: unknown,
+): ParamRef {
+  const envelope = coerceToEnvelope(selfCodec.codecId, value)
+  const columnRef = extractColumnRef(selfAst)
   if (columnRef !== undefined) {
-    setHandleRoutingKey(envelope, columnRef.table, columnRef.column);
+    setHandleRoutingKey(envelope, columnRef.table, columnRef.column)
   }
-  return ParamRef.of(envelope, { codec: selfCodec });
+  return ParamRef.of(envelope, { codec: selfCodec })
 }
 
 /**
@@ -152,16 +166,19 @@ function asEncryptedParam(selfAst: AnyExpression, selfCodec: CodecRef, value: un
  * a programming error in a custom builder); throw with a stable
  * runtime envelope so the failure mode is loud.
  */
-function requireSelfCodec(self: Expression<ScopeField>, publicMethod: string): CodecRef {
-  const codec = codecOf(self);
+function requireSelfCodec(
+  self: Expression<ScopeField>,
+  publicMethod: string,
+): CodecRef {
+  const codec = codecOf(self)
   if (codec === undefined) {
     throw new TypeError(
       `cipherstash ${publicMethod}: self expression is missing a CodecRef. ` +
         'Cipherstash predicate operators require a column-bound self argument; ' +
         'reach the operator through the ORM model-accessor (e.g. `model.users.where((u) => u.email.cipherstashEq(...))`).',
-    );
+    )
   }
-  return codec;
+  return codec
 }
 
 /**
@@ -180,60 +197,69 @@ function requireSelfCodec(self: Expression<ScopeField>, publicMethod: string): C
  * here until the new branch is wired — closing off the runtime-only
  * failure mode the previous if-chain shape tolerated.
  */
-type EnvelopeCoercer = (value: unknown) => EncryptedEnvelopeBase<unknown>;
+type EnvelopeCoercer = (value: unknown) => EncryptedEnvelopeBase<unknown>
 
-const ENVELOPE_COERCERS: Readonly<Record<CipherstashCodecId, EnvelopeCoercer>> = {
-  [CIPHERSTASH_STRING_CODEC_ID]: (value) => {
-    if (value instanceof EncryptedString) return value;
-    if (typeof value === 'string') return EncryptedString.from(value);
-    throw envelopeTypeError('EncryptedString', 'string', value);
-  },
-  [CIPHERSTASH_DOUBLE_CODEC_ID]: (value) => {
-    if (value instanceof EncryptedDouble) return value;
-    if (typeof value === 'number') return EncryptedDouble.from(value);
-    throw envelopeTypeError('EncryptedDouble', 'number', value);
-  },
-  [CIPHERSTASH_BIGINT_CODEC_ID]: (value) => {
-    if (value instanceof EncryptedBigInt) return value;
-    if (typeof value === 'bigint') return EncryptedBigInt.from(value);
-    throw envelopeTypeError('EncryptedBigInt', 'bigint', value);
-  },
-  [CIPHERSTASH_DATE_CODEC_ID]: (value) => {
-    if (value instanceof EncryptedDate) return value;
-    if (value instanceof Date) return EncryptedDate.from(value);
-    throw envelopeTypeError('EncryptedDate', 'Date', value);
-  },
-  [CIPHERSTASH_BOOLEAN_CODEC_ID]: (value) => {
-    if (value instanceof EncryptedBoolean) return value;
-    if (typeof value === 'boolean') return EncryptedBoolean.from(value);
-    throw envelopeTypeError('EncryptedBoolean', 'boolean', value);
-  },
-  [CIPHERSTASH_JSON_CODEC_ID]: (value) => {
-    if (value instanceof EncryptedJson) return value;
-    return EncryptedJson.from(value);
-  },
-};
+const ENVELOPE_COERCERS: Readonly<Record<CipherstashCodecId, EnvelopeCoercer>> =
+  {
+    [CIPHERSTASH_STRING_CODEC_ID]: (value) => {
+      if (value instanceof EncryptedString) return value
+      if (typeof value === 'string') return EncryptedString.from(value)
+      throw envelopeTypeError('EncryptedString', 'string', value)
+    },
+    [CIPHERSTASH_DOUBLE_CODEC_ID]: (value) => {
+      if (value instanceof EncryptedDouble) return value
+      if (typeof value === 'number') return EncryptedDouble.from(value)
+      throw envelopeTypeError('EncryptedDouble', 'number', value)
+    },
+    [CIPHERSTASH_BIGINT_CODEC_ID]: (value) => {
+      if (value instanceof EncryptedBigInt) return value
+      if (typeof value === 'bigint') return EncryptedBigInt.from(value)
+      throw envelopeTypeError('EncryptedBigInt', 'bigint', value)
+    },
+    [CIPHERSTASH_DATE_CODEC_ID]: (value) => {
+      if (value instanceof EncryptedDate) return value
+      if (value instanceof Date) return EncryptedDate.from(value)
+      throw envelopeTypeError('EncryptedDate', 'Date', value)
+    },
+    [CIPHERSTASH_BOOLEAN_CODEC_ID]: (value) => {
+      if (value instanceof EncryptedBoolean) return value
+      if (typeof value === 'boolean') return EncryptedBoolean.from(value)
+      throw envelopeTypeError('EncryptedBoolean', 'boolean', value)
+    },
+    [CIPHERSTASH_JSON_CODEC_ID]: (value) => {
+      if (value instanceof EncryptedJson) return value
+      return EncryptedJson.from(value)
+    },
+  }
 
-function coerceToEnvelope(columnCodecId: string, value: unknown): EncryptedEnvelopeBase<unknown> {
+function coerceToEnvelope(
+  columnCodecId: string,
+  value: unknown,
+): EncryptedEnvelopeBase<unknown> {
   if (!isCipherstashCodecId(columnCodecId)) {
     throw new Error(
       `cipherstash operator: column codec id "${columnCodecId}" is not a cipherstash codec; ` +
         'this operator should not be reachable on a non-cipherstash column. ' +
         'If you see this error, the operator-registry trait dispatch is wired against a ' +
         'codec that should not advertise the cipherstash trait. File a bug against the package.',
-    );
+    )
   }
-  return ENVELOPE_COERCERS[columnCodecId](value);
+  return ENVELOPE_COERCERS[columnCodecId](value)
 }
 
-function envelopeTypeError(envelopeType: string, expected: string, value: unknown): TypeError {
-  const got = value === null ? 'null' : value instanceof Date ? 'Date' : typeof value;
+function envelopeTypeError(
+  envelopeType: string,
+  expected: string,
+  value: unknown,
+): TypeError {
+  const got =
+    value === null ? 'null' : value instanceof Date ? 'Date' : typeof value
   return new TypeError(
     `cipherstash operator: expected a ${expected} plaintext or an ${envelopeType} envelope, ` +
       `got ${got}. ` +
       `Use \`${envelopeType}.from(plaintext)\` to construct an envelope explicitly, or ` +
       'pass the plaintext directly and let the operator wrap it.',
-  );
+  )
 }
 
 /**
@@ -252,12 +278,12 @@ function envelopeTypeError(envelopeType: string, expected: string, value: unknow
  */
 function extractColumnRef(selfAst: AnyExpression): ColumnRef | undefined {
   if (selfAst.kind === 'column-ref') {
-    return selfAst;
+    return selfAst
   }
   try {
-    return selfAst.baseColumnRef();
+    return selfAst.baseColumnRef()
   } catch {
-    return undefined;
+    return undefined
   }
 }
 
@@ -273,12 +299,18 @@ function extractColumnRef(selfAst: AnyExpression): ColumnRef | undefined {
  * @param eqlFunction - The EQL function to lower to (`eq`, `ilike`).
  *   Embedded into the SQL lowering template as `eql_v2.<eqlFunction>(...)`.
  */
-function eqlOperator(publicMethod: string, eqlFunction: 'eq' | 'ilike'): SqlOperationDescriptor {
+function eqlOperator(
+  publicMethod: string,
+  eqlFunction: 'eq' | 'ilike',
+): SqlOperationDescriptor {
   return {
     self: { codecId: CIPHERSTASH_STRING_CODEC_ID },
-    impl: (self: Expression<ScopeField>, value: unknown): Expression<PgBoolReturn> => {
-      const selfCodec = requireSelfCodec(self, publicMethod);
-      const selfAst = toExpr(self, selfCodec);
+    impl: (
+      self: Expression<ScopeField>,
+      value: unknown,
+    ): Expression<PgBoolReturn> => {
+      const selfCodec = requireSelfCodec(self, publicMethod)
+      const selfAst = toExpr(self, selfCodec)
       return buildOperation({
         method: publicMethod,
         args: [selfAst, asEncryptedParam(selfAst, selfCodec, value)],
@@ -288,9 +320,9 @@ function eqlOperator(publicMethod: string, eqlFunction: 'eq' | 'ilike'): SqlOper
           strategy: 'function',
           template: `eql_v2.${eqlFunction}({{self}}, {{arg0}})`,
         },
-      });
+      })
     },
-  };
+  }
 }
 
 /**
@@ -335,15 +367,20 @@ function envelopeOperator(
     // the full rationale; AGENTS.md requires the rationale comment
     // alongside any `as unknown as` cast.
     self: { traits: [trait] as unknown as readonly CodecTrait[] },
-    impl: (self: Expression<ScopeField>, ...userArgs: unknown[]): Expression<PgBoolReturn> => {
+    impl: (
+      self: Expression<ScopeField>,
+      ...userArgs: unknown[]
+    ): Expression<PgBoolReturn> => {
       if (userArgs.length !== arity) {
         throw new TypeError(
           `cipherstash ${publicMethod}: expected ${arity} argument${arity === 1 ? '' : 's'}, got ${userArgs.length}.`,
-        );
+        )
       }
-      const selfCodec = requireSelfCodec(self, publicMethod);
-      const selfAst = toExpr(self, selfCodec);
-      const argRefs = userArgs.map((value) => asEncryptedParam(selfAst, selfCodec, value));
+      const selfCodec = requireSelfCodec(self, publicMethod)
+      const selfAst = toExpr(self, selfCodec)
+      const argRefs = userArgs.map((value) =>
+        asEncryptedParam(selfAst, selfCodec, value),
+      )
       return buildOperation({
         method: publicMethod,
         args: [selfAst, ...argRefs],
@@ -353,9 +390,9 @@ function envelopeOperator(
           strategy: 'function',
           template,
         },
-      });
+      })
     },
-  };
+  }
 }
 
 /**
@@ -390,24 +427,29 @@ function variableArityEnvelopeOperator(
   return {
     // See `envelopeOperator` for the cast rationale.
     self: { traits: [trait] as unknown as readonly CodecTrait[] },
-    impl: (self: Expression<ScopeField>, values: unknown): Expression<PgBoolReturn> => {
+    impl: (
+      self: Expression<ScopeField>,
+      values: unknown,
+    ): Expression<PgBoolReturn> => {
       if (!Array.isArray(values)) {
         throw new TypeError(
           `cipherstash ${publicMethod}: expected an array argument, got ${
             values === null ? 'null' : typeof values
           }.`,
-        );
+        )
       }
       if (values.length === 0) {
         throw new TypeError(
           `cipherstash ${publicMethod}: empty array is not supported. ` +
             'An empty membership check has no well-defined SQL lowering — use ' +
             '`WHERE FALSE` directly if you want to match no rows.',
-        );
+        )
       }
-      const selfCodec = requireSelfCodec(self, publicMethod);
-      const selfAst = toExpr(self, selfCodec);
-      const argRefs = values.map((value) => asEncryptedParam(selfAst, selfCodec, value));
+      const selfCodec = requireSelfCodec(self, publicMethod)
+      const selfAst = toExpr(self, selfCodec)
+      const argRefs = values.map((value) =>
+        asEncryptedParam(selfAst, selfCodec, value),
+      )
       return buildOperation({
         method: publicMethod,
         args: [selfAst, ...argRefs],
@@ -417,9 +459,9 @@ function variableArityEnvelopeOperator(
           strategy: 'function',
           template: buildTemplate(values.length),
         },
-      });
+      })
     },
-  };
+  }
 }
 
 /**
@@ -429,15 +471,15 @@ function variableArityEnvelopeOperator(
  * outer parentheses retained for shape stability.
  */
 function buildInArrayTemplate(n: number): string {
-  const terms: string[] = [];
+  const terms: string[] = []
   for (let i = 0; i < n; i++) {
-    terms.push(`eql_v2.eq({{self}}, {{arg${i}}})`);
+    terms.push(`eql_v2.eq({{self}}, {{arg${i}}})`)
   }
-  return `(${terms.join(' OR ')})`;
+  return `(${terms.join(' OR ')})`
 }
 
 function buildNotInArrayTemplate(n: number): string {
-  return `NOT ${buildInArrayTemplate(n)}`;
+  return `NOT ${buildInArrayTemplate(n)}`
 }
 
 /**
@@ -459,17 +501,22 @@ function jsonbPathExistsOperator(): SqlOperationDescriptor {
   return {
     // See `envelopeOperator` for the cast rationale.
     self: {
-      traits: [CIPHERSTASH_TRAIT_SEARCHABLE_JSON] as unknown as readonly CodecTrait[],
+      traits: [
+        CIPHERSTASH_TRAIT_SEARCHABLE_JSON,
+      ] as unknown as readonly CodecTrait[],
     },
-    impl: (self: Expression<ScopeField>, path: unknown): Expression<PgBoolReturn> => {
+    impl: (
+      self: Expression<ScopeField>,
+      path: unknown,
+    ): Expression<PgBoolReturn> => {
       if (typeof path !== 'string') {
         throw new TypeError(
           `cipherstash cipherstashJsonbPathExists: expected a string path argument, got ${
             path === null ? 'null' : typeof path
           }.`,
-        );
+        )
       }
-      const selfAst = toExpr(self);
+      const selfAst = toExpr(self)
       return buildOperation({
         method: 'cipherstashJsonbPathExists',
         args: [selfAst, ParamRef.of(path, { codec: { codecId: 'pg/text@1' } })],
@@ -479,9 +526,9 @@ function jsonbPathExistsOperator(): SqlOperationDescriptor {
           strategy: 'function',
           template: 'eql_v2.jsonb_path_exists({{self}}, {{arg0}})',
         },
-      });
+      })
     },
-  };
+  }
 }
 
 /**
@@ -588,5 +635,5 @@ export function cipherstashQueryOperations(): SqlOperationDescriptors {
       'NOT (eql_v2.gte({{self}}, {{arg0}}) AND eql_v2.lte({{self}}, {{arg1}}))',
     ),
     cipherstashJsonbPathExists: jsonbPathExistsOperator(),
-  };
+  }
 }

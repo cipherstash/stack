@@ -27,8 +27,8 @@
  * is `(table, column)`.
  */
 export interface CipherstashRoutingKey {
-  readonly table: string;
-  readonly column: string;
+  readonly table: string
+  readonly column: string
 }
 
 export interface CipherstashSingleDecryptArgs {
@@ -37,28 +37,28 @@ export interface CipherstashSingleDecryptArgs {
    * inspects the embedded `i.t` / `i.c` schema markers to pick the
    * right `cast_as` for the round-trip.
    */
-  readonly ciphertext: unknown;
-  readonly table: string;
-  readonly column: string;
-  readonly signal?: AbortSignal;
+  readonly ciphertext: unknown
+  readonly table: string
+  readonly column: string
+  readonly signal?: AbortSignal
 }
 
 export interface CipherstashBulkEncryptArgs {
-  readonly routingKey: CipherstashRoutingKey;
+  readonly routingKey: CipherstashRoutingKey
   /**
    * Plaintext values to encrypt. Polymorphic at the SDK boundary: each
    * batch is homogeneously typed by its `(table, column)` routing key,
    * so the SDK derives the EQL `cast_as` from the search-config already
    * registered on the column rather than from a per-batch hint.
    */
-  readonly values: ReadonlyArray<unknown>;
-  readonly signal?: AbortSignal;
+  readonly values: ReadonlyArray<unknown>
+  readonly signal?: AbortSignal
 }
 
 export interface CipherstashBulkDecryptArgs {
-  readonly routingKey: CipherstashRoutingKey;
-  readonly ciphertexts: ReadonlyArray<unknown>;
-  readonly signal?: AbortSignal;
+  readonly routingKey: CipherstashRoutingKey
+  readonly ciphertexts: ReadonlyArray<unknown>
+  readonly signal?: AbortSignal
 }
 
 /**
@@ -68,7 +68,7 @@ export interface CipherstashBulkDecryptArgs {
  * implement these three methods directly.
  */
 export interface CipherstashSdk {
-  decrypt(args: CipherstashSingleDecryptArgs): Promise<string>;
-  bulkEncrypt(args: CipherstashBulkEncryptArgs): Promise<ReadonlyArray<unknown>>;
-  bulkDecrypt(args: CipherstashBulkDecryptArgs): Promise<ReadonlyArray<unknown>>;
+  decrypt(args: CipherstashSingleDecryptArgs): Promise<string>
+  bulkEncrypt(args: CipherstashBulkEncryptArgs): Promise<ReadonlyArray<unknown>>
+  bulkDecrypt(args: CipherstashBulkDecryptArgs): Promise<ReadonlyArray<unknown>>
 }

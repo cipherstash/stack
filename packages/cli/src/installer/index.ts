@@ -5,10 +5,8 @@ import pg from 'pg'
 // EQL release, pinned to match the EQL payload format this package emits.
 // Bump in lockstep with @cipherstash/protect-ffi.
 const EQL_VERSION = 'eql-2.3.1'
-const EQL_INSTALL_URL =
-  `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
-const EQL_INSTALL_NO_OPERATOR_FAMILY_URL =
-  `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt-supabase.sql`
+const EQL_INSTALL_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
+const EQL_INSTALL_NO_OPERATOR_FAMILY_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt-supabase.sql`
 const EQL_SCHEMA_NAME = 'eql_v2'
 
 /**
@@ -375,10 +373,7 @@ function resolveBundledFilename(options: {
  * Load the bundled EQL install SQL. Used by the Drizzle migration path.
  */
 export function loadBundledEqlSql(
-  options: {
-    excludeOperatorFamily?: boolean
-    supabase?: boolean
-  } = {},
+  options: { excludeOperatorFamily?: boolean; supabase?: boolean } = {},
 ): string {
   const filename = resolveBundledFilename({
     excludeOperatorFamily: options.excludeOperatorFamily ?? false,

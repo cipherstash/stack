@@ -1,5 +1,12 @@
 import { spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,9 +36,12 @@ function describeSpawnFailure(result: StepResult): string {
   const lines = [`step \`${result.label}\` failed.`]
   if (result.error) lines.push(`  spawn error: ${result.error.message}`)
   if (result.signal) lines.push(`  killed by signal: ${result.signal}`)
-  if (typeof result.status === 'number') lines.push(`  exit status: ${result.status}`)
-  if (result.stderr.trim()) lines.push(`--- stderr ---\n${result.stderr.trim()}`)
-  if (result.stdout.trim()) lines.push(`--- stdout ---\n${result.stdout.trim()}`)
+  if (typeof result.status === 'number')
+    lines.push(`  exit status: ${result.status}`)
+  if (result.stderr.trim())
+    lines.push(`--- stderr ---\n${result.stderr.trim()}`)
+  if (result.stdout.trim())
+    lines.push(`--- stdout ---\n${result.stdout.trim()}`)
   return lines.join('\n')
 }
 
@@ -131,41 +141,49 @@ function timeoutFor(line: string): number {
 const README_COMMANDS = parseRunItCommands(
   readFileSync(resolve(EXAMPLE_DIR, 'README.md'), 'utf8'),
 )
-const EXECUTED_COMMANDS = README_COMMANDS.filter((line) => !SKIP_COMMANDS.has(line))
+const EXECUTED_COMMANDS = README_COMMANDS.filter(
+  (line) => !SKIP_COMMANDS.has(line),
+)
 
 const outcomes = new Map<string, StepResult>()
 let snapDir: string
 
-describe.skipIf(!authConfigured)('examples/prisma README "Run it" walkthrough', () => {
-  beforeAll(async () => {
-    snapDir = await snapshotTransientOutputs()
-    await wipeTransientOutputs()
+describe.skipIf(!authConfigured)(
+  'examples/prisma README "Run it" walkthrough',
+  () => {
+    beforeAll(async () => {
+      snapDir = await snapshotTransientOutputs()
+      await wipeTransientOutputs()
 
-    // Drive the walkthrough straight from the parsed README. `bash -c` keeps
-    // fidelity with what a user actually types — no argv tokenizer needed,
-    // future README evolutions (operators, quoting) Just Work.
-    for (const line of README_COMMANDS) {
-      if (SKIP_COMMANDS.has(line)) {
-        console.log(`[readme-walkthrough] skip: ${line}`)
-        continue
+      // Drive the walkthrough straight from the parsed README. `bash -c` keeps
+      // fidelity with what a user actually types — no argv tokenizer needed,
+      // future README evolutions (operators, quoting) Just Work.
+      for (const line of README_COMMANDS) {
+        if (SKIP_COMMANDS.has(line)) {
+          console.log(`[readme-walkthrough] skip: ${line}`)
+          continue
+        }
+        outcomes.set(line, runStep(line, timeoutFor(line)))
       }
-      outcomes.set(line, runStep(line, timeoutFor(line)))
-    }
-  }, 600_000) // 10 min total budget for the cold path
+    }, 600_000) // 10 min total budget for the cold path
 
-  afterAll(async () => {
-    // Teardown the bundled Postgres container regardless of outcome.
-    runStep('docker compose down -v', 60_000)
-    // Restore the transient outputs from snapshot so the working tree is clean.
-    await restoreTransientOutputs(snapDir)
-    // Remove the .env we copied in the walkthrough (not tracked anyway).
-    rmSync(join(EXAMPLE_DIR, '.env'), { force: true })
-  }, 120_000)
+    afterAll(async () => {
+      // Teardown the bundled Postgres container regardless of outcome.
+      runStep('docker compose down -v', 60_000)
+      // Restore the transient outputs from snapshot so the working tree is clean.
+      await restoreTransientOutputs(snapDir)
+      // Remove the .env we copied in the walkthrough (not tracked anyway).
+      rmSync(join(EXAMPLE_DIR, '.env'), { force: true })
+    }, 120_000)
 
-  // Per-step exit-zero assertion, registered once per non-skipped README line.
-  it.each(EXECUTED_COMMANDS)('README "Run it" step exited 0: %s', (line) => {
-    const r = outcomes.get(line)
-    expect(r, `no outcome recorded for \`${line}\` — beforeAll did not run this step`).toBeDefined()
-    expect(r!.status, describeSpawnFailure(r!)).toBe(0)
-  })
-})
+    // Per-step exit-zero assertion, registered once per non-skipped README line.
+    it.each(EXECUTED_COMMANDS)('README "Run it" step exited 0: %s', (line) => {
+      const r = outcomes.get(line)
+      expect(
+        r,
+        `no outcome recorded for \`${line}\` — beforeAll did not run this step`,
+      ).toBeDefined()
+      expect(r!.status, describeSpawnFailure(r!)).toBe(0)
+    })
+  },
+)

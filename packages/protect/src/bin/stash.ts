@@ -1,5 +1,7 @@
 import { config } from 'dotenv'
+
 config()
+
 import readline from 'node:readline'
 import {
   buildApplication,
@@ -321,11 +323,7 @@ Examples:
  * Delete command - Delete a secret from the vault
  */
 const deleteCommand = buildCommand({
-  func: async (flags: {
-    name: string
-    environment: string
-    yes?: boolean
-  }) => {
+  func: async (flags: { name: string; environment: string; yes?: boolean }) => {
     const { name, environment, yes } = flags
     const stash = createStash(environment)
 

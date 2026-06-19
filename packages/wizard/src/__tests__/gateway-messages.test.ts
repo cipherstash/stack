@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { homedir } from 'node:os'
+import { resolve } from 'node:path'
+import { beforeAll, describe, expect, it } from 'vitest'
 
 const GATEWAY_URL = 'http://localhost:8787'
 
@@ -66,7 +66,9 @@ describe('Gateway AI Messages (integration)', () => {
    */
   function shouldBail(res: Response): boolean {
     if (res.status === 401) {
-      console.warn('Skipping: CipherStash token expired. Run `npx stash auth login`.')
+      console.warn(
+        'Skipping: CipherStash token expired. Run `npx stash auth login`.',
+      )
       return true
     }
     if (res.status === 429) {
@@ -84,7 +86,9 @@ describe('Gateway AI Messages (integration)', () => {
     const res = await sendMessage({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 32,
-      messages: [{ role: 'user', content: 'Reply with exactly one word: hello' }],
+      messages: [
+        { role: 'user', content: 'Reply with exactly one word: hello' },
+      ],
     })
 
     if (shouldBail(res)) return
@@ -122,7 +126,11 @@ describe('Gateway AI Messages (integration)', () => {
       messages: [
         { role: 'user', content: 'Remember the number 42.' },
         { role: 'assistant', content: 'I will remember the number 42.' },
-        { role: 'user', content: 'What number did I ask you to remember? Reply with just the number.' },
+        {
+          role: 'user',
+          content:
+            'What number did I ask you to remember? Reply with just the number.',
+        },
       ],
     })
 
@@ -139,7 +147,8 @@ describe('Gateway AI Messages (integration)', () => {
     const res = await sendMessage({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 32,
-      system: 'You are a pirate. Always say "Arrr" at the start of every reply.',
+      system:
+        'You are a pirate. Always say "Arrr" at the start of every reply.',
       messages: [{ role: 'user', content: 'Say hello.' }],
     })
 

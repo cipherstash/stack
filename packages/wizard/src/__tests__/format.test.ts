@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { formatAgentOutput } from '../lib/format.js'
 import pc from 'picocolors'
+import { describe, expect, it } from 'vitest'
+import { formatAgentOutput } from '../lib/format.js'
 
 describe('formatAgentOutput', () => {
   it('renders h2 headings as bold cyan', () => {

@@ -34,10 +34,7 @@ import {
   type EncryptedTableColumn,
 } from '@cipherstash/stack/schema'
 
-import type {
-  CipherstashRoutingKey,
-  CipherstashSdk,
-} from '../execution/sdk'
+import type { CipherstashRoutingKey, CipherstashSdk } from '../execution/sdk'
 
 // `JsPlaintext` is the input type `@cipherstash/stack`'s `bulkEncrypt`
 // accepts for non-bigint, non-Date values. Redeclared locally because
@@ -114,9 +111,14 @@ function unwrap<T>(result: StackResult<T>, op: string): T {
   return result.data
 }
 
-function unwrapBulkDecryptEntry(entry: { data?: unknown; error?: unknown }): string {
+function unwrapBulkDecryptEntry(entry: {
+  data?: unknown
+  error?: unknown
+}): string {
   if ('error' in entry && entry.error !== undefined) {
-    throw new Error(`cipherstash bulkDecrypt entry failed: ${String(entry.error)}`)
+    throw new Error(
+      `cipherstash bulkDecrypt entry failed: ${String(entry.error)}`,
+    )
   }
   return asSdkPlaintext(entry.data)
 }

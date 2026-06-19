@@ -1,19 +1,19 @@
+import { type Result, withResult } from '@byteslice/result'
+import type {
+  Encrypted as CipherStashEncrypted,
+  EncryptedQuery as CipherStashEncryptedQuery,
+} from '@cipherstash/protect-ffi'
+import {
+  encryptQueryBulk as ffiEncryptQueryBulk,
+  type JsPlaintext,
+  type QueryPayload,
+} from '@cipherstash/protect-ffi'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { Context, LockContext } from '@/identity'
 import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
-import {
-  type JsPlaintext,
-  type QueryPayload,
-  encryptQueryBulk as ffiEncryptQueryBulk,
-} from '@cipherstash/protect-ffi'
-import type {
-  Encrypted as CipherStashEncrypted,
-  EncryptedQuery as CipherStashEncryptedQuery,
-} from '@cipherstash/protect-ffi'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
   assertValidNumericValue,

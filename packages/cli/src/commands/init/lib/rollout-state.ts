@@ -127,4 +127,3 @@ export function rollupPlanStep(
   if (states.every((s) => s.needs === 'completed')) return 'completed'
   return 'unknown'
 }
-

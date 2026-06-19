@@ -1,11 +1,11 @@
 import 'dotenv/config'
+
+import { createClient } from '@supabase/supabase-js'
+import postgres from 'postgres'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
 import { encryptedSupabase } from '@/supabase'
-import postgres from 'postgres'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-
-import { createClient } from '@supabase/supabase-js'
 
 // supabase.test.ts needs a live Supabase project, so the suite is skipped
 // when the Supabase environment is not configured (e.g. in CI, pending a
@@ -103,181 +103,184 @@ afterAll(async () => {
   }
 }, 30000)
 
-describe.skipIf(!SUPABASE_ENABLED)('supabase (encryptedSupabase wrapper)', () => {
-  it('should insert and select encrypted data', async () => {
-    const protectClient = await Encryption({ schemas: [table] })
-    const eSupabase = encryptedSupabase({
-      encryptionClient: protectClient,
-      supabaseClient: supabase,
-    })
-
-    const plaintext = 'hello world'
-
-    // Insert — auto-encrypts the `encrypted` column, auto-converts to PG composite
-    const { data: insertedData, error: insertError } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .insert({
-        encrypted: plaintext,
-        test_run_id: TEST_RUN_ID,
+describe.skipIf(!SUPABASE_ENABLED)(
+  'supabase (encryptedSupabase wrapper)',
+  () => {
+    it('should insert and select encrypted data', async () => {
+      const protectClient = await Encryption({ schemas: [table] })
+      const eSupabase = encryptedSupabase({
+        encryptionClient: protectClient,
+        supabaseClient: supabase,
       })
-      .select('id')
 
-    if (insertError) {
-      throw new Error(`[protect]: ${insertError.message}`)
-    }
+      const plaintext = 'hello world'
 
-    insertedIds.push(insertedData![0].id)
+      // Insert — auto-encrypts the `encrypted` column, auto-converts to PG composite
+      const { data: insertedData, error: insertError } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .insert({
+          encrypted: plaintext,
+          test_run_id: TEST_RUN_ID,
+        })
+        .select('id')
 
-    // Select — auto-adds ::jsonb cast to `encrypted`, auto-decrypts result
-    const { data, error } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .select('id, encrypted')
-      .eq('id', insertedData![0].id)
+      if (insertError) {
+        throw new Error(`[protect]: ${insertError.message}`)
+      }
 
-    if (error) {
-      throw new Error(`[protect]: ${error.message}`)
-    }
+      insertedIds.push(insertedData![0].id)
 
-    expect(data).toHaveLength(1)
-    expect(data![0].encrypted).toBe(plaintext)
-  }, 30000)
+      // Select — auto-adds ::jsonb cast to `encrypted`, auto-decrypts result
+      const { data, error } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .select('id, encrypted')
+        .eq('id', insertedData![0].id)
 
-  it('should insert and select encrypted model data', async () => {
-    const protectClient = await Encryption({ schemas: [table] })
-    const eSupabase = encryptedSupabase({
-      encryptionClient: protectClient,
-      supabaseClient: supabase,
-    })
+      if (error) {
+        throw new Error(`[protect]: ${error.message}`)
+      }
 
-    const model = {
-      encrypted: 'hello world',
-      otherField: 'not encrypted',
-    }
+      expect(data).toHaveLength(1)
+      expect(data![0].encrypted).toBe(plaintext)
+    }, 30000)
 
-    // Insert — auto-encrypts `encrypted`, passes `otherField` through
-    const { data: insertedData, error: insertError } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .insert({
-        ...model,
-        test_run_id: TEST_RUN_ID,
+    it('should insert and select encrypted model data', async () => {
+      const protectClient = await Encryption({ schemas: [table] })
+      const eSupabase = encryptedSupabase({
+        encryptionClient: protectClient,
+        supabaseClient: supabase,
       })
-      .select('id')
 
-    if (insertError) {
-      throw new Error(`[protect]: ${insertError.message}`)
-    }
+      const model = {
+        encrypted: 'hello world',
+        otherField: 'not encrypted',
+      }
 
-    insertedIds.push(insertedData![0].id)
+      // Insert — auto-encrypts `encrypted`, passes `otherField` through
+      const { data: insertedData, error: insertError } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .insert({
+          ...model,
+          test_run_id: TEST_RUN_ID,
+        })
+        .select('id')
 
-    // Select — auto-adds ::jsonb to `encrypted`, auto-decrypts
-    const { data, error } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .select('id, encrypted, otherField')
-      .eq('id', insertedData![0].id)
+      if (insertError) {
+        throw new Error(`[protect]: ${insertError.message}`)
+      }
 
-    if (error) {
-      throw new Error(`[protect]: ${error.message}`)
-    }
+      insertedIds.push(insertedData![0].id)
 
-    expect(data).toHaveLength(1)
-    expect({
-      encrypted: data![0].encrypted,
-      otherField: data![0].otherField,
-    }).toEqual(model)
-  }, 30000)
+      // Select — auto-adds ::jsonb to `encrypted`, auto-decrypts
+      const { data, error } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .select('id, encrypted, otherField')
+        .eq('id', insertedData![0].id)
 
-  it('should insert and select bulk encrypted model data', async () => {
-    const protectClient = await Encryption({ schemas: [table] })
-    const eSupabase = encryptedSupabase({
-      encryptionClient: protectClient,
-      supabaseClient: supabase,
-    })
+      if (error) {
+        throw new Error(`[protect]: ${error.message}`)
+      }
 
-    const models = [
-      {
-        encrypted: 'hello world 1',
-        otherField: 'not encrypted 1',
-      },
-      {
-        encrypted: 'hello world 2',
-        otherField: 'not encrypted 2',
-      },
-    ]
+      expect(data).toHaveLength(1)
+      expect({
+        encrypted: data![0].encrypted,
+        otherField: data![0].otherField,
+      }).toEqual(model)
+    }, 30000)
 
-    // Bulk insert — auto-encrypts all models
-    const { data: insertedData, error: insertError } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .insert(models.map((m) => ({ ...m, test_run_id: TEST_RUN_ID })))
-      .select('id')
-
-    if (insertError) {
-      throw new Error(`[protect]: ${insertError.message}`)
-    }
-
-    insertedIds.push(...insertedData!.map((d) => d.id))
-
-    // Select — auto-decrypts all results
-    const { data, error } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .select('id, encrypted, otherField')
-      .in(
-        'id',
-        insertedData!.map((d) => d.id),
-      )
-
-    if (error) {
-      throw new Error(`[protect]: ${error.message}`)
-    }
-
-    expect(
-      data!.map((d) => ({
-        encrypted: d.encrypted,
-        otherField: d.otherField,
-      })),
-    ).toEqual(models)
-  }, 30000)
-
-  it('should insert and query encrypted number data with equality', async () => {
-    const protectClient = await Encryption({ schemas: [table] })
-    const eSupabase = encryptedSupabase({
-      encryptionClient: protectClient,
-      supabaseClient: supabase,
-    })
-
-    const testAge = 25
-    const model = {
-      age: testAge,
-      otherField: 'not encrypted',
-    }
-
-    // Insert — auto-encrypts `age`
-    const { data: insertedData, error: insertError } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .insert({
-        ...model,
-        test_run_id: TEST_RUN_ID,
+    it('should insert and select bulk encrypted model data', async () => {
+      const protectClient = await Encryption({ schemas: [table] })
+      const eSupabase = encryptedSupabase({
+        encryptionClient: protectClient,
+        supabaseClient: supabase,
       })
-      .select('id')
 
-    if (insertError) {
-      throw new Error(`[protect]: ${insertError.message}`)
-    }
+      const models = [
+        {
+          encrypted: 'hello world 1',
+          otherField: 'not encrypted 1',
+        },
+        {
+          encrypted: 'hello world 2',
+          otherField: 'not encrypted 2',
+        },
+      ]
 
-    insertedIds.push(insertedData![0].id)
+      // Bulk insert — auto-encrypts all models
+      const { data: insertedData, error: insertError } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .insert(models.map((m) => ({ ...m, test_run_id: TEST_RUN_ID })))
+        .select('id')
 
-    // Query by encrypted `age` — auto-encrypts the search term
-    const { data, error } = await eSupabase
-      .from<ProtectCiRow>('protect-ci', table)
-      .select('id, age, otherField')
-      .eq('age', testAge)
-      .eq('test_run_id', TEST_RUN_ID)
+      if (insertError) {
+        throw new Error(`[protect]: ${insertError.message}`)
+      }
 
-    if (error) {
-      throw new Error(`[protect]: ${error.message}`)
-    }
+      insertedIds.push(...insertedData!.map((d) => d.id))
 
-    // Verify we found our specific row with encrypted age match
-    expect(data).toHaveLength(1)
-    expect(data![0].age).toBe(testAge)
-  }, 30000)
-})
+      // Select — auto-decrypts all results
+      const { data, error } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .select('id, encrypted, otherField')
+        .in(
+          'id',
+          insertedData!.map((d) => d.id),
+        )
+
+      if (error) {
+        throw new Error(`[protect]: ${error.message}`)
+      }
+
+      expect(
+        data!.map((d) => ({
+          encrypted: d.encrypted,
+          otherField: d.otherField,
+        })),
+      ).toEqual(models)
+    }, 30000)
+
+    it('should insert and query encrypted number data with equality', async () => {
+      const protectClient = await Encryption({ schemas: [table] })
+      const eSupabase = encryptedSupabase({
+        encryptionClient: protectClient,
+        supabaseClient: supabase,
+      })
+
+      const testAge = 25
+      const model = {
+        age: testAge,
+        otherField: 'not encrypted',
+      }
+
+      // Insert — auto-encrypts `age`
+      const { data: insertedData, error: insertError } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .insert({
+          ...model,
+          test_run_id: TEST_RUN_ID,
+        })
+        .select('id')
+
+      if (insertError) {
+        throw new Error(`[protect]: ${insertError.message}`)
+      }
+
+      insertedIds.push(insertedData![0].id)
+
+      // Query by encrypted `age` — auto-encrypts the search term
+      const { data, error } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .select('id, age, otherField')
+        .eq('age', testAge)
+        .eq('test_run_id', TEST_RUN_ID)
+
+      if (error) {
+        throw new Error(`[protect]: ${error.message}`)
+      }
+
+      // Verify we found our specific row with encrypted age match
+      expect(data).toHaveLength(1)
+      expect(data![0].age).toBe(testAge)
+    }, 30000)
+  },
+)

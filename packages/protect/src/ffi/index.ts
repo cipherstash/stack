@@ -2,21 +2,21 @@ import { type Result, withResult } from '@byteslice/result'
 import { type JsPlaintext, newClient } from '@cipherstash/protect-ffi'
 import {
   type EncryptConfig,
+  encryptConfigSchema,
   type ProtectTable,
   type ProtectTableColumn,
-  encryptConfigSchema,
 } from '@cipherstash/schema'
-import { type ProtectError, ProtectErrorTypes } from '..'
 import { logger } from '../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '..'
 import { toFfiKeysetIdentifier } from '../helpers'
 import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
   Decrypted,
+  Encrypted,
   EncryptOptions,
   EncryptQueryOptions,
-  Encrypted,
   KeysetIdentifier,
   ScalarQueryTerm,
   SearchTerm,
@@ -425,5 +425,4 @@ export class ProtectClient {
   createSearchTerms(terms: SearchTerm[]): SearchTermsOperation {
     return new SearchTermsOperation(this.client, terms)
   }
-
 }

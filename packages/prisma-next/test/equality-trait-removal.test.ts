@@ -31,62 +31,64 @@
  * re-opening the footgun.
  */
 
-import { describe, expect, it, vi } from 'vitest';
-import { createCipherstashStringCodec } from '../src/execution/codec-runtime';
-import { createParameterizedCodecDescriptors } from '../src/execution/parameterized';
-import type { CipherstashSdk } from '../src/execution/sdk';
-import { cipherstashStringCodecMetadata } from '../src/extension-metadata/codec-metadata';
+import { describe, expect, it, vi } from 'vitest'
+import { createCipherstashStringCodec } from '../src/execution/codec-runtime'
+import { createParameterizedCodecDescriptors } from '../src/execution/parameterized'
+import type { CipherstashSdk } from '../src/execution/sdk'
+import { cipherstashStringCodecMetadata } from '../src/extension-metadata/codec-metadata'
 
 function emptySdk(): CipherstashSdk {
   return {
     decrypt: vi.fn(),
     bulkEncrypt: vi.fn(),
     bulkDecrypt: vi.fn(),
-  };
+  }
 }
 
 describe('cipherstash codec: no `equality` trait', () => {
   it('runtime codec never advertises the framework `equality` trait', () => {
-    const codec = createCipherstashStringCodec(emptySdk());
-    const traits: ReadonlyArray<string> = codec.descriptor.traits ?? [];
-    expect(traits).not.toContain('equality');
+    const codec = createCipherstashStringCodec(emptySdk())
+    const traits: ReadonlyArray<string> = codec.descriptor.traits ?? []
+    expect(traits).not.toContain('equality')
     // Cipherstash-namespaced traits (load-bearing for the multi-codec
     // operator dispatch) ARE expected — they're isolated from
     // framework built-ins by the `cipherstash:` prefix.
-    expect(traits.some((t) => t.startsWith('cipherstash:'))).toBe(true);
-  });
+    expect(traits.some((t) => t.startsWith('cipherstash:'))).toBe(true)
+  })
 
   it('parameterized codec descriptors (the ones the runtime consumes for dispatch) never advertise `equality`', () => {
-    const descriptors = createParameterizedCodecDescriptors(emptySdk());
-    expect(descriptors.length).toBeGreaterThan(0);
+    const descriptors = createParameterizedCodecDescriptors(emptySdk())
+    expect(descriptors.length).toBeGreaterThan(0)
     for (const descriptor of descriptors) {
-      const traits: ReadonlyArray<string> = descriptor.traits ?? [];
-      expect(traits).not.toContain('equality');
-      expect(traits.some((t) => t.startsWith('cipherstash:'))).toBe(true);
+      const traits: ReadonlyArray<string> = descriptor.traits ?? []
+      expect(traits).not.toContain('equality')
+      expect(traits.some((t) => t.startsWith('cipherstash:'))).toBe(true)
     }
-  });
+  })
 
   it('SDK-free pack-meta codec metadata never advertises `equality`', () => {
-    const traits: ReadonlyArray<string> = cipherstashStringCodecMetadata.descriptor.traits ?? [];
-    expect(traits).not.toContain('equality');
-    expect(traits.some((t) => t.startsWith('cipherstash:'))).toBe(true);
-  });
+    const traits: ReadonlyArray<string> =
+      cipherstashStringCodecMetadata.descriptor.traits ?? []
+    expect(traits).not.toContain('equality')
+    expect(traits.some((t) => t.startsWith('cipherstash:'))).toBe(true)
+  })
 
   it('the three trait declarations agree (runtime / parameterized / pack-meta) for the string codec', () => {
     // If these three diverge, contract emit (which reads pack-meta) and
     // the runtime (which reads the parameterized descriptor) will
     // disagree about which built-in operations are reachable on
     // cipherstash columns. They must always be identical.
-    const runtime = createCipherstashStringCodec(emptySdk()).descriptor.traits ?? [];
+    const runtime =
+      createCipherstashStringCodec(emptySdk()).descriptor.traits ?? []
     const parameterized =
       createParameterizedCodecDescriptors(emptySdk()).find(
         (d) => d.codecId === 'cipherstash/string@1',
-      )?.traits ?? [];
-    const packMeta = cipherstashStringCodecMetadata.descriptor.traits ?? [];
-    expect([...runtime].sort()).toEqual([...parameterized].sort());
-    expect([...runtime].sort()).toEqual([...packMeta].sort());
-  });
-});
+      )?.traits ?? []
+    const packMeta = cipherstashStringCodecMetadata.descriptor.traits ?? []
+    expect([...runtime].sort()).toEqual([...parameterized].sort())
+    expect([...runtime].sort()).toEqual([...packMeta].sort())
+  })
+})
 
 describe('cipherstash columns: framework built-in `eq` is not reachable', () => {
   it('documents the gating contract — built-in `eq` requires `equality` in column traits', () => {
@@ -115,7 +117,7 @@ describe('cipherstash columns: framework built-in `eq` is not reachable', () => 
     // `readonly never[]` (which is itself a strong static signal that
     // the trait can`t be present).
     const traits: ReadonlyArray<string> =
-      createCipherstashStringCodec(emptySdk()).descriptor.traits ?? [];
-    expect(traits.includes('equality')).toBe(false);
-  });
-});
+      createCipherstashStringCodec(emptySdk()).descriptor.traits ?? []
+    expect(traits.includes('equality')).toBe(false)
+  })
+})

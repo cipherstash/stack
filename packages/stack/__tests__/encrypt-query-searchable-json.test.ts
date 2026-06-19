@@ -1,9 +1,10 @@
 import 'dotenv/config'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
-import { beforeAll, describe, expect, it } from 'vitest'
 
 type EncryptionClient = Awaited<ReturnType<typeof Encryption>>
+
 import {
   createFailingMockLockContext,
   createMockLockContext,

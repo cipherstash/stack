@@ -21,18 +21,23 @@
  * contract-space package layout section). Re-emit `ops.json` /
  * `migration.json` after edits via `node migration.ts`.
  */
-import { Migration, MigrationCLI, rawSql } from '@prisma-next/target-postgres/migration';
-import { CIPHERSTASH_INVARIANTS } from '../../src/extension-metadata/constants';
-import { EQL_BUNDLE_SQL } from '../../src/migration/eql-bundle';
+import {
+  Migration,
+  MigrationCLI,
+  rawSql,
+} from '@prisma-next/target-postgres/migration'
+import { CIPHERSTASH_INVARIANTS } from '../../src/extension-metadata/constants'
+import { EQL_BUNDLE_SQL } from '../../src/migration/eql-bundle'
 
-const INSTALL_LABEL = 'Install EQL bundle (functions, operators, casts, op classes, schema, types)';
+const INSTALL_LABEL =
+  'Install EQL bundle (functions, operators, casts, op classes, schema, types)'
 
 export default class M extends Migration {
   override describe() {
     return {
       from: null,
       to: 'sha256:efa685171bebbb8f078f08d12be3578bb5d96b71669dccc6cc9e4be96af8cdb4',
-    };
+    }
   }
 
   override get operations() {
@@ -59,13 +64,14 @@ export default class M extends Migration {
             // Placing the composite outside the `eql_v2` namespace
             // decouples the type's lifecycle from the bundle's
             // functions / operators / casts.
-            description: 'verify "public.eql_v2_encrypted" composite type exists',
+            description:
+              'verify "public.eql_v2_encrypted" composite type exists',
             sql: "SELECT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'public' AND t.typname = 'eql_v2_encrypted')",
           },
         ],
       }),
-    ];
+    ]
   }
 }
 
-MigrationCLI.run(import.meta.url, M);
+MigrationCLI.run(import.meta.url, M)

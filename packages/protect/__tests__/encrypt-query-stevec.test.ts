@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { protect } from '../src'
 
 type ProtectClient = Awaited<ReturnType<typeof protect>>
+
 import { expectFailure, jsonbSchema, metadata, unwrapResult } from './fixtures'
 
 describe('encryptQuery with steVecSelector', () => {

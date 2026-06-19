@@ -112,53 +112,37 @@ describe('prodInstallCommand', () => {
 
 describe('devInstallCommand', () => {
   it('returns bun add -D for bun', () => {
-    expect(devInstallCommand('bun', 'stash')).toBe(
-      'bun add -D stash',
-    )
+    expect(devInstallCommand('bun', 'stash')).toBe('bun add -D stash')
   })
 
   it('returns pnpm add -D for pnpm', () => {
-    expect(devInstallCommand('pnpm', 'stash')).toBe(
-      'pnpm add -D stash',
-    )
+    expect(devInstallCommand('pnpm', 'stash')).toBe('pnpm add -D stash')
   })
 
   it('returns yarn add -D for yarn', () => {
-    expect(devInstallCommand('yarn', 'stash')).toBe(
-      'yarn add -D stash',
-    )
+    expect(devInstallCommand('yarn', 'stash')).toBe('yarn add -D stash')
   })
 
   it('returns npm install -D for npm', () => {
-    expect(devInstallCommand('npm', 'stash')).toBe(
-      'npm install -D stash',
-    )
+    expect(devInstallCommand('npm', 'stash')).toBe('npm install -D stash')
   })
 })
 
 describe('runnerCommand', () => {
   it('returns npx for npm', () => {
-    expect(runnerCommand('npm', 'stash')).toBe(
-      'npx stash',
-    )
+    expect(runnerCommand('npm', 'stash')).toBe('npx stash')
   })
 
   it('returns bunx for bun', () => {
-    expect(runnerCommand('bun', 'stash')).toBe(
-      'bunx stash',
-    )
+    expect(runnerCommand('bun', 'stash')).toBe('bunx stash')
   })
 
   it('returns pnpm dlx for pnpm', () => {
-    expect(runnerCommand('pnpm', 'stash')).toBe(
-      'pnpm dlx stash',
-    )
+    expect(runnerCommand('pnpm', 'stash')).toBe('pnpm dlx stash')
   })
 
   it('returns yarn dlx for yarn', () => {
-    expect(runnerCommand('yarn', 'stash')).toBe(
-      'yarn dlx stash',
-    )
+    expect(runnerCommand('yarn', 'stash')).toBe('yarn dlx stash')
   })
 
   it('passes the package reference through verbatim (multi-word args allowed)', () => {

@@ -1,9 +1,9 @@
-import type { Encrypted, EncryptedQueryResult, KeysetIdentifier } from '@/types'
 import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
   KeysetIdentifier as KeysetIdentifierFfi,
 } from '@cipherstash/protect-ffi'
+import type { Encrypted, EncryptedQueryResult, KeysetIdentifier } from '@/types'
 
 /**
  * The shape `encryptQuery` / `encryptQueryBulk` can return: a full storage
@@ -143,7 +143,7 @@ export function isEncryptedPayload(value: unknown): value is Encrypted {
 }
 
 export {
-  toJsonPath,
   buildNestedObject,
   parseJsonbPath,
+  toJsonPath,
 } from './jsonb'

@@ -1,3 +1,4 @@
+import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import type { EncryptionClient } from '@/encryption'
 import {
   bulkModelsToEncryptedPgComposites,
@@ -9,7 +10,6 @@ import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import { EncryptedColumn } from '@/schema'
 import type { ScalarQueryTerm } from '@/types'
 import { logger } from '@/utils/logger'
-import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import {
   addJsonbCasts,
   getEncryptedColumnNames,
@@ -486,8 +486,6 @@ export class EncryptedQueryBuilderImpl<
           termMap.push({ source: 'filter', filterIndex: i, inIndex: j })
         }
       } else if (f.op === 'is') {
-        // `is` is used for null/boolean checks — don't encrypt
-        continue
       } else {
         terms.push({
           value: f.value as JsPlaintext,

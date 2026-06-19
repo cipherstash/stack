@@ -1,8 +1,9 @@
 import 'dotenv/config'
-import { Encryption } from '@/index'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { Encryption } from '@/index'
 
 type EncryptionClient = Awaited<ReturnType<typeof Encryption>>
+
 import { expectFailure, jsonbSchema, metadata, unwrapResult } from './fixtures'
 
 describe('encryptQuery with steVecSelector', () => {

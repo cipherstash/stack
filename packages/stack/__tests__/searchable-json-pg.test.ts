@@ -1,9 +1,9 @@
 import 'dotenv/config'
+import postgres from 'postgres'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
-import postgres from 'postgres'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 if (!process.env.DATABASE_URL) {
   throw new Error('Missing env.DATABASE_URL')

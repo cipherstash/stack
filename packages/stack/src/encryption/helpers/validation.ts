@@ -1,6 +1,6 @@
+import type { Result } from '@byteslice/result'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { FfiIndexTypeName } from '@/types'
-import type { Result } from '@byteslice/result'
 
 /**
  * Validates that a value is not NaN or Infinity.

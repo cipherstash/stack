@@ -22,8 +22,11 @@
  * surfaces immediately instead of silently no-op'ing.
  */
 
-import type { JsonValue } from '@prisma-next/contract/types';
-import { type AnyCodecDescriptor, CodecImpl } from '@prisma-next/framework-components/codec';
+import type { JsonValue } from '@prisma-next/contract/types'
+import {
+  type AnyCodecDescriptor,
+  CodecImpl,
+} from '@prisma-next/framework-components/codec'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -33,9 +36,12 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
-} from './constants';
+} from './constants'
 
-function makeMetadataDescriptor(codecId: string, typeName: string): AnyCodecDescriptor {
+function makeMetadataDescriptor(
+  codecId: string,
+  typeName: string,
+): AnyCodecDescriptor {
   return {
     codecId,
     traits: CIPHERSTASH_CODEC_TRAITS[codecId] ?? [],
@@ -51,71 +57,78 @@ function makeMetadataDescriptor(codecId: string, typeName: string): AnyCodecDesc
     isParameterized: false,
     renderOutputType: () => typeName,
     factory: () => () => {
-      throw new Error('cipherstash codec: metadata descriptor factory is not callable');
+      throw new Error(
+        'cipherstash codec: metadata descriptor factory is not callable',
+      )
     },
-  };
+  }
 }
 
-class CipherstashCodecMetadata extends CodecImpl<string, readonly [], unknown, unknown> {
-  readonly #typeName: string;
+class CipherstashCodecMetadata extends CodecImpl<
+  string,
+  readonly [],
+  unknown,
+  unknown
+> {
+  readonly #typeName: string
 
   constructor(descriptor: AnyCodecDescriptor, typeName: string) {
-    super(descriptor);
-    this.#typeName = typeName;
+    super(descriptor)
+    this.#typeName = typeName
   }
 
   async encode(): Promise<unknown> {
     throw new Error(
       'cipherstash codec: encode called on the pack-meta metadata codec. ' +
         'Construct a runtime descriptor via `createCipherstashRuntimeDescriptor({ sdk })` and use that instead.',
-    );
+    )
   }
 
   async decode(): Promise<unknown> {
     throw new Error(
       'cipherstash codec: decode called on the pack-meta metadata codec. ' +
         'Construct a runtime descriptor via `createCipherstashRuntimeDescriptor({ sdk })` and use that instead.',
-    );
+    )
   }
 
   encodeJson(): JsonValue {
-    const marker = `$${this.#typeName.charAt(0).toLowerCase()}${this.#typeName.slice(1)}`;
-    return { [marker]: '<opaque>' } as JsonValue;
+    const marker = `$${this.#typeName.charAt(0).toLowerCase()}${this.#typeName.slice(1)}`
+    return { [marker]: '<opaque>' } as JsonValue
   }
 
   decodeJson(): unknown {
     throw new Error(
       'cipherstash codec: decodeJson is not supported; envelopes do not round-trip through JSON.',
-    );
+    )
   }
 }
 
 export const cipherstashStringCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_STRING_CODEC_ID, 'EncryptedString'),
   'EncryptedString',
-);
+)
 
 export const cipherstashDoubleCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_DOUBLE_CODEC_ID, 'EncryptedDouble'),
   'EncryptedDouble',
-);
+)
 
 export const cipherstashBigIntCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_BIGINT_CODEC_ID, 'EncryptedBigInt'),
   'EncryptedBigInt',
-);
+)
 
 export const cipherstashDateCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_DATE_CODEC_ID, 'EncryptedDate'),
   'EncryptedDate',
-);
+)
 
 export const cipherstashBooleanCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_BOOLEAN_CODEC_ID, 'EncryptedBoolean'),
   'EncryptedBoolean',
-);
+)
 
 export const cipherstashJsonCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_JSON_CODEC_ID, 'EncryptedJson'),
   'EncryptedJson',
-);
+)

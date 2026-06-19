@@ -1,5 +1,5 @@
-import { EncryptionErrorTypes, getErrorMessage } from '@/errors'
 import { describe, expect, it } from 'vitest'
+import { EncryptionErrorTypes, getErrorMessage } from '@/errors'
 
 describe('error helpers', () => {
   // -------------------------------------------------------

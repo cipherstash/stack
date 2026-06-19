@@ -1,8 +1,8 @@
 import 'dotenv/config'
+import { beforeAll, describe, expect, it, test } from 'vitest'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedField, encryptedTable } from '@/schema'
-import { beforeAll, describe, expect, it, test } from 'vitest'
 
 const users = encryptedTable('users', {
   email: encryptedColumn('email').freeTextSearch().equality().orderAndRange(),
@@ -51,29 +51,25 @@ const cases = [
 ]
 
 describe('Number encryption and decryption', () => {
-  test.each(cases)(
-    'should encrypt and decrypt a number: %d',
-    async (age) => {
-      const ciphertext = await protectClient.encrypt(age, {
-        column: users.age,
-        table: users,
-      })
+  test.each(cases)('should encrypt and decrypt a number: %d', async (age) => {
+    const ciphertext = await protectClient.encrypt(age, {
+      column: users.age,
+      table: users,
+    })
 
-      if (ciphertext.failure) {
-        throw new Error(`[protect]: ${ciphertext.failure.message}`)
-      }
+    if (ciphertext.failure) {
+      throw new Error(`[protect]: ${ciphertext.failure.message}`)
+    }
 
-      // Verify encrypted field
-      expect(ciphertext.data).toHaveProperty('c')
+    // Verify encrypted field
+    expect(ciphertext.data).toHaveProperty('c')
 
-      const plaintext = await protectClient.decrypt(ciphertext.data)
+    const plaintext = await protectClient.decrypt(ciphertext.data)
 
-      expect(plaintext).toEqual({
-        data: age,
-      })
-    },
-    30000,
-  )
+    expect(plaintext).toEqual({
+      data: age,
+    })
+  }, 30000)
 
   // Special case
   it('should treat a negative zero valued float as 0.0', async () => {
@@ -751,17 +747,13 @@ const invalidPlaintexts = [
 ]
 
 describe('Invalid or uncoercable values', () => {
-  test.each(invalidPlaintexts)(
-    'should fail to encrypt',
-    async (input) => {
-      const result = await protectClient.encrypt(input, {
-        column: users.age,
-        table: users,
-      })
+  test.each(invalidPlaintexts)('should fail to encrypt', async (input) => {
+    const result = await protectClient.encrypt(input, {
+      column: users.age,
+      table: users,
+    })
 
-      expect(result.failure).toBeDefined()
-      expect(result.failure?.message).toContain('Cannot convert')
-    },
-    30000,
-  )
+    expect(result.failure).toBeDefined()
+    expect(result.failure?.message).toContain('Cannot convert')
+  }, 30000)
 })

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock constants before importing the module under test
 vi.mock('../lib/constants.js', () => ({
@@ -24,7 +24,12 @@ describe('checkReadiness (unit)', () => {
 
   it('returns "not_ready" when gateway is down', async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url
       if (url.includes('localhost:8787')) {
         throw new Error('Connection refused')
       }
@@ -35,7 +40,12 @@ describe('checkReadiness (unit)', () => {
 
   it('returns "ready_with_warnings" when npm is degraded but gateway is up', async () => {
     vi.mocked(fetch).mockImplementation(async (input) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : (input as Request).url
       if (url.includes('npmjs')) {
         return new Response(null, { status: 503 })
       }

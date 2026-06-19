@@ -15,29 +15,29 @@
  *     `@prisma-next/extension-cipherstash/migration`.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest'
 import {
   CipherstashAddSearchConfigCall,
   CipherstashRemoveSearchConfigCall,
   type CipherstashSearchIndex,
   cipherstashAddSearchConfig,
   cipherstashRemoveSearchConfig,
-} from '../src/migration/call-classes';
+} from '../src/migration/call-classes'
 
-const TABLE = 'user';
-const FIELD = 'email';
-const MIGRATION_MODULE = '@prisma-next/extension-cipherstash/migration';
+const TABLE = 'user'
+const FIELD = 'email'
+const MIGRATION_MODULE = '@prisma-next/extension-cipherstash/migration'
 
 describe('CipherstashAddSearchConfigCall', () => {
   it('exposes factoryName, operationClass and label per (table, field, index)', () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique');
-    expect(call.factoryName).toBe('cipherstashAddSearchConfig');
-    expect(call.operationClass).toBe('additive');
-    expect(call.label).toBe(`Enable cipherstash search on ${TABLE}.${FIELD}`);
-  });
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique')
+    expect(call.factoryName).toBe('cipherstashAddSearchConfig')
+    expect(call.operationClass).toBe('additive')
+    expect(call.label).toBe(`Enable cipherstash search on ${TABLE}.${FIELD}`)
+  })
 
   it('toOp() produces the canonical add_search_config@v1 op shape', () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique');
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique')
     expect(call.toOp()).toEqual({
       id: `cipherstash-codec.${TABLE}.${FIELD}.add-search-config.unique`,
       label: `Enable cipherstash search on ${TABLE}.${FIELD}`,
@@ -52,70 +52,87 @@ describe('CipherstashAddSearchConfigCall', () => {
         },
       ],
       postcheck: [],
-    });
-  });
+    })
+  })
 
   it("toOp() embeds 'match' when the index is 'match'", () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'match');
-    const op = call.toOp();
-    expect(op.id).toBe(`cipherstash-codec.${TABLE}.${FIELD}.add-search-config.match`);
-    expect(op.invariantId).toBe(`cipherstash-codec:${TABLE}.${FIELD}:add-search-config:match@v1`);
-    expect(op.execute[0]!.sql).toContain(`'match'`);
-  });
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'match')
+    const op = call.toOp()
+    expect(op.id).toBe(
+      `cipherstash-codec.${TABLE}.${FIELD}.add-search-config.match`,
+    )
+    expect(op.invariantId).toBe(
+      `cipherstash-codec:${TABLE}.${FIELD}:add-search-config:match@v1`,
+    )
+    expect(op.execute[0]!.sql).toContain(`'match'`)
+  })
 
   it("toOp() defaults the cast type to 'text'", () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique');
-    expect(call.toOp().execute[0]!.sql).toContain(`, 'text')`);
-  });
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique')
+    expect(call.toOp().execute[0]!.sql).toContain(`, 'text')`)
+  })
 
   it('toOp() honours an explicit castAs override', () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique', 'jsonb');
-    expect(call.toOp().execute[0]!.sql).toContain(`, 'jsonb')`);
-  });
+    const call = new CipherstashAddSearchConfigCall(
+      TABLE,
+      FIELD,
+      'unique',
+      'jsonb',
+    )
+    expect(call.toOp().execute[0]!.sql).toContain(`, 'jsonb')`)
+  })
 
   it('toOp() escapes embedded single quotes in identifiers', () => {
-    const call = new CipherstashAddSearchConfigCall("us'er", "em'ail", 'unique');
-    expect(call.toOp().execute[0]!.sql).toContain("'us''er'");
-    expect(call.toOp().execute[0]!.sql).toContain("'em''ail'");
-  });
+    const call = new CipherstashAddSearchConfigCall("us'er", "em'ail", 'unique')
+    expect(call.toOp().execute[0]!.sql).toContain("'us''er'")
+    expect(call.toOp().execute[0]!.sql).toContain("'em''ail'")
+  })
 
   it("renderTypeScript() emits cipherstashAddSearchConfig({...}) without castAs when 'text'", () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique');
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique')
     expect(call.renderTypeScript()).toBe(
       `cipherstashAddSearchConfig({ table: "${TABLE}", column: "${FIELD}", index: "unique" })`,
-    );
-  });
+    )
+  })
 
   it('renderTypeScript() emits castAs only when it differs from the default', () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'match', 'jsonb');
+    const call = new CipherstashAddSearchConfigCall(
+      TABLE,
+      FIELD,
+      'match',
+      'jsonb',
+    )
     expect(call.renderTypeScript()).toBe(
       `cipherstashAddSearchConfig({ table: "${TABLE}", column: "${FIELD}", index: "match", castAs: "jsonb" })`,
-    );
-  });
+    )
+  })
 
   it('importRequirements() pulls cipherstashAddSearchConfig from the /migration subpath', () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique');
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique')
     expect(call.importRequirements()).toEqual([
-      { moduleSpecifier: MIGRATION_MODULE, symbol: 'cipherstashAddSearchConfig' },
-    ]);
-  });
+      {
+        moduleSpecifier: MIGRATION_MODULE,
+        symbol: 'cipherstashAddSearchConfig',
+      },
+    ])
+  })
 
   it('is frozen at construction', () => {
-    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique');
-    expect(Object.isFrozen(call)).toBe(true);
-  });
-});
+    const call = new CipherstashAddSearchConfigCall(TABLE, FIELD, 'unique')
+    expect(Object.isFrozen(call)).toBe(true)
+  })
+})
 
 describe('CipherstashRemoveSearchConfigCall', () => {
   it('exposes factoryName, operationClass and label per (table, field, index)', () => {
-    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'match');
-    expect(call.factoryName).toBe('cipherstashRemoveSearchConfig');
-    expect(call.operationClass).toBe('destructive');
-    expect(call.label).toBe(`Disable cipherstash search on ${TABLE}.${FIELD}`);
-  });
+    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'match')
+    expect(call.factoryName).toBe('cipherstashRemoveSearchConfig')
+    expect(call.operationClass).toBe('destructive')
+    expect(call.label).toBe(`Disable cipherstash search on ${TABLE}.${FIELD}`)
+  })
 
   it('toOp() produces the canonical remove_search_config@v1 op shape', () => {
-    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'unique');
+    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'unique')
     expect(call.toOp()).toEqual({
       id: `cipherstash-codec.${TABLE}.${FIELD}.remove-search-config.unique`,
       label: `Disable cipherstash search on ${TABLE}.${FIELD}`,
@@ -130,37 +147,44 @@ describe('CipherstashRemoveSearchConfigCall', () => {
         },
       ],
       postcheck: [],
-    });
-  });
+    })
+  })
 
   it('renderTypeScript() emits cipherstashRemoveSearchConfig({...}) (castAs is irrelevant)', () => {
-    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'match');
+    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'match')
     expect(call.renderTypeScript()).toBe(
       `cipherstashRemoveSearchConfig({ table: "${TABLE}", column: "${FIELD}", index: "match" })`,
-    );
-  });
+    )
+  })
 
   it('importRequirements() pulls cipherstashRemoveSearchConfig from the /migration subpath', () => {
-    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'unique');
+    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'unique')
     expect(call.importRequirements()).toEqual([
-      { moduleSpecifier: MIGRATION_MODULE, symbol: 'cipherstashRemoveSearchConfig' },
-    ]);
-  });
+      {
+        moduleSpecifier: MIGRATION_MODULE,
+        symbol: 'cipherstashRemoveSearchConfig',
+      },
+    ])
+  })
 
   it('is frozen at construction', () => {
-    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'unique');
-    expect(Object.isFrozen(call)).toBe(true);
-  });
-});
+    const call = new CipherstashRemoveSearchConfigCall(TABLE, FIELD, 'unique')
+    expect(Object.isFrozen(call)).toBe(true)
+  })
+})
 
 describe('cipherstashAddSearchConfig / cipherstashRemoveSearchConfig factories', () => {
   it('cipherstashAddSearchConfig constructs an Add call with the given args', () => {
-    const call = cipherstashAddSearchConfig({ table: TABLE, column: FIELD, index: 'unique' });
-    expect(call).toBeInstanceOf(CipherstashAddSearchConfigCall);
+    const call = cipherstashAddSearchConfig({
+      table: TABLE,
+      column: FIELD,
+      index: 'unique',
+    })
+    expect(call).toBeInstanceOf(CipherstashAddSearchConfigCall)
     expect(call.toOp().invariantId).toBe(
       `cipherstash-codec:${TABLE}.${FIELD}:add-search-config:unique@v1`,
-    );
-  });
+    )
+  })
 
   it('cipherstashAddSearchConfig honours an explicit castAs override', () => {
     const call = cipherstashAddSearchConfig({
@@ -168,21 +192,25 @@ describe('cipherstashAddSearchConfig / cipherstashRemoveSearchConfig factories',
       column: FIELD,
       index: 'unique',
       castAs: 'jsonb',
-    });
-    expect(call.toOp().execute[0]!.sql).toContain(`, 'jsonb')`);
-    expect(call.renderTypeScript()).toContain('castAs: "jsonb"');
-  });
+    })
+    expect(call.toOp().execute[0]!.sql).toContain(`, 'jsonb')`)
+    expect(call.renderTypeScript()).toContain('castAs: "jsonb"')
+  })
 
   it('cipherstashRemoveSearchConfig constructs a Remove call with the given args', () => {
-    const call = cipherstashRemoveSearchConfig({ table: TABLE, column: FIELD, index: 'match' });
-    expect(call).toBeInstanceOf(CipherstashRemoveSearchConfigCall);
+    const call = cipherstashRemoveSearchConfig({
+      table: TABLE,
+      column: FIELD,
+      index: 'match',
+    })
+    expect(call).toBeInstanceOf(CipherstashRemoveSearchConfigCall)
     expect(call.toOp().invariantId).toBe(
       `cipherstash-codec:${TABLE}.${FIELD}:remove-search-config:match@v1`,
-    );
-  });
+    )
+  })
 
   it('CipherstashSearchIndex narrows to the two supported indices', () => {
-    const indices: readonly CipherstashSearchIndex[] = ['unique', 'match'];
-    expect(indices).toEqual(['unique', 'match']);
-  });
-});
+    const indices: readonly CipherstashSearchIndex[] = ['unique', 'match']
+    expect(indices).toEqual(['unique', 'match'])
+  })
+})

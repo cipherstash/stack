@@ -36,9 +36,9 @@
  * `vectorFactory`.
  */
 
-import type { CodecInstanceContext } from '@prisma-next/framework-components/codec';
-import type { RuntimeParameterizedCodecDescriptor } from '@prisma-next/sql-runtime';
-import { type as arktype } from 'arktype';
+import type { CodecInstanceContext } from '@prisma-next/framework-components/codec'
+import type { RuntimeParameterizedCodecDescriptor } from '@prisma-next/sql-runtime'
+import { type as arktype } from 'arktype'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -47,7 +47,7 @@ import {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
-} from '../extension-metadata/constants';
+} from '../extension-metadata/constants'
 import {
   createCipherstashBigIntCodec,
   createCipherstashBooleanCodec,
@@ -55,88 +55,102 @@ import {
   createCipherstashDoubleCodec,
   createCipherstashJsonCodec,
   createCipherstashStringCodec,
-} from './codec-runtime';
-import type { CipherstashSdk } from './sdk';
+} from './codec-runtime'
+import type { CipherstashSdk } from './sdk'
 
 export interface CipherstashStringParams {
-  readonly equality: boolean;
-  readonly freeTextSearch: boolean;
-  readonly orderAndRange: boolean;
+  readonly equality: boolean
+  readonly freeTextSearch: boolean
+  readonly orderAndRange: boolean
 }
 
 export interface CipherstashNumericParams {
-  readonly equality: boolean;
-  readonly orderAndRange: boolean;
+  readonly equality: boolean
+  readonly orderAndRange: boolean
 }
 
 export interface CipherstashDateParams {
-  readonly equality: boolean;
-  readonly orderAndRange: boolean;
+  readonly equality: boolean
+  readonly orderAndRange: boolean
 }
 
 export interface CipherstashBooleanParams {
-  readonly equality: boolean;
+  readonly equality: boolean
 }
 
 export interface CipherstashJsonParams {
-  readonly searchableJson: boolean;
+  readonly searchableJson: boolean
 }
 
 export const encryptedStringParamsSchema = arktype({
   equality: 'boolean',
   freeTextSearch: 'boolean',
   orderAndRange: 'boolean',
-});
+})
 
 export const encryptedDoubleParamsSchema = arktype({
   equality: 'boolean',
   orderAndRange: 'boolean',
-});
+})
 
 export const encryptedBigIntParamsSchema = arktype({
   equality: 'boolean',
   orderAndRange: 'boolean',
-});
+})
 
 export const encryptedDateParamsSchema = arktype({
   equality: 'boolean',
   orderAndRange: 'boolean',
-});
+})
 
 export const encryptedBooleanParamsSchema = arktype({
   equality: 'boolean',
-});
+})
 
 export const encryptedJsonParamsSchema = arktype({
   searchableJson: 'boolean',
-});
+})
 
-export function renderEncryptedStringOutputType(_params: CipherstashStringParams): string {
-  return 'EncryptedString';
+export function renderEncryptedStringOutputType(
+  _params: CipherstashStringParams,
+): string {
+  return 'EncryptedString'
 }
 
-export function renderEncryptedDoubleOutputType(_params: CipherstashNumericParams): string {
-  return 'EncryptedDouble';
+export function renderEncryptedDoubleOutputType(
+  _params: CipherstashNumericParams,
+): string {
+  return 'EncryptedDouble'
 }
 
-export function renderEncryptedBigIntOutputType(_params: CipherstashNumericParams): string {
-  return 'EncryptedBigInt';
+export function renderEncryptedBigIntOutputType(
+  _params: CipherstashNumericParams,
+): string {
+  return 'EncryptedBigInt'
 }
 
-export function renderEncryptedDateOutputType(_params: CipherstashDateParams): string {
-  return 'EncryptedDate';
+export function renderEncryptedDateOutputType(
+  _params: CipherstashDateParams,
+): string {
+  return 'EncryptedDate'
 }
 
-export function renderEncryptedBooleanOutputType(_params: CipherstashBooleanParams): string {
-  return 'EncryptedBoolean';
+export function renderEncryptedBooleanOutputType(
+  _params: CipherstashBooleanParams,
+): string {
+  return 'EncryptedBoolean'
 }
 
-export function renderEncryptedJsonOutputType(_params: CipherstashJsonParams): string {
-  return 'EncryptedJson';
+export function renderEncryptedJsonOutputType(
+  _params: CipherstashJsonParams,
+): string {
+  return 'EncryptedJson'
 }
 
-const ENCRYPTED_TARGET_TYPES = ['eql_v2_encrypted'] as const;
-const ENCRYPTED_META = { db: { sql: { postgres: { nativeType: 'eql_v2_encrypted' } } } } as const;
+const ENCRYPTED_TARGET_TYPES = ['eql_v2_encrypted'] as const
+const ENCRYPTED_META = {
+  db: { sql: { postgres: { nativeType: 'eql_v2_encrypted' } } },
+} as const
 // Per-codec traits live in `CIPHERSTASH_CODEC_TRAITS` and use the
 // `cipherstash:*` namespace so the cipherstash-namespaced operators
 // (`cipherstashEq`, `cipherstashGt`, etc.) can register against
@@ -150,83 +164,101 @@ export type CipherstashAnyParams =
   | CipherstashNumericParams
   | CipherstashDateParams
   | CipherstashBooleanParams
-  | CipherstashJsonParams;
+  | CipherstashJsonParams
 
 export function createParameterizedCodecDescriptors(
   sdk: CipherstashSdk,
 ): ReadonlyArray<RuntimeParameterizedCodecDescriptor<CipherstashAnyParams>> {
-  const stringCodec = createCipherstashStringCodec(sdk);
-  const doubleCodec = createCipherstashDoubleCodec(sdk);
-  const bigIntCodec = createCipherstashBigIntCodec(sdk);
-  const dateCodec = createCipherstashDateCodec(sdk);
-  const booleanCodec = createCipherstashBooleanCodec(sdk);
-  const jsonCodec = createCipherstashJsonCodec(sdk);
+  const stringCodec = createCipherstashStringCodec(sdk)
+  const doubleCodec = createCipherstashDoubleCodec(sdk)
+  const bigIntCodec = createCipherstashBigIntCodec(sdk)
+  const dateCodec = createCipherstashDateCodec(sdk)
+  const booleanCodec = createCipherstashBooleanCodec(sdk)
+  const jsonCodec = createCipherstashJsonCodec(sdk)
 
-  const stringDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashStringParams> = {
-    codecId: CIPHERSTASH_STRING_CODEC_ID,
-    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_STRING_CODEC_ID] ?? [],
-    targetTypes: ENCRYPTED_TARGET_TYPES,
-    meta: ENCRYPTED_META,
-    paramsSchema: encryptedStringParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: renderEncryptedStringOutputType,
-    factory: (_params: CipherstashStringParams) => (_ctx: CodecInstanceContext) => stringCodec,
-  };
+  const stringDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashStringParams> =
+    {
+      codecId: CIPHERSTASH_STRING_CODEC_ID,
+      traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_STRING_CODEC_ID] ?? [],
+      targetTypes: ENCRYPTED_TARGET_TYPES,
+      meta: ENCRYPTED_META,
+      paramsSchema: encryptedStringParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: renderEncryptedStringOutputType,
+      factory:
+        (_params: CipherstashStringParams) => (_ctx: CodecInstanceContext) =>
+          stringCodec,
+    }
 
-  const doubleDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashNumericParams> = {
-    codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
-    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_DOUBLE_CODEC_ID] ?? [],
-    targetTypes: ENCRYPTED_TARGET_TYPES,
-    meta: ENCRYPTED_META,
-    paramsSchema: encryptedDoubleParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: renderEncryptedDoubleOutputType,
-    factory: (_params: CipherstashNumericParams) => (_ctx: CodecInstanceContext) => doubleCodec,
-  };
+  const doubleDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashNumericParams> =
+    {
+      codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
+      traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_DOUBLE_CODEC_ID] ?? [],
+      targetTypes: ENCRYPTED_TARGET_TYPES,
+      meta: ENCRYPTED_META,
+      paramsSchema: encryptedDoubleParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: renderEncryptedDoubleOutputType,
+      factory:
+        (_params: CipherstashNumericParams) => (_ctx: CodecInstanceContext) =>
+          doubleCodec,
+    }
 
-  const bigIntDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashNumericParams> = {
-    codecId: CIPHERSTASH_BIGINT_CODEC_ID,
-    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_BIGINT_CODEC_ID] ?? [],
-    targetTypes: ENCRYPTED_TARGET_TYPES,
-    meta: ENCRYPTED_META,
-    paramsSchema: encryptedBigIntParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: renderEncryptedBigIntOutputType,
-    factory: (_params: CipherstashNumericParams) => (_ctx: CodecInstanceContext) => bigIntCodec,
-  };
+  const bigIntDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashNumericParams> =
+    {
+      codecId: CIPHERSTASH_BIGINT_CODEC_ID,
+      traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_BIGINT_CODEC_ID] ?? [],
+      targetTypes: ENCRYPTED_TARGET_TYPES,
+      meta: ENCRYPTED_META,
+      paramsSchema: encryptedBigIntParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: renderEncryptedBigIntOutputType,
+      factory:
+        (_params: CipherstashNumericParams) => (_ctx: CodecInstanceContext) =>
+          bigIntCodec,
+    }
 
-  const dateDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashDateParams> = {
-    codecId: CIPHERSTASH_DATE_CODEC_ID,
-    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_DATE_CODEC_ID] ?? [],
-    targetTypes: ENCRYPTED_TARGET_TYPES,
-    meta: ENCRYPTED_META,
-    paramsSchema: encryptedDateParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: renderEncryptedDateOutputType,
-    factory: (_params: CipherstashDateParams) => (_ctx: CodecInstanceContext) => dateCodec,
-  };
+  const dateDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashDateParams> =
+    {
+      codecId: CIPHERSTASH_DATE_CODEC_ID,
+      traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_DATE_CODEC_ID] ?? [],
+      targetTypes: ENCRYPTED_TARGET_TYPES,
+      meta: ENCRYPTED_META,
+      paramsSchema: encryptedDateParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: renderEncryptedDateOutputType,
+      factory:
+        (_params: CipherstashDateParams) => (_ctx: CodecInstanceContext) =>
+          dateCodec,
+    }
 
-  const booleanDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashBooleanParams> = {
-    codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_BOOLEAN_CODEC_ID] ?? [],
-    targetTypes: ENCRYPTED_TARGET_TYPES,
-    meta: ENCRYPTED_META,
-    paramsSchema: encryptedBooleanParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: renderEncryptedBooleanOutputType,
-    factory: (_params: CipherstashBooleanParams) => (_ctx: CodecInstanceContext) => booleanCodec,
-  };
+  const booleanDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashBooleanParams> =
+    {
+      codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
+      traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_BOOLEAN_CODEC_ID] ?? [],
+      targetTypes: ENCRYPTED_TARGET_TYPES,
+      meta: ENCRYPTED_META,
+      paramsSchema: encryptedBooleanParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: renderEncryptedBooleanOutputType,
+      factory:
+        (_params: CipherstashBooleanParams) => (_ctx: CodecInstanceContext) =>
+          booleanCodec,
+    }
 
-  const jsonDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashJsonParams> = {
-    codecId: CIPHERSTASH_JSON_CODEC_ID,
-    traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_JSON_CODEC_ID] ?? [],
-    targetTypes: ENCRYPTED_TARGET_TYPES,
-    meta: ENCRYPTED_META,
-    paramsSchema: encryptedJsonParamsSchema,
-    isParameterized: true as const,
-    renderOutputType: renderEncryptedJsonOutputType,
-    factory: (_params: CipherstashJsonParams) => (_ctx: CodecInstanceContext) => jsonCodec,
-  };
+  const jsonDescriptor: RuntimeParameterizedCodecDescriptor<CipherstashJsonParams> =
+    {
+      codecId: CIPHERSTASH_JSON_CODEC_ID,
+      traits: CIPHERSTASH_CODEC_TRAITS[CIPHERSTASH_JSON_CODEC_ID] ?? [],
+      targetTypes: ENCRYPTED_TARGET_TYPES,
+      meta: ENCRYPTED_META,
+      paramsSchema: encryptedJsonParamsSchema,
+      isParameterized: true as const,
+      renderOutputType: renderEncryptedJsonOutputType,
+      factory:
+        (_params: CipherstashJsonParams) => (_ctx: CodecInstanceContext) =>
+          jsonCodec,
+    }
 
   return [
     stringDescriptor,
@@ -235,5 +267,5 @@ export function createParameterizedCodecDescriptors(
     dateDescriptor,
     booleanDescriptor,
     jsonDescriptor,
-  ] as ReadonlyArray<RuntimeParameterizedCodecDescriptor<CipherstashAnyParams>>;
+  ] as ReadonlyArray<RuntimeParameterizedCodecDescriptor<CipherstashAnyParams>>
 }

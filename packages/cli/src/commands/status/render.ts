@@ -1,9 +1,9 @@
 import { PLAN_REL_PATH } from '../init/lib/setup-prompt.js'
 import {
   type ColumnQuest,
+  isComplete,
   type Objective,
   type QuestLog,
-  isComplete,
 } from './quest.js'
 
 const PROGRESS_BAR_WIDTH = 6

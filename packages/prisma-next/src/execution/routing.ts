@@ -14,8 +14,8 @@
  * batching is a future optimization.
  */
 
-import type { EncryptedEnvelopeBase } from './envelope-base';
-import type { CipherstashRoutingKey } from './sdk';
+import type { EncryptedEnvelopeBase } from './envelope-base'
+import type { CipherstashRoutingKey } from './sdk'
 
 /**
  * Per-target context the bulk-encrypt middleware accumulates while
@@ -33,10 +33,10 @@ import type { CipherstashRoutingKey } from './sdk';
  * correctness.
  */
 export interface BulkEncryptTarget<TRef = unknown> {
-  readonly ref: TRef;
-  readonly plaintext: unknown;
-  readonly envelope: EncryptedEnvelopeBase<unknown>;
-  readonly routingKey: CipherstashRoutingKey;
+  readonly ref: TRef
+  readonly plaintext: unknown
+  readonly envelope: EncryptedEnvelopeBase<unknown>
+  readonly routingKey: CipherstashRoutingKey
 }
 
 /**
@@ -47,7 +47,7 @@ export interface BulkEncryptTarget<TRef = unknown> {
  * (e.g. `(a, bc)` vs `(ab, c)`).
  */
 export function routingKeyId(routingKey: CipherstashRoutingKey): string {
-  return `${routingKey.table}\u0000${routingKey.column}`;
+  return `${routingKey.table}\u0000${routingKey.column}`
 }
 
 /**
@@ -60,17 +60,19 @@ export function routingKeyId(routingKey: CipherstashRoutingKey): string {
  * "missing ciphertext" diagnostic shape: it points at the workflow that
  * should have populated the slot.
  */
-export function getRoutingKey(envelope: EncryptedEnvelopeBase<unknown>): CipherstashRoutingKey {
-  const handle = envelope.expose();
+export function getRoutingKey(
+  envelope: EncryptedEnvelopeBase<unknown>,
+): CipherstashRoutingKey {
+  const handle = envelope.expose()
   if (handle.table === undefined || handle.column === undefined) {
     throw new Error(
       'cipherstash bulk-encrypt: envelope has no (table, column) routing context. ' +
         'The bulk-encrypt middleware stamps routing context from the lowered AST ' +
         '(insert/update); raw-SQL plans embedding cipherstash envelopes must stamp ' +
         'routing context explicitly before execute.',
-    );
+    )
   }
-  return { table: handle.table, column: handle.column };
+  return { table: handle.table, column: handle.column }
 }
 
 /**
@@ -87,15 +89,15 @@ export function getRoutingKey(envelope: EncryptedEnvelopeBase<unknown>): Ciphers
 export function groupByRoutingKey<TRef>(
   targets: ReadonlyArray<BulkEncryptTarget<TRef>>,
 ): Map<string, BulkEncryptTarget<TRef>[]> {
-  const groups = new Map<string, BulkEncryptTarget<TRef>[]>();
+  const groups = new Map<string, BulkEncryptTarget<TRef>[]>()
   for (const target of targets) {
-    const id = routingKeyId(target.routingKey);
-    let group = groups.get(id);
+    const id = routingKeyId(target.routingKey)
+    let group = groups.get(id)
     if (!group) {
-      group = [];
-      groups.set(id, group);
+      group = []
+      groups.set(id, group)
     }
-    group.push(target);
+    group.push(target)
   }
-  return groups;
+  return groups
 }

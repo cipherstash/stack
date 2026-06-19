@@ -20,15 +20,15 @@ import {
   EncryptedEnvelopeBase,
   type EncryptedEnvelopeFromInternalArgs,
   type EncryptedEnvelopeHandle,
-} from './envelope-base';
+} from './envelope-base'
 
-export type EncryptedJsonHandle = EncryptedEnvelopeHandle<unknown>;
+export type EncryptedJsonHandle = EncryptedEnvelopeHandle<unknown>
 
-export type EncryptedJsonFromInternalArgs = EncryptedEnvelopeFromInternalArgs;
+export type EncryptedJsonFromInternalArgs = EncryptedEnvelopeFromInternalArgs
 
 export class EncryptedJson extends EncryptedEnvelopeBase<unknown> {
   protected override get typeName(): string {
-    return 'EncryptedJson';
+    return 'EncryptedJson'
   }
 
   static from(plaintext: unknown): EncryptedJson {
@@ -38,7 +38,7 @@ export class EncryptedJson extends EncryptedEnvelopeBase<unknown> {
       table: undefined,
       column: undefined,
       sdk: undefined,
-    });
+    })
   }
 
   static fromInternal(args: EncryptedJsonFromInternalArgs): EncryptedJson {
@@ -48,6 +48,6 @@ export class EncryptedJson extends EncryptedEnvelopeBase<unknown> {
       table: args.table,
       column: args.column,
       sdk: args.sdk,
-    });
+    })
   }
 }

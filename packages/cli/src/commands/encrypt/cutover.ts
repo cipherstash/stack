@@ -1,6 +1,3 @@
-import { detectDrizzle } from '@/commands/db/detect.js'
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
 import {
   activateConfig,
   appendEvent,
@@ -11,6 +8,9 @@ import {
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectDrizzle } from '@/commands/db/detect.js'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadStashConfig } from '@/config/index.js'
 import { scaffoldDrizzleMigration } from './drizzle-helper.js'
 
 /**

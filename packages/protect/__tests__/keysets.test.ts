@@ -1,6 +1,6 @@
 import 'dotenv/config'
-import { csColumn, csTable } from '@cipherstash/schema'
 import { ensureKeyset } from '@cipherstash/protect-ffi'
+import { csColumn, csTable } from '@cipherstash/schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { protect } from '../src'
 

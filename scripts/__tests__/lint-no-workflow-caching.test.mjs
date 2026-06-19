@@ -22,13 +22,19 @@ function run(...targets) {
     execFileSync('node', [SCRIPT, ...targets], { encoding: 'utf8' })
     return { exitCode: 0, output: '' }
   } catch (err) {
-    return { exitCode: err.status, output: String(err.stdout) + String(err.stderr) }
+    return {
+      exitCode: err.status,
+      output: String(err.stdout) + String(err.stderr),
+    }
   }
 }
 
 describe('lint-no-workflow-caching', () => {
   const fx = (name) =>
-    resolve(fileURLToPath(import.meta.url), `../fixtures/lint-no-workflow-caching/${name}`)
+    resolve(
+      fileURLToPath(import.meta.url),
+      `../fixtures/lint-no-workflow-caching/${name}`,
+    )
 
   it('defaults to checking release.yml and tests-supply-chain.yml', () => {
     expect(run().exitCode).toBe(0)
@@ -74,12 +80,15 @@ describe('lint-no-workflow-caching', () => {
   })
 
   it('keeps release.yml free of GitHub Actions caching', () => {
-    expect(run(resolve(REPO_ROOT, '.github/workflows/release.yml')).exitCode).toBe(0)
+    expect(
+      run(resolve(REPO_ROOT, '.github/workflows/release.yml')).exitCode,
+    ).toBe(0)
   })
 
   it('keeps tests-supply-chain.yml free of GitHub Actions caching', () => {
     expect(
-      run(resolve(REPO_ROOT, '.github/workflows/tests-supply-chain.yml')).exitCode,
+      run(resolve(REPO_ROOT, '.github/workflows/tests-supply-chain.yml'))
+        .exitCode,
     ).toBe(0)
   })
 

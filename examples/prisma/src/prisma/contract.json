@@ -178,9 +178,7 @@
         "foreignKeys": [],
         "indexes": [],
         "primaryKey": {
-          "columns": [
-            "id"
-          ]
+          "columns": ["id"]
         },
         "uniques": []
       }
@@ -227,9 +225,7 @@
                     "version": 1
                   }
                 },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
+                "targetTypes": ["eql_v2_encrypted"],
                 "traits": [
                   "cipherstash:equality",
                   "cipherstash:free-text-search",
@@ -255,9 +251,7 @@
                     "version": 1
                   }
                 },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
+                "targetTypes": ["eql_v2_encrypted"],
                 "traits": [
                   "cipherstash:equality",
                   "cipherstash:order-and-range"
@@ -282,9 +276,7 @@
                     "version": 1
                   }
                 },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
+                "targetTypes": ["eql_v2_encrypted"],
                 "traits": [
                   "cipherstash:equality",
                   "cipherstash:order-and-range"
@@ -309,9 +301,7 @@
                     "version": 1
                   }
                 },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
+                "targetTypes": ["eql_v2_encrypted"],
                 "traits": [
                   "cipherstash:equality",
                   "cipherstash:order-and-range"
@@ -336,12 +326,8 @@
                     "version": 1
                   }
                 },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:equality"
-                ]
+                "targetTypes": ["eql_v2_encrypted"],
+                "traits": ["cipherstash:equality"]
               }
             },
             {
@@ -362,12 +348,8 @@
                     "version": 1
                   }
                 },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:searchable-json"
-                ]
+                "targetTypes": ["eql_v2_encrypted"],
+                "traits": ["cipherstash:searchable-json"]
               }
             }
           ],

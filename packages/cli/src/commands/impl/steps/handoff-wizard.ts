@@ -1,8 +1,8 @@
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import {
-  CONTEXT_REL_PATH,
   buildContextFile,
+  CONTEXT_REL_PATH,
   writeContextFile,
 } from '../../init/lib/write-context.js'
 import type { HandoffStep, InitState } from '../../init/types.js'

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  type PlanSummary,
   effectiveStep,
+  type PlanSummary,
   parsePlanSummary,
   renderPlanSummary,
 } from '../parse-plan.js'

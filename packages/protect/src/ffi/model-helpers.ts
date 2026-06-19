@@ -1,9 +1,9 @@
 import {
   type Encrypted as CipherStashEncrypted,
   type DecryptBulkOptions,
-  type JsPlaintext,
   decryptBulk,
   encryptBulk,
+  type JsPlaintext,
 } from '@cipherstash/protect-ffi'
 import type { ProtectTable, ProtectTableColumn } from '@cipherstash/schema'
 import { isEncryptedPayload } from '../helpers'

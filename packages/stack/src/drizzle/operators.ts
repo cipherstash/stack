@@ -1,19 +1,11 @@
-import type { EncryptionClient } from '@/encryption/index.js'
-import type {
-  EncryptedColumn,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@/schema'
-import { type QueryTypeName, queryTypes } from '@/types'
 import {
-  type SQL,
-  type SQLWrapper,
   and,
   arrayContained,
   arrayContains,
   arrayOverlaps,
   asc,
   between,
+  bindIfParam,
   desc,
   eq,
   exists,
@@ -33,9 +25,18 @@ import {
   notIlike,
   notInArray,
   or,
+  type SQL,
+  type SQLWrapper,
+  sql,
 } from 'drizzle-orm'
-import { bindIfParam, sql } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
+import type { EncryptionClient } from '@/encryption/index.js'
+import type {
+  EncryptedColumn,
+  EncryptedTable,
+  EncryptedTableColumn,
+} from '@/schema'
+import { type QueryTypeName, queryTypes } from '@/types'
 import type { EncryptedColumnConfig } from './index.js'
 import { getEncryptedColumnConfig } from './index.js'
 import { extractEncryptionSchema } from './schema-extraction.js'

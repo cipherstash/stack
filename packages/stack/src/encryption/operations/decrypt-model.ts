@@ -1,9 +1,9 @@
+import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { Client, Decrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
-import { type Result, withResult } from '@byteslice/result'
 import {
   decryptModelFields,
   decryptModelFieldsWithLockContext,

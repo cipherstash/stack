@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { nextMoveHint, readProjectStatus } from '../index.js'
 import {
-  type ColumnObservation,
   buildColumnQuest,
   buildQuestLog,
+  type ColumnObservation,
   inferQuestPath,
   isComplete,
 } from '../quest.js'

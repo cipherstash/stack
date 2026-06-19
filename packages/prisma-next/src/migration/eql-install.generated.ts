@@ -6,7 +6,7 @@
 // offline builds work without network access. Regenerate with
 // `pnpm vendor-eql-install` after bumping EQL_VERSION in the script.
 
-export const EQL_INSTALL_VERSION = 'eql-2.3.1' as const;
+export const EQL_INSTALL_VERSION = 'eql-2.3.1' as const
 
 export const EQL_INSTALL_SQL: string = `--! @file schema.sql
 --! @brief EQL v2 schema creation
@@ -7652,4 +7652,4 @@ BEGIN
     );
   END LOOP;
 END $$;
-`;
+`

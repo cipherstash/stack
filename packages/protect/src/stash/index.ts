@@ -1,6 +1,6 @@
 import type { Result } from '@byteslice/result'
 import { csColumn, csTable } from '@cipherstash/schema'
-import { type ProtectClient, encryptedToPgComposite, protect } from '../index'
+import { encryptedToPgComposite, type ProtectClient, protect } from '../index'
 import type { Encrypted } from '../types'
 
 export type SecretName = string

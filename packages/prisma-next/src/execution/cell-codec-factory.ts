@@ -26,20 +26,26 @@
  * plane = encode/decode bodies.
  */
 
-import type { JsonValue } from '@prisma-next/contract/types';
+import type { JsonValue } from '@prisma-next/contract/types'
 import {
   type AnyCodecDescriptor,
   CodecImpl,
   type CodecTrait,
-} from '@prisma-next/framework-components/codec';
-import { runtimeError } from '@prisma-next/framework-components/runtime';
-import type { Codec, SqlCodecCallContext } from '@prisma-next/sql-relational-core/ast';
-import { CIPHERSTASH_CODEC_TRAITS, EQL_V2_ENCRYPTED_TYPE } from '../extension-metadata/constants';
-import type { EncryptedEnvelopeBase } from './envelope-base';
-import { isBulkEncryptMiddlewareRegistered } from './middleware-registry';
-import type { CipherstashSdk } from './sdk';
+} from '@prisma-next/framework-components/codec'
+import { runtimeError } from '@prisma-next/framework-components/runtime'
+import type {
+  Codec,
+  SqlCodecCallContext,
+} from '@prisma-next/sql-relational-core/ast'
+import {
+  CIPHERSTASH_CODEC_TRAITS,
+  EQL_V2_ENCRYPTED_TYPE,
+} from '../extension-metadata/constants'
+import type { EncryptedEnvelopeBase } from './envelope-base'
+import { isBulkEncryptMiddlewareRegistered } from './middleware-registry'
+import type { CipherstashSdk } from './sdk'
 
-const CIPHERSTASH_TARGET_TYPES = [EQL_V2_ENCRYPTED_TYPE] as const;
+const CIPHERSTASH_TARGET_TYPES = [EQL_V2_ENCRYPTED_TYPE] as const
 
 /**
  * Encode the SDK ciphertext payload as a Postgres composite literal
@@ -50,15 +56,15 @@ const CIPHERSTASH_TARGET_TYPES = [EQL_V2_ENCRYPTED_TYPE] as const;
  * plaintext type.
  */
 export function encodeEqlV2EncryptedWire(payload: unknown): string {
-  const json = JSON.stringify(payload);
+  const json = JSON.stringify(payload)
   if (json === undefined) {
     throw new Error(
       'cipherstash codec: ciphertext payload is not JSON-serializable. ' +
         'The CipherStash SDK must return a JSON-encodable bulk-encrypt result.',
-    );
+    )
   }
-  const escaped = json.replaceAll('"', '""');
-  return `("${escaped}")`;
+  const escaped = json.replaceAll('"', '""')
+  return `("${escaped}")`
 }
 
 /**
@@ -68,66 +74,67 @@ export function encodeEqlV2EncryptedWire(payload: unknown): string {
  * shapes — and `null`/`undefined` passthrough — are accepted.
  */
 function decodeEqlV2EncryptedWire(wire: unknown): unknown {
-  if (wire === null || wire === undefined) return wire;
+  if (wire === null || wire === undefined) return wire
   if (typeof wire === 'object') {
     if ('data' in wire) {
-      return (wire as { data: unknown }).data;
+      return (wire as { data: unknown }).data
     }
-    return wire;
+    return wire
   }
   if (typeof wire !== 'string') {
     throw new Error(
       `cipherstash codec: unexpected wire shape for eql_v2_encrypted: ${typeof wire}`,
-    );
+    )
   }
-  const trimmed = wire.trim();
+  const trimmed = wire.trim()
   if (!trimmed.startsWith('(') || !trimmed.endsWith(')')) {
     throw new Error(
       `cipherstash codec: expected composite literal "(...)" but got: ${trimmed.slice(0, 40)}`,
-    );
+    )
   }
-  const inner = trimmed.slice(1, -1);
+  const inner = trimmed.slice(1, -1)
   const unquoted =
-    inner.startsWith('"') && inner.endsWith('"') ? inner.slice(1, -1).replaceAll('""', '"') : inner;
-  return JSON.parse(unquoted);
+    inner.startsWith('"') && inner.endsWith('"')
+      ? inner.slice(1, -1).replaceAll('""', '"')
+      : inner
+  return JSON.parse(unquoted)
 }
 
-export interface CipherstashCellCodecOptions<E extends EncryptedEnvelopeBase<unknown>> {
-  readonly codecId: string;
-  readonly typeName: string;
-  readonly fromInternal: (args: {
-    readonly ciphertext: unknown;
-    readonly table: string;
-    readonly column: string;
-    readonly sdk: CipherstashSdk;
-  }) => E;
-}
-
-export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> extends CodecImpl<
-  string,
-  readonly CodecTrait[],
-  unknown,
-  E
+export interface CipherstashCellCodecOptions<
+  E extends EncryptedEnvelopeBase<unknown>,
 > {
-  readonly sdk: CipherstashSdk | undefined;
-  readonly #fromInternal: CipherstashCellCodecOptions<E>['fromInternal'];
-  readonly #typeName: string;
+  readonly codecId: string
+  readonly typeName: string
+  readonly fromInternal: (args: {
+    readonly ciphertext: unknown
+    readonly table: string
+    readonly column: string
+    readonly sdk: CipherstashSdk
+  }) => E
+}
+
+export class CipherstashCellCodec<
+  E extends EncryptedEnvelopeBase<unknown>,
+> extends CodecImpl<string, readonly CodecTrait[], unknown, E> {
+  readonly sdk: CipherstashSdk | undefined
+  readonly #fromInternal: CipherstashCellCodecOptions<E>['fromInternal']
+  readonly #typeName: string
   // One-shot cache so the per-encode WeakSet lookup only runs until the
   // first time we observe a registered middleware on this codec's SDK.
   // WeakSet entries are append-only (the registry never un-registers an
   // SDK), so flipping this to true is safe for the rest of the codec's
   // lifetime.
-  #middlewareCheckPassed = false;
+  #middlewareCheckPassed = false
 
   constructor(
     descriptor: AnyCodecDescriptor,
     sdk: CipherstashSdk | undefined,
     options: CipherstashCellCodecOptions<E>,
   ) {
-    super(descriptor);
-    this.sdk = sdk;
-    this.#fromInternal = options.fromInternal;
-    this.#typeName = options.typeName;
+    super(descriptor)
+    this.sdk = sdk
+    this.#fromInternal = options.fromInternal
+    this.#typeName = options.typeName
   }
 
   async encode(value: E, _ctx: SqlCodecCallContext): Promise<unknown> {
@@ -142,9 +149,9 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
     // contract for non-runtime callers — e.g. the codec unit tests that
     // call `encode` directly with an envelope.)
     if (typeof value === 'string') {
-      return value;
+      return value
     }
-    const handle = value.expose();
+    const handle = value.expose()
     if (handle.ciphertext === undefined) {
       // Misconfig diagnostic: when an SDK-bound codec sees a pre-encrypt
       // envelope but no `bulkEncryptMiddleware(sdk)` has been
@@ -170,13 +177,13 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
               reason: 'cipherstash-bulk-encrypt-middleware-not-registered',
               envelopeRouting: { table: handle.table, column: handle.column },
             },
-          );
+          )
         }
-        this.#middlewareCheckPassed = true;
+        this.#middlewareCheckPassed = true
       }
-      return value;
+      return value
     }
-    return encodeEqlV2EncryptedWire(handle.ciphertext);
+    return encodeEqlV2EncryptedWire(handle.ciphertext)
   }
 
   async decode(wire: unknown, ctx: SqlCodecCallContext): Promise<E> {
@@ -191,9 +198,9 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
           codecId: this.descriptor.codecId,
           reason: 'cipherstash-sdk-required',
         },
-      );
+      )
     }
-    const column = ctx.column;
+    const column = ctx.column
     if (!column) {
       throw runtimeError(
         'RUNTIME.DECODE_FAILED',
@@ -205,25 +212,25 @@ export class CipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>> exte
           codecId: this.descriptor.codecId,
           reason: 'cipherstash-decode-column-context-missing',
         },
-      );
+      )
     }
     return this.#fromInternal({
       ciphertext: decodeEqlV2EncryptedWire(wire),
       table: column.table,
       column: column.name,
       sdk: this.sdk,
-    });
+    })
   }
 
   encodeJson(_value: E): JsonValue {
-    const marker = `$${this.#typeName.charAt(0).toLowerCase()}${this.#typeName.slice(1)}`;
-    return { [marker]: '<opaque>' } as JsonValue;
+    const marker = `$${this.#typeName.charAt(0).toLowerCase()}${this.#typeName.slice(1)}`
+    return { [marker]: '<opaque>' } as JsonValue
   }
 
   decodeJson(_json: JsonValue): E {
     throw new Error(
       'cipherstash codec: decodeJson is not supported; envelopes do not round-trip through JSON.',
-    );
+    )
   }
 }
 
@@ -277,9 +284,9 @@ function makeAuxiliaryDescriptor<E extends EncryptedEnvelopeBase<unknown>>(
           'parameterized descriptors built in `parameterized.ts`, not through ' +
           '`codec.descriptor.factory`. Use `createParameterizedCodecDescriptors(sdk)` ' +
           'to get the production runtime descriptors.',
-      );
+      )
     },
-  };
+  }
 }
 
 /**
@@ -287,9 +294,15 @@ function makeAuxiliaryDescriptor<E extends EncryptedEnvelopeBase<unknown>>(
  * codec id, the user-facing type name, and the per-type envelope
  * `fromInternal` factory.
  */
-export function makeCipherstashCellCodec<E extends EncryptedEnvelopeBase<unknown>>(
+export function makeCipherstashCellCodec<
+  E extends EncryptedEnvelopeBase<unknown>,
+>(
   sdk: CipherstashSdk,
   options: CipherstashCellCodecOptions<E>,
 ): CipherstashCellCodec<E> & Codec<string, readonly CodecTrait[], unknown, E> {
-  return new CipherstashCellCodec(makeAuxiliaryDescriptor(options), sdk, options);
+  return new CipherstashCellCodec(
+    makeAuxiliaryDescriptor(options),
+    sdk,
+    options,
+  )
 }

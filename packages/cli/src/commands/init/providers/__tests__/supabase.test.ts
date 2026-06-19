@@ -22,9 +22,7 @@ describe('createSupabaseProvider getNextSteps', () => {
 
   it('uses pnpm dlx when package manager is pnpm', () => {
     const steps = provider.getNextSteps({}, 'pnpm')
-    expect(steps[0]).toContain(
-      'pnpm dlx stash db install --supabase',
-    )
+    expect(steps[0]).toContain('pnpm dlx stash db install --supabase')
   })
 
   it('uses yarn dlx when package manager is yarn', () => {

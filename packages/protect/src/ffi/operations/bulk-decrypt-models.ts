@@ -1,6 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import type { LockContext } from '../../identify'
 import type { Client, Decrypted } from '../../types'
 import { getErrorCode } from '../helpers/error-code'

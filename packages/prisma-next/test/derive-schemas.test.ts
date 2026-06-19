@@ -31,7 +31,12 @@ function makeContract(
       tables: Object.fromEntries(
         Object.entries(tables).map(([name, cols]) => [
           name,
-          { columns: cols as Record<string, { codecId: string; typeParams?: Record<string, unknown> | null }> },
+          {
+            columns: cols as Record<
+              string,
+              { codecId: string; typeParams?: Record<string, unknown> | null }
+            >,
+          },
         ]),
       ),
     },
@@ -72,18 +77,39 @@ describe('deriveStackSchemas', () => {
     })
     const schemas = deriveStackSchemas(contract)
     expect(schemas).toHaveLength(2)
-    expect(schemas.map((t) => t.tableName).sort()).toEqual(['audit_log', 'users'])
+    expect(schemas.map((t) => t.tableName).sort()).toEqual([
+      'audit_log',
+      'users',
+    ])
   })
 
   it('maps each cipherstash codec id to the correct dataType', () => {
     const contract = makeContract({
       t: {
-        s: { codecId: CIPHERSTASH_STRING_CODEC_ID, typeParams: { equality: true } },
-        d: { codecId: CIPHERSTASH_DOUBLE_CODEC_ID, typeParams: { equality: true } },
-        b: { codecId: CIPHERSTASH_BIGINT_CODEC_ID, typeParams: { equality: true } },
-        dt: { codecId: CIPHERSTASH_DATE_CODEC_ID, typeParams: { equality: true } },
-        bo: { codecId: CIPHERSTASH_BOOLEAN_CODEC_ID, typeParams: { equality: true } },
-        j: { codecId: CIPHERSTASH_JSON_CODEC_ID, typeParams: { searchableJson: true } },
+        s: {
+          codecId: CIPHERSTASH_STRING_CODEC_ID,
+          typeParams: { equality: true },
+        },
+        d: {
+          codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
+          typeParams: { equality: true },
+        },
+        b: {
+          codecId: CIPHERSTASH_BIGINT_CODEC_ID,
+          typeParams: { equality: true },
+        },
+        dt: {
+          codecId: CIPHERSTASH_DATE_CODEC_ID,
+          typeParams: { equality: true },
+        },
+        bo: {
+          codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
+          typeParams: { equality: true },
+        },
+        j: {
+          codecId: CIPHERSTASH_JSON_CODEC_ID,
+          typeParams: { searchableJson: true },
+        },
       },
     })
     const [t] = deriveStackSchemas(contract)
@@ -104,11 +130,19 @@ describe('deriveStackSchemas', () => {
       users: {
         email: {
           codecId: CIPHERSTASH_STRING_CODEC_ID,
-          typeParams: { equality: true, freeTextSearch: true, orderAndRange: true },
+          typeParams: {
+            equality: true,
+            freeTextSearch: true,
+            orderAndRange: true,
+          },
         },
         bio: {
           codecId: CIPHERSTASH_STRING_CODEC_ID,
-          typeParams: { equality: false, freeTextSearch: true, orderAndRange: false },
+          typeParams: {
+            equality: false,
+            freeTextSearch: true,
+            orderAndRange: false,
+          },
         },
         preferences: {
           codecId: CIPHERSTASH_JSON_CODEC_ID,
@@ -139,7 +173,11 @@ describe('deriveStackSchemas', () => {
         c: {
           codecId: CIPHERSTASH_STRING_CODEC_ID,
           // explicit false on every flag should produce a column with no indices
-          typeParams: { equality: false, freeTextSearch: false, orderAndRange: false },
+          typeParams: {
+            equality: false,
+            freeTextSearch: false,
+            orderAndRange: false,
+          },
         },
       },
     })
@@ -153,7 +191,10 @@ describe('deriveStackSchemas', () => {
       t: {
         c: {
           codecId: CIPHERSTASH_STRING_CODEC_ID,
-          typeParams: { equality: true, futureFlag: true } as Record<string, boolean>,
+          typeParams: { equality: true, futureFlag: true } as Record<
+            string,
+            boolean
+          >,
         },
       },
     })

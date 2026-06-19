@@ -1,11 +1,11 @@
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  SUPABASE_PERMISSIONS_SQL,
-  loadBundledEqlSql,
-} from '@/installer/index.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import {
+  loadBundledEqlSql,
+  SUPABASE_PERMISSIONS_SQL,
+} from '@/installer/index.js'
 
 /**
  * Filename of the Supabase migration that installs CipherStash EQL.

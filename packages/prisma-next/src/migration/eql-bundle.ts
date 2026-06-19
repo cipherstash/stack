@@ -26,4 +26,7 @@
  * `test/descriptor.test.ts` re-runs `assertDescriptorSelfConsistency`
  * to confirm that invariant.
  */
-export { EQL_INSTALL_SQL as EQL_BUNDLE_SQL, EQL_INSTALL_VERSION } from './eql-install.generated';
+export {
+  EQL_INSTALL_SQL as EQL_BUNDLE_SQL,
+  EQL_INSTALL_VERSION,
+} from './eql-install.generated'

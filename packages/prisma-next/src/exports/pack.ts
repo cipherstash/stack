@@ -8,4 +8,4 @@
  * codec runtime, middleware).
  */
 
-export { cipherstashPackMeta as default } from '../extension-metadata/descriptor-meta';
+export { cipherstashPackMeta as default } from '../extension-metadata/descriptor-meta'

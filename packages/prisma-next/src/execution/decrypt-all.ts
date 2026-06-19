@@ -60,20 +60,20 @@
  * observing the signal.
  */
 
-import { ifDefined } from '@prisma-next/utils/defined';
-import { checkCipherstashAborted, raceCipherstashAbort } from './abort';
-import { EncryptedEnvelopeBase, isHandleDecrypted } from './envelope-base';
-import type { CipherstashRoutingKey, CipherstashSdk } from './sdk';
+import { ifDefined } from '@prisma-next/utils/defined'
+import { checkCipherstashAborted, raceCipherstashAbort } from './abort'
+import { EncryptedEnvelopeBase, isHandleDecrypted } from './envelope-base'
+import type { CipherstashRoutingKey, CipherstashSdk } from './sdk'
 
 export interface DecryptAllOptions {
-  readonly signal?: AbortSignal;
+  readonly signal?: AbortSignal
 }
 
 interface BulkDecryptTarget {
-  readonly envelope: EncryptedEnvelopeBase<unknown>;
-  readonly ciphertext: unknown;
-  readonly sdk: CipherstashSdk;
-  readonly routingKey: CipherstashRoutingKey;
+  readonly envelope: EncryptedEnvelopeBase<unknown>
+  readonly ciphertext: unknown
+  readonly sdk: CipherstashSdk
+  readonly routingKey: CipherstashRoutingKey
 }
 
 /**
@@ -92,17 +92,20 @@ interface BulkDecryptTarget {
  * without making any SDK call), so it is cheap to call defensively
  * after queries that may or may not contain encrypted columns.
  */
-export async function decryptAll(rows: unknown, opts?: DecryptAllOptions): Promise<void> {
-  const targets = collectTargets(rows);
+export async function decryptAll(
+  rows: unknown,
+  opts?: DecryptAllOptions,
+): Promise<void> {
+  const targets = collectTargets(rows)
   if (targets.length === 0) {
-    return;
+    return
   }
-  const groups = groupTargets(targets);
+  const groups = groupTargets(targets)
   for (const group of groups.values()) {
-    const first = group[0];
-    if (!first) continue;
-    const ciphertexts = group.map((t) => t.ciphertext);
-    checkCipherstashAborted(opts?.signal, 'decrypt-all');
+    const first = group[0]
+    if (!first) continue
+    const ciphertexts = group.map((t) => t.ciphertext)
+    checkCipherstashAborted(opts?.signal, 'decrypt-all')
     const plaintexts = await raceCipherstashAbort(
       first.sdk.bulkDecrypt({
         routingKey: first.routingKey,
@@ -111,18 +114,18 @@ export async function decryptAll(rows: unknown, opts?: DecryptAllOptions): Promi
       }),
       opts?.signal,
       'decrypt-all',
-    );
+    )
     if (plaintexts.length !== group.length) {
       throw new Error(
         `cipherstash decryptAll: SDK returned ${plaintexts.length} plaintexts ` +
           `for routing key (${first.routingKey.table}, ${first.routingKey.column}) ` +
           `but ${group.length} were requested.`,
-      );
+      )
     }
     for (let i = 0; i < group.length; i++) {
-      const target = group[i];
-      const plaintext = plaintexts[i];
-      if (!target) continue;
+      const target = group[i]
+      const plaintext = plaintexts[i]
+      if (!target) continue
       if (plaintext === undefined) {
         throw new Error(
           `cipherstash decryptAll: SDK returned undefined plaintext at index ${i} ` +
@@ -130,7 +133,7 @@ export async function decryptAll(rows: unknown, opts?: DecryptAllOptions): Promi
             'A missing plaintext indicates the SDK could not decrypt this envelope; ' +
             'silently skipping it would leave the caller with an envelope that still ' +
             'reports as not-yet-decrypted, so we surface the failure here instead.',
-        );
+        )
       }
       // The SDK's `bulkDecrypt` returns `ReadonlyArray<unknown>`;
       // narrowing to each envelope's `T` is the per-subclass
@@ -143,42 +146,42 @@ export async function decryptAll(rows: unknown, opts?: DecryptAllOptions): Promi
       // — every cell in a `(sdk, table, column)` group has the same
       // codec id, hence the same envelope subclass — but dynamic
       // dispatch still keeps the call site agnostic.
-      EncryptedEnvelopeBase.applyDecryptedSdkResult(target.envelope, plaintext);
+      EncryptedEnvelopeBase.applyDecryptedSdkResult(target.envelope, plaintext)
     }
   }
 }
 
 function collectTargets(root: unknown): BulkDecryptTarget[] {
-  const targets: BulkDecryptTarget[] = [];
-  const seenObjects = new WeakSet<object>();
-  const seenEnvelopes = new WeakSet<EncryptedEnvelopeBase<unknown>>();
+  const targets: BulkDecryptTarget[] = []
+  const seenObjects = new WeakSet<object>()
+  const seenEnvelopes = new WeakSet<EncryptedEnvelopeBase<unknown>>()
   visit(root, seenObjects, (envelope) => {
-    if (seenEnvelopes.has(envelope)) return;
-    seenEnvelopes.add(envelope);
-    if (isHandleDecrypted(envelope)) return;
-    const handle = envelope.expose();
+    if (seenEnvelopes.has(envelope)) return
+    seenEnvelopes.add(envelope)
+    if (isHandleDecrypted(envelope)) return
+    const handle = envelope.expose()
     if (handle.table === undefined || handle.column === undefined) {
       throw new Error(
         'cipherstash decryptAll: envelope is missing (table, column) routing context. ' +
           'Read-side envelopes constructed via codec.decode always carry routing context; ' +
           'this typically means the envelope was constructed manually outside the codec path.',
-      );
+      )
     }
     if (handle.sdk === undefined) {
       throw new Error(
         'cipherstash decryptAll: envelope is missing the SDK reference needed to decrypt. ' +
           'Read-side envelopes constructed via codec.decode always carry an SDK reference; ' +
           'this typically means the envelope was constructed manually outside the codec path.',
-      );
+      )
     }
     targets.push({
       envelope,
       ciphertext: handle.ciphertext,
       sdk: handle.sdk,
       routingKey: { table: handle.table, column: handle.column },
-    });
-  });
-  return targets;
+    })
+  })
+  return targets
 }
 
 function visit(
@@ -186,59 +189,61 @@ function visit(
   seen: WeakSet<object>,
   found: (envelope: EncryptedEnvelopeBase<unknown>) => void,
 ): void {
-  if (value === null || value === undefined) return;
+  if (value === null || value === undefined) return
   if (value instanceof EncryptedEnvelopeBase) {
-    found(value);
-    return;
+    found(value)
+    return
   }
-  if (typeof value !== 'object') return;
-  if (seen.has(value)) return;
+  if (typeof value !== 'object') return
+  if (seen.has(value)) return
   // Walker is intentionally scoped to plain arrays + plain objects.
   // Date / Map / Set / typed arrays / Buffer / Error / class instances
   // are passed over so the walker`s shape stays trivially predictable
   // and immune to host-object iterator surprises.
   if (Array.isArray(value)) {
-    seen.add(value);
+    seen.add(value)
     for (const item of value) {
-      visit(item, seen, found);
+      visit(item, seen, found)
     }
-    return;
+    return
   }
   if (!isPlainObject(value)) {
-    return;
+    return
   }
-  seen.add(value);
+  seen.add(value)
   for (const key of Object.keys(value)) {
-    visit((value as Record<string, unknown>)[key], seen, found);
+    visit((value as Record<string, unknown>)[key], seen, found)
   }
 }
 
 function isPlainObject(value: object): boolean {
-  const proto = Object.getPrototypeOf(value);
-  return proto === null || proto === Object.prototype;
+  const proto = Object.getPrototypeOf(value)
+  return proto === null || proto === Object.prototype
 }
 
-function groupTargets(targets: ReadonlyArray<BulkDecryptTarget>): Map<string, BulkDecryptTarget[]> {
+function groupTargets(
+  targets: ReadonlyArray<BulkDecryptTarget>,
+): Map<string, BulkDecryptTarget[]> {
   // Group by `(sdk identity, table, column)`. The SDK identity portion
   // of the key uses a per-SDK index issued on first encounter so
   // grouping never depends on object reference equality colliding
   // accidentally (different SDK instances always partition into
   // different groups even if their `(table, column)` matches).
-  const sdkIndex = new Map<CipherstashSdk, number>();
-  const groups = new Map<string, BulkDecryptTarget[]>();
+  const sdkIndex = new Map<CipherstashSdk, number>()
+  const groups = new Map<string, BulkDecryptTarget[]>()
   for (const target of targets) {
-    let idx = sdkIndex.get(target.sdk);
+    let idx = sdkIndex.get(target.sdk)
     if (idx === undefined) {
-      idx = sdkIndex.size;
-      sdkIndex.set(target.sdk, idx);
+      idx = sdkIndex.size
+      sdkIndex.set(target.sdk, idx)
     }
-    const id = `${idx}\u0000${target.routingKey.table}\u0000${target.routingKey.column}`;
-    let group = groups.get(id);
+    const id = `${idx}\u0000${target.routingKey.table}\u0000${target.routingKey.column}`
+    let group = groups.get(id)
     if (!group) {
-      group = [];
-      groups.set(id, group);
+      group = []
+      groups.set(id, group)
     }
-    group.push(target);
+    group.push(target)
   }
-  return groups;
+  return groups
 }

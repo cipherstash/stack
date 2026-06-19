@@ -1,9 +1,9 @@
+import * as p from '@clack/prompts'
+import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { detectDotenvFile } from '@/config/database-url.js'
 import { loadStashConfig } from '@/config/index.js'
 import { messages } from '@/messages.js'
-import * as p from '@clack/prompts'
-import pg from 'pg'
 
 export async function testConnectionCommand(
   options: { databaseUrl?: string } = {},

@@ -32,14 +32,14 @@ import {
   type EncryptedTableColumn,
   toEqlCastAs,
 } from '@cipherstash/stack/schema'
-import type { SqlMiddleware, SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime'
+import type {
+  SqlMiddleware,
+  SqlRuntimeExtensionDescriptor,
+} from '@prisma-next/sql-runtime'
 
 import { createCipherstashRuntimeDescriptor } from '../exports/runtime'
 import { bulkEncryptMiddleware } from '../middleware/bulk-encrypt'
-import {
-  type ContractStorageView,
-  deriveStackSchemas,
-} from './derive-schemas'
+import { type ContractStorageView, deriveStackSchemas } from './derive-schemas'
 import { createCipherstashSdk } from './sdk-adapter'
 
 export interface CipherstashFromStackOptions {
@@ -76,7 +76,7 @@ export async function cipherstashFromStack(
   if (first === undefined) {
     throw new Error(
       'cipherstashFromStack: no cipherstash columns found in contract.json AND no override `schemas` supplied. ' +
-        '`@cipherstash/stack`\'s `Encryption({ schemas })` requires at least one `EncryptedTable`. ' +
+        "`@cipherstash/stack`'s `Encryption({ schemas })` requires at least one `EncryptedTable`. " +
         'Check that prisma/schema.prisma declares at least one `cipherstash.Encrypted*()` column and that ' +
         '`pnpm emit` has been run since the last edit.',
     )
@@ -84,7 +84,9 @@ export async function cipherstashFromStack(
 
   const encryptionClient = await Encryption({
     schemas: [first, ...rest],
-    ...(opts.encryptionConfig !== undefined ? { config: opts.encryptionConfig } : {}),
+    ...(opts.encryptionConfig !== undefined
+      ? { config: opts.encryptionConfig }
+      : {}),
   })
 
   const sdk = createCipherstashSdk(encryptionClient, schemas)
@@ -132,8 +134,10 @@ function assertSchemasAgree(
 
   if (missingInUser.length > 0 || extraInUser.length > 0) {
     const parts: string[] = []
-    if (missingInUser.length > 0) parts.push(`missing in override: [${missingInUser.join(', ')}]`)
-    if (extraInUser.length > 0) parts.push(`extra in override: [${extraInUser.join(', ')}]`)
+    if (missingInUser.length > 0)
+      parts.push(`missing in override: [${missingInUser.join(', ')}]`)
+    if (extraInUser.length > 0)
+      parts.push(`extra in override: [${extraInUser.join(', ')}]`)
     divergence(
       `table "${derived.tableName}"`,
       `declares columns [${[...derivedCols].sort().join(', ')}]`,
@@ -172,7 +176,12 @@ function assertSchemasAgree(
   }
 }
 
-function divergence(loc: string, contractSide: string, overrideSide: string, hint: string): never {
+function divergence(
+  loc: string,
+  contractSide: string,
+  overrideSide: string,
+  hint: string,
+): never {
   throw new Error(
     `cipherstashFromStack: schema divergence on ${loc}. Contract ${contractSide} but override ${overrideSide}. ${hint}`,
   )

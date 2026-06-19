@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { buildBench, teardownBench } from '../src/drizzle/setup.js'
 import type { BenchHandle } from '../src/drizzle/setup.js'
+import { buildBench, teardownBench } from '../src/drizzle/setup.js'
 import { applySchema, countBenchRows } from '../src/harness/db.js'
 import { explain, summarize } from '../src/harness/explain.js'
 import { getTargetRows, seed } from '../src/harness/seed.js'

@@ -1,7 +1,7 @@
+import * as p from '@clack/prompts'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { EQLInstaller } from '@/installer/index.js'
-import * as p from '@clack/prompts'
 
 export async function upgradeCommand(options: {
   dryRun?: boolean

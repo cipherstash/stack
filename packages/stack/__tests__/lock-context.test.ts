@@ -1,8 +1,8 @@
 import 'dotenv/config'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
-import { beforeAll, describe, expect, it } from 'vitest'
 
 const users = encryptedTable('users', {
   email: encryptedColumn('email').freeTextSearch().equality().orderAndRange(),

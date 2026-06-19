@@ -1,7 +1,4 @@
-import {
-  GATEWAY_URL,
-  HEALTH_CHECK_TIMEOUT_MS,
-} from '../lib/constants.js'
+import { GATEWAY_URL, HEALTH_CHECK_TIMEOUT_MS } from '../lib/constants.js'
 import type { HealthCheckResult, ReadinessResult } from '../lib/types.js'
 
 async function checkEndpoint(
@@ -9,10 +6,7 @@ async function checkEndpoint(
   url: string,
 ): Promise<HealthCheckResult> {
   const controller = new AbortController()
-  const timeout = setTimeout(
-    () => controller.abort(),
-    HEALTH_CHECK_TIMEOUT_MS,
-  )
+  const timeout = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS)
 
   try {
     const response = await fetch(url, {

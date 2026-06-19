@@ -1,4 +1,4 @@
-import { ProtectOperatorError, encryptedType } from '@cipherstash/drizzle/pg'
+import { encryptedType, ProtectOperatorError } from '@cipherstash/drizzle/pg'
 import { pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import { setup } from './test-utils'

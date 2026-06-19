@@ -1,6 +1,6 @@
-import type { PlanStep } from './parse-plan.js'
 import type { HandoffChoice, InitMode, Integration } from '../types.js'
 import { type PackageManager, runnerCommand } from '../utils.js'
+import type { PlanStep } from './parse-plan.js'
 
 export const PLAN_REL_PATH = '.cipherstash/plan.md'
 
@@ -474,7 +474,7 @@ function renderRolloutPlanPrompt(ctx: SetupPromptContext): string {
     ...planSharedSetupBlock(ctx),
     '## What this plan covers',
     '',
-    "Two paths, depending on whether the column already exists:",
+    'Two paths, depending on whether the column already exists:',
     '',
     bullet(
       '**Add a new encrypted column** — single deploy, no rollout/cutover split. Declared encrypted from the start.',
@@ -485,7 +485,7 @@ function renderRolloutPlanPrompt(ctx: SetupPromptContext): string {
         : '**Encryption rollout for an existing column** — the encrypted twin column and the application-side dual-write code (plus `stash db push` for Proxy users only). All of this lands in one PR; the user deploys it; `cs_migrations` records `dual_writing` the next time backfill is invoked.',
     ),
     '',
-    "Converting a populated column in place is **not** supported — any \"just swap the type\" approach corrupts data. If the user asks for that, the plan must explain why and route them to the encryption-rollout flow.",
+    'Converting a populated column in place is **not** supported — any "just swap the type" approach corrupts data. If the user asks for that, the plan must explain why and route them to the encryption-rollout flow.',
     '',
     '## Your task: produce the rollout plan file',
     '',
@@ -584,7 +584,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
       '**Remove dual-writes.** The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write code paths.',
     ),
     bullet(
-      '**Drop plaintext.** `stash encrypt drop` emits a migration that removes `<col>_plaintext`. Apply with the project\'s normal migration tooling.',
+      "**Drop plaintext.** `stash encrypt drop` emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling.",
     ),
     '',
     '## Your task: produce the cutover plan file',
@@ -619,9 +619,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
     bullet(
       'Read-path code changes: every site that reads `<col>` from this table must decrypt via the encryption client. Enumerate the sites you can find via grep so the user can verify nothing was missed.',
     ),
-    bullet(
-      'Removal of the dual-write code from the persistence layer.',
-    ),
+    bullet('Removal of the dual-write code from the persistence layer.'),
     bullet(
       'The drop invocation: `' +
         cli +
@@ -670,7 +668,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
     'The full lifecycle for each column the user wants to protect, in order:',
     '',
     bullet(
-      "**Add new encrypted columns** — declared encrypted from the start; single-deploy.",
+      '**Add new encrypted columns** — declared encrypted from the start; single-deploy.',
     ),
     bullet(
       ctx.usesProxy
@@ -691,7 +689,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
     `  \`step\` is \`"complete"\` for this plan. \`path\` is \`"new"\` or \`"migrate"\` per column.`,
     '',
     bullet(
-      "An explicit warning at the top of the prose: this plan skips the production-deploy gate; backfill will run against rows that may not have been seen by deployed dual-write code. Confirm with the user that no deployed application is writing to this database before they run `" +
+      'An explicit warning at the top of the prose: this plan skips the production-deploy gate; backfill will run against rows that may not have been seen by deployed dual-write code. Confirm with the user that no deployed application is writing to this database before they run `' +
         cli +
         ' impl`.',
     ),
@@ -700,9 +698,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
         cli +
         ' encrypt backfill`, `cutover`, `drop`) and concrete `--table` / `--column` values.',
     ),
-    bullet(
-      'For new columns: the additive single-deploy walkthrough.',
-    ),
+    bullet('For new columns: the additive single-deploy walkthrough.'),
     bullet(
       `Project-specific risks. Common ones: bundler exclusion not yet configured (Next.js / webpack / Vite), top-level-await in the placeholder encryption client breaks non-Next contexts, existing partial CipherStash state (run \`${cli} db status\` and note any pre-existing encrypted columns or pending configs).`,
     ),

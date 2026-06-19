@@ -1,10 +1,10 @@
 import { type Result, withResult } from '@byteslice/result'
 import {
-  type JsPlaintext,
   decrypt as ffiDecrypt,
+  type JsPlaintext,
 } from '@cipherstash/protect-ffi'
-import { type ProtectError, ProtectErrorTypes } from '../..'
 import { logger } from '../../../../utils/logger'
+import { type ProtectError, ProtectErrorTypes } from '../..'
 import type { LockContext } from '../../identify'
 import type { Client, Encrypted } from '../../types'
 import { getErrorCode } from '../helpers/error-code'

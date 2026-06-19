@@ -26,7 +26,10 @@ const BIN = {
   cli: resolve(REPO_ROOT, 'packages/cli/dist/bin/stash.js'),
   wizard: resolve(REPO_ROOT, 'packages/wizard/dist/bin/wizard.js'),
   protect: resolve(REPO_ROOT, 'packages/protect/dist/bin/stash.js'),
-  drizzleGen: resolve(REPO_ROOT, 'packages/drizzle/dist/bin/generate-eql-migration.js'),
+  drizzleGen: resolve(
+    REPO_ROOT,
+    'packages/drizzle/dist/bin/generate-eql-migration.js',
+  ),
 } as const
 
 const UA: Record<PackageManager, string> = {
@@ -48,14 +51,12 @@ describe('CLI init providers — package-manager-aware Next Steps', () => {
     {
       label: 'base',
       create: createBaseProvider,
-      firstStep: (r) =>
-        `Set up your database: ${r} stash db install`,
+      firstStep: (r) => `Set up your database: ${r} stash db install`,
     },
     {
       label: 'drizzle',
       create: createDrizzleProvider,
-      firstStep: (r) =>
-        `Set up your database: ${r} stash db install --drizzle`,
+      firstStep: (r) => `Set up your database: ${r} stash db install --drizzle`,
     },
     {
       label: 'supabase',
@@ -201,13 +202,18 @@ describe.skipIf(!authConfigured)(
 // in their --help output when executed under different package manager environments.
 describe('binaries — help text uses detected runner', () => {
   for (const pm of PMS) {
-    for (const [name, bin] of Object.entries(BIN) as Array<[keyof typeof BIN, string]>) {
+    for (const [name, bin] of Object.entries(BIN) as Array<
+      [keyof typeof BIN, string]
+    >) {
       it(`${name} --help renders ${RUNNER[pm]} for pm=${pm}`, () => {
         const result = spawnSync('node', [bin, '--help'], {
           env: { ...process.env, npm_config_user_agent: UA[pm] },
           encoding: 'utf8',
         })
-        expect(result.status, `${name} --help (pm=${pm}) stderr: ${result.stderr}`).toBe(0)
+        expect(
+          result.status,
+          `${name} --help (pm=${pm}) stderr: ${result.stderr}`,
+        ).toBe(0)
         expect(result.stdout).toContain(RUNNER[pm])
         if (RUNNER[pm] !== 'npx') {
           expect(result.stdout).not.toMatch(/\bnpx\b/)

@@ -1,8 +1,8 @@
 import 'dotenv/config'
 import { csColumn, csTable } from '@cipherstash/schema'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { FfiProtectError, ProtectErrorTypes, protect } from '../src'
 import type { ProtectClient } from '../src'
+import { FfiProtectError, ProtectErrorTypes, protect } from '../src'
 
 /** FFI tests require longer timeout due to client initialization */
 const FFI_TEST_TIMEOUT = 30_000

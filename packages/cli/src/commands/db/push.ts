@@ -1,11 +1,10 @@
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadEncryptConfig, loadStashConfig } from '@/config/index.js'
 import { discardPendingConfig } from '@cipherstash/migrate'
-import type { EncryptConfig } from '@cipherstash/stack/schema'
+import type { CastAs, EncryptConfig } from '@cipherstash/stack/schema'
 import { toEqlCastAs } from '@cipherstash/stack/schema'
-import type { CastAs } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { loadEncryptConfig, loadStashConfig } from '@/config/index.js'
 import { validateEncryptConfig } from './validate.js'
 
 /**

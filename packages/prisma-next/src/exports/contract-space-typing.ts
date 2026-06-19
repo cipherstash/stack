@@ -21,19 +21,19 @@
  * drift while keeping the descriptor module light.
  */
 
-import type { Contract } from '@prisma-next/contract/types';
-import type { MigrationPlanOperation } from '@prisma-next/framework-components/control';
-import type { MigrationMetadata } from '@prisma-next/migration-tools/metadata';
-import type { SqlStorage } from '@prisma-next/sql-contract/types';
+import type { Contract } from '@prisma-next/contract/types'
+import type { MigrationPlanOperation } from '@prisma-next/framework-components/control'
+import type { MigrationMetadata } from '@prisma-next/migration-tools/metadata'
+import type { SqlStorage } from '@prisma-next/sql-contract/types'
 
 function fail(field: string, value: unknown): never {
   throw new Error(
     `cipherstash contract-space JSON is missing or malformed at "${field}" (saw ${typeof value}). The on-disk JSON drifted from the framework's expected shape — re-run \`prisma-next contract emit\` and \`prisma-next migration plan\` for the cipherstash space.`,
-  );
+  )
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  return typeof value === 'object' && value !== null
 }
 
 /**
@@ -43,14 +43,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * runner / verifier, which performs its own validation.
  */
 export function asCipherstashContract(value: unknown): Contract<SqlStorage> {
-  if (!isRecord(value)) fail('<root>', value);
-  if (typeof value['target'] !== 'string') fail('target', value['target']);
-  if (typeof value['targetFamily'] !== 'string') fail('targetFamily', value['targetFamily']);
-  const storage = value['storage'];
-  if (!isRecord(storage)) fail('storage', storage);
+  if (!isRecord(value)) fail('<root>', value)
+  if (typeof value['target'] !== 'string') fail('target', value['target'])
+  if (typeof value['targetFamily'] !== 'string')
+    fail('targetFamily', value['targetFamily'])
+  const storage = value['storage']
+  if (!isRecord(storage)) fail('storage', storage)
   if (typeof storage['storageHash'] !== 'string')
-    fail('storage.storageHash', storage['storageHash']);
-  return value as unknown as Contract<SqlStorage>;
+    fail('storage.storageHash', storage['storageHash'])
+  return value as unknown as Contract<SqlStorage>
 }
 
 /**
@@ -59,11 +60,14 @@ export function asCipherstashContract(value: unknown): Contract<SqlStorage> {
  * provenance; missing `to` or a non-string `migrationHash` here means
  * a non-emitted artefact slipped into the import path.
  */
-export function asCipherstashMigrationMetadata(value: unknown): MigrationMetadata {
-  if (!isRecord(value)) fail('<root>', value);
-  if (typeof value['to'] !== 'string') fail('to', value['to']);
-  if (typeof value['migrationHash'] !== 'string') fail('migrationHash', value['migrationHash']);
-  return value as unknown as MigrationMetadata;
+export function asCipherstashMigrationMetadata(
+  value: unknown,
+): MigrationMetadata {
+  if (!isRecord(value)) fail('<root>', value)
+  if (typeof value['to'] !== 'string') fail('to', value['to'])
+  if (typeof value['migrationHash'] !== 'string')
+    fail('migrationHash', value['migrationHash'])
+  return value as unknown as MigrationMetadata
 }
 
 /**
@@ -72,15 +76,17 @@ export function asCipherstashMigrationMetadata(value: unknown): MigrationMetadat
  * canonical `id` / `operationClass` discriminator so a malformed entry
  * doesn't reach the planner.
  */
-export function asCipherstashMigrationOps(value: unknown): readonly MigrationPlanOperation[] {
-  if (!Array.isArray(value)) fail('<root>', value);
+export function asCipherstashMigrationOps(
+  value: unknown,
+): readonly MigrationPlanOperation[] {
+  if (!Array.isArray(value)) fail('<root>', value)
   for (let index = 0; index < value.length; index += 1) {
-    const entry = value[index];
-    if (!isRecord(entry)) fail(`[${index}]`, entry);
-    if (typeof entry['id'] !== 'string') fail(`[${index}].id`, entry['id']);
+    const entry = value[index]
+    if (!isRecord(entry)) fail(`[${index}]`, entry)
+    if (typeof entry['id'] !== 'string') fail(`[${index}].id`, entry['id'])
     if (typeof entry['operationClass'] !== 'string') {
-      fail(`[${index}].operationClass`, entry['operationClass']);
+      fail(`[${index}].operationClass`, entry['operationClass'])
     }
   }
-  return value as unknown as readonly MigrationPlanOperation[];
+  return value as unknown as readonly MigrationPlanOperation[]
 }

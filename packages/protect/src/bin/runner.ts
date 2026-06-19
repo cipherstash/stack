@@ -12,7 +12,11 @@ function fromUserAgent(): Pm | undefined {
 }
 
 function fromLockfile(cwd: string): Pm | undefined {
-  if (existsSync(resolve(cwd, 'bun.lockb')) || existsSync(resolve(cwd, 'bun.lock'))) return 'bun'
+  if (
+    existsSync(resolve(cwd, 'bun.lockb')) ||
+    existsSync(resolve(cwd, 'bun.lock'))
+  )
+    return 'bun'
   if (existsSync(resolve(cwd, 'pnpm-lock.yaml'))) return 'pnpm'
   if (existsSync(resolve(cwd, 'yarn.lock'))) return 'yarn'
   if (existsSync(resolve(cwd, 'package-lock.json'))) return 'npm'
@@ -21,5 +25,11 @@ function fromLockfile(cwd: string): Pm | undefined {
 
 export function detectRunner(): string {
   const pm = fromUserAgent() ?? fromLockfile(process.cwd()) ?? 'npm'
-  return pm === 'bun' ? 'bunx' : pm === 'pnpm' ? 'pnpm dlx' : pm === 'yarn' ? 'yarn dlx' : 'npx'
+  return pm === 'bun'
+    ? 'bunx'
+    : pm === 'pnpm'
+      ? 'pnpm dlx'
+      : pm === 'yarn'
+        ? 'yarn dlx'
+        : 'npx'
 }

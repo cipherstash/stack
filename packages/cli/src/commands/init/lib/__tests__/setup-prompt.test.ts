@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { type SetupPromptContext, renderSetupPrompt } from '../setup-prompt.js'
+import { renderSetupPrompt, type SetupPromptContext } from '../setup-prompt.js'
 
 const baseCtx: SetupPromptContext = {
   integration: 'drizzle',
@@ -362,7 +362,7 @@ describe('renderSetupPrompt — plan mode (complete escape hatch)', () => {
     expect(out).toMatch(/no deploy gate between rollout and cutover/i)
   })
 
-  it("first response asks the user to confirm there is no deployed application", () => {
+  it('first response asks the user to confirm there is no deployed application', () => {
     const out = renderSetupPrompt(planCtx)
     expect(out).toMatch(/this database isn't backing a deployed application/i)
   })
@@ -546,7 +546,9 @@ describe('renderSetupPrompt — usesProxy conditional', () => {
         planStep: 'complete',
         usesProxy: false,
       })
-      expect(out).toMatch(/schema-add.*dual-write code.*backfill.*schema rename/)
+      expect(out).toMatch(
+        /schema-add.*dual-write code.*backfill.*schema rename/,
+      )
       // The lifecycle line should not have "db push" twice
       const migrateSection = out.substring(
         out.indexOf('**Migrate existing columns**'),

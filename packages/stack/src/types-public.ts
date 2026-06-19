@@ -7,52 +7,37 @@
  */
 
 // Core types
-export type {
-  Client,
-  EncryptedValue,
-  Encrypted,
-  EncryptedQuery,
-} from '@/types'
-
 // Client configuration
-export type {
-  KeysetIdentifier,
-  ClientConfig,
-  EncryptionClientConfig,
-} from '@/types'
-
 // Encrypt / decrypt operation options and results
-export type {
-  EncryptOptions,
-  EncryptedReturnType,
-  SearchTerm,
-  EncryptedSearchTerm,
-  EncryptedQueryResult,
-} from '@/types'
-
 // Model field types
-export type {
-  EncryptedFields,
-  OtherFields,
-  DecryptedFields,
-  Decrypted,
-  EncryptedFromSchema,
-} from '@/types'
-
 // Bulk operations
-export type {
-  BulkEncryptPayload,
-  BulkEncryptedData,
-  BulkDecryptPayload,
-  BulkDecryptedData,
-  DecryptionResult,
-} from '@/types'
-
 // Query types (public only)
 export type {
-  QueryTypeName,
+  BulkDecryptedData,
+  BulkDecryptPayload,
+  BulkEncryptedData,
+  BulkEncryptPayload,
+  Client,
+  ClientConfig,
+  Decrypted,
+  DecryptedFields,
+  DecryptionResult,
+  Encrypted,
+  EncryptedFields,
+  EncryptedFromSchema,
+  EncryptedQuery,
+  EncryptedQueryResult,
+  EncryptedReturnType,
+  EncryptedSearchTerm,
+  EncryptedValue,
+  EncryptionClientConfig,
+  EncryptOptions,
   EncryptQueryOptions,
+  KeysetIdentifier,
+  OtherFields,
+  QueryTypeName,
   ScalarQueryTerm,
+  SearchTerm,
 } from '@/types'
 
 // Runtime values

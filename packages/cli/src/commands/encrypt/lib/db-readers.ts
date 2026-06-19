@@ -9,9 +9,13 @@ import type pg from 'pg'
  */
 export async function latestByColumnSafe(
   client: pg.ClientBase,
-): Promise<ReturnType<typeof latestByColumn> extends Promise<infer T> ? T : never> {
+): Promise<
+  ReturnType<typeof latestByColumn> extends Promise<infer T> ? T : never
+> {
   try {
-    return (await latestByColumn(client)) as Awaited<ReturnType<typeof latestByColumn>>
+    return (await latestByColumn(client)) as Awaited<
+      ReturnType<typeof latestByColumn>
+    >
   } catch (err) {
     if (
       err instanceof Error &&

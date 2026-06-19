@@ -26,12 +26,13 @@ describe('classifyPhase', () => {
     expect(classifyPhase('dual-writing')).toBe('cutover')
   })
 
-  it.each(['backfilling', 'backfilled', 'cut-over'] as MigrationPhase[])(
-    '%s classifies as cutover (mid-cutover work)',
-    (phase) => {
-      expect(classifyPhase(phase)).toBe('cutover')
-    },
-  )
+  it.each([
+    'backfilling',
+    'backfilled',
+    'cut-over',
+  ] as MigrationPhase[])('%s classifies as cutover (mid-cutover work)', (phase) => {
+    expect(classifyPhase(phase)).toBe('cutover')
+  })
 
   it('dropped classifies as completed', () => {
     expect(classifyPhase('dropped')).toBe('completed')
@@ -89,39 +90,31 @@ describe('rollupPlanStep', () => {
     // for any column, they have already done the in-app dual-write work.
     // The cutover-plan template handles the mixed case explicitly so the
     // user doesn't have to do two plans in a row.
-    expect(
-      rollupPlanStep([state('rollout'), state('cutover')]),
-    ).toBe('cutover')
+    expect(rollupPlanStep([state('rollout'), state('cutover')])).toBe('cutover')
   })
 
   it('returns rollout when columns are mixed rollout + unknown', () => {
     // No cutover-ready columns. Plan the rollout; the agent will resolve
     // the unknowns as it goes (asking the user about new vs migrate).
-    expect(rollupPlanStep([state('rollout'), state('unknown')])).toBe(
-      'rollout',
-    )
+    expect(rollupPlanStep([state('rollout'), state('unknown')])).toBe('rollout')
   })
 
   it('returns rollout when every column needs rollout', () => {
-    expect(rollupPlanStep([state('rollout'), state('rollout')])).toBe(
-      'rollout',
-    )
+    expect(rollupPlanStep([state('rollout'), state('rollout')])).toBe('rollout')
   })
 
   it('returns unknown when every column is unknown', () => {
     // Caller (e.g. `stash plan`) interprets this as "ask the user which
     // path applies before drafting".
-    expect(rollupPlanStep([state('unknown'), state('unknown')])).toBe(
-      'unknown',
-    )
+    expect(rollupPlanStep([state('unknown'), state('unknown')])).toBe('unknown')
   })
 
   it('returns completed only when every column is completed', () => {
-    expect(
-      rollupPlanStep([state('completed'), state('completed')]),
-    ).toBe('completed')
-    expect(
-      rollupPlanStep([state('completed'), state('cutover')]),
-    ).toBe('cutover')
+    expect(rollupPlanStep([state('completed'), state('completed')])).toBe(
+      'completed',
+    )
+    expect(rollupPlanStep([state('completed'), state('cutover')])).toBe(
+      'cutover',
+    )
   })
 })
