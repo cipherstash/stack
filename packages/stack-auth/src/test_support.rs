@@ -5,6 +5,8 @@
 //! the fixture drift that comes from copy-pasting the `Token { .. }` literal and
 //! the unsigned-JWT mint into every test module.
 
+use cts_common::Crn;
+
 use crate::{SecretToken, Token};
 
 /// A [`Token`] with the given raw access-token string and a far-future expiry,
@@ -36,6 +38,9 @@ pub(crate) fn jwt_token(claims: serde_json::Value) -> Token {
 
 /// Standard CTS JWT claims for `workspace`, with the other required claims
 /// (`iss`/`sub`/`aud`/`iat`/`exp`/`scope`) filled in with valid placeholders.
+///
+/// NOTE: `exp` is a fixed *past* epoch, so the token reads as expired — use
+/// [`jwt_with_workspace`] instead when a currently-valid token is needed.
 pub(crate) fn claims_with_workspace(workspace: &str) -> serde_json::Value {
     serde_json::json!({
         "workspace": workspace,
@@ -46,4 +51,42 @@ pub(crate) fn claims_with_workspace(workspace: &str) -> serde_json::Value {
         "exp": 1_700_003_600u64,
         "scope": "dataset:create",
     })
+}
+
+/// A workspace [`Crn`] in the standard test region (`ap-southeast-2.aws`)
+/// carrying the given `workspace` ID.
+pub(crate) fn crn_with_workspace(workspace: &str) -> Crn {
+    format!("crn:ap-southeast-2.aws:{workspace}")
+        .parse()
+        .expect("test CRN parses")
+}
+
+/// A real (unsigned) JWT *string* carrying the given `workspace` claim and a
+/// currently-valid (`now + 1h`) expiry — for exercising the post-auth
+/// workspace verification that CRN-bound strategies run. Unlike
+/// [`claims_with_workspace`], whose `exp` is a fixed past epoch, the token this
+/// mints reads as valid.
+pub(crate) fn jwt_with_workspace(workspace: &str) -> String {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+    let claims = serde_json::json!({
+        "iss": "https://cts.example.com/",
+        "sub": "CS|test-principal",
+        "aud": "test-audience",
+        "iat": now,
+        "exp": now + 3600,
+        "workspace": workspace,
+        "scope": "",
+    });
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(b"test-secret"),
+    )
+    .expect("JWT encode")
 }

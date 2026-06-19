@@ -9,8 +9,8 @@ const mod = require("../index.js") as typeof import("../index") & {
 
 const { OidcFederationStrategy, MockAuthServer } = mod;
 
-const REGION = "ap-southeast-2.aws";
 const WORKSPACE_ID = "ZVATKW3VHMFG27DY";
+const WORKSPACE_CRN = `crn:ap-southeast-2.aws:${WORKSPACE_ID}`;
 
 let server: InstanceType<typeof MockAuthServerType>;
 let savedHost: string | undefined;
@@ -60,11 +60,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
   it("federates a third-party JWT into a CTS service token", async () => {
     server.mockAuthorizeEndpoint();
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.create(
-      REGION,
-      WORKSPACE_ID,
-      jwt.getJwt,
-    );
+    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, jwt.getJwt);
 
     const result = await strategy.getToken();
 
@@ -79,11 +75,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     server.mockAuthorizeEndpoint(0);
     server.mockAuthorizeEndpoint(0);
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.create(
-      REGION,
-      WORKSPACE_ID,
-      jwt.getJwt,
-    );
+    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, jwt.getJwt);
 
     await strategy.getToken();
     await strategy.getToken();
@@ -93,7 +85,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
 
   it("surfaces a getJwt rejection as an error with .code", async () => {
     server.mockAuthorizeEndpoint();
-    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, () =>
+    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, () =>
       Promise.reject(new Error("provider unavailable")),
     );
 
@@ -105,25 +97,31 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     }
   });
 
-  it("rejects an invalid workspace id with .code", () => {
+  it("rejects an invalid workspace CRN with .code", () => {
     try {
-      OidcFederationStrategy.create(REGION, "not-a-workspace-id", () =>
+      OidcFederationStrategy.create("not-a-crn", () =>
         Promise.resolve("h.p.s"),
       );
-      expect.unreachable("create should throw on a malformed workspace id");
+      expect.unreachable("create should throw on a malformed workspace CRN");
     } catch (err) {
-      expect((err as AuthError).code).toBe("INVALID_WORKSPACE_ID");
+      expect((err as AuthError).code).toBe("INVALID_CRN");
     }
   });
 
-  it("rejects an invalid region with .code", () => {
+  it("rejects a CRN whose workspace segment is malformed with .code", () => {
+    // "not-a-crn" above fails at the `crn:` prefix; this is the distinct path
+    // where the prefix/region parse but the workspace segment fails validation
+    // — what the old INVALID_WORKSPACE_ID case covered before the CRN switch.
     try {
-      OidcFederationStrategy.create("not-a-region", WORKSPACE_ID, () =>
-        Promise.resolve("h.p.s"),
+      OidcFederationStrategy.create(
+        "crn:ap-southeast-2.aws:not-a-valid-workspace",
+        () => Promise.resolve("h.p.s"),
       );
-      expect.unreachable("create should throw on a malformed region");
+      expect.unreachable(
+        "create should throw on a malformed workspace segment",
+      );
     } catch (err) {
-      expect((err as AuthError).code).toBe("INVALID_REGION");
+      expect((err as AuthError).code).toBe("INVALID_CRN");
     }
   });
 
@@ -132,8 +130,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     const store = memStore();
     const jwt = countingJwt();
     const strategy = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       jwt.getJwt,
       store.load,
       store.save,
@@ -150,8 +147,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     server.mockAuthorizeEndpoint();
     const store = memStore();
     const first = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => Promise.resolve("h.p.s"),
       store.load,
       store.save,
@@ -164,8 +160,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     server.clearMocks();
     server.mockAuthorizeEndpointError();
     const second = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => Promise.reject(new Error("getJwt must not be called")),
       store.load,
       store.save,
@@ -182,8 +177,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     server.mockAuthorizeEndpoint();
     const jwt = countingJwt();
     const strategy = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       jwt.getJwt,
       () => Promise.resolve("}{ not json"),
       (_json: string) => Promise.resolve(),
@@ -200,7 +194,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // a `Promise<number>` fails napi's `Promise<String>` coercion and must
     // surface as a clean SERVER_ERROR rejection, not a panic or hung promise.
     server.mockAuthorizeEndpoint();
-    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, () =>
+    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, () =>
       Promise.resolve(42 as unknown as string),
     );
 
@@ -219,7 +213,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // /api/authorise and getting a 500 must reject with an enriched `.code`,
     // not resolve or throw an un-coded error.
     server.mockAuthorizeEndpointError();
-    const strategy = OidcFederationStrategy.create(REGION, WORKSPACE_ID, () =>
+    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, () =>
       Promise.resolve("header.payload.signature"),
     );
 

@@ -74,13 +74,12 @@ export class OidcFederationStrategy {
   }
 
   /**
-   * @param {string} region
-   * @param {string} workspaceId
+   * @param {string} workspaceCrn
    * @param {OidcProvider} getJwt
    * @param {OidcFederationStrategyOptions} [options]
    * @returns {OidcFederationStrategy}
    */
-  static create(region, workspaceId, getJwt, options) {
+  static create(workspaceCrn, getJwt, options) {
     // Wrap `getJwt` so the wasm binding always sees a Promise-returning
     // function even if the caller passed a sync one — see the note in
     // `AccessKeyStrategy.create`.
@@ -92,8 +91,7 @@ export class OidcFederationStrategy {
         Promise.resolve(store.save(json));
       return new OidcFederationStrategy(
         RawOidcFederationStrategy.createWithStore(
-          region,
-          workspaceId,
+          workspaceCrn,
           jwt,
           load,
           save,
@@ -101,7 +99,7 @@ export class OidcFederationStrategy {
       );
     }
     return new OidcFederationStrategy(
-      RawOidcFederationStrategy.create(region, workspaceId, jwt),
+      RawOidcFederationStrategy.create(workspaceCrn, jwt),
     );
   }
 

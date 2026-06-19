@@ -12,8 +12,6 @@
 
 use std::collections::BTreeMap;
 
-#[cfg(target_arch = "wasm32")]
-use cts_common::Region;
 use serde::Serialize;
 use serde_wasm_bindgen::Serializer;
 use stack_auth::{AuthError, AuthStrategy, ServiceToken};
@@ -207,18 +205,13 @@ impl OidcProvider for JsOidcProvider {
     }
 }
 
-/// Parse and validate the `region` + `workspaceId` inputs shared by both
-/// `OidcFederationStrategy` factories.
-#[cfg(target_arch = "wasm32")]
-fn parse_oidc_inputs(
-    region: &str,
-    workspace_id: &str,
-) -> Result<(Region, cts_common::WorkspaceId), JsValue> {
-    let region = Region::new(region).map_err(|e| to_js_error(AuthError::from(e)))?;
-    let workspace_id = workspace_id
-        .parse::<cts_common::WorkspaceId>()
-        .map_err(|e| to_js_error(AuthError::from(e)))?;
-    Ok((region, workspace_id))
+/// Parse a workspace CRN string, mapping a parse failure to the `INVALID_CRN`
+/// error code. Shared by every factory that takes a workspace CRN
+/// (`AccessKeyStrategy`, `OidcFederationStrategy`).
+fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn, JsValue> {
+    workspace_crn
+        .parse()
+        .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))
 }
 
 enum AccessKeyStrategyInner {
@@ -252,9 +245,7 @@ impl AccessKeyStrategy {
     /// Every issued token's workspace claim is verified against the CRN;
     /// a mismatch fails the call with a `WORKSPACE_MISMATCH` error.
     pub fn create(workspace_crn: String, access_key: String) -> Result<AccessKeyStrategy, JsValue> {
-        let crn: cts_common::Crn = workspace_crn
-            .parse()
-            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
@@ -282,9 +273,7 @@ impl AccessKeyStrategy {
         load_token: js_sys::Function,
         save_token: js_sys::Function,
     ) -> Result<AccessKeyStrategy, JsValue> {
-        let crn: cts_common::Crn = workspace_crn
-            .parse()
-            .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_js_error(AuthError::from(e)))?;
@@ -341,25 +330,25 @@ pub struct OidcFederationStrategy {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl OidcFederationStrategy {
-    /// Create an `OidcFederationStrategy` for the given region and workspace.
+    /// Create an `OidcFederationStrategy` for the given workspace CRN.
+    ///
+    /// The CRN format is `crn:<region>:<workspace-id>` (e.g.
+    /// `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from
+    /// the CRN and used for service discovery; the workspace ID is used to
+    /// verify every federated token belongs to the right workspace.
     ///
     /// `getJwt` is called on every federation — initial auth and every
     /// re-federation after expiry — and must return `Promise<string>`
     /// resolving to the *current* third-party OIDC JWT (e.g. by calling
     /// `clerk.session.getToken()`).
     pub fn create(
-        region: String,
-        workspace_id: String,
+        workspace_crn: String,
         get_jwt: js_sys::Function,
     ) -> Result<OidcFederationStrategy, JsValue> {
-        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(
-            region,
-            workspace_id,
-            JsOidcProvider { get_jwt },
-        )
-        .build()
-        .map_err(to_js_error)?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+            .build()
+            .map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -374,25 +363,20 @@ impl OidcFederationStrategy {
     /// survives across Edge Function invocations without re-federating.
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
-        region: String,
-        workspace_id: String,
+        workspace_crn: String,
         get_jwt: js_sys::Function,
         load_token: js_sys::Function,
         save_token: js_sys::Function,
     ) -> Result<OidcFederationStrategy, JsValue> {
-        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let store = JsTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(
-            region,
-            workspace_id,
-            JsOidcProvider { get_jwt },
-        )
-        .with_token_store(store)
-        .build()
-        .map_err(to_js_error)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+            .with_token_store(store)
+            .build()
+            .map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
             inner: OidcFederationStrategyInner::WithStore(inner),
         })
@@ -644,60 +628,55 @@ mod tests {
         store.save(&token).await;
     }
 
-    const VALID_WORKSPACE_ID: &str = "ZVATKW3VHMFG27DY";
-
     fn jwt_fn(jwt: &str) -> js_sys::Function {
         // `async () => "<jwt>"`
         js_sys::Function::new_no_args(&format!("return Promise.resolve('{jwt}');"))
     }
 
     #[wasm_bindgen_test]
-    fn oidc_federation_strategy_rejects_invalid_region() {
+    fn oidc_federation_strategy_rejects_invalid_crn() {
         let err = expect_js_err(OidcFederationStrategy::create(
-            "not-a-region".to_string(),
-            VALID_WORKSPACE_ID.to_string(),
+            "not-a-crn".to_string(),
             jwt_fn("h.p.s"),
         ));
-        assert_eq!(error_code_of(&err), "INVALID_REGION");
+        assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
+    /// A structurally well-formed CRN whose workspace segment fails
+    /// `WorkspaceId` validation is rejected with `INVALID_CRN` — the path the
+    /// old `INVALID_WORKSPACE_ID` test covered before the factory took a CRN.
+    /// "not-a-crn" above fails at the `crn:` prefix; this exercises the
+    /// workspace sub-parser instead.
     #[wasm_bindgen_test]
-    fn oidc_federation_strategy_rejects_invalid_workspace_id() {
+    fn oidc_federation_strategy_rejects_crn_with_malformed_workspace() {
         let err = expect_js_err(OidcFederationStrategy::create(
-            "ap-southeast-2.aws".to_string(),
-            "not-a-workspace-id".to_string(),
+            "crn:ap-southeast-2.aws:not-a-valid-workspace".to_string(),
             jwt_fn("h.p.s"),
         ));
-        assert_eq!(error_code_of(&err), "INVALID_WORKSPACE_ID");
+        assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn oidc_federation_strategy_accepts_valid_inputs() {
-        let result = OidcFederationStrategy::create(
-            "ap-southeast-2.aws".to_string(),
-            VALID_WORKSPACE_ID.to_string(),
-            jwt_fn("h.p.s"),
-        );
+        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"));
         assert!(result.is_ok());
     }
 
     #[wasm_bindgen_test]
-    fn oidc_create_with_store_rejects_invalid_workspace_id() {
+    fn oidc_create_with_store_rejects_invalid_crn() {
         let err = expect_js_err(OidcFederationStrategy::create_with_store(
-            "ap-southeast-2.aws".to_string(),
-            "not-a-workspace-id".to_string(),
+            "not-a-crn".to_string(),
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
         ));
-        assert_eq!(error_code_of(&err), "INVALID_WORKSPACE_ID");
+        assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn oidc_create_with_store_accepts_valid_inputs() {
         let result = OidcFederationStrategy::create_with_store(
-            "ap-southeast-2.aws".to_string(),
-            VALID_WORKSPACE_ID.to_string(),
+            VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),

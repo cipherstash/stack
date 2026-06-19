@@ -1,4 +1,4 @@
-use cts_common::{CtsServiceDiscovery, Region, ServiceDiscovery, WorkspaceId};
+use cts_common::{Crn, CtsServiceDiscovery, ServiceDiscovery, WorkspaceId};
 
 use crate::auto_refresh::AutoRefresh;
 use crate::oidc_refresher::{OidcProvider, OidcRefresher};
@@ -15,14 +15,19 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken};
 /// fresh CTS token. Supply an `OidcProvider` that returns the live provider
 /// token each time (e.g. wrapping `clerk.session.getToken()`).
 ///
-/// Every returned token is checked against the configured workspace — the
-/// same post-auth verification [`AccessKeyStrategy`](crate::AccessKeyStrategy)
-/// performs — so a token CTS minted for a different workspace (or one loaded
-/// from a poisoned shared cache) is never handed back. Verification can fail
-/// in two ways:
+/// The strategy is bound to a workspace CRN at construction. The region is
+/// derived from the CRN — there is no separate `region` argument — so a
+/// caller can't accidentally point the strategy at one region while the
+/// CRN says another, matching
+/// [`AccessKeyStrategy`](crate::AccessKeyStrategy).
+///
+/// Every returned token is checked against the CRN's workspace — the
+/// same post-auth verification `AccessKeyStrategy` performs — so a token CTS
+/// minted for a different workspace (or one loaded from a poisoned shared
+/// cache) is never handed back. Verification can fail in two ways:
 ///
 /// - [`AuthError::WorkspaceMismatch`] — the JWT decoded cleanly but its
-///   `workspace` claim doesn't match the configured workspace ID.
+///   `workspace` claim doesn't match the CRN's workspace ID.
 /// - [`AuthError::InvalidToken`] — the JWT is malformed or missing the
 ///   `workspace` claim entirely, so verification can't run.
 ///
@@ -36,15 +41,14 @@ use crate::{ensure_trailing_slash, AuthError, AuthStrategy, ServiceToken};
 ///
 /// ```no_run
 /// use stack_auth::{AuthError, OidcProviderFn, OidcFederationStrategy, SecretToken};
-/// use cts_common::{Region, WorkspaceId};
+/// use cts_common::Crn;
 ///
-/// let region = Region::aws("ap-southeast-2").unwrap();
-/// let workspace_id: WorkspaceId = "ZVATKW3VHMFG27DY".parse().unwrap();
+/// let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
 /// let provider = OidcProviderFn::new(|| async {
 ///     // Real consumers call into a provider SDK / FFI to fetch a live JWT.
 ///     Ok::<_, AuthError>(SecretToken::new("header.payload.signature".to_string()))
 /// });
-/// let strategy = OidcFederationStrategy::new(region, workspace_id, provider).unwrap();
+/// let strategy = OidcFederationStrategy::new(crn, provider).unwrap();
 /// ```
 pub struct OidcFederationStrategy<P, S = NoStore> {
     inner: AutoRefresh<OidcRefresher<P>, S>,
@@ -52,27 +56,25 @@ pub struct OidcFederationStrategy<P, S = NoStore> {
 }
 
 impl<P: OidcProvider> OidcFederationStrategy<P> {
-    /// Create a new `OidcFederationStrategy` for the given region, workspace, and
+    /// Create a new `OidcFederationStrategy` for the given workspace CRN and
     /// OIDC provider.
     ///
-    /// The auth endpoint is resolved automatically via service discovery.
-    pub fn new(
-        region: Region,
-        workspace_id: WorkspaceId,
-        oidc_provider: P,
-    ) -> Result<Self, AuthError> {
-        Self::builder(region, workspace_id, oidc_provider).build()
+    /// The auth endpoint is resolved automatically via service discovery
+    /// using the region encoded in the CRN; the workspace ID is used to
+    /// verify every federated token belongs to the right workspace.
+    ///
+    /// A CRN with a `service_name` component (e.g.
+    /// `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY:zerokms`) is accepted; the
+    /// `service_name` is ignored. Only the region and workspace ID are
+    /// load-bearing for this strategy.
+    pub fn new(workspace_crn: Crn, oidc_provider: P) -> Result<Self, AuthError> {
+        Self::builder(workspace_crn, oidc_provider).build()
     }
 
     /// Return a builder for configuring an `OidcFederationStrategy` before construction.
-    pub fn builder(
-        region: Region,
-        workspace_id: WorkspaceId,
-        oidc_provider: P,
-    ) -> OidcFederationStrategyBuilder<P> {
+    pub fn builder(workspace_crn: Crn, oidc_provider: P) -> OidcFederationStrategyBuilder<P> {
         OidcFederationStrategyBuilder {
-            region,
-            workspace_id,
+            workspace_crn,
             oidc_provider,
             base_url_override: None,
             token_store: NoStore,
@@ -82,15 +84,10 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
 
 impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P, S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        let token: ServiceToken = self.inner.get_token().await?;
-        let token_workspace = *token.workspace_id()?;
-        if token_workspace != self.expected_workspace {
-            return Err(AuthError::WorkspaceMismatch {
-                expected_workspace: self.expected_workspace,
-                token_workspace,
-            });
-        }
-        Ok(token)
+        self.inner
+            .get_token()
+            .await?
+            .verify_workspace(self.expected_workspace)
     }
 }
 
@@ -98,8 +95,7 @@ impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P,
 ///
 /// Created via [`OidcFederationStrategy::builder`].
 pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
-    region: Region,
-    workspace_id: WorkspaceId,
+    workspace_crn: Crn,
     oidc_provider: P,
     base_url_override: Option<url::Url>,
     token_store: S,
@@ -129,8 +125,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
     /// [`TokenStoreFn`](crate::TokenStoreFn) for ready-made implementations.
     pub fn with_token_store<T: TokenStore>(self, store: T) -> OidcFederationStrategyBuilder<P, T> {
         OidcFederationStrategyBuilder {
-            region: self.region,
-            workspace_id: self.workspace_id,
+            workspace_crn: self.workspace_crn,
             oidc_provider: self.oidc_provider,
             base_url_override: self.base_url_override,
             token_store: store,
@@ -141,18 +136,21 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
 impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     /// Build the [`OidcFederationStrategy`].
     ///
-    /// Resolves the base URL via service discovery unless overridden with
-    /// `base_url` (available when the `test-utils` feature is enabled).
+    /// Resolves the base URL via service discovery using the CRN's region,
+    /// unless overridden with `base_url` (available when the `test-utils`
+    /// feature is enabled).
     pub fn build(self) -> Result<OidcFederationStrategy<P, S>, AuthError> {
+        let expected_workspace = self.workspace_crn.workspace_id;
+        let region = self.workspace_crn.region;
         let base_url = match self.base_url_override {
             Some(url) => url,
-            None => crate::cts_base_url_from_env()?
-                .unwrap_or(CtsServiceDiscovery::endpoint(self.region)?),
+            None => {
+                crate::cts_base_url_from_env()?.unwrap_or(CtsServiceDiscovery::endpoint(region)?)
+            }
         };
-        let expected_workspace = self.workspace_id;
         let refresher = OidcRefresher::new(
             self.oidc_provider,
-            self.workspace_id,
+            expected_workspace,
             ensure_trailing_slash(base_url),
         );
         Ok(OidcFederationStrategy {
@@ -168,38 +166,12 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use cts_common::Region;
     use mocktail::prelude::*;
 
     use super::*;
     use crate::oidc_refresher::OidcProviderFn;
+    use crate::test_support::{crn_with_workspace, jwt_with_workspace};
     use crate::{InMemoryTokenStore, SecretToken, Token, TokenStore};
-
-    /// Mint an unsigned JWT carrying the given `workspace` claim. The strategy
-    /// decodes claims without verifying the signature (it already holds the
-    /// token), so an unsigned token is sufficient to exercise verification.
-    fn jwt_with_workspace(workspace: &str) -> String {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_secs();
-        let claims = serde_json::json!({
-            "iss": "https://cts.example.com/",
-            "sub": "CS|test-user",
-            "aud": "test-audience",
-            "iat": now,
-            "exp": now + 3600,
-            "workspace": workspace,
-            "scope": "",
-        });
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(b"test-secret"),
-        )
-        .expect("JWT encode")
-    }
 
     /// A mock CTS that federates any OIDC token into a CTS token carrying the
     /// given `workspace` claim.
@@ -216,10 +188,6 @@ mod tests {
         server
     }
 
-    fn test_region() -> Region {
-        Region::aws("ap-southeast-2").expect("region parses")
-    }
-
     fn provider() -> OidcProviderFn<impl Fn() -> std::future::Ready<Result<SecretToken, AuthError>>>
     {
         OidcProviderFn::new(|| {
@@ -234,17 +202,43 @@ mod tests {
         const WS: &str = "ZVATKW3VHMFG27DY";
         let server = start_mock_server_returning_jwt(WS).await;
 
-        let strategy =
-            OidcFederationStrategy::builder(test_region(), WS.parse().unwrap(), provider())
-                .base_url(server.url(""))
-                .build()
-                .expect("builder");
+        let strategy = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
 
         let token = (&strategy).get_token().await.expect("get_token");
         assert_eq!(
             token.workspace_id().expect("workspace_id").as_str(),
             WS,
             "happy-path token should carry the expected workspace",
+        );
+    }
+
+    /// A CRN carrying a `service_name` component is accepted; the
+    /// `service_name` is ignored, exactly as for
+    /// [`AccessKeyStrategy`](crate::AccessKeyStrategy). Pinned as a test —
+    /// matching `access_key_strategy::accepts_crn_with_service_name` — so a
+    /// future contributor doesn't tighten the constructor into rejecting these
+    /// CRNs without realising the docstring already promises acceptance.
+    #[tokio::test]
+    async fn accepts_crn_with_service_name() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+        let crn: Crn = format!("crn:ap-southeast-2.aws:{WS}:zerokms")
+            .parse()
+            .expect("CRN with service_name parses");
+
+        let strategy = OidcFederationStrategy::builder(crn, provider())
+            .base_url(server.url(""))
+            .build()
+            .expect("CRN with service_name should construct a strategy");
+
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "service_name is ignored — verification still uses the workspace ID",
         );
     }
 
@@ -259,14 +253,10 @@ mod tests {
         const EXPECTED_WS: &str = "ZVATKW3VHMFG27DY";
         let server = start_mock_server_returning_jwt(TOKEN_WS).await;
 
-        let strategy = OidcFederationStrategy::builder(
-            test_region(),
-            EXPECTED_WS.parse().unwrap(),
-            provider(),
-        )
-        .base_url(server.url(""))
-        .build()
-        .expect("builder");
+        let strategy = OidcFederationStrategy::builder(crn_with_workspace(EXPECTED_WS), provider())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
 
         let err = (&strategy)
             .get_token()
@@ -298,14 +288,11 @@ mod tests {
             MockServer::new_http("oidc-federation-strategy-malformed-test").with_mocks(mocks);
         server.start().await.expect("mock server start");
 
-        let strategy = OidcFederationStrategy::builder(
-            test_region(),
-            "ZVATKW3VHMFG27DY".parse().unwrap(),
-            provider(),
-        )
-        .base_url(server.url(""))
-        .build()
-        .expect("builder");
+        let strategy =
+            OidcFederationStrategy::builder(crn_with_workspace("ZVATKW3VHMFG27DY"), provider())
+                .base_url(server.url(""))
+                .build()
+                .expect("builder");
 
         let err = (&strategy)
             .get_token()
@@ -353,15 +340,11 @@ mod tests {
         let store = Arc::new(InMemoryTokenStore::new());
         store.save(&stored).await;
 
-        let strategy = OidcFederationStrategy::builder(
-            test_region(),
-            EXPECTED_WS.parse().unwrap(),
-            provider(),
-        )
-        .base_url(server.url(""))
-        .with_token_store(Arc::clone(&store))
-        .build()
-        .expect("builder");
+        let strategy = OidcFederationStrategy::builder(crn_with_workspace(EXPECTED_WS), provider())
+            .base_url(server.url(""))
+            .with_token_store(Arc::clone(&store))
+            .build()
+            .expect("builder");
 
         let err = (&strategy)
             .get_token()
@@ -383,14 +366,10 @@ mod tests {
         const EXPECTED_WS: &str = "ZVATKW3VHMFG27DY";
         let server = start_mock_server_returning_jwt(TOKEN_WS).await;
 
-        let strategy = OidcFederationStrategy::builder(
-            test_region(),
-            EXPECTED_WS.parse().unwrap(),
-            provider(),
-        )
-        .base_url(server.url(""))
-        .build()
-        .expect("builder");
+        let strategy = OidcFederationStrategy::builder(crn_with_workspace(EXPECTED_WS), provider())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
 
         for call in 1..=2 {
             let err = match (&strategy).get_token().await {

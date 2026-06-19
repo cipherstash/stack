@@ -103,15 +103,19 @@ export interface OidcFederationStrategyOptions {
 export declare class OidcFederationStrategy {
   private constructor();
   /**
-   * Create an `OidcFederationStrategy` for the given region and workspace.
+   * Create an `OidcFederationStrategy` for the given workspace CRN.
+   *
+   * The CRN format is `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from the
+   * CRN and used for service discovery; the workspace ID is used to verify
+   * every federated token belongs to the right workspace.
    *
    * `getJwt` must return the current third-party OIDC JWT (it is re-invoked
    * on every re-federation). Pass `options.store` to back the strategy with a
    * persistent cache — see {@link TokenStore}.
    */
   static create(
-    region: string,
-    workspaceId: string,
+    workspaceCrn: string,
     getJwt: OidcProvider,
     options?: OidcFederationStrategyOptions,
   ): OidcFederationStrategy;

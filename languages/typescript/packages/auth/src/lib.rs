@@ -34,6 +34,15 @@ fn warn_callback(name: &str, detail: &str) {
     eprintln!("stack-auth: {name} {detail}");
 }
 
+/// Parse a workspace CRN string, mapping a parse failure to the `INVALID_CRN`
+/// error code. Shared by every factory that takes a workspace CRN
+/// (`AccessKeyStrategy`, `AutoStrategy`, `OidcFederationStrategy`).
+fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn> {
+    workspace_crn
+        .parse()
+        .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))
+}
+
 // ---------------------------------------------------------------------------
 // TokenResult — returned by strategy.getToken()
 // ---------------------------------------------------------------------------
@@ -117,10 +126,7 @@ impl AutoStrategy {
                 builder = builder.with_access_key(key);
             }
             if let Some(crn_str) = opts.workspace_crn {
-                let crn = crn_str
-                    .parse()
-                    .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
-                builder = builder.with_workspace_crn(crn);
+                builder = builder.with_workspace_crn(parse_workspace_crn(&crn_str)?);
             }
         }
 
@@ -159,9 +165,7 @@ impl AccessKeyStrategy {
     /// A mismatch fails `getToken()` with `code === "WORKSPACE_MISMATCH"`.
     #[napi(factory)]
     pub fn create(workspace_crn: String, access_key: String) -> Result<Self> {
-        let crn: cts_common::Crn = workspace_crn
-            .parse()
-            .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let key: stack_auth::AccessKey = access_key
             .parse()
             .map_err(|e| to_napi_error(AuthError::from(e)))?;
@@ -212,19 +216,6 @@ impl DeviceSessionStrategy {
 // ---------------------------------------------------------------------------
 // OidcFederationStrategy — federate a third-party OIDC JWT into a CTS service token
 // ---------------------------------------------------------------------------
-
-/// Parse and validate the `region` + `workspaceId` inputs shared by both
-/// `OidcFederationStrategy` factories.
-fn parse_oidc_inputs(
-    region: &str,
-    workspace_id: &str,
-) -> Result<(Region, cts_common::WorkspaceId)> {
-    let region = Region::new(region).map_err(|e| to_napi_error(AuthError::from(e)))?;
-    let workspace_id = workspace_id
-        .parse::<cts_common::WorkspaceId>()
-        .map_err(|e| to_napi_error(AuthError::from(e)))?;
-    Ok((region, workspace_id))
-}
 
 /// Bridges a JS `getJwt` callback into a Rust [`OidcProvider`].
 ///
@@ -333,25 +324,25 @@ pub struct OidcFederationStrategy {
 
 #[napi]
 impl OidcFederationStrategy {
-    /// Create an `OidcFederationStrategy` for the given region and workspace.
+    /// Create an `OidcFederationStrategy` for the given workspace CRN.
+    ///
+    /// The CRN format is `crn:<region>:<workspace-id>` (e.g.
+    /// `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from
+    /// the CRN and used for service discovery; the workspace ID is used to
+    /// verify every federated token belongs to the right workspace.
     ///
     /// `getJwt` is called on every federation — initial auth and every
     /// re-federation after the CTS token expires — and must return
     /// `Promise<string>` resolving to the *current* third-party OIDC JWT.
     #[napi(factory)]
     pub fn create(
-        region: String,
-        workspace_id: String,
+        workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
     ) -> Result<Self> {
-        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(
-            region,
-            workspace_id,
-            NapiOidcProvider { get_jwt },
-        )
-        .build()
-        .map_err(to_napi_error)?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+            .build()
+            .map_err(to_napi_error)?;
         Ok(Self {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -366,25 +357,20 @@ impl OidcFederationStrategy {
     /// re-federating.
     #[napi(factory)]
     pub fn create_with_store(
-        region: String,
-        workspace_id: String,
+        workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         load_token: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         save_token: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
     ) -> Result<Self> {
-        let (region, workspace_id) = parse_oidc_inputs(&region, &workspace_id)?;
+        let crn = parse_workspace_crn(&workspace_crn)?;
         let store = NapiTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(
-            region,
-            workspace_id,
-            NapiOidcProvider { get_jwt },
-        )
-        .with_token_store(store)
-        .build()
-        .map_err(to_napi_error)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+            .with_token_store(store)
+            .build()
+            .map_err(to_napi_error)?;
         Ok(Self {
             inner: OidcFederationStrategyInner::WithStore(inner),
         })
