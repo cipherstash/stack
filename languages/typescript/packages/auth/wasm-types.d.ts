@@ -102,16 +102,18 @@ export declare class AccessKeyStrategy {
  */
 export declare class OidcFederationStrategy {
   private constructor()
-  /** Create an `OidcFederationStrategy` for the given region and workspace. */
+  /**
+   * Create an `OidcFederationStrategy` for the given workspace CRN. The CRN
+   * format is `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`).
+   */
   static create(
-    region: string,
-    workspaceId: string,
+    workspaceCrn: string,
     getJwt: () => Promise<string>,
   ): OidcFederationStrategy
   /** Create an `OidcFederationStrategy` backed by external token-store callbacks. */
   static createWithStore(
-    region: string,
-    workspaceId: string,
+    workspaceCrn: string,
     getJwt: () => Promise<string>,
     loadToken: () => Promise<string | null | undefined>,
     saveToken: (json: string) => Promise<void>,

@@ -9,8 +9,8 @@ const mod = require("../index.js") as typeof import("../index") & {
 
 const { OidcFederationStrategy, MockAuthServer } = mod;
 
-const REGION = "ap-southeast-2.aws";
 const WORKSPACE_ID = "ZVATKW3VHMFG27DY";
+const WORKSPACE_CRN = `crn:ap-southeast-2.aws:${WORKSPACE_ID}`;
 
 let server: InstanceType<typeof MockAuthServerType>;
 let savedHost: string | undefined;
@@ -48,8 +48,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
     const store = cookieStore({ request: requestWith(), responseHeaders });
 
     const strategy = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       store.load,
       store.save,
@@ -71,8 +70,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       responseHeaders: firstHeaders,
     });
     const first = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       firstStore.load,
       firstStore.save,
@@ -89,8 +87,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       responseHeaders: new Headers(),
     });
     const second = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => Promise.reject(new Error("getJwt must not be called")),
       secondStore.load,
       secondStore.save,
@@ -109,8 +106,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       responseHeaders: firstHeaders,
     });
     const first = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       firstStore.load,
       firstStore.save,
@@ -128,8 +124,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       responseHeaders: new Headers(),
     });
     const second = OidcFederationStrategy.createWithStore(
-      REGION,
-      WORKSPACE_ID,
+      WORKSPACE_CRN,
       () => {
         getJwtCalls += 1;
         return Promise.resolve("header.payload.signature");

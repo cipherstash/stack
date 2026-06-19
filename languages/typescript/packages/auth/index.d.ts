@@ -210,13 +210,18 @@ export declare const OAuthStrategy: typeof DeviceSessionStrategy
  */
 export declare class OidcFederationStrategy {
   /**
-   * Create an `OidcFederationStrategy` for the given region and workspace.
+   * Create an `OidcFederationStrategy` for the given workspace CRN.
+   *
+   * The CRN format is `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). Region is parsed from
+   * the CRN and used for service discovery; the workspace ID is used to
+   * verify every federated token belongs to the right workspace.
    *
    * `getJwt` is called on every federation — initial auth and every
    * re-federation after the CTS token expires — and must return
    * `Promise<string>` resolving to the *current* third-party OIDC JWT.
    */
-  static create(region: string, workspaceId: string, getJwt: () => any): OidcFederationStrategy
+  static create(workspaceCrn: string, getJwt: () => any): OidcFederationStrategy
   /**
    * Create an `OidcFederationStrategy` backed by external token-store callbacks.
    *
@@ -226,7 +231,7 @@ export declare class OidcFederationStrategy {
    * cookie — so a federated token survives across requests without
    * re-federating.
    */
-  static createWithStore(region: string, workspaceId: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any): OidcFederationStrategy
+  static createWithStore(workspaceCrn: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any): OidcFederationStrategy
   /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<TokenResult>
 }
