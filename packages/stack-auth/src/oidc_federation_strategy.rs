@@ -266,6 +266,44 @@ mod tests {
         }
     }
 
+    /// Precedence: an explicit `base_url` override (the one `maybe_base_url`
+    /// sets) wins over the `CS_CTS_HOST` environment variable. `build()`
+    /// resolves the host in priority order override → `CS_CTS_HOST` →
+    /// discovery, so with `CS_CTS_HOST` pointed at a dead address the strategy
+    /// must still federate against the override's mock — proving the env var
+    /// was not consulted.
+    ///
+    /// `CS_CTS_HOST` is read inside `build()` (not `get_token`), so the env
+    /// override is scoped to just that synchronous call via `temp_env`; the
+    /// async federation runs with the environment already restored. No other
+    /// test in this crate reads `CS_CTS_HOST` (every strategy test pins
+    /// `base_url`), so this can't perturb a concurrent test.
+    #[tokio::test]
+    async fn base_url_override_takes_precedence_over_cs_cts_host() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+
+        // A routable-but-dead host: if `CS_CTS_HOST` were consulted, federation
+        // would target this and fail rather than hitting the mock.
+        let strategy = temp_env::with_var("CS_CTS_HOST", Some("http://127.0.0.1:1/"), || {
+            OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some(server.url("").to_string()))
+                .expect("override URL parses")
+                .build()
+                .expect("builder")
+        });
+
+        let token = (&strategy)
+            .get_token()
+            .await
+            .expect("override must win: federation should hit the mock, not CS_CTS_HOST");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "token should come from the override's mock server",
+        );
+    }
+
     /// Happy path — the federated token's `workspace` claim matches the
     /// configured workspace: `get_token()` returns the token cleanly.
     #[tokio::test]
