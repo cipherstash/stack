@@ -802,10 +802,12 @@ mod tests {
 
     // The `baseUrl` override parsing (empty/absent/valid/malformed semantics)
     // lives on `OidcFederationStrategyBuilder::maybe_base_url` in the core
-    // `stack-auth` crate and is unit-tested there; the napi `INVALID_URL`
-    // mapping is covered by `error_mapping::maps_all_auth_error_variants`. The
-    // factories themselves need a JS runtime (their callbacks are
-    // `ThreadsafeFunction`s), so there's nothing further to test at this seam.
+    // `stack-auth` crate and is unit-tested there. The factory callbacks are
+    // `ThreadsafeFunction`s, so these factories can't be driven from a Rust
+    // unit test — but they *are* exercised end-to-end through the napi seam by
+    // the vitest suite (`__tests__/oidc-federation-strategy.test.ts`), which
+    // covers the `baseUrl` override winning over `CS_CTS_HOST`, the
+    // `INVALID_URL` rejection through the factory, and empty-as-absent.
 
     // --- Device code result ---
     //

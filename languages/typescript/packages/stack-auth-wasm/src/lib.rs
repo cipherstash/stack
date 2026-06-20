@@ -737,6 +737,20 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// The store variant accepts a valid `baseUrl` override — mirrors
+    /// `oidc_federation_strategy_accepts_valid_base_url` on the plain `create`.
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_accepts_valid_base_url() {
+        let result = OidcFederationStrategy::create_with_store(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+            Some("https://cts.example.com".to_string()),
+        );
+        assert!(result.is_ok());
+    }
+
     /// The store variant also accepts and validates a `baseUrl` override.
     #[wasm_bindgen_test]
     fn oidc_create_with_store_rejects_invalid_base_url() {
