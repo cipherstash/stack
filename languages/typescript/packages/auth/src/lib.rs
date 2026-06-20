@@ -43,6 +43,19 @@ fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn> {
         .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))
 }
 
+/// Parse an optional `baseUrl` override into a [`url::Url`]. An absent or empty
+/// string yields `None` (fall back to `CS_CTS_HOST` / service discovery); an
+/// invalid URL maps to the `INVALID_URL` error code.
+fn parse_base_url(base_url: Option<String>) -> Result<Option<url::Url>> {
+    match base_url {
+        Some(s) if !s.is_empty() => Ok(Some(
+            s.parse::<url::Url>()
+                .map_err(|e| to_napi_error(AuthError::from(e)))?,
+        )),
+        _ => Ok(None),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // TokenResult — returned by strategy.getToken()
 // ---------------------------------------------------------------------------
@@ -334,15 +347,24 @@ impl OidcFederationStrategy {
     /// `getJwt` is called on every federation — initial auth and every
     /// re-federation after the CTS token expires — and must return
     /// `Promise<string>` resolving to the *current* third-party OIDC JWT.
+    ///
+    /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
+    /// e.g. a self-hosted CTS or a local mock auth server. It takes precedence
+    /// over the `CS_CTS_HOST` environment variable and region service
+    /// discovery, and is scoped to this strategy alone (unlike `CS_CTS_HOST`,
+    /// which redirects every CTS client in the process).
     #[napi(factory)]
     pub fn create(
         workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+        base_url: Option<String>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
-            .build()
-            .map_err(to_napi_error)?;
+        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
+        if let Some(url) = parse_base_url(base_url)? {
+            builder = builder.base_url(url);
+        }
+        let inner = builder.build().map_err(to_napi_error)?;
         Ok(Self {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -355,19 +377,28 @@ impl OidcFederationStrategy {
     /// and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
     /// cookie — so a federated token survives across requests without
     /// re-federating.
+    ///
+    /// `baseUrl` behaves as in [`create`](Self::create) — an explicit,
+    /// strategy-scoped CTS host that overrides `CS_CTS_HOST` and service
+    /// discovery.
     #[napi(factory)]
     pub fn create_with_store(
         workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         load_token: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         save_token: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+        base_url: Option<String>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = NapiTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
+        if let Some(url) = parse_base_url(base_url)? {
+            builder = builder.base_url(url);
+        }
+        let inner = builder
             .with_token_store(store)
             .build()
             .map_err(to_napi_error)?;

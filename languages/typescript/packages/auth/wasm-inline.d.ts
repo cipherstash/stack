@@ -94,6 +94,13 @@ export interface OidcFederationStrategyOptions {
    * {@link AccessKeyStrategyOptions.store}.
    */
   store?: TokenStore;
+  /**
+   * Pin this strategy to a specific CTS host — e.g. a self-hosted CTS or a
+   * local mock auth server — overriding region service discovery. Scoped to
+   * this strategy alone. In wasm there is no `CS_CTS_HOST` env fallback, so
+   * this is the only way to target a host other than the region-discovered one.
+   */
+  baseUrl?: string;
 }
 
 /**

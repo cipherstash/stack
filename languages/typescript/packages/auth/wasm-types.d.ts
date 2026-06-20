@@ -106,22 +106,31 @@ export declare class OidcFederationStrategy {
    * Create an `OidcFederationStrategy` for the given workspace CRN. The CRN
    * format is `crn:<region>:<workspace-id>` (e.g.
    * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`).
+   *
+   * `baseUrl`, when supplied, pins this strategy to a specific CTS host —
+   * e.g. a self-hosted CTS or a local mock auth server — overriding region
+   * service discovery, scoped to this strategy alone.
    */
   static create(
     workspaceCrn: string,
     getJwt: () => Promise<string>,
+    baseUrl?: string | undefined | null,
   ): OidcFederationStrategy
   /**
    * Create an `OidcFederationStrategy` backed by external token-store
    * callbacks. Takes the same `workspaceCrn` as {@link create} (region for
    * service discovery, workspace ID for verification) plus `loadToken` /
    * `saveToken` to persist the federated CTS token across requests.
+   *
+   * `baseUrl` behaves as in {@link create} — an explicit, strategy-scoped CTS
+   * host that overrides region service discovery.
    */
   static createWithStore(
     workspaceCrn: string,
     getJwt: () => Promise<string>,
     loadToken: () => Promise<string | null | undefined>,
     saveToken: (json: string) => Promise<void>,
+    baseUrl?: string | undefined | null,
   ): OidcFederationStrategy
   /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<TokenResult>

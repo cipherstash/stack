@@ -30,6 +30,25 @@
   );
   ```
 
+- **`OidcFederationStrategy` `baseUrl` override** — both `create` and
+  `createWithStore` now accept an optional trailing `baseUrl` that pins a single
+  strategy instance to a specific CTS host, taking precedence over the
+  `CS_CTS_HOST` environment variable and region service discovery.
+
+  ```ts
+  OidcFederationStrategy.createWithStore(
+    workspaceCrn, getJwt, loadToken, saveToken,
+    "http://localhost:4000", // baseUrl — federate against a mock / self-hosted CTS
+  );
+  ```
+
+  Unlike `CS_CTS_HOST`, the override is scoped to that strategy alone, so it
+  doesn't redirect other CTS clients sharing the process (e.g. a `protect-ffi`
+  encryption client). On `wasm-inline` it's the `baseUrl` field of the options
+  object (`{ store?, baseUrl? }`); in the wasm runtime — which can't read
+  `CS_CTS_HOST` from the environment — it's the only way to target a host other
+  than the region-discovered one.
+
 ### Breaking Changes
 
 - **`AccessKeyStrategy.create(workspaceCrn, accessKey)`** — the first argument

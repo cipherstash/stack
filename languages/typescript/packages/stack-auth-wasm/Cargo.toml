@@ -36,6 +36,10 @@ web-sys = { version = "0.3", features = ["console"] }
 # behaviour of the upstream `CallbackTokenStore` on native. Target-gated for
 # the same reason as `web-sys`.
 zeroize = { workspace = true }
+# Parses the optional `baseUrl` override in `OidcFederationStrategy` into a
+# `url::Url`. Only used by the wasm32 strategy bindings, so target-gated to keep
+# `cargo udeps --all-targets` from flagging it as unused on the host target.
+url = "2"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

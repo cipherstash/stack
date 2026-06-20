@@ -104,8 +104,12 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
     /// Override the base URL resolved by service discovery.
     ///
-    /// Useful for pointing at a local or mock auth server during testing.
-    #[cfg(any(test, feature = "test-utils"))]
+    /// Takes precedence over both the `CS_CTS_HOST` environment variable and
+    /// region-derived service discovery. Use this to point a single strategy
+    /// instance at a specific CTS host — e.g. a self-hosted CTS, or a local
+    /// mock auth server in development — without relying on the process-wide
+    /// `CS_CTS_HOST`, which would also redirect any other CTS client (e.g. the
+    /// `protect-ffi` encryption client) sharing the same process.
     pub fn base_url(mut self, url: url::Url) -> Self {
         self.base_url_override = Some(url);
         self
@@ -136,9 +140,11 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
 impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     /// Build the [`OidcFederationStrategy`].
     ///
-    /// Resolves the base URL via service discovery using the CRN's region,
-    /// unless overridden with `base_url` (available when the `test-utils`
-    /// feature is enabled).
+    /// Resolves the base URL in priority order: an explicit [`base_url`]
+    /// override, then the `CS_CTS_HOST` environment variable, then service
+    /// discovery using the CRN's region.
+    ///
+    /// [`base_url`]: Self::base_url
     pub fn build(self) -> Result<OidcFederationStrategy<P, S>, AuthError> {
         let expected_workspace = self.workspace_crn.workspace_id;
         let region = self.workspace_crn.region;

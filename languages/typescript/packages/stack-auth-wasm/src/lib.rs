@@ -214,6 +214,19 @@ fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn, JsValue> 
         .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))
 }
 
+/// Parse an optional `baseUrl` override into a [`url::Url`]. An absent or empty
+/// string yields `None` (fall back to region service discovery); an invalid URL
+/// maps to the `INVALID_URL` error code.
+#[cfg(target_arch = "wasm32")]
+fn parse_base_url(base_url: Option<String>) -> Result<Option<url::Url>, JsValue> {
+    match base_url {
+        Some(s) if !s.is_empty() => Ok(Some(
+            s.parse::<url::Url>().map_err(|e| to_js_error(AuthError::from(e)))?,
+        )),
+        _ => Ok(None),
+    }
+}
+
 enum AccessKeyStrategyInner {
     NoStore(stack_auth::AccessKeyStrategy),
     #[cfg(target_arch = "wasm32")]
@@ -341,14 +354,24 @@ impl OidcFederationStrategy {
     /// re-federation after expiry — and must return `Promise<string>`
     /// resolving to the *current* third-party OIDC JWT (e.g. by calling
     /// `clerk.session.getToken()`).
+    ///
+    /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
+    /// e.g. a self-hosted CTS or a local mock auth server. It overrides region
+    /// service discovery and is scoped to this strategy alone. In wasm there is
+    /// no `CS_CTS_HOST` env fallback (the sandbox can't read env), so `baseUrl`
+    /// is the only way to target a host other than the region-discovered one.
     pub fn create(
         workspace_crn: String,
         get_jwt: js_sys::Function,
+        base_url: Option<String>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-            .build()
-            .map_err(to_js_error)?;
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt });
+        if let Some(url) = parse_base_url(base_url)? {
+            builder = builder.base_url(url);
+        }
+        let inner = builder.build().map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -361,19 +384,28 @@ impl OidcFederationStrategy {
     /// [`AccessKeyStrategy::create_with_store`] for the callback contract. Use
     /// this to back the strategy with an HTTP-only cookie so a federated token
     /// survives across Edge Function invocations without re-federating.
+    ///
+    /// `baseUrl` behaves as in [`create`](Self::create) — an explicit,
+    /// strategy-scoped CTS host that overrides region service discovery.
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
         workspace_crn: String,
         get_jwt: js_sys::Function,
         load_token: js_sys::Function,
         save_token: js_sys::Function,
+        base_url: Option<String>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = JsTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt });
+        if let Some(url) = parse_base_url(base_url)? {
+            builder = builder.base_url(url);
+        }
+        let inner = builder
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;
