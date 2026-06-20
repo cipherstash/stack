@@ -43,19 +43,6 @@ fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn> {
         .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))
 }
 
-/// Parse an optional `baseUrl` override into a [`url::Url`]. An absent or empty
-/// string yields `None` (fall back to `CS_CTS_HOST` / service discovery); an
-/// invalid URL maps to the `INVALID_URL` error code.
-fn parse_base_url(base_url: Option<String>) -> Result<Option<url::Url>> {
-    match base_url {
-        Some(s) if !s.is_empty() => Ok(Some(
-            s.parse::<url::Url>()
-                .map_err(|e| to_napi_error(AuthError::from(e)))?,
-        )),
-        _ => Ok(None),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // TokenResult — returned by strategy.getToken()
 // ---------------------------------------------------------------------------
@@ -360,12 +347,11 @@ impl OidcFederationStrategy {
         base_url: Option<String>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
-        if let Some(url) = parse_base_url(base_url)? {
-            builder = builder.base_url(url);
-        }
-        let inner = builder.build().map_err(to_napi_error)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_napi_error)?
+            .build()
+            .map_err(to_napi_error)?;
         Ok(Self {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -395,12 +381,9 @@ impl OidcFederationStrategy {
             load: load_token,
             save: save_token,
         };
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
-        if let Some(url) = parse_base_url(base_url)? {
-            builder = builder.base_url(url);
-        }
-        let inner = builder
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_napi_error)?
             .with_token_store(store)
             .build()
             .map_err(to_napi_error)?;
@@ -817,44 +800,12 @@ mod tests {
         }
     }
 
-    // --- baseUrl override parsing ---
-    //
-    // The `OidcFederationStrategy::create{,_with_store}` factories take their
-    // `baseUrl` argument through `parse_base_url`. The factories themselves
-    // need a JS runtime (their callbacks are `ThreadsafeFunction`s), so the
-    // override semantics — empty/absent → `None`, valid → `Some`, malformed →
-    // `INVALID_URL` — are pinned here on the helper instead.
-    mod parse_base_url {
-        use super::*;
-
-        #[test]
-        fn none_yields_no_override() {
-            assert!(super::super::parse_base_url(None).unwrap().is_none());
-        }
-
-        #[test]
-        fn empty_string_is_treated_as_absent() {
-            // An empty `baseUrl` must fall through to `CS_CTS_HOST` / service
-            // discovery rather than erroring — it's not a malformed URL.
-            assert!(super::super::parse_base_url(Some(String::new()))
-                .unwrap()
-                .is_none());
-        }
-
-        #[test]
-        fn valid_url_yields_override() {
-            let parsed = super::super::parse_base_url(Some("https://cts.example.com".to_string()))
-                .unwrap()
-                .expect("a valid URL should produce an override");
-            assert_eq!(parsed.as_str(), "https://cts.example.com/");
-        }
-
-        #[test]
-        fn malformed_url_maps_to_invalid_url() {
-            let err = expect_err(super::super::parse_base_url(Some("not a url".to_string())));
-            assertions::has_error_code(&err, "INVALID_URL");
-        }
-    }
+    // The `baseUrl` override parsing (empty/absent/valid/malformed semantics)
+    // lives on `OidcFederationStrategyBuilder::maybe_base_url` in the core
+    // `stack-auth` crate and is unit-tested there; the napi `INVALID_URL`
+    // mapping is covered by `error_mapping::maps_all_auth_error_variants`. The
+    // factories themselves need a JS runtime (their callbacks are
+    // `ThreadsafeFunction`s), so there's nothing further to test at this seam.
 
     // --- Device code result ---
     //

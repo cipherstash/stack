@@ -115,6 +115,22 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
         self
     }
 
+    /// Apply an optional base-URL override supplied as a raw string.
+    ///
+    /// The string-typed convenience the language bindings (napi, wasm) call,
+    /// so the "empty means absent, otherwise parse-or-reject" semantics live in
+    /// one place rather than being re-derived per binding. An absent or empty
+    /// string is a no-op — base-URL resolution falls back to `CS_CTS_HOST` /
+    /// region service discovery (see [`build`](Self::build)); a non-empty but
+    /// malformed string is rejected as [`AuthError::InvalidUrl`]. For an
+    /// already-parsed URL, use [`base_url`](Self::base_url).
+    pub fn maybe_base_url(self, base_url: Option<String>) -> Result<Self, AuthError> {
+        match base_url {
+            Some(s) if !s.is_empty() => Ok(self.base_url(s.parse::<url::Url>()?)),
+            _ => Ok(self),
+        }
+    }
+
     /// Wire an external [`TokenStore`] into the strategy.
     ///
     /// On every call to [`get_token`](AuthStrategy::get_token), if no token is
@@ -199,6 +215,55 @@ mod tests {
         OidcProviderFn::new(|| {
             std::future::ready(Ok(SecretToken::new("header.payload.signature".to_string())))
         })
+    }
+
+    const WS: &str = "ZVATKW3VHMFG27DY";
+
+    /// `maybe_base_url` is the string-typed override seam the language bindings
+    /// rely on; pin its empty/absent/valid/malformed semantics here so the napi
+    /// and wasm crates don't each re-test (and risk re-deriving) them.
+    mod maybe_base_url {
+        use super::*;
+
+        #[test]
+        fn absent_is_a_noop() {
+            let b = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(None)
+                .unwrap();
+            assert!(b.base_url_override.is_none());
+        }
+
+        #[test]
+        fn empty_string_is_a_noop() {
+            let b = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some(String::new()))
+                .unwrap();
+            assert!(b.base_url_override.is_none());
+        }
+
+        #[test]
+        fn valid_url_sets_the_override() {
+            let b = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some("https://cts.example.com".to_string()))
+                .unwrap();
+            assert_eq!(
+                b.base_url_override.as_ref().map(url::Url::as_str),
+                Some("https://cts.example.com/")
+            );
+        }
+
+        #[test]
+        fn malformed_url_is_invalid_url() {
+            // The builder isn't `Debug`, so match on the result rather than
+            // `unwrap_err()` (which would require `T: Debug`).
+            match OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some("not a url".to_string()))
+            {
+                Err(AuthError::InvalidUrl(_)) => {}
+                Ok(_) => panic!("expected Err(InvalidUrl), got Ok"),
+                Err(other) => panic!("expected InvalidUrl, got: {other:?}"),
+            }
+        }
     }
 
     /// Happy path — the federated token's `workspace` claim matches the

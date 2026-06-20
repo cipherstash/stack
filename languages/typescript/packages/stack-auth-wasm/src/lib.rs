@@ -214,20 +214,6 @@ fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn, JsValue> 
         .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))
 }
 
-/// Parse an optional `baseUrl` override into a [`url::Url`]. An absent or empty
-/// string yields `None` (fall back to region service discovery); an invalid URL
-/// maps to the `INVALID_URL` error code.
-#[cfg(target_arch = "wasm32")]
-fn parse_base_url(base_url: Option<String>) -> Result<Option<url::Url>, JsValue> {
-    match base_url {
-        Some(s) if !s.is_empty() => Ok(Some(
-            s.parse::<url::Url>()
-                .map_err(|e| to_js_error(AuthError::from(e)))?,
-        )),
-        _ => Ok(None),
-    }
-}
-
 enum AccessKeyStrategyInner {
     NoStore(stack_auth::AccessKeyStrategy),
     #[cfg(target_arch = "wasm32")]
@@ -367,12 +353,11 @@ impl OidcFederationStrategy {
         base_url: Option<String>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt });
-        if let Some(url) = parse_base_url(base_url)? {
-            builder = builder.base_url(url);
-        }
-        let inner = builder.build().map_err(to_js_error)?;
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_js_error)?
+            .build()
+            .map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -401,12 +386,9 @@ impl OidcFederationStrategy {
             load: load_token,
             save: save_token,
         };
-        let mut builder =
-            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt });
-        if let Some(url) = parse_base_url(base_url)? {
-            builder = builder.base_url(url);
-        }
-        let inner = builder
+        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_js_error)?
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;
