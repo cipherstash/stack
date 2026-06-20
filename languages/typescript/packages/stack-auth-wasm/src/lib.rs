@@ -221,7 +221,8 @@ fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn, JsValue> 
 fn parse_base_url(base_url: Option<String>) -> Result<Option<url::Url>, JsValue> {
     match base_url {
         Some(s) if !s.is_empty() => Ok(Some(
-            s.parse::<url::Url>().map_err(|e| to_js_error(AuthError::from(e)))?,
+            s.parse::<url::Url>()
+                .map_err(|e| to_js_error(AuthError::from(e)))?,
         )),
         _ => Ok(None),
     }
@@ -670,6 +671,7 @@ mod tests {
         let err = expect_js_err(OidcFederationStrategy::create(
             "not-a-crn".to_string(),
             jwt_fn("h.p.s"),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
@@ -684,14 +686,49 @@ mod tests {
         let err = expect_js_err(OidcFederationStrategy::create(
             "crn:ap-southeast-2.aws:not-a-valid-workspace".to_string(),
             jwt_fn("h.p.s"),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn oidc_federation_strategy_accepts_valid_inputs() {
-        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"));
+        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None);
         assert!(result.is_ok());
+    }
+
+    /// A supplied `baseUrl` override is accepted and threaded into the builder.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_accepts_valid_base_url() {
+        let result = OidcFederationStrategy::create(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            Some("https://cts.example.com".to_string()),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// An empty `baseUrl` string is treated as absent (falls back to region
+    /// discovery), not as an invalid URL.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_treats_empty_base_url_as_absent() {
+        let result = OidcFederationStrategy::create(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            Some(String::new()),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// A malformed `baseUrl` surfaces as `INVALID_URL`.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_rejects_invalid_base_url() {
+        let err = expect_js_err(OidcFederationStrategy::create(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            Some("not a url".to_string()),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_URL");
     }
 
     #[wasm_bindgen_test]
@@ -701,6 +738,7 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
@@ -712,8 +750,22 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
         );
         assert!(result.is_ok());
+    }
+
+    /// The store variant also accepts and validates a `baseUrl` override.
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_rejects_invalid_base_url() {
+        let err = expect_js_err(OidcFederationStrategy::create_with_store(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+            Some("not a url".to_string()),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_URL");
     }
 
     #[wasm_bindgen_test]

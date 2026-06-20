@@ -360,7 +360,8 @@ impl OidcFederationStrategy {
         base_url: Option<String>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
         if let Some(url) = parse_base_url(base_url)? {
             builder = builder.base_url(url);
         }
@@ -394,7 +395,8 @@ impl OidcFederationStrategy {
             load: load_token,
             save: save_token,
         };
-        let mut builder = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt });
         if let Some(url) = parse_base_url(base_url)? {
             builder = builder.base_url(url);
         }
@@ -812,6 +814,45 @@ mod tests {
 
             let err = to_napi_error(AuthError::Server("something broke".to_string()));
             assertions::has_error_code(&err, "SERVER_ERROR");
+        }
+    }
+
+    // --- baseUrl override parsing ---
+    //
+    // The `OidcFederationStrategy::create{,_with_store}` factories take their
+    // `baseUrl` argument through `parse_base_url`. The factories themselves
+    // need a JS runtime (their callbacks are `ThreadsafeFunction`s), so the
+    // override semantics — empty/absent → `None`, valid → `Some`, malformed →
+    // `INVALID_URL` — are pinned here on the helper instead.
+    mod parse_base_url {
+        use super::*;
+
+        #[test]
+        fn none_yields_no_override() {
+            assert!(super::super::parse_base_url(None).unwrap().is_none());
+        }
+
+        #[test]
+        fn empty_string_is_treated_as_absent() {
+            // An empty `baseUrl` must fall through to `CS_CTS_HOST` / service
+            // discovery rather than erroring — it's not a malformed URL.
+            assert!(super::super::parse_base_url(Some(String::new()))
+                .unwrap()
+                .is_none());
+        }
+
+        #[test]
+        fn valid_url_yields_override() {
+            let parsed = super::super::parse_base_url(Some("https://cts.example.com".to_string()))
+                .unwrap()
+                .expect("a valid URL should produce an override");
+            assert_eq!(parsed.as_str(), "https://cts.example.com/");
+        }
+
+        #[test]
+        fn malformed_url_maps_to_invalid_url() {
+            let err = expect_err(super::super::parse_base_url(Some("not a url".to_string())));
+            assertions::has_error_code(&err, "INVALID_URL");
         }
     }
 
