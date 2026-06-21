@@ -63,3 +63,34 @@ impl<E> Plaintext<E> {
         self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::CipherTextReader;
+    use bytes::Bytes;
+
+    // `read_nonce` operates on attacker-controlled bytes, so the `len() < N`
+    // guard must hold exactly at the boundary. Tests at `N-1`/`N`/`N+1` pin it
+    // down — without them, `<` could become `<=` or `==` unnoticed. See #209.
+    const N: usize = 4;
+
+    #[test]
+    fn read_nonce_fewer_than_n_bytes_errors() {
+        let reader = CipherTextReader::new(Bytes::from_static(&[1, 2, 3]));
+        assert!(reader.read_nonce::<N>().is_err());
+    }
+
+    #[test]
+    fn read_nonce_exactly_n_bytes_succeeds() {
+        // Exactly N bytes, nothing left over. Kills `<` -> `<=` and `<` -> `==`,
+        // which would (wrongly) reject this case.
+        let reader = CipherTextReader::new(Bytes::from_static(&[1, 2, 3, 4]));
+        assert!(reader.read_nonce::<N>().is_ok());
+    }
+
+    #[test]
+    fn read_nonce_more_than_n_bytes_succeeds() {
+        let reader = CipherTextReader::new(Bytes::from_static(&[1, 2, 3, 4, 5, 6]));
+        assert!(reader.read_nonce::<N>().is_ok());
+    }
+}
