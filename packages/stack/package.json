@@ -195,7 +195,7 @@
 		"release": "tsup"
 	},
 	"devDependencies": {
-		"@clack/prompts": "^1.4.0",
+		"@clack/prompts": "^1.5.1",
 		"@supabase/supabase-js": "^2.105.4",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
@@ -214,7 +214,7 @@
 	"dependencies": {
 		"@byteslice/result": "0.2.0",
 		"@cipherstash/auth": "catalog:repo",
-		"@cipherstash/protect-ffi": "0.24.0",
+		"@cipherstash/protect-ffi": "0.26.0",
 		"evlog": "1.11.0",
 		"uuid": "14.0.0",
 		"zod": "3.25.76"
