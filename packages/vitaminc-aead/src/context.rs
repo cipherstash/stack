@@ -53,12 +53,17 @@ use crate::{Aad, Cipher, Decipher, Decrypt, Encrypt, IntoAad};
 
 /// Folds a context `tag` and `extra_aad` into the AAD layout bound by `ContextTag`.
 ///
-/// This is the **single source** of the encrypt/decrypt AAD layout: both the [`Encrypt`] impl and
-/// [`ContextTag::decrypt_with_aad`] go through it, so the two sides cannot drift out of sync (a
-/// divergence would silently break authentication). The tag is encoded into an owned/`'static`
-/// `Aad` and re-borrowed for the call's `'a` lifetime (`Aad` is covariant in its lifetime, so
-/// `'static: 'a` permits the narrowing); the result is `(extra_aad, tag)`, which [`IntoAad`]
-/// PAE-encodes.
+/// This is the layout shared by the two *type-driven* paths: both the [`Encrypt`] impl and
+/// [`ContextTag::decrypt_with_aad`] go through it, so those two sides cannot drift out of sync (a
+/// divergence would silently break authentication). The low-level [`ContextTag::aad`] /
+/// [`ContextTag::aad_with`] builders reproduce the same `(extra_aad, tag)` layout *by hand* (they
+/// must return the unencoded tag for a cipher's own decrypt entry point to re-encode), so they are
+/// a parallel construction kept in lockstep only by the `*_helper_matches_encrypt_binding` tests —
+/// if you change the layout here, update those builders too.
+///
+/// The tag is encoded into an owned/`'static` `Aad` and re-borrowed for the call's `'a` lifetime
+/// (`Aad` is covariant in its lifetime, so `'static: 'a` permits the narrowing); the result is
+/// `(extra_aad, tag)`, which [`IntoAad`] PAE-encodes.
 fn fold_tag_aad<'a, Tag, A>(tag: Tag, extra_aad: A) -> (A, Aad<'a>)
 where
     Tag: IntoAad<'static>,
@@ -112,6 +117,28 @@ where
 ///
 /// For lower-level control you can instead build the raw AAD with [`ContextTag::aad`] /
 /// [`ContextTag::aad_with`] and pass it to a cipher's own decrypt entry point.
+///
+/// # Limitations
+///
+/// `ContextTag` is designed to wrap the **outermost** value being encrypted. A few corollaries are
+/// worth knowing — none is a soundness issue, but each produces ciphertext that the obvious decrypt
+/// call will reject:
+///
+/// - **Use [`refine`](ContextTag::refine), not nesting, to layer context.** Wrapping a `ContextTag`
+///   *inside another* `ContextTag` (`ContextTag::new(ContextTag::new(v, "b"), "a")`) folds the AAD
+///   twice into `((extra, "a"), "b")`, which the symmetric [`context`](ContextTag::context) +
+///   `refine` decrypt path *cannot* reconstruct (it produces `(extra, ("a", "b"))`). Always layer
+///   hierarchy with `ContextTag::new(v, "a").refine("b")`.
+/// - **`ContextTag` has no [`Decrypt`] impl**, only an [`Encrypt`] impl. It therefore composes on
+///   the encrypt side (you *can* build `Vec<ContextTag<…>>` and encrypt it) but a `ContextTag`
+///   nested inside another structure has no symmetric decrypt path — decrypt only at the top level
+///   via [`context`](ContextTag::context) / [`aad`](ContextTag::aad). Don't bury a `ContextTag`
+///   inside a collection or struct you intend to read back.
+/// - **A unit tag `()` still binds a (non-empty) tag.** `ContextTag::new(v, ())` seals against
+///   `PAE(empty, empty)`, not empty AAD, so `cipher.decrypt(ct)` (empty AAD) will fail. If you want
+///   no context, encrypt the bare value; if you want a context, give a real tag.
+/// - **Tags must be [`IntoAad<'static>`](IntoAad)** (owned or `&'static`), so a short-lived `&str`
+///   must be promoted to `String` / `&'static str` — see the tag-type note above.
 pub struct ContextTag<Tag, T> {
     inner: T,
     tag: Tag,
