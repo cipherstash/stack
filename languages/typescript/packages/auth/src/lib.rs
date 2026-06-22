@@ -576,6 +576,57 @@ mod tests {
     use mocktail::prelude::*;
     use tempfile::TempDir;
 
+    /// `index.d.ts` is hand-written and re-exports the generated `native.d.ts`,
+    /// plus the `AuthErrorCode` union NAPI-RS can't emit. That union must list
+    /// exactly the codes `AuthError::error_code()` produces, plus
+    /// `UNKNOWN_ERROR` (the `index.js` fallback). This guards the two against
+    /// drift — adding an `AuthError` variant (which the exhaustive `error_code`
+    /// match forces a code for) without updating the union fails here.
+    ///
+    /// `EXPECTED` mirrors the codes pinned by stack-auth's
+    /// `auth_error_code_is_stable_for_every_variant`; keep all three in sync.
+    #[test]
+    fn ts_auth_error_code_union_matches_error_codes() {
+        use std::collections::BTreeSet;
+
+        const EXPECTED: &[&str] = &[
+            "REQUEST_ERROR",
+            "ACCESS_DENIED",
+            "EXPIRED_TOKEN",
+            "INVALID_GRANT",
+            "INVALID_CLIENT",
+            "INVALID_URL",
+            "INVALID_REGION",
+            "INVALID_TOKEN",
+            "SERVER_ERROR",
+            "STORE_ERROR",
+            "NOT_AUTHENTICATED",
+            "MISSING_WORKSPACE_CRN",
+            "INVALID_ACCESS_KEY",
+            "INVALID_CRN",
+            "WORKSPACE_MISMATCH",
+            "INVALID_WORKSPACE_ID",
+            "UNKNOWN_ERROR",
+        ];
+
+        // Extract the union members — lines of the form `  | 'CODE'`.
+        let dts = include_str!("../index.d.ts");
+        let union: BTreeSet<&str> = dts
+            .lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("| '")
+                    .and_then(|rest| rest.strip_suffix('\''))
+            })
+            .collect();
+
+        let expected: BTreeSet<&str> = EXPECTED.iter().copied().collect();
+        assert_eq!(
+            union, expected,
+            "AuthErrorCode union in index.d.ts drifted from AuthError::error_code()",
+        );
+    }
+
     // --- Shared helpers ---
 
     fn device_code_json() -> serde_json::Value {
