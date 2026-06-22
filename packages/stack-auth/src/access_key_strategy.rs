@@ -118,10 +118,14 @@ impl<S> AccessKeyStrategyBuilder<S> {
         self
     }
 
-    /// Override the base URL resolved by service discovery.
+    /// Override the CTS base URL resolved for this strategy.
     ///
-    /// Useful for pointing at a local or mock auth server during testing.
-    #[cfg(any(test, feature = "test-utils"))]
+    /// Takes precedence over both the `CS_CTS_HOST` environment variable and
+    /// region-derived service discovery. Use it to point a single strategy
+    /// instance at a specific CTS host — e.g. a self-hosted CTS, or a local
+    /// mock auth server in development — without relying on the process-wide
+    /// `CS_CTS_HOST`, which would redirect every other CTS client sharing the
+    /// process.
     pub fn base_url(mut self, url: url::Url) -> Self {
         self.base_url_override = Some(url);
         self
@@ -154,9 +158,11 @@ impl<S> AccessKeyStrategyBuilder<S> {
 impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
     /// Build the [`AccessKeyStrategy`].
     ///
-    /// Resolves the base URL via service discovery using the CRN's region,
-    /// unless overridden with `base_url` (available when the `test-utils`
-    /// feature is enabled).
+    /// Resolves the base URL in priority order: an explicit [`base_url`]
+    /// override, then the `CS_CTS_HOST` environment variable, then service
+    /// discovery using the CRN's region.
+    ///
+    /// [`base_url`]: Self::base_url
     pub fn build(self) -> Result<AccessKeyStrategy<S>, AuthError> {
         let expected_workspace = self.workspace_crn.workspace_id;
         let region = self.workspace_crn.region;
