@@ -578,38 +578,58 @@ mod tests {
 
     /// `index.d.ts` is hand-written and re-exports the generated `native.d.ts`,
     /// plus the `AuthErrorCode` union NAPI-RS can't emit. That union must list
-    /// exactly the codes `AuthError::error_code()` produces, plus
-    /// `UNKNOWN_ERROR` (the `index.js` fallback). This guards the two against
-    /// drift — adding an `AuthError` variant (which the exhaustive `error_code`
-    /// match forces a code for) without updating the union fails here.
+    /// exactly the codes `AuthError::error_code()` can return, plus
+    /// `UNKNOWN_ERROR` (the `index.js` fallback).
     ///
-    /// `EXPECTED` mirrors the codes pinned by stack-auth's
-    /// `auth_error_code_is_stable_for_every_variant`; keep all three in sync.
+    /// The expected set is *derived* from `error_code()`'s match arms in the
+    /// core crate's source — not a hand-kept mirror — so there's no parallel
+    /// list to drift. `error_code`'s match is exhaustive, so adding an
+    /// `AuthError` variant forces a new `=> "CODE"` arm there, which this test
+    /// then requires the TS union to include; forget to update `index.d.ts` and
+    /// this fails.
     #[test]
     fn ts_auth_error_code_union_matches_error_codes() {
         use std::collections::BTreeSet;
 
-        const EXPECTED: &[&str] = &[
-            "REQUEST_ERROR",
-            "ACCESS_DENIED",
-            "EXPIRED_TOKEN",
-            "INVALID_GRANT",
-            "INVALID_CLIENT",
-            "INVALID_URL",
-            "INVALID_REGION",
-            "INVALID_TOKEN",
-            "SERVER_ERROR",
-            "STORE_ERROR",
-            "NOT_AUTHENTICATED",
-            "MISSING_WORKSPACE_CRN",
-            "INVALID_ACCESS_KEY",
-            "INVALID_CRN",
-            "WORKSPACE_MISMATCH",
-            "INVALID_WORKSPACE_ID",
-            "UNKNOWN_ERROR",
-        ];
+        // Parse the codes `AuthError::error_code` can return straight from its
+        // source. The node crate depends on stack-auth, so this resolves to the
+        // core crate's `lib.rs`.
+        const CORE_SRC: &str = include_str!("../../src/lib.rs");
 
-        // Extract the union members — lines of the form `  | 'CODE'`.
+        let fn_start = CORE_SRC
+            .find("pub fn error_code(")
+            .expect("AuthError::error_code source not found");
+        // The method is indented 4 spaces, so its closing brace is the first
+        // `\n    }` after the signature (the inner `match` closes at 8 spaces,
+        // and every arm is deeper still — none collide with this).
+        let fn_body = {
+            let rest = &CORE_SRC[fn_start..];
+            let end = rest.find("\n    }").expect("error_code fn close not found");
+            &rest[..end]
+        };
+
+        // Every arm is `=> "CODE",`; pull the string literals. `UNKNOWN_ERROR`
+        // is added by the JS layer, never by `error_code`, so add it explicitly.
+        let mut expected: BTreeSet<&str> = fn_body
+            .match_indices("=> \"")
+            .map(|(i, _)| {
+                let after = &fn_body[i + "=> \"".len()..];
+                let close = after
+                    .find('"')
+                    .expect("error_code arm missing closing quote");
+                &after[..close]
+            })
+            .collect();
+        expected.insert("UNKNOWN_ERROR");
+
+        // A mis-scoped parse (empty/garbage) should fail loudly here, not pass.
+        assert!(
+            expected.len() >= 10,
+            "parsed only {} error codes from error_code() — the source parse likely broke",
+            expected.len(),
+        );
+
+        // The hand-written `index.d.ts` union — lines of the form `  | 'CODE'`.
         let dts = include_str!("../index.d.ts");
         let union: BTreeSet<&str> = dts
             .lines()
@@ -620,7 +640,6 @@ mod tests {
             })
             .collect();
 
-        let expected: BTreeSet<&str> = EXPECTED.iter().copied().collect();
         assert_eq!(
             union, expected,
             "AuthErrorCode union in index.d.ts drifted from AuthError::error_code()",
