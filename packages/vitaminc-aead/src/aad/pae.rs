@@ -18,7 +18,7 @@ pub(crate) fn encode(pieces: &[&[u8]]) -> Aad<'static> {
     }
     // The pre-computed `total_len` is only a capacity hint, so a wrong value
     // wouldn't change the output. Assert it matches the bytes we actually wrote,
-    // both as a defensive invariant and so the formula stays covered by tests.
+    // as a defensive invariant against the hint silently drifting from the writes.
     debug_assert_eq!(
         buf.len(),
         total_len,
