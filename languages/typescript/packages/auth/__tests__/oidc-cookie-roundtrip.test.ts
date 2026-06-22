@@ -1,32 +1,29 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { MockAuthServer as MockAuthServerType } from "../test-utils";
 import { cookieStore } from "../cookies.mjs";
+import { MockCtsServer } from "./helpers/mock-cts-server";
 
-// Load the CJS module — includes MockAuthServer when built with test-utils.
-const mod = require("../index.js") as typeof import("../index") & {
-  MockAuthServer: typeof MockAuthServerType;
-};
-
-const { OidcFederationStrategy, MockAuthServer } = mod;
+const { OidcFederationStrategy } =
+  require("../index.js") as typeof import("../index");
 
 const WORKSPACE_ID = "ZVATKW3VHMFG27DY";
 const WORKSPACE_CRN = `crn:ap-southeast-2.aws:${WORKSPACE_ID}`;
 
-let server: InstanceType<typeof MockAuthServerType>;
+let server: MockCtsServer;
 let savedHost: string | undefined;
 
 beforeEach(async () => {
-  server = await MockAuthServer.start();
+  server = await MockCtsServer.start();
   savedHost = process.env.CS_CTS_HOST;
   process.env.CS_CTS_HOST = server.baseUrl;
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (savedHost === undefined) {
     delete process.env.CS_CTS_HOST;
   } else {
     process.env.CS_CTS_HOST = savedHost;
   }
+  await server.close();
 });
 
 /** Extract the `name=value` pair from a `Set-Cookie` header. */

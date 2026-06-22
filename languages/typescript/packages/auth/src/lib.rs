@@ -13,9 +13,6 @@ use stack_auth::{
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
 
-#[cfg(feature = "test-utils")]
-mod mock_auth_server;
-
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
@@ -1219,100 +1216,4 @@ mod tests {
             }
         }
     }
-}
-
-/// Variant of `beginDeviceCodeFlow` that targets a custom auth server URL.
-///
-/// Intended for **testing only** — requires the crate to be built with the
-/// `test-utils` Cargo feature.
-#[cfg(feature = "test-utils")]
-#[napi]
-pub async fn begin_device_code_flow_with_base_url(
-    region: String,
-    client_id: String,
-    base_url: String,
-) -> Result<DeviceCodeResult> {
-    let region = Region::new(&region).map_err(|e| to_napi_error(AuthError::from(e)))?;
-    let parsed_url: url::Url = base_url
-        .parse()
-        .map_err(|e: url::ParseError| to_napi_error(AuthError::from(e)))?;
-    let strategy = DeviceCodeStrategy::builder(region, client_id)
-        .base_url(parsed_url)
-        .build()
-        .map_err(to_napi_error)?;
-    let pending = strategy.begin().await.map_err(to_napi_error)?;
-    Ok(DeviceCodeResult::from_pending(pending))
-}
-
-/// Variant of `provisionDeviceClient` that uses a custom profile directory.
-///
-/// Intended for **testing only** — requires the crate to be built with the
-/// `test-utils` Cargo feature.
-#[cfg(feature = "test-utils")]
-#[napi]
-pub async fn bind_client_device_with_profile_dir(profile_dir: String) -> Result<()> {
-    let store = stack_profile::ProfileStore::new(&profile_dir);
-    stack_auth::bind_client_device(&store)
-        .await
-        .map_err(device_client_to_napi_error)
-}
-
-/// Save a test auth token to the given profile directory with the ZeroKMS
-/// service URL set to `zerokms_base_url`.
-///
-/// Intended for **testing only** — requires the crate to be built with the
-/// `test-utils` Cargo feature.
-#[cfg(feature = "test-utils")]
-#[napi]
-pub fn save_test_token(profile_dir: String, zerokms_base_url: String) -> Result<()> {
-    use jsonwebtoken::{encode, EncodingKey, Header};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?
-        .as_secs();
-
-    let claims = serde_json::json!({
-        "iss": "https://cts.example.com/",
-        "sub": "CS|test-user",
-        "aud": "legacy-aud-value",
-        "iat": now,
-        "exp": now + 3600,
-        "workspace": "ZVATKW3VHMFG27DY",
-        "scope": "",
-        "services": {
-            "zerokms": zerokms_base_url,
-        },
-    });
-
-    let jwt = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(b"test-secret"),
-    )
-    .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    let token_json = serde_json::json!({
-        "access_token": jwt,
-        "token_type": "Bearer",
-        "expires_at": now + 3600,
-    });
-
-    let store = stack_profile::ProfileStore::new(&profile_dir);
-
-    let workspace_id = "ZVATKW3VHMFG27DY";
-    store
-        .init_workspace(workspace_id)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    // Save the token to the workspace directory.
-    let ws_store = store
-        .workspace_store(workspace_id)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-    ws_store
-        .save_with_mode("auth.json", &token_json, 0o600)
-        .map_err(|e| napi::Error::new(Status::GenericFailure, format!("{e}")))?;
-
-    Ok(())
 }

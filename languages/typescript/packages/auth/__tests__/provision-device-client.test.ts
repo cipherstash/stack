@@ -1,17 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { MockAuthServer as MockAuthServerType } from "../test-utils";
 import type { AuthError } from "../index";
+import { MockCtsServer } from "./helpers/mock-cts-server";
+import { saveTestToken } from "./helpers/test-fixtures";
 
-const mod = require("../index.js") as typeof import("../index") & {
-  MockAuthServer: typeof MockAuthServerType;
-  bindClientDeviceWithProfileDir: (profileDir: string) => Promise<void>;
-  saveTestToken: (profileDir: string, zerokmsBaseUrl: string) => void;
-};
-
-const { MockAuthServer, bindClientDeviceWithProfileDir, saveTestToken } = mod;
+const { bindClientDevice } =
+  require("../index.js") as typeof import("../index");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -19,13 +15,9 @@ const { MockAuthServer, bindClientDeviceWithProfileDir, saveTestToken } = mod;
 
 const TEST_WORKSPACE_ID = "ZVATKW3VHMFG27DY";
 
-let server: InstanceType<typeof MockAuthServerType>;
+let server: MockCtsServer;
 let profileDir: string;
-
-async function startServer(): Promise<InstanceType<typeof MockAuthServerType>> {
-  const s = await MockAuthServer.start();
-  return s;
-}
+let savedConfigPath: string | undefined;
 
 function freshProfileDir(): string {
   return mkdtempSync(join(tmpdir(), "cs-auth-test-"));
@@ -41,15 +33,28 @@ function workspaceDir(): string {
 
 describe("provision device client (TypeScript / vitest)", () => {
   beforeEach(async () => {
-    server = await startServer();
+    server = await MockCtsServer.start();
     profileDir = freshProfileDir();
+    // Production `bindClientDevice()` resolves its profile dir from
+    // CS_CONFIG_PATH (ProfileStore::resolve), so point it at the temp dir.
+    savedConfigPath = process.env.CS_CONFIG_PATH;
+    process.env.CS_CONFIG_PATH = profileDir;
+  });
+
+  afterEach(async () => {
+    if (savedConfigPath === undefined) {
+      delete process.env.CS_CONFIG_PATH;
+    } else {
+      process.env.CS_CONFIG_PATH = savedConfigPath;
+    }
+    await server.close();
   });
 
   it("creates secretkey.json on successful provisioning", async () => {
     server.mockCreateClientEndpoint();
     saveTestToken(profileDir, server.baseUrl);
 
-    await bindClientDeviceWithProfileDir(profileDir);
+    await bindClientDevice();
 
     const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
@@ -68,7 +73,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     });
     writeFileSync(join(workspaceDir(), "secretkey.json"), existing);
 
-    await bindClientDeviceWithProfileDir(profileDir);
+    await bindClientDevice();
 
     const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
@@ -79,7 +84,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     server.mockCreateClientConflict();
     saveTestToken(profileDir, server.baseUrl);
 
-    await bindClientDeviceWithProfileDir(profileDir);
+    await bindClientDevice();
 
     expect(existsSync(join(workspaceDir(), "secretkey.json"))).toBe(false);
   });
@@ -89,7 +94,7 @@ describe("provision device client (TypeScript / vitest)", () => {
     saveTestToken(profileDir, server.baseUrl);
 
     try {
-      await bindClientDeviceWithProfileDir(profileDir);
+      await bindClientDevice();
       expect.unreachable("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(Error);
@@ -99,7 +104,7 @@ describe("provision device client (TypeScript / vitest)", () => {
   it("throws STORE_ERROR when auth token is missing", async () => {
     // No token saved — should fail trying to load auth.json
     try {
-      await bindClientDeviceWithProfileDir(profileDir);
+      await bindClientDevice();
       expect.unreachable("should have thrown");
     } catch (err) {
       const authErr = err as AuthError;

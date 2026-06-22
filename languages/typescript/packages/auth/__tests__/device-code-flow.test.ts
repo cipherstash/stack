@@ -1,33 +1,26 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import type { MockAuthServer as MockAuthServerType } from "../test-utils";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { DeviceCodeResult, AuthResult, AuthError } from "../index";
+import { MockCtsServer } from "./helpers/mock-cts-server";
 
-// Load the CJS module — includes MockAuthServer when built with test-utils.
-const mod = require("../index.js") as typeof import("../index") & {
-  MockAuthServer: typeof MockAuthServerType;
-};
-
-const { beginDeviceCodeFlow, beginDeviceCodeFlowWithBaseUrl, MockAuthServer } =
-  mod;
+const { beginDeviceCodeFlow } =
+  require("../index.js") as typeof import("../index");
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-let server: InstanceType<typeof MockAuthServerType>;
+let server: MockCtsServer;
 
-async function startServer(): Promise<InstanceType<typeof MockAuthServerType>> {
-  const s = await MockAuthServer.start();
+async function startServer(): Promise<MockCtsServer> {
+  const s = await MockCtsServer.start();
   s.mockDeviceCodeEndpoint();
   return s;
 }
 
+// The production `beginDeviceCodeFlow` resolves its auth host from CS_CTS_HOST
+// (set in `beforeEach` below), so no test-only base-URL override is needed.
 async function beginFlow(): Promise<DeviceCodeResult> {
-  return beginDeviceCodeFlowWithBaseUrl(
-    "ap-southeast-2.aws",
-    "test-client",
-    server.baseUrl,
-  );
+  return beginDeviceCodeFlow("ap-southeast-2.aws", "test-client");
 }
 
 // ---------------------------------------------------------------------------
@@ -48,26 +41,24 @@ describe("device code flow (TypeScript / vitest)", () => {
     }
   });
 
-  it("beginDeviceCodeFlowWithBaseUrl rejects for invalid region", async () => {
-    try {
-      await beginDeviceCodeFlowWithBaseUrl(
-        "not-a-region",
-        "test-client",
-        "http://localhost:9999",
-      );
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const authErr = err as AuthError;
-      expect(authErr).toBeInstanceOf(Error);
-      expect(authErr.code).toBe("INVALID_REGION");
-    }
-  });
-
   // ---------- Tests that need the mock server ----------
 
   describe("with mock server", () => {
+    let savedHost: string | undefined;
+
     beforeEach(async () => {
       server = await startServer();
+      savedHost = process.env.CS_CTS_HOST;
+      process.env.CS_CTS_HOST = server.baseUrl;
+    });
+
+    afterEach(async () => {
+      if (savedHost === undefined) {
+        delete process.env.CS_CTS_HOST;
+      } else {
+        process.env.CS_CTS_HOST = savedHost;
+      }
+      await server.close();
     });
 
     it("exposes getter fields on DeviceCodeResult", async () => {

@@ -57,9 +57,8 @@
   "scripts": {
     "build": "napi build --release && node scripts/apply-dts-additions.mjs",
     "build:debug": "napi build && node scripts/apply-dts-additions.mjs",
-    "build:test": "napi build --features test-utils && node scripts/apply-dts-additions.mjs",
     "build:wasm": "cd ../wasm && wasm-pack build --target bundler --out-dir ../node/wasm && rm -f ../node/wasm/README.md ../node/wasm/LICENSE ../node/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../node/wasm/package.json && node ../node/scripts/inline-wasm.mjs",
-    "test": "npm run build:test && vitest run",
+    "test": "npm run build:debug && vitest run",
     "format": "npx --yes @biomejs/biome@2.3.4 format --write .",
     "format:check": "npx --yes @biomejs/biome@2.3.4 ci ."
   },
