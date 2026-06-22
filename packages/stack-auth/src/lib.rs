@@ -318,14 +318,21 @@ pub enum AuthError {
     InvalidUrl(#[from] url::ParseError),
     /// The requested region is not supported.
     #[error("Unsupported region: {0}")]
+    #[diagnostic(help("Use a supported region, e.g. `ap-southeast-2.aws`."))]
     Region(#[from] cts_common::RegionError),
     /// The workspace CRN could not be parsed.
     #[error("Invalid workspace CRN: {0}")]
+    #[diagnostic(help(
+        "A workspace CRN looks like `crn:<region>:<workspace-id>`, e.g. `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY`."
+    ))]
     InvalidCrn(cts_common::InvalidCrn),
     /// The token issued by the auth server is for a different workspace than
     /// the one configured on the strategy. Surfaces when the access key was
     /// minted for a different workspace, or when the wrong CRN was passed.
     #[error("Workspace mismatch: token issued for {token_workspace}, but strategy is configured for {expected_workspace}")]
+    #[diagnostic(help(
+        "The access key or workspace CRN is scoped to a different workspace than the one requested — check which workspace the credential belongs to."
+    ))]
     WorkspaceMismatch {
         /// The workspace the strategy was configured for (from the CRN).
         expected_workspace: cts_common::WorkspaceId,
@@ -340,15 +347,22 @@ pub enum AuthError {
     /// Set the `CS_WORKSPACE_CRN` environment variable or call
     /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
     #[error("Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn")]
+    #[diagnostic(help(
+        "Set the `CS_WORKSPACE_CRN` environment variable, or pass the CRN via `AutoStrategyBuilder::with_workspace_crn`."
+    ))]
     MissingWorkspaceCrn,
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
+    #[diagnostic(help(
+        "Log in with `stash login`, or set `CS_CLIENT_ACCESS_KEY` for service-to-service auth."
+    ))]
     NotAuthenticated,
     /// A token (access token or device code) has expired.
     #[error("Token expired")]
     TokenExpired,
     /// The access key string is malformed (e.g. missing `CSAK` prefix or `.` separator).
     #[error("Invalid access key: {0}")]
+    #[diagnostic(help("Access keys have the form `CSAK<key-id>.<secret>`."))]
     InvalidAccessKey(#[from] access_key::InvalidAccessKey),
     /// The JWT could not be decoded or its claims are malformed.
     #[error("Invalid token: {0}")]
@@ -537,5 +551,21 @@ mod tests {
         for (err, expected) in cases {
             assert_eq!(err.error_code(), expected, "error_code for {err:?}");
         }
+    }
+
+    /// The variants annotated with `#[diagnostic(help(..))]` must surface that
+    /// help through `miette::Diagnostic` — this is what the CLI renders below
+    /// the error message. Pins a representative one so the annotation can't be
+    /// dropped silently.
+    #[test]
+    fn annotated_variants_expose_diagnostic_help() {
+        use miette::Diagnostic;
+
+        let err = AuthError::NotAuthenticated;
+        let help = err.help().map(|h| h.to_string());
+        assert!(
+            help.as_deref().is_some_and(|h| h.contains("stash login")),
+            "NotAuthenticated should carry actionable help, got: {help:?}",
+        );
     }
 }
