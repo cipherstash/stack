@@ -104,11 +104,31 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
     /// Override the base URL resolved by service discovery.
     ///
-    /// Useful for pointing at a local or mock auth server during testing.
-    #[cfg(any(test, feature = "test-utils"))]
+    /// Takes precedence over both the `CS_CTS_HOST` environment variable and
+    /// region-derived service discovery. Use this to point a single strategy
+    /// instance at a specific CTS host — e.g. a self-hosted CTS, or a local
+    /// mock auth server in development — without relying on the process-wide
+    /// `CS_CTS_HOST`, which would also redirect any other CTS client (e.g. the
+    /// `protect-ffi` encryption client) sharing the same process.
     pub fn base_url(mut self, url: url::Url) -> Self {
         self.base_url_override = Some(url);
         self
+    }
+
+    /// Apply an optional base-URL override supplied as a raw string.
+    ///
+    /// The string-typed convenience the language bindings (napi, wasm) call,
+    /// so the "empty means absent, otherwise parse-or-reject" semantics live in
+    /// one place rather than being re-derived per binding. An absent or empty
+    /// string is a no-op — base-URL resolution falls back to `CS_CTS_HOST` /
+    /// region service discovery (see [`build`](Self::build)); a non-empty but
+    /// malformed string is rejected as [`AuthError::InvalidUrl`]. For an
+    /// already-parsed URL, use [`base_url`](Self::base_url).
+    pub fn maybe_base_url(self, base_url: Option<String>) -> Result<Self, AuthError> {
+        match base_url {
+            Some(s) if !s.is_empty() => Ok(self.base_url(s.parse::<url::Url>()?)),
+            _ => Ok(self),
+        }
     }
 
     /// Wire an external [`TokenStore`] into the strategy.
@@ -136,9 +156,11 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
 impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
     /// Build the [`OidcFederationStrategy`].
     ///
-    /// Resolves the base URL via service discovery using the CRN's region,
-    /// unless overridden with `base_url` (available when the `test-utils`
-    /// feature is enabled).
+    /// Resolves the base URL in priority order: an explicit [`base_url`]
+    /// override, then the `CS_CTS_HOST` environment variable, then service
+    /// discovery using the CRN's region.
+    ///
+    /// [`base_url`]: Self::base_url
     pub fn build(self) -> Result<OidcFederationStrategy<P, S>, AuthError> {
         let expected_workspace = self.workspace_crn.workspace_id;
         let region = self.workspace_crn.region;
@@ -193,6 +215,93 @@ mod tests {
         OidcProviderFn::new(|| {
             std::future::ready(Ok(SecretToken::new("header.payload.signature".to_string())))
         })
+    }
+
+    const WS: &str = "ZVATKW3VHMFG27DY";
+
+    /// `maybe_base_url` is the string-typed override seam the language bindings
+    /// rely on; pin its empty/absent/valid/malformed semantics here so the napi
+    /// and wasm crates don't each re-test (and risk re-deriving) them.
+    mod maybe_base_url {
+        use super::*;
+
+        #[test]
+        fn absent_is_a_noop() {
+            let b = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(None)
+                .unwrap();
+            assert!(b.base_url_override.is_none());
+        }
+
+        #[test]
+        fn empty_string_is_a_noop() {
+            let b = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some(String::new()))
+                .unwrap();
+            assert!(b.base_url_override.is_none());
+        }
+
+        #[test]
+        fn valid_url_sets_the_override() {
+            let b = OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some("https://cts.example.com".to_string()))
+                .unwrap();
+            assert_eq!(
+                b.base_url_override.as_ref().map(url::Url::as_str),
+                Some("https://cts.example.com/")
+            );
+        }
+
+        #[test]
+        fn malformed_url_is_invalid_url() {
+            // The builder isn't `Debug`, so match on the result rather than
+            // `unwrap_err()` (which would require `T: Debug`).
+            match OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some("not a url".to_string()))
+            {
+                Err(AuthError::InvalidUrl(_)) => {}
+                Ok(_) => panic!("expected Err(InvalidUrl), got Ok"),
+                Err(other) => panic!("expected InvalidUrl, got: {other:?}"),
+            }
+        }
+    }
+
+    /// Precedence: an explicit `base_url` override (the one `maybe_base_url`
+    /// sets) wins over the `CS_CTS_HOST` environment variable. `build()`
+    /// resolves the host in priority order override → `CS_CTS_HOST` →
+    /// discovery, so with `CS_CTS_HOST` pointed at a dead address the strategy
+    /// must still federate against the override's mock — proving the env var
+    /// was not consulted.
+    ///
+    /// `CS_CTS_HOST` is read inside `build()` (not `get_token`), so the env
+    /// override is scoped to just that synchronous call via `temp_env`; the
+    /// async federation runs with the environment already restored. No other
+    /// test in this crate reads `CS_CTS_HOST` (every strategy test pins
+    /// `base_url`), so this can't perturb a concurrent test.
+    #[tokio::test]
+    async fn base_url_override_takes_precedence_over_cs_cts_host() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+
+        // A routable-but-dead host: if `CS_CTS_HOST` were consulted, federation
+        // would target this and fail rather than hitting the mock.
+        let strategy = temp_env::with_var("CS_CTS_HOST", Some("http://127.0.0.1:1/"), || {
+            OidcFederationStrategy::builder(crn_with_workspace(WS), provider())
+                .maybe_base_url(Some(server.url("").to_string()))
+                .expect("override URL parses")
+                .build()
+                .expect("builder")
+        });
+
+        let token = (&strategy)
+            .get_token()
+            .await
+            .expect("override must win: federation should hit the mock, not CS_CTS_HOST");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "token should come from the override's mock server",
+        );
     }
 
     /// Happy path — the federated token's `workspace` claim matches the

@@ -341,12 +341,21 @@ impl OidcFederationStrategy {
     /// re-federation after expiry — and must return `Promise<string>`
     /// resolving to the *current* third-party OIDC JWT (e.g. by calling
     /// `clerk.session.getToken()`).
+    ///
+    /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
+    /// e.g. a self-hosted CTS or a local mock auth server. It overrides region
+    /// service discovery and is scoped to this strategy alone. In wasm there is
+    /// no `CS_CTS_HOST` env fallback (the sandbox can't read env), so `baseUrl`
+    /// is the only way to target a host other than the region-discovered one.
     pub fn create(
         workspace_crn: String,
         get_jwt: js_sys::Function,
+        base_url: Option<String>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_js_error)?
             .build()
             .map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
@@ -356,17 +365,21 @@ impl OidcFederationStrategy {
 
     /// Create an `OidcFederationStrategy` backed by external token-store callbacks.
     ///
-    /// Behaves like [`create`](Self::create) but persists the federated CTS
+    /// Behaves like `create` but persists the federated CTS
     /// token through `loadToken` / `saveToken` — see
     /// [`AccessKeyStrategy::create_with_store`] for the callback contract. Use
     /// this to back the strategy with an HTTP-only cookie so a federated token
     /// survives across Edge Function invocations without re-federating.
+    ///
+    /// `baseUrl` behaves as in `create` — an explicit,
+    /// strategy-scoped CTS host that overrides region service discovery.
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
         workspace_crn: String,
         get_jwt: js_sys::Function,
         load_token: js_sys::Function,
         save_token: js_sys::Function,
+        base_url: Option<String>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = JsTokenStore {
@@ -374,6 +387,8 @@ impl OidcFederationStrategy {
             save: save_token,
         };
         let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_js_error)?
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;
@@ -638,6 +653,7 @@ mod tests {
         let err = expect_js_err(OidcFederationStrategy::create(
             "not-a-crn".to_string(),
             jwt_fn("h.p.s"),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
@@ -652,14 +668,49 @@ mod tests {
         let err = expect_js_err(OidcFederationStrategy::create(
             "crn:ap-southeast-2.aws:not-a-valid-workspace".to_string(),
             jwt_fn("h.p.s"),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn oidc_federation_strategy_accepts_valid_inputs() {
-        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"));
+        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None);
         assert!(result.is_ok());
+    }
+
+    /// A supplied `baseUrl` override is accepted and threaded into the builder.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_accepts_valid_base_url() {
+        let result = OidcFederationStrategy::create(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            Some("https://cts.example.com".to_string()),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// An empty `baseUrl` string is treated as absent (falls back to region
+    /// discovery), not as an invalid URL.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_treats_empty_base_url_as_absent() {
+        let result = OidcFederationStrategy::create(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            Some(String::new()),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// A malformed `baseUrl` surfaces as `INVALID_URL`.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_rejects_invalid_base_url() {
+        let err = expect_js_err(OidcFederationStrategy::create(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            Some("not a url".to_string()),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_URL");
     }
 
     #[wasm_bindgen_test]
@@ -669,6 +720,7 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
@@ -680,8 +732,50 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
         );
         assert!(result.is_ok());
+    }
+
+    /// The store variant accepts a valid `baseUrl` override — mirrors
+    /// `oidc_federation_strategy_accepts_valid_base_url` on the plain `create`.
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_accepts_valid_base_url() {
+        let result = OidcFederationStrategy::create_with_store(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+            Some("https://cts.example.com".to_string()),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// The store variant treats an empty `baseUrl` as absent — mirrors
+    /// `oidc_federation_strategy_treats_empty_base_url_as_absent` on `create`.
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_treats_empty_base_url_as_absent() {
+        let result = OidcFederationStrategy::create_with_store(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+            Some(String::new()),
+        );
+        assert!(result.is_ok());
+    }
+
+    /// The store variant also accepts and validates a `baseUrl` override.
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_rejects_invalid_base_url() {
+        let err = expect_js_err(OidcFederationStrategy::create_with_store(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+            Some("not a url".to_string()),
+        ));
+        assert_eq!(error_code_of(&err), "INVALID_URL");
     }
 
     #[wasm_bindgen_test]

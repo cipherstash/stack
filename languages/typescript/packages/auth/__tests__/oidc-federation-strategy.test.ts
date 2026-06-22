@@ -97,6 +97,93 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     }
   });
 
+  it("honours an explicit baseUrl override over CS_CTS_HOST", async () => {
+    // CS_CTS_HOST (set in beforeEach) points at `server`, which here 500s on
+    // federation. A second server is the override target and succeeds. If the
+    // napi `baseUrl` arg is threaded through `maybe_base_url`, federation hits
+    // the override and resolves; if the override were dropped, it would hit
+    // CS_CTS_HOST's 500 and reject. This proves the precedence guarantee
+    // motivating CIP-3246 survives the napi parameter threading — the Rust core
+    // proves the ordering, this proves the binding preserves it.
+    server.mockAuthorizeEndpointError();
+    const override = await MockAuthServer.start();
+    try {
+      override.mockAuthorizeEndpoint();
+      const strategy = OidcFederationStrategy.create(
+        WORKSPACE_CRN,
+        () => Promise.resolve("header.payload.signature"),
+        override.baseUrl,
+      );
+
+      const result = await strategy.getToken();
+
+      expect(result.workspaceId).toBe(WORKSPACE_ID);
+    } finally {
+      override.clearMocks();
+    }
+  });
+
+  it("honours a baseUrl override over CS_CTS_HOST for createWithStore", async () => {
+    // The store-variant twin of the precedence test: `baseUrl` is the 5th
+    // positional arg here (vs the 3rd on `create`), threaded through a separate
+    // wrapper path in index.js. CS_CTS_HOST's `server` 500s; the override
+    // server succeeds. getToken resolving (and the token landing in the store)
+    // proves the 5th-positional override is threaded, not dropped or
+    // mis-positioned.
+    server.mockAuthorizeEndpointError();
+    const override = await MockAuthServer.start();
+    try {
+      override.mockAuthorizeEndpoint();
+      const store = memStore();
+      const strategy = OidcFederationStrategy.createWithStore(
+        WORKSPACE_CRN,
+        () => Promise.resolve("header.payload.signature"),
+        store.load,
+        store.save,
+        override.baseUrl,
+      );
+
+      const result = await strategy.getToken();
+
+      expect(result.workspaceId).toBe(WORKSPACE_ID);
+      expect(store.saved()).not.toBeNull();
+    } finally {
+      override.clearMocks();
+    }
+  });
+
+  it("rejects a malformed baseUrl with INVALID_URL", () => {
+    // The napi twin of the wasm `..._rejects_invalid_base_url` test: a
+    // non-empty, unparseable override must surface through the factory as a
+    // coded INVALID_URL error (via `maybe_base_url(...)? → to_napi_error`), not
+    // a silent fallback or an un-coded throw.
+    try {
+      OidcFederationStrategy.create(
+        WORKSPACE_CRN,
+        () => Promise.resolve("h.p.s"),
+        "not a url",
+      );
+      expect.unreachable("create should throw on a malformed baseUrl");
+    } catch (err) {
+      expect((err as AuthError).code).toBe("INVALID_URL");
+    }
+  });
+
+  it("treats an empty baseUrl as absent (falls back to CS_CTS_HOST)", async () => {
+    // An empty-string override must be a no-op, not an INVALID_URL — so
+    // federation still resolves against CS_CTS_HOST's mock.
+    server.mockAuthorizeEndpoint();
+    const strategy = OidcFederationStrategy.create(
+      WORKSPACE_CRN,
+      () => Promise.resolve("header.payload.signature"),
+      "",
+    );
+
+    const result = await strategy.getToken();
+
+    expect(result.workspaceId).toBe(WORKSPACE_ID);
+  });
+
   it("rejects an invalid workspace CRN with .code", () => {
     try {
       OidcFederationStrategy.create("not-a-crn", () =>

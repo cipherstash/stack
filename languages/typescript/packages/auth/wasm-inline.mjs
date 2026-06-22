@@ -85,6 +85,7 @@ export class OidcFederationStrategy {
     // `AccessKeyStrategy.create`.
     const jwt = () => Promise.resolve(getJwt());
     const store = options?.store;
+    const baseUrl = options?.baseUrl;
     if (store) {
       const load = () => Promise.resolve(store.load());
       const save = (/** @type {string} */ json) =>
@@ -95,11 +96,12 @@ export class OidcFederationStrategy {
           jwt,
           load,
           save,
+          baseUrl,
         ),
       );
     }
     return new OidcFederationStrategy(
-      RawOidcFederationStrategy.create(workspaceCrn, jwt),
+      RawOidcFederationStrategy.create(workspaceCrn, jwt, baseUrl),
     );
   }
 

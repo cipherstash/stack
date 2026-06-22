@@ -334,13 +334,22 @@ impl OidcFederationStrategy {
     /// `getJwt` is called on every federation — initial auth and every
     /// re-federation after the CTS token expires — and must return
     /// `Promise<string>` resolving to the *current* third-party OIDC JWT.
+    ///
+    /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
+    /// e.g. a self-hosted CTS or a local mock auth server. It takes precedence
+    /// over the `CS_CTS_HOST` environment variable and region service
+    /// discovery, and is scoped to this strategy alone (unlike `CS_CTS_HOST`,
+    /// which redirects every CTS client in the process).
     #[napi(factory)]
     pub fn create(
         workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
+        base_url: Option<String>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_napi_error)?
             .build()
             .map_err(to_napi_error)?;
         Ok(Self {
@@ -350,17 +359,22 @@ impl OidcFederationStrategy {
 
     /// Create an `OidcFederationStrategy` backed by external token-store callbacks.
     ///
-    /// Behaves like [`create`](Self::create) but persists the federated CTS
+    /// Behaves like `create` but persists the federated CTS
     /// token through `loadToken` (`() => Promise<string | null | undefined>`)
     /// and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
     /// cookie — so a federated token survives across requests without
     /// re-federating.
+    ///
+    /// `baseUrl` behaves as in `create` — an explicit,
+    /// strategy-scoped CTS host that overrides `CS_CTS_HOST` and service
+    /// discovery.
     #[napi(factory)]
     pub fn create_with_store(
         workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         load_token: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         save_token: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
+        base_url: Option<String>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = NapiTokenStore {
@@ -368,6 +382,8 @@ impl OidcFederationStrategy {
             save: save_token,
         };
         let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+            .maybe_base_url(base_url)
+            .map_err(to_napi_error)?
             .with_token_store(store)
             .build()
             .map_err(to_napi_error)?;
@@ -783,6 +799,15 @@ mod tests {
             assertions::has_error_code(&err, "SERVER_ERROR");
         }
     }
+
+    // The `baseUrl` override parsing (empty/absent/valid/malformed semantics)
+    // lives on `OidcFederationStrategyBuilder::maybe_base_url` in the core
+    // `stack-auth` crate and is unit-tested there. The factory callbacks are
+    // `ThreadsafeFunction`s, so these factories can't be driven from a Rust
+    // unit test — but they *are* exercised end-to-end through the napi seam by
+    // the vitest suite (`__tests__/oidc-federation-strategy.test.ts`), which
+    // covers the `baseUrl` override winning over `CS_CTS_HOST`, the
+    // `INVALID_URL` rejection through the factory, and empty-as-absent.
 
     // --- Device code result ---
     //

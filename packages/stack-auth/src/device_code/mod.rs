@@ -154,10 +154,13 @@ pub struct DeviceCodeStrategyBuilder {
 }
 
 impl DeviceCodeStrategyBuilder {
-    /// Override the base URL resolved by service discovery.
+    /// Override the auth-server base URL resolved for this flow.
     ///
-    /// Useful for pointing at a local or mock CTS instance during testing.
-    #[cfg(any(test, feature = "test-utils"))]
+    /// Takes precedence over both the `CS_CTS_HOST` environment variable and
+    /// region-derived service discovery. Use it to point a single flow at a
+    /// specific host — e.g. a self-hosted CTS, or a local mock auth server in
+    /// development — without relying on the process-wide `CS_CTS_HOST`, which
+    /// would redirect every other CTS client sharing the process.
     pub fn base_url(mut self, url: Url) -> Self {
         self.base_url_override = Some(url);
         self
@@ -184,8 +187,11 @@ impl DeviceCodeStrategyBuilder {
 
     /// Build the [`DeviceCodeStrategy`].
     ///
-    /// Resolves the base URL via service discovery unless overridden with
-    /// `base_url` (available when the `test-utils` feature is enabled).
+    /// Resolves the base URL in priority order: an explicit [`base_url`]
+    /// override, then the `CS_CTS_HOST` environment variable, then service
+    /// discovery using the region.
+    ///
+    /// [`base_url`]: Self::base_url
     pub fn build(self) -> Result<DeviceCodeStrategy, AuthError> {
         let base_url = match self.base_url_override {
             Some(url) => url,
