@@ -553,19 +553,64 @@ mod tests {
         }
     }
 
-    /// The variants annotated with `#[diagnostic(help(..))]` must surface that
-    /// help through `miette::Diagnostic` — this is what the CLI renders below
-    /// the error message. Pins a representative one so the annotation can't be
-    /// dropped silently.
+    /// Every variant annotated with `#[diagnostic(help(..))]` must surface that
+    /// help through `miette::Diagnostic` — it's what the CLI renders below the
+    /// error message. Unlike `error_code`'s exhaustive match, `help` is optional
+    /// and silently compiles if dropped, so pin all six (and a couple of
+    /// un-annotated variants that must stay `None`) explicitly.
     #[test]
     fn annotated_variants_expose_diagnostic_help() {
         use miette::Diagnostic;
 
-        let err = AuthError::NotAuthenticated;
-        let help = err.help().map(|h| h.to_string());
-        assert!(
-            help.as_deref().is_some_and(|h| h.contains("stash login")),
-            "NotAuthenticated should carry actionable help, got: {help:?}",
-        );
+        let workspace = "ZVATKW3VHMFG27DY"
+            .parse::<cts_common::WorkspaceId>()
+            .unwrap();
+
+        // (variant, substring its help must contain) — one row per annotation.
+        let with_help: Vec<(AuthError, &str)> = vec![
+            (
+                AuthError::Region("not-a-region".parse::<cts_common::Region>().unwrap_err()),
+                "supported region",
+            ),
+            (
+                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
+                "crn:<region>:<workspace-id>",
+            ),
+            (
+                AuthError::WorkspaceMismatch {
+                    expected_workspace: workspace,
+                    token_workspace: workspace,
+                },
+                "different workspace",
+            ),
+            (AuthError::MissingWorkspaceCrn, "CS_WORKSPACE_CRN"),
+            (AuthError::NotAuthenticated, "stash login"),
+            (
+                AuthError::InvalidAccessKey(
+                    "".parse::<crate::access_key::AccessKey>().unwrap_err(),
+                ),
+                "CSAK<key-id>.<secret>",
+            ),
+        ];
+
+        for (err, substring) in with_help {
+            let help = err.help().map(|h| h.to_string());
+            assert!(
+                help.as_deref().is_some_and(|h| h.contains(substring)),
+                "{err:?} should carry help containing {substring:?}, got: {help:?}",
+            );
+        }
+
+        // Un-annotated variants must report no help — keeps the contract
+        // symmetric so a stray annotation doesn't slip in unnoticed.
+        for err in [
+            AuthError::TokenExpired,
+            AuthError::InvalidToken("malformed".to_string()),
+        ] {
+            assert!(
+                err.help().is_none(),
+                "{err:?} has no #[diagnostic(help)] and should report None",
+            );
+        }
     }
 }
