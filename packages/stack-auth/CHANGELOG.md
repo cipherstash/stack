@@ -2,6 +2,41 @@
 
 ### CI
 
+- make the CRAP workflow blocking
+
+### Documentation
+
+- note OidcFederationStrategy INVALID_CRN error-code change
+- drop Rustdoc intra-link from binding doc comments
+
+### Features
+
+- add baseUrl override to OidcFederationStrategy (CIP-3246)
+- expose base_url override on all auth strategies
+
+### Fixes
+
+- format baseUrl bindings + cover baseUrl override in tests
+
+### Refactoring
+
+- take a workspace CRN in OidcFederationStrategy
+- address code-review findings on the CRN change
+- durable index.d.ts additions + shared base_url helper
+
+### Testing
+
+- deterministic expiry-crossing refresh test; clear CRAP findings
+- cover is_*_at boundaries and failed-refresh expiry path
+- assert backwards wall-clock is handled gracefully
+- scaffold cargo-fuzz pilot for public string parsers
+- assert base_url override beats CS_CTS_HOST
+- cover the napi baseUrl seam + the dts normaliser
+- close the lopsided baseUrl/normaliser test asymmetries
+
+
+### CI
+
 - add cargo-crap (CRAP metric) coverage report
 - reuse crap:stack-auth mise task in CRAP workflow
 
