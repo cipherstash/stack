@@ -123,6 +123,35 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     }
   });
 
+  it("honours a baseUrl override over CS_CTS_HOST for createWithStore", async () => {
+    // The store-variant twin of the precedence test: `baseUrl` is the 5th
+    // positional arg here (vs the 3rd on `create`), threaded through a separate
+    // wrapper path in index.js. CS_CTS_HOST's `server` 500s; the override
+    // server succeeds. getToken resolving (and the token landing in the store)
+    // proves the 5th-positional override is threaded, not dropped or
+    // mis-positioned.
+    server.mockAuthorizeEndpointError();
+    const override = await MockAuthServer.start();
+    try {
+      override.mockAuthorizeEndpoint();
+      const store = memStore();
+      const strategy = OidcFederationStrategy.createWithStore(
+        WORKSPACE_CRN,
+        () => Promise.resolve("header.payload.signature"),
+        store.load,
+        store.save,
+        override.baseUrl,
+      );
+
+      const result = await strategy.getToken();
+
+      expect(result.workspaceId).toBe(WORKSPACE_ID);
+      expect(store.saved()).not.toBeNull();
+    } finally {
+      override.clearMocks();
+    }
+  });
+
   it("rejects a malformed baseUrl with INVALID_URL", () => {
     // The napi twin of the wasm `..._rejects_invalid_base_url` test: a
     // non-empty, unparseable override must surface through the factory as a

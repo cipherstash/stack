@@ -751,6 +751,20 @@ mod tests {
         assert!(result.is_ok());
     }
 
+    /// The store variant treats an empty `baseUrl` as absent — mirrors
+    /// `oidc_federation_strategy_treats_empty_base_url_as_absent` on `create`.
+    #[wasm_bindgen_test]
+    fn oidc_create_with_store_treats_empty_base_url_as_absent() {
+        let result = OidcFederationStrategy::create_with_store(
+            VALID_CRN.to_string(),
+            jwt_fn("h.p.s"),
+            empty_load_fn(),
+            noop_save_fn(),
+            Some(String::new()),
+        );
+        assert!(result.is_ok());
+    }
+
     /// The store variant also accepts and validates a `baseUrl` override.
     #[wasm_bindgen_test]
     fn oidc_create_with_store_rejects_invalid_base_url() {
