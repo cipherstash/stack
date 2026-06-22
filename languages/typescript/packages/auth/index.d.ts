@@ -128,13 +128,13 @@ export declare class OidcFederationStrategy {
   /**
    * Create an `OidcFederationStrategy` backed by external token-store callbacks.
    *
-   * Behaves like [`create`](Self::create) but persists the federated CTS
+   * Behaves like `create` but persists the federated CTS
    * token through `loadToken` (`() => Promise<string | null | undefined>`)
    * and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
    * cookie — so a federated token survives across requests without
    * re-federating.
    *
-   * `baseUrl` behaves as in [`create`](Self::create) — an explicit,
+   * `baseUrl` behaves as in `create` — an explicit,
    * strategy-scoped CTS host that overrides `CS_CTS_HOST` and service
    * discovery.
    */

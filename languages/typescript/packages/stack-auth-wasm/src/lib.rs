@@ -365,13 +365,13 @@ impl OidcFederationStrategy {
 
     /// Create an `OidcFederationStrategy` backed by external token-store callbacks.
     ///
-    /// Behaves like [`create`](Self::create) but persists the federated CTS
+    /// Behaves like `create` but persists the federated CTS
     /// token through `loadToken` / `saveToken` — see
     /// [`AccessKeyStrategy::create_with_store`] for the callback contract. Use
     /// this to back the strategy with an HTTP-only cookie so a federated token
     /// survives across Edge Function invocations without re-federating.
     ///
-    /// `baseUrl` behaves as in [`create`](Self::create) — an explicit,
+    /// `baseUrl` behaves as in `create` — an explicit,
     /// strategy-scoped CTS host that overrides region service discovery.
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
