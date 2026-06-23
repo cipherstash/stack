@@ -57,10 +57,10 @@
   disagrees with the workspace it was pointed at.
 
   ```ts
-  // Before (0.38.x)
+  // Before (0.35.x)
   const strategy = AccessKeyStrategy.create("ap-southeast-2.aws", "CSAKid.secret");
 
-  // After (0.39.0)
+  // After (0.40.0)
   const strategy = AccessKeyStrategy.create(
     "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
     "CSAKid.secret",
