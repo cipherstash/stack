@@ -44,8 +44,16 @@ export class MockCtsServer {
       }),
     );
 
-    await new Promise<void>((resolve) => {
-      mock.#server.listen(0, "127.0.0.1", resolve);
+    await new Promise<void>((resolve, reject) => {
+      // Surface bind/listen failures as a rejected promise instead of hanging
+      // the suite until a timeout. Drop the listener once we're listening so it
+      // doesn't intercept later runtime errors.
+      const onError = (err: Error) => reject(err);
+      mock.#server.once("error", onError);
+      mock.#server.listen(0, "127.0.0.1", () => {
+        mock.#server.removeListener("error", onError);
+        resolve();
+      });
     });
     const addr = mock.#server.address();
     if (addr === null || typeof addr === "string") {
@@ -113,16 +121,21 @@ export class MockCtsServer {
   /**
    * `expiry` is seconds-until-expiry; CTS returns the JWT `exp` as an ABSOLUTE
    * Unix epoch (CIP-3233), so convert to `now + expiry` — otherwise a freshly
-   * federated token reads as already expired. Default 3600.
+   * federated token reads as already expired. Default 3600. The minted JWT's
+   * `exp` is set to the same absolute value, so the token and the response
+   * envelope stay consistent.
    */
   mockAuthorizeEndpoint(expiry = 3600): void {
-    this.#on("POST", "/api/authorise", () => ({
-      status: 200,
-      json: {
-        accessToken: mintJwt(),
-        expiry: Math.floor(Date.now() / 1000) + expiry,
-      },
-    }));
+    this.#on("POST", "/api/authorise", () => {
+      const exp = Math.floor(Date.now() / 1000) + expiry;
+      return {
+        status: 200,
+        json: {
+          accessToken: mintJwt({ exp }),
+          expiry: exp,
+        },
+      };
+    });
   }
 
   mockAuthorizeEndpointError(): void {
