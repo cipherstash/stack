@@ -1,7 +1,7 @@
 use super::{Decipher, DecipherVisitor, Decrypt, MapAccess, SeqAccess};
 use crate::{IntoAad, Unspecified};
 use std::collections::HashMap;
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Controlled, Equatable, Protected};
 use zeroize::Zeroize;
 
 impl<'c> Decrypt<'c> for Vec<u8> {
@@ -142,6 +142,34 @@ where
         D::map_ok(
             T::decrypt_with_aad(decipher, aad),
             Protected::init_from_inner,
+        )
+    }
+}
+
+impl<'c, T> Decrypt<'c> for Equatable<T>
+where
+    // `Send` is required by the `Decrypt: Send` supertrait and is load-bearing,
+    // not over-tightening. Unlike the sibling `Protected` impl — which bounds
+    // `T: Decrypt`, transitively giving `T: Send` — this impl bounds the
+    // flattened `T::Inner: Decrypt`, which only proves `T::Inner: Send`. `T`
+    // itself is otherwise unconstrained (`Controlled` has no `Send` supertrait),
+    // so `T: Send` is not implied and must be stated for `map_ok`'s `U: Send`
+    // requirement (and the impl's own `Send`) to hold.
+    T: Controlled + Send + 'c,
+    T::Inner: Decrypt<'c> + 'c,
+{
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        // Decrypt the innermost value, then rebuild both wrapper layers
+        // (`Equatable<Protected<_>>`) via `init_from_inner` — the mirror of the
+        // `Encrypt` impl, which unwraps them. The AAD is threaded through to the
+        // inner decrypt so the binding matches what the `Encrypt` impl sealed.
+        D::map_ok(
+            <T::Inner as Decrypt<'c>>::decrypt_with_aad(decipher, aad),
+            Equatable::init_from_inner,
         )
     }
 }

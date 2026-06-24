@@ -4,7 +4,7 @@ use crate::{
     Aad, IntoAad,
 };
 use std::collections::HashMap;
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Controlled, Equatable, Protected};
 use zeroize::Zeroize;
 
 impl Encrypt for u32 {
@@ -104,6 +104,34 @@ where
         // boundary, so the bare-`T` stack window opened here is bounded by
         // the inner `Encrypt::encrypt_with_aad` call. Custom `Encrypt` impls
         // are responsible for their own discipline.
+        self.risky_unwrap().encrypt_with_aad(cipher, aad)
+    }
+}
+
+impl<T> Encrypt for Equatable<T>
+where
+    // Deliberately no `Zeroize` bound, unlike the sibling `Protected<T>` impl
+    // above (`T: Encrypt + Zeroize`): `Controlled` already governs the zeroize
+    // chain for `T`, and the inner value is re-wrapped in `Protected` by the leaf
+    // impl before it crosses the cipher boundary (see below), so an extra bound
+    // here would over-constrain callers without adding protection. The divergence
+    // is a conscious choice, not drift.
+    T: Controlled,
+    T::Inner: Encrypt,
+{
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        // `Equatable` is an in-memory constant-time-equality wrapper; it adds
+        // nothing to the ciphertext — an `Equatable<Protected<T>>` ciphertext is
+        // interchangeable with a `Protected<T>` one, as the ciphertext does not
+        // attest the wrapper. Mirror the `Protected<T>` impl above: unwrap to the
+        // inner value and let the leaf `Encrypt` impl re-wrap it in `Protected`
+        // before crossing the cipher boundary, preserving the zeroize chain of
+        // custody. The `Equatable` layer is reconstructed structurally on decrypt
+        // (see the `Decrypt` impl).
         self.risky_unwrap().encrypt_with_aad(cipher, aad)
     }
 }
