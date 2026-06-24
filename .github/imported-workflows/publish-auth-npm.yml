@@ -1,9 +1,10 @@
 name: "Publish @cipherstash/auth to npm"
 
 on:
-  push:
-    tags:
-      - "stack-auth-v*"
+  # Published manually. `@cipherstash/auth` is versioned independently of the
+  # Rust `stack-auth` crate (its `package.json` version), so it must NOT auto-
+  # publish on release-plz's `stack-auth-v*` tags — that would ship the node
+  # package at the Rust crate's version. Trigger via "Run workflow" instead.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -182,11 +183,8 @@ jobs:
       - name: Determine version and npm tag
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/stack-auth-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/stack-auth-v}"
-          else
-            VERSION=$(jq -r .version "${{ env.WORKING_DIR }}/package.json")
-          fi
+          # Manual publish: the version is whatever `package.json` declares.
+          VERSION=$(jq -r .version "${{ env.WORKING_DIR }}/package.json")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           if [[ "$VERSION" == *"-"* ]]; then
