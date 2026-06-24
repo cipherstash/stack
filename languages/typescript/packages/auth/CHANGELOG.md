@@ -4,6 +4,29 @@
 
 ### New Features
 
+- **`OidcFederationStrategy` `baseUrl` override** — both `create` and
+  `createWithStore` now accept an optional trailing `baseUrl` that pins a single
+  strategy instance to a specific CTS host, taking precedence over the
+  `CS_CTS_HOST` environment variable and region service discovery.
+
+  ```ts
+  OidcFederationStrategy.createWithStore(
+    workspaceCrn, getJwt, loadToken, saveToken,
+    "http://localhost:4000", // baseUrl — federate against a mock / self-hosted CTS
+  );
+  ```
+
+  Unlike `CS_CTS_HOST`, the override is scoped to that strategy alone, so it
+  doesn't redirect other CTS clients sharing the process (e.g. a `protect-ffi`
+  encryption client). On `wasm-inline` it's the `baseUrl` field of the options
+  object (`{ store?, baseUrl? }`); in the wasm runtime — which can't read
+  `CS_CTS_HOST` from the environment — it's the only way to target a host other
+  than the region-discovered one.
+
+## 0.39.0
+
+### New Features
+
 - **`OidcFederationStrategy`** — federate a third-party OIDC JWT (Clerk,
   Supabase, …) into a CipherStash CTS service token via `/api/authorise`.
   Exposed on both the napi and `wasm-inline` entrypoints, with a `getJwt`
@@ -30,25 +53,6 @@
   );
   ```
 
-- **`OidcFederationStrategy` `baseUrl` override** — both `create` and
-  `createWithStore` now accept an optional trailing `baseUrl` that pins a single
-  strategy instance to a specific CTS host, taking precedence over the
-  `CS_CTS_HOST` environment variable and region service discovery.
-
-  ```ts
-  OidcFederationStrategy.createWithStore(
-    workspaceCrn, getJwt, loadToken, saveToken,
-    "http://localhost:4000", // baseUrl — federate against a mock / self-hosted CTS
-  );
-  ```
-
-  Unlike `CS_CTS_HOST`, the override is scoped to that strategy alone, so it
-  doesn't redirect other CTS clients sharing the process (e.g. a `protect-ffi`
-  encryption client). On `wasm-inline` it's the `baseUrl` field of the options
-  object (`{ store?, baseUrl? }`); in the wasm runtime — which can't read
-  `CS_CTS_HOST` from the environment — it's the only way to target a host other
-  than the region-discovered one.
-
 ### Breaking Changes
 
 - **`AccessKeyStrategy.create(workspaceCrn, accessKey)`** — the first argument
@@ -57,10 +61,10 @@
   disagrees with the workspace it was pointed at.
 
   ```ts
-  // Before (0.35.x)
+  // Before (0.38.x)
   const strategy = AccessKeyStrategy.create("ap-southeast-2.aws", "CSAKid.secret");
 
-  // After (0.40.0)
+  // After (0.39.0)
   const strategy = AccessKeyStrategy.create(
     "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
     "CSAKid.secret",
