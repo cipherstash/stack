@@ -1,0 +1,58 @@
+# SPIKE SCAFFOLD (CIP-3278) — not wired for production yet.
+#
+# Owns the *versioning* half of npm releases: on push to main, the changesets
+# action opens/updates a "Version Packages" PR that applies accumulated
+# .changeset/*.md entries to package.json + CHANGELOG.md for the @cipherstash
+# npm products. It deliberately does NOT publish — the @cipherstash/auth and
+# @cipherstash/profile packages need a matrix napi/wasm build, so actual
+# publishing stays with the existing publish-auth-npm.yml (triggered manually,
+# or auto-triggered off the Version Packages PR merge in a follow-up).
+#
+# This is the seam with release-plz: release-plz owns Cargo.* + crates.io;
+# this owns package.json + npm. They never touch the same files.
+name: "Release (npm — changesets)"
+
+on:
+  push:
+    branches:
+      - main
+
+# Only one Version Packages PR in flight at a time.
+concurrency:
+  group: release-npm
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the Version Packages branch/commit
+  pull-requests: write # open/update the Version Packages PR
+
+jobs:
+  version:
+    name: Open/update Version Packages PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # Installs only the root manifest's devDependency (@changesets/cli).
+      # `--ignore-scripts` and no workspace build keep this off the napi
+      # toolchain entirely — versioning only reads/writes package.json + md.
+      - name: Install changesets
+        run: npm install --no-workspaces --ignore-scripts
+
+      - name: Create Version Packages PR
+        uses: changesets/action@v1
+        with:
+          # `version` regenerates package.json + CHANGELOG from .changeset/*.md.
+          # No `publish:` on purpose — see header comment.
+          version: npx changeset version
+          title: "Release: version @cipherstash npm packages"
+          commit: "chore(release): version @cipherstash npm packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
