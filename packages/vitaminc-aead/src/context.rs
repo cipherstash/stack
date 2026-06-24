@@ -474,6 +474,21 @@ mod tests {
     }
 
     #[test]
+    fn unit_tag_still_binds_nonempty_aad() {
+        let cipher = MockCipher::new();
+
+        ContextTag::new("secret", ())
+            .encrypt(&cipher)
+            .expect("encryption should succeed");
+
+        // Pins the documented boundary: a `()` tag binds PAE(empty, empty), which
+        // is *not* empty AAD — so `cipher.decrypt(ct)` (empty AAD) must fail. A
+        // regression that folded a `()` tag to empty AAD would silently break it.
+        assert_eq!(cipher.captured_aad(), ((), ()).into_aad().as_bytes());
+        assert_ne!(cipher.captured_aad(), Aad::empty().as_bytes());
+    }
+
+    #[test]
     fn refine_nests_the_tag() {
         let cipher = MockCipher::new();
 
@@ -504,6 +519,29 @@ mod tests {
     }
 
     #[test]
+    fn nested_context_tag_folds_aad_twice() {
+        let cipher = MockCipher::new();
+
+        // The documented footgun: wrapping a `ContextTag` *inside another* rather
+        // than layering with `refine`.
+        ContextTag::new(ContextTag::new("secret", "b"), "a")
+            .encrypt(&cipher)
+            .expect("encryption should succeed");
+
+        // Nesting folds the AAD twice into ((extra, "a"), "b") — extra = () here...
+        assert_eq!(
+            cipher.captured_aad(),
+            (((), "a"), "b").into_aad().as_bytes()
+        );
+        // ...which is distinct from the symmetric refine layout ((), ("a", "b"))
+        // that `context("a").refine("b")` decrypts against — hence the footgun.
+        assert_ne!(
+            cipher.captured_aad(),
+            ((), ("a", "b")).into_aad().as_bytes()
+        );
+    }
+
+    #[test]
     fn owned_string_tag_is_accepted() {
         let cipher = MockCipher::new();
 
@@ -512,6 +550,19 @@ mod tests {
             .expect("encryption should succeed");
 
         let expected = ((), "owned-tag").into_aad();
+        assert_eq!(cipher.captured_aad(), expected.as_bytes());
+    }
+
+    #[test]
+    fn vec_u8_tag_is_accepted() {
+        let cipher = MockCipher::new();
+
+        // `Vec<u8>` is a documented tag type; exercise it like the &str/String cases.
+        ContextTag::new("secret", vec![0xde_u8, 0xad, 0xbe, 0xef])
+            .encrypt(&cipher)
+            .expect("encryption should succeed");
+
+        let expected = ((), vec![0xde_u8, 0xad, 0xbe, 0xef]).into_aad();
         assert_eq!(cipher.captured_aad(), expected.as_bytes());
     }
 
