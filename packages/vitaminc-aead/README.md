@@ -232,9 +232,15 @@ impl Encrypt for User {
 }
 
 impl<'c> Decrypt<'c> for User {
-    fn decrypt<D: Decipher<'c>>(decipher: D) -> D::Ok<Self> {
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
         // A visitor describes what to do with each shape the cipher might
-        // produce. Here we only accept maps.
+        // produce. Here we only accept maps. The `aad` mirrors the encrypt
+        // side and is threaded to the decipher so each value is authenticated
+        // against it.
         struct UserVisitor;
         impl<'c> DecipherVisitor<'c> for UserVisitor {
             type Value = User;
@@ -255,7 +261,7 @@ impl<'c> Decrypt<'c> for User {
                 })
             }
         }
-        decipher.decrypt_map(UserVisitor)
+        decipher.decrypt_map(UserVisitor, aad)
     }
 }
 ```
