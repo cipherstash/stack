@@ -48,12 +48,10 @@ export function mintJwt(claims: Record<string, unknown> = {}): string {
 export function saveTestToken(
   profileDir: string,
   zerokmsBaseUrl: string,
-  workspaceId: string = WORKSPACE_ID,
 ): void {
   const now = Math.floor(Date.now() / 1000);
   const jwt = mintJwt({
     aud: "legacy-aud-value",
-    workspace: workspaceId,
     services: { zerokms: zerokmsBaseUrl },
   });
   const tokenJson = {
@@ -61,9 +59,9 @@ export function saveTestToken(
     token_type: "Bearer",
     expires_at: now + 3600,
   };
-  const wsDir = join(profileDir, "workspaces", workspaceId);
+  const wsDir = join(profileDir, "workspaces", WORKSPACE_ID);
   mkdirSync(wsDir, { recursive: true });
-  writeFileSync(join(profileDir, "current_workspace"), workspaceId);
+  writeFileSync(join(profileDir, "current_workspace"), WORKSPACE_ID);
   writeFileSync(join(wsDir, "auth.json"), JSON.stringify(tokenJson), {
     mode: 0o600,
   });

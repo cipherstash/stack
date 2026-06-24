@@ -9,7 +9,7 @@
 // keeps the last handler registered per route. `clearMocks()` drops them all.
 
 import { type Server, createServer } from "node:http";
-import { mintJwt, WORKSPACE_ID } from "./test-fixtures";
+import { mintJwt } from "./test-fixtures";
 
 type Handler = (body: string) => { status: number; json: unknown };
 
@@ -106,12 +106,12 @@ export class MockCtsServer {
     }));
   }
 
-  mockTokenEndpointError(code: string, description?: string): void {
+  mockTokenEndpointError(code: string): void {
     this.#on("POST", "/oauth/device/token", () => ({
       status: 400,
       json: {
         error: code,
-        error_description: description ?? `${code} occurred`,
+        error_description: `${code} occurred`,
       },
     }));
   }
@@ -171,5 +171,3 @@ export class MockCtsServer {
     this.#routes.clear();
   }
 }
-
-export { WORKSPACE_ID };
