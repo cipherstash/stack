@@ -1,8 +1,10 @@
-# npm releases (changesets) — SPIKE (CIP-3278)
+# npm releases (changesets)
 
-> Status: **spike** on branch `dan/changesets-spike`. This documents the model and
-> what the spike validated; it is not the production rollout. Tracking issue:
-> [CIP-3278](https://linear.app/cipherstash/issue/CIP-3278).
+> Adopts [changesets](https://github.com/changesets/changesets) for the `@cipherstash`
+> npm products while release-plz keeps owning the Rust crates. Tracking issue:
+> [CIP-3278](https://linear.app/cipherstash/issue/CIP-3278). Scope of the
+> initial PR: **versioning** (the Version Packages PR); publishing stays manual
+> for now (see "Still deferred").
 
 ## Why
 
@@ -59,22 +61,42 @@ registry** and never read or write each other's files:
 - The root manifest is `private: true` and lists only the two products, so it has
   no effect on crates / release-plz.
 
-## Open question for the production rollout
+## npm workspaces decision (resolved)
 
-The root `package.json` introduces **npm workspaces** where there were none.
-CI currently does `npm install` *inside* `packages/stack-auth/node` against that
-package's own `package-lock.json`. With a root workspace present, npm may hoist
-to the root and resolve differently. The spike's release workflow sidesteps this
-for *versioning* (`npm install --no-workspaces --ignore-scripts` — changesets
-only needs its own CLI). The thing to confirm before rollout is the **build**
-path: either
+The root `package.json` introduces **npm workspaces** where there were none, so
+the effect on the existing `npm install` steps was checked empirically:
 
-- (a) adopt root workspaces end-to-end and update the build/publish jobs to
-  install from root, or
-- (b) keep per-package installs and run changesets in a mode that enumerates
-  packages without hoisting (e.g. pnpm workspace, or a pinned `@manypkg` glob),
+- **The napi build is unaffected.** The publish pipeline's only Node dependency
+  is the `napi` binary (`@napi-rs/cli`); the products have **zero runtime
+  `dependencies`**. After a workspace install, `npx napi` still resolves from
+  `packages/stack-auth/node/node_modules/.bin`, so `napi build` / `napi
+  artifacts` work exactly as before — **no change to `publish-auth-npm.yml` is
+  needed**.
+- **Only the two products are in the workspace.** The other nested JS packages
+  (`load-tests`, `health-checks/typescript`, `usage-metrics-tracker`,
+  `cts-web`) are **not** matched by the `workspaces` globs — verified `npm
+  prefix` from `load-tests/` returns its own dir and `npm ci` there still
+  resolves against its own lockfile, so `test-load-tests.yml` (the only `npm ci`
+  user) is untouched.
+- **One lockfile is the source of truth.** A root `package-lock.json` governs
+  the workspace; the per-package lockfiles under `stack-auth/node` and
+  `stack-profile/node` are removed (npm ignores them in workspace mode). The
+  build uses `npm install` (not `npm ci`), so it adapts platform-specific
+  optional deps per runner.
 
-whichever keeps the napi matrix build reproducible.
+The release workflow installs only the changesets CLI
+(`npm install --no-workspaces --ignore-scripts`), so the versioning job never
+touches the napi toolchain.
+
+### Still deferred (follow-ups, not blocking this PR)
+
+- **Publish stays manual.** This PR wires *versioning* (the Version Packages
+  PR). Auto-triggering `publish-auth-npm.yml` on the Version PR merge is a
+  separate change.
+- **CHANGELOG handover.** The first `changeset version` will prepend a
+  changesets-formatted section above the existing hand-written history (same
+  `## x.y.z` shape), so no migration is required; merging this PR with no
+  pending `.changeset/*.md` is a no-op.
 
 ## Extending to Python / C# / Ruby (and future stack-encrypt, stack-zerokms)
 

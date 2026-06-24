@@ -1,4 +1,4 @@
-# SPIKE SCAFFOLD (CIP-3278) — not wired for production yet.
+# Release versioning for the @cipherstash npm products (CIP-3278).
 #
 # Owns the *versioning* half of npm releases: on push to main, the changesets
 # action opens/updates a "Version Packages" PR that applies accumulated
