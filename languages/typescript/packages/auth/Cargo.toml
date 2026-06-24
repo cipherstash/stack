@@ -16,12 +16,12 @@ napi = { version = "2", features = ["async", "tokio_rt"] }
 napi-derive = "2"
 serde_json = "1"
 zeroize = { workspace = true }
-url = { version = "2", optional = true }
-mocktail = { version = "0.3.0", optional = true }
-jsonwebtoken = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
+# `stack-auth/test-utils` gives the Rust #[cfg(test)] unit tests the no-timeout
+# `http_client`; the mock server itself is now a JS helper (see
+# __tests__/helpers/), so the napi crate no longer ships a `test-utils` feature
+# or the heavy mocktail/jsonwebtoken/reqwest deps in its published artifact.
 stack-auth = { workspace = true, features = ["test-utils"] }
 jsonwebtoken = { workspace = true }
 mocktail = "0.3.0"
@@ -32,6 +32,3 @@ url = "2"
 
 [build-dependencies]
 napi-build = "2"
-
-[features]
-test-utils = ["stack-auth/test-utils", "dep:url", "dep:mocktail", "dep:jsonwebtoken", "dep:reqwest"]

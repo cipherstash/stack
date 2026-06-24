@@ -7,5 +7,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["__tests__/**/*.ts", "index.d.ts", "test-utils.d.ts"]
+  "include": ["__tests__/**/*.ts", "index.d.ts"]
 }

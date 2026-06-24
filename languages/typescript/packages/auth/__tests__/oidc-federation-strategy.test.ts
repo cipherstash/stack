@@ -1,34 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { MockAuthServer as MockAuthServerType } from "../test-utils";
 import type { AuthError } from "../index";
+import { MockCtsServer } from "./helpers/mock-cts-server";
 
-// Load the CJS module — includes MockAuthServer when built with test-utils.
-const mod = require("../index.js") as typeof import("../index") & {
-  MockAuthServer: typeof MockAuthServerType;
-};
-
-const { OidcFederationStrategy, MockAuthServer } = mod;
+const { OidcFederationStrategy } =
+  require("../index.js") as typeof import("../index");
 
 const WORKSPACE_ID = "ZVATKW3VHMFG27DY";
 const WORKSPACE_CRN = `crn:ap-southeast-2.aws:${WORKSPACE_ID}`;
 
-let server: InstanceType<typeof MockAuthServerType>;
+let server: MockCtsServer;
 let savedHost: string | undefined;
 
 beforeEach(async () => {
-  server = await MockAuthServer.start();
+  server = await MockCtsServer.start();
   // OidcFederationStrategy reads the CTS base URL from CS_CTS_HOST at runtime,
   // so set it before constructing the strategy.
   savedHost = process.env.CS_CTS_HOST;
   process.env.CS_CTS_HOST = server.baseUrl;
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (savedHost === undefined) {
     delete process.env.CS_CTS_HOST;
   } else {
     process.env.CS_CTS_HOST = savedHost;
   }
+  await server.close();
 });
 
 /** A `getJwt` callback that counts invocations and returns a fixed JWT. */
@@ -106,7 +103,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // motivating CIP-3246 survives the napi parameter threading — the Rust core
     // proves the ordering, this proves the binding preserves it.
     server.mockAuthorizeEndpointError();
-    const override = await MockAuthServer.start();
+    const override = await MockCtsServer.start();
     try {
       override.mockAuthorizeEndpoint();
       const strategy = OidcFederationStrategy.create(
@@ -119,7 +116,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
 
       expect(result.workspaceId).toBe(WORKSPACE_ID);
     } finally {
-      override.clearMocks();
+      await override.close();
     }
   });
 
@@ -131,7 +128,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // proves the 5th-positional override is threaded, not dropped or
     // mis-positioned.
     server.mockAuthorizeEndpointError();
-    const override = await MockAuthServer.start();
+    const override = await MockCtsServer.start();
     try {
       override.mockAuthorizeEndpoint();
       const store = memStore();
@@ -148,7 +145,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
       expect(result.workspaceId).toBe(WORKSPACE_ID);
       expect(store.saved()).not.toBeNull();
     } finally {
-      override.clearMocks();
+      await override.close();
     }
   });
 
