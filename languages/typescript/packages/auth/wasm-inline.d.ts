@@ -105,6 +105,12 @@ export interface AccessKeyStrategyOptions {
 export declare class AccessKeyStrategy {
   private constructor();
   /**
+   * Capability flag — `false` for this ambient strategy: the credential is a
+   * static value, so `getToken()` self-refreshes and can be driven from any
+   * context. (Contrast {@link OidcFederationStrategy.requiresFederation}.)
+   */
+  readonly requiresFederation: false;
+  /**
    * Create a new `AccessKeyStrategy` for the given workspace CRN and
    * access key.
    *
@@ -158,6 +164,13 @@ export interface OidcFederationStrategyOptions {
  */
 export declare class OidcFederationStrategy {
   private constructor();
+  /**
+   * Capability flag — `true` for this federated strategy: the third-party JWT
+   * and token cache are request-scoped, so federation must happen in scope.
+   * Consumers should read a warmed token (`@cipherstash/auth/next`) rather than
+   * drive `getToken()` from a detached context.
+   */
+  readonly requiresFederation: true;
   /**
    * Create an `OidcFederationStrategy` for the given workspace CRN.
    *

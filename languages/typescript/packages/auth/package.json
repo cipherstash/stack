@@ -27,6 +27,10 @@
     "./cookies": {
       "types": "./cookies.d.ts",
       "default": "./cookies.mjs"
+    },
+    "./next": {
+      "types": "./next.d.ts",
+      "default": "./next.mjs"
     }
   },
   "napi": {
@@ -55,6 +59,8 @@
     "wasm-inline.d.ts",
     "cookies.mjs",
     "cookies.d.ts",
+    "next.mjs",
+    "next.d.ts",
     "wasm/"
   ],
   "scripts": {
