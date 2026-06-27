@@ -348,7 +348,7 @@ pub enum AuthError {
     /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
     #[error("Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn")]
     #[diagnostic(help(
-        "Set the `CS_WORKSPACE_CRN` environment variable, or pass the CRN via `AutoStrategyBuilder::with_workspace_crn`."
+        "Most strategies need a workspace CRN — set the `CS_WORKSPACE_CRN` environment variable, or pass it explicitly, e.g. `AutoStrategyBuilder::with_workspace_crn`."
     ))]
     MissingWorkspaceCrn,
     /// No credentials are available (e.g. not logged in, no access key configured).

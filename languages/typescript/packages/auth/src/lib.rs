@@ -993,6 +993,48 @@ mod tests {
                 }
             }
 
+            mod given_invalid_grant {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_invalid_grant_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.bad_request().json(error_json("invalid_grant"));
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assertions::has_error_code(&err, "INVALID_GRANT");
+                }
+            }
+
+            mod given_invalid_client {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_invalid_client_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.bad_request().json(error_json("invalid_client"));
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assertions::has_error_code(&err, "INVALID_CLIENT");
+                }
+            }
+
             mod given_consumed_handle {
                 use super::*;
 
