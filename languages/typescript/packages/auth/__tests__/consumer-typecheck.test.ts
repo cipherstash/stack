@@ -25,34 +25,52 @@ const packageDir = join(__dirname, "..");
 // cross-platform (no shell, no `.bin` shim) and pinned to the devDependency.
 const tscBin = require.resolve("typescript/bin/tsc");
 
-// A consumer that imports — and *uses*, so nothing is elided — every symbol
-// that has to survive the split: the napi-generated classes/interfaces re-
-// exported via `./native`, the hand-written `AuthError`/`AuthErrorCode`, and
-// the `OAuthStrategy` runtime alias (imported as a value, not a type).
+// A consumer that imports — and *uses*, so nothing is elided — the public
+// Result surface: the success types (`TokenResult`), the `AuthFailure`
+// discriminated union + `AuthErrorCode`, the strategy classes (as values, to
+// call their `Result`-returning factories/methods), and the `OAuthStrategy`
+// runtime alias. It exercises narrowing on both arms of a `Result` and the
+// per-variant `WORKSPACE_MISMATCH` payload — so a broken return type, a missing
+// failure variant, or an unresolved `@byteslice/result` / `./native` re-export
+// fails the typecheck.
 const CONSUMER = `
-import type {
-  AuthError,
-  AuthErrorCode,
-  TokenResult,
-  DeviceSessionStrategy,
+import type { AuthFailure, AuthErrorCode, TokenResult } from "@cipherstash/auth";
+import {
   AutoStrategy,
+  DeviceSessionStrategy,
+  OAuthStrategy,
 } from "@cipherstash/auth";
-import { OAuthStrategy } from "@cipherstash/auth";
 
 const _alias: typeof DeviceSessionStrategy = OAuthStrategy;
 
-function codeOf(err: AuthError): AuthErrorCode {
-  return err.code;
+function handle(failure: AuthFailure): AuthErrorCode {
+  if (failure.type === "WORKSPACE_MISMATCH") {
+    const _e: string = failure.expected;
+    const _a: string = failure.actual;
+    void _e;
+    void _a;
+  }
+  return failure.type;
 }
 
-declare const tr: TokenResult;
-const _token: string = tr.token;
-declare const auto: AutoStrategy;
+async function run() {
+  const detected = AutoStrategy.detect();
+  if (detected.failure) {
+    void handle(detected.failure);
+    return;
+  }
+  const result = await detected.data.getToken();
+  if (result.failure) {
+    void handle(result.failure);
+  } else {
+    const token: TokenResult = result.data;
+    const _t: string = token.token;
+    void _t;
+  }
+}
 
-void codeOf;
+void run;
 void _alias;
-void _token;
-void auto;
 `;
 
 // Node16 resolution makes tsc honour the package's `exports` map (the "node"

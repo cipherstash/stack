@@ -61,13 +61,20 @@ import { cookieStore } from "@cipherstash/auth/cookies";
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
 
-  const strategy = AccessKeyStrategy.create(
+  const created = AccessKeyStrategy.create(
     Deno.env.get("CS_WORKSPACE_CRN")!,    // e.g. "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
     Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
     { store: cookieStore({ request: req, responseHeaders }) },
   );
+  if (created.failure) {
+    return Response.json({ error: created.failure.type }, { status: 500, headers: responseHeaders });
+  }
 
-  const { token, workspaceId, services } = await strategy.getToken();
+  const result = await created.data.getToken();
+  if (result.failure) {
+    return Response.json({ error: result.failure.type }, { status: 500, headers: responseHeaders });
+  }
+  const { token, workspaceId, services } = result.data;
   // `token` is the bearer credential; pass as `Authorization: Bearer ${token}`
   // to ZeroKMS at `services.zerokms`.
 
@@ -83,15 +90,15 @@ Deno.serve(async (req) => {
 ```jsonc
 {
   "imports": {
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.39/wasm-inline",
-    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.39/cookies"
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^1/wasm-inline",
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^1/cookies"
   }
 }
 ```
 
 Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying, no bundler plugins. The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config.
 
-`getToken()` resolves to `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`).
+`getToken()` resolves to a `Result`; on success `result.data` is `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`). See [Error handling](#error-handling).
 
 For Cloudflare Workers the shape is identical; env access becomes `env.CS_CLIENT_ACCESS_KEY` instead of `Deno.env.get(...)`.
 
@@ -106,14 +113,21 @@ import { cookieStore } from "@cipherstash/auth/cookies";
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
 
-  const strategy = OidcFederationStrategy.create(
+  const created = OidcFederationStrategy.create(
     Deno.env.get("CS_WORKSPACE_CRN")!, // e.g. "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
     // Returns the *current* provider JWT — re-invoked on every re-federation.
     () => getClerkSessionToken(req),
     { store: cookieStore({ request: req, responseHeaders }) },
   );
+  if (created.failure) {
+    return Response.json({ error: created.failure.type }, { status: 500, headers: responseHeaders });
+  }
 
-  const { token, services } = await strategy.getToken();
+  const result = await created.data.getToken();
+  if (result.failure) {
+    return Response.json({ error: result.failure.type }, { status: 500, headers: responseHeaders });
+  }
+  const { token, services } = result.data;
   return new Response(JSON.stringify({ services }), { headers: responseHeaders });
 });
 ```
@@ -204,8 +218,8 @@ Starts the OAuth 2.0 Device Authorization flow. Returns a `Promise<DeviceCodeRes
 
 | Method | Description |
 |---|---|
-| `AccessKeyStrategy.create(workspaceCrn, accessKey, options?)` | Build a strategy from a workspace CRN and access key. Region is derived from the CRN. Pass `{ store }` to back it with a persistent cache. The strategy verifies every issued token's `workspace` claim against the CRN — mismatch surfaces as `code === "WORKSPACE_MISMATCH"`. |
-| `strategy.getToken()` | Retrieve a valid `TokenResult`, refreshing as needed |
+| `AccessKeyStrategy.create(workspaceCrn, accessKey, options?)` | Build a strategy from a workspace CRN and access key (returns a `Result`). Region is derived from the CRN. Pass `{ store }` to back it with a persistent cache. The strategy verifies every issued token's `workspace` claim against the CRN — mismatch surfaces as `failure.type === "WORKSPACE_MISMATCH"`. |
+| `strategy.getToken()` | Retrieve a valid token, refreshing as needed. Resolves to `{ data: TokenResult }` or `{ failure }`. |
 
 `TokenResult` is `{ token, subject, workspaceId, issuer, services }`.
 
@@ -226,18 +240,40 @@ Helper that returns a `TokenStore` backed by an HTTP-only cookie. Works in any r
 
 ## Error handling
 
-Errors thrown from this package extend `Error` with a machine-readable `.code` property:
+Every fallible operation returns a [`@byteslice/result`](https://www.npmjs.com/package/@byteslice/result) `Result` instead of throwing: `{ data }` on success, `{ failure }` on a domain error. Check `result.failure` — no `try/catch` needed:
 
-```js
-try {
-  await strategy.getToken();
-} catch (err) {
-  console.error(err.code);    // e.g. "EXPIRED_TOKEN"
-  console.error(err.message); // Human-readable description
+```ts
+const result = await strategy.getToken();
+if (result.failure) {
+  console.error(result.failure.type);          // e.g. "EXPIRED_TOKEN"
+  console.error(result.failure.error.message); // human-readable description
+  console.error(result.failure.help);          // actionable hint, when available
+} else {
+  use(result.data.token);                       // result.data: TokenResult
 }
 ```
 
-Common codes: `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, `INVALID_REGION`, `INVALID_TOKEN`, `SERVER_ERROR`, `REQUEST_ERROR`.
+`failure` is a discriminated union — narrow on `type` to reach per-variant fields:
+
+```ts
+const created = AccessKeyStrategy.create(workspaceCrn, accessKey);
+if (created.failure) {
+  if (created.failure.type === "WORKSPACE_MISMATCH") {
+    console.error(`expected ${created.failure.expected}, got ${created.failure.actual}`);
+  }
+  return;
+}
+const strategy = created.data;
+```
+
+Failure `type`s: `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, `INVALID_GRANT`, `INVALID_CLIENT`, `INVALID_REGION`, `INVALID_URL`, `INVALID_TOKEN`, `SERVER_ERROR`, `REQUEST_ERROR`, `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_CRN`, `WORKSPACE_MISMATCH`, `INVALID_WORKSPACE_ID`, `ALREADY_CONSUMED`, `INTERNAL_ERROR`, `STORE_ERROR`. Each `failure` also carries the live `error: Error` and optional `help`/`url`. Only a genuine internal panic still throws.
+
+> **Migrating from the throw-based API (pre-1.0):** replace
+> `try { const t = await s.getToken(); … } catch (err) { err.code }`
+> with `const r = await s.getToken(); if (r.failure) { r.failure.type } else { r.data }`.
+> Factories (`AccessKeyStrategy.create`, `AutoStrategy.detect`,
+> `OidcFederationStrategy.create`, `DeviceSessionStrategy.fromProfile`) now
+> return a `Result` too, so unwrap `.data` before use.
 
 ## License
 

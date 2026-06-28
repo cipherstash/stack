@@ -2,7 +2,9 @@
 
 WebAssembly bindings for [`stack-auth`](../). Consumed by the unified [`@cipherstash/auth`](../node/) npm package — this crate is the upstream source, not a published artifact.
 
-Scoped to `AccessKeyStrategy` (machine-to-machine auth). `AccessKeyStrategy.create(workspaceCrn, accessKey)` returns a strategy; `getToken(): Promise<TokenResult>` resolves to `{ token, subject, workspaceId, issuer, services }`. Region is derived from the CRN, and every issued token's `workspace` JWT claim is verified against the CRN — a mismatch surfaces as `code === "WORKSPACE_MISMATCH"`. Errors thrown extend `Error` with a machine-readable `.code` property (`INVALID_CRN`, `INVALID_ACCESS_KEY`, `WORKSPACE_MISMATCH`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, etc.) sourced from `AuthError::error_code()` in the parent `stack-auth` crate.
+Scoped to `AccessKeyStrategy` (machine-to-machine auth). Region is derived from the CRN, and every issued token's `workspace` JWT claim is verified against the CRN — a mismatch surfaces as `WORKSPACE_MISMATCH`.
+
+The wrapped [`@cipherstash/auth/wasm-inline`](../node/wasm-inline.d.ts) entry returns a [`@byteslice/result`](https://www.npmjs.com/package/@byteslice/result) `Result`: `AccessKeyStrategy.create(...)` and `getToken()` resolve to `{ data }` on success or `{ failure }` (a discriminated `AuthFailure` tagged by `type`, carrying the live `error`, optional `help`/`url`, and per-variant payload such as `WORKSPACE_MISMATCH`'s `expected`/`actual`). The failure `type`s come from `AuthError` in the parent `stack-auth` crate. The lower-level raw `/wasm` bindings still *throw* a JS `Error` whose `.code` carries the same discriminant, with the structured failure attached as the `__authFailure` property.
 
 OAuth strategies, device-code flow, and profile-store loading are deliberately out of scope — they need Node-only APIs (filesystem device identity, browser launching) that can't be ported to wasm32.
 
