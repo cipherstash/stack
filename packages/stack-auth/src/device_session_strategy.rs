@@ -196,11 +196,11 @@ impl DeviceSessionStrategyBuilder {
 
         let region_str = token
             .region()
-            .ok_or(AuthError::NotAuthenticated)?
+            .ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?
             .to_string();
         let client_id = token
             .client_id()
-            .ok_or(AuthError::NotAuthenticated)?
+            .ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?
             .to_string();
         let crn = token
             .workspace_crn()

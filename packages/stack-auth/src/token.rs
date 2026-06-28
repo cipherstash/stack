@@ -161,9 +161,11 @@ impl Token {
         let workspace_id = self.workspace_id()?;
         let region: Region = self
             .region()
-            .ok_or(AuthError::NotAuthenticated)?
+            .ok_or(AuthError::NotAuthenticated(crate::error::NotAuthenticated))?
             .parse()
-            .map_err(|e: cts_common::RegionError| AuthError::Server(e.to_string()))?;
+            .map_err(|e: cts_common::RegionError| {
+                AuthError::Server(crate::error::ServerError(e.to_string()))
+            })?;
         Ok(Crn::new(region, workspace_id))
     }
 
@@ -186,8 +188,11 @@ impl Token {
         use std::collections::HashSet;
 
         let token_str = self.access_token.as_str();
-        let header = decode_header(token_str)
-            .map_err(|e| AuthError::InvalidToken(format!("invalid JWT header: {e}")))?;
+        let header = decode_header(token_str).map_err(|e| {
+            AuthError::InvalidToken(crate::error::InvalidToken(format!(
+                "invalid JWT header: {e}"
+            )))
+        })?;
 
         let dummy_key = DecodingKey::from_secret(&[]);
         let mut validation = Validation::new(header.alg);
@@ -198,7 +203,11 @@ impl Token {
 
         decode(token_str, &dummy_key, &validation)
             .map(|data| data.claims)
-            .map_err(|e| AuthError::InvalidToken(format!("failed to decode JWT claims: {e}")))
+            .map_err(|e| {
+                AuthError::InvalidToken(crate::error::InvalidToken(format!(
+                    "failed to decode JWT claims: {e}"
+                )))
+            })
     }
 
     /// Wasm32 path: decode the JWT payload by splitting + base64 + JSON. We
@@ -274,10 +283,10 @@ impl Token {
             let err: RefreshErrorResponse = resp.json().await?;
             tracing::debug!(error = %err.error, "token refresh failed");
             return Err(match err.error.as_str() {
-                "invalid_grant" => AuthError::InvalidGrant,
-                "invalid_client" => AuthError::InvalidClient,
-                "access_denied" => AuthError::AccessDenied,
-                _ => AuthError::Server(err.error_description),
+                "invalid_grant" => AuthError::InvalidGrant(crate::error::InvalidGrant),
+                "invalid_client" => AuthError::InvalidClient(crate::error::InvalidClient),
+                "access_denied" => AuthError::AccessDenied(crate::error::AccessDenied),
+                _ => AuthError::Server(crate::error::ServerError(err.error_description)),
             });
         }
 
@@ -476,7 +485,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, AuthError::InvalidGrant));
+        assert!(matches!(err, AuthError::InvalidGrant(_)));
     }
 
     #[tokio::test]
@@ -494,7 +503,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, AuthError::InvalidClient));
+        assert!(matches!(err, AuthError::InvalidClient(_)));
     }
 
     #[tokio::test]
@@ -512,7 +521,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(err, AuthError::AccessDenied));
+        assert!(matches!(err, AuthError::AccessDenied(_)));
     }
 
     #[tokio::test]
@@ -530,7 +539,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(&err, AuthError::Server(desc) if desc == "something_unexpected occurred"));
+        assert!(
+            matches!(&err, AuthError::Server(crate::error::ServerError(desc)) if desc == "something_unexpected occurred")
+        );
     }
 
     #[tokio::test]
@@ -616,7 +627,7 @@ mod tests {
     fn test_workspace_crn_fails_without_region() {
         let token = jwt_token(valid_claims_json());
         let err = token.workspace_crn().unwrap_err();
-        assert!(matches!(err, AuthError::NotAuthenticated));
+        assert!(matches!(err, AuthError::NotAuthenticated(_)));
     }
 
     #[test]

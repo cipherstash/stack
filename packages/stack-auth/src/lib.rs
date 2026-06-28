@@ -22,7 +22,6 @@
 #![cfg_attr(test, allow(clippy::panic))]
 #![cfg_attr(test, allow(unused_results))]
 
-use std::convert::Infallible;
 use std::future::Future;
 #[cfg(all(not(any(test, feature = "test-utils")), not(target_arch = "wasm32")))]
 use std::time::Duration;
@@ -40,12 +39,22 @@ mod auto_strategy;
 mod clock;
 mod device_session_refresher;
 mod device_session_strategy;
+mod error;
 mod oidc_federation_strategy;
 mod oidc_refresher;
 mod refresher;
 mod service_token;
 mod token;
 mod token_store;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use error::StoreError;
+pub use error::{
+    AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, InternalError, InvalidAccessKeyError,
+    InvalidClient, InvalidCrn, InvalidGrant, InvalidToken, InvalidUrl, InvalidWorkspaceId,
+    MissingWorkspaceCrn, NotAuthenticated, RequestError, ServerError, TokenExpired,
+    UnsupportedRegion, WorkspaceMismatch,
+};
 
 // Filesystem-backed device identity and the interactive device-code flow are
 // native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
@@ -297,148 +306,6 @@ impl SecretToken {
     }
 }
 
-/// Errors that can occur during an authentication flow.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
-#[non_exhaustive]
-pub enum AuthError {
-    /// The HTTP request to the auth server failed (network error, timeout, etc.).
-    #[error("HTTP request failed: {0}")]
-    Request(#[from] reqwest::Error),
-    /// The user denied the authorization request.
-    #[error("Authorization was denied")]
-    AccessDenied,
-    /// The grant type was rejected by the server.
-    #[error("Invalid grant")]
-    InvalidGrant,
-    /// The client ID is not recognized.
-    #[error("Invalid client")]
-    InvalidClient,
-    /// A URL could not be parsed.
-    #[error("Invalid URL: {0}")]
-    InvalidUrl(#[from] url::ParseError),
-    /// The requested region is not supported.
-    #[error("Unsupported region: {0}")]
-    #[diagnostic(help("Use a supported region, e.g. `ap-southeast-2.aws`."))]
-    Region(#[from] cts_common::RegionError),
-    /// The workspace CRN could not be parsed.
-    #[error("Invalid workspace CRN: {0}")]
-    #[diagnostic(help(
-        "A workspace CRN looks like `crn:<region>:<workspace-id>`, e.g. `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY`."
-    ))]
-    InvalidCrn(cts_common::InvalidCrn),
-    /// The token issued by the auth server is for a different workspace than
-    /// the one configured on the strategy. Surfaces when the access key was
-    /// minted for a different workspace, or when the wrong CRN was passed.
-    #[error("Workspace mismatch: token issued for {token_workspace}, but strategy is configured for {expected_workspace}")]
-    #[diagnostic(help(
-        "The access key or workspace CRN is scoped to a different workspace than the one requested — check which workspace the credential belongs to."
-    ))]
-    WorkspaceMismatch {
-        /// The workspace the strategy was configured for (from the CRN).
-        expected_workspace: cts_common::WorkspaceId,
-        /// The workspace the auth server's token actually carries.
-        token_workspace: cts_common::WorkspaceId,
-    },
-    /// The workspace ID could not be parsed.
-    #[error("Invalid workspace ID: {0}")]
-    InvalidWorkspaceId(#[from] cts_common::InvalidWorkspaceId),
-    /// An access key was provided but the workspace CRN is missing.
-    ///
-    /// Set the `CS_WORKSPACE_CRN` environment variable or call
-    /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
-    #[error("Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn")]
-    #[diagnostic(help(
-        "Most strategies need a workspace CRN — set the `CS_WORKSPACE_CRN` environment variable, or pass it explicitly, e.g. `AutoStrategyBuilder::with_workspace_crn`."
-    ))]
-    MissingWorkspaceCrn,
-    /// No credentials are available (e.g. not logged in, no access key configured).
-    #[error("Not authenticated")]
-    #[diagnostic(help(
-        "Log in with `stash login`, or set `CS_CLIENT_ACCESS_KEY` for service-to-service auth."
-    ))]
-    NotAuthenticated,
-    /// A token (access token or device code) has expired.
-    #[error("Token expired")]
-    TokenExpired,
-    /// The access key string is malformed (e.g. missing `CSAK` prefix or `.` separator).
-    #[error("Invalid access key: {0}")]
-    #[diagnostic(help("Access keys have the form `CSAK<key-id>.<secret>`."))]
-    InvalidAccessKey(#[from] access_key::InvalidAccessKey),
-    /// The JWT could not be decoded or its claims are malformed.
-    #[error("Invalid token: {0}")]
-    InvalidToken(String),
-    /// An unexpected error was returned by the auth server.
-    #[error("Server error: {0}")]
-    Server(String),
-    /// A token store operation failed.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[error("Token store error: {0}")]
-    Store(#[from] stack_profile::ProfileError),
-}
-
-impl AuthError {
-    /// The complete set of codes [`AuthError::error_code`] can return — the
-    /// stable, machine-readable contract surfaced across FFI (JS `Error.code`,
-    /// Node-API codes, the `index.d.ts` / wasm typing unions). Kept next to
-    /// `error_code` so the two move together. The binding crates derive their
-    /// expected union from this constant rather than re-scraping this source,
-    /// and `auth_error_code_is_stable_for_every_variant` pins that it stays in
-    /// lockstep with what `error_code` actually returns.
-    pub const ERROR_CODES: &'static [&'static str] = &[
-        "REQUEST_ERROR",
-        "ACCESS_DENIED",
-        "EXPIRED_TOKEN",
-        "INVALID_GRANT",
-        "INVALID_CLIENT",
-        "INVALID_URL",
-        "INVALID_REGION",
-        "INVALID_TOKEN",
-        "SERVER_ERROR",
-        "NOT_AUTHENTICATED",
-        "MISSING_WORKSPACE_CRN",
-        "INVALID_ACCESS_KEY",
-        "INVALID_CRN",
-        "WORKSPACE_MISMATCH",
-        "INVALID_WORKSPACE_ID",
-        // `Store` (and its code) only exists off-wasm — see `error_code` below.
-        #[cfg(not(target_arch = "wasm32"))]
-        "STORE_ERROR",
-    ];
-
-    /// Stable machine-readable identifier for surfacing across FFI boundaries
-    /// (e.g. JS `Error.code`, Node-API error codes). Named `error_code` rather
-    /// than `code` to avoid colliding with `miette::Diagnostic::code`, which
-    /// is inherited via `#[derive(Diagnostic)]`. Every value it can return is
-    /// listed in [`AuthError::ERROR_CODES`].
-    pub fn error_code(&self) -> &'static str {
-        match self {
-            Self::Request(_) => "REQUEST_ERROR",
-            Self::AccessDenied => "ACCESS_DENIED",
-            Self::TokenExpired => "EXPIRED_TOKEN",
-            Self::InvalidGrant => "INVALID_GRANT",
-            Self::InvalidClient => "INVALID_CLIENT",
-            Self::InvalidUrl(_) => "INVALID_URL",
-            Self::Region(_) => "INVALID_REGION",
-            Self::InvalidToken(_) => "INVALID_TOKEN",
-            Self::Server(_) => "SERVER_ERROR",
-            Self::NotAuthenticated => "NOT_AUTHENTICATED",
-            Self::MissingWorkspaceCrn => "MISSING_WORKSPACE_CRN",
-            Self::InvalidAccessKey(_) => "INVALID_ACCESS_KEY",
-            Self::InvalidCrn(_) => "INVALID_CRN",
-            Self::WorkspaceMismatch { .. } => "WORKSPACE_MISMATCH",
-            Self::InvalidWorkspaceId(_) => "INVALID_WORKSPACE_ID",
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Store(_) => "STORE_ERROR",
-        }
-    }
-}
-
-impl From<Infallible> for AuthError {
-    fn from(never: Infallible) -> Self {
-        match never {}
-    }
-}
-
 /// Read the `CS_CTS_HOST` environment variable and parse it as a URL.
 ///
 /// Returns `Ok(None)` if the variable is not set or empty.
@@ -472,15 +339,20 @@ where
     use base64::Engine;
     let segments: Vec<&str> = token.split('.').collect();
     if segments.len() != 3 {
-        return Err(AuthError::InvalidToken(
+        return Err(AuthError::InvalidToken(error::InvalidToken(
             "JWT must have three segments".to_string(),
-        ));
+        )));
     }
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(segments[1])
-        .map_err(|e| AuthError::InvalidToken(format!("base64 decode failed: {e}")))?;
-    serde_json::from_slice(&payload)
-        .map_err(|e| AuthError::InvalidToken(format!("failed to decode JWT claims: {e}")))
+        .map_err(|e| {
+            AuthError::InvalidToken(error::InvalidToken(format!("base64 decode failed: {e}")))
+        })?;
+    serde_json::from_slice(&payload).map_err(|e| {
+        AuthError::InvalidToken(error::InvalidToken(format!(
+            "failed to decode JWT claims: {e}"
+        )))
+    })
 }
 
 /// Create a [`reqwest::Client`] with standard timeouts.
@@ -525,86 +397,91 @@ mod tests {
     /// all variants except `Request`, whose inner `reqwest::Error` has no public
     /// constructor; if a new variant is added without a code, `error_code`'s
     /// exhaustive match fails to compile, so the contract can't silently drift.
-    ///
-    /// Also pins [`AuthError::ERROR_CODES`] against what `error_code` actually
-    /// returns: every constructed variant's code must be declared there, and
-    /// `ERROR_CODES` must hold exactly those codes plus `REQUEST_ERROR` (the one
-    /// variant with no public constructor). So the list can't grow stale entries
-    /// or omit a real one — which is what the binding crates' union tests trust.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn auth_error_code_is_stable_for_every_variant() {
-        use std::collections::BTreeSet;
-
         let workspace = "ZVATKW3VHMFG27DY"
             .parse::<cts_common::WorkspaceId>()
             .unwrap();
 
         let cases: Vec<(AuthError, &str)> = vec![
-            (AuthError::AccessDenied, "ACCESS_DENIED"),
-            (AuthError::TokenExpired, "EXPIRED_TOKEN"),
-            (AuthError::InvalidGrant, "INVALID_GRANT"),
-            (AuthError::InvalidClient, "INVALID_CLIENT"),
-            (AuthError::NotAuthenticated, "NOT_AUTHENTICATED"),
-            (AuthError::MissingWorkspaceCrn, "MISSING_WORKSPACE_CRN"),
-            (AuthError::Server("boom".into()), "SERVER_ERROR"),
-            (AuthError::InvalidToken("malformed".into()), "INVALID_TOKEN"),
             (
-                AuthError::InvalidUrl("not a url".parse::<url::Url>().unwrap_err()),
+                AuthError::AccessDenied(crate::error::AccessDenied),
+                "ACCESS_DENIED",
+            ),
+            (
+                AuthError::TokenExpired(crate::error::TokenExpired),
+                "EXPIRED_TOKEN",
+            ),
+            (
+                AuthError::InvalidGrant(crate::error::InvalidGrant),
+                "INVALID_GRANT",
+            ),
+            (
+                AuthError::InvalidClient(crate::error::InvalidClient),
+                "INVALID_CLIENT",
+            ),
+            (
+                AuthError::NotAuthenticated(crate::error::NotAuthenticated),
+                "NOT_AUTHENTICATED",
+            ),
+            (
+                AuthError::MissingWorkspaceCrn(crate::error::MissingWorkspaceCrn),
+                "MISSING_WORKSPACE_CRN",
+            ),
+            (
+                AuthError::AlreadyConsumed(crate::error::AlreadyConsumed),
+                "ALREADY_CONSUMED",
+            ),
+            (
+                AuthError::Server(crate::error::ServerError("boom".into())),
+                "SERVER_ERROR",
+            ),
+            (
+                AuthError::Internal(crate::error::InternalError("boom".into())),
+                "INTERNAL_ERROR",
+            ),
+            (
+                AuthError::InvalidToken(crate::error::InvalidToken("malformed".into())),
+                "INVALID_TOKEN",
+            ),
+            (
+                AuthError::from("not a url".parse::<url::Url>().unwrap_err()),
                 "INVALID_URL",
             ),
             (
-                AuthError::Region("not-a-region".parse::<cts_common::Region>().unwrap_err()),
+                AuthError::from("not-a-region".parse::<cts_common::Region>().unwrap_err()),
                 "INVALID_REGION",
             ),
             (
-                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
+                AuthError::from("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
                 "INVALID_CRN",
             ),
             (
-                AuthError::InvalidWorkspaceId("!".parse::<cts_common::WorkspaceId>().unwrap_err()),
+                AuthError::from("!".parse::<cts_common::WorkspaceId>().unwrap_err()),
                 "INVALID_WORKSPACE_ID",
             ),
             (
-                AuthError::InvalidAccessKey(
-                    "".parse::<crate::access_key::AccessKey>().unwrap_err(),
-                ),
+                AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err()),
                 "INVALID_ACCESS_KEY",
             ),
             (
-                AuthError::WorkspaceMismatch {
+                AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
                     expected_workspace: workspace,
                     token_workspace: workspace,
-                },
+                }),
                 "WORKSPACE_MISMATCH",
             ),
             #[cfg(not(target_arch = "wasm32"))]
             (
-                AuthError::Store(stack_profile::ProfileError::HomeDirNotFound),
+                AuthError::from(stack_profile::ProfileError::HomeDirNotFound),
                 "STORE_ERROR",
             ),
         ];
 
-        let declared: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
-
-        let mut from_variants: BTreeSet<&str> = BTreeSet::new();
         for (err, expected) in cases {
             assert_eq!(err.error_code(), expected, "error_code for {err:?}");
-            assert!(
-                declared.contains(expected),
-                "{expected} is returned by error_code() but missing from AuthError::ERROR_CODES",
-            );
-            from_variants.insert(expected);
         }
-
-        // `Request` has no public constructor, so it can't appear above; add its
-        // code explicitly so the set-equality below stays exact.
-        from_variants.insert("REQUEST_ERROR");
-
-        assert_eq!(
-            declared, from_variants,
-            "AuthError::ERROR_CODES drifted from the codes error_code() returns",
-        );
     }
 
     /// Every variant annotated with `#[diagnostic(help(..))]` must surface that
@@ -623,26 +500,30 @@ mod tests {
         // (variant, substring its help must contain) — one row per annotation.
         let with_help: Vec<(AuthError, &str)> = vec![
             (
-                AuthError::Region("not-a-region".parse::<cts_common::Region>().unwrap_err()),
+                AuthError::from("not-a-region".parse::<cts_common::Region>().unwrap_err()),
                 "supported region",
             ),
             (
-                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
+                AuthError::from("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
                 "crn:<region>:<workspace-id>",
             ),
             (
-                AuthError::WorkspaceMismatch {
+                AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
                     expected_workspace: workspace,
                     token_workspace: workspace,
-                },
+                }),
                 "different workspace",
             ),
-            (AuthError::MissingWorkspaceCrn, "CS_WORKSPACE_CRN"),
-            (AuthError::NotAuthenticated, "stash login"),
             (
-                AuthError::InvalidAccessKey(
-                    "".parse::<crate::access_key::AccessKey>().unwrap_err(),
-                ),
+                AuthError::MissingWorkspaceCrn(crate::error::MissingWorkspaceCrn),
+                "CS_WORKSPACE_CRN",
+            ),
+            (
+                AuthError::NotAuthenticated(crate::error::NotAuthenticated),
+                "stash login",
+            ),
+            (
+                AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err()),
                 "CSAK<key-id>.<secret>",
             ),
         ];
@@ -658,8 +539,8 @@ mod tests {
         // Un-annotated variants must report no help — keeps the contract
         // symmetric so a stray annotation doesn't slip in unnoticed.
         for err in [
-            AuthError::TokenExpired,
-            AuthError::InvalidToken("malformed".to_string()),
+            AuthError::TokenExpired(crate::error::TokenExpired),
+            AuthError::InvalidToken(crate::error::InvalidToken("malformed".to_string())),
         ] {
             assert!(
                 err.help().is_none(),

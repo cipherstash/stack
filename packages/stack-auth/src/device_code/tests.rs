@@ -109,7 +109,7 @@ async fn test_begin_invalid_client() {
 
     let err = strategy_for(&server, &dir).begin().await.unwrap_err();
 
-    assert!(matches!(err, AuthError::InvalidClient));
+    assert!(matches!(err, AuthError::InvalidClient(_)));
 }
 
 #[tokio::test]
@@ -124,7 +124,9 @@ async fn test_begin_server_error() {
 
     let err = strategy_for(&server, &dir).begin().await.unwrap_err();
 
-    assert!(matches!(&err, AuthError::Server(desc) if desc == "server_error occurred"));
+    assert!(
+        matches!(&err, AuthError::Server(crate::error::ServerError(desc)) if desc == "server_error occurred")
+    );
 }
 
 // ---- poll_for_token() tests ----
@@ -187,7 +189,7 @@ async fn test_poll_for_token_access_denied() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, AuthError::AccessDenied));
+    assert!(matches!(err, AuthError::AccessDenied(_)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -207,7 +209,7 @@ async fn test_poll_for_token_expired_token() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, AuthError::TokenExpired));
+    assert!(matches!(err, AuthError::TokenExpired(_)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -227,7 +229,7 @@ async fn test_poll_for_token_invalid_grant() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, AuthError::InvalidGrant));
+    assert!(matches!(err, AuthError::InvalidGrant(_)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -247,7 +249,7 @@ async fn test_poll_for_token_invalid_client() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, AuthError::InvalidClient));
+    assert!(matches!(err, AuthError::InvalidClient(_)));
 }
 
 #[tokio::test(start_paused = true)]
@@ -267,7 +269,9 @@ async fn test_poll_for_token_unknown_error() {
         .await
         .unwrap_err();
 
-    assert!(matches!(&err, AuthError::Server(desc) if desc == "something_unexpected occurred"));
+    assert!(
+        matches!(&err, AuthError::Server(crate::error::ServerError(desc)) if desc == "something_unexpected occurred")
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -363,7 +367,7 @@ async fn test_poll_for_token_slow_down_increases_interval() {
 
     let err = pending.poll_for_token().await.unwrap_err();
 
-    assert!(matches!(err, AuthError::TokenExpired));
+    assert!(matches!(err, AuthError::TokenExpired(_)));
 }
 
 // ---- ensure_trailing_slash / URL join tests ----

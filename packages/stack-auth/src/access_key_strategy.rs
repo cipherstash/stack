@@ -253,20 +253,20 @@ mod workspace_verification_tests {
             .await
             .expect_err("expected mismatch");
         match err {
-            AuthError::WorkspaceMismatch {
+            AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
                 expected_workspace,
                 token_workspace,
-            } => {
+            }) => {
                 assert_eq!(expected_workspace.as_str(), CRN_WS);
                 assert_eq!(token_workspace.as_str(), TOKEN_WS);
             }
             other => panic!("expected WorkspaceMismatch, got {other:?}"),
         }
         assert_eq!(
-            AuthError::WorkspaceMismatch {
+            AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
                 expected_workspace: CRN_WS.parse().unwrap(),
                 token_workspace: TOKEN_WS.parse().unwrap(),
-            }
+            })
             .error_code(),
             "WORKSPACE_MISMATCH",
         );

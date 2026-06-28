@@ -372,10 +372,10 @@ mod tests {
             .await
             .expect_err("expected mismatch");
         match err {
-            AuthError::WorkspaceMismatch {
+            AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
                 expected_workspace,
                 token_workspace,
-            } => {
+            }) => {
                 assert_eq!(expected_workspace.as_str(), EXPECTED_WS);
                 assert_eq!(token_workspace.as_str(), TOKEN_WS);
             }

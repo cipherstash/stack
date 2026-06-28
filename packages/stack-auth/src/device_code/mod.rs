@@ -112,8 +112,8 @@ impl DeviceCodeStrategy {
             let err: ErrorResponse = code_resp.json().await?;
             tracing::debug!(error = %err.error, "device code request failed");
             return Err(match err.error.as_str() {
-                "invalid_client" => AuthError::InvalidClient,
-                _ => AuthError::Server(err.error_description),
+                "invalid_client" => AuthError::InvalidClient(crate::error::InvalidClient),
+                _ => AuthError::Server(crate::error::ServerError(err.error_description)),
             });
         }
 
@@ -307,7 +307,7 @@ impl PendingDeviceCode {
         loop {
             if tokio::time::Instant::now() >= deadline {
                 tracing::debug!("device code expired while polling");
-                return Err(AuthError::TokenExpired);
+                return Err(AuthError::TokenExpired(crate::error::TokenExpired));
             }
 
             let resp = client
@@ -368,11 +368,17 @@ impl PendingDeviceCode {
                     interval += tokio::time::Duration::from_secs(5);
                     tracing::debug!(interval_secs = interval.as_secs(), "slowing down");
                 }
-                "expired_token" => return Err(AuthError::TokenExpired),
-                "access_denied" => return Err(AuthError::AccessDenied),
-                "invalid_grant" => return Err(AuthError::InvalidGrant),
-                "invalid_client" => return Err(AuthError::InvalidClient),
-                _ => return Err(AuthError::Server(err.error_description)),
+                "expired_token" => return Err(AuthError::TokenExpired(crate::error::TokenExpired)),
+                "access_denied" => return Err(AuthError::AccessDenied(crate::error::AccessDenied)),
+                "invalid_grant" => return Err(AuthError::InvalidGrant(crate::error::InvalidGrant)),
+                "invalid_client" => {
+                    return Err(AuthError::InvalidClient(crate::error::InvalidClient))
+                }
+                _ => {
+                    return Err(AuthError::Server(crate::error::ServerError(
+                        err.error_description,
+                    )))
+                }
             }
 
             tokio::time::sleep(interval).await;

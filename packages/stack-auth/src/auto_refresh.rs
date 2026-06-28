@@ -27,8 +27,10 @@ pub(crate) enum AutoRefreshError {
 impl From<AutoRefreshError> for crate::AuthError {
     fn from(err: AutoRefreshError) -> Self {
         match err {
-            AutoRefreshError::NotFound => crate::AuthError::NotAuthenticated,
-            AutoRefreshError::Expired => crate::AuthError::TokenExpired,
+            AutoRefreshError::NotFound => {
+                crate::AuthError::NotAuthenticated(crate::error::NotAuthenticated)
+            }
+            AutoRefreshError::Expired => crate::AuthError::TokenExpired(crate::error::TokenExpired),
             AutoRefreshError::Auth(e) => e,
         }
     }
@@ -388,16 +390,18 @@ mod tests {
         use crate::AuthError;
         assert!(matches!(
             AuthError::from(AutoRefreshError::NotFound),
-            AuthError::NotAuthenticated
+            AuthError::NotAuthenticated(_)
         ));
         assert!(matches!(
             AuthError::from(AutoRefreshError::Expired),
-            AuthError::TokenExpired
+            AuthError::TokenExpired(_)
         ));
         // The `Auth` variant passes the inner error through unchanged.
         assert!(matches!(
-            AuthError::from(AutoRefreshError::Auth(AuthError::AccessDenied)),
-            AuthError::AccessDenied
+            AuthError::from(AutoRefreshError::Auth(AuthError::AccessDenied(
+                crate::error::AccessDenied
+            ))),
+            AuthError::AccessDenied(_)
         ));
     }
 
@@ -1748,7 +1752,7 @@ mod expiry_crossing_regression {
                 calls.fetch_add(1, Ordering::SeqCst);
                 started.notify_one();
                 gate.notified().await;
-                Err(AuthError::TokenExpired)
+                Err(AuthError::TokenExpired(crate::error::TokenExpired))
             }
         }
     }
