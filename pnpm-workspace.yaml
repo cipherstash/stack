@@ -12,20 +12,20 @@ catalogs:
     # all seven entries on the same version so a single bump here moves
     # everything in lockstep.
     '@cipherstash/auth': 0.38.0
-    '@cipherstash/auth-darwin-arm64': 0.38.0
-    '@cipherstash/auth-darwin-x64': 0.38.0
-    '@cipherstash/auth-linux-arm64-gnu': 0.38.0
-    '@cipherstash/auth-linux-x64-gnu': 0.38.0
-    '@cipherstash/auth-linux-x64-musl': 0.38.0
-    '@cipherstash/auth-win32-x64-msvc': 0.38.0
+    '@cipherstash/auth-darwin-arm64': 0.39.0
+    '@cipherstash/auth-darwin-x64': 0.39.0
+    '@cipherstash/auth-linux-arm64-gnu': 0.39.0
+    '@cipherstash/auth-linux-x64-gnu': 0.39.0
+    '@cipherstash/auth-linux-x64-musl': 0.39.0
+    '@cipherstash/auth-win32-x64-msvc': 0.39.0
     tsup: 8.5.1
-    tsx: 4.22.1
+    tsx: 4.22.4
     typescript: 5.9.3
-    vitest: 3.2.4
+    vitest: 3.2.6
   security:
-    '@clerk/nextjs': 7.3.5
-    next: 15.5.18
-    vite: 8.0.13
+    '@clerk/nextjs': 7.5.7
+    next: 15.5.19
+    vite: 8.0.16
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
