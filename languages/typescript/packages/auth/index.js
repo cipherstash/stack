@@ -1,44 +1,64 @@
-// Wrapper that loads the native napi-rs module and enriches errors with a
-// machine-readable `.code` property by parsing the "CODE: message" format
-// that the Rust side produces.
+// Wrapper that loads the native napi-rs module and converts its outcomes into
+// the `@byteslice/result` shape: `{ data }` on success, `{ failure }` on a
+// domain error. The Rust side never reaches the caller as a throw — every
+// `AuthError` crosses the FFI boundary as a `__CS_FAIL__`-sentineled JSON blob
+// in the rejection/throw, which we parse here into a typed `failure`. Only a
+// genuine panic (no sentinel) propagates as a thrown exception.
 
 const native = require("./stack-auth-node.js");
 
-const CODE_RE = /^([A-Z_]+): /;
+// Must match `FAILURE_SENTINEL` in src/lib.rs.
+const FAILURE_SENTINEL = "__CS_FAIL__";
 
 /**
- * Parse the "CODE: message" format produced by the Rust bindings and attach
- * `.code` to the Error object.
+ * Convert a thrown/rejected native error into a `Result` `failure`.
+ *
+ * Domain failures carry the sentinel + serialized `AuthError`
+ * (`{ type, message, help?, url?, ...payload }`); we reuse the thrown `Error`
+ * as the live `failure.error`, restoring its message and attaching the
+ * structured fields. Anything without the sentinel is a real bug/panic and is
+ * re-thrown unchanged.
  */
-function enrichError(err) {
-  if (err instanceof Error) {
-    const match = CODE_RE.exec(err.message);
-    if (match) {
-      err.code = match[1];
-      err.message = err.message.slice(match[0].length);
-    }
+function toFailure(err) {
+  if (!(err instanceof Error) || !err.message.startsWith(FAILURE_SENTINEL)) {
+    throw err;
   }
-  throw err;
+  const { type, message, help, url, ...payload } = JSON.parse(
+    err.message.slice(FAILURE_SENTINEL.length),
+  );
+  err.message = message;
+  err.code = type;
+  const failure = { type, error: err, ...payload };
+  if (help !== undefined) {
+    err.help = help;
+    failure.help = help;
+  }
+  if (url !== undefined) {
+    err.url = url;
+    failure.url = url;
+  }
+  return { failure };
 }
 
 /**
- * Wrap an async function so that rejected errors get `.code` enrichment.
+ * Wrap an async native function so it resolves to `{ data }` / `{ failure }`
+ * and never rejects for a domain error.
  */
 function wrapAsync(fn) {
   return function (...args) {
-    return fn.apply(this, args).catch(enrichError);
+    return fn.apply(this, args).then((data) => ({ data }), toFailure);
   };
 }
 
 /**
- * Wrap a sync function so that thrown errors get `.code` enrichment.
+ * Wrap a sync native function so it returns `{ data }` / `{ failure }`.
  */
 function wrapSync(fn) {
   return function (...args) {
     try {
-      return fn.apply(this, args);
+      return { data: fn.apply(this, args) };
     } catch (err) {
-      enrichError(err);
+      return toFailure(err);
     }
   };
 }

@@ -6,12 +6,61 @@
  * the raw wasm-bindgen-generated bindings. Consumers see this; the raw
  * `createWithStore(crn, key, loadFn, saveFn)` shape stays internal.
  *
- * `AuthErrorCode`, `AuthError`, and `TokenResult` are shared with the
- * lower-level `/wasm` entry via `wasm-types.d.ts` — re-exported here so
- * importers only need one TS module reference.
+ * Every fallible operation returns a `@byteslice/result` `Result<T, AuthFailure>`
+ * (`{ data }` on success, `{ failure }` on error) assembled by the wrapper in
+ * `wasm-inline.mjs` from the structured error the wasm layer attaches — so
+ * consumers write `if (result.failure) …` and never `try/catch`. (The lower-
+ * level `/wasm` entry still throws; see `wasm-types.d.ts`.)
  */
 
-export type { AuthErrorCode, AuthError, TokenResult } from "./wasm-types.d.ts";
+import type { Result } from "@byteslice/result";
+
+export type { TokenResult } from "./wasm-types.d.ts";
+
+/** Fields present on every {@link AuthFailure}. */
+interface FailureBase {
+  /** The live `Error` from the wasm boundary, with `.message`/`.code`. */
+  error: Error;
+  /** Actionable diagnostic guidance, when the error carries it. */
+  help?: string;
+  /** A URL with more detail, when the error carries it. */
+  url?: string;
+}
+
+/**
+ * A domain failure returned in the `failure` arm of a `Result`. Discriminated
+ * by `type`; narrow to access per-variant payload (e.g. `WORKSPACE_MISMATCH`'s
+ * `expected`/`actual`). This is the full code set; the wasm strategies emit a
+ * subset (no device-flow or filesystem-store codes).
+ */
+export type AuthFailure =
+  | (FailureBase & { type: "REQUEST_ERROR" })
+  | (FailureBase & { type: "ACCESS_DENIED" })
+  | (FailureBase & { type: "EXPIRED_TOKEN" })
+  | (FailureBase & { type: "INVALID_GRANT" })
+  | (FailureBase & { type: "INVALID_CLIENT" })
+  | (FailureBase & { type: "INVALID_URL" })
+  | (FailureBase & { type: "INVALID_REGION" })
+  | (FailureBase & { type: "INVALID_TOKEN" })
+  | (FailureBase & { type: "SERVER_ERROR" })
+  | (FailureBase & { type: "NOT_AUTHENTICATED" })
+  | (FailureBase & { type: "MISSING_WORKSPACE_CRN" })
+  | (FailureBase & { type: "INVALID_ACCESS_KEY" })
+  | (FailureBase & { type: "INVALID_CRN" })
+  | (FailureBase & { type: "WORKSPACE_MISMATCH"; expected: string; actual: string })
+  | (FailureBase & { type: "INVALID_WORKSPACE_ID" })
+  | (FailureBase & { type: "ALREADY_CONSUMED" })
+  | (FailureBase & { type: "INTERNAL_ERROR" })
+  | (FailureBase & { type: "STORE_ERROR" });
+
+/** The machine-readable discriminant carried by every {@link AuthFailure}. */
+export type AuthErrorCode = AuthFailure["type"];
+
+/** The resolved value of a `getToken()` call. */
+export type GetTokenResult = Result<
+  import("./wasm-types.d.ts").TokenResult,
+  AuthFailure
+>;
 
 /**
  * Pluggable persistent cache for service tokens. Pair with the
@@ -73,9 +122,9 @@ export declare class AccessKeyStrategy {
     workspaceCrn: string,
     accessKey: string,
     options?: AccessKeyStrategyOptions,
-  ): AccessKeyStrategy;
+  ): Result<AccessKeyStrategy, AuthFailure>;
   /** Retrieve a valid access token, refreshing or re-authenticating as needed. */
-  getToken(): Promise<import("./wasm-types.d.ts").TokenResult>;
+  getToken(): Promise<GetTokenResult>;
   /** Release the underlying wasm resources. */
   free(): void;
 }
@@ -125,9 +174,9 @@ export declare class OidcFederationStrategy {
     workspaceCrn: string,
     getJwt: OidcProvider,
     options?: OidcFederationStrategyOptions,
-  ): OidcFederationStrategy;
+  ): Result<OidcFederationStrategy, AuthFailure>;
   /** Retrieve a valid CTS service token, federating or re-federating as needed. */
-  getToken(): Promise<import("./wasm-types.d.ts").TokenResult>;
+  getToken(): Promise<GetTokenResult>;
   /** Release the underlying wasm resources. */
   free(): void;
 }

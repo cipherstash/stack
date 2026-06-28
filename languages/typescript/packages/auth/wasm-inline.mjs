@@ -17,6 +17,22 @@ import {
 /** @typedef {() => string | Promise<string>} OidcProvider */
 /** @typedef {{ store?: TokenStore }} OidcFederationStrategyOptions */
 
+// Convert a thrown/rejected wasm error into a `Result` `failure`. The wasm
+// binding attaches the serialized `AuthError` as an `__authFailure` object on
+// the thrown `Error`; we reuse that `Error` as the live `failure.error`.
+// Anything without the brand is a genuine panic and is re-thrown.
+function toFailure(err) {
+  const details = err && err.__authFailure;
+  if (!details || typeof details.type !== "string") throw err;
+  const { type, help, url, ...payload } = details;
+  // `payload` still carries `message`; drop it from the spread fields.
+  delete payload.message;
+  const failure = { type, error: err, ...payload };
+  if (help !== undefined) failure.help = help;
+  if (url !== undefined) failure.url = url;
+  return { failure };
+}
+
 export class AccessKeyStrategy {
   #inner;
 
@@ -32,32 +48,40 @@ export class AccessKeyStrategy {
    * @returns {AccessKeyStrategy}
    */
   static create(workspaceCrn, accessKey, options) {
-    const store = options?.store;
-    if (store) {
-      // Wrap the user's `load` / `save` so the wasm binding always sees
-      // Promise-returning functions even if the caller passed sync ones —
-      // `js_sys::Promise::from` on the wasm side casts the return value as
-      // a Promise unconditionally, so sync values would otherwise reject.
-      const load = () => Promise.resolve(store.load());
-      const save = (/** @type {string} */ json) =>
-        Promise.resolve(store.save(json));
-      return new AccessKeyStrategy(
-        RawAccessKeyStrategy.createWithStore(
-          workspaceCrn,
-          accessKey,
-          load,
-          save,
+    try {
+      const store = options?.store;
+      if (store) {
+        // Wrap the user's `load` / `save` so the wasm binding always sees
+        // Promise-returning functions even if the caller passed sync ones —
+        // `js_sys::Promise::from` on the wasm side casts the return value as
+        // a Promise unconditionally, so sync values would otherwise reject.
+        const load = () => Promise.resolve(store.load());
+        const save = (/** @type {string} */ json) =>
+          Promise.resolve(store.save(json));
+        return {
+          data: new AccessKeyStrategy(
+            RawAccessKeyStrategy.createWithStore(
+              workspaceCrn,
+              accessKey,
+              load,
+              save,
+            ),
+          ),
+        };
+      }
+      return {
+        data: new AccessKeyStrategy(
+          RawAccessKeyStrategy.create(workspaceCrn, accessKey),
         ),
-      );
+      };
+    } catch (err) {
+      return toFailure(err);
     }
-    return new AccessKeyStrategy(
-      RawAccessKeyStrategy.create(workspaceCrn, accessKey),
-    );
   }
 
-  /** @returns {Promise<import("./wasm-inline.d.ts").TokenResult>} */
+  /** @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>} */
   getToken() {
-    return this.#inner.getToken();
+    return this.#inner.getToken().then((data) => ({ data }), toFailure);
   }
 
   free() {
@@ -80,34 +104,42 @@ export class OidcFederationStrategy {
    * @returns {OidcFederationStrategy}
    */
   static create(workspaceCrn, getJwt, options) {
-    // Wrap `getJwt` so the wasm binding always sees a Promise-returning
-    // function even if the caller passed a sync one — see the note in
-    // `AccessKeyStrategy.create`.
-    const jwt = () => Promise.resolve(getJwt());
-    const store = options?.store;
-    const baseUrl = options?.baseUrl;
-    if (store) {
-      const load = () => Promise.resolve(store.load());
-      const save = (/** @type {string} */ json) =>
-        Promise.resolve(store.save(json));
-      return new OidcFederationStrategy(
-        RawOidcFederationStrategy.createWithStore(
-          workspaceCrn,
-          jwt,
-          load,
-          save,
-          baseUrl,
+    try {
+      // Wrap `getJwt` so the wasm binding always sees a Promise-returning
+      // function even if the caller passed a sync one — see the note in
+      // `AccessKeyStrategy.create`.
+      const jwt = () => Promise.resolve(getJwt());
+      const store = options?.store;
+      const baseUrl = options?.baseUrl;
+      if (store) {
+        const load = () => Promise.resolve(store.load());
+        const save = (/** @type {string} */ json) =>
+          Promise.resolve(store.save(json));
+        return {
+          data: new OidcFederationStrategy(
+            RawOidcFederationStrategy.createWithStore(
+              workspaceCrn,
+              jwt,
+              load,
+              save,
+              baseUrl,
+            ),
+          ),
+        };
+      }
+      return {
+        data: new OidcFederationStrategy(
+          RawOidcFederationStrategy.create(workspaceCrn, jwt, baseUrl),
         ),
-      );
+      };
+    } catch (err) {
+      return toFailure(err);
     }
-    return new OidcFederationStrategy(
-      RawOidcFederationStrategy.create(workspaceCrn, jwt, baseUrl),
-    );
   }
 
-  /** @returns {Promise<import("./wasm-inline.d.ts").TokenResult>} */
+  /** @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>} */
   getToken() {
-    return this.#inner.getToken();
+    return this.#inner.getToken().then((data) => ({ data }), toFailure);
   }
 
   free() {
