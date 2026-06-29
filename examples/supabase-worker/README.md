@@ -22,7 +22,7 @@ pnpm install
 
 ```sh
 cp .env.example .env.local
-# fill in CS_CLIENT_ID, CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY (and optionally CS_REGION)
+# fill in CS_CLIENT_ID, CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY, CS_WORKSPACE_CRN
 
 supabase functions serve --env-file .env.local cipherstash-roundtrip
 ```

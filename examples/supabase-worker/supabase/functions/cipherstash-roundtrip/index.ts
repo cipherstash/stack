@@ -28,12 +28,13 @@ Deno.serve(async (_req: Request) => {
   const accessKey = Deno.env.get('CS_CLIENT_ACCESS_KEY')
   const clientId = Deno.env.get('CS_CLIENT_ID')
   const clientKey = Deno.env.get('CS_CLIENT_KEY')
-  const region = Deno.env.get('CS_REGION') ?? 'us-east-1.aws'
+  const workspaceCrn = Deno.env.get('CS_WORKSPACE_CRN')
 
   const missing = Object.entries({
     CS_CLIENT_ACCESS_KEY: accessKey,
     CS_CLIENT_ID: clientId,
     CS_CLIENT_KEY: clientKey,
+    CS_WORKSPACE_CRN: workspaceCrn,
   })
     .filter(([, v]) => !v)
     .map(([k]) => k)
@@ -52,7 +53,7 @@ Deno.serve(async (_req: Request) => {
     const client = await Encryption({
       schemas: [users],
       config: {
-        region,
+        workspaceCrn: workspaceCrn!,
         accessKey: accessKey!,
         clientId: clientId!,
         clientKey: clientKey!,

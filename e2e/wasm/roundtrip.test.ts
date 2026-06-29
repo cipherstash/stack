@@ -22,14 +22,13 @@ import {
   isEncrypted,
 } from '@cipherstash/stack/wasm-inline'
 
-// `CS_WORKSPACE_CRN` is intentionally not in this list — the WASM
-// client doesn't read it (workspace identity comes from the access-key
-// token). A separate ticket tracks adding parity with the Node entry,
-// at which point CRN should be added back here.
+// `CS_WORKSPACE_CRN` identifies the workspace and the region is derived
+// from it; the access-key token's workspace is asserted against the CRN.
 const REQUIRED_ENV = [
   'CS_CLIENT_ACCESS_KEY',
   'CS_CLIENT_ID',
   'CS_CLIENT_KEY',
+  'CS_WORKSPACE_CRN',
 ] as const
 
 function envOrSkip(): Record<(typeof REQUIRED_ENV)[number], string> | null {
@@ -72,10 +71,10 @@ Deno.test({
     const client = await Encryption({
       schemas: [users],
       config: {
-        // The WASM entry needs an explicit region for AccessKeyStrategy.
-        // This is the region of the CI test workspace the CS_* secrets
-        // target — not the documented default (see wasm-inline.ts).
-        region: 'ap-southeast-2.aws',
+        // The WASM entry identifies the workspace by CRN; the region is
+        // derived from it and the access-key token's workspace is asserted
+        // against it (see wasm-inline.ts).
+        workspaceCrn: env!.CS_WORKSPACE_CRN,
         accessKey: env!.CS_CLIENT_ACCESS_KEY,
         clientId: env!.CS_CLIENT_ID,
         clientKey: env!.CS_CLIENT_KEY,

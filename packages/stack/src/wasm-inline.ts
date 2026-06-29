@@ -21,10 +21,10 @@
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     region:    "us-east-1.aws",
- *     accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
- *     clientId:  Deno.env.get("CS_CLIENT_ID")!,
- *     clientKey: Deno.env.get("CS_CLIENT_KEY")!,
+ *     workspaceCrn: Deno.env.get("CS_WORKSPACE_CRN")!,
+ *     accessKey:    Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+ *     clientId:     Deno.env.get("CS_CLIENT_ID")!,
+ *     clientKey:    Deno.env.get("CS_CLIENT_KEY")!,
  *   },
  * })
  *
@@ -37,7 +37,7 @@
  *
  * For runtimes that need a custom token store (e.g. cookies on a
  * Supabase Edge Function), build the strategy yourself with
- * `AccessKeyStrategy.create(region, accessKey, { store })` from
+ * `AccessKeyStrategy.create(workspaceCrn, accessKey, { store })` from
  * `@cipherstash/auth/wasm-inline` and pass it via `config.strategy`.
  */
 
@@ -115,30 +115,25 @@ export type WasmPlaintext =
 /**
  * Config for {@link Encryption} on the WASM entry point.
  *
- * Unlike the Node entry, the WASM path needs the region passed
- * explicitly today (no default — workspace deployment region is a
- * caller concern). For service-to-service / CI use, pass `accessKey`
- * plus the workspace `clientId` / `clientKey` and we construct an
- * `AccessKeyStrategy` for you. To plug in a custom token store
- * (cookies on Supabase Edge, KV on Cloudflare Workers, …) build the
- * strategy with `AccessKeyStrategy.create(region, accessKey, { store })`
- * and hand it to `config.strategy` instead.
- *
- * NOTE: `region` will be removed in a future release. The strategy
- * will then take a `workspaceCrn` and derive the region from it —
- * single source of truth, with the bearer token's workspace asserted
- * against the CRN. Plan accordingly; the field is required for now
- * because the underlying `@cipherstash/auth/wasm-inline`
- * `AccessKeyStrategy.create()` still takes a region argument.
+ * Identify the workspace with a `workspaceCrn`
+ * (`crn:<region>:<workspace-id>`). The region is derived from the CRN —
+ * there's no separate `region` field — and the bearer token's workspace
+ * is asserted against the CRN (`getToken()` fails with
+ * `code === "WORKSPACE_MISMATCH"` on a mismatch). For service-to-service
+ * / CI use, pass `accessKey` plus the workspace `clientId` / `clientKey`
+ * and we construct an `AccessKeyStrategy` for you. To plug in a custom
+ * token store (cookies on Supabase Edge, KV on Cloudflare Workers, …)
+ * build the strategy with
+ * `AccessKeyStrategy.create(workspaceCrn, accessKey, { store })` and hand
+ * it to `config.strategy` instead.
  */
 export type WasmClientConfig = {
   /**
-   * CipherStash region, e.g. `"us-east-1.aws"`. Required for now.
-   * @deprecated will be replaced by `workspaceCrn` once
-   * `@cipherstash/auth` switches `AccessKeyStrategy.create()` to derive
-   * region from a CRN.
+   * Workspace CRN, format `crn:<region>:<workspace-id>` (e.g.
+   * `"crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"`). The region is parsed
+   * from the CRN; the workspace ID is asserted against the bearer token.
    */
-  region: string
+  workspaceCrn: string
   /** Workspace client identifier — required by the WASM client. */
   clientId: string
   /** Workspace client key — required by the WASM client. */
@@ -331,7 +326,8 @@ function resolveStrategy(cfg: WasmClientConfig): AccessKeyStrategy {
     )
   }
   if (cfg.strategy) return cfg.strategy
-  if (cfg.accessKey) return AccessKeyStrategy.create(cfg.region, cfg.accessKey)
+  if (cfg.accessKey)
+    return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey)
   throw new Error(
     '[encryption]: WASM entry requires either `config.accessKey` or `config.strategy`.',
   )
