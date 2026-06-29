@@ -2,11 +2,11 @@
 "@cipherstash/stack": minor
 ---
 
-Bump `@cipherstash/protect-ffi` to `0.26.0` and `@cipherstash/auth` to `0.39.0`, and replace the lock-context token ceremony with a strategy-based approach for identity-bound encryption.
+Bump `@cipherstash/protect-ffi` to `0.26.0` and `@cipherstash/auth` to `0.40.0`, and replace the lock-context token ceremony with a strategy-based approach for identity-bound encryption.
 
 **protect-ffi `0.26.0`** supersedes `0.25.0`. The public API is unchanged from `0.25` (internal fixes only). As in `0.25`, `serviceToken` is gone from the encrypt / decrypt / query option types; auth flows through the client's strategy / credentials, and lock contexts travel as `lockContext.identityClaim`. The WASM-inline path takes a single options object with the auth strategy nested under `strategy`, and `Encryption()` config uses **`workspaceCrn`** (`CS_WORKSPACE_CRN`) as the single source of truth — `CS_REGION` is no longer consulted.
 
-**Strategy-based, identity-bound encryption.** `@cipherstash/auth` `0.39` adds `OidcFederationStrategy`, which federates an end user's third-party OIDC JWT (Clerk, Supabase, Auth0, …) into a CTS service token. Pass it as `config.strategy` so every ZeroKMS request authenticates *as that user*, then bind the data key to a claim with `.withLockContext({ identityClaim })`:
+**Strategy-based, identity-bound encryption.** `@cipherstash/auth` `0.40` adds `OidcFederationStrategy`, which federates an end user's third-party OIDC JWT (Clerk, Supabase, Auth0, …) into a CTS service token. It takes a `workspaceCrn` (region derived from the CRN), matching `AccessKeyStrategy`. Pass it as `config.strategy` so every ZeroKMS request authenticates *as that user*, then bind the data key to a claim with `.withLockContext({ identityClaim })`:
 
 ```ts
 import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
@@ -14,7 +14,7 @@ import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 const client = await Encryption({
   schemas: [users],
   config: {
-    strategy: OidcFederationStrategy.create(region, workspaceId, () => getUserJwt()),
+    strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
   },
 })
 

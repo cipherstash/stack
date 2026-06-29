@@ -24,20 +24,6 @@ const users = encryptedTable('users', {
 
 const IDENTITY_CLAIM = { identityClaim: ['sub'] }
 
-/** Split `crn:<region>:<workspace-id>` into its region and workspace id. */
-function regionAndWorkspaceFromCrn(crn: string): {
-  region: string
-  workspaceId: string
-} {
-  const match = crn.match(/^crn:([^:]+):(.+)$/)
-  if (!match) {
-    throw new Error(
-      `CS_WORKSPACE_CRN must look like "crn:<region>:<workspace-id>", got "${crn}"`,
-    )
-  }
-  return { region: match[1], workspaceId: match[2] }
-}
-
 /**
  * Build an encryption client that authenticates every ZeroKMS request as
  * the end user behind `userJwt`. `getJwt` returns the *current* JWT and is
@@ -48,12 +34,11 @@ async function userClient(userJwt: string) {
   if (!crn) {
     throw new Error('CS_WORKSPACE_CRN must be set for the lock-context tests')
   }
-  const { region, workspaceId } = regionAndWorkspaceFromCrn(crn)
 
   return Encryption({
     schemas: [users],
     config: {
-      strategy: OidcFederationStrategy.create(region, workspaceId, () =>
+      strategy: OidcFederationStrategy.create(crn, () =>
         Promise.resolve(userJwt),
       ),
     },

@@ -668,7 +668,7 @@ export class EncryptionClient {
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     strategy: OidcFederationStrategy.create(region, workspaceId, () => getUserJwt()),
+ *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
  *   },
  * })
  *

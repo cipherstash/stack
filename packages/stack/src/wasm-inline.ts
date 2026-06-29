@@ -45,7 +45,7 @@
  * import { cookieStore } from "@cipherstash/auth/cookies"
  *
  * const strategy = OidcFederationStrategy.create(
- *   "ap-southeast-2.aws", workspaceId, () => getClerkSessionToken(req),
+ *   "crn:ap-southeast-2.aws:my-workspace-id", () => getClerkSessionToken(req),
  *   { store: cookieStore({ request: req, responseHeaders }) },
  * )
  * const client = await Encryption({ schemas, config: { strategy, clientId, clientKey } })

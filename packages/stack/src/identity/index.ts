@@ -63,7 +63,7 @@ export function resolveLockContext(input: LockContextInput): Context {
  * const client = await Encryption({
  *   schemas,
  *   config: {
- *     strategy: OidcFederationStrategy.create(region, workspaceId, () => getJwt()),
+ *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
  *   },
  * })
  *
