@@ -277,6 +277,14 @@ v3 `InferPlaintext` / `InferEncrypted` mirror v2:
   `EncryptedTableColumn` constraint those generics use. Single-value
   `encrypt`/`decrypt`/`encryptQuery` + `Encryption()` config DO work in this
   increment; model-method inference for v3 is a follow-up.
+- **v3 columns through the WASM-inline entry** (`wasm-inline.ts`) — known
+  boundary. `getColumnName()` (`src/wasm-inline.ts:314-320`) runtime-checks
+  `instanceof EncryptedColumn || instanceof EncryptedField` and throws otherwise,
+  so a v3 column passed to the WASM-inline client would throw at runtime. The
+  type widening still compiles (the `instanceof` guard narrows the wider union)
+  and this path is outside the scoped typecheck, so it is a documented deferred
+  boundary, not a regression. The batch-2 "no `instanceof`" / structural-runtime
+  claim is scoped to the native `operations/*.ts` path.
 - **Per-column DDL type emission** — deriving each column's Postgres type from
   its v3 builder. v2 hard-codes one native type (`eql_v2_encrypted`); v3 needs a
   per-column type (`eql_v3.text_search`, etc.). Net-new, touches every adapter.
