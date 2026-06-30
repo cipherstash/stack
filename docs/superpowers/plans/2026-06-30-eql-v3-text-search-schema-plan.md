@@ -54,6 +54,11 @@ Code-review feedback verified against the actual files before incorporation. Ver
   - **v2 precedent confirms it:** v2 already declares `match?: Required<MatchIndexOpts>` (`src/schema/index.ts:246`, not `:247` — `:247` is `ste_vec`) and the package builds/ships under this tsconfig. So `Required<MatchIndexOpts>` works in-repo today; the "can fail typecheck" premise is false here.
   - **Decision (robustness, NOT a fix):** still adopted `BuiltMatchIndexOpts` (`{ tokenizer: NonNullable<MatchIndexOpts['tokenizer']>; … }`) for `defaultMatchOpts()`'s return type and the private `matchOpts` field, because it states non-null intent explicitly and is decoupled from `Required<>`'s `exactOptionalPropertyTypes`-dependent subtlety. Verified empirically that this explicit type compiles clean BOTH without AND with `exactOptionalPropertyTypes` (so it also future-proofs the new module against a later strictness bump, which `Required<MatchIndexOpts>` would not survive). The public tuning input stays `MatchIndexOpts` (all-optional); only the internal resolved shape uses `BuiltMatchIndexOpts`. The emitted `build()` shape is unchanged (a fully-required object is assignable to the optional `ColumnSchema.indexes.match`).
 
+### Batch 7 — `@ts-expect-error` placement in the Batch-4 negative test
+
+- **[VALID — real defect] Batch-4 negative test placed `@ts-expect-error` on the wrong line.** The Batch-4 test put `// @ts-expect-error` directly above the `client.encryptQuery('…', {` call line, but the `EncryptedField`-not-assignable-to-`BuildableQueryColumn` error is a DEEP object-literal property mismatch that tsc reports on the inner `column:` argument line, not the call's first line. Since `@ts-expect-error` only suppresses the immediately-following line, the directive would be unused → **TS2578 "Unused '@ts-expect-error' directive"** AND the real error would leak from the `column:` line → `schema-v3.test-d.ts` goes red. (Hazard compounded: an implementer "fixing" the TS2578 by deleting the directive would silently delete the negative guarantee.) **Reproduced empirically** with the repo's TypeScript **5.9.3**: directive-above-the-call → TS2578 (at the directive line) + TS2741 (at the `column:` line); directive-directly-above-`column:` (multi-line) or a collapsed one-line call → both clean (no TS2578, no leak). **Fix (Variant B):** moved the `@ts-expect-error` to sit directly above the `column: v2usersWithField.profile.email,` line (kept the call multi-line), matching the placement style of Task 4's negative test, and added an inline comment explaining the deep-property-line requirement.
+- **Audit of all other `@ts-expect-error` directives in the plan:** the only other one is Task 4's "rejects a v2 `EncryptedColumn` in a v3 table" test — verified it ALREADY sits directly above the offending `email: encryptedColumn('email'),` property line (the generic-constraint mismatch lands there), so it is correctly placed and needs no change. No other mis-placed directives found.
+
 ## Global Constraints
 
 - **Do NOT change** the v2 module's (`packages/stack/src/schema/index.ts`) runtime behavior or the shape of its existing exported symbols. The DSL additions are purely additive. The ONLY permitted edit to this file is a backward-compatible **widening** of `buildEncryptConfig`'s parameter type to the shared structural `BuildableTable` contract (Task 5) — a pure widening (existing callers still type-check) required so the client accepts both v2 and v3 tables. (If the team prefers zero v2 edits, the documented fallback in Task 5 is to assemble the config inline in `Encryption()` instead.)
@@ -1010,9 +1015,14 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
     // query path were instead widened to BuildableColumn (the rejected
     // Batch-2/3 design), this call would compile and only fail at runtime with
     // "no indexes configured" — so this test guards against that re-widening.
-    // @ts-expect-error - EncryptedField is not assignable to BuildableQueryColumn
+    //
+    // The mismatch is a DEEP object-literal property error, so tsc reports it on
+    // the `column:` line — the `@ts-expect-error` MUST sit directly above that
+    // line (not above the call), or you get TS2578 "unused directive" + the real
+    // error leaking. (Mirror of Task 4's v2-column-rejected test placement.)
     client.encryptQuery('alice@example.com', {
       table: v2usersWithField,
+      // @ts-expect-error - EncryptedField is not assignable to BuildableQueryColumn
       column: v2usersWithField.profile.email,
     })
   })
