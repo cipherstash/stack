@@ -153,16 +153,10 @@ export type WasmPlaintext =
  * you. To plug in a custom token store (cookies on Supabase Edge, KV on
  * Cloudflare Workers, …) or to bind encryption to an end user, build the
  * strategy yourself — `AccessKeyStrategy` or `OidcFederationStrategy` —
- * and hand it to `config.strategy` instead.
+ * and hand it to `config.strategy` instead. A pre-built strategy already
+ * carries the CRN, so `workspaceCrn` is optional on that path.
  */
 export type WasmClientConfig = {
-  /**
-   * CipherStash workspace CRN, e.g.
-   * `"crn:ap-southeast-2.aws:my-workspace-id"`. Required — it is the
-   * single source of truth for workspace identity; the `AccessKeyStrategy`
-   * derives the region from it.
-   */
-  workspaceCrn: string
   /** Workspace client identifier — required by the WASM client. */
   clientId: string
   /** Workspace client key — required by the WASM client. */
@@ -171,10 +165,24 @@ export type WasmClientConfig = {
   // pre-built `strategy` — never both, never neither.
 } & (
   | {
+      /**
+       * CipherStash workspace CRN, e.g.
+       * `"crn:ap-southeast-2.aws:my-workspace-id"`. Required on the
+       * access-key path — it is the single source of truth for workspace
+       * identity and `AccessKeyStrategy` derives the region from it.
+       */
+      workspaceCrn: string
       accessKey: string
       strategy?: never
     }
   | {
+      /**
+       * Optional on the strategy path. A pre-built `strategy` (e.g.
+       * `OidcFederationStrategy.create(workspaceCrn, …)`) already
+       * encapsulates the workspace CRN and region, so the SDK never reads
+       * this — supply it if convenient, omit it otherwise.
+       */
+      workspaceCrn?: string
       accessKey?: never
       strategy: WasmAuthStrategy
     }
@@ -377,9 +385,14 @@ export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
     )
   }
   if (cfg.strategy) return cfg.strategy
-  // Discriminated union guarantees this branch implies `accessKey` is set.
-  // `AccessKeyStrategy.create` takes the full workspace CRN (region is
-  // derived from it inside `@cipherstash/auth`), so the CRN stays the
-  // single source of truth — no manual region split.
-  return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey as string)
+  // No strategy → the access-key arm, where `workspaceCrn` and `accessKey`
+  // are both required (and so present at runtime); the union widens their
+  // static types to `string | undefined`, hence the casts.
+  // `AccessKeyStrategy.create` takes the full workspace CRN — the region is
+  // derived from it inside `@cipherstash/auth`, so the CRN stays the single
+  // source of truth with no manual region split.
+  return AccessKeyStrategy.create(
+    cfg.workspaceCrn as string,
+    cfg.accessKey as string,
+  )
 }
