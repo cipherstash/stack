@@ -71,8 +71,6 @@ import {
   buildEncryptConfig,
   type CastAs,
   type EncryptConfig,
-  EncryptedColumn,
-  EncryptedField,
   type EncryptedTable,
   type EncryptedTableColumn,
   encryptConfigSchema,
@@ -355,12 +353,26 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
   return { ...config, tables }
 }
 
-function getColumnName(col: EncryptOptions['column']): string {
-  if (col instanceof EncryptedColumn || col instanceof EncryptedField) {
+/**
+ * Resolve a column's name structurally. Accepts any column builder exposing
+ * `getName()` — v2 `EncryptedColumn` / `EncryptedField` AND v3 column builders
+ * (e.g. `EncryptedTextSearchColumn`) alike — matching the structural
+ * `BuildableColumn` contract that `EncryptOptions.column` was widened to.
+ *
+ * An `instanceof EncryptedColumn || EncryptedField` gate would type-check after
+ * the widening but throw at runtime for a v3 column, breaking the type promise;
+ * resolving the name structurally keeps the wasm-inline encrypt entry honest.
+ * The `typeof` check still fails loudly for plain JS callers passing a value
+ * that is not a column builder.
+ *
+ * @internal exported for unit-test coverage.
+ */
+export function getColumnName(col: EncryptOptions['column']): string {
+  if (typeof col?.getName === 'function') {
     return col.getName()
   }
   throw new Error(
-    '[encryption]: opts.column must be an EncryptedColumn or EncryptedField',
+    '[encryption]: opts.column must be a column builder exposing getName()',
   )
 }
 
