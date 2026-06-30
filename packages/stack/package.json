@@ -51,6 +51,9 @@
 			"schema": [
 				"./dist/schema/index.d.ts"
 			],
+			"schema/v3": [
+				"./dist/schema/v3/index.d.ts"
+			],
 			"types": [
 				"./dist/types-public.d.ts"
 			],
@@ -117,6 +120,16 @@
 			"require": {
 				"types": "./dist/schema/index.d.cts",
 				"default": "./dist/schema/index.cjs"
+			}
+		},
+		"./schema/v3": {
+			"import": {
+				"types": "./dist/schema/v3/index.d.ts",
+				"default": "./dist/schema/v3/index.js"
+			},
+			"require": {
+				"types": "./dist/schema/v3/index.d.cts",
+				"default": "./dist/schema/v3/index.cjs"
 			}
 		},
 		"./types": {
