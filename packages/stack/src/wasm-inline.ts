@@ -356,7 +356,17 @@ function getColumnName(col: EncryptOptions['column']): string {
   )
 }
 
-function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
+/**
+ * Resolve the auth strategy for the WASM client from its config: an explicit
+ * `config.strategy`, or — for the access-key path — an `AccessKeyStrategy`
+ * built from the workspace CRN (region derived from it inside
+ * `@cipherstash/auth`). `strategy` and `accessKey` are mutually exclusive.
+ *
+ * @internal exported for offline unit coverage of the strategy wiring; the
+ * gated Deno e2e (`e2e/wasm/roundtrip.test.ts`) is the only other exercise of
+ * this path and it skips without real `CS_*` secrets.
+ */
+export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   // The discriminated union rejects `accessKey` + `strategy` together at
   // compile time, but JS callers (Deno / plain JS) bypass that — guard at
   // runtime so a conflicting config fails loudly instead of silently

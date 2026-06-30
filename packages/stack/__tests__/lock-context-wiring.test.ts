@@ -221,4 +221,40 @@ describe('lock-context wiring: identityClaim forwarded, serviceToken never sent'
     expect(opts.ciphertexts[0].lockContext).toEqual(IDENTITY_CLAIM)
     expect(hasServiceToken(opts)).toBe(false)
   })
+
+  // The plain `{ identityClaim }` input (vs a `LockContext` instance) flows
+  // through the same `resolveLockContext` funnel for every operation, so the
+  // single encrypt/decrypt assertions above plus the direct
+  // `resolveLockContext` unit test cover it. These two cases additionally
+  // assert the plain input lands in the per-element placement shapes —
+  // per-payload (`plaintexts[]`) and per-query (`queries[]`) — that single
+  // encrypt/decrypt don't exercise.
+  it('bulkEncrypt accepts a plain { identityClaim } object (no LockContext needed)', async () => {
+    unwrap(
+      await client
+        .bulkEncrypt([{ id: '1', plaintext: 'alice@example.com' }], {
+          column: users.email,
+          table: users,
+        })
+        .withLockContext({ identityClaim: ['sub'] }),
+    )
+
+    const opts = lastOpts(ffi.encryptBulk)
+    expect(opts.plaintexts[0].lockContext).toEqual(IDENTITY_CLAIM)
+    expect(hasServiceToken(opts)).toBe(false)
+  })
+
+  it('encryptQuery (batch) accepts a plain { identityClaim } object (no LockContext needed)', async () => {
+    unwrap(
+      await client
+        .encryptQuery([
+          { value: 'alice@example.com', column: users.email, table: users },
+        ])
+        .withLockContext({ identityClaim: ['sub'] }),
+    )
+
+    const opts = lastOpts(ffi.encryptQueryBulk)
+    expect(opts.queries[0].lockContext).toEqual(IDENTITY_CLAIM)
+    expect(hasServiceToken(opts)).toBe(false)
+  })
 })
