@@ -1,5 +1,5 @@
 import { describe, expectTypeOf, it } from 'vitest'
-import { Encryption, EncryptionClient } from '@/encryption'
+import { Encryption, type EncryptionClient } from '@/encryption'
 // v2 column builders — used to prove the v3 table type rejects a v2 column and
 // to assert v2 backward-compat against the widened client types.
 import {

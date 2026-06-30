@@ -119,7 +119,10 @@ describe('eql_v3 text_search column', () => {
 
     expect(b.indexes.match.k).toBe(6)
     expect(b.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
-    expect(b.indexes.match.tokenizer).toEqual({ kind: 'ngram', token_length: 3 })
+    expect(b.indexes.match.tokenizer).toEqual({
+      kind: 'ngram',
+      token_length: 3,
+    })
 
     // A second build() of an independent column is also pristine.
     const c = encryptedTextSearchColumn('c').build()
