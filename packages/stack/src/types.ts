@@ -7,6 +7,7 @@ import type {
   QueryOpName,
 } from '@cipherstash/protect-ffi'
 import type {
+  ColumnSchema,
   EncryptedColumn,
   EncryptedField,
   EncryptedTable,
@@ -131,8 +132,33 @@ export type ClientConfig = {
 
 type AtLeastOneCsTable<T> = [T, ...T[]]
 
+/** Structural contract for a column builder the client can consume for STORAGE
+ *  (`encrypt`). Satisfied by v2 `EncryptedColumn` / `EncryptedField` AND v3
+ *  `EncryptedTextSearchColumn` — fields ARE encryptable, so this stays wide. */
+export interface BuildableColumn {
+  getName(): string
+  build(): ColumnSchema
+}
+
+/** Structural contract for a column the client can consume for QUERIES
+ *  (`encryptQuery` / search terms). Narrower than `BuildableColumn`: it must
+ *  EXCLUDE non-queryable `EncryptedField` (a field has no indexes). A v2
+ *  `EncryptedColumn` qualifies via the nominal arm; a v3 queryable concrete
+ *  type qualifies via the `getEqlType()` structural arm; `EncryptedField` (no
+ *  `getEqlType`, not an `EncryptedColumn`) is rejected. */
+export type BuildableQueryColumn =
+  | EncryptedColumn
+  | (BuildableColumn & { getEqlType(): string })
+
+/** Structural contract for a table builder the client can consume. Satisfied by
+ *  v2 and v3 `EncryptedTable` alike. */
+export interface BuildableTable {
+  tableName: string
+  build(): { tableName: string; columns: Record<string, ColumnSchema> }
+}
+
 export type EncryptionClientConfig = {
-  schemas: AtLeastOneCsTable<EncryptedTable<EncryptedTableColumn>>
+  schemas: AtLeastOneCsTable<BuildableTable>
   config?: ClientConfig
 }
 
@@ -147,8 +173,8 @@ export type EncryptionClientConfig = {
  */
 export type EncryptOptions = {
   /** The column or nested field to encrypt into. From {@link EncryptedColumn} or {@link EncryptedField}. */
-  column: EncryptedColumn | EncryptedField
-  table: EncryptedTable<EncryptedTableColumn>
+  column: BuildableColumn // storage: fields are encryptable, so stays wide
+  table: BuildableTable
 }
 
 /** Format for encrypted query/search term return values */
@@ -159,8 +185,8 @@ export type EncryptedReturnType =
 
 export type SearchTerm = {
   value: JsPlaintext
-  column: EncryptedColumn
-  table: EncryptedTable<EncryptedTableColumn>
+  column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
+  table: BuildableTable
   returnType?: EncryptedReturnType
 }
 
@@ -310,8 +336,8 @@ export const queryTypeToQueryOp: Partial<Record<QueryTypeName, QueryOpName>> = {
 
 /** @internal */
 export type QueryTermBase = {
-  column: EncryptedColumn
-  table: EncryptedTable<EncryptedTableColumn>
+  column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
+  table: BuildableTable
   queryType?: QueryTypeName
   returnType?: EncryptedReturnType
 }
