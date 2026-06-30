@@ -7,12 +7,12 @@ import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
 import type {
-  EncryptedColumn,
-  EncryptedField,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@/schema'
-import type { Client, Encrypted, EncryptOptions } from '@/types'
+  BuildableColumn,
+  BuildableTable,
+  Client,
+  Encrypted,
+  EncryptOptions,
+} from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
@@ -24,8 +24,8 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   // rejects null at the type layer; this is defense in depth for callers
   // that reach this class through casts or dynamic field walking.
   private plaintext: JsPlaintext | null
-  private column: EncryptedColumn | EncryptedField
-  private table: EncryptedTable<EncryptedTableColumn>
+  private column: BuildableColumn
+  private table: BuildableTable
 
   constructor(
     client: Client,
@@ -109,8 +109,8 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   public getOperation(): {
     client: Client
     plaintext: JsPlaintext | null
-    column: EncryptedColumn | EncryptedField
-    table: EncryptedTable<EncryptedTableColumn>
+    column: BuildableColumn
+    table: BuildableTable
   } {
     return {
       client: this.client,

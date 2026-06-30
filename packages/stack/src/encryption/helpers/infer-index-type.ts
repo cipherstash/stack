@@ -1,13 +1,16 @@
 import type { JsPlaintext, QueryOpName } from '@cipherstash/protect-ffi'
-import type { EncryptedColumn } from '@/schema'
-import type { FfiIndexTypeName, QueryTypeName } from '../../types'
+import type {
+  BuildableQueryColumn,
+  FfiIndexTypeName,
+  QueryTypeName,
+} from '../../types'
 import { queryTypeToFfi, queryTypeToQueryOp } from '../../types'
 
 /**
  * Infer the primary index type from a column's configured indexes.
  * Priority: unique > match > ore > ste_vec (for scalar queries)
  */
-export function inferIndexType(column: EncryptedColumn): FfiIndexTypeName {
+export function inferIndexType(column: BuildableQueryColumn): FfiIndexTypeName {
   const config = column.build()
   const indexes = config.indexes
 
@@ -52,7 +55,7 @@ export function inferQueryOpFromPlaintext(plaintext: JsPlaintext): QueryOpName {
  * Validate that the specified index type is configured on the column
  */
 export function validateIndexType(
-  column: EncryptedColumn,
+  column: BuildableQueryColumn,
   indexType: FfiIndexTypeName,
 ): void {
   const config = column.build()
@@ -84,7 +87,7 @@ export function validateIndexType(
  * @throws Error if ste_vec is inferred but queryOp cannot be determined
  */
 export function resolveIndexType(
-  column: EncryptedColumn,
+  column: BuildableQueryColumn,
   queryType?: QueryTypeName,
   plaintext?: JsPlaintext | null,
 ): { indexType: FfiIndexTypeName; queryOp?: QueryOpName } {
