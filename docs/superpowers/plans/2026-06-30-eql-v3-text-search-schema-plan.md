@@ -13,16 +13,26 @@
 Code-review feedback verified against the actual files before incorporation. Verdicts and what changed:
 
 - **[VALID] `token_filters: []` nullish-merge edge is untested.** Confirmed `[] ?? x` evaluates to `[]` (an empty array is not nullish), so an explicit `token_filters: []` DOES override the downcase default through the `?? ` merge. v2 tests this (`schema-builders.test.ts:87-103` passes `token_filters: []` and asserts `[]` survives). The v3 plan's override test (Task 1, Step 1) deliberately omitted `token_filters` and never exercised the explicit-empty-array path. **Change:** added a dedicated `.freeTextSearch({ token_filters: [] })` override test asserting `match.token_filters === []`.
-- **[VALID] Repeated `.freeTextSearch()` calls are untested.** Confirmed the sketched v3 `freeTextSearch()` (like v2 `src/schema/index.ts:353-367`) re-merges each call against `DEFAULT_MATCH_OPTS`, NOT against current state — so `.freeTextSearch({ k: 8 }).freeTextSearch({ m: 4096 })` resets `k` back to `6` (last-call-wins-fully). This matches v2 exactly, so per the "mirror v2 exactly" global constraint we KEEP this behavior rather than switching to merge-against-current (which would diverge from v2). **Change:** added a repeated-call test that pins the v2-consistent last-call-wins-fully semantics.
-- **[VALID] Type-level tests don't run in CI (pre-existing repo issue).** Confirmed `vitest.config.ts` has no `typecheck` block, `package.json` `test` script is `vitest run` (no `--typecheck`), and `.github/workflows/tests.yml` runs `pnpm run test`. Vitest only collects `*.test-d.ts` under typecheck mode, so the existing `__tests__/types.test-d.ts` is ALSO unenforced in CI today. **Change:** added Task 4, Step 4 — add a `test:types` package script so the type suite is runnable with one command, and an explicit note that wiring it into CI is a repo-wide change tracked as an open question (out of scope for the additive v3 work).
+- **[VALID] Repeated `.freeTextSearch()` calls are untested.** Confirmed the sketched v3 `freeTextSearch()` (like v2 `src/schema/index.ts:353-367`) re-merges each call against a fresh defaults object (`defaultMatchOpts()` after the batch-2 factory change), NOT against current state — so `.freeTextSearch({ k: 8 }).freeTextSearch({ m: 4096 })` resets `k` back to `6` (last-call-wins-fully). This matches v2 exactly, so per the "mirror v2 exactly" global constraint we KEEP this behavior rather than switching to merge-against-current (which would diverge from v2). **Change:** added a repeated-call test that pins the v2-consistent last-call-wins-fully semantics.
+- **[VALID] Type-level tests don't run in CI (pre-existing repo issue).** Confirmed `vitest.config.ts` has no `typecheck` block, `package.json` `test` script is `vitest run` (no `--typecheck`), and `.github/workflows/tests.yml` runs `pnpm run test`. Vitest only collects `*.test-d.ts` under typecheck mode, so the existing `__tests__/types.test-d.ts` is ALSO unenforced in CI today. **Change:** added Task 4, Step 4 — add a `test:types` package script. (Batch 2 finalizes the CI decision: scope typecheck + wire into CI — see below.)
 - **[VALID] Dead-code remap in `InferPlaintext`/`InferEncrypted`.** In v3's flat single-type model `EncryptedV3TableColumn = { [key: string]: EncryptedTextSearchColumn }`, the `as C[K] extends EncryptedTextSearchColumn ? K : never` key-remap filters nothing (every value is already that type). v2 needs the filter because its column map also admits nested-object branches (`src/schema/index.ts:526`, `548`). **Change:** simplified both helpers to `{ [K in keyof C]: string }` / `{ [K in keyof C]: Encrypted }` with a comment marking the filter as a future extension point for when more v3 concrete types land.
 - **[VALID] API surface bloat: three ways to read one literal.** v2 exposes column metadata via methods only (`getName()`, `build()` — no getters: `src/schema/index.ts:240-407`). The plan exposed the eql type via a `get eqlType` getter AND `getEqlType()` AND an exported const. **Change (partial):** dropped the `get eqlType` property getter; kept `getEqlType()` (method, matching v2 convention) and the exported `TEXT_SEARCH_EQL_TYPE` const (the single source-of-truth literal, useful for external comparison without instantiation). Updated the constraint, the interface list, and the test that asserted `col.eqlType`.
 - **[VALID] Assertions.** **Changes:** switched the load-bearing/default `build()` assertions to `toStrictEqual` (catches stray `undefined` keys); switched the two column-instance type checks from the looser `toMatchTypeOf` to `toEqualTypeOf`; added a negative `@ts-expect-error` type test proving a v2 `EncryptedColumn` is rejected by the v3 `EncryptedV3TableColumn` constraint (v2/v3 column classes carry different private fields, so they are nominally non-assignable — the rejection is real).
 - **[VALID] Type tightening.** **Changes:** tightened `InferPlaintext`/`InferEncrypted` constraints from `EncryptedTable<any>` to `EncryptedTable<EncryptedV3TableColumn>`; inlined the pointless `const castAs: CastAs = 'string'` local into `cast_as: 'string'` (the `ColumnSchema` return type already checks the literal against `CastAs`), and dropped the now-unused `CastAs` import.
 
+### Batch 2 — scope decision + further review
+
+**SCOPE DECISION (Option A): v3 must WORK with the client.** This increment now includes widening the public client types so the v3 builders are accepted by `Encryption` / `encrypt` / `decrypt` / `encryptQuery`. Verified the runtime path is purely structural — no `instanceof` anywhere in `src/encryption/operations/*.ts`; the client only reads `column.getName()` (`encrypt.ts:53` etc.), `column.build()` (`encryption/helpers/infer-index-type.ts:11,58`), `table.tableName` (`encrypt.ts:52` etc.), `table.build().columns` (`encryption/helpers/model-helpers.ts:268,566`; dynamodb ops), and `buildEncryptConfig(...schemas)` which calls `tb.build()` (`encryption/index.ts:674`). The blocking types are in `src/types.ts`: `EncryptionClientConfig.schemas` (:98), `EncryptOptions.column`/`table` (:113-114), `SearchTerm` (:123-128) / `QueryTermBase` (:275-280) `.column`/`.table` — all typed against nominal v2 classes (private fields → v3 class not assignable). **Added Task 5** to widen these to a structural contract; runtime is untouched.
+
+- **[VALID — real latent bug] Shared mutable defaults.** Confirmed in the plan's sketch: `this.matchOpts = { ...DEFAULT_MATCH_OPTS }` is a SHALLOW copy, so the module-level `DEFAULT_MATCH_OPTS.tokenizer` and `.token_filters` (and the `{ kind: 'downcase' }` object inside) are shared by reference across every column built from defaults; `.freeTextSearch()` re-uses those same refs on the `?? ` fallback; and `build()` returns `this.matchOpts` directly. So a caller mutating one built config can mutate the shared defaults used by later columns (cross-column aliasing). **v2 comparison:** v2 (`src/schema/index.ts:353-367`) constructs FRESH inline object literals each `freeTextSearch()` call (no shared module-level const), so it has no cross-column aliasing — but its `build()` still returns `this.indexesValue` by reference, a milder self-aliasing latent issue. Not fixing v2 here. **Change (Task 1):** replaced the `DEFAULT_MATCH_OPTS` const with a `defaultMatchOpts()` factory (fresh nested objects per call) and made `build()` return a deep-cloned `match` block; added a two-column independent-mutation test.
+- **[VALID] Missing changeset.** Confirmed the repo uses Changesets (`.changeset/config.json`, sample `.changeset/native-binary-guards.md`). Frontmatter key is the package `name`; `packages/stack/package.json` name is `@cipherstash/stack`. **Change: added Task 6** to create a `.changeset/*.md` with a **minor** bump (additive `./schema/v3` subpath + exports, plus backward-compatible type widening).
+- **[VALID] Task 4 TDD label.** "Write the failing type test" contradicted "run to verify it passes" — these type tests are expected green on first run. **Change:** renamed Task 4 Step 1 to "Write type-level regression tests" and adjusted the surrounding wording so the sequencing is honest.
+- **[CI — scoped path chosen, with finding] Enforce v3 type tests in CI.** Ran `pnpm exec vitest --run --typecheck __tests__/types.test-d.ts`: the `types.test-d.ts` assertions PASS (18 passed, "Type Errors: no errors"), but the package-wide typecheck surfaces **124 pre-existing "Unhandled Source Error"s** — `src/wasm-inline.ts` can't resolve `@cipherstash/auth/wasm-inline` / `@cipherstash/protect-ffi/wasm-inline` type decls, plus a type mismatch in `__tests__/wasm-inline-normalize.test.ts:69`. Root cause: `tsconfig.json` has NO `include`, so typecheck checks every file. Verified `@/encryption` does NOT import `wasm-inline.ts`, so a typecheck program rooted only at the `*.test-d.ts` files (which import `@/schema`, `@/schema/v3`, `@/types`, `@/encryption`) will not reach the broken modules. **Decision (per coordinator's "scope safely"):** SCOPE Vitest typecheck to the stack package's type-test files via a dedicated narrow `tsconfig.typecheck.json`, add a `test:types` script, and wire THAT into CI — so v3 (and the existing) type tests are enforced without forcing a repo-wide cleanup. The 124 latent wasm-inline typecheck errors are recorded as a flagged follow-up, NOT fixed here. (See Task 4, Step 4.)
+
 ## Global Constraints
 
-- **Do NOT modify** `packages/stack/src/schema/index.ts` (the v2 module). v3 is purely additive.
+- **Do NOT change** the v2 module's (`packages/stack/src/schema/index.ts`) runtime behavior or the shape of its existing exported symbols. The DSL additions are purely additive. The ONLY permitted edit to this file is a backward-compatible **widening** of `buildEncryptConfig`'s parameter type to the shared structural `BuildableTable` contract (Task 5) — a pure widening (existing callers still type-check) required so the client accepts both v2 and v3 tables. (If the team prefers zero v2 edits, the documented fallback in Task 5 is to assemble the config inline in `Encryption()` instead.)
+- **Runtime is structural and unchanged.** The encrypt/decrypt/query path reads only `column.getName()`, `column.build()`, `table.tableName`, `table.build().columns` — no `instanceof`. Client integration is achieved by widening the public TYPES (Task 5), not by a runtime rewrite.
 - v3 builders MUST emit the existing `ColumnSchema` / `EncryptConfig` shape imported from `@/schema` — reuse the v2 types, do not redefine them.
 - `cast_as` MUST be the SDK-facing literal `'string'` (NOT `'text'`). `toEqlCastAs` is a v2/wasm-inline concern and is out of scope here.
 - Match-index defaults MUST mirror the v2 `freeTextSearch()` builder **exactly**: `tokenizer: { kind: 'ngram', token_length: 3 }`, `token_filters: [{ kind: 'downcase' }]`, `k: 6`, `m: 2048`, `include_original: true`. (Note: `include_original` is `true` — the v2 builder default, not the zod-schema default of `false`.)
@@ -40,7 +50,13 @@ Code-review feedback verified against the actual files before incorporation. Ver
 - **Create:** `packages/stack/__tests__/schema-v3.test.ts` — runtime behavior tests.
 - **Create:** `packages/stack/__tests__/schema-v3.test-d.ts` — type-level inference tests.
 - **Modify:** `packages/stack/tsup.config.ts` — add `src/schema/v3/index.ts` to the main config's `entry` array.
-- **Modify:** `packages/stack/package.json` — add the `./schema/v3` export and `typesVersions` entry.
+- **Modify:** `packages/stack/package.json` — add the `./schema/v3` export, `typesVersions` entry, and a `test:types` script.
+- **Modify:** `packages/stack/src/types.ts` — define the structural `BuildableColumn` / `BuildableTable` contract and widen `EncryptionClientConfig.schemas`, `EncryptOptions`, `SearchTerm` / `QueryTermBase` to it (Task 5).
+- **Modify:** `packages/stack/src/schema/index.ts` — backward-compatible widening of `buildEncryptConfig`'s parameter type ONLY (Task 5; see Global Constraints for the fallback).
+- **Create:** `packages/stack/tsconfig.typecheck.json` — narrow tsconfig (roots = `__tests__/**/*.test-d.ts`) so Vitest typecheck enforces the type tests without dragging in the 124 pre-existing wasm-inline errors (Task 4).
+- **Modify:** `packages/stack/vitest.config.ts` — add a `typecheck` block (include `__tests__/**/*.test-d.ts`, `tsconfig: './tsconfig.typecheck.json'`) (Task 4).
+- **Modify:** `.github/workflows/tests.yml` — run the scoped type tests in CI (Task 4).
+- **Create:** `.changeset/<name>.md` — minor bump for `@cipherstash/stack` (Task 6).
 
 ---
 
@@ -141,9 +157,9 @@ describe('eql_v3 text_search column', () => {
   })
 
   it('repeated .freeTextSearch() calls are last-call-wins-fully (each re-merges against defaults, not prior state)', () => {
-    // Each call re-merges against DEFAULT_MATCH_OPTS, not the accumulated
-    // matchOpts — so the second call resets k back to its default of 6. This
-    // is intentional: it mirrors v2 exactly. Pinned here so a future
+    // Each call re-merges against a fresh defaultMatchOpts(), not the
+    // accumulated matchOpts — so the second call resets k back to its default
+    // of 6. This is intentional: it mirrors v2 exactly. Pinned here so a future
     // "merge against current state" change can't silently slip in.
     const built = encryptedTextSearchColumn('email')
       .freeTextSearch({ k: 8 })
@@ -171,6 +187,27 @@ describe('eql_v3 text_search column', () => {
     expect(built).not.toHaveProperty('eqlType')
     expect(Object.keys(built).sort()).toEqual(['cast_as', 'indexes'])
   })
+
+  it('built columns share no mutable state: mutating one build() output does not affect another', () => {
+    // Guards against the shared-defaults aliasing bug: defaults come from a
+    // per-instance factory and build() deep-clones the match block.
+    const a = encryptedTextSearchColumn('a').build()
+    const b = encryptedTextSearchColumn('b').build()
+
+    // Mutate every nested level of a's match block.
+    a.indexes.match.k = 999
+    a.indexes.match.token_filters.push({ kind: 'downcase' })
+    a.indexes.match.tokenizer = { kind: 'standard' }
+
+    expect(b.indexes.match.k).toBe(6)
+    expect(b.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+    expect(b.indexes.match.tokenizer).toEqual({ kind: 'ngram', token_length: 3 })
+
+    // A second build() of an independent column is also pristine.
+    const c = encryptedTextSearchColumn('c').build()
+    expect(c.indexes.match.k).toBe(6)
+    expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+  })
 })
 ```
 
@@ -197,13 +234,21 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
  * Default match-index parameters. These mirror the v2 `freeTextSearch()`
  * builder defaults EXACTLY (note `include_original: true`, which is the v2
  * builder default rather than the zod-schema default of `false`).
+ *
+ * This is a FACTORY (not a shared `const`) so every caller gets fresh, unaliased
+ * nested objects (`tokenizer`, `token_filters` and the `{ kind: 'downcase' }`
+ * inside it). A shared const would be shallow-copied by `{ ...DEFAULT }`, leaving
+ * those nested objects aliased across every column — a caller mutating one built
+ * config could then corrupt the defaults used by later columns.
  */
-const DEFAULT_MATCH_OPTS: Required<MatchIndexOpts> = {
-  tokenizer: { kind: 'ngram', token_length: 3 },
-  token_filters: [{ kind: 'downcase' }],
-  k: 6,
-  m: 2048,
-  include_original: true,
+function defaultMatchOpts(): Required<MatchIndexOpts> {
+  return {
+    tokenizer: { kind: 'ngram', token_length: 3 },
+    token_filters: [{ kind: 'downcase' }],
+    k: 6,
+    m: 2048,
+    include_original: true,
+  }
 }
 
 /**
@@ -219,7 +264,7 @@ export class EncryptedTextSearchColumn {
 
   constructor(columnName: string) {
     this.columnName = columnName
-    this.matchOpts = { ...DEFAULT_MATCH_OPTS }
+    this.matchOpts = defaultMatchOpts()
   }
 
   /**
@@ -236,13 +281,15 @@ export class EncryptedTextSearchColumn {
    * on for this type. Merge semantics mirror v2's `opts?.x ?? default`.
    */
   freeTextSearch(opts?: MatchIndexOpts): this {
+    // A fresh defaults object per call supplies the `?? ` fallbacks, so no
+    // nested default object is ever shared into `this.matchOpts` by reference.
+    const defaults = defaultMatchOpts()
     this.matchOpts = {
-      tokenizer: opts?.tokenizer ?? DEFAULT_MATCH_OPTS.tokenizer,
-      token_filters: opts?.token_filters ?? DEFAULT_MATCH_OPTS.token_filters,
-      k: opts?.k ?? DEFAULT_MATCH_OPTS.k,
-      m: opts?.m ?? DEFAULT_MATCH_OPTS.m,
-      include_original:
-        opts?.include_original ?? DEFAULT_MATCH_OPTS.include_original,
+      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
+      token_filters: opts?.token_filters ?? defaults.token_filters,
+      k: opts?.k ?? defaults.k,
+      m: opts?.m ?? defaults.m,
+      include_original: opts?.include_original ?? defaults.include_original,
     }
     return this
   }
@@ -251,12 +298,21 @@ export class EncryptedTextSearchColumn {
   build(): ColumnSchema {
     // `cast_as` is typed `CastAs` by the `ColumnSchema` return type, so the
     // literal is checked here without a redundant local annotation.
+    //
+    // Deep-clone the match block so the returned config NEVER aliases this
+    // builder's internal `matchOpts` (or any caller-supplied opts merged into
+    // it). A caller mutating the returned object cannot corrupt this builder's
+    // state or another column's defaults.
     return {
       cast_as: 'string',
       indexes: {
         unique: { token_filters: [] },
         ore: {},
-        match: this.matchOpts,
+        match: {
+          ...this.matchOpts,
+          tokenizer: { ...this.matchOpts.tokenizer },
+          token_filters: this.matchOpts.token_filters.map((f) => ({ ...f })),
+        },
       },
     }
   }
@@ -281,7 +337,7 @@ export function encryptedTextSearchColumn(
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm exec vitest run __tests__/schema-v3.test.ts`
-Expected: PASS (all 9 tests in this describe block green).
+Expected: PASS (all 10 tests in this describe block green).
 
 - [ ] **Step 5: Commit**
 
@@ -624,18 +680,23 @@ git commit -m "feat(stack): wire @cipherstash/stack/schema/v3 export subpath"
 
 ---
 
-### Task 4: Type-level inference tests
+### Task 4: Type-level inference tests + CI enforcement
 
 **Files:**
 - Create: `packages/stack/__tests__/schema-v3.test-d.ts`
+- Create: `packages/stack/tsconfig.typecheck.json` (Step 4)
+- Modify: `packages/stack/vitest.config.ts` (add a scoped `typecheck` block — Step 4)
 - Modify: `packages/stack/package.json` (add a `test:types` script — Step 4)
+- Modify: `.github/workflows/tests.yml` (run the scoped type tests in CI — Step 4)
+
+> Note: the v3 client-integration acceptance type-tests (`Encryption({ schemas: [v3users] })`, `client.encrypt`/`decrypt`/`encryptQuery` with v3 builders) are added in **Task 5**, which also appends to this same `schema-v3.test-d.ts`. They are enforced by the same CI wiring set up here.
 
 **Interfaces:**
 - Consumes: `encryptedTable`, `encryptedTextSearchColumn`, `type EncryptedTextSearchColumn`, `type InferEncrypted`, `type InferPlaintext` from `@/schema/v3`; `type Encrypted` from `@/types`; `encryptedColumn` from `@/schema` (v2, for the negative `@ts-expect-error` rejection test).
 
-- [ ] **Step 1: Write the failing type test**
+- [ ] **Step 1: Write type-level regression tests**
 
-Create `packages/stack/__tests__/schema-v3.test-d.ts`:
+These are regression/guard tests, expected to type-check green on first run (Tasks 1-2 already define the types they assert). Create `packages/stack/__tests__/schema-v3.test-d.ts`:
 
 ```ts
 import { describe, expectTypeOf, it } from 'vitest'
@@ -701,26 +762,280 @@ Expected: PASS — no type errors reported. (If `@/schema/v3` types were missing
 Run: `pnpm exec vitest run __tests__/schema-v3.test.ts`
 Expected: PASS (all runtime tests still green — no regression from the type-test file).
 
-- [ ] **Step 4: Make the type suite runnable with one command (CI enforcement gap)**
+- [ ] **Step 4: Enforce the type tests in CI (scoped typecheck)**
 
-`.test-d.ts` files are collected by Vitest ONLY in typecheck mode. Today `vitest.config.ts` has no `typecheck` block and `package.json`'s `test` script is `vitest run` (no `--typecheck`), and CI (`.github/workflows/tests.yml`) runs `pnpm run test`. So neither this new `schema-v3.test-d.ts` NOR the pre-existing `__tests__/types.test-d.ts` is enforced in CI — a wrong `InferPlaintext`/`InferEncrypted` shape would NOT fail the build. This is a pre-existing repo issue, not introduced by v3.
+`.test-d.ts` files are collected by Vitest ONLY in typecheck mode, and today nothing runs typecheck in CI (`package.json` `test` = `vitest run`; `tests.yml` runs `pnpm run test`). So neither this `schema-v3.test-d.ts` nor the pre-existing `types.test-d.ts` is enforced — a wrong inferred shape would NOT fail the build.
 
-Add a `test:types` script to `packages/stack/package.json` so the type suite is runnable with one command (this is purely additive and does not change the default `test` behavior):
+**Verified finding (do not skip):** `tsconfig.json` has NO `include`, so a naive package-wide `vitest --typecheck` checks every file and surfaces **124 pre-existing "Unhandled Source Error"s** unrelated to v3 — `src/wasm-inline.ts` cannot resolve `@cipherstash/auth/wasm-inline` / `@cipherstash/protect-ffi/wasm-inline` type decls, plus a type mismatch at `__tests__/wasm-inline-normalize.test.ts:69`. (The `*.test-d.ts` assertions themselves pass.) We therefore SCOPE the typecheck program to the type-test files so v3 is enforced without forcing a repo-wide cleanup. Verified `@/encryption` does not import `wasm-inline.ts`, so a program rooted at the `*.test-d.ts` files does not reach the broken modules.
+
+a) Create `packages/stack/tsconfig.typecheck.json` — narrow roots so tsc only pulls the type-test files and what they actually import:
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "include": ["__tests__/**/*.test-d.ts"]
+}
+```
+
+b) Add a scoped `typecheck` block to `packages/stack/vitest.config.ts`:
+
+```ts
+import { resolve } from 'node:path'
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@/': resolve(__dirname, './src') + '/',
+    },
+  },
+  test: {
+    typecheck: {
+      // Enforced only via the `test:types` script (below) / CI, not the default
+      // `vitest run`. Scoped tsconfig keeps the 124 pre-existing wasm-inline
+      // typecheck errors out of scope (tracked as a follow-up).
+      tsconfig: './tsconfig.typecheck.json',
+      include: ['__tests__/**/*.test-d.ts'],
+    },
+  },
+})
+```
+
+c) Add a `test:types` script to `packages/stack/package.json`:
 
 ```json
     "test:types": "vitest --run --typecheck",
 ```
 
 Run: `pnpm run test:types`
-Expected: PASS — typechecks `schema-v3.test-d.ts` AND the existing `types.test-d.ts`.
+Expected: PASS — `schema-v3.test-d.ts`, the Task 5 client-integration acceptance tests, AND the existing `types.test-d.ts` all type-check; ZERO errors reported.
 
-> **Open question for the user (do NOT decide unilaterally):** should `test:types` be wired into CI (e.g. a step in `tests.yml`, or by adding a `typecheck.enabled` block to `vitest.config.ts` so the default `test` run also typechecks)? Doing so is a repo-wide change — it would start enforcing ALL `*.test-d.ts` in the package, which could surface latent type errors in pre-existing suites — so it is intentionally OUT OF SCOPE for this additive v3 work and left as a follow-up decision.
+> **STOP-gate:** if this scoped run still reports the `wasm-inline` errors (e.g. a type-test transitively imports a broken module), narrow `tsconfig.typecheck.json` further (add an `exclude` for `src/wasm-inline.ts` / `__tests__/wasm-inline-normalize.test.ts`) until the run is clean BEFORE wiring CI. Do not wire a red command into CI.
+
+d) Wire it into CI. In `.github/workflows/tests.yml`, add a step in the `run-tests` job (after `Install dependencies`, before/after `Run tests`):
+
+```yaml
+      - name: Type tests (stack)
+        run: pnpm --filter @cipherstash/stack run test:types
+```
+
+> **Flagged follow-up (NOT fixed here):** the 124 pre-existing package-wide typecheck errors (missing `@cipherstash/{auth,protect-ffi}/wasm-inline` type declarations + `wasm-inline-normalize.test.ts:69`) are a separate cleanup. Enabling typecheck repo-wide / unscoped should be a dedicated follow-up after those are resolved.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/stack/__tests__/schema-v3.test-d.ts packages/stack/package.json
-git commit -m "test(stack): type-level inference tests for eql_v3 schema DSL"
+git add packages/stack/__tests__/schema-v3.test-d.ts packages/stack/tsconfig.typecheck.json packages/stack/vitest.config.ts packages/stack/package.json .github/workflows/tests.yml
+git commit -m "test(stack): type-level tests for eql_v3 schema DSL + scoped CI typecheck"
+```
+
+---
+
+### Task 5: Widen the public client types to a structural contract (Option A — v3 works with the client)
+
+**Goal:** make the v3 builders first-class with the client API (`Encryption`, `encrypt`, `decrypt`, `encryptQuery`) by widening the blocking public types to a structural contract that BOTH v2 and v3 builders satisfy. Runtime is untouched (verified structural — no `instanceof` on the encrypt/decrypt/query path).
+
+**Decision — v3 keeps its OWN `EncryptedTable` class** (not reuse v2's): v3 needs a different column constraint (`EncryptedV3TableColumn`) and a simpler `build()` (no nested-field / ste_vec rewriting). v2 and v3 classes are nominally distinct (private fields) but BOTH structurally satisfy `BuildableColumn` / `BuildableTable`, which is exactly what a single widened type can accept. Reusing v2's class would not help anyway — v3 columns don't satisfy v2's `EncryptedTableColumn` generic constraint.
+
+**Verified structural members the client actually touches** (so the contract is minimal and correct):
+- Column: `getName(): string` (`operations/encrypt.ts:53` etc.), `build(): ColumnSchema` (`helpers/infer-index-type.ts:11,58`).
+- Table: `tableName: string` (`operations/encrypt.ts:52` etc.), `build(): { tableName; columns }` (`helpers/model-helpers.ts:268,566`; dynamodb ops; and `buildEncryptConfig(...schemas)` → `tb.build()` at `encryption/index.ts:674`).
+
+**Files:**
+- Modify: `packages/stack/src/types.ts` — define `BuildableColumn` / `BuildableTable`; widen `EncryptionClientConfig.schemas`, `EncryptOptions`, `SearchTerm`, `QueryTermBase`.
+- Modify: `packages/stack/src/schema/index.ts` — widen `buildEncryptConfig`'s parameter type ONLY (backward-compatible; the file already does `import type { Encrypted } from '@/types'`, so referencing `BuildableTable` from `@/types` adds no new module cycle).
+- Test: append a `describe` block to `packages/stack/__tests__/schema-v3.test-d.ts`.
+
+**Interfaces (define in `src/types.ts`, alongside the other public client types):**
+
+```ts
+import type {
+  ColumnSchema,
+  // ...existing imports (EncryptedColumn, EncryptedField, EncryptedTable, EncryptedTableColumn)
+} from '@/schema'
+
+/** Structural contract for a column builder the client can consume. Satisfied
+ *  by v2 `EncryptedColumn` / `EncryptedField` AND v3 `EncryptedTextSearchColumn`. */
+export interface BuildableColumn {
+  getName(): string
+  build(): ColumnSchema
+}
+
+/** Structural contract for a table builder the client can consume. Satisfied by
+ *  v2 and v3 `EncryptedTable` alike. */
+export interface BuildableTable {
+  tableName: string
+  build(): { tableName: string; columns: Record<string, ColumnSchema> }
+}
+```
+
+- [ ] **Step 1: Write the failing client-integration acceptance tests**
+
+Append to `packages/stack/__tests__/schema-v3.test-d.ts`. First extend its imports:
+
+```ts
+// add to the existing imports:
+import { Encryption, EncryptionClient } from '@/encryption'
+import { encryptedTable as v2EncryptedTable } from '@/schema'
+import type { Encrypted } from '@/types'
+```
+
+Then append:
+
+```ts
+describe('eql_v3 client integration (type-level acceptance)', () => {
+  const v3users = encryptedTable('users', {
+    email: encryptedTextSearchColumn('email'),
+  })
+
+  it('Encryption accepts a v3 schema', () => {
+    expectTypeOf(Encryption).toBeCallableWith({ schemas: [v3users] })
+  })
+
+  it('encrypt accepts a v3 table + column', () => {
+    const client = {} as EncryptionClient
+    expectTypeOf(client.encrypt).toBeCallableWith('alice@example.com', {
+      table: v3users,
+      column: v3users.email,
+    })
+  })
+
+  it('encryptQuery accepts a v3 table + column', () => {
+    const client = {} as EncryptionClient
+    expectTypeOf(client.encryptQuery).toBeCallableWith('alice@example.com', {
+      table: v3users,
+      column: v3users.email,
+    })
+  })
+
+  it('decrypt accepts an Encrypted value (round-trip target type; schema-independent)', () => {
+    const client = {} as EncryptionClient
+    expectTypeOf(client.decrypt).toBeCallableWith({} as Encrypted)
+  })
+
+  it('BACKWARD COMPAT: v2 tables/columns still satisfy the widened types', () => {
+    const v2users = v2EncryptedTable('users', {
+      email: encryptedColumn('email').equality(),
+    })
+    expectTypeOf(Encryption).toBeCallableWith({ schemas: [v2users] })
+    const client = {} as EncryptionClient
+    expectTypeOf(client.encrypt).toBeCallableWith('alice@example.com', {
+      table: v2users,
+      column: v2users.email,
+    })
+  })
+})
+```
+
+- [ ] **Step 2: Run the type tests to verify they fail**
+
+Run: `pnpm run test:types` (added in Task 4)
+Expected: FAIL — the v3 `Encryption` / `encrypt` / `encryptQuery` assertions error because `EncryptedTextSearchColumn` / v3 `EncryptedTable` are not assignable to the still-nominal v2 types. (The v2 backward-compat assertions and `decrypt` already pass.)
+
+- [ ] **Step 3: Define the structural contract and widen the public types**
+
+In `packages/stack/src/types.ts`:
+1. Add `ColumnSchema` to the existing `@/schema` type import.
+2. Add the `BuildableColumn` / `BuildableTable` interfaces (above).
+3. Widen the blocking surfaces:
+
+```ts
+export type EncryptionClientConfig = {
+  schemas: AtLeastOneCsTable<BuildableTable>
+  config?: ClientConfig
+}
+
+export type EncryptOptions = {
+  column: BuildableColumn
+  table: BuildableTable
+}
+
+export type SearchTerm = {
+  value: JsPlaintext
+  column: BuildableColumn
+  table: BuildableTable
+  returnType?: EncryptedReturnType
+}
+
+export type QueryTermBase = {
+  column: BuildableColumn
+  table: BuildableTable
+  queryType?: QueryTypeName
+  returnType?: EncryptedReturnType
+}
+```
+
+In `packages/stack/src/schema/index.ts`, widen `buildEncryptConfig`'s parameter (the ONLY permitted edit to the v2 module — pure widening, no behavior change):
+
+```ts
+import type { BuildableTable, Encrypted } from '@/types'
+
+export function buildEncryptConfig(
+  ...protectTables: Array<BuildableTable>
+): EncryptConfig {
+  // body unchanged — already only calls tb.build()
+}
+```
+
+> **Do NOT touch** the generic schema-aware model methods `encryptModel<S extends EncryptedTableColumn>` / `bulkEncryptModels` (`encryption/index.ts:394,489`) or `EncryptedFromSchema` / `InferPlaintext` / `EncryptedFields`. They must keep inferring `S` from `EncryptedTable<S>` so v2 field-level inference is preserved. v3 support for the model methods is a future increment (v3 columns don't satisfy `EncryptedTableColumn`). The `EncryptedTable<T> & T` accessor and v2 inference must be re-verified green (Step 4).
+>
+> **Fallback (if the team forbids ANY v2-module edit):** instead of widening `buildEncryptConfig`, leave it as-is and change `Encryption()` (`encryption/index.ts`) to assemble the config inline from the structural `schemas` (`for (const tb of schemas) { const d = tb.build(); config.tables[d.tableName] = d.columns }`). This keeps `src/schema/index.ts` pristine at the cost of ~6 duplicated lines in the client.
+
+- [ ] **Step 4: Run the full suite to verify pass + no regression**
+
+```bash
+pnpm run test:types         # v3 acceptance + v2 backward-compat + existing types.test-d.ts all green
+pnpm exec vitest run        # all runtime tests still pass (encryptModel inference unaffected)
+```
+
+Expected: all green. In particular `__tests__/types.test-d.ts` (v2 inference, `EncryptedFromSchema`, `encryptModel` schema-aware return types) must still pass — proving the widening did not narrow or break v2.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/stack/src/types.ts packages/stack/src/schema/index.ts packages/stack/__tests__/schema-v3.test-d.ts
+git commit -m "feat(stack): widen public client types so v3 builders work with the client"
+```
+
+---
+
+### Task 6: Changeset
+
+**Files:**
+- Create: `.changeset/eql-v3-text-search.md`
+
+**Interfaces:** none (release metadata only). The repo uses Changesets (`.changeset/config.json`); frontmatter keys are package `name`s. `packages/stack/package.json` name is `@cipherstash/stack`.
+
+- [ ] **Step 1: Create the changeset**
+
+Create `.changeset/eql-v3-text-search.md` (minor — additive `./schema/v3` subpath + exports, plus backward-compatible public-type widening; no breaking changes):
+
+```md
+---
+"@cipherstash/stack": minor
+---
+
+Add the EQL v3 `text_search` authoring DSL on a new `@cipherstash/stack/schema/v3`
+subpath (`encryptedTextSearchColumn`, v3 `encryptedTable` / `buildEncryptConfig`).
+The v3 builders emit the existing `EncryptConfig` shape, so encryption, payloads,
+and query paths are unchanged at runtime.
+
+Also widens the public client types (`EncryptionClientConfig.schemas`,
+`EncryptOptions`, `SearchTerm`/`EncryptQueryOptions`) to a structural contract so
+both v2 and v3 builders are accepted by `Encryption` / `encrypt` / `decrypt` /
+`encryptQuery`. This is a backward-compatible widening — existing v2 usage is
+unaffected.
+```
+
+- [ ] **Step 2: Verify the changeset is valid**
+
+Run: `pnpm exec changeset status` (from the repo root)
+Expected: lists a pending `minor` bump for `@cipherstash/stack`, no errors. (If `changeset status` is unavailable in this environment, confirm the frontmatter key exactly matches the package `name` and the bump keyword is one of `major`/`minor`/`patch`.)
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add .changeset/eql-v3-text-search.md
+git commit -m "chore(stack): changeset for eql_v3 text_search DSL (minor)"
 ```
 
 ---
@@ -736,12 +1051,16 @@ git commit -m "test(stack): type-level inference tests for eql_v3 schema DSL"
 - `buildEncryptConfig` → valid `EncryptConfig` (`v: 1`) passing `encryptConfigSchema.parse` → Task 2.
 - `InferPlaintext` / `InferEncrypted` → Task 4 (type) + Task 2 (definition).
 - New `@cipherstash/stack/schema/v3` subpath (exports + tsup) → Task 3.
-- v2 module untouched → enforced by Global Constraints; no task edits `src/schema/index.ts`.
-- Non-goals (DDL, transition tooling, query dialect, other concrete types, nested fields) → not implemented (correctly out of scope).
+- No shared mutable state (per-instance defaults + cloned `build()`) → Task 1 (`defaultMatchOpts()` factory + independent-mutation test).
+- **Client integration (Option A):** widen public types so v3 builders work with `Encryption` / `encrypt` / `decrypt` / `encryptQuery`; v2 backward-compat preserved → Task 5.
+- Type tests enforced in CI (scoped typecheck) → Task 4, Step 4.
+- Changeset (minor) for the public-surface change → Task 6.
+- v2 module: runtime + existing exported shapes untouched; ONLY a backward-compatible `buildEncryptConfig` param widening (Task 5) — see Global Constraints.
+- Non-goals (v3 in the generic model methods, DDL, transition tooling, query dialect, other concrete types, nested fields) → not implemented (correctly out of scope).
 
 **Placeholder scan:** No TBD/TODO/"handle edge cases" present; every code step contains complete, runnable code.
 
-**Type consistency:** `EncryptedTextSearchColumn`, `encryptedTextSearchColumn`, `EncryptedTable`, `encryptedTable`, `buildEncryptConfig`, `EncryptedV3TableColumn`, `InferPlaintext`, `InferEncrypted`, `TEXT_SEARCH_EQL_TYPE`, `DEFAULT_MATCH_OPTS`, and `getEqlType()` (method only — no property getter) are used identically across tasks and tests. `build()` returns `ColumnSchema`; `EncryptedTable.build()` returns the local `TableDefinition` (`{ tableName, columns: Record<string, ColumnSchema> }`), matching `buildEncryptConfig`'s consumption.
+**Type consistency:** `EncryptedTextSearchColumn`, `encryptedTextSearchColumn`, `EncryptedTable`, `encryptedTable`, `buildEncryptConfig`, `EncryptedV3TableColumn`, `InferPlaintext`, `InferEncrypted`, `TEXT_SEARCH_EQL_TYPE`, the `defaultMatchOpts()` factory, `getEqlType()` (method only — no property getter), and the structural `BuildableColumn` / `BuildableTable` contract (Task 5) are used identically across tasks and tests. `build()` returns `ColumnSchema`; `EncryptedTable.build()` returns `{ tableName, columns: Record<string, ColumnSchema> }`, matching both `buildEncryptConfig`'s consumption and the `BuildableTable` contract.
 
 ---
 
