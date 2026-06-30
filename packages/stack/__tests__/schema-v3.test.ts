@@ -214,4 +214,20 @@ describe('eql_v3 buildEncryptConfig', () => {
     const config = buildEncryptConfig(users, posts)
     expect(Object.keys(config.tables).sort()).toEqual(['posts', 'users'])
   })
+
+  it('throws when two tables share the same tableName (no silent drop)', () => {
+    // v3-only additive guard: keying config.tables by name means a duplicate
+    // would silently overwrite the earlier table. Fail loudly instead so the
+    // footgun surfaces at build time. (v2 keeps its silent-overwrite behavior
+    // unchanged — the no-v2-change constraint.)
+    const a = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const b = encryptedTable('users', {
+      name: encryptedTextSearchColumn('name'),
+    })
+    expect(() => buildEncryptConfig(a, b)).toThrow(
+      /duplicate table name "users"/,
+    )
+  })
 })
