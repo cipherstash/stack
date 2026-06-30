@@ -36,6 +36,11 @@ Code-review feedback verified against the actual files before incorporation. Ver
 - **[VALID] First typecheck run was unscoped.** Task 4's old Step 2 ran `vitest --run --typecheck __tests__/schema-v3.test-d.ts` BEFORE the scoped `tsconfig.typecheck.json` existed (created in the old Step 4), so the very first run would hit the 124 unrelated errors. **Change:** reordered Task 4 so the scoped `tsconfig.typecheck.json` + `vitest.config.ts` `typecheck` block + `test:types` script are created FIRST (new Step 2); every typecheck invocation (Task 4 and Task 5's failing-first run) goes through `pnpm run test:types`, which is scoped from the very first run.
 - **[VALID] Duplicate `Encrypted` import.** Task 4 Step 1 already adds `import type { Encrypted } from '@/types'`; Task 5 Step 1 repeated it. **Change:** Task 5 now adds ONLY the genuinely new imports (`Encryption, EncryptionClient` from `@/encryption`; `encryptedTable as v2EncryptedTable` extending the existing `@/schema` import) and reuses the already-imported `Encrypted`.
 
+### Batch 4 — split the query column contract (encryptQuery must reject non-queryable fields)
+
+- **[VALID — type-safety regression in batch-2/3 widening] `encryptQuery` was widened too far.** Batch 2 widened `SearchTerm.column` / `QueryTermBase.column` from the nominal `EncryptedColumn` to the structural `BuildableColumn`. Verified the problem: `BuildableColumn` (`{ getName(): string; build(): ColumnSchema }`) is INTENTIONALLY also satisfied by v2 `EncryptedField` (confirmed `EncryptedField` at `src/schema/index.ts:197` has `getName()` (:235) and `build()` returning `{ cast_as, indexes: {} }` (:228)) — that structural match is REQUIRED so `encrypt()` can still target nested fields. Side effect: widening the query path to `BuildableColumn` would make `encryptQuery()` type-callable with an `encryptedField(...)`, which has no indexes and which the original nominal `EncryptedColumn` correctly rejected; it would only blow up at runtime ("no indexes configured"). **Fix:** keep `encrypt`'s storage path at `BuildableColumn` (columns AND fields), but give the query path its own narrower contract `BuildableQueryColumn = EncryptedColumn | (BuildableColumn & { getEqlType(): string })`. Verified `getEqlType()` is a sound discriminator: a `grep` for `getEqlType` across `src/` returns nothing today (v3 not implemented), v2 `EncryptedColumn`/`EncryptedField` do NOT declare it, and only v3 `EncryptedTextSearchColumn` will — so the nominal arm admits v2 queryable columns, the structural arm admits v3 queryable columns, and `EncryptedField` (no `getEqlType`, not an `EncryptedColumn`) is excluded. Verified the narrowing is safe for the storage path: the `infer-index-type.ts` functions batch-3 widened (`inferIndexType`/`validateIndexType`/`resolveIndexType`) are reached ONLY via `resolveIndexType`, imported solely by `operations/encrypt-query.ts` (:72,:165) and `operations/batch-encrypt-query.ts` (:51) — NOT by `encrypt.ts`/`bulk-encrypt.ts` — so narrowing them to `BuildableQueryColumn` cannot break field encryption. **Change:** `SearchTerm.column` + `QueryTermBase.column` → `BuildableQueryColumn`; `EncryptOptions.column` stays `BuildableColumn`; the three `infer-index-type.ts` signatures take `BuildableQueryColumn` (not `BuildableColumn`); added negative (`encryptQuery` rejects a field) + positive (`encrypt` accepts a field; `encryptQuery` accepts v2 column and v3 column) type tests.
+  - **Follow-up flagged (not blocking):** `getEqlType()` works as the queryability discriminator only because the sole v3 type shipping is `text_search`, which is queryable. If a future v3 *non-queryable* concrete type also carries `getEqlType()`, the structural arm would wrongly admit it. When such a type lands, switch the discriminator to a queryability-specific marker (e.g. a `readonly __queryable` brand or an explicit capability method) rather than the generic `getEqlType()`. Kept `getEqlType()` for now.
+
 ## Global Constraints
 
 - **Do NOT change** the v2 module's (`packages/stack/src/schema/index.ts`) runtime behavior or the shape of its existing exported symbols. The DSL additions are purely additive. The ONLY permitted edit to this file is a backward-compatible **widening** of `buildEncryptConfig`'s parameter type to the shared structural `BuildableTable` contract (Task 5) — a pure widening (existing callers still type-check) required so the client accepts both v2 and v3 tables. (If the team prefers zero v2 edits, the documented fallback in Task 5 is to assemble the config inline in `Encryption()` instead.)
@@ -60,7 +65,7 @@ Code-review feedback verified against the actual files before incorporation. Ver
 - **Modify:** `packages/stack/package.json` — add the `./schema/v3` export, `typesVersions` entry, and a `test:types` script.
 - **Modify:** `packages/stack/src/types.ts` — define the structural `BuildableColumn` / `BuildableTable` contract and widen `EncryptionClientConfig.schemas`, `EncryptOptions`, `SearchTerm` / `QueryTermBase` to it (Task 5).
 - **Modify:** `packages/stack/src/schema/index.ts` — backward-compatible widening of `buildEncryptConfig`'s parameter type ONLY (Task 5; see Global Constraints for the fallback).
-- **Modify:** `packages/stack/src/encryption/operations/encrypt.ts`, `.../operations/bulk-encrypt.ts`, `.../helpers/infer-index-type.ts` — widen the internal consumers of the widened public types from narrow v2 types to `BuildableColumn` / `BuildableTable` (Task 5, Step 3b).
+- **Modify:** `packages/stack/src/encryption/operations/encrypt.ts`, `.../operations/bulk-encrypt.ts` (storage path → `BuildableColumn` / `BuildableTable`) and `.../helpers/infer-index-type.ts` (query path → `BuildableQueryColumn`) — widen the internal consumers of the widened public types (Task 5, Step 3b).
 - **Create:** `packages/stack/tsconfig.typecheck.json` — narrow tsconfig (roots = `__tests__/**/*.test-d.ts`) so Vitest typecheck enforces the type tests without dragging in the 124 pre-existing wasm-inline errors (Task 4).
 - **Modify:** `packages/stack/vitest.config.ts` — add a `typecheck` block (include `__tests__/**/*.test-d.ts`, `tsconfig: './tsconfig.typecheck.json'`) (Task 4).
 - **Modify:** `.github/workflows/tests.yml` — run the scoped type tests in CI (Task 4).
@@ -860,15 +865,27 @@ git commit -m "test(stack): type-level tests for eql_v3 schema DSL + scoped CI t
 ```ts
 import type {
   ColumnSchema,
-  // ...existing imports (EncryptedColumn, EncryptedField, EncryptedTable, EncryptedTableColumn)
+  EncryptedColumn,
+  // ...existing imports (EncryptedColumn already imported; EncryptedField, EncryptedTable, EncryptedTableColumn)
 } from '@/schema'
 
-/** Structural contract for a column builder the client can consume. Satisfied
- *  by v2 `EncryptedColumn` / `EncryptedField` AND v3 `EncryptedTextSearchColumn`. */
+/** Structural contract for a column builder the client can consume for STORAGE
+ *  (`encrypt`). Satisfied by v2 `EncryptedColumn` / `EncryptedField` AND v3
+ *  `EncryptedTextSearchColumn` — fields ARE encryptable, so this stays wide. */
 export interface BuildableColumn {
   getName(): string
   build(): ColumnSchema
 }
+
+/** Structural contract for a column the client can consume for QUERIES
+ *  (`encryptQuery` / search terms). Narrower than `BuildableColumn`: it must
+ *  EXCLUDE non-queryable `EncryptedField` (a field has no indexes). A v2
+ *  `EncryptedColumn` qualifies via the nominal arm; a v3 queryable concrete
+ *  type qualifies via the `getEqlType()` structural arm; `EncryptedField` (no
+ *  `getEqlType`, not an `EncryptedColumn`) is rejected. */
+export type BuildableQueryColumn =
+  | EncryptedColumn
+  | (BuildableColumn & { getEqlType(): string })
 
 /** Structural contract for a table builder the client can consume. Satisfied by
  *  v2 and v3 `EncryptedTable` alike. */
@@ -886,7 +903,11 @@ Append to `packages/stack/__tests__/schema-v3.test-d.ts`. First extend its impor
 // NEW imports for Task 5 (Encrypted + encryptedColumn already imported in Task 4):
 import { Encryption, EncryptionClient } from '@/encryption'
 // extend the existing `import { encryptedColumn } from '@/schema'` to also bring in:
-import { encryptedColumn, encryptedTable as v2EncryptedTable } from '@/schema'
+import {
+  encryptedColumn,
+  encryptedField,
+  encryptedTable as v2EncryptedTable,
+} from '@/schema'
 ```
 
 Then append:
@@ -932,21 +953,52 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
       table: v2users,
       column: v2users.email,
     })
+    // a v2 EncryptedColumn is STILL queryable (nominal arm of BuildableQueryColumn)
+    expectTypeOf(client.encryptQuery).toBeCallableWith('alice@example.com', {
+      table: v2users,
+      column: v2users.email,
+    })
+  })
+
+  it('a non-queryable v2 EncryptedField is encryptable but NOT queryable', () => {
+    const v2usersWithField = v2EncryptedTable('users', {
+      profile: { email: encryptedField('email') },
+    })
+    const client = {} as EncryptionClient
+
+    // POSITIVE: a field IS encryptable (storage path = BuildableColumn)
+    expectTypeOf(client.encrypt).toBeCallableWith('alice@example.com', {
+      table: v2usersWithField,
+      column: v2usersWithField.profile.email,
+    })
+
+    // NEGATIVE: a field is NOT queryable. The query path uses
+    // BuildableQueryColumn, which excludes EncryptedField (no indexes). If the
+    // query path were instead widened to BuildableColumn (the rejected
+    // Batch-2/3 design), this call would compile and only fail at runtime with
+    // "no indexes configured" — so this test guards against that re-widening.
+    // @ts-expect-error - EncryptedField is not assignable to BuildableQueryColumn
+    client.encryptQuery('alice@example.com', {
+      table: v2usersWithField,
+      column: v2usersWithField.profile.email,
+    })
   })
 })
 ```
 
 - [ ] **Step 2: Run the type tests to verify they fail**
 
-Run: `pnpm run test:types` (added in Task 4)
-Expected: FAIL — the v3 `Encryption` / `encrypt` / `encryptQuery` assertions error because `EncryptedTextSearchColumn` / v3 `EncryptedTable` are not assignable to the still-nominal v2 types. (The v2 backward-compat assertions and `decrypt` already pass.)
+Run: `pnpm run test:types` (script added in Task 4)
+Expected: FAIL — the v3 `Encryption` / `encrypt` / `encryptQuery` assertions error because `EncryptedTextSearchColumn` / v3 `EncryptedTable` are not assignable to the still-nominal pre-Task-5 v2 types. These clear after Step 3.
+
+(The v2 backward-compat `encrypt`/`encryptQuery` assertions and `decrypt` already pass. The field tests also already pass: pre-Task-5 `QueryTermBase.column` is the original nominal `EncryptedColumn`, so the `@ts-expect-error` on querying a field is already a valid suppression — those tests stay green through Step 3, guarding against any future re-widening of the query path to `BuildableColumn`.)
 
 - [ ] **Step 3a: Define the structural contract and widen the public types**
 
 In `packages/stack/src/types.ts`:
-1. Add `ColumnSchema` to the existing `@/schema` type import.
-2. Add the `BuildableColumn` / `BuildableTable` interfaces (above).
-3. Widen the blocking surfaces:
+1. Add `ColumnSchema` to the existing `@/schema` type import (`EncryptedColumn` is already imported there).
+2. Add the `BuildableColumn` / `BuildableQueryColumn` / `BuildableTable` definitions (above).
+3. Widen the blocking surfaces. Note the **storage vs query split**: `EncryptOptions` (encrypt) accepts `BuildableColumn` (columns AND fields), while `SearchTerm` / `QueryTermBase` (encryptQuery) accept the narrower `BuildableQueryColumn` so a non-queryable field is rejected at the type layer:
 
 ```ts
 export type EncryptionClientConfig = {
@@ -955,19 +1007,19 @@ export type EncryptionClientConfig = {
 }
 
 export type EncryptOptions = {
-  column: BuildableColumn
+  column: BuildableColumn // storage: fields are encryptable, so stays wide
   table: BuildableTable
 }
 
 export type SearchTerm = {
   value: JsPlaintext
-  column: BuildableColumn
+  column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
   table: BuildableTable
   returnType?: EncryptedReturnType
 }
 
 export type QueryTermBase = {
-  column: BuildableColumn
+  column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
   table: BuildableTable
   queryType?: QueryTypeName
   returnType?: EncryptedReturnType
@@ -1006,10 +1058,10 @@ After Step 3a, the package will NOT typecheck until the internal consumers that 
    - fields `private column` (:66) / `private table` (:67) → `BuildableColumn` / `BuildableTable`
    - same import swap (`@/types` gains `BuildableColumn, BuildableTable`; drop unused `@/schema` narrow types). If the `*WithLockContext` variant re-exposes `column`/`table` (mirror of `encrypt.ts` `getOperation()`), widen those too.
 
-3. **`src/encryption/helpers/infer-index-type.ts`** — index inference:
-   - `inferIndexType(column: EncryptedColumn)` (:10), `validateIndexType(column: EncryptedColumn, ...)` (:55), `resolveIndexType(column: EncryptedColumn, ...)` (:87) → `column: BuildableColumn` in all three.
-   - import: replace `import type { EncryptedColumn } from '@/schema'` with `import type { BuildableColumn } from '@/types'`.
-   - Bodies are unchanged: they read `column.build().indexes` and `column.getName()`, both on `BuildableColumn`. (This is the case the coordinator flagged — confirmed `BuildableColumn` exposes enough; no extra members.)
+3. **`src/encryption/helpers/infer-index-type.ts`** — index inference (QUERY path only — verified reached solely via `resolveIndexType` from `encrypt-query.ts:72,165` and `batch-encrypt-query.ts:51`, NOT from the storage path):
+   - `inferIndexType(column: EncryptedColumn)` (:10), `validateIndexType(column: EncryptedColumn, ...)` (:55), `resolveIndexType(column: EncryptedColumn, ...)` (:87) → `column: BuildableQueryColumn` in all three (NOT `BuildableColumn` — these run only for queries, so they should reject non-queryable fields too).
+   - import: replace `import type { EncryptedColumn } from '@/schema'` with `import type { BuildableQueryColumn } from '@/types'`.
+   - Bodies are unchanged: they read `column.build().indexes` and `column.getName()`, both available on `BuildableQueryColumn` (its `EncryptedColumn` arm and its `BuildableColumn & …` arm each provide `getName()` + `build()`).
 
 > **Do NOT widen the model path.** `encrypt-model.ts`, `bulk-encrypt-models.ts`, and `model-helpers.ts` keep `EncryptedTable<EncryptedTableColumn>` / `EncryptedTable<S>` — they are fed by the generic `encryptModel<S extends EncryptedTableColumn>` methods which are intentionally left narrow (preserves v2 inference; v3 model support is a later increment). Widening them would over-reach and could disturb inference.
 
@@ -1089,7 +1141,7 @@ git commit -m "chore(stack): changeset for eql_v3 text_search DSL (minor)"
 - `InferPlaintext` / `InferEncrypted` → Task 4 (type) + Task 2 (definition).
 - New `@cipherstash/stack/schema/v3` subpath (exports + tsup) → Task 3.
 - No shared mutable state (per-instance defaults + cloned `build()`) → Task 1 (`defaultMatchOpts()` factory + independent-mutation test).
-- **Client integration (Option A):** widen public types AND the internal consumers they force (`operations/encrypt.ts`, `operations/bulk-encrypt.ts`, `helpers/infer-index-type.ts`) so v3 builders work with `Encryption` / `encrypt` / `decrypt` / `encryptQuery`; model path left narrow; v2 backward-compat preserved → Task 5 (Steps 3a + 3b).
+- **Client integration (Option A):** widen public types AND the internal consumers they force so v3 builders work with `Encryption` / `encrypt` / `decrypt` / `encryptQuery`; storage path (`encrypt`, `operations/encrypt.ts`, `operations/bulk-encrypt.ts`) uses `BuildableColumn` (accepts fields), query path (`encryptQuery`, `helpers/infer-index-type.ts`) uses the narrower `BuildableQueryColumn` (rejects non-queryable fields); model path left narrow; v2 backward-compat preserved → Task 5 (Steps 3a + 3b).
 - Type tests enforced in CI (scoped typecheck, `--typecheck.only`) → Task 4, Steps 2-3 (scoped config + script) and Step 5 (CI wiring).
 - Changeset (minor) for the public-surface change → Task 6.
 - v2 module: runtime + existing exported shapes untouched; ONLY a backward-compatible `buildEncryptConfig` param widening (Task 5) — see Global Constraints.
@@ -1097,7 +1149,7 @@ git commit -m "chore(stack): changeset for eql_v3 text_search DSL (minor)"
 
 **Placeholder scan:** No TBD/TODO/"handle edge cases" present; every code step contains complete, runnable code.
 
-**Type consistency:** `EncryptedTextSearchColumn`, `encryptedTextSearchColumn`, `EncryptedTable`, `encryptedTable`, `buildEncryptConfig`, `EncryptedV3TableColumn`, `InferPlaintext`, `InferEncrypted`, `TEXT_SEARCH_EQL_TYPE`, the `defaultMatchOpts()` factory, `getEqlType()` (method only — no property getter), and the structural `BuildableColumn` / `BuildableTable` contract (Task 5) are used identically across tasks and tests. `build()` returns `ColumnSchema`; `EncryptedTable.build()` returns `{ tableName, columns: Record<string, ColumnSchema> }`, matching both `buildEncryptConfig`'s consumption and the `BuildableTable` contract.
+**Type consistency:** `EncryptedTextSearchColumn`, `encryptedTextSearchColumn`, `EncryptedTable`, `encryptedTable`, `buildEncryptConfig`, `EncryptedV3TableColumn`, `InferPlaintext`, `InferEncrypted`, `TEXT_SEARCH_EQL_TYPE`, the `defaultMatchOpts()` factory, `getEqlType()` (method only — no property getter; also the query-path discriminator in `BuildableQueryColumn`), and the structural `BuildableColumn` / `BuildableQueryColumn` / `BuildableTable` contract (Task 5) are used identically across tasks and tests. `build()` returns `ColumnSchema`; `EncryptedTable.build()` returns `{ tableName, columns: Record<string, ColumnSchema> }`, matching both `buildEncryptConfig`'s consumption and the `BuildableTable` contract.
 
 ---
 

@@ -155,14 +155,26 @@ interface BuildableTable {
   tableName: string
   build(): { tableName: string; columns: Record<string, ColumnSchema> }
 }
+// Query path is NARROWER: it must reject non-queryable EncryptedField (no
+// indexes). A v2 EncryptedColumn qualifies nominally; a v3 queryable concrete
+// type qualifies via getEqlType(); EncryptedField is excluded.
+type BuildableQueryColumn =
+  | EncryptedColumn
+  | (BuildableColumn & { getEqlType(): string })
 ```
 
-Widened surfaces (in `packages/stack/src/types.ts`):
+Widened surfaces (in `packages/stack/src/types.ts`) — note the **storage vs query split**:
 
 - `EncryptionClientConfig.schemas` → `AtLeastOneCsTable<BuildableTable>`
-- `EncryptOptions.column` / `.table` → `BuildableColumn` / `BuildableTable`
-- `SearchTerm` / `QueryTermBase.column` / `.table` → `BuildableColumn` /
-  `BuildableTable`
+- `EncryptOptions.column` / `.table` → `BuildableColumn` / `BuildableTable` —
+  the STORAGE path (`encrypt`) accepts columns AND nested fields.
+- `SearchTerm` / `QueryTermBase.column` → `BuildableQueryColumn`; `.table` →
+  `BuildableTable` — the QUERY path (`encryptQuery`) accepts only queryable
+  columns, so a `BuildableQueryColumn` excludes `EncryptedField` (which the
+  nominal `EncryptedColumn` type rejected and must keep rejecting).
+- Internally, the query-only index-inference helpers
+  (`inferIndexType`/`validateIndexType`/`resolveIndexType`) also take
+  `BuildableQueryColumn` (verified reached only from the `encryptQuery` path).
 
 Plus `buildEncryptConfig`'s parameter is widened to `BuildableTable` (pure
 widening; it only calls `.build()`).
@@ -183,7 +195,14 @@ schema-aware model methods** (`encryptModel<S extends EncryptedTableColumn>` /
 **Acceptance (these must type-check with v3 builders):**
 `Encryption({ schemas: [v3users] })`, `client.encrypt(v, { table: v3users, column:
 v3users.email })`, `client.decrypt(...)` round-trip, and
-`client.encryptQuery(v, { table: v3users, column: v3users.email })`.
+`client.encryptQuery(v, { table: v3users, column: v3users.email })`. Plus the
+storage/query split: a v2 `encryptedField` is `encrypt`-able but a `@ts-expect-error`
+proves it is NOT `encryptQuery`-able, and a v2 `EncryptedColumn` stays queryable.
+
+> Discriminator follow-up: `getEqlType()` distinguishes queryable v3 types today
+> only because the one v3 type shipping (`text_search`) is queryable. If a future
+> v3 *non-queryable* type also carries `getEqlType()`, switch the query-path
+> discriminator to a queryability-specific marker. Not blocking for this increment.
 
 ## `build()` output — pinned to v2
 
