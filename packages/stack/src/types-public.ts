@@ -13,6 +13,7 @@
 // Bulk operations
 // Query types (public only)
 export type {
+  AuthStrategy,
   BulkDecryptedData,
   BulkDecryptPayload,
   BulkEncryptedData,

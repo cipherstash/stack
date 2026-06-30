@@ -6,7 +6,7 @@ import {
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { LockContext } from '@/identity'
+import { type LockContextInput, resolveLockContext } from '@/identity'
 import type { Client, EncryptedQueryResult, EncryptQueryOptions } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
@@ -27,7 +27,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): EncryptQueryOperationWithLockContext {
     return new EncryptQueryOperationWithLockContext(
       this.client,
@@ -116,7 +116,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
     private client: Client,
     private plaintext: JsPlaintext | null | undefined,
     private opts: EncryptQueryOptions,
-    private lockContext: LockContext,
+    private lockContext: LockContextInput,
     auditMetadata?: Record<string, unknown>,
   ) {
     super()
@@ -148,17 +148,11 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       return { failure: validationError.failure }
     }
 
-    const lockContextResult = await this.lockContext.getLockContext()
-    if (lockContextResult.failure) {
-      log.emit()
-      return { failure: lockContextResult.failure }
-    }
-
-    const { ctsToken, context } = lockContextResult.data
-
     const result = await withResult(
       async () => {
         if (!this.client) throw noClientError()
+
+        const context = resolveLockContext(this.lockContext)
 
         const { metadata } = this.getAuditData()
 
@@ -182,7 +176,6 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
           indexType,
           queryOp,
           lockContext: context,
-          serviceToken: ctsToken,
           unverifiedContext: metadata,
         })
 

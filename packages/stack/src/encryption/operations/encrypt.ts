@@ -5,7 +5,7 @@ import {
 } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { LockContext } from '@/identity'
+import { type LockContextInput, resolveLockContext } from '@/identity'
 import type {
   EncryptedColumn,
   EncryptedField,
@@ -40,7 +40,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): EncryptOperationWithLockContext {
     return new EncryptOperationWithLockContext(this, lockContext)
   }
@@ -123,9 +123,9 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
 export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypted> {
   private operation: EncryptOperation
-  private lockContext: LockContext
+  private lockContext: LockContextInput
 
-  constructor(operation: EncryptOperation, lockContext: LockContext) {
+  constructor(operation: EncryptOperation, lockContext: LockContextInput) {
     super()
     this.operation = operation
     this.lockContext = lockContext
@@ -157,18 +157,13 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
         }
 
         const { metadata } = this.getAuditData()
-        const context = await this.lockContext.getLockContext()
-
-        if (context.failure) {
-          throw new Error(`[encryption]: ${context.failure.message}`)
-        }
+        const lockContext = resolveLockContext(this.lockContext)
 
         return await ffiEncrypt(client, {
           plaintext,
           column: column.getName(),
           table: table.tableName,
-          lockContext: context.data.context,
-          serviceToken: context.data.ctsToken,
+          lockContext,
           unverifiedContext: metadata,
         })
       },

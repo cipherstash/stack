@@ -5,7 +5,7 @@ import {
 } from '@cipherstash/protect-ffi'
 import { isEncryptedPayload } from '@/encryption/helpers'
 import type { AuditData } from '@/encryption/operations/base-operation'
-import type { GetLockContextResponse } from '@/identity'
+import type { Context } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { Client, Decrypted, Encrypted } from '@/types'
 
@@ -382,7 +382,7 @@ export async function decryptModelFieldsWithLockContext<
 >(
   model: T,
   client: Client,
-  lockContext: GetLockContextResponse,
+  lockContext: Context,
   auditData?: AuditData,
 ): Promise<Decrypted<T>> {
   if (!client) {
@@ -400,7 +400,7 @@ export async function decryptModelFieldsWithLockContext<
     ([key, value]) => ({
       id: key,
       ciphertext: value as CipherStashEncrypted,
-      lockContext: lockContext.context,
+      lockContext,
     }),
   )
 
@@ -409,7 +409,6 @@ export async function decryptModelFieldsWithLockContext<
     (items) =>
       decryptBulk(client, {
         ciphertexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -440,7 +439,7 @@ export async function encryptModelFieldsWithLockContext(
   model: Record<string, unknown>,
   table: EncryptedTable<EncryptedTableColumn>,
   client: Client,
-  lockContext: GetLockContextResponse,
+  lockContext: Context,
   auditData?: AuditData,
 ): Promise<Record<string, unknown>> {
   if (!client) {
@@ -460,7 +459,7 @@ export async function encryptModelFieldsWithLockContext(
       plaintext: value as string,
       table: table.tableName,
       column: key,
-      lockContext: lockContext.context,
+      lockContext,
     }),
   )
 
@@ -469,7 +468,6 @@ export async function encryptModelFieldsWithLockContext(
     (items) =>
       encryptBulk(client, {
         plaintexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -764,7 +762,7 @@ export async function bulkDecryptModelsWithLockContext<
 >(
   models: T[],
   client: Client,
-  lockContext: GetLockContextResponse,
+  lockContext: Context,
   auditData?: AuditData,
 ): Promise<Decrypted<T>[]> {
   if (!client) {
@@ -782,7 +780,7 @@ export async function bulkDecryptModelsWithLockContext<
     Object.entries(fields).map(([key, value]) => ({
       id: `${modelIndex}-${key}`,
       ciphertext: value as CipherStashEncrypted,
-      lockContext: lockContext.context,
+      lockContext,
     })),
   )
 
@@ -791,7 +789,6 @@ export async function bulkDecryptModelsWithLockContext<
     (items) =>
       decryptBulk(client, {
         ciphertexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,
@@ -836,7 +833,7 @@ export async function bulkEncryptModelsWithLockContext(
   models: Record<string, unknown>[],
   table: EncryptedTable<EncryptedTableColumn>,
   client: Client,
-  lockContext: GetLockContextResponse,
+  lockContext: Context,
   auditData?: AuditData,
 ): Promise<Record<string, unknown>[]> {
   if (!client) {
@@ -856,7 +853,7 @@ export async function bulkEncryptModelsWithLockContext(
       plaintext: value as string,
       table: table.tableName,
       column: key,
-      lockContext: lockContext.context,
+      lockContext,
     })),
   )
 
@@ -865,7 +862,6 @@ export async function bulkEncryptModelsWithLockContext(
     (items) =>
       encryptBulk(client, {
         plaintexts: items,
-        serviceToken: lockContext.ctsToken,
         unverifiedContext: auditData?.metadata,
       }),
     keyMap,

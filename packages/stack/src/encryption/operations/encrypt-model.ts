@@ -1,7 +1,7 @@
 import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { LockContext } from '@/identity'
+import { type LockContextInput, resolveLockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { Client } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
@@ -31,7 +31,7 @@ export class EncryptModelOperation<
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): EncryptModelOperationWithLockContext<T> {
     return new EncryptModelOperationWithLockContext(this, lockContext)
   }
@@ -89,9 +89,12 @@ export class EncryptModelOperationWithLockContext<
   T extends Record<string, unknown>,
 > extends EncryptionOperation<T> {
   private operation: EncryptModelOperation<T>
-  private lockContext: LockContext
+  private lockContext: LockContextInput
 
-  constructor(operation: EncryptModelOperation<T>, lockContext: LockContext) {
+  constructor(
+    operation: EncryptModelOperation<T>,
+    lockContext: LockContextInput,
+  ) {
     super()
     this.operation = operation
     this.lockContext = lockContext
@@ -117,11 +120,7 @@ export class EncryptModelOperationWithLockContext<
           throw noClientError()
         }
 
-        const context = await this.lockContext.getLockContext()
-
-        if (context.failure) {
-          throw new Error(`[encryption]: ${context.failure.message}`)
-        }
+        const context = resolveLockContext(this.lockContext)
 
         const auditData = this.getAuditData()
 
@@ -129,7 +128,7 @@ export class EncryptModelOperationWithLockContext<
           model,
           table,
           client,
-          context.data,
+          context,
           auditData,
         )) as T
       },

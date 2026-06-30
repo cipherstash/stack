@@ -7,26 +7,26 @@ settings:
 catalogs:
   repo:
     '@cipherstash/auth':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     '@cipherstash/auth-darwin-arm64':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     '@cipherstash/auth-darwin-x64':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     '@cipherstash/auth-linux-arm64-gnu':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     '@cipherstash/auth-linux-x64-gnu':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     '@cipherstash/auth-linux-x64-musl':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     '@cipherstash/auth-win32-x64-msvc':
-      specifier: 0.38.0
-      version: 0.38.0
+      specifier: 0.40.0
+      version: 0.40.0
     tsup:
       specifier: 8.5.1
       version: 8.5.1
@@ -215,7 +215,7 @@ importers:
     dependencies:
       '@cipherstash/auth':
         specifier: catalog:repo
-        version: 0.38.0(@cipherstash/auth-darwin-arm64@0.38.0)(@cipherstash/auth-darwin-x64@0.38.0)(@cipherstash/auth-linux-arm64-gnu@0.38.0)(@cipherstash/auth-linux-x64-gnu@0.38.0)(@cipherstash/auth-linux-x64-musl@0.38.0)(@cipherstash/auth-win32-x64-msvc@0.38.0)
+        version: 0.40.0(@cipherstash/auth-darwin-arm64@0.40.0)(@cipherstash/auth-darwin-x64@0.40.0)(@cipherstash/auth-linux-arm64-gnu@0.40.0)(@cipherstash/auth-linux-x64-gnu@0.40.0)(@cipherstash/auth-linux-x64-musl@0.40.0)(@cipherstash/auth-win32-x64-msvc@0.40.0)
       '@cipherstash/migrate':
         specifier: workspace:*
         version: link:../migrate
@@ -240,25 +240,6 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
-    optionalDependencies:
-      '@cipherstash/auth-darwin-arm64':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-darwin-x64':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-linux-arm64-gnu':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-linux-x64-gnu':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-linux-x64-musl':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-win32-x64-msvc':
-        specifier: catalog:repo
-        version: 0.38.0
     devDependencies:
       '@cipherstash/stack':
         specifier: workspace:*
@@ -284,6 +265,25 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+    optionalDependencies:
+      '@cipherstash/auth-darwin-arm64':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-darwin-x64':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-arm64-gnu':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-x64-gnu':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-x64-musl':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-win32-x64-msvc':
+        specifier: catalog:repo
+        version: 0.40.0
 
   packages/drizzle:
     dependencies:
@@ -361,10 +361,6 @@ importers:
       next:
         specifier: ^14 || ^15
         version: 15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-    optionalDependencies:
-      '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.60.4
-        version: 4.60.4
     devDependencies:
       '@clerk/nextjs':
         specifier: catalog:security
@@ -381,6 +377,10 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu':
+        specifier: 4.60.4
+        version: 4.60.4
 
   packages/prisma-next:
     dependencies:
@@ -478,10 +478,6 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
-    optionalDependencies:
-      '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.60.4
-        version: 4.60.4
     devDependencies:
       '@supabase/supabase-js':
         specifier: ^2.105.4
@@ -507,6 +503,10 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+    optionalDependencies:
+      '@rollup/rollup-linux-x64-gnu':
+        specifier: 4.60.4
+        version: 4.60.4
 
   packages/protect-dynamodb:
     dependencies:
@@ -556,10 +556,10 @@ importers:
         version: 0.2.0
       '@cipherstash/auth':
         specifier: catalog:repo
-        version: 0.38.0(@cipherstash/auth-darwin-arm64@0.38.0)(@cipherstash/auth-darwin-x64@0.38.0)(@cipherstash/auth-linux-arm64-gnu@0.38.0)(@cipherstash/auth-linux-x64-gnu@0.38.0)(@cipherstash/auth-linux-x64-musl@0.38.0)(@cipherstash/auth-win32-x64-msvc@0.38.0)
+        version: 0.40.0(@cipherstash/auth-darwin-arm64@0.40.0)(@cipherstash/auth-darwin-x64@0.40.0)(@cipherstash/auth-linux-arm64-gnu@0.40.0)(@cipherstash/auth-linux-x64-gnu@0.40.0)(@cipherstash/auth-linux-x64-musl@0.40.0)(@cipherstash/auth-win32-x64-msvc@0.40.0)
       '@cipherstash/protect-ffi':
-        specifier: 0.24.0
-        version: 0.24.0
+        specifier: 0.26.0
+        version: 0.26.0
       evlog:
         specifier: 1.11.0
         version: 1.11.0(next@15.5.10(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
@@ -606,6 +606,25 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+    optionalDependencies:
+      '@cipherstash/auth-darwin-arm64':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-darwin-x64':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-arm64-gnu':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-x64-gnu':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-x64-musl':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-win32-x64-msvc':
+        specifier: catalog:repo
+        version: 0.40.0
 
   packages/wizard:
     dependencies:
@@ -614,7 +633,7 @@ importers:
         version: 0.3.143(@anthropic-ai/sdk@0.81.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
       '@cipherstash/auth':
         specifier: catalog:repo
-        version: 0.38.0(@cipherstash/auth-darwin-arm64@0.38.0)(@cipherstash/auth-darwin-x64@0.38.0)(@cipherstash/auth-linux-arm64-gnu@0.38.0)(@cipherstash/auth-linux-x64-gnu@0.38.0)(@cipherstash/auth-linux-x64-musl@0.38.0)(@cipherstash/auth-win32-x64-msvc@0.38.0)
+        version: 0.40.0(@cipherstash/auth-darwin-arm64@0.40.0)(@cipherstash/auth-darwin-x64@0.40.0)(@cipherstash/auth-linux-arm64-gnu@0.40.0)(@cipherstash/auth-linux-x64-gnu@0.40.0)(@cipherstash/auth-linux-x64-musl@0.40.0)(@cipherstash/auth-win32-x64-msvc@0.40.0)
       '@clack/prompts':
         specifier: 1.4.0
         version: 1.4.0
@@ -633,25 +652,6 @@ importers:
       zod:
         specifier: ^3.25.76
         version: 3.25.76
-    optionalDependencies:
-      '@cipherstash/auth-darwin-arm64':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-darwin-x64':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-linux-arm64-gnu':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-linux-x64-gnu':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-linux-x64-musl':
-        specifier: catalog:repo
-        version: 0.38.0
-      '@cipherstash/auth-win32-x64-msvc':
-        specifier: catalog:repo
-        version: 0.38.0
     devDependencies:
       '@types/pg':
         specifier: ^8.20.0
@@ -668,6 +668,25 @@ importers:
       vitest:
         specifier: catalog:repo
         version: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+    optionalDependencies:
+      '@cipherstash/auth-darwin-arm64':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-darwin-x64':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-arm64-gnu':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-x64-gnu':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-linux-x64-musl':
+        specifier: catalog:repo
+        version: 0.40.0
+      '@cipherstash/auth-win32-x64-msvc':
+        specifier: catalog:repo
+        version: 0.40.0
 
 packages:
 
@@ -685,21 +704,25 @@ packages:
     resolution: {integrity: sha512-9UeV1W2vjOVwJSJrq9aw3UeMo82Ir59FfJ5mchh7OXZEaevkANvHYn25bTCnIpqfqOx7qFEosJW2ELIoV1nprg==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143':
     resolution: {integrity: sha512-/9oP/FCewrPnwVN+QUS5rlO3kMa07w+hOrpWrz24aEpBYhcHzr0zoNMBriPDAkTr3ao/z1k40UZ2dHmgsSODzA==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143':
     resolution: {integrity: sha512-rr4334GOLl9caYDeyWsbwMaVJCiNvKHE9nLdey8opIkq7/FHHu712U6tDk0tcoCdsGU/S3/BBaZParOgF+s5qw==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143':
     resolution: {integrity: sha512-kwqnbHo4Zj6TzO1V/83uLhsTt0xBp/BN5V/aHIX+khM4UuNO6NOKNaZvr8Int3sF0ARF95Hjr4l/hMKxry6DhQ==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143':
     resolution: {integrity: sha512-q5UaLZ9ABbqQN8UXpqHUqjW6akI1zMrV5Jvtq0yueKP4nIRbBBZBQ80M4bpdrc0+SiRmjVRV3p8lsCCAd8azgg==}
@@ -764,24 +787,28 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@biomejs/cli-linux-arm64@2.4.15':
     resolution: {integrity: sha512-owaAMZD/T4LrD0ELNCk0Km3qrRHuM0X6EAyVE1FSqGY0rbLoiDLrO4Us2tllm6cAeB2Ioa9C2C08NZPdr8+0Ug==}
     engines: {node: '>=14.21.3'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@biomejs/cli-linux-x64-musl@2.4.15':
     resolution: {integrity: sha512-CNq/9W38SYSH023lfcQ4KKU8K0YX8T//FZUhcgtMMRABDojx5XsMV7jlweAvGSl389wJQB29Qo6Zb/a+jdvt+w==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@biomejs/cli-linux-x64@2.4.15':
     resolution: {integrity: sha512-0jj7THz12GbUOLmMibktK6DZjqz2zV64KFxyBtcFTKPiiOIY0a7vns1elpO1dERvxpsZ5ik0oFfz0oGwFde1+g==}
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@biomejs/cli-win32-arm64@2.4.15':
     resolution: {integrity: sha512-ouhkYdlhp/1GghEJPdWwD/Vi3gQ1nFxuSpMolWsbq3Lsq3QUR4jl6UdhhscdCugKU5vOEuMiJhvKj66O0OCq+w==}
@@ -853,45 +880,48 @@ packages:
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
 
-  '@cipherstash/auth-darwin-arm64@0.38.0':
-    resolution: {integrity: sha512-LF4u99t+KMll3m6ALcKzq8UCTC9zxUQLb6eKHMG5PGE5kIOb4MbG8yeEc3nUM6Up4hAl5leoCMlZsFdcVdSEQA==}
+  '@cipherstash/auth-darwin-arm64@0.40.0':
+    resolution: {integrity: sha512-TMVgX+dTiP4zvDEgKDDe92SQSeTZarRMq4+StUFRCJrefRVfjtnNT0zqhWmpZelCxOtnL7Ch+mq+TKRmYCY1cQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@cipherstash/auth-darwin-x64@0.38.0':
-    resolution: {integrity: sha512-E+S8ehq92S7fSuUSDTN1JZOZiWPVpmL01KK/aF+R7DaaGGBzQ0ZleR6JbY2t6pmX4TUpGRgbN8ImewuZW6QqgA==}
+  '@cipherstash/auth-darwin-x64@0.40.0':
+    resolution: {integrity: sha512-G8fmOqWrOTE5cO3CwVSSUAqlJXKvvQjHlKzT1aKR8KC9GDExSAmaQMiV7wNDI1NonHq9ERRi2MQ2mYNmfRTqxA==}
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/auth-linux-arm64-gnu@0.38.0':
-    resolution: {integrity: sha512-ZF167YZRIl4+Geqi0+diShyV2VdWG14UfAsvP1ZPfrLOsNJn5wCK3tL9Mw90Q526zr6Yik/smbfrUrS69rHU6A==}
+  '@cipherstash/auth-linux-arm64-gnu@0.40.0':
+    resolution: {integrity: sha512-3c4blsy35OUGK+SaOI9SIQCZW7zByuBYK6NR+HNde6RTXtxPOY2h9bpg72MMKOAvU/5KWkCvDR+jrMammAWRIg==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
-  '@cipherstash/auth-linux-x64-gnu@0.38.0':
-    resolution: {integrity: sha512-xl1zMuANCtHMhfC77QBKULlfsbGMsGOqWTl5zD6NPn8lrM4tqDpaOdLwEbIo4EjbLSoA38IY9jxYB0qvlV0QQA==}
+  '@cipherstash/auth-linux-x64-gnu@0.40.0':
+    resolution: {integrity: sha512-Tul+CoQGvhdZCMrPGjKa7/YiHtpr/h4vzLRxX9C8vUHfM0r26d3JvHLJsJPz4wsiBTXfcbfQ9gcV/UEkPhn4vg==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
-  '@cipherstash/auth-linux-x64-musl@0.38.0':
-    resolution: {integrity: sha512-rN4E+sOjZH7xLCV/NFOixceTMYqivnF+CyFqxJaUpmqW36vwwuTAuv8S93A+wOzn+A6W8HPwfkBWMmZenNUznQ==}
+  '@cipherstash/auth-linux-x64-musl@0.40.0':
+    resolution: {integrity: sha512-qW5IhDWgIEVZ94oWrI/P0LUqMYd6BdLMRDirevWiTqc0Bfw8PaYe7bfds1MOfzx59kWJqedugVbpf/VApO448A==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
-  '@cipherstash/auth-win32-x64-msvc@0.38.0':
-    resolution: {integrity: sha512-cvnqgRL4sKeuJ7HvdLyLkwS59TW4FI9z/Fdreyv8Q78TEhjmG0HMXKdNeTW7AAATFYmzqJlmZX2RRa+QnUfhfQ==}
+  '@cipherstash/auth-win32-x64-msvc@0.40.0':
+    resolution: {integrity: sha512-V66Y6p3RPFb4o1M6jB4LRLGBciISqxVOkDYU000ehkk12Ztu2hd1IHihHtq9zxQtlXFbMVJUeWNtxbL4Etmifw==}
     cpu: [x64]
     os: [win32]
 
-  '@cipherstash/auth@0.38.0':
-    resolution: {integrity: sha512-jsrJ8fqenjcuMGWG1pBzVUflZUQZ7c1MosYiqyxh6fYDsMlTl70S8agDSsa2ciXmVQyti49n4on8c1CZxGhF5w==}
+  '@cipherstash/auth@0.40.0':
+    resolution: {integrity: sha512-UARvsiy29HhxsBZM7cqntIqwqNOVEbuHz1JAkZO5gfFaB927BnDfC5lP5dgU7xjm5NN1MoGfBVSVK9jVMhquog==}
     peerDependencies:
-      '@cipherstash/auth-darwin-arm64': 0.38.0
-      '@cipherstash/auth-darwin-x64': 0.38.0
-      '@cipherstash/auth-linux-arm64-gnu': 0.38.0
-      '@cipherstash/auth-linux-x64-gnu': 0.38.0
-      '@cipherstash/auth-linux-x64-musl': 0.38.0
-      '@cipherstash/auth-win32-x64-msvc': 0.38.0
+      '@cipherstash/auth-darwin-arm64': 0.40.0
+      '@cipherstash/auth-darwin-x64': 0.40.0
+      '@cipherstash/auth-linux-arm64-gnu': 0.40.0
+      '@cipherstash/auth-linux-x64-gnu': 0.40.0
+      '@cipherstash/auth-linux-x64-musl': 0.40.0
+      '@cipherstash/auth-win32-x64-msvc': 0.40.0
     peerDependenciesMeta:
       '@cipherstash/auth-darwin-arm64':
         optional: true
@@ -911,8 +941,8 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.24.0':
-    resolution: {integrity: sha512-86OyhIciDfLtiJN3+L7jdaXBf+V2XvM3NKYzGWoal2wv3mJKuUbdyTo27kmVd14+NeEoTmx6xYYtLevbCUTJGg==}
+  '@cipherstash/protect-ffi-darwin-arm64@0.26.0':
+    resolution: {integrity: sha512-v2ZFgDlqHVdWEtnqxGYHGQ7gbkLVWzbB9CSEo0V3TGFhKjfh3tRsQFfZle+Fns9/1hHN0c/Q8jEvqmeRBt+TAA==}
     cpu: [arm64]
     os: [darwin]
 
@@ -921,8 +951,8 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-x64@0.24.0':
-    resolution: {integrity: sha512-lDXBCUeGKO2bDTqIIqGhRasip5LBC0lQIn2QepwEuByugkXMGtmYMQmmwvMUhXKkp2keG7HAkeTniFSfcj6pYg==}
+  '@cipherstash/protect-ffi-darwin-x64@0.26.0':
+    resolution: {integrity: sha512-z9pvB0v8k3S1RRzqkwMUCCNQjjJr2iY8KV3ItZOb7ykvNLd55x3gFlZKFe+zLhBesCIZASSHBFp9yIcO0GGyBA==}
     cpu: [x64]
     os: [darwin]
 
@@ -931,8 +961,8 @@ packages:
     cpu: [arm64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.24.0':
-    resolution: {integrity: sha512-i6ufKc4vcVpMBuR9sdW09acULEg5FaTvpvbN5MCQ6XEF0iMkXM4/D7W4VnE1jHIJf1qgU2jE+T5oIlqp8Hnj3w==}
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.26.0':
+    resolution: {integrity: sha512-IA8r5IwzCpoFUE2cB5VCCCioA8RfOIMql87SUB2DLAFShOeIACvaSwNBktwTCzLgMe5283BXqqyPNn2HzEGYGA==}
     cpu: [arm64]
     os: [linux]
 
@@ -941,8 +971,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.24.0':
-    resolution: {integrity: sha512-zTa0IosxIo1qZInWSwCTns+TRjzOeuBGnMJg3OyK/q90I+RybaRROhMpbeWUV5QY7pLNwt6uICoghFJqI/Vh3Q==}
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.26.0':
+    resolution: {integrity: sha512-QZVoThJ5kjrf5icg3OJ9ctcnN0CqF6fatVTcuUOLg4nz8xb+m5dIv4WhgvCT7HnipGmALGwKWdpNlnaMrUu0cg==}
     cpu: [x64]
     os: [linux]
 
@@ -951,8 +981,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.24.0':
-    resolution: {integrity: sha512-OEs12fukiVgOxr/1Hn/23x4Tahl1gQG4pac9Uzr7Zz/O45365dK/4gazdmBpSsQYelESBiIEILGtw01QsmzLtw==}
+  '@cipherstash/protect-ffi-linux-x64-musl@0.26.0':
+    resolution: {integrity: sha512-ji6uo8F8vKNI5lmkfEy7RX22jm79Yjg/csyVXAQcTRdwVNZdVGe01vm3f4BIXrFrGDUmHvVJWUHqChqU6z8QiA==}
     cpu: [x64]
     os: [linux]
 
@@ -961,16 +991,16 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.24.0':
-    resolution: {integrity: sha512-g4JVGK2DYPc5zdzgBtYYgH5H8zQoV/DEfILKXLPlFfQFnGoDR8CQktXAdivgVwKWIXvOrmci+uuG6n8+tPZxSw==}
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.26.0':
+    resolution: {integrity: sha512-1XsLN+pcGjs1O7YCGBawbaVYnJ6N2r8jIcyL0LxQOgE40P4H+CcAwwxcZT4H243g18FJGIYGIW7MVN42csPOWw==}
     cpu: [x64]
     os: [win32]
 
   '@cipherstash/protect-ffi@0.23.0':
     resolution: {integrity: sha512-Ca8MKLrrumC561VoPDOhuUZcF8C8YenqO1Ig9hSJSRUB+jFeIJXeyn7glExsvKYWtxOx/pRub9FV8A0RyuPHMg==}
 
-  '@cipherstash/protect-ffi@0.24.0':
-    resolution: {integrity: sha512-duYmf4kZsSJvdAjKuacXSO9qF9PFqaV9TU+2Yr0uy5FHdOw3G9dUCasZCnnnrDfnu92gJPxrsvZW6DMm0dbx+w==}
+  '@cipherstash/protect-ffi@0.26.0':
+    resolution: {integrity: sha512-UqhzMh/x/qBKhYVRiBi6V5MpHH+WiUaWQ0Wm/Q80aCrMoBNolhLWxPhiXM6zBE3tMTmH7Ge0wYIWOxFMfygMEA==}
 
   '@clack/core@1.3.0':
     resolution: {integrity: sha512-xJPHpAmEQUBrXSLx0gF+q5K/IyihXpsHZcha+jB+tyahsKRK3Dxo4D0coZDewHo12NhiuzC3dTtMPbm53GEAAA==}
@@ -1657,89 +1687,105 @@ packages:
     resolution: {integrity: sha512-excjX8DfsIcJ10x1Kzr4RcWe1edC9PquDRRPx3YVCvQv+U5p7Yin2s32ftzikXojb1PIFc/9Mt28/y+iRklkrw==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-libvips-linux-arm@1.2.4':
     resolution: {integrity: sha512-bFI7xcKFELdiNCVov8e44Ia4u2byA+l3XtsAj+Q8tfCwO6BQ8iDojYdvoPMqsKDkuoOo+X6HZA0s0q11ANMQ8A==}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-libvips-linux-ppc64@1.2.4':
     resolution: {integrity: sha512-FMuvGijLDYG6lW+b/UvyilUWu5Ayu+3r2d1S8notiGCIyYU/76eig1UfMmkZ7vwgOrzKzlQbFSuQfgm7GYUPpA==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-libvips-linux-riscv64@1.2.4':
     resolution: {integrity: sha512-oVDbcR4zUC0ce82teubSm+x6ETixtKZBh/qbREIOcI3cULzDyb18Sr/Wcyx7NRQeQzOiHTNbZFF1UwPS2scyGA==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-libvips-linux-s390x@1.2.4':
     resolution: {integrity: sha512-qmp9VrzgPgMoGZyPvrQHqk02uyjA0/QrTO26Tqk6l4ZV0MPWIW6LTkqOIov+J1yEu7MbFQaDpwdwJKhbJvuRxQ==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-libvips-linux-x64@1.2.4':
     resolution: {integrity: sha512-tJxiiLsmHc9Ax1bz3oaOYBURTXGIRDODBqhveVHonrHJ9/+k89qbLl0bcJns+e4t4rvaNBxaEZsFtSfAdquPrw==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-libvips-linuxmusl-arm64@1.2.4':
     resolution: {integrity: sha512-FVQHuwx1IIuNow9QAbYUzJ+En8KcVm9Lk5+uGUQJHaZmMECZmOlix9HnH7n1TRkXMS0pGxIJokIVB9SuqZGGXw==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@img/sharp-libvips-linuxmusl-x64@1.2.4':
     resolution: {integrity: sha512-+LpyBk7L44ZIXwz/VYfglaX/okxezESc6UxDSoyo2Ks6Jxc4Y7sGjpgU9s4PMgqgjj1gZCylTieNamqA1MF7Dg==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@img/sharp-linux-arm64@0.34.5':
     resolution: {integrity: sha512-bKQzaJRY/bkPOXyKx5EVup7qkaojECG6NLYswgktOZjaXecSAeCWiZwwiFf3/Y+O1HrauiE3FVsGxFg8c24rZg==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-linux-arm@0.34.5':
     resolution: {integrity: sha512-9dLqsvwtg1uuXBGZKsxem9595+ujv0sJ6Vi8wcTANSFpwV/GONat5eCkzQo/1O6zRIkh0m/8+5BjrRr7jDUSZw==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-linux-ppc64@0.34.5':
     resolution: {integrity: sha512-7zznwNaqW6YtsfrGGDA6BRkISKAAE1Jo0QdpNYXNMHu2+0dTrPflTLNkpc8l7MUP5M16ZJcUvysVWWrMefZquA==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-linux-riscv64@0.34.5':
     resolution: {integrity: sha512-51gJuLPTKa7piYPaVs8GmByo7/U7/7TZOq+cnXJIHZKavIRHAP77e3N2HEl3dgiqdD/w0yUfiJnII77PuDDFdw==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-linux-s390x@0.34.5':
     resolution: {integrity: sha512-nQtCk0PdKfho3eC5MrbQoigJ2gd1CgddUMkabUj+rBevs8tZ2cULOx46E7oyX+04WGfABgIwmMC0VqieTiR4jg==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-linux-x64@0.34.5':
     resolution: {integrity: sha512-MEzd8HPKxVxVenwAa+JRPwEC7QFjoPWuS5NZnBt6B3pu7EG2Ge0id1oLHZpPJdn3OQK+BQDiw9zStiHBTJQQQQ==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@img/sharp-linuxmusl-arm64@0.34.5':
     resolution: {integrity: sha512-fprJR6GtRsMt6Kyfq44IsChVZeGN97gTD331weR1ex1c1rypDEABN6Tm2xa1wE6lYb5DdEnk03NZPqA7Id21yg==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@img/sharp-linuxmusl-x64@0.34.5':
     resolution: {integrity: sha512-Jg8wNT1MUzIvhBFxViqrEhWDGzqymo3sV7z7ZsaWbZNDLXRJZoRGrjulp60YYtV4wfY8VIKcWidjojlLcWrd8Q==}
     engines: {node: ^18.17.0 || ^20.3.0 || >=21.0.0}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@img/sharp-wasm32@0.34.5':
     resolution: {integrity: sha512-OdWTEiVkY2PHwqkbBI8frFxQQFekHaSSkUIJkwzclWZe64O1X4UlUjqqqLaPbUpMOQk6FBu/HtlGXNblIs0huw==}
@@ -1831,24 +1877,28 @@ packages:
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@next/swc-linux-arm64-musl@15.5.7':
     resolution: {integrity: sha512-nfymt+SE5cvtTrG9u1wdoxBr9bVB7mtKTcj0ltRn6gkP/2Nu1zM5ei8rwP9qKQP0Y//umK+TtkKgNtfboBxRrw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@next/swc-linux-x64-gnu@15.5.7':
     resolution: {integrity: sha512-hvXcZvCaaEbCZcVzcY7E1uXN9xWZfFvkNHwbe/n4OkRhFWrs1J1QV+4U1BN06tXLdaS4DazEGXwgqnu/VMcmqw==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@next/swc-linux-x64-musl@15.5.7':
     resolution: {integrity: sha512-4IUO539b8FmF0odY6/SqANJdgwn1xs1GkPO5doZugwZ3ETF6JUdckk7RGmsfSf7ws8Qb2YB5It33mvNL/0acqA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@next/swc-win32-arm64-msvc@15.5.7':
     resolution: {integrity: sha512-CpJVTkYI3ZajQkC5vajM7/ApKJUOlm6uP4BknM3XKvJ7VXAvCqSjSLmM0LKdYzn6nBJVSjdclx8nYJSa3xlTgQ==}
@@ -2055,131 +2105,157 @@ packages:
     resolution: {integrity: sha512-t4ONHboXi/3E0rT6OZl1pKbl2Vgxf9vJfWgmUoCEVQVxhW6Cw/c8I6hbbu7DAvgp82RKiH7TpLwxnJeKv2pbsw==}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm-gnueabihf@4.60.4':
     resolution: {integrity: sha512-EIPRXTVQpHyF8WOo219AD2yEltPehLTcTMz2fn6JsatLYSzQf00hj3rulF+yauOlF9/FtM2WpkT/hJh/KJFGhA==}
     cpu: [arm]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm-musleabihf@4.59.0':
     resolution: {integrity: sha512-CikFT7aYPA2ufMD086cVORBYGHffBo4K8MQ4uPS/ZnY54GKj36i196u8U+aDVT2LX4eSMbyHtyOh7D7Zvk2VvA==}
     cpu: [arm]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-arm-musleabihf@4.60.4':
     resolution: {integrity: sha512-J3Yh9PzzF1Ovah2At+lHiGQdsYgArxBbXv/zHfSyaiFQEqvNv7DcW98pCrmdjCZBrqBiKrKKe2V+aaSGWuBe/w==}
     cpu: [arm]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-arm64-gnu@4.59.0':
     resolution: {integrity: sha512-jYgUGk5aLd1nUb1CtQ8E+t5JhLc9x5WdBKew9ZgAXg7DBk0ZHErLHdXM24rfX+bKrFe+Xp5YuJo54I5HFjGDAA==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-gnu@4.60.4':
     resolution: {integrity: sha512-BFDEZMYfUvLn37ONE1yMBojPxnMlTFsdyNoqncT0qFq1mAfllL+ATMMJd8TeuVMiX84s1KbcxcZbXInmcO2mRg==}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-arm64-musl@4.59.0':
     resolution: {integrity: sha512-peZRVEdnFWZ5Bh2KeumKG9ty7aCXzzEsHShOZEFiCQlDEepP1dpUl/SrUNXNg13UmZl+gzVDPsiCwnV1uI0RUA==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-arm64-musl@4.60.4':
     resolution: {integrity: sha512-pc9EYOSlOgdQ2uPl1o9PF6/kLSgaUosia7gOuS8mB69IxJvlclko1MECXysjs5ryez1/5zjYqx3+xYU0TU6R1A==}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-loong64-gnu@4.59.0':
     resolution: {integrity: sha512-gbUSW/97f7+r4gHy3Jlup8zDG190AuodsWnNiXErp9mT90iCy9NKKU0Xwx5k8VlRAIV2uU9CsMnEFg/xXaOfXg==}
     cpu: [loong64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-gnu@4.60.4':
     resolution: {integrity: sha512-NxnomyxYerDh5n4iLrNa+sH+Z+U4BMEE46V2PgQ/hoB909i8gV1M5wPojWg9fk1jWpO3IQnOs20K4wyZuFLEFQ==}
     cpu: [loong64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-loong64-musl@4.59.0':
     resolution: {integrity: sha512-yTRONe79E+o0FWFijasoTjtzG9EBedFXJMl888NBEDCDV9I2wGbFFfJQQe63OijbFCUZqxpHz1GzpbtSFikJ4Q==}
     cpu: [loong64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-loong64-musl@4.60.4':
     resolution: {integrity: sha512-nbJnQ8a3z1mtmrwImCYhc6BGpThAyYVRQxw9uKSKG4wR6aAYno9sVjJ0zaZcW9BPJX1GbrDPf+SvdWjgTuDmnw==}
     cpu: [loong64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-gnu@4.59.0':
     resolution: {integrity: sha512-sw1o3tfyk12k3OEpRddF68a1unZ5VCN7zoTNtSn2KndUE+ea3m3ROOKRCZxEpmT9nsGnogpFP9x6mnLTCaoLkA==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-gnu@4.60.4':
     resolution: {integrity: sha512-2EU6acNrQLd8tYvo/LXW535wupT3m6fo7HKo6lr7ktQoItxTyOL1ZCR/GfGCuXl2vR+zmfI6eRXkSemafv+iVg==}
     cpu: [ppc64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-ppc64-musl@4.59.0':
     resolution: {integrity: sha512-+2kLtQ4xT3AiIxkzFVFXfsmlZiG5FXYW7ZyIIvGA7Bdeuh9Z0aN4hVyXS/G1E9bTP/vqszNIN/pUKCk/BTHsKA==}
     cpu: [ppc64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-musl@4.60.4':
     resolution: {integrity: sha512-WeBtoMuaMxiiIrO2IYP3xs6GMWkJP2C0EoT8beTLkUPmzV1i/UcOSVw1d5r9KBODtHKilG5yFxsGRnBbK3wJ4A==}
     cpu: [ppc64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-gnu@4.59.0':
     resolution: {integrity: sha512-NDYMpsXYJJaj+I7UdwIuHHNxXZ/b/N2hR15NyH3m2qAtb/hHPA4g4SuuvrdxetTdndfj9b1WOmy73kcPRoERUg==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-gnu@4.60.4':
     resolution: {integrity: sha512-FJHFfqpKUI3A10WrWKiFbBZ7yVbGT4q4B5o1qKFFojqpaYoh9LrQgqWCmmcxQzVSXYtyB5bzkXrYzlHTs21MYA==}
     cpu: [riscv64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-riscv64-musl@4.59.0':
     resolution: {integrity: sha512-nLckB8WOqHIf1bhymk+oHxvM9D3tyPndZH8i8+35p/1YiVoVswPid2yLzgX7ZJP0KQvnkhM4H6QZ5m0LzbyIAg==}
     cpu: [riscv64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-musl@4.60.4':
     resolution: {integrity: sha512-mcEl6CUT5IAUmQf1m9FYSmVqCJlpQ8r8eyftFUHG8i9OhY7BkBXSUdnLH5DOf0wCOjcP9v/QO93zpmF1SptCCw==}
     cpu: [riscv64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-s390x-gnu@4.59.0':
     resolution: {integrity: sha512-oF87Ie3uAIvORFBpwnCvUzdeYUqi2wY6jRFWJAy1qus/udHFYIkplYRW+wo+GRUP4sKzYdmE1Y3+rY5Gc4ZO+w==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-s390x-gnu@4.60.4':
     resolution: {integrity: sha512-ynt3JxVd2w2buzoKDWIyiV1pJW93xlQic1THVLXilz429oijRpSHivZAgp65KBu+cMcgf1eVVjdnTLvPxgCuoQ==}
     cpu: [s390x]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.59.0':
     resolution: {integrity: sha512-3AHmtQq/ppNuUspKAlvA8HtLybkDflkMuLK4DPo77DfthRb71V84/c4MlWJXixZz4uruIH4uaa07IqoAkG64fg==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-gnu@4.60.4':
     resolution: {integrity: sha512-Boiz5+MsaROEWDf+GGEwF8VMHGhlUoQMtIPjOgA5fv4osupqTVnJteQNKJwUcnUog2G55jYXH7KZFFiJe0TEzQ==}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   '@rollup/rollup-linux-x64-musl@4.59.0':
     resolution: {integrity: sha512-2UdiwS/9cTAx7qIUZB/fWtToJwvt0Vbo0zmnYt7ED35KPg13Q0ym1g442THLC7VyI6JfYTP4PiSOWyoMdV2/xg==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-linux-x64-musl@4.60.4':
     resolution: {integrity: sha512-+qfSY27qIrFfI/Hom04KYFw3GKZSGU4lXus51wsb5EuySfFlWRwjkKWoE9emgRw/ukoT4Udsj4W/+xxG8VbPKg==}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   '@rollup/rollup-openbsd-x64@4.59.0':
     resolution: {integrity: sha512-M3bLRAVk6GOwFlPTIxVBSYKUaqfLrn8l0psKinkCFxl4lQvOSz8ZrKDz2gxcBwHFpci0B6rttydI4IpS4IS/jQ==}
@@ -3167,24 +3243,28 @@ packages:
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-arm64-musl@1.30.2:
     resolution: {integrity: sha512-5Vh9dGeblpTxWHpOx8iauV02popZDsCYMPIgiuw97OJ5uaDsL86cnqSFs5LZkG3ghHoX5isLgWzMs+eD1YzrnA==}
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-linux-x64-gnu@1.30.2:
     resolution: {integrity: sha512-Cfd46gdmj1vQ+lR6VRTTadNHu6ALuw2pKR9lYq4FnhvgBc4zWY1EtZcAc6EffShbb1MFrIPfLDXD6Xprbnni4w==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-x64-musl@1.30.2:
     resolution: {integrity: sha512-XJaLUUFXb6/QG2lGIW6aIk6jKdtjtcffUT0NKvIqhSBY3hh9Ch+1LCeH80dR9q9LBjG3ewbDjnumefsLsP6aiA==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-win32-arm64-msvc@1.30.2:
     resolution: {integrity: sha512-FZn+vaj7zLv//D/192WFFVA0RgHawIcHqLX9xuWiQt7P0PtdFEVaxgF9rjM/IRYHQXNnk61/H/gb2Ei+kUQ4xQ==}
@@ -4326,67 +4406,67 @@ snapshots:
       human-id: 4.1.3
       prettier: 2.8.8
 
-  '@cipherstash/auth-darwin-arm64@0.38.0':
+  '@cipherstash/auth-darwin-arm64@0.40.0':
     optional: true
 
-  '@cipherstash/auth-darwin-x64@0.38.0':
+  '@cipherstash/auth-darwin-x64@0.40.0':
     optional: true
 
-  '@cipherstash/auth-linux-arm64-gnu@0.38.0':
+  '@cipherstash/auth-linux-arm64-gnu@0.40.0':
     optional: true
 
-  '@cipherstash/auth-linux-x64-gnu@0.38.0':
+  '@cipherstash/auth-linux-x64-gnu@0.40.0':
     optional: true
 
-  '@cipherstash/auth-linux-x64-musl@0.38.0':
+  '@cipherstash/auth-linux-x64-musl@0.40.0':
     optional: true
 
-  '@cipherstash/auth-win32-x64-msvc@0.38.0':
+  '@cipherstash/auth-win32-x64-msvc@0.40.0':
     optional: true
 
-  '@cipherstash/auth@0.38.0(@cipherstash/auth-darwin-arm64@0.38.0)(@cipherstash/auth-darwin-x64@0.38.0)(@cipherstash/auth-linux-arm64-gnu@0.38.0)(@cipherstash/auth-linux-x64-gnu@0.38.0)(@cipherstash/auth-linux-x64-musl@0.38.0)(@cipherstash/auth-win32-x64-msvc@0.38.0)':
+  '@cipherstash/auth@0.40.0(@cipherstash/auth-darwin-arm64@0.40.0)(@cipherstash/auth-darwin-x64@0.40.0)(@cipherstash/auth-linux-arm64-gnu@0.40.0)(@cipherstash/auth-linux-x64-gnu@0.40.0)(@cipherstash/auth-linux-x64-musl@0.40.0)(@cipherstash/auth-win32-x64-msvc@0.40.0)':
     optionalDependencies:
-      '@cipherstash/auth-darwin-arm64': 0.38.0
-      '@cipherstash/auth-darwin-x64': 0.38.0
-      '@cipherstash/auth-linux-arm64-gnu': 0.38.0
-      '@cipherstash/auth-linux-x64-gnu': 0.38.0
-      '@cipherstash/auth-linux-x64-musl': 0.38.0
-      '@cipherstash/auth-win32-x64-msvc': 0.38.0
+      '@cipherstash/auth-darwin-arm64': 0.40.0
+      '@cipherstash/auth-darwin-x64': 0.40.0
+      '@cipherstash/auth-linux-arm64-gnu': 0.40.0
+      '@cipherstash/auth-linux-x64-gnu': 0.40.0
+      '@cipherstash/auth-linux-x64-musl': 0.40.0
+      '@cipherstash/auth-win32-x64-msvc': 0.40.0
 
   '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.24.0':
+  '@cipherstash/protect-ffi-darwin-arm64@0.26.0':
     optional: true
 
   '@cipherstash/protect-ffi-darwin-x64@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-x64@0.24.0':
+  '@cipherstash/protect-ffi-darwin-x64@0.26.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-arm64-gnu@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.24.0':
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.26.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-x64-gnu@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.24.0':
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.26.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-x64-musl@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.24.0':
+  '@cipherstash/protect-ffi-linux-x64-musl@0.26.0':
     optional: true
 
   '@cipherstash/protect-ffi-win32-x64-msvc@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.24.0':
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.26.0':
     optional: true
 
   '@cipherstash/protect-ffi@0.23.0':
@@ -4400,16 +4480,16 @@ snapshots:
       '@cipherstash/protect-ffi-linux-x64-musl': 0.23.0
       '@cipherstash/protect-ffi-win32-x64-msvc': 0.23.0
 
-  '@cipherstash/protect-ffi@0.24.0':
+  '@cipherstash/protect-ffi@0.26.0':
     dependencies:
       '@neon-rs/load': 0.1.82
     optionalDependencies:
-      '@cipherstash/protect-ffi-darwin-arm64': 0.24.0
-      '@cipherstash/protect-ffi-darwin-x64': 0.24.0
-      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.24.0
-      '@cipherstash/protect-ffi-linux-x64-gnu': 0.24.0
-      '@cipherstash/protect-ffi-linux-x64-musl': 0.24.0
-      '@cipherstash/protect-ffi-win32-x64-msvc': 0.24.0
+      '@cipherstash/protect-ffi-darwin-arm64': 0.26.0
+      '@cipherstash/protect-ffi-darwin-x64': 0.26.0
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.26.0
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.26.0
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.26.0
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.26.0
 
   '@clack/core@1.3.0':
     dependencies:

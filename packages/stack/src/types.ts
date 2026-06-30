@@ -1,4 +1,5 @@
 import type {
+  AuthStrategy,
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
   JsPlaintext,
@@ -14,6 +15,19 @@ import type {
   encryptedColumn,
   encryptedField,
 } from '@/schema'
+
+/**
+ * A pluggable authentication strategy for ZeroKMS requests. Any object
+ * with a `getToken(): Promise<{ token: string }>` method satisfies it —
+ * notably the strategies from `@cipherstash/auth`: `OidcFederationStrategy`
+ * (per-user, identity-bound encryption) and `AccessKeyStrategy`
+ * (service-to-service / CI). When supplied to {@link ClientConfig.strategy},
+ * `getToken()` is invoked on every ZeroKMS request, taking precedence over
+ * the credentials-derived default.
+ *
+ * @see ClientConfig.strategy
+ */
+export type { AuthStrategy }
 
 // ---------------------------------------------------------------------------
 // Branded type utilities
@@ -90,6 +104,29 @@ export type ClientConfig = {
    * Keysets are created and managed in the CipherStash dashboard.
    */
   keyset?: KeysetIdentifier
+
+  /**
+   * An optional authentication strategy for ZeroKMS requests, from
+   * `@cipherstash/auth` (re-exported by `@cipherstash/stack`). When provided,
+   * its `getToken()` is invoked on every ZeroKMS request and takes precedence
+   * over the credentials-derived default strategy (the `clientKey` is still
+   * required for encryption). Use:
+   *
+   * - `OidcFederationStrategy` for per-user, identity-bound encryption —
+   *   federates an end user's OIDC JWT into a CTS service token, so requests
+   *   authenticate as that user. Pair with `.withLockContext({ identityClaim })`
+   *   to bind the data key to a claim. This replaces the older
+   *   `LockContext.identify()` ceremony.
+   * - `AccessKeyStrategy` for service-to-service / CI, or any custom
+   *   `{ getToken() }` object for bespoke token acquisition / caching.
+   *
+   * Leave unset to let the client build its default strategy from
+   * `workspaceCrn` / `accessKey` / `clientId` / `clientKey` (or the
+   * corresponding `CS_*` environment variables).
+   *
+   * @see {@link AuthStrategy}
+   */
+  strategy?: AuthStrategy
 }
 
 type AtLeastOneCsTable<T> = [T, ...T[]]

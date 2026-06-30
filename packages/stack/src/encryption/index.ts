@@ -17,6 +17,7 @@ import {
   type encryptedTable,
 } from '@/schema'
 import type {
+  AuthStrategy,
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
@@ -85,6 +86,7 @@ export class EncryptionClient {
     clientId?: string
     clientKey?: string
     keyset?: KeysetIdentifier
+    strategy?: AuthStrategy
   }): Promise<Result<EncryptionClient, EncryptionError>> {
     return await withResult(
       async () => {
@@ -101,6 +103,11 @@ export class EncryptionClient {
 
         // newClient handles env var fallback internally via withEnvCredentials,
         // so we pass config values through without manual fallback here.
+        // When `strategy` is supplied, protect-ffi invokes its getToken()
+        // on every ZeroKMS request instead of building an AutoStrategy
+        // from the credentials in clientOpts (the clientKey is still used
+        // for encryption). Passing `strategy: undefined` is equivalent to
+        // omitting it, so the default credentials path is unaffected.
         this.client = await newClient({
           encryptConfig: validated,
           clientOpts: {
@@ -110,6 +117,7 @@ export class EncryptionClient {
             clientKey: config.clientKey,
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
+          strategy: config.strategy,
         })
 
         this.encryptConfig = validated
@@ -626,6 +634,12 @@ export class EncryptionClient {
  * columns to use. Credentials are read from the optional `config` or from the environment
  * (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`).
  *
+ * Pass a `config.strategy` to control how ZeroKMS requests are authenticated; its `getToken()`
+ * is then used for every request in place of the credentials-derived default. Use
+ * `OidcFederationStrategy` for per-user, identity-bound encryption (federates an end user's OIDC
+ * JWT into a CTS service token) or `AccessKeyStrategy` for service-to-service / CI. Both are
+ * re-exported from `@cipherstash/stack`. See {@link ClientConfig.strategy}.
+ *
  * @param config - Initialization options. Must include `schemas`; optionally include `config` for
  *   workspace/keys. Logging is configured via the `STASH_STACK_LOG` environment variable
  *   (`debug | info | error`, default: `error`).
@@ -644,6 +658,24 @@ export class EncryptionClient {
  * })
  * const client = await Encryption({ schemas: [users] })
  * const result = await client.encrypt("alice@example.com", { column: users.email, table: users })
+ * ```
+ *
+ * @example Per-user, identity-bound encryption
+ * ```typescript
+ * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
+ *
+ * // Authenticate every ZeroKMS request as the signed-in user.
+ * const client = await Encryption({
+ *   schemas: [users],
+ *   config: {
+ *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
+ *   },
+ * })
+ *
+ * // Bind the data key to the user's `sub` claim.
+ * const result = await client
+ *   .encrypt("alice@example.com", { column: users.email, table: users })
+ *   .withLockContext({ identityClaim: ["sub"] })
  * ```
  *
  * @see {@link EncryptionClientConfig} for full config options.

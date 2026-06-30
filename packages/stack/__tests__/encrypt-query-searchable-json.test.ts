@@ -1,14 +1,11 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
 
 type EncryptionClient = Awaited<ReturnType<typeof Encryption>>
 
 import {
-  createFailingMockLockContext,
   createMockLockContext,
-  createMockLockContextWithNullContext,
   expectFailure,
   jsonbSchema,
   metadata,
@@ -451,19 +448,15 @@ describe('searchableJson with LockContext', () => {
     expect(typeof operation.withLockContext).toBe('function')
   })
 
-  it('executes string plaintext with LockContext mock', async () => {
-    const mockLockContext = createMockLockContext()
-
+  it('executes string plaintext bound to an identity claim', async () => {
     const operation = protectClient.encryptQuery('$.user.email', {
       column: jsonbSchema.metadata,
       table: jsonbSchema,
       queryType: 'searchableJson',
     })
 
-    const withContext = operation.withLockContext(mockLockContext as any)
+    const withContext = operation.withLockContext(createMockLockContext())
     const result = await withContext.execute()
-
-    expect(mockLockContext.getLockContext).toHaveBeenCalledTimes(1)
 
     const data = unwrapResult(result)
     expect(data).toMatchObject({
@@ -473,9 +466,7 @@ describe('searchableJson with LockContext', () => {
     expectSelector(data)
   }, 30000)
 
-  it('executes object plaintext with LockContext mock', async () => {
-    const mockLockContext = createMockLockContext()
-
+  it('executes object plaintext bound to an identity claim', async () => {
     const operation = protectClient.encryptQuery(
       { role: 'admin' },
       {
@@ -485,17 +476,12 @@ describe('searchableJson with LockContext', () => {
       },
     )
 
-    const withContext = operation.withLockContext(mockLockContext as any)
+    const withContext = operation.withLockContext(createMockLockContext())
     const result = await withContext.execute()
-
-    // LockContext should be called even if the actual encryption fails
-    // with a mock token (ste_vec_term operations may require real auth)
-    expect(mockLockContext.getLockContext).toHaveBeenCalledTimes(1)
 
     // Ensure the operation actually completed (has either data or failure)
     expect(result.data !== undefined || result.failure !== undefined).toBe(true)
 
-    // The result may fail due to mock token, but we verify LockContext integration worked
     if (result.data) {
       expect(result.data).toMatchObject({
         i: { t: 'documents', c: 'metadata' },
@@ -505,9 +491,7 @@ describe('searchableJson with LockContext', () => {
     }
   }, 30000)
 
-  it('executes batch with LockContext mock', async () => {
-    const mockLockContext = createMockLockContext()
-
+  it('executes a batch bound to an identity claim', async () => {
     const operation = protectClient.encryptQuery([
       {
         value: '$.user.email',
@@ -523,61 +507,12 @@ describe('searchableJson with LockContext', () => {
       },
     ])
 
-    const withContext = operation.withLockContext(mockLockContext as any)
+    const withContext = operation.withLockContext(createMockLockContext())
     const result = await withContext.execute()
 
-    // LockContext should be called even if the actual encryption fails
-    // with a mock token (ste_vec_term operations may require real auth)
-    expect(mockLockContext.getLockContext).toHaveBeenCalledTimes(1)
-
-    // The result may fail due to mock token, but we verify LockContext integration worked
     if (result.data) {
       expect(result.data).toHaveLength(2)
     }
-  }, 30000)
-
-  it('handles LockContext failure gracefully', async () => {
-    const mockLockContext = createFailingMockLockContext(
-      EncryptionErrorTypes.CtsTokenError,
-      'Mock LockContext failure',
-    )
-
-    const operation = protectClient.encryptQuery('$.user.email', {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      queryType: 'searchableJson',
-    })
-
-    const withContext = operation.withLockContext(mockLockContext as any)
-    const result = await withContext.execute()
-
-    expectFailure(
-      result,
-      'Mock LockContext failure',
-      EncryptionErrorTypes.CtsTokenError,
-    )
-  }, 30000)
-
-  it('handles explicit null context from getLockContext gracefully', async () => {
-    const mockLockContext = createMockLockContextWithNullContext()
-
-    const operation = protectClient.encryptQuery([
-      {
-        value: '$.user.email',
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'searchableJson',
-      },
-    ])
-
-    const withContext = operation.withLockContext(mockLockContext as any)
-    const result = await withContext.execute()
-
-    // Should succeed - null context should not be passed to FFI
-    const data = unwrapResult(result)
-    expect(data).toHaveLength(1)
-    expect(data[0]).toMatchObject({ i: { t: 'documents', c: 'metadata' } })
-    expectSelector(data[0])
   }, 30000)
 })
 

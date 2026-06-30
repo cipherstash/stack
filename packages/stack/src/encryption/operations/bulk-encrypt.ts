@@ -2,7 +2,11 @@ import { type Result, withResult } from '@byteslice/result'
 import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { Context, LockContext } from '@/identity'
+import {
+  type Context,
+  type LockContextInput,
+  resolveLockContext,
+} from '@/identity'
 import type {
   EncryptedColumn,
   EncryptedField,
@@ -79,7 +83,7 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
   }
 
   public withLockContext(
-    lockContext: LockContext,
+    lockContext: LockContextInput,
   ): BulkEncryptOperationWithLockContext {
     return new BulkEncryptOperationWithLockContext(this, lockContext)
   }
@@ -152,9 +156,9 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
 
 export class BulkEncryptOperationWithLockContext extends EncryptionOperation<BulkEncryptedData> {
   private operation: BulkEncryptOperation
-  private lockContext: LockContext
+  private lockContext: LockContextInput
 
-  constructor(operation: BulkEncryptOperation, lockContext: LockContext) {
+  constructor(operation: BulkEncryptOperation, lockContext: LockContextInput) {
     super()
     this.operation = operation
     this.lockContext = lockContext
@@ -185,16 +189,13 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
           return []
         }
 
-        const context = await this.lockContext.getLockContext()
-        if (context.failure) {
-          throw new Error(`[encryption]: ${context.failure.message}`)
-        }
+        const lockContext = resolveLockContext(this.lockContext)
 
         const nonNullPayloads = createEncryptPayloads(
           plaintexts,
           column,
           table,
-          context.data.context,
+          lockContext,
         )
 
         if (nonNullPayloads.length === 0) {
@@ -205,7 +206,6 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
 
         const encryptedData = await encryptBulk(client, {
           plaintexts: nonNullPayloads,
-          serviceToken: context.data.ctsToken,
           unverifiedContext: metadata,
         })
 

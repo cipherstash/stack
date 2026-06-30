@@ -24,30 +24,53 @@ export type LockContextOptions = {
 }
 
 export type GetLockContextResponse = {
-  ctsToken: CtsToken
+  ctsToken?: CtsToken
   context: Context
 }
 
 /**
- * Manages CipherStash lock contexts for row-level access control.
+ * The accepted argument to `.withLockContext()` — either a {@link LockContext}
+ * or a plain identity-claim spec (e.g. `{ identityClaim: ['sub'] }`).
+ */
+export type LockContextInput = LockContext | Context
+
+/**
+ * Resolve a {@link LockContextInput} to the {@link Context} (identity claim)
+ * that protect-ffi expects. Synchronous — no token round-trip.
+ */
+export function resolveLockContext(input: LockContextInput): Context {
+  return input instanceof LockContext ? input.identityContext : input
+}
+
+/**
+ * Binds an encryption/decryption operation to a user's identity by selecting
+ * which JWT claim(s) ZeroKMS bakes into the data key's tag (the *lock context*).
  *
- * A `LockContext` ties encryption/decryption operations to an authenticated
- * user identity via CTS (CipherStash Token Service). Call {@link identify}
- * with a user's JWT to obtain a CTS token, then pass the `LockContext`
- * to `.withLockContext()` on any encrypt/decrypt operation.
+ * The claim **value** is resolved by ZeroKMS from the token that authenticates
+ * the request — so to bind to a real end user, authenticate the client as that
+ * user with an `OidcFederationStrategy` (from `@cipherstash/auth`) and pass the
+ * claim to `.withLockContext()`. The same context must be supplied to decrypt.
+ *
+ * You can pass a plain `{ identityClaim }` directly — constructing a
+ * `LockContext` is optional.
  *
  * @example
  * ```typescript
- * import { LockContext } from "@cipherstash/stack/identity"
+ * import { Encryption } from "@cipherstash/stack"
+ * import { OidcFederationStrategy } from "@cipherstash/auth"
  *
- * const lc = new LockContext()
- * const identified = await lc.identify(userJwt)
+ * // Authenticate the client as the end user (replaces the old identify() flow).
+ * const client = await Encryption({
+ *   schemas,
+ *   config: {
+ *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
+ *   },
+ * })
  *
- * if (identified.failure) throw new Error(identified.failure.message)
- *
+ * // Bind the key to the user's `sub` claim — no token, no identify().
  * const result = await client
  *   .encrypt(value, { column: users.email, table: users })
- *   .withLockContext(identified.data)
+ *   .withLockContext({ identityClaim: ["sub"] })
  * ```
  */
 export class LockContext {
@@ -77,19 +100,26 @@ export class LockContext {
   }
 
   /**
+   * The identity-claim context this lock context binds to, e.g.
+   * `{ identityClaim: ['sub'] }`. Resolved synchronously — `.withLockContext()`
+   * uses this directly; no CTS token is required.
+   */
+  get identityContext(): Context {
+    return this.context
+  }
+
+  /**
    * Exchange a user's JWT for a CTS token and bind it to this lock context.
    *
-   * @param jwtToken - A valid OIDC / JWT token for the current user.
-   * @returns A `Result` containing this `LockContext` (now authenticated) or an error.
+   * @deprecated Per-operation CTS tokens were removed in protect-ffi 0.25.
+   * Authenticate the client as the user with an `OidcFederationStrategy`
+   * (`config.strategy`) instead, and pass the claim to `.withLockContext()`.
+   * The token fetched here is no longer used by encryption operations. This
+   * method is kept for backwards compatibility and will be removed in a
+   * future major release.
    *
-   * @example
-   * ```typescript
-   * const lc = new LockContext()
-   * const result = await lc.identify(userJwt)
-   * if (result.failure) {
-   *   console.error("Auth failed:", result.failure.message)
-   * }
-   * ```
+   * @param jwtToken - A valid OIDC / JWT token for the current user.
+   * @returns A `Result` containing this `LockContext` or an error.
    */
   async identify(
     jwtToken: string,
@@ -145,28 +175,21 @@ export class LockContext {
   }
 
   /**
-   * Retrieve the current CTS token and context for use with encryption operations.
+   * Retrieve the identity context (and CTS token, if one was set).
    *
-   * Must be called after {@link identify}. Returns the token/context pair that
-   * `.withLockContext()` expects.
-   *
-   * @returns A `Result` containing the CTS token and identity context, or an error
-   *   if {@link identify} has not been called.
+   * @deprecated Encryption operations no longer consume a CTS token — they read
+   * the identity claim directly via {@link identityContext}. Pass the claim to
+   * `.withLockContext()` and authenticate the client with an
+   * `OidcFederationStrategy` instead. Kept for backwards compatibility; the
+   * returned `ctsToken` is `undefined` unless one was supplied to the
+   * constructor or {@link identify} was called.
    */
   getLockContext(): Promise<Result<GetLockContextResponse, EncryptionError>> {
     return withResult(
-      () => {
-        if (!this.ctsToken?.accessToken || !this.ctsToken?.expiry) {
-          throw new Error(
-            'The CTS token is not set. Please call identify() with a users JWT token, or pass an existing CTS token to the LockContext constructor before calling getLockContext().',
-          )
-        }
-
-        return {
-          context: this.context,
-          ctsToken: this.ctsToken,
-        }
-      },
+      () => ({
+        context: this.context,
+        ctsToken: this.ctsToken,
+      }),
       (error) => ({
         type: EncryptionErrorTypes.CtsTokenError,
         message: error.message,
