@@ -8,6 +8,18 @@
 
 **Tech Stack:** TypeScript (ES2022, bundler module resolution), Zod 3.25.76, Vitest 3, tsup (dual ESM+CJS build), Biome (formatting/lint).
 
+## Review dispositions
+
+Code-review feedback verified against the actual files before incorporation. Verdicts and what changed:
+
+- **[VALID] `token_filters: []` nullish-merge edge is untested.** Confirmed `[] ?? x` evaluates to `[]` (an empty array is not nullish), so an explicit `token_filters: []` DOES override the downcase default through the `?? ` merge. v2 tests this (`schema-builders.test.ts:87-103` passes `token_filters: []` and asserts `[]` survives). The v3 plan's override test (Task 1, Step 1) deliberately omitted `token_filters` and never exercised the explicit-empty-array path. **Change:** added a dedicated `.freeTextSearch({ token_filters: [] })` override test asserting `match.token_filters === []`.
+- **[VALID] Repeated `.freeTextSearch()` calls are untested.** Confirmed the sketched v3 `freeTextSearch()` (like v2 `src/schema/index.ts:353-367`) re-merges each call against `DEFAULT_MATCH_OPTS`, NOT against current state — so `.freeTextSearch({ k: 8 }).freeTextSearch({ m: 4096 })` resets `k` back to `6` (last-call-wins-fully). This matches v2 exactly, so per the "mirror v2 exactly" global constraint we KEEP this behavior rather than switching to merge-against-current (which would diverge from v2). **Change:** added a repeated-call test that pins the v2-consistent last-call-wins-fully semantics.
+- **[VALID] Type-level tests don't run in CI (pre-existing repo issue).** Confirmed `vitest.config.ts` has no `typecheck` block, `package.json` `test` script is `vitest run` (no `--typecheck`), and `.github/workflows/tests.yml` runs `pnpm run test`. Vitest only collects `*.test-d.ts` under typecheck mode, so the existing `__tests__/types.test-d.ts` is ALSO unenforced in CI today. **Change:** added Task 4, Step 4 — add a `test:types` package script so the type suite is runnable with one command, and an explicit note that wiring it into CI is a repo-wide change tracked as an open question (out of scope for the additive v3 work).
+- **[VALID] Dead-code remap in `InferPlaintext`/`InferEncrypted`.** In v3's flat single-type model `EncryptedV3TableColumn = { [key: string]: EncryptedTextSearchColumn }`, the `as C[K] extends EncryptedTextSearchColumn ? K : never` key-remap filters nothing (every value is already that type). v2 needs the filter because its column map also admits nested-object branches (`src/schema/index.ts:526`, `548`). **Change:** simplified both helpers to `{ [K in keyof C]: string }` / `{ [K in keyof C]: Encrypted }` with a comment marking the filter as a future extension point for when more v3 concrete types land.
+- **[VALID] API surface bloat: three ways to read one literal.** v2 exposes column metadata via methods only (`getName()`, `build()` — no getters: `src/schema/index.ts:240-407`). The plan exposed the eql type via a `get eqlType` getter AND `getEqlType()` AND an exported const. **Change (partial):** dropped the `get eqlType` property getter; kept `getEqlType()` (method, matching v2 convention) and the exported `TEXT_SEARCH_EQL_TYPE` const (the single source-of-truth literal, useful for external comparison without instantiation). Updated the constraint, the interface list, and the test that asserted `col.eqlType`.
+- **[VALID] Assertions.** **Changes:** switched the load-bearing/default `build()` assertions to `toStrictEqual` (catches stray `undefined` keys); switched the two column-instance type checks from the looser `toMatchTypeOf` to `toEqualTypeOf`; added a negative `@ts-expect-error` type test proving a v2 `EncryptedColumn` is rejected by the v3 `EncryptedV3TableColumn` constraint (v2/v3 column classes carry different private fields, so they are nominally non-assignable — the rejection is real).
+- **[VALID] Type tightening.** **Changes:** tightened `InferPlaintext`/`InferEncrypted` constraints from `EncryptedTable<any>` to `EncryptedTable<EncryptedV3TableColumn>`; inlined the pointless `const castAs: CastAs = 'string'` local into `cast_as: 'string'` (the `ColumnSchema` return type already checks the literal against `CastAs`), and dropped the now-unused `CastAs` import.
+
 ## Global Constraints
 
 - **Do NOT modify** `packages/stack/src/schema/index.ts` (the v2 module). v3 is purely additive.
@@ -16,7 +28,7 @@
 - Match-index defaults MUST mirror the v2 `freeTextSearch()` builder **exactly**: `tokenizer: { kind: 'ngram', token_length: 3 }`, `token_filters: [{ kind: 'downcase' }]`, `k: 6`, `m: 2048`, `include_original: true`. (Note: `include_original` is `true` — the v2 builder default, not the zod-schema default of `false`.)
 - `unique.token_filters` defaults to `[]` (case-sensitive equality, matching v2).
 - `.freeTextSearch(opts?)` is **tuning only** — it overrides match-index params and NEVER enables a capability. Merge semantics are per-top-level-key replace against the defaults (mirror v2's `opts?.x ?? default`).
-- `EncryptedTextSearchColumn` records `eqlType = 'eql_v3.text_search'`, exposed via a getter / `getEqlType()`. This value is metadata for future increments and MUST be absent from `build()` output.
+- `EncryptedTextSearchColumn` records the eql type `'eql_v3.text_search'`, exposed via the `getEqlType()` method ONLY (no property getter — methods-not-getters matches the v2 builder convention). The single source-of-truth literal is the exported `TEXT_SEARCH_EQL_TYPE` const. This value is metadata for future increments and MUST be absent from `build()` output.
 - v3 `encryptedTable` and `buildEncryptConfig` intentionally shadow the v2 symbol names; they live only on the `/v3` subpath. `buildEncryptConfig` emits `{ v: 1, tables }`.
 - Tests live in `packages/stack/__tests__/`, named `*.test.ts` (runtime) and `*.test-d.ts` (type-level, run with `--typecheck`). Source imports use the `@/` alias (`@/schema`, `@/schema/v3`, `@/types`).
 - Run all commands from `packages/stack/` unless noted. The test runner is `pnpm exec vitest`.
@@ -39,14 +51,14 @@
 - Test: `packages/stack/__tests__/schema-v3.test.ts`
 
 **Interfaces:**
-- Consumes (from v2, `@/schema`): `type CastAs`, `type ColumnSchema`, `type MatchIndexOpts`, the runtime builder `encryptedColumn` (test only, for the equivalence assertion).
+- Consumes (from v2, `@/schema`): `type ColumnSchema`, `type MatchIndexOpts`, the runtime builder `encryptedColumn` (test only, for the equivalence assertion). (`CastAs` is NOT consumed — `build()` emits the bare `'string'` literal, checked by the `ColumnSchema` return type.)
 - Produces:
   - `class EncryptedTextSearchColumn` with:
     - `constructor(columnName: string)`
     - `freeTextSearch(opts?: MatchIndexOpts): this`
     - `build(): ColumnSchema`
     - `getName(): string`
-    - `getEqlType(): 'eql_v3.text_search'` and a `get eqlType(): 'eql_v3.text_search'` getter
+    - `getEqlType(): 'eql_v3.text_search'` (method only — no `get eqlType` property getter)
   - `function encryptedTextSearchColumn(columnName: string): EncryptedTextSearchColumn`
   - `const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'` (exported const literal)
 
@@ -71,7 +83,8 @@ describe('eql_v3 text_search column', () => {
 
   it('.build() emits the pinned default config (cast_as: string + all three indexes)', () => {
     const built = encryptedTextSearchColumn('email').build()
-    expect(built).toEqual({
+    // toStrictEqual (not toEqual) so a stray `undefined` key would fail.
+    expect(built).toStrictEqual({
       cast_as: 'string',
       indexes: {
         unique: { token_filters: [] },
@@ -94,7 +107,8 @@ describe('eql_v3 text_search column', () => {
       .orderAndRange()
       .freeTextSearch()
       .build()
-    expect(v3).toEqual(v2)
+    // toStrictEqual: byte-identical, no extra/undefined keys on either side.
+    expect(v3).toStrictEqual(v2)
   })
 
   it('.freeTextSearch(opts) overrides each provided key and keeps the rest as defaults', () => {
@@ -116,6 +130,29 @@ describe('eql_v3 text_search column', () => {
     })
   })
 
+  it('.freeTextSearch({ token_filters: [] }) overrides the downcase default with an empty array', () => {
+    // LOAD-BEARING: `[] ?? default` evaluates to `[]` (an empty array is not
+    // nullish), so an explicit empty array must OVERRIDE the downcase default,
+    // not fall back to it. Mirrors v2 (schema-builders.test.ts).
+    const built = encryptedTextSearchColumn('email')
+      .freeTextSearch({ token_filters: [] })
+      .build()
+    expect(built.indexes.match.token_filters).toEqual([])
+  })
+
+  it('repeated .freeTextSearch() calls are last-call-wins-fully (each re-merges against defaults, not prior state)', () => {
+    // Each call re-merges against DEFAULT_MATCH_OPTS, not the accumulated
+    // matchOpts — so the second call resets k back to its default of 6. This
+    // is intentional: it mirrors v2 exactly. Pinned here so a future
+    // "merge against current state" change can't silently slip in.
+    const built = encryptedTextSearchColumn('email')
+      .freeTextSearch({ k: 8 })
+      .freeTextSearch({ m: 4096 })
+      .build()
+    expect(built.indexes.match.k).toBe(6)
+    expect(built.indexes.match.m).toBe(4096)
+  })
+
   it('.freeTextSearch() is tuning-only: unique and ore indexes stay present', () => {
     const built = encryptedTextSearchColumn('email')
       .freeTextSearch({ k: 8 })
@@ -124,10 +161,9 @@ describe('eql_v3 text_search column', () => {
     expect(built.indexes.ore).toEqual({})
   })
 
-  it('getEqlType() / eqlType getter return the concrete domain name', () => {
+  it('getEqlType() returns the concrete domain name', () => {
     const col = encryptedTextSearchColumn('email')
     expect(col.getEqlType()).toBe('eql_v3.text_search')
-    expect(col.eqlType).toBe('eql_v3.text_search')
   })
 
   it('eqlType metadata is absent from build() output', () => {
@@ -148,7 +184,7 @@ Expected: FAIL — module resolution error `Failed to resolve import "@/schema/v
 Create `packages/stack/src/schema/v3/index.ts`:
 
 ```ts
-import type { CastAs, ColumnSchema, MatchIndexOpts } from '@/schema'
+import type { ColumnSchema, MatchIndexOpts } from '@/schema'
 
 /**
  * The concrete EQL v3 domain name for a full-capability text column.
@@ -186,12 +222,10 @@ export class EncryptedTextSearchColumn {
     this.matchOpts = { ...DEFAULT_MATCH_OPTS }
   }
 
-  /** The concrete EQL v3 domain name. Metadata only; not emitted by `build()`. */
-  get eqlType(): typeof TEXT_SEARCH_EQL_TYPE {
-    return TEXT_SEARCH_EQL_TYPE
-  }
-
-  /** The concrete EQL v3 domain name. Metadata only; not emitted by `build()`. */
+  /**
+   * The concrete EQL v3 domain name. Metadata only; not emitted by `build()`.
+   * Method (not a property getter) to match the v2 builder convention.
+   */
   getEqlType(): typeof TEXT_SEARCH_EQL_TYPE {
     return TEXT_SEARCH_EQL_TYPE
   }
@@ -215,9 +249,10 @@ export class EncryptedTextSearchColumn {
 
   /** Emit the encrypt-config column. Byte-identical to a v2 equality+order+match column. */
   build(): ColumnSchema {
-    const castAs: CastAs = 'string'
+    // `cast_as` is typed `CastAs` by the `ColumnSchema` return type, so the
+    // literal is checked here without a redundant local annotation.
     return {
-      cast_as: castAs,
+      cast_as: 'string',
       indexes: {
         unique: { token_filters: [] },
         ore: {},
@@ -246,7 +281,7 @@ export function encryptedTextSearchColumn(
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `pnpm exec vitest run __tests__/schema-v3.test.ts`
-Expected: PASS (all 7 tests in this file green).
+Expected: PASS (all 9 tests in this describe block green).
 
 - [ ] **Step 5: Commit**
 
@@ -271,8 +306,8 @@ git commit -m "feat(stack): add eql_v3 text_search column builder"
   - `class EncryptedTable<T extends EncryptedV3TableColumn>` with `tableName: string`, `columnBuilders: T`, and `build(): { tableName: string; columns: Record<string, ColumnSchema> }`
   - `function encryptedTable<T extends EncryptedV3TableColumn>(tableName: string, columns: T): EncryptedTable<T> & T`
   - `function buildEncryptConfig(...tables: Array<EncryptedTable<EncryptedV3TableColumn>>): EncryptConfig`
-  - `type InferPlaintext<T extends EncryptedTable<any>>` → `{ [col]: string }`
-  - `type InferEncrypted<T extends EncryptedTable<any>>` → `{ [col]: Encrypted }`
+  - `type InferPlaintext<T extends EncryptedTable<EncryptedV3TableColumn>>` → `{ [col]: string }`
+  - `type InferEncrypted<T extends EncryptedTable<EncryptedV3TableColumn>>` → `{ [col]: Encrypted }`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -315,7 +350,7 @@ describe('eql_v3 encryptedTable', () => {
     })
     const built = users.build()
     expect(built.tableName).toBe('users')
-    expect(built.columns).toEqual({
+    expect(built.columns).toStrictEqual({
       email: {
         cast_as: 'string',
         indexes: {
@@ -377,7 +412,6 @@ Append to `packages/stack/src/schema/v3/index.ts`. First extend the import at th
 
 ```ts
 import type {
-  CastAs,
   ColumnSchema,
   EncryptConfig,
   MatchIndexOpts,
@@ -468,28 +502,27 @@ export function buildEncryptConfig(
   return config
 }
 
-/** Infer the plaintext (decrypted) shape from a v3 table schema. */
-export type InferPlaintext<T extends EncryptedTable<any>> =
-  T extends EncryptedTable<infer C>
-    ? {
-        [K in keyof C as C[K] extends EncryptedTextSearchColumn
-          ? K
-          : never]: string
-      }
-    : never
+/**
+ * Infer the plaintext (decrypted) shape from a v3 table schema.
+ *
+ * In v3's flat single-type column model every value is an
+ * {@link EncryptedTextSearchColumn}, so no key-remap filter is needed — every
+ * column maps to `string`. When future v3 increments add other concrete column
+ * types (or nested fields), reintroduce a `[K in keyof C as C[K] extends ... ]`
+ * filter here.
+ */
+export type InferPlaintext<T extends EncryptedTable<EncryptedV3TableColumn>> =
+  T extends EncryptedTable<infer C> ? { [K in keyof C]: string } : never
 
-/** Infer the encrypted shape from a v3 table schema. */
-export type InferEncrypted<T extends EncryptedTable<any>> =
-  T extends EncryptedTable<infer C>
-    ? {
-        [K in keyof C as C[K] extends EncryptedTextSearchColumn
-          ? K
-          : never]: Encrypted
-      }
-    : never
+/**
+ * Infer the encrypted shape from a v3 table schema. See {@link InferPlaintext}
+ * for why no key-remap filter is needed in the flat single-type model.
+ */
+export type InferEncrypted<T extends EncryptedTable<EncryptedV3TableColumn>> =
+  T extends EncryptedTable<infer C> ? { [K in keyof C]: Encrypted } : never
 ```
 
-Note: the `CastAs` import is still used by Task 1's `build()`; keep it in the import list.
+Note: `CastAs` is intentionally NOT imported — Task 1's `build()` emits the bare `'string'` literal (checked by the `ColumnSchema` return type), so no `CastAs` annotation is needed anywhere in this module.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -595,9 +628,10 @@ git commit -m "feat(stack): wire @cipherstash/stack/schema/v3 export subpath"
 
 **Files:**
 - Create: `packages/stack/__tests__/schema-v3.test-d.ts`
+- Modify: `packages/stack/package.json` (add a `test:types` script — Step 4)
 
 **Interfaces:**
-- Consumes: `encryptedTable`, `encryptedTextSearchColumn`, `type EncryptedTextSearchColumn`, `type InferEncrypted`, `type InferPlaintext` from `@/schema/v3`; `type Encrypted` from `@/types`.
+- Consumes: `encryptedTable`, `encryptedTextSearchColumn`, `type EncryptedTextSearchColumn`, `type InferEncrypted`, `type InferPlaintext` from `@/schema/v3`; `type Encrypted` from `@/types`; `encryptedColumn` from `@/schema` (v2, for the negative `@ts-expect-error` rejection test).
 
 - [ ] **Step 1: Write the failing type test**
 
@@ -605,6 +639,8 @@ Create `packages/stack/__tests__/schema-v3.test-d.ts`:
 
 ```ts
 import { describe, expectTypeOf, it } from 'vitest'
+// v2 column builder — used only to prove the v3 table type rejects it.
+import { encryptedColumn } from '@/schema'
 import type {
   EncryptedTextSearchColumn,
   InferEncrypted,
@@ -616,15 +652,22 @@ import type { Encrypted } from '@/types'
 describe('eql_v3 schema type inference', () => {
   it('encryptedTextSearchColumn returns an EncryptedTextSearchColumn', () => {
     const col = encryptedTextSearchColumn('email')
-    expectTypeOf(col).toMatchTypeOf<EncryptedTextSearchColumn>()
+    expectTypeOf(col).toEqualTypeOf<EncryptedTextSearchColumn>()
   })
 
   it('encryptedTable exposes column builders as typed properties', () => {
     const users = encryptedTable('users', {
       email: encryptedTextSearchColumn('email'),
     })
-    expectTypeOf(users.email).toMatchTypeOf<EncryptedTextSearchColumn>()
+    expectTypeOf(users.email).toEqualTypeOf<EncryptedTextSearchColumn>()
     expectTypeOf(users.tableName).toBeString()
+  })
+
+  it('rejects a v2 EncryptedColumn in a v3 table (nominal private-field mismatch)', () => {
+    encryptedTable('users', {
+      // @ts-expect-error - a v2 EncryptedColumn is not an EncryptedTextSearchColumn
+      email: encryptedColumn('email'),
+    })
   })
 
   it('InferPlaintext maps each column to string', () => {
@@ -658,10 +701,25 @@ Expected: PASS — no type errors reported. (If `@/schema/v3` types were missing
 Run: `pnpm exec vitest run __tests__/schema-v3.test.ts`
 Expected: PASS (all runtime tests still green — no regression from the type-test file).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Make the type suite runnable with one command (CI enforcement gap)**
+
+`.test-d.ts` files are collected by Vitest ONLY in typecheck mode. Today `vitest.config.ts` has no `typecheck` block and `package.json`'s `test` script is `vitest run` (no `--typecheck`), and CI (`.github/workflows/tests.yml`) runs `pnpm run test`. So neither this new `schema-v3.test-d.ts` NOR the pre-existing `__tests__/types.test-d.ts` is enforced in CI — a wrong `InferPlaintext`/`InferEncrypted` shape would NOT fail the build. This is a pre-existing repo issue, not introduced by v3.
+
+Add a `test:types` script to `packages/stack/package.json` so the type suite is runnable with one command (this is purely additive and does not change the default `test` behavior):
+
+```json
+    "test:types": "vitest --run --typecheck",
+```
+
+Run: `pnpm run test:types`
+Expected: PASS — typechecks `schema-v3.test-d.ts` AND the existing `types.test-d.ts`.
+
+> **Open question for the user (do NOT decide unilaterally):** should `test:types` be wired into CI (e.g. a step in `tests.yml`, or by adding a `typecheck.enabled` block to `vitest.config.ts` so the default `test` run also typechecks)? Doing so is a repo-wide change — it would start enforcing ALL `*.test-d.ts` in the package, which could surface latent type errors in pre-existing suites — so it is intentionally OUT OF SCOPE for this additive v3 work and left as a follow-up decision.
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/stack/__tests__/schema-v3.test-d.ts
+git add packages/stack/__tests__/schema-v3.test-d.ts packages/stack/package.json
 git commit -m "test(stack): type-level inference tests for eql_v3 schema DSL"
 ```
 
@@ -674,7 +732,7 @@ git commit -m "test(stack): type-level inference tests for eql_v3 schema DSL"
 - `.freeTextSearch(opts?)` as tuning-only with per-key replace merge → Task 1, Steps 1 & 3 (override + tuning-only tests).
 - Pinned `build()` output (`cast_as: 'string'` + three indexes, defaults) → Task 1, default-config test.
 - Load-bearing v2/v3 equivalence assertion → Task 1, "LOAD-BEARING" test (imports v2 `encryptedColumn`).
-- `eqlType = 'eql_v3.text_search'` via getter, absent from `build()` → Task 1, getEqlType + absence tests.
+- `'eql_v3.text_search'` via `getEqlType()` method (no property getter), absent from `build()` → Task 1, getEqlType + absence tests.
 - `buildEncryptConfig` → valid `EncryptConfig` (`v: 1`) passing `encryptConfigSchema.parse` → Task 2.
 - `InferPlaintext` / `InferEncrypted` → Task 4 (type) + Task 2 (definition).
 - New `@cipherstash/stack/schema/v3` subpath (exports + tsup) → Task 3.
@@ -683,7 +741,7 @@ git commit -m "test(stack): type-level inference tests for eql_v3 schema DSL"
 
 **Placeholder scan:** No TBD/TODO/"handle edge cases" present; every code step contains complete, runnable code.
 
-**Type consistency:** `EncryptedTextSearchColumn`, `encryptedTextSearchColumn`, `EncryptedTable`, `encryptedTable`, `buildEncryptConfig`, `EncryptedV3TableColumn`, `InferPlaintext`, `InferEncrypted`, `TEXT_SEARCH_EQL_TYPE`, `DEFAULT_MATCH_OPTS`, and `getEqlType()`/`eqlType` are used identically across tasks and tests. `build()` returns `ColumnSchema`; `EncryptedTable.build()` returns the local `TableDefinition` (`{ tableName, columns: Record<string, ColumnSchema> }`), matching `buildEncryptConfig`'s consumption.
+**Type consistency:** `EncryptedTextSearchColumn`, `encryptedTextSearchColumn`, `EncryptedTable`, `encryptedTable`, `buildEncryptConfig`, `EncryptedV3TableColumn`, `InferPlaintext`, `InferEncrypted`, `TEXT_SEARCH_EQL_TYPE`, `DEFAULT_MATCH_OPTS`, and `getEqlType()` (method only — no property getter) are used identically across tasks and tests. `build()` returns `ColumnSchema`; `EncryptedTable.build()` returns the local `TableDefinition` (`{ tableName, columns: Record<string, ColumnSchema> }`), matching `buildEncryptConfig`'s consumption.
 
 ---
 
