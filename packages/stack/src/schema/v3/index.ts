@@ -223,6 +223,14 @@ export function buildEncryptConfig(
 
   for (const tb of tables) {
     const tableDef = tb.build()
+    // Config tables are keyed by name, so a duplicate would silently overwrite
+    // the earlier table. Fail loudly instead. (v3-only additive guard; v2's
+    // buildEncryptConfig keeps its existing silent-overwrite behavior.)
+    if (Object.hasOwn(config.tables, tableDef.tableName)) {
+      throw new Error(
+        `[schema/v3]: duplicate table name "${tableDef.tableName}" passed to buildEncryptConfig — each table must have a unique name`,
+      )
+    }
     config.tables[tableDef.tableName] = tableDef.columns
   }
 
