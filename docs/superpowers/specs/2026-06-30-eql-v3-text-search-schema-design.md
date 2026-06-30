@@ -4,7 +4,10 @@
 **Status:** Approved (design)
 **Package:** `@cipherstash/stack`
 **Scope:** Authoring DSL + encrypt-config emission for the `eql_v3.text_search`
-concrete type. DDL and query-dialect work are explicitly deferred (see Non-goals).
+concrete type, **plus** a backward-compatible structural widening of the public
+client types so v3 builders are first-class with the client API (`Encryption`,
+`encrypt`, `decrypt`, `encryptQuery`). DDL and query-dialect work are explicitly
+deferred (see Non-goals).
 
 ---
 
@@ -74,10 +77,18 @@ satisfies the `eql_v3.text_search` domain `CHECK`. Therefore:
   `ALTER COLUMN ... TYPE` is a `jsonb → jsonb` metadata flip.
 - The native cipherstash-client (`@cipherstash/protect-ffi` `newClient`) needs
   **no changes**: the `EncryptConfig` it receives is unchanged.
+- The SDK's **runtime** encrypt/decrypt/query path needs no changes either — it
+  is purely structural (it only reads `column.getName()`, `column.build()`,
+  `table.tableName`, `table.build().columns`; there is no `instanceof` on that
+  path).
 
-This is what makes increment 1 purely additive: the v3 builder emits the
-**existing `EncryptConfig` shape**; only the developer-facing authoring surface
-is new.
+What this increment *does* change is the SDK's **public TYPES**: today they are
+typed against the v2 `EncryptedTable<EncryptedTableColumn>` / `EncryptedColumn`
+classes, which are nominal (private fields), so the separate v3
+`EncryptedTextSearchColumn` class is not assignable to them. To make v3 builders
+work with the client (not just emit a config), the public client types are
+**widened to a structural contract** in this increment (see "Client integration"
+below). The widening is purely additive — existing v2 usage is unaffected.
 
 ## Architecture & location
 
@@ -85,10 +96,14 @@ is new.
   focused files if it grows).
 - New export subpath: `@cipherstash/stack/schema/v3` (added to `package.json`
   `exports` + `tsup`/build entry as needed).
-- v2 (`packages/stack/src/schema/index.ts`) is **untouched**.
+- The v2 schema module (`packages/stack/src/schema/index.ts`) keeps its runtime
+  behavior and existing exported symbol shapes; the only permitted edit there is
+  a backward-compatible **widening** of `buildEncryptConfig`'s parameter type to
+  the shared structural table contract (it already only calls `.build()`).
 - v3 builders emit the existing `ColumnSchema` / `EncryptConfig` shape, so the
-  encryption client, payload, encrypt/decrypt, and query paths work with zero
-  client changes.
+  encryption client, payload, encrypt/decrypt, and query paths work at runtime
+  with **zero runtime changes**. Client integration at the **type** level is
+  achieved by widening the public types (next section), not by a runtime rewrite.
 
 ## Public API
 
@@ -124,6 +139,51 @@ const users = encryptedTable('users', {
 > Naming note: v3 `encryptedTable` / `buildEncryptConfig` intentionally shadow the
 > v2 names but live on the `/v3` subpath, so an importer picks the model by import
 > path, not by symbol name.
+
+## Client integration (in scope)
+
+v3 builders must be **accepted by the client API**, not merely emit a config. The
+runtime already works (structural — see "load-bearing fact"); the blocker is the
+public TYPES. This increment widens them to a shared **structural contract** so
+both v2 and v3 builders satisfy them:
+
+```ts
+// minimal structural shapes — exact members verified against the client's
+// actual usage (column.getName/build, table.tableName/build):
+interface BuildableColumn { getName(): string; build(): ColumnSchema }
+interface BuildableTable {
+  tableName: string
+  build(): { tableName: string; columns: Record<string, ColumnSchema> }
+}
+```
+
+Widened surfaces (in `packages/stack/src/types.ts`):
+
+- `EncryptionClientConfig.schemas` → `AtLeastOneCsTable<BuildableTable>`
+- `EncryptOptions.column` / `.table` → `BuildableColumn` / `BuildableTable`
+- `SearchTerm` / `QueryTermBase.column` / `.table` → `BuildableColumn` /
+  `BuildableTable`
+
+Plus `buildEncryptConfig`'s parameter is widened to `BuildableTable` (pure
+widening; it only calls `.build()`).
+
+**v3 keeps its own `EncryptedTable` class** (it needs a different column
+constraint and a simpler `build()` than v2's nested-field/ste_vec logic). Both
+the v2 and v3 table/column classes satisfy the structural contract, which is what
+lets a single widened type accept either.
+
+**Backward compatibility:** widening only — existing v2 tables/columns still
+satisfy the new types (a regression type-test asserts this). The **generic
+schema-aware model methods** (`encryptModel<S extends EncryptedTableColumn>` /
+`bulkEncryptModels`) are **left unchanged** so v2's field-level inference
+(`InferPlaintext`, `EncryptedFields`, `EncryptedFromSchema`, the
+`EncryptedTable<T> & T` accessor) is preserved. v3 support for the model methods
+(its columns don't satisfy `EncryptedTableColumn`) is a **future increment**.
+
+**Acceptance (these must type-check with v3 builders):**
+`Encryption({ schemas: [v3users] })`, `client.encrypt(v, { table: v3users, column:
+v3users.email })`, `client.decrypt(...)` round-trip, and
+`client.encryptQuery(v, { table: v3users, column: v3users.email })`.
 
 ## `build()` output — pinned to v2
 
@@ -171,7 +231,8 @@ and a test asserts that equality directly (see Testing). This is what makes
 ## v3 metadata for later increments
 
 `EncryptedTextSearchColumn` records its concrete domain name —
-`eqlType = 'eql_v3.text_search'` — exposed via a getter (e.g. `getEqlType()`).
+`'eql_v3.text_search'` — exposed via the `getEqlType()` method (method only, no
+property getter, matching the v2 builder convention).
 
 - `build()` (the encrypt config) does **not** include `eqlType`; the wire config
   stays identical to v2.
@@ -188,6 +249,15 @@ v3 `InferPlaintext` / `InferEncrypted` mirror v2:
 
 ## Non-goals (deferred to follow-up increments)
 
+> Note: "widen the public client types" was previously implied as out of scope
+> ("zero client changes"). It is now **in scope** for this increment (see Client
+> integration). The items below remain deferred.
+
+- **v3 support in the generic schema-aware model methods** (`encryptModel` /
+  `bulkEncryptModels` field-level inference) — v3 columns don't satisfy the v2
+  `EncryptedTableColumn` constraint those generics use. Single-value
+  `encrypt`/`decrypt`/`encryptQuery` + `Encryption()` config DO work in this
+  increment; model-method inference for v3 is a follow-up.
 - **Per-column DDL type emission** — deriving each column's Postgres type from
   its v3 builder. v2 hard-codes one native type (`eql_v2_encrypted`); v3 needs a
   per-column type (`eql_v3.text_search`, etc.). Net-new, touches every adapter.
@@ -216,7 +286,13 @@ v3 `InferPlaintext` / `InferEncrypted` mirror v2:
   (`v: 1`) that passes `encryptConfigSchema.parse(...)`.
 - **`eqlType` metadata:** `getEqlType()` returns `'eql_v3.text_search'` and is
   absent from `build()` output.
+- **No shared mutable state:** two columns built independently must not alias —
+  mutating one column's `build()` output must not affect another's (defaults are
+  produced per-instance, `build()` returns a fresh clone).
 - **Type-level:** `InferPlaintext` / `InferEncrypted` produce the expected shapes.
+- **Client integration (type-level):** the acceptance snippets above type-check
+  with v3 builders, and a regression test asserts v2 tables/columns still satisfy
+  the widened public types.
 
 ## Open questions
 
