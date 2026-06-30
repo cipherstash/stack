@@ -152,6 +152,13 @@ describe('eql_v3 encryptedTable', () => {
     'tableName',
     'columnBuilders',
     '_columnType',
+    // Inherited Object.prototype members: assigning these as own properties
+    // would shadow the prototype method/accessor. Guard them too so the
+    // table object stays well-behaved for reflection / serialization.
+    'constructor',
+    'toString',
+    'valueOf',
+    'hasOwnProperty',
   ])('throws when a column name (%s) collides with a reserved property', (reserved) => {
     expect(() =>
       encryptedTable('users', {

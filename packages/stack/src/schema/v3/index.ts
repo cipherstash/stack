@@ -171,10 +171,12 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
 }
 
 /**
- * Instance members of {@link EncryptedTable} that a column name must not shadow.
- * Because {@link encryptedTable} copies column builders onto the instance for
- * accessor access (`users.email`), a column named e.g. `build` would otherwise
- * overwrite the method that {@link buildEncryptConfig} relies on.
+ * Own instance members of {@link EncryptedTable} that a column name must not
+ * shadow. Because {@link encryptedTable} copies column builders onto the
+ * instance for accessor access (`users.email`), a column named e.g. `build`
+ * would otherwise overwrite the method that {@link buildEncryptConfig} relies
+ * on. `_columnType` is a type-only `declare` (no runtime property) so it is
+ * listed explicitly here rather than caught by the `in` check below.
  */
 const RESERVED_TABLE_KEYS = new Set([
   'tableName',
@@ -182,6 +184,17 @@ const RESERVED_TABLE_KEYS = new Set([
   '_columnType',
   'build',
 ])
+
+/**
+ * Whether a column name would collide with a reserved property on the table
+ * object — either an own member ({@link RESERVED_TABLE_KEYS}) or any inherited
+ * `Object.prototype` member (`constructor`, `toString`, `valueOf`,
+ * `hasOwnProperty`, …). The `in` check covers the prototype chain so assigning
+ * the column as an own property can never shadow a prototype method/accessor.
+ */
+function isReservedTableKey(tableBuilder: object, colName: string): boolean {
+  return RESERVED_TABLE_KEYS.has(colName) || colName in tableBuilder
+}
 
 /**
  * Define a v3 encrypted table. Intentionally shadows the v2 `encryptedTable`
@@ -198,7 +211,7 @@ export function encryptedTable<T extends EncryptedV3TableColumn>(
   ) as EncryptedTable<T> & T
 
   for (const [colName, colBuilder] of Object.entries(columns)) {
-    if (RESERVED_TABLE_KEYS.has(colName)) {
+    if (isReservedTableKey(tableBuilder, colName)) {
       throw new Error(
         `Column name "${colName}" collides with a reserved EncryptedTable property`,
       )
