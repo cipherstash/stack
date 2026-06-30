@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { Encrypted } from '@/types'
+import type { BuildableTable, Encrypted } from '@/types'
 
 // ------------------------
 // Zod schemas
@@ -678,7 +678,7 @@ export function encryptedField(valueName: string) {
  * ```
  */
 export function buildEncryptConfig(
-  ...protectTables: Array<EncryptedTable<EncryptedTableColumn>>
+  ...protectTables: Array<BuildableTable>
 ): EncryptConfig {
   const config: EncryptConfig = {
     v: 1,
