@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { encryptedColumn } from '@/schema'
+import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import {
+  buildEncryptConfig,
+  EncryptedTable,
   EncryptedTextSearchColumn,
+  encryptedTable,
   encryptedTextSearchColumn,
 } from '@/schema/v3'
 
@@ -122,5 +125,77 @@ describe('eql_v3 text_search column', () => {
     const c = encryptedTextSearchColumn('c').build()
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+  })
+})
+
+describe('eql_v3 encryptedTable', () => {
+  it('creates a table exposing column builders as properties', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    expect(users).toBeInstanceOf(EncryptedTable)
+    expect(users.tableName).toBe('users')
+    expect(users.email).toBeInstanceOf(EncryptedTextSearchColumn)
+  })
+
+  it('table.email returns the same builder instance passed in', () => {
+    const emailCol = encryptedTextSearchColumn('email')
+    const users = encryptedTable('users', { email: emailCol })
+    expect(users.email).toBe(emailCol)
+  })
+
+  it('build() assembles { tableName, columns } with built column configs', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const built = users.build()
+    expect(built.tableName).toBe('users')
+    expect(built.columns).toStrictEqual({
+      email: {
+        cast_as: 'string',
+        indexes: {
+          unique: { token_filters: [] },
+          ore: {},
+          match: {
+            tokenizer: { kind: 'ngram', token_length: 3 },
+            token_filters: [{ kind: 'downcase' }],
+            k: 6,
+            m: 2048,
+            include_original: true,
+          },
+        },
+      },
+    })
+  })
+})
+
+describe('eql_v3 buildEncryptConfig', () => {
+  it('produces a { v: 1, tables } config', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const config = buildEncryptConfig(users)
+    expect(config.v).toBe(1)
+    expect(config.tables).toHaveProperty('users')
+    expect(config.tables.users).toHaveProperty('email')
+  })
+
+  it('emits a config that passes encryptConfigSchema.parse()', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const config = buildEncryptConfig(users)
+    expect(() => encryptConfigSchema.parse(config)).not.toThrow()
+  })
+
+  it('supports multiple tables', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const posts = encryptedTable('posts', {
+      body: encryptedTextSearchColumn('body'),
+    })
+    const config = buildEncryptConfig(users, posts)
+    expect(Object.keys(config.tables).sort()).toEqual(['posts', 'users'])
   })
 })
