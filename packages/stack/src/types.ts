@@ -10,7 +10,6 @@ import type {
   ColumnSchema,
   EncryptedColumn,
   EncryptedField,
-  EncryptedTable,
   EncryptedTableColumn,
   // Imported type-only for the TSDoc {@link} references in the comments below.
   encryptedColumn,
