@@ -1,4 +1,5 @@
-import type { ColumnSchema, MatchIndexOpts } from '@/schema'
+import type { ColumnSchema, EncryptConfig, MatchIndexOpts } from '@/schema'
+import type { Encrypted } from '@/types'
 
 /**
  * The concrete EQL v3 domain name for a full-capability text column.
@@ -129,3 +130,102 @@ export function encryptedTextSearchColumn(
 ): EncryptedTextSearchColumn {
   return new EncryptedTextSearchColumn(columnName)
 }
+
+/**
+ * Shape of v3 table columns: every value is a top-level
+ * {@link EncryptedTextSearchColumn}. (Nested fields and other v3 concrete
+ * types are deferred to later increments.)
+ */
+export type EncryptedV3TableColumn = {
+  [key: string]: EncryptedTextSearchColumn
+}
+
+interface TableDefinition {
+  tableName: string
+  columns: Record<string, ColumnSchema>
+}
+
+/**
+ * A v3 encrypted table. Mirrors the v2 `EncryptedTable` but only accepts v3
+ * column builders. Emits the same `{ tableName, columns }` definition shape.
+ */
+export class EncryptedTable<T extends EncryptedV3TableColumn> {
+  /** @internal Type-level brand so TypeScript can infer `T` from `EncryptedTable<T>`. */
+  declare readonly _columnType: T
+
+  constructor(
+    public readonly tableName: string,
+    public readonly columnBuilders: T,
+  ) {}
+
+  build(): TableDefinition {
+    const builtColumns: Record<string, ColumnSchema> = {}
+    for (const [colName, builder] of Object.entries(this.columnBuilders)) {
+      builtColumns[colName] = builder.build()
+    }
+    return {
+      tableName: this.tableName,
+      columns: builtColumns,
+    }
+  }
+}
+
+/**
+ * Define a v3 encrypted table. Intentionally shadows the v2 `encryptedTable`
+ * name but lives on the `/v3` subpath — the importer picks the model by import
+ * path. The returned object is also a column accessor (`users.email`).
+ */
+export function encryptedTable<T extends EncryptedV3TableColumn>(
+  tableName: string,
+  columns: T,
+): EncryptedTable<T> & T {
+  const tableBuilder = new EncryptedTable(
+    tableName,
+    columns,
+  ) as EncryptedTable<T> & T
+
+  for (const [colName, colBuilder] of Object.entries(columns)) {
+    ;(tableBuilder as EncryptedV3TableColumn)[colName] = colBuilder
+  }
+
+  return tableBuilder
+}
+
+/**
+ * Build an `EncryptConfig` (`v: 1`) from one or more v3 tables. Emits the same
+ * shape as v2's `buildEncryptConfig`.
+ */
+export function buildEncryptConfig(
+  ...tables: Array<EncryptedTable<EncryptedV3TableColumn>>
+): EncryptConfig {
+  const config: EncryptConfig = {
+    v: 1,
+    tables: {},
+  }
+
+  for (const tb of tables) {
+    const tableDef = tb.build()
+    config.tables[tableDef.tableName] = tableDef.columns
+  }
+
+  return config
+}
+
+/**
+ * Infer the plaintext (decrypted) shape from a v3 table schema.
+ *
+ * In v3's flat single-type column model every value is an
+ * {@link EncryptedTextSearchColumn}, so no key-remap filter is needed — every
+ * column maps to `string`. When future v3 increments add other concrete column
+ * types (or nested fields), reintroduce a `[K in keyof C as C[K] extends ... ]`
+ * filter here.
+ */
+export type InferPlaintext<T extends EncryptedTable<EncryptedV3TableColumn>> =
+  T extends EncryptedTable<infer C> ? { [K in keyof C]: string } : never
+
+/**
+ * Infer the encrypted shape from a v3 table schema. See {@link InferPlaintext}
+ * for why no key-remap filter is needed in the flat single-type model.
+ */
+export type InferEncrypted<T extends EncryptedTable<EncryptedV3TableColumn>> =
+  T extends EncryptedTable<infer C> ? { [K in keyof C]: Encrypted } : never
