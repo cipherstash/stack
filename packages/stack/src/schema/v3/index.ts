@@ -171,6 +171,19 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
 }
 
 /**
+ * Instance members of {@link EncryptedTable} that a column name must not shadow.
+ * Because {@link encryptedTable} copies column builders onto the instance for
+ * accessor access (`users.email`), a column named e.g. `build` would otherwise
+ * overwrite the method that {@link buildEncryptConfig} relies on.
+ */
+const RESERVED_TABLE_KEYS = new Set([
+  'tableName',
+  'columnBuilders',
+  '_columnType',
+  'build',
+])
+
+/**
  * Define a v3 encrypted table. Intentionally shadows the v2 `encryptedTable`
  * name but lives on the `/v3` subpath — the importer picks the model by import
  * path. The returned object is also a column accessor (`users.email`).
@@ -185,6 +198,11 @@ export function encryptedTable<T extends EncryptedV3TableColumn>(
   ) as EncryptedTable<T> & T
 
   for (const [colName, colBuilder] of Object.entries(columns)) {
+    if (RESERVED_TABLE_KEYS.has(colName)) {
+      throw new Error(
+        `Column name "${colName}" collides with a reserved EncryptedTable property`,
+      )
+    }
     ;(tableBuilder as EncryptedV3TableColumn)[colName] = colBuilder
   }
 
