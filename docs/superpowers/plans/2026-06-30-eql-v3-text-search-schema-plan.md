@@ -46,6 +46,14 @@ Code-review feedback verified against the actual files before incorporation. Ver
 - **[VALID — should-fix] `bulk-encrypt.ts` widen-site was vague + mislabeled.** The batch-3 step covered the `column`/`table` re-exposure only via a conditional ("if the `*WithLockContext` variant re-exposes … widen those too") with no line ref and the wrong owning class. Verified the real site: it is `BulkEncryptOperation.getOperation()`'s RETURN TYPE at `src/encryption/operations/bulk-encrypt.ts:141-142` (`column: EncryptedColumn | EncryptedField` (:141), `table: EncryptedTable<EncryptedTableColumn>` (:142)) — destructured and consumed by `BulkEncryptOperationWithLockContext.execute()` at :168 (uses only `.getName()` / `.tableName`). It is NOT a member of the `*WithLockContext` class. **Change:** rewrote the `bulk-encrypt.ts` step to pin `:141-142` as a REQUIRED widen-site on `BulkEncryptOperation.getOperation()`, with the corrected class label, so an implementer can't leave `bulk-encrypt.ts` red.
 - **[VALID — flag, not blocking] WASM-inline path does not accept v3 columns.** Verified `src/wasm-inline.ts:314-320`: `getColumnName(col: EncryptOptions['column'])` does `if (col instanceof EncryptedColumn || col instanceof EncryptedField) return col.getName(); throw …`. Confirmed (a) it STILL type-checks after the `EncryptOptions['column']` widening — an `instanceof` guard narrowing a wider union is valid TS; and (b) it is OUTSIDE the scoped typecheck graph (`@/encryption` doesn't import `wasm-inline.ts`; the `test:types` tsconfig roots only the `*.test-d.ts` files), so it does NOT make the package red. But a v3 column routed through the WASM-inline entry would hit the `else throw` at RUNTIME. This is consistent with the batch-2 "no `instanceof`" finding being explicitly scoped to `operations/*.ts`. **Change:** added a note to Task 5 (Step 3b) and the spec's known-boundaries that the WASM-inline entry does not yet accept v3 columns — a deferred, documented boundary, not a latent surprise.
 
+### Batch 6 — `Required<MatchIndexOpts>` vs an explicit built type
+
+- **[REFUTED as a bug → applied as robustness] `Required<MatchIndexOpts>` could fail typecheck.** The finding claimed that because `matchIndexOptsSchema` fields are `.default(...).optional()` (`src/schema/index.ts:99-105`), `Required<>` might not strip `undefined` and the plan's `defaultMatchOpts()` / `matchOpts` spread-clone could fail declaration/build typecheck. **Verified and refuted under this repo's actual config:**
+  - `tsconfig.json` sets `strict: true`, has **no `extends`** (no base tsconfig), and does **NOT** set `exactOptionalPropertyTypes`.
+  - TS's `-?` mapped modifier (`Required<T> = { [K]-?: T[K] }`) DOES strip `undefined` when `exactOptionalPropertyTypes` is off. Reproduced empirically with the repo's TypeScript **5.9.3**: a faithful replica of the plan's exact pattern (`Required<MatchIndexOpts>` factory + private field + the `build()` spread/clone of `tokenizer`/`token_filters` + `.map()` + non-`undefined` assignments) compiles with **ZERO errors** under `--strict` (no EOPT). It only errors (TS2532 / TS2322) when `--exactOptionalPropertyTypes` is forced on — which the repo does not use.
+  - **v2 precedent confirms it:** v2 already declares `match?: Required<MatchIndexOpts>` (`src/schema/index.ts:246`, not `:247` — `:247` is `ste_vec`) and the package builds/ships under this tsconfig. So `Required<MatchIndexOpts>` works in-repo today; the "can fail typecheck" premise is false here.
+  - **Decision (robustness, NOT a fix):** still adopted `BuiltMatchIndexOpts` (`{ tokenizer: NonNullable<MatchIndexOpts['tokenizer']>; … }`) for `defaultMatchOpts()`'s return type and the private `matchOpts` field, because it states non-null intent explicitly and is decoupled from `Required<>`'s `exactOptionalPropertyTypes`-dependent subtlety. Verified empirically that this explicit type compiles clean BOTH without AND with `exactOptionalPropertyTypes` (so it also future-proofs the new module against a later strictness bump, which `Required<MatchIndexOpts>` would not survive). The public tuning input stays `MatchIndexOpts` (all-optional); only the internal resolved shape uses `BuiltMatchIndexOpts`. The emitted `build()` shape is unchanged (a fully-required object is assignable to the optional `ColumnSchema.indexes.match`).
+
 ## Global Constraints
 
 - **Do NOT change** the v2 module's (`packages/stack/src/schema/index.ts`) runtime behavior or the shape of its existing exported symbols. The DSL additions are purely additive. The ONLY permitted edit to this file is a backward-compatible **widening** of `buildEncryptConfig`'s parameter type to the shared structural `BuildableTable` contract (Task 5) — a pure widening (existing callers still type-check) required so the client accepts both v2 and v3 tables. (If the team prefers zero v2 edits, the documented fallback in Task 5 is to assemble the config inline in `Encryption()` instead.)
@@ -249,6 +257,26 @@ import type { ColumnSchema, MatchIndexOpts } from '@/schema'
 export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
 
 /**
+ * Fully-resolved match-index options: every field present and non-`undefined`.
+ *
+ * `MatchIndexOpts` (the user-facing tuning input) has all fields optional —
+ * each is `.default(...).optional()` in the zod schema, so its inferred type is
+ * `T | undefined`. This type pins the BUILT/resolved shape explicitly via
+ * `NonNullable<...>`, which states the non-null intent directly and is robust
+ * regardless of `Required<>`'s subtle, `exactOptionalPropertyTypes`-dependent
+ * stripping semantics. (v2 uses `Required<MatchIndexOpts>` and that compiles
+ * fine under this repo's tsconfig — `strict: true`, NO `exactOptionalPropertyTypes`
+ * — so this is a clarity/robustness choice, not a fix for a present break.)
+ */
+type BuiltMatchIndexOpts = {
+  tokenizer: NonNullable<MatchIndexOpts['tokenizer']>
+  token_filters: NonNullable<MatchIndexOpts['token_filters']>
+  k: NonNullable<MatchIndexOpts['k']>
+  m: NonNullable<MatchIndexOpts['m']>
+  include_original: NonNullable<MatchIndexOpts['include_original']>
+}
+
+/**
  * Default match-index parameters. These mirror the v2 `freeTextSearch()`
  * builder defaults EXACTLY (note `include_original: true`, which is the v2
  * builder default rather than the zod-schema default of `false`).
@@ -259,7 +287,7 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
  * those nested objects aliased across every column — a caller mutating one built
  * config could then corrupt the defaults used by later columns.
  */
-function defaultMatchOpts(): Required<MatchIndexOpts> {
+function defaultMatchOpts(): BuiltMatchIndexOpts {
   return {
     tokenizer: { kind: 'ngram', token_length: 3 },
     token_filters: [{ kind: 'downcase' }],
@@ -278,7 +306,7 @@ function defaultMatchOpts(): Required<MatchIndexOpts> {
  */
 export class EncryptedTextSearchColumn {
   private readonly columnName: string
-  private matchOpts: Required<MatchIndexOpts>
+  private matchOpts: BuiltMatchIndexOpts
 
   constructor(columnName: string) {
     this.columnName = columnName
