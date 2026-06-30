@@ -102,21 +102,24 @@ const results = await db.select().from(usersTable)
 
 ### 👤 Identity-aware encryption
 
-Bind decryption to a user's identity so only *that* user can read their data — a valid JWT from your
-identity provider is required to decrypt. Clerk ships a drop-in Next.js middleware today; any OIDC
-provider works through the `LockContext` primitive.
-
-| Provider | Support |
-|---|---|
-| Clerk (Next.js middleware) | ✅ Drop-in |
-| Any OIDC provider (Auth0, Okta, Supabase Auth, …) | ✅ via JWT / `LockContext` |
+Bind a record's encryption key to the end user's identity, so only *that* user can decrypt their data.
+`OidcFederationStrategy` federates your identity provider's OIDC JWT into the client — every ZeroKMS
+request then authenticates *as that user* — and `.withLockContext({ identityClaim })` binds the data key to
+a claim. Works with any OIDC provider: Clerk, Supabase Auth, Auth0, Okta, and more.
 
 ```typescript
-import { LockContext } from "@cipherstash/stack/identity";
+import { Encryption, OidcFederationStrategy } from "@cipherstash/stack";
 
-const lc = await new LockContext().identify(userJwt);
-const enc = await client.encrypt("ssn", { table: users, column: users.ssn })
-  .withLockContext(lc.data);
+// Authenticate every request as the signed-in user via their OIDC JWT
+const client = await Encryption({
+  schemas: [users],
+  config: { strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()) },
+});
+
+// Bind the data key to a claim — the same claim is required to decrypt
+await client
+  .encrypt("alice@example.com", { table: users, column: users.email })
+  .withLockContext({ identityClaim: ["sub"] });
 ```
 
 → [Identity-aware encryption][identity]
