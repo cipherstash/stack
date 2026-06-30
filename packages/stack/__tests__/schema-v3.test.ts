@@ -147,6 +147,19 @@ describe('eql_v3 encryptedTable', () => {
     expect(users.email).toBe(emailCol)
   })
 
+  it.each([
+    'build',
+    'tableName',
+    'columnBuilders',
+    '_columnType',
+  ])('throws when a column name (%s) collides with a reserved property', (reserved) => {
+    expect(() =>
+      encryptedTable('users', {
+        [reserved]: encryptedTextSearchColumn(reserved),
+      }),
+    ).toThrow(/reserved EncryptedTable property/)
+  })
+
   it('build() assembles { tableName, columns } with built column configs', () => {
     const users = encryptedTable('users', {
       email: encryptedTextSearchColumn('email'),
