@@ -8,7 +8,16 @@ import type {
   InferEncrypted,
   InferPlaintext,
 } from '@/schema'
-import { encryptedColumn, encryptedTable } from '@/schema'
+import {
+  encryptedBool,
+  encryptedColumn,
+  encryptedDate,
+  encryptedJson,
+  encryptedNumber,
+  encryptedTable,
+  encryptedText,
+  encryptedTimestampTz,
+} from '@/schema'
 import type {
   Decrypted,
   DecryptedFields,
@@ -144,6 +153,45 @@ describe('Type inference', () => {
       email: string
       createdAt: Date
     }>()
+  })
+
+  it('typed columns are assignable to EncryptedColumn', () => {
+    expectTypeOf(encryptedNumber('n')).toMatchTypeOf<EncryptedColumn>()
+    expectTypeOf(encryptedDate('d')).toMatchTypeOf<EncryptedColumn>()
+    expectTypeOf(encryptedTimestampTz('t')).toMatchTypeOf<EncryptedColumn>()
+    expectTypeOf(encryptedText('s')).toMatchTypeOf<EncryptedColumn>()
+    expectTypeOf(encryptedJson('j')).toMatchTypeOf<EncryptedColumn>()
+    expectTypeOf(encryptedBool('b')).toMatchTypeOf<EncryptedColumn>()
+  })
+
+  it('typed columns work with encryptedTable inference', () => {
+    const table = encryptedTable('events', {
+      title: encryptedText('title').equality(),
+      attendees: encryptedNumber('attendees').orderAndRange(),
+    })
+    type Plaintext = InferPlaintext<typeof table>
+    expectTypeOf<Plaintext>().toMatchTypeOf<{
+      title: string
+      attendees: string
+    }>()
+  })
+
+  it('typed columns only expose their permitted builder methods', () => {
+    // EncryptedBool has no index methods
+    // @ts-expect-error - equality() is not available on EncryptedBool
+    encryptedBool('b').equality()
+
+    // EncryptedNumber has no full-text search
+    // @ts-expect-error - freeTextSearch() is not available on EncryptedNumber
+    encryptedNumber('n').freeTextSearch()
+
+    // EncryptedText has no searchableJson (that lives on EncryptedJson)
+    // @ts-expect-error - searchableJson() is not available on EncryptedText
+    encryptedText('s').searchableJson()
+
+    // EncryptedJson has no equality index
+    // @ts-expect-error - equality() is not available on EncryptedJson
+    encryptedJson('j').equality()
   })
 
   it('encryptModel infers schema-aware return types from table argument', async () => {

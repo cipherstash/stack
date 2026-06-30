@@ -1,12 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEncryptConfig,
+  EncryptedBool,
   EncryptedColumn,
+  EncryptedDate,
   EncryptedField,
+  EncryptedJson,
+  EncryptedNumber,
   EncryptedTable,
+  EncryptedText,
+  EncryptedTimestampTz,
+  encryptedBool,
   encryptedColumn,
+  encryptedDate,
   encryptedField,
+  encryptedJson,
+  encryptedNumber,
   encryptedTable,
+  encryptedText,
+  encryptedTimestampTz,
+  toEqlCastAs,
 } from '@/schema'
 
 describe('schema builders', () => {
@@ -387,6 +400,172 @@ describe('schema builders', () => {
         cast_as: 'string',
         indexes: {},
       })
+    })
+  })
+
+  // -------------------------------------------------------
+  // Strongly-typed encrypted columns
+  // -------------------------------------------------------
+  describe('typed encrypted columns', () => {
+    describe('encryptedNumber', () => {
+      it('is an EncryptedColumn with cast_as "number"', () => {
+        const col = encryptedNumber('age')
+        expect(col).toBeInstanceOf(EncryptedNumber)
+        expect(col).toBeInstanceOf(EncryptedColumn)
+        expect(col.getName()).toBe('age')
+        expect(col.build().cast_as).toBe('number')
+      })
+
+      it('.equality() adds a unique index', () => {
+        expect(
+          encryptedNumber('age').equality().build().indexes.unique,
+        ).toEqual({ token_filters: [] })
+      })
+
+      it('.orderAndRange() adds an ore index', () => {
+        expect(
+          encryptedNumber('age').orderAndRange().build().indexes.ore,
+        ).toEqual({})
+      })
+    })
+
+    describe('encryptedDate', () => {
+      it('is an EncryptedColumn with cast_as "date"', () => {
+        const col = encryptedDate('dob')
+        expect(col).toBeInstanceOf(EncryptedDate)
+        expect(col).toBeInstanceOf(EncryptedColumn)
+        expect(col.build().cast_as).toBe('date')
+      })
+
+      it('supports equality and orderAndRange', () => {
+        const built = encryptedDate('dob').equality().orderAndRange().build()
+        expect(built.indexes).toHaveProperty('unique')
+        expect(built.indexes).toHaveProperty('ore')
+      })
+    })
+
+    describe('encryptedTimestampTz', () => {
+      it('is an EncryptedColumn with cast_as "timestamp"', () => {
+        const col = encryptedTimestampTz('occurred_at')
+        expect(col).toBeInstanceOf(EncryptedTimestampTz)
+        expect(col).toBeInstanceOf(EncryptedColumn)
+        expect(col.build().cast_as).toBe('timestamp')
+      })
+
+      it('supports equality and orderAndRange', () => {
+        const built = encryptedTimestampTz('occurred_at')
+          .equality()
+          .orderAndRange()
+          .build()
+        expect(built.indexes).toHaveProperty('unique')
+        expect(built.indexes).toHaveProperty('ore')
+      })
+    })
+
+    describe('encryptedText', () => {
+      it('is an EncryptedColumn with cast_as "text"', () => {
+        const col = encryptedText('email')
+        expect(col).toBeInstanceOf(EncryptedText)
+        expect(col).toBeInstanceOf(EncryptedColumn)
+        expect(col.build().cast_as).toBe('text')
+      })
+
+      it('supports equality, orderAndRange and freeTextSearch', () => {
+        const built = encryptedText('email')
+          .equality()
+          .orderAndRange()
+          .freeTextSearch()
+          .build()
+        expect(built.indexes).toHaveProperty('unique')
+        expect(built.indexes).toHaveProperty('ore')
+        expect(built.indexes.match).toEqual({
+          tokenizer: { kind: 'ngram', token_length: 3 },
+          token_filters: [{ kind: 'downcase' }],
+          k: 6,
+          m: 2048,
+          include_original: true,
+        })
+      })
+    })
+
+    describe('encryptedJson', () => {
+      it('is an EncryptedColumn with cast_as "json"', () => {
+        const col = encryptedJson('metadata')
+        expect(col).toBeInstanceOf(EncryptedJson)
+        expect(col).toBeInstanceOf(EncryptedColumn)
+        expect(col.build().cast_as).toBe('json')
+      })
+
+      it('.searchableJson() adds a ste_vec index', () => {
+        const built = encryptedJson('metadata').searchableJson().build()
+        expect(built.cast_as).toBe('json')
+        expect(built.indexes.ste_vec).toEqual({
+          prefix: 'enabled',
+          array_index_mode: 'all',
+        })
+      })
+
+      it('ste_vec prefix is rewritten by encryptedTable.build()', () => {
+        const built = encryptedTable('documents', {
+          metadata: encryptedJson('metadata').searchableJson(),
+        }).build()
+        expect(built.columns.metadata.indexes.ste_vec).toEqual({
+          prefix: 'documents/metadata',
+          array_index_mode: 'all',
+        })
+      })
+    })
+
+    describe('encryptedBool', () => {
+      it('is an EncryptedColumn with cast_as "boolean" and no indexes', () => {
+        const col = encryptedBool('is_active')
+        expect(col).toBeInstanceOf(EncryptedBool)
+        expect(col).toBeInstanceOf(EncryptedColumn)
+        expect(col.build()).toEqual({
+          cast_as: 'boolean',
+          indexes: {},
+        })
+      })
+    })
+
+    it('typed columns compose into encryptedTable / buildEncryptConfig', () => {
+      const events = encryptedTable('events', {
+        title: encryptedText('title').equality().freeTextSearch(),
+        attendees: encryptedNumber('attendees').orderAndRange(),
+        occurred_at: encryptedTimestampTz('occurred_at').orderAndRange(),
+        cancelled: encryptedBool('cancelled'),
+        payload: encryptedJson('payload').searchableJson(),
+      })
+      const config = buildEncryptConfig(events)
+
+      expect(config.tables.events.title.cast_as).toBe('text')
+      expect(config.tables.events.attendees.cast_as).toBe('number')
+      expect(config.tables.events.occurred_at.cast_as).toBe('timestamp')
+      expect(config.tables.events.cancelled).toEqual({
+        cast_as: 'boolean',
+        indexes: {},
+      })
+      expect(config.tables.events.payload.indexes.ste_vec?.prefix).toBe(
+        'events/payload',
+      )
+    })
+  })
+
+  // -------------------------------------------------------
+  // toEqlCastAs
+  // -------------------------------------------------------
+  describe('toEqlCastAs', () => {
+    it.each([
+      ['string', 'text'],
+      ['text', 'text'],
+      ['number', 'double'],
+      ['bigint', 'big_int'],
+      ['boolean', 'boolean'],
+      ['date', 'date'],
+      ['timestamp', 'timestamp'],
+      ['json', 'jsonb'],
+    ] as const)('maps %s -> %s', (input, expected) => {
+      expect(toEqlCastAs(input)).toBe(expected)
     })
   })
 })

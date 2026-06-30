@@ -1,8 +1,20 @@
 import { z } from 'zod'
 import type { Encrypted } from '@/types'
-import { EncryptedColumn } from './encrypted-column'
+import { EncryptedBool } from './encrypted-bool'
+import { EncryptedColumn, EncryptedColumnBuilder } from './encrypted-column'
+import { EncryptedDate } from './encrypted-date'
+import { EncryptedJson } from './encrypted-json'
+import { EncryptedNumber } from './encrypted-number'
+import { EncryptedText } from './encrypted-text'
+import { EncryptedTimestampTz } from './encrypted-timestamptz'
 
-export { EncryptedColumn } from './encrypted-column'
+export { EncryptedBool } from './encrypted-bool'
+export { EncryptedColumn, EncryptedColumnBuilder } from './encrypted-column'
+export { EncryptedDate } from './encrypted-date'
+export { EncryptedJson } from './encrypted-json'
+export { EncryptedNumber } from './encrypted-number'
+export { EncryptedText } from './encrypted-text'
+export { EncryptedTimestampTz } from './encrypted-timestamptz'
 
 // ------------------------
 // Zod schemas
@@ -15,6 +27,7 @@ export { EncryptedColumn } from './encrypted-column'
  * - `"bigint"`
  * - `"boolean"`
  * - `"date"`
+ * - `"timestamp"`
  * - `"number"`
  * - `"string"`
  * - `"json"`
@@ -40,6 +53,7 @@ export const eqlCastAsEnum = z
     'double',
     'boolean',
     'date',
+    'timestamp',
     'jsonb',
   ])
   .default('text')
@@ -48,7 +62,16 @@ export const eqlCastAsEnum = z
  * SDK-facing data types — developer-friendly aliases accepted by `dataType()`.
  */
 export const castAsEnum = z
-  .enum(['bigint', 'boolean', 'date', 'number', 'string', 'json', 'text'])
+  .enum([
+    'bigint',
+    'boolean',
+    'date',
+    'timestamp',
+    'number',
+    'string',
+    'json',
+    'text',
+  ])
   .default('text')
 
 /**
@@ -71,6 +94,8 @@ export function toEqlCastAs(value: CastAs): EqlCastAs {
       return 'boolean'
     case 'date':
       return 'date'
+    case 'timestamp':
+      return 'timestamp'
     case 'json':
       return 'jsonb'
   }
@@ -460,7 +485,134 @@ export function encryptedTable<T extends EncryptedTableColumn>(
  * ```
  */
 export function encryptedColumn(columnName: string) {
-  return new EncryptedColumn(columnName)
+  return new EncryptedColumnBuilder(columnName)
+}
+
+/**
+ * Define a strongly-typed encrypted column for numeric values (`cast_as: 'number'`).
+ *
+ * Supports `.equality()` and `.orderAndRange()`.
+ *
+ * @param columnName - The name of the database column to encrypt.
+ * @returns A new {@link EncryptedNumber} builder.
+ *
+ * @example
+ * ```typescript
+ * import { encryptedTable, encryptedNumber } from "@cipherstash/stack/schema"
+ *
+ * const users = encryptedTable("users", {
+ *   age: encryptedNumber("age").orderAndRange(),
+ * })
+ * ```
+ */
+export function encryptedNumber(columnName: string) {
+  return new EncryptedNumber(columnName)
+}
+
+/**
+ * Define a strongly-typed encrypted column for date values (`cast_as: 'date'`).
+ *
+ * Supports `.equality()` and `.orderAndRange()`.
+ *
+ * @param columnName - The name of the database column to encrypt.
+ * @returns A new {@link EncryptedDate} builder.
+ *
+ * @example
+ * ```typescript
+ * import { encryptedTable, encryptedDate } from "@cipherstash/stack/schema"
+ *
+ * const users = encryptedTable("users", {
+ *   date_of_birth: encryptedDate("date_of_birth").orderAndRange(),
+ * })
+ * ```
+ */
+export function encryptedDate(columnName: string) {
+  return new EncryptedDate(columnName)
+}
+
+/**
+ * Define a strongly-typed encrypted column for timestamp-with-time-zone values
+ * (`cast_as: 'timestamp'`).
+ *
+ * Supports `.equality()` and `.orderAndRange()`.
+ *
+ * @param columnName - The name of the database column to encrypt.
+ * @returns A new {@link EncryptedTimestampTz} builder.
+ *
+ * @example
+ * ```typescript
+ * import { encryptedTable, encryptedTimestampTz } from "@cipherstash/stack/schema"
+ *
+ * const events = encryptedTable("events", {
+ *   occurred_at: encryptedTimestampTz("occurred_at").orderAndRange(),
+ * })
+ * ```
+ */
+export function encryptedTimestampTz(columnName: string) {
+  return new EncryptedTimestampTz(columnName)
+}
+
+/**
+ * Define a strongly-typed encrypted column for text values (`cast_as: 'text'`).
+ *
+ * Supports `.equality()`, `.orderAndRange()`, and `.freeTextSearch()`.
+ *
+ * @param columnName - The name of the database column to encrypt.
+ * @returns A new {@link EncryptedText} builder.
+ *
+ * @example
+ * ```typescript
+ * import { encryptedTable, encryptedText } from "@cipherstash/stack/schema"
+ *
+ * const users = encryptedTable("users", {
+ *   email: encryptedText("email").equality().freeTextSearch(),
+ * })
+ * ```
+ */
+export function encryptedText(columnName: string) {
+  return new EncryptedText(columnName)
+}
+
+/**
+ * Define a strongly-typed encrypted column for JSON values (`cast_as: 'json'`).
+ *
+ * Supports `.searchableJson()` for searchable encrypted JSON (STE-Vec).
+ *
+ * @param columnName - The name of the database column to encrypt.
+ * @returns A new {@link EncryptedJson} builder.
+ *
+ * @example
+ * ```typescript
+ * import { encryptedTable, encryptedJson } from "@cipherstash/stack/schema"
+ *
+ * const documents = encryptedTable("documents", {
+ *   metadata: encryptedJson("metadata").searchableJson(),
+ * })
+ * ```
+ */
+export function encryptedJson(columnName: string) {
+  return new EncryptedJson(columnName)
+}
+
+/**
+ * Define a strongly-typed encrypted column for boolean values (`cast_as: 'boolean'`).
+ *
+ * Boolean columns are encrypted but not searchable, so no index methods are exposed.
+ *
+ * @param columnName - The name of the database column to encrypt.
+ * @returns A new {@link EncryptedBool} builder.
+ *
+ * @example
+ * ```typescript
+ * import { encryptedTable, encryptedBool } from "@cipherstash/stack/schema"
+ *
+ * const users = encryptedTable("users", {
+ *   is_active: encryptedBool("is_active"),
+ * })
+ * ```
+ */
+export function encryptedBool(columnName: string) {
+  return new EncryptedBool(columnName)
 }
 
 /**

@@ -15,7 +15,7 @@
  */
 
 import {
-  type EncryptedColumn,
+  type EncryptedColumnBuilder,
   type EncryptedTable,
   type EncryptedTableColumn,
   encryptedColumn,
@@ -69,10 +69,10 @@ const CODEC_ID_TO_DATA_TYPE: Readonly<Record<CipherstashCodecId, DataType>> = {
 // keys drive both the dispatch table in `applyTypeParams` and the
 // "Known flags" line in its error message.
 const FLAG_DISPATCH = {
-  equality: (b: EncryptedColumn) => b.equality(),
-  freeTextSearch: (b: EncryptedColumn) => b.freeTextSearch(),
-  orderAndRange: (b: EncryptedColumn) => b.orderAndRange(),
-  searchableJson: (b: EncryptedColumn) => b.searchableJson(),
+  equality: (b: EncryptedColumnBuilder) => b.equality(),
+  freeTextSearch: (b: EncryptedColumnBuilder) => b.freeTextSearch(),
+  orderAndRange: (b: EncryptedColumnBuilder) => b.orderAndRange(),
+  searchableJson: (b: EncryptedColumnBuilder) => b.searchableJson(),
 } as const
 
 type CipherstashFlag = keyof typeof FLAG_DISPATCH
@@ -95,7 +95,7 @@ export function deriveStackSchemas(
     const columns = table.columns
     if (!columns) continue
 
-    const builders: Record<string, EncryptedColumn> = {}
+    const builders: Record<string, EncryptedColumnBuilder> = {}
     for (const [columnName, column] of Object.entries(columns)) {
       const codecId = column.codecId
       if (codecId == null || !isCipherstashCodecId(codecId)) continue
@@ -117,11 +117,11 @@ export function deriveStackSchemas(
 }
 
 function applyTypeParams(
-  builder: EncryptedColumn,
+  builder: EncryptedColumnBuilder,
   typeParams: Readonly<Record<string, unknown>>,
   tableName: string,
   columnName: string,
-): EncryptedColumn {
+): EncryptedColumnBuilder {
   let result = builder
   for (const [flag, value] of Object.entries(typeParams)) {
     if (value !== true) continue
