@@ -55,6 +55,20 @@ function defaultMatchOpts(): BuiltMatchIndexOpts {
  * The concrete type inherently enables equality + order/range + free-text
  * match — there are no capability-enabling methods. `.freeTextSearch(opts?)`
  * tunes the match index only.
+ *
+ * NOTE — querying: a `text_search` column emits all three indexes (`unique`,
+ * `ore`, `match`), and the shared index-inference picks them by fixed priority
+ * `unique > match > ore`. So `encryptQuery(value, { column, table })` with NO
+ * explicit `queryType` builds an EQUALITY term (via `unique`), NOT a free-text
+ * match — a substring like `'joh'` then matches nothing. To run a free-text
+ * match query you MUST pass `queryType: 'freeTextSearch'`:
+ *
+ * ```typescript
+ * // equality (default): exact value only
+ * client.encryptQuery('john@example.com', { column: users.email, table: users })
+ * // free-text match: substring/token search
+ * client.encryptQuery('joh', { column: users.email, table: users, queryType: 'freeTextSearch' })
+ * ```
  */
 export class EncryptedTextSearchColumn {
   private readonly columnName: string
@@ -124,6 +138,9 @@ export class EncryptedTextSearchColumn {
  * Define an `eql_v3.text_search` column. The concrete type carries all three
  * capabilities (equality + order/range + free-text match). Chain
  * `.freeTextSearch(opts)` to tune the match index.
+ *
+ * Querying defaults to EQUALITY — pass `queryType: 'freeTextSearch'` to
+ * `encryptQuery` for free-text match. See {@link EncryptedTextSearchColumn}.
  */
 export function encryptedTextSearchColumn(
   columnName: string,
