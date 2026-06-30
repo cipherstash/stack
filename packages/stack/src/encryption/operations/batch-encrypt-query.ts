@@ -204,11 +204,11 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
       return { data: this.terms.map(() => null) }
     }
 
-    const context = resolveLockContext(this.lockContext)
-
     const result = await withResult(
       async () => {
         if (!this.client) throw noClientError()
+
+        const context = resolveLockContext(this.lockContext)
 
         const { metadata } = this.getAuditData()
 

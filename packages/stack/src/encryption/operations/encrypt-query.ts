@@ -148,11 +148,11 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       return { failure: validationError.failure }
     }
 
-    const context = resolveLockContext(this.lockContext)
-
     const result = await withResult(
       async () => {
         if (!this.client) throw noClientError()
+
+        const context = resolveLockContext(this.lockContext)
 
         const { metadata } = this.getAuditData()
 

@@ -68,5 +68,7 @@ describe('wasm-inline resolveStrategy', () => {
       // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — JS callers bypass the compile-time union
       resolveStrategy(both as any),
     ).toThrowError(/mutually exclusive/)
+    // The guard must short-circuit *before* building a strategy.
+    expect(vi.mocked(AccessKeyStrategy.create)).not.toHaveBeenCalled()
   })
 })
