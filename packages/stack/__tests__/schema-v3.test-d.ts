@@ -14,9 +14,9 @@ import type {
 } from '@/schema/v3'
 import {
   encryptedBoolColumn,
+  encryptedDateColumn,
   encryptedFloat8Column,
   encryptedInt4Column,
-  encryptedInt8Column,
   encryptedTable,
   encryptedTextColumn,
   encryptedTextEqColumn,
@@ -69,7 +69,6 @@ describe('eql_v3 schema type inference', () => {
     const metrics = encryptedTable('metrics', {
       name: encryptedTextColumn('name'),
       age: encryptedInt4Column('age'),
-      id64: encryptedInt8Column('id64'),
       active: encryptedBoolColumn('active'),
       createdAt: encryptedTimestamptzColumn('created_at'),
       score: encryptedFloat8Column('score'),
@@ -80,7 +79,6 @@ describe('eql_v3 schema type inference', () => {
     expectTypeOf<Plaintext>().toEqualTypeOf<{
       name: string
       age: number
-      id64: string
       active: boolean
       createdAt: Date
       score: number
@@ -88,13 +86,13 @@ describe('eql_v3 schema type inference', () => {
   })
 
   it('v3 domain classes remain nominal by literal domain definition', () => {
-    const int8 = encryptedInt8Column('id64')
+    const date = encryptedDateColumn('created_on')
     const bool = encryptedBoolColumn('active')
 
-    expectTypeOf(int8).not.toEqualTypeOf<typeof bool>()
+    expectTypeOf(date).not.toEqualTypeOf<typeof bool>()
 
-    // @ts-expect-error - storage-only bool is not assignable to storage-only int8
-    const invalid: typeof int8 = bool
+    // @ts-expect-error - storage-only bool is not assignable to storage-only date
+    const invalid: typeof date = bool
     void invalid
   })
 })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import {
-  encryptedInt8Column,
+  encryptedDateColumn,
   encryptedTable,
   encryptedTextColumn,
   encryptedTimestamptzColumn,
@@ -10,8 +10,10 @@ import {
 
 const table = encryptedTable('t', {
   when: encryptedTimestamptzColumn('when'),
-  big: encryptedInt8Column('big'),
   note: encryptedTextColumn('note'),
+  // camelCase JS property → snake_case DB name: reconstruction must key by the
+  // JS property (how the decrypted row is keyed), not the DB column name.
+  createdOn: encryptedDateColumn('created_on'),
 })
 
 /**
@@ -27,12 +29,12 @@ function fakeClient(data: Record<string, unknown>): EncryptionClient {
 }
 
 describe('typedClient — decrypt reconstruction', () => {
-  it('reconstructs Date and bigint columns from cast_as', async () => {
+  it('reconstructs Date columns from cast_as', async () => {
     const client = typedClient(
       fakeClient({
         when: '2020-01-02T03:04:05.000Z',
-        big: '42',
         note: 'hi',
+        createdOn: '2026-07-01T00:00:00.000Z',
       }),
       table,
     )
@@ -44,28 +46,29 @@ describe('typedClient — decrypt reconstruction', () => {
     const data = result.data as Record<string, unknown>
     expect(data.when).toBeInstanceOf(Date)
     expect((data.when as Date).toISOString()).toBe('2020-01-02T03:04:05.000Z')
-    expect(data.big).toBe(42n)
+    // Reconstructed by JS property (`createdOn`), though the DB column is
+    // `created_on` — a regression here would leave it an unparsed string.
+    expect(data.createdOn).toBeInstanceOf(Date)
+    expect((data.createdOn as Date).toISOString()).toBe(
+      '2026-07-01T00:00:00.000Z',
+    )
     expect(data.note).toBe('hi') // string column untouched
   })
 
   it('leaves null column values untouched', async () => {
-    const client = typedClient(
-      fakeClient({ when: null, big: null, note: null }),
-      table,
-    )
+    const client = typedClient(fakeClient({ when: null, note: null }), table)
 
     const result = await client.decryptModel({}, table)
     if (result.failure) return
 
     const data = result.data as Record<string, unknown>
     expect(data.when).toBeNull()
-    expect(data.big).toBeNull()
     expect(data.note).toBeNull()
   })
 
   it('reconstructs each row for bulkDecryptModels', async () => {
     const client = typedClient(
-      fakeClient({ when: '2021-06-01T00:00:00.000Z', big: '7', note: 'x' }),
+      fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),
       table,
     )
 
@@ -75,7 +78,6 @@ describe('typedClient — decrypt reconstruction', () => {
     const rows = result.data as Array<Record<string, unknown>>
     expect(rows).toHaveLength(1)
     expect(rows[0].when).toBeInstanceOf(Date)
-    expect(rows[0].big).toBe(7n)
   })
 
   it('propagates a failure result unchanged', async () => {

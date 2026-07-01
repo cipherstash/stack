@@ -204,6 +204,32 @@ function prepareFieldsForDecryption<T extends Record<string, unknown>>(
 /**
  * Helper function to prepare fields for encryption
  */
+/**
+ * Resolve how a table's model fields map onto encrypt-config columns.
+ *
+ * `columnPaths` are the keys used to MATCH a user model's fields (the JS
+ * property names); `toColumnName` maps a matched field to the name the FFI /
+ * encrypt config is keyed by (the DB name).
+ *
+ * When a table exposes `buildColumnKeyMap()` (v3), those two can differ, so we
+ * match by property but address by DB name. Otherwise (v2) `build()` already
+ * keys columns by the property name, so both are that same key (identity map).
+ */
+export function resolveEncryptColumnMap(table: BuildableTable): {
+  columnPaths: string[]
+  toColumnName: (path: string) => string
+} {
+  const keyMap = table.buildColumnKeyMap?.()
+  if (keyMap) {
+    return {
+      columnPaths: Object.keys(keyMap),
+      toColumnName: (path) => keyMap[path] ?? path,
+    }
+  }
+  const columnPaths = Object.keys(table.build().columns)
+  return { columnPaths, toColumnName: (path) => path }
+}
+
 function prepareFieldsForEncryption<T extends Record<string, unknown>>(
   model: T,
   table: BuildableTable,
@@ -263,8 +289,8 @@ function prepareFieldsForEncryption<T extends Record<string, unknown>>(
     }
   }
 
-  // Get all column paths from the table schema
-  const columnPaths = Object.keys(table.build().columns)
+  // Get all column paths from the table schema (matched by JS property name).
+  const { columnPaths } = resolveEncryptColumnMap(table)
   processNestedFields(model, '', columnPaths)
 
   return { otherFields, operationFields, keyMap, nullFields }
@@ -336,12 +362,13 @@ export async function encryptModelFields(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareFieldsForEncryption(model, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = Object.entries(operationFields).map(
     ([key, value]) => ({
       id: key,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
     }),
   )
 
@@ -452,12 +479,13 @@ export async function encryptModelFieldsWithLockContext(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareFieldsForEncryption(model, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = Object.entries(operationFields).map(
     ([key, value]) => ({
       id: key,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
       lockContext,
     }),
   )
@@ -559,8 +587,8 @@ function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
     }
 
     if (table) {
-      // Get all column paths from the table schema
-      const columnPaths = Object.keys(table.build().columns)
+      // Get all column paths from the table schema (matched by JS property name).
+      const { columnPaths } = resolveEncryptColumnMap(table)
       processNestedFields(model, '', columnPaths)
     } else {
       // For decryption, process all encrypted fields
@@ -657,12 +685,13 @@ export async function bulkEncryptModels(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareBulkModelsForOperation(models, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = operationFields.flatMap((fields, modelIndex) =>
     Object.entries(fields).map(([key, value]) => ({
       id: `${modelIndex}-${key}`,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
     })),
   )
 
@@ -837,12 +866,13 @@ export async function bulkEncryptModelsWithLockContext(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareBulkModelsForOperation(models, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = operationFields.flatMap((fields, modelIndex) =>
     Object.entries(fields).map(([key, value]) => ({
       id: `${modelIndex}-${key}`,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
       lockContext,
     })),
   )

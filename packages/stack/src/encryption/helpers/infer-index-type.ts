@@ -39,12 +39,12 @@ export function inferQueryOpFromPlaintext(plaintext: Plaintext): QueryOpName {
   if (typeof plaintext === 'string') {
     return 'ste_vec_selector'
   }
-  // Objects, arrays, numbers, booleans are all valid JSONB containment values
+  // Objects (incl. Date), arrays, numbers, booleans are all valid JSONB
+  // containment values
   if (
     typeof plaintext === 'object' ||
     typeof plaintext === 'number' ||
-    typeof plaintext === 'boolean' ||
-    typeof plaintext === 'bigint'
+    typeof plaintext === 'boolean'
   ) {
     return 'ste_vec_term'
   }

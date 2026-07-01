@@ -37,14 +37,14 @@ import {
  * Every method derives its types from the concrete `table` / `column` builder
  * arguments (which carry their branded types at the call site), so:
  * - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
- *   (`text → string`, `int8 → bigint`, `timestamptz → Date`, …);
+ *   (`text → string`, `timestamptz → Date`, …);
  * - `encryptQuery` additionally constrains `queryType` to the column's
  *   capabilities and rejects storage-only columns outright;
  * - `encryptModel` / `bulkEncryptModels` validate schema-column fields against
  *   their inferred plaintext type (passthrough fields are untouched) and return
  *   a precise encrypted model;
  * - `decryptModel` / `bulkDecryptModels` return the precise plaintext model,
- *   reconstructing `Date` / `bigint` values from the encrypt-config `cast_as`.
+ *   reconstructing `Date` values from the encrypt-config `cast_as`.
  *
  * @typeParam S - the tuple of registered v3 tables; `table` arguments must be a
  *   member of this tuple.
@@ -87,7 +87,7 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
 
   /**
    * Decrypt a model, returning the precise plaintext shape for `table`. `Date`
-   * and `bigint` columns are reconstructed from the encrypt-config `cast_as`.
+   * columns are reconstructed from the encrypt-config `cast_as`.
    *
    * Pass `lockContext` to decrypt identity-bound data — the same context that
    * was supplied at encrypt time must be provided here.
@@ -117,25 +117,29 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
 }
 
 /**
- * Reconstruct `Date` / `bigint` values on a decrypted row from the table's
- * encrypt-config `cast_as`. The FFI returns `JsPlaintext` (string/number/boolean/
- * …) with no `Date` / `bigint`, so those columns arrive as their serialized form
- * and are rebuilt here. Safe (idempotent) if the FFI ever returns `Date` /
- * `bigint` directly: `new Date(date)` / `BigInt(bigint)` are no-ops.
+ * Reconstruct `Date` values on a decrypted row from the table's encrypt-config
+ * `cast_as`. The FFI returns `JsPlaintext` (string/number/boolean/…) with no
+ * `Date`, so those columns arrive as their serialized form and are rebuilt here.
+ * Safe (idempotent) if the FFI ever returns `Date` directly: `new Date(date)` is
+ * a no-op.
+ *
+ * NOTE: `bigint` (int8) reconstruction is intentionally absent — int8 domains are
+ * omitted from the v3 SDK until the native FFI supports lossless bigint I/O.
  */
 function reconstructRow(
   row: Record<string, unknown>,
   table: AnyV3Table,
 ): Record<string, unknown> {
+  // The decrypted row is keyed by JS property name, but `cast_as` lives on the
+  // config keyed by DB name — bridge the two via the table's property→DB map.
   const { columns } = table.build()
+  const propToDb = table.buildColumnKeyMap()
   const out: Record<string, unknown> = { ...row }
-  for (const [key, schema] of Object.entries(columns)) {
-    const value = out[key]
+  for (const [property, dbName] of Object.entries(propToDb)) {
+    const value = out[property]
     if (value == null) continue
-    if (schema.cast_as === 'date') {
-      out[key] = new Date(value as string | number | Date)
-    } else if (schema.cast_as === 'bigint') {
-      out[key] = BigInt(value as string | number | bigint)
+    if (columns[dbName]?.cast_as === 'date') {
+      out[property] = new Date(value as string | number | Date)
     }
   }
   return out
@@ -145,7 +149,7 @@ function reconstructRow(
  * Wrap an already-built {@link EncryptionClient} in a {@link TypedEncryptionClient}
  * for the given v3 schemas. Zero runtime cost for the encrypt/query paths (the
  * underlying operations are returned unchanged); the decrypt-model paths add a
- * per-column `Date` / `bigint` reconstruction step.
+ * per-column `Date` reconstruction step.
  *
  * The `schemas` are captured with a `const` type parameter so array-literal
  * widening does not collapse per-table inference.
@@ -166,17 +170,13 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     decrypt: (encrypted) => client.decrypt(encrypted),
     decryptModel: async (input, table, lockContext) => {
       const op = client.decryptModel(input as never)
-      const result = await (lockContext
-        ? op.withLockContext(lockContext)
-        : op)
+      const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
       return { data: reconstructRow(result.data, table) } as never
     },
     bulkDecryptModels: async (input, table, lockContext) => {
       const op = client.bulkDecryptModels(input as never)
-      const result = await (lockContext
-        ? op.withLockContext(lockContext)
-        : op)
+      const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
       return {
         data: result.data.map((row) =>
