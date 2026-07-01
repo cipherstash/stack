@@ -803,8 +803,13 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
 
   build(): TableDefinition {
     const builtColumns: Record<string, ColumnSchema> = {}
-    for (const [colName, builder] of Object.entries(this.columnBuilders)) {
-      builtColumns[colName] = builder.build()
+    for (const builder of Object.values(this.columnBuilders)) {
+      // Key by the column's DB name (`getName()`), NOT the JS property name.
+      // `encrypt`/`decrypt` look columns up in the config by `column.getName()`,
+      // so a camelCase JS key mapping to a snake_case DB column (e.g.
+      // `externalId: encryptedInt8Column('external_id')`) must register under
+      // `external_id` or the FFI reports "column not found in Encrypt config".
+      builtColumns[builder.getName()] = builder.build()
     }
     return {
       tableName: this.tableName,
