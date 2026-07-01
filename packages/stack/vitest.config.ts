@@ -5,6 +5,19 @@ export default defineConfig({
   resolve: {
     alias: {
       '@/': resolve(__dirname, './src') + '/',
+      // The installed `@cipherstash/{protect-ffi,auth}` only export `.`; their
+      // `/wasm-inline` subpaths (imported by `src/wasm-inline.ts`) are not
+      // resolvable by Vitest. Alias them to local stubs so unit tests that only
+      // exercise pure helpers can load the module. Tests needing real WASM
+      // behaviour mock these specifiers explicitly.
+      '@cipherstash/protect-ffi/wasm-inline': resolve(
+        __dirname,
+        './__tests__/helpers/stub-protect-ffi-wasm-inline.ts',
+      ),
+      '@cipherstash/auth/wasm-inline': resolve(
+        __dirname,
+        './__tests__/helpers/stub-auth-wasm-inline.ts',
+      ),
     },
   },
   test: {

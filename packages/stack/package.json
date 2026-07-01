@@ -204,6 +204,7 @@
 		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
 		"build": "tsup",
 		"dev": "tsup --watch",
+		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
 		"release": "tsup"
