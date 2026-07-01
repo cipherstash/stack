@@ -26,18 +26,28 @@ async function hasEqlV3TextSearch(sql: postgres.Sql): Promise<boolean> {
  * never run it unconditionally against a shared test database.
  */
 export async function installEqlV3IfNeeded(sql: postgres.Sql): Promise<void> {
-  await sql`SELECT pg_advisory_lock(${EQL_V3_ADVISORY_LOCK_ID})`
+  // Advisory locks are session-scoped, so the whole check/install/unlock flow
+  // must run on a single reserved connection. Issuing the lock/unlock via the
+  // pool can land them on different pooled backends — allowing an install race
+  // and unlocking a backend that never held the lock.
+  const reserved = await sql.reserve()
 
   try {
-    if (await hasEqlV3TextSearch(sql)) return
+    await reserved`SELECT pg_advisory_lock(${EQL_V3_ADVISORY_LOCK_ID})`
 
-    const eqlV3Sql = await readFile(eqlV3SqlPath, 'utf8')
-    await sql.unsafe(eqlV3Sql)
+    try {
+      if (await hasEqlV3TextSearch(reserved)) return
 
-    if (!(await hasEqlV3TextSearch(sql))) {
-      throw new Error('EQL v3 installation did not create eql_v3.text_search')
+      const eqlV3Sql = await readFile(eqlV3SqlPath, 'utf8')
+      await reserved.unsafe(eqlV3Sql)
+
+      if (!(await hasEqlV3TextSearch(reserved))) {
+        throw new Error('EQL v3 installation did not create eql_v3.text_search')
+      }
+    } finally {
+      await reserved`SELECT pg_advisory_unlock(${EQL_V3_ADVISORY_LOCK_ID})`
     }
   } finally {
-    await sql`SELECT pg_advisory_unlock(${EQL_V3_ADVISORY_LOCK_ID})`
+    reserved.release()
   }
 }

@@ -280,6 +280,66 @@ describe('eql_v3 model encryption inference', () => {
     >()
   })
 
+  it('encryptModel degrades gracefully for a bare BuildableTable-typed value (no brand)', () => {
+    // A table passed through a value/param annotated as the structural
+    // `BuildableTable` (no `_columnType` brand) cannot recover its literal
+    // column keys. It must degrade to the model unchanged — NOT mark every
+    // field `Encrypted`. Regression guard: `keyof BuildableTableColumns<...>`
+    // must resolve to `never` here, not `keyof never` (= string|number|symbol),
+    // which would wrongly encrypt all fields including `id` and `untouched`.
+    const usersConcrete = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const table: import('@/types').BuildableTable = usersConcrete
+    const client = {} as EncryptionClient
+
+    const encrypted = client.encryptModel(
+      { id: 'u1', email: 'alice@example.com', untouched: 42 },
+      table,
+    )
+    expectTypeOf(encrypted).toEqualTypeOf<
+      import('@/encryption').EncryptModelOperation<{
+        id: string
+        email: string
+        untouched: number
+      }>
+    >()
+  })
+
+  it('model inference keys off the property name, not the DB column name (aliased columns)', () => {
+    // The column's DB name ('created_at') differs from the object property name
+    // ('occurredAt'). Model inference keys off the PROPERTY name, so `occurredAt`
+    // must become `Encrypted` while unrelated fields are preserved verbatim.
+    const events = encryptedTable('events', {
+      occurredAt: encryptedTimestamptzColumn('created_at'),
+    })
+    const client = {} as EncryptionClient
+
+    const encryptedOne = client.encryptModel(
+      { id: 'e1', occurredAt: new Date(), label: 'signup' },
+      events,
+    )
+    expectTypeOf(encryptedOne).toEqualTypeOf<
+      import('@/encryption').EncryptModelOperation<{
+        id: string
+        occurredAt: Encrypted
+        label: string
+      }>
+    >()
+
+    const encryptedMany = client.bulkEncryptModels(
+      [{ id: 'e1', occurredAt: new Date(), label: 'signup' }],
+      events,
+    )
+    expectTypeOf(encryptedMany).toEqualTypeOf<
+      import('@/encryption').BulkEncryptModelsOperation<{
+        id: string
+        occurredAt: Encrypted
+        label: string
+      }>
+    >()
+  })
+
   it('v2 encryptModel inference still preserves non-schema fields after widening', () => {
     const users = v2EncryptedTable('users', {
       email: encryptedColumn('email').equality(),

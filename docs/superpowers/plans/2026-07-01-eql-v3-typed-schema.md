@@ -60,8 +60,8 @@
 
 **Files:**
 - Read only: `packages/stack/src/schema/v3/index.ts`
-- Read only: `/Users/tobyhede/src/encrypt-query-language/.worktrees/eql_v3/crates/eql-bindings/src/v3/inventory.rs`
-- Read only: `/Users/tobyhede/src/encrypt-query-language/.worktrees/eql_v3/crates/eql-bindings/schema/v3/*.json`
+- Read only: `<eql-v3-worktree>/crates/eql-bindings/src/v3/inventory.rs`
+- Read only: `<eql-v3-worktree>/crates/eql-bindings/schema/v3/*.json`
 
 - [ ] **Step 1: Confirm branch and dirty state**
 
@@ -84,7 +84,7 @@ Also expect currently untracked v3 live-test/helper files and the `packages/stac
 Run:
 
 ```bash
-sed -n '1,140p' /Users/tobyhede/src/encrypt-query-language/.worktrees/eql_v3/crates/eql-bindings/src/v3/inventory.rs
+sed -n '1,140p' <eql-v3-worktree>/crates/eql-bindings/src/v3/inventory.rs
 ```
 
 Expected: inventory includes exactly these domain identifiers:
@@ -107,14 +107,14 @@ float8 float8_eq float8_ord_ore float8_ord
 Run:
 
 ```bash
-rg '"required"' /Users/tobyhede/src/encrypt-query-language/.worktrees/eql_v3/crates/eql-bindings/schema/v3 -n
+rg '"required"' <eql-v3-worktree>/crates/eql-bindings/schema/v3 -n
 ```
 
 Expected:
 - Schemas with required `hm` support equality.
 - Schemas with required `ob` support order/range.
 - Schemas with required `bf` support free-text search.
-- Schemas with only `v`, `i`, `c` are storage-only.
+- Those exposing only `v`, `i`, `c` are storage-only.
 
 ---
 
@@ -507,7 +507,7 @@ export class EncryptedInt4OrdColumn extends EncryptedV3Column<typeof INT4_ORD> {
 export const encryptedInt4OrdColumn = (columnName: string) => new EncryptedInt4OrdColumn(columnName, INT4_ORD)
 ```
 
-Repeat the same exact pattern for:
+Repeat this exact pattern for:
 
 ```text
 Int2: int2, int2_eq, int2_ord_ore, int2_ord -> castAs number

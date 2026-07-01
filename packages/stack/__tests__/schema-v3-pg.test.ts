@@ -137,6 +137,10 @@ beforeEach(async () => {
     DELETE FROM protect_ci_v3_text_search
     WHERE test_run_id = ${TEST_RUN_ID}
   `
+  await sql`
+    DELETE FROM protect_ci_v3_typed_domains
+    WHERE test_run_id = ${TEST_RUN_ID}
+  `
 }, 30000)
 
 afterAll(async () => {
@@ -144,6 +148,10 @@ afterAll(async () => {
 
   await sql`
     DELETE FROM protect_ci_v3_text_search
+    WHERE test_run_id = ${TEST_RUN_ID}
+  `
+  await sql`
+    DELETE FROM protect_ci_v3_typed_domains
     WHERE test_run_id = ${TEST_RUN_ID}
   `
   await sql.end()
