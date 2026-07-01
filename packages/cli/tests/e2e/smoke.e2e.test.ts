@@ -21,6 +21,11 @@ describe('stash CLI — non-interactive smoke', () => {
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
     expect(r.output).toContain('db install')
+    // dotenv v17 prints an `injected env (N) from …` banner on every
+    // `config()` call unless `quiet: true` is passed. Guard against that
+    // noise regressing back into the CLI's stdout (it also destabilises the
+    // PTY output capture these e2e tests rely on).
+    expect(r.output).not.toContain('injected env')
   })
 
   it('--version prints the package version', async () => {

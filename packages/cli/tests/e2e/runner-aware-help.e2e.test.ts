@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { render } from '../helpers/pty.js'
+import { run } from '../helpers/run.js'
 
 /**
  * E2E coverage for the runner-aware help rendering. The smoke suite
@@ -29,9 +29,8 @@ describe('--help — runner-aware Usage + Examples', () => {
     ua,
     label,
   }) => {
-    const r = render(['--help'], { env: { npm_config_user_agent: ua } })
-    const { exitCode } = await r.exit
-    expect(exitCode).toBe(0)
+    const r = await run(['--help'], { env: { npm_config_user_agent: ua } })
+    expect(r.exitCode).toBe(0)
     // Usage line must use the right runner. The leader is stable
     // (`messages.cli.usagePrefix === 'Usage: '`) so we assert on the
     // suffix the renderer composes at runtime.
@@ -50,9 +49,8 @@ describe('auth — runner-aware Usage + Examples', () => {
     label,
   }) => {
     // `auth` with no subcommand prints the auth HELP and exits 0.
-    const r = render(['auth'], { env: { npm_config_user_agent: ua } })
-    const { exitCode } = await r.exit
-    expect(exitCode).toBe(0)
+    const r = await run(['auth'], { env: { npm_config_user_agent: ua } })
+    expect(r.exitCode).toBe(0)
     expect(r.output).toContain(`Usage: ${label} stash auth`)
     expect(r.output).toContain(`${label} stash auth login`)
   })
