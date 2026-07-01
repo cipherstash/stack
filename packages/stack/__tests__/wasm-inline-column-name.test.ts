@@ -1,4 +1,22 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// This unit test only covers `getColumnName`, which resolves a column's name
+// structurally and never touches WASM. Mock the `/wasm-inline` specifiers so
+// Vitest can load `../src/wasm-inline` without resolving the real inlined WASM
+// entries (which aren't exported for the test bundler).
+vi.mock('@cipherstash/auth/wasm-inline', () => ({
+  AccessKeyStrategy: {
+    create: vi.fn(),
+  },
+}))
+
+vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ({
+  decrypt: vi.fn(),
+  encrypt: vi.fn(),
+  isEncrypted: vi.fn(),
+  newClient: vi.fn(),
+}))
+
 import { encryptedColumn, encryptedField } from '../src/schema'
 import { encryptedTextSearchColumn } from '../src/schema/v3'
 import { getColumnName } from '../src/wasm-inline'

@@ -83,6 +83,24 @@ describe('CJS consumers can require the built bundles', () => {
   it('discovers at least the public entry points', () => {
     expect(cjsEntries).toContain('dist/index.cjs')
     expect(cjsEntries).toContain('dist/encryption/index.cjs')
+    expect(cjsEntries).toContain('dist/schema/v3/index.cjs')
+  })
+
+  it('exposes v3 schema builders from the CJS bundle', () => {
+    const v3Bundle = path.join(distDir, 'schema', 'v3', 'index.cjs')
+    const script = [
+      `const v3 = require(${JSON.stringify(v3Bundle)})`,
+      `const required = ['encryptedTextSearchColumn', 'encryptedInt4Column', 'encryptedBoolColumn', 'encryptedTimestamptzColumn']`,
+      `const missing = required.filter((k) => typeof v3[k] !== 'function')`,
+      `if (missing.length > 0) { throw new Error('missing v3 CJS exports: ' + missing.join(', ')) }`,
+    ].join('\n')
+
+    expect(() =>
+      execFileSync(process.execPath, ['-e', script], {
+        cwd: packageRoot,
+        stdio: 'pipe',
+      }),
+    ).not.toThrow()
   })
 
   it.each(
