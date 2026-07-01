@@ -1,5 +1,6 @@
 import type { Result } from '@byteslice/result'
 import type { EncryptionError } from '@/errors'
+import type { LockContextInput } from '@/identity'
 import type {
   AnyV3Table,
   ColumnsOf,
@@ -88,17 +89,22 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
    * Decrypt a model, returning the precise plaintext shape for `table`. `Date`
    * and `bigint` columns are reconstructed from the encrypt-config `cast_as`.
    *
+   * Pass `lockContext` to decrypt identity-bound data — the same context that
+   * was supplied at encrypt time must be provided here.
+   *
    * Unlike the encrypt operations this returns a plain `Promise<Result<…>>`
    * rather than a chainable operation, because it maps the resolved value.
    */
   decryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: T,
     table: Table,
+    lockContext?: LockContextInput,
   ): Promise<Result<V3DecryptedModel<Table, T>, EncryptionError>>
 
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
     table: Table,
+    lockContext?: LockContextInput,
   ): Promise<Result<Array<V3DecryptedModel<Table, T>>, EncryptionError>>
 
   // Parity passthroughs — not v3-strengthened, delegated as-is.
@@ -158,13 +164,19 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncryptModels: (input, table) =>
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
-    decryptModel: async (input, table) => {
-      const result = await client.decryptModel(input as never)
+    decryptModel: async (input, table, lockContext) => {
+      const op = client.decryptModel(input as never)
+      const result = await (lockContext
+        ? op.withLockContext(lockContext)
+        : op)
       if (result.failure) return result as never
       return { data: reconstructRow(result.data, table) } as never
     },
-    bulkDecryptModels: async (input, table) => {
-      const result = await client.bulkDecryptModels(input as never)
+    bulkDecryptModels: async (input, table, lockContext) => {
+      const op = client.bulkDecryptModels(input as never)
+      const result = await (lockContext
+        ? op.withLockContext(lockContext)
+        : op)
       if (result.failure) return result as never
       return {
         data: result.data.map((row) =>

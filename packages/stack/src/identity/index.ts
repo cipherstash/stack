@@ -39,7 +39,12 @@ export type LockContextInput = LockContext | Context
  * that protect-ffi expects. Synchronous — no token round-trip.
  */
 export function resolveLockContext(input: LockContextInput): Context {
-  return input instanceof LockContext ? input.identityContext : input
+  // Use a structural check as well as `instanceof` so a `LockContext`
+  // constructed in another realm (or from a duplicate module instance) is still
+  // resolved rather than slipping through as a raw `Context`.
+  return input instanceof LockContext || 'identityContext' in input
+    ? (input as LockContext).identityContext
+    : input
 }
 
 /**

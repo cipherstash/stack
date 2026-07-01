@@ -54,6 +54,9 @@
 			"schema/v3": [
 				"./dist/schema/v3/index.d.ts"
 			],
+			"v3": [
+				"./dist/encryption/v3.d.ts"
+			],
 			"types": [
 				"./dist/types-public.d.ts"
 			],
