@@ -4,7 +4,6 @@ import type { EncryptionClient } from '@/encryption'
 // from src/encryption/v3.ts), exercising the re-export at the same time.
 import {
   encryptedInt4OrdColumn,
-  encryptedInt8Column,
   encryptedTable,
   encryptedTextColumn,
   encryptedTextEqColumn,
@@ -22,7 +21,6 @@ const users = encryptedTable('users', {
   bio: encryptedTextSearchColumn('bio'), // equality + order + free-text
   note: encryptedTextColumn('note'), // storage only (not queryable)
   createdAt: encryptedTimestamptzOrdColumn('created_at'), // equality + order
-  id64: encryptedInt8Column('id64'), // storage-only bigint
 })
 
 // A second registered table whose `weight` domain (int4_ord) is NOT present in
@@ -38,11 +36,6 @@ describe('typed v3 client — encrypt plaintext is pinned to the column domain',
     expectTypeOf(client.encrypt).toBeCallableWith('alice@example.com', {
       table: users,
       column: users.email,
-    })
-    // int8 domains use `string` plaintext until the native FFI supports bigint.
-    expectTypeOf(client.encrypt).toBeCallableWith('1', {
-      table: users,
-      column: users.id64,
     })
     expectTypeOf(client.encrypt).toBeCallableWith(new Date(), {
       table: users,
@@ -138,17 +131,16 @@ describe('typed v3 client — model encrypt validates schema fields', () => {
 describe('typed v3 client — model decrypt yields precise plaintext', () => {
   it('reconstructs schema columns to their plaintext type regardless of the input field type', () => {
     // Input is the encrypted row; output pins each schema column to its plaintext
-    // type (Date for timestamptz, bigint for int8, string for text).
+    // type (Date for timestamptz, string for text).
     expectTypeOf<
       V3DecryptedModel<
         typeof users,
-        { id: string; email: Encrypted; createdAt: Encrypted; id64: Encrypted }
+        { id: string; email: Encrypted; createdAt: Encrypted }
       >
     >().toEqualTypeOf<{
       id: string
       email: string
       createdAt: Date
-      id64: string
     }>()
   })
 

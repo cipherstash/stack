@@ -19,7 +19,7 @@ export type QueryCapabilities = Readonly<{
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'bigint' | 'boolean' | 'date'
+type PlaintextKind = 'string' | 'number' | 'boolean' | 'date'
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -27,7 +27,7 @@ type PlaintextKind = 'string' | 'number' | 'bigint' | 'boolean' | 'date'
  * concrete (otherwise-empty) subclass is discriminated by its literal
  * `eqlType`/`castAs`/`capabilities` — TypeScript empty subclasses are NOT
  * nominal, so without this a storage-only `bool` column would be assignable to
- * a storage-only `int8` column and plaintext inference would collapse.
+ * a storage-only `date` column and plaintext inference would collapse.
  */
 type V3DomainDefinition = Readonly<{
   eqlType: `eql_v3.${string}`
@@ -128,26 +128,12 @@ const INT2_ORD = {
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const INT8 = {
-  eqlType: 'eql_v3.int8',
-  castAs: 'bigint',
-  capabilities: STORAGE_ONLY,
-} as const
-const INT8_EQ = {
-  eqlType: 'eql_v3.int8_eq',
-  castAs: 'bigint',
-  capabilities: EQUALITY_ONLY,
-} as const
-const INT8_ORD_ORE = {
-  eqlType: 'eql_v3.int8_ord_ore',
-  castAs: 'bigint',
-  capabilities: ORDER_AND_RANGE,
-} as const
-const INT8_ORD = {
-  eqlType: 'eql_v3.int8_ord',
-  castAs: 'bigint',
-  capabilities: ORDER_AND_RANGE,
-} as const
+// NOTE: int8 (bigint) domains are intentionally NOT defined yet. The native
+// protect-ffi build cannot round-trip a 64-bit int losslessly: a JS `bigint`
+// fails JSON serialization, and a `string` is rejected for a `big_int` column
+// ("Cannot convert String to BigInt"), while `number` loses precision above
+// 2^53. Re-add INT8/INT8_EQ/INT8_ORD_ORE/INT8_ORD and their builders once the
+// FFI accepts a lossless bigint on input and returns it on decrypt.
 
 const DATE = {
   eqlType: 'eql_v3.date',
@@ -376,7 +362,7 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
  * literal {@link V3DomainDefinition} (not by capabilities alone): the private
  * `definition` field carries the literal `eqlType`/`castAs`/`capabilities`, so
  * two otherwise-empty subclasses (e.g. `EncryptedBoolColumn` and
- * `EncryptedInt8Column`, both storage-only) are NOT mutually assignable. This
+ * `EncryptedDateColumn`, both storage-only) are NOT mutually assignable. This
  * nominality is what keeps plaintext inference precise.
  */
 class EncryptedV3Column<D extends V3DomainDefinition> {
@@ -562,26 +548,9 @@ export class EncryptedInt2OrdColumn extends EncryptedV3Column<
 export const encryptedInt2OrdColumn = (columnName: string) =>
   new EncryptedInt2OrdColumn(columnName, INT2_ORD)
 
-// int8
-export class EncryptedInt8Column extends EncryptedV3Column<typeof INT8> {}
-export const encryptedInt8Column = (columnName: string) =>
-  new EncryptedInt8Column(columnName, INT8)
-
-export class EncryptedInt8EqColumn extends EncryptedV3Column<typeof INT8_EQ> {}
-export const encryptedInt8EqColumn = (columnName: string) =>
-  new EncryptedInt8EqColumn(columnName, INT8_EQ)
-
-export class EncryptedInt8OrdOreColumn extends EncryptedV3Column<
-  typeof INT8_ORD_ORE
-> {}
-export const encryptedInt8OrdOreColumn = (columnName: string) =>
-  new EncryptedInt8OrdOreColumn(columnName, INT8_ORD_ORE)
-
-export class EncryptedInt8OrdColumn extends EncryptedV3Column<
-  typeof INT8_ORD
-> {}
-export const encryptedInt8OrdColumn = (columnName: string) =>
-  new EncryptedInt8OrdColumn(columnName, INT8_ORD)
+// int8 (bigint) domain builders are intentionally omitted pending FFI support
+// for lossless bigint round-tripping — see the note by the INT4/DATE domain
+// definitions above.
 
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
@@ -743,10 +712,6 @@ export type AnyEncryptedV3Column =
   | EncryptedInt2EqColumn
   | EncryptedInt2OrdOreColumn
   | EncryptedInt2OrdColumn
-  | EncryptedInt8Column
-  | EncryptedInt8EqColumn
-  | EncryptedInt8OrdOreColumn
-  | EncryptedInt8OrdColumn
   | EncryptedDateColumn
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
@@ -807,14 +772,29 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
       // Key by the column's DB name (`getName()`), NOT the JS property name.
       // `encrypt`/`decrypt` look columns up in the config by `column.getName()`,
       // so a camelCase JS key mapping to a snake_case DB column (e.g.
-      // `externalId: encryptedInt8Column('external_id')`) must register under
-      // `external_id` or the FFI reports "column not found in Encrypt config".
+      // `createdOn: encryptedDateColumn('created_on')`) must register under
+      // `created_on` or the FFI reports "column not found in Encrypt config".
       builtColumns[builder.getName()] = builder.build()
     }
     return {
       tableName: this.tableName,
       columns: builtColumns,
     }
+  }
+
+  /**
+   * Map each column's JS property name to its DB column name (`getName()`).
+   * The model path matches user models by property name but must address the
+   * encrypt config and FFI by DB name — `build()` keys columns by DB name, so
+   * the two only agree when property == name. This recovers the mapping that
+   * `build()` discards.
+   */
+  buildColumnKeyMap(): Record<string, string> {
+    const map: Record<string, string> = {}
+    for (const [property, builder] of Object.entries(this.columnBuilders)) {
+      map[property] = builder.getName()
+    }
+    return map
   }
 }
 
@@ -831,6 +811,7 @@ const RESERVED_TABLE_KEYS = new Set([
   'columnBuilders',
   '_columnType',
   'build',
+  'buildColumnKeyMap',
 ])
 
 /**
@@ -903,19 +884,11 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
   : K extends 'number'
     ? number
-    : K extends 'bigint'
-      ? // int8 domains accept/return `string` until the native FFI supports
-        // bigint I/O. The domain's `cast_as` stays `'bigint'` → `'big_int'`, so
-        // server-side casting is unchanged; only the JS plaintext type differs.
-        // `string` is lossless across the full int8 range (`number` would
-        // corrupt values above 2^53). Revert to `bigint` once the FFI accepts
-        // it on input and returns it on decrypt.
-        string
-      : K extends 'boolean'
-        ? boolean
-        : K extends 'date'
-          ? Date
-          : never
+    : K extends 'boolean'
+      ? boolean
+      : K extends 'date'
+        ? Date
+        : never
 
 /**
  * The plaintext type for a single v3 column, read from the literal domain

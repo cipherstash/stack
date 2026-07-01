@@ -73,10 +73,9 @@ export type EncryptedQuery = CipherStashEncryptedQuery
  *
  * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
  * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
- * BigInt"), and `decrypt` has no `castAs` context to reconstruct one on the way
- * out. v3 int8 domains therefore use `string` plaintext (lossless across the
- * full int8 range) for now. `bigint` returns once the upstream FFI input union
- * supports it on input and returns it on decrypt.
+ * BigInt") and rejects a `string` for a `big_int` column. The v3 int8 domains
+ * are therefore omitted from the SDK entirely (see `schema/v3`) until the FFI
+ * supports lossless bigint I/O; `bigint` returns here alongside them.
  *
  * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
  * arm can collapse back into `JsPlaintext`.
@@ -183,6 +182,17 @@ export type BuildableQueryColumn = EncryptedColumn | BuildableV3QueryableColumn
 export interface BuildableTable {
   tableName: string
   build(): { tableName: string; columns: Record<string, ColumnSchema> }
+  /**
+   * Optional map from a model field's JS property name to its encrypt-config
+   * column name (the DB name). Present when the two can differ — v3 tables key
+   * their config by DB name (`column.getName()`) while models are written with
+   * JS property keys, so the model path must match by property but address the
+   * FFI/config by DB name.
+   *
+   * Absent on v2 tables, whose `build()` already keys columns by the JS property
+   * name; the model path then matches and addresses by that same key.
+   */
+  buildColumnKeyMap?(): Record<string, string>
 }
 
 export type EncryptionClientConfig = {

@@ -24,10 +24,6 @@ import {
   EncryptedInt4EqColumn,
   EncryptedInt4OrdColumn,
   EncryptedInt4OrdOreColumn,
-  EncryptedInt8Column,
-  EncryptedInt8EqColumn,
-  EncryptedInt8OrdColumn,
-  EncryptedInt8OrdOreColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
@@ -64,10 +60,6 @@ import {
   encryptedInt4EqColumn,
   encryptedInt4OrdColumn,
   encryptedInt4OrdOreColumn,
-  encryptedInt8Column,
-  encryptedInt8EqColumn,
-  encryptedInt8OrdColumn,
-  encryptedInt8OrdOreColumn,
   encryptedNumericColumn,
   encryptedNumericEqColumn,
   encryptedNumericOrdColumn,
@@ -147,38 +139,6 @@ const domainCases = [
     encryptedInt2OrdColumn,
     EncryptedInt2OrdColumn,
     'number',
-    { ore: {} },
-    { equality: true, orderAndRange: true, freeTextSearch: false },
-  ],
-  [
-    'eql_v3.int8',
-    encryptedInt8Column,
-    EncryptedInt8Column,
-    'bigint',
-    {},
-    { equality: false, orderAndRange: false, freeTextSearch: false },
-  ],
-  [
-    'eql_v3.int8_eq',
-    encryptedInt8EqColumn,
-    EncryptedInt8EqColumn,
-    'bigint',
-    { unique: { token_filters: [] } },
-    { equality: true, orderAndRange: false, freeTextSearch: false },
-  ],
-  [
-    'eql_v3.int8_ord_ore',
-    encryptedInt8OrdOreColumn,
-    EncryptedInt8OrdOreColumn,
-    'bigint',
-    { ore: {} },
-    { equality: true, orderAndRange: true, freeTextSearch: false },
-  ],
-  [
-    'eql_v3.int8_ord',
-    encryptedInt8OrdColumn,
-    EncryptedInt8OrdColumn,
-    'bigint',
     { ore: {} },
     { equality: true, orderAndRange: true, freeTextSearch: false },
   ],
@@ -670,16 +630,32 @@ describe('eql_v3 buildEncryptConfig', () => {
     // `column.getName()`, so keying by the JS property name makes the FFI
     // report "column not found in Encrypt config" at encrypt time.
     const users = encryptedTable('accounts', {
-      externalId: encryptedInt8Column('external_id'),
       createdOn: encryptedDateColumn('created_on'),
+      lastSeen: encryptedTimestamptzColumn('last_seen'),
     })
     const config = buildEncryptConfig(users)
     expect(Object.keys(config.tables.accounts).sort()).toEqual([
       'created_on',
-      'external_id',
+      'last_seen',
     ])
-    expect(config.tables.accounts).not.toHaveProperty('externalId')
     expect(config.tables.accounts).not.toHaveProperty('createdOn')
+    expect(config.tables.accounts).not.toHaveProperty('lastSeen')
+  })
+
+  it('buildColumnKeyMap maps JS property → DB column name', () => {
+    // The model path matches user models by JS property but must address the
+    // FFI/config by DB name. `build()` discards the property→name relationship
+    // (it keys by DB name); `buildColumnKeyMap()` recovers it.
+    const users = encryptedTable('accounts', {
+      createdOn: encryptedDateColumn('created_on'),
+      lastSeen: encryptedTimestamptzColumn('last_seen'),
+      email: encryptedTextSearchColumn('email'),
+    })
+    expect(users.buildColumnKeyMap()).toEqual({
+      createdOn: 'created_on',
+      lastSeen: 'last_seen',
+      email: 'email',
+    })
   })
 
   it('throws when two tables share the same tableName (no silent drop)', () => {

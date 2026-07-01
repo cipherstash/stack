@@ -1,12 +1,12 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
+import { typedClient } from '@/encryption/v3'
 import { Encryption } from '@/index'
 import {
   encryptedBoolColumn,
   encryptedDateColumn,
   encryptedInt4OrdColumn,
-  encryptedInt8Column,
   encryptedTable,
   encryptedTextColumn,
   encryptedTextEqColumn,
@@ -23,7 +23,9 @@ const users = encryptedTable('schema_v3_client_users', {
   body: encryptedTextMatchColumn('body'),
   notes: encryptedTextColumn('notes'),
   active: encryptedBoolColumn('active'),
-  externalId: encryptedInt8Column('external_id'),
+  // camelCase JS property → snake_case DB name on purpose: the model path must
+  // match models by JS property (`createdOn`) yet address the FFI/config by DB
+  // name (`created_on`). The round-trip tests below exercise that mapping.
   createdOn: encryptedDateColumn('created_on'),
   occurredAt: encryptedTimestamptzColumn('occurred_at'),
 })
@@ -177,35 +179,61 @@ describeLive('eql_v3 client integration', () => {
     expect(matchTerm).not.toHaveProperty('c')
   }, 30000)
 
-  it('round-trips a representative int8 storage domain (string plaintext)', async () => {
-    // int8 domains use `string` plaintext until the native FFI supports bigint
-    // I/O. `string` is lossless across the full int8 range (this value exceeds
-    // Number.MAX_SAFE_INTEGER); `cast_as: bigint` handles server-side casting.
-    const int8Encrypted = unwrapResult(
-      await protectClient.encrypt('1234567890123456789', {
-        table: users,
-        column: users.externalId,
-      }),
-    )
-    expect(unwrapResult(await protectClient.decrypt(int8Encrypted))).toBe(
-      '1234567890123456789',
-    )
-  }, 30000)
+  // int8 (bigint) storage domains are omitted from the v3 SDK until the native
+  // protect-ffi supports lossless bigint round-tripping — a `bigint` fails JSON
+  // serialization and a `string` is rejected for a `big_int` column. Re-add a
+  // round-trip test alongside the domain builders when the FFI lands.
 
-  it('round-trips a representative date storage domain', async () => {
+  // A `date` domain decrypts to an ISO 8601 string from the native FFI, so the
+  // single-value `decrypt` path returns a string (a lone ciphertext carries no
+  // column context). The typed client's `decryptModel` reconstructs a real
+  // `Date` from the encrypt-config `cast_as` (`reconstructRow`), keyed by the
+  // JS property (`createdOn`) even though the DB column is `created_on`.
+  it('round-trips a representative date storage domain via decryptModel', async () => {
+    const typed = typedClient(protectClient, users)
+    // Zero milliseconds so the FFI dropping sub-second precision (`...00Z` vs
+    // `...000Z`) does not perturb the reconstructed instant.
     const day = new Date('2026-07-01T00:00:00.000Z')
+
+    // Encrypt via the single-value path (the proven route for a `Date` domain),
+    // then decrypt through the model path so `reconstructRow` rebuilds a `Date`
+    // from the encrypt-config `cast_as`.
     const dateEncrypted = unwrapResult(
       await protectClient.encrypt(day, {
         table: users,
         column: users.createdOn,
       }),
     )
-    // Assertion pending live verification: `decrypt` has no `castAs` context, so
-    // whether a `date` domain returns a `Date` or an ISO string is FFI-dependent.
-    // If this returns a string, that is a separate pre-existing gap to handle as
-    // a follow-up (client-side Date reconstruction or a string assertion).
-    expect(unwrapResult(await protectClient.decrypt(dateEncrypted))).toEqual(
-      day,
+    // Guard against a false pass: the value must be an actual ciphertext, not a
+    // plaintext `Date` that would trivially satisfy the assertions below.
+    expect(dateEncrypted).toHaveProperty('c')
+
+    const decrypted = unwrapResult(
+      await typed.decryptModel({ createdOn: dateEncrypted }, users),
     )
+    expect(decrypted.createdOn).toBeInstanceOf(Date)
+    expect(decrypted.createdOn).toEqual(day)
+  }, 30000)
+
+  // Regression: a camelCase JS property mapping to a snake_case DB column
+  // (`nickname` is name==key, but `createdOn`→`created_on` is not) must be
+  // ENCRYPTED by the model path — not silently passed through as plaintext
+  // because the field key (`createdOn`) fails to match the DB-keyed config.
+  it('encrypts a property-vs-DB-name column through encryptModel (no plaintext leak)', async () => {
+    const typed = typedClient(protectClient, users)
+    const day = new Date('2026-07-01T00:00:00.000Z')
+
+    const encrypted = unwrapResult(
+      await typed.encryptModel({ createdOn: day, notes: 'hello' }, users),
+    )
+    // The schema field must become a ciphertext (has `c`), NOT remain a Date.
+    expect(encrypted.createdOn).not.toBeInstanceOf(Date)
+    expect(encrypted.createdOn).toHaveProperty('c')
+    expect(encrypted.notes).toHaveProperty('c')
+
+    const decrypted = unwrapResult(await typed.decryptModel(encrypted, users))
+    expect(decrypted.createdOn).toBeInstanceOf(Date)
+    expect(decrypted.createdOn).toEqual(day)
+    expect(decrypted.notes).toBe('hello')
   }, 30000)
 })
