@@ -8,7 +8,12 @@ export interface RunOptions {
 }
 
 export interface RunResult {
-  exitCode: number
+  /**
+   * The process's numeric exit code, or `null` when it was terminated by a
+   * signal (see {@link RunResult.signal}). Never coerced to 0, so a
+   * signal-killed child (crash, SIGKILL) is distinguishable from a clean exit.
+   */
+  exitCode: number | null
   signal: NodeJS.Signals | null
   /** ANSI-stripped combined stdout + stderr. */
   output: string
@@ -68,7 +73,9 @@ export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
     child.on('close', (code, signal) => {
       const raw = stdout + stderr
       res({
-        exitCode: code ?? 0,
+        // `code` is null when the child was terminated by `signal`; keep it
+        // null rather than masking a kill/crash as a clean 0 exit.
+        exitCode: code,
         signal,
         output: stripAnsi(raw),
         raw,
