@@ -588,6 +588,9 @@ importers:
       execa:
         specifier: ^9.5.2
         version: 9.6.1
+      fta-cli:
+        specifier: 3.0.0
+        version: 3.0.0
       json-schema-to-typescript:
         specifier: ^15.0.2
         version: 15.0.4
@@ -3012,6 +3015,10 @@ packages:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
+
+  fta-cli@3.0.0:
+    resolution: {integrity: sha512-SBmoqIwbN7PLDmwmrPgjr6Z6/S9jPhNz5TCPmEVFkIaeloc/T2WXLeeXqhG1+C0UQxpOfGrC7CUb4friqbc2kQ==}
+    hasBin: true
 
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
@@ -6222,6 +6229,8 @@ snapshots:
 
   fsevents@2.3.3:
     optional: true
+
+  fta-cli@3.0.0: {}
 
   function-bind@1.1.2: {}
 
