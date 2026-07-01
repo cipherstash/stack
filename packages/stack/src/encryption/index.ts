@@ -279,9 +279,11 @@ export class EncryptionClient {
     plaintextOrTerms: Plaintext | readonly ScalarQueryTerm[],
     opts?: EncryptQueryOptions,
   ): EncryptQueryOperation | BatchEncryptQueryOperation {
-    // Discriminate between ScalarQueryTerm[] and Plaintext (which can also be an array)
-    // using a type guard function
-    if (isScalarQueryTermArray(plaintextOrTerms)) {
+    // Discriminate between ScalarQueryTerm[] and Plaintext (which can also be an
+    // array) using a type guard function. Only route to batch mode when no opts
+    // are supplied — an explicit EncryptQueryOptions forces the single-plaintext
+    // path even if the plaintext value happens to be an array.
+    if (!opts && isScalarQueryTermArray(plaintextOrTerms)) {
       return new BatchEncryptQueryOperation(this.client, plaintextOrTerms)
     }
 
