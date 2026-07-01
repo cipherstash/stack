@@ -115,42 +115,12 @@ export function render(args: string[], opts: RenderOptions = {}): Rendered {
   })
 
   let raw = ''
-  // Timestamp of the most recent stdout chunk. The `exit` resolver below
-  // waits for this to go quiet so trailing/in-flight output lands in `raw`
-  // before any test reads `r.output`.
-  let lastDataAt = Date.now()
   pty.onData((d) => {
     raw += d
-    lastDataAt = Date.now()
   })
 
-  // Resolve `exit` only AFTER the stdout stream has drained. node-pty's
-  // `onExit` is NOT ordered after the final `onData`: on a loaded runner the
-  // OS pipe can deliver the exit event while trailing stdout is still in
-  // flight, so a test that does `await r.exit` then reads `r.output` can
-  // observe a truncated buffer (the flaky-help race). We capture the exit
-  // event, then wait until no further data has arrived for a short settle
-  // window (SETTLE_MS) — each new chunk resets the window — bounded by a hard
-  // cap (DRAIN_CAP_MS) so a chatty process can never hang the suite. A bare
-  // microtask/`setImmediate` is insufficient because pipe data may still be
-  // in flight after the exit event.
-  const SETTLE_MS = 50
-  const DRAIN_CAP_MS = 2_000
   const exit = new Promise<{ exitCode: number; signal?: number }>((res) => {
-    pty.onExit((e) => {
-      const deadline = Date.now() + DRAIN_CAP_MS
-      const check = () => {
-        const quietFor = Date.now() - lastDataAt
-        if (quietFor >= SETTLE_MS || Date.now() >= deadline) {
-          res(e)
-          return
-        }
-        // Re-check once the settle window would elapse, but never past the
-        // hard cap.
-        setTimeout(check, Math.min(SETTLE_MS - quietFor, deadline - Date.now()))
-      }
-      check()
-    })
+    pty.onExit((e) => res(e))
   })
 
   const waitFor = async (match: string | RegExp, timeoutMs = 5_000) => {
