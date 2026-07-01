@@ -88,8 +88,9 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          // `Plaintext` widens the FFI `JsPlaintext` with Date/bigint; cast at
-          // the FFI boundary until the upstream input union is corrected.
+          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
+          // `toJSON` at the boundary); cast until the upstream input union is
+          // corrected to include it.
           plaintext: plaintext as JsPlaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
@@ -177,8 +178,9 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          // `Plaintext` widens the FFI `JsPlaintext` with Date/bigint; cast at
-          // the FFI boundary until the upstream input union is corrected.
+          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
+          // `toJSON` at the boundary); cast until the upstream input union is
+          // corrected to include it.
           plaintext: plaintext as JsPlaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,

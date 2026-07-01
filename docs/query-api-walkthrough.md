@@ -38,7 +38,7 @@ flowchart TD
 |---|-------|-------------|------|
 | 1 | Public API | `encryption/index.ts:259/270` `encryptQuery()` | Overloaded: single value → `EncryptQueryOperation`; `ScalarQueryTerm[]` → `BatchEncryptQueryOperation`. |
 | 1a | Query builders | `drizzle/operators.ts:976`, `supabase/query-builder.ts:44` | `eq/gt/...` operators & deferred builders that batch-encrypt RHS values, then emit a WHERE clause. |
-| 2 | Operations | `operations/encrypt-query.ts:41`, `operations/batch-encrypt-query.ts:115` | `execute()`: validate → resolve index → call FFI. `*WithLockContext` adds CTS token + ZeroKMS lock context. |
+| 2 | Operations | `operations/encrypt-query.ts:41`, `operations/batch-encrypt-query.ts:115` | `execute()`: validate → resolve index → call FFI. `*WithLockContext` resolves `LockContextInput` via `resolveLockContext` before the FFI call. |
 | 3 | EQL resolution | `helpers/infer-index-type.ts:89`, `types.ts:292` | `resolveIndexType` + `queryTypeToFfi`/`queryTypeToQueryOp` map public `QueryTypeName` → FFI `indexType`/`queryOp`. |
 | 4 | FFI JS wrapper | `protect-ffi/lib/index.cjs:155` | `encryptQuery`/`encryptQueryBulk` → `wrapAsync(native.*)`. |
 | 5 | Native loader | `protect-ffi/lib/load.cjs:9` | `@neon-rs/load` proxies to the platform prebuilt `.node`. |

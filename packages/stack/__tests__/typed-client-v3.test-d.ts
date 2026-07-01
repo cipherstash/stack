@@ -39,7 +39,8 @@ describe('typed v3 client — encrypt plaintext is pinned to the column domain',
       table: users,
       column: users.email,
     })
-    expectTypeOf(client.encrypt).toBeCallableWith(1n, {
+    // int8 domains use `string` plaintext until the native FFI supports bigint.
+    expectTypeOf(client.encrypt).toBeCallableWith('1', {
       table: users,
       column: users.id64,
     })
@@ -147,7 +148,7 @@ describe('typed v3 client — model decrypt yields precise plaintext', () => {
       id: string
       email: string
       createdAt: Date
-      id64: bigint
+      id64: string
     }>()
   })
 
