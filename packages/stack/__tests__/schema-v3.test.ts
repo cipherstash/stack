@@ -1,12 +1,420 @@
 import { describe, expect, it } from 'vitest'
+import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
 import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import {
   buildEncryptConfig,
+  EncryptedBoolColumn,
+  EncryptedDateColumn,
+  EncryptedDateEqColumn,
+  EncryptedDateOrdColumn,
+  EncryptedDateOrdOreColumn,
+  EncryptedFloat4Column,
+  EncryptedFloat4EqColumn,
+  EncryptedFloat4OrdColumn,
+  EncryptedFloat4OrdOreColumn,
+  EncryptedFloat8Column,
+  EncryptedFloat8EqColumn,
+  EncryptedFloat8OrdColumn,
+  EncryptedFloat8OrdOreColumn,
+  EncryptedInt2Column,
+  EncryptedInt2EqColumn,
+  EncryptedInt2OrdColumn,
+  EncryptedInt2OrdOreColumn,
+  EncryptedInt4Column,
+  EncryptedInt4EqColumn,
+  EncryptedInt4OrdColumn,
+  EncryptedInt4OrdOreColumn,
+  EncryptedInt8Column,
+  EncryptedInt8EqColumn,
+  EncryptedInt8OrdColumn,
+  EncryptedInt8OrdOreColumn,
+  EncryptedNumericColumn,
+  EncryptedNumericEqColumn,
+  EncryptedNumericOrdColumn,
+  EncryptedNumericOrdOreColumn,
   EncryptedTable,
+  EncryptedTextColumn,
+  EncryptedTextEqColumn,
+  EncryptedTextMatchColumn,
+  EncryptedTextOrdColumn,
+  EncryptedTextOrdOreColumn,
   EncryptedTextSearchColumn,
+  EncryptedTimestamptzColumn,
+  EncryptedTimestamptzEqColumn,
+  EncryptedTimestamptzOrdColumn,
+  EncryptedTimestamptzOrdOreColumn,
+  encryptedBoolColumn,
+  encryptedDateColumn,
+  encryptedDateEqColumn,
+  encryptedDateOrdColumn,
+  encryptedDateOrdOreColumn,
+  encryptedFloat4Column,
+  encryptedFloat4EqColumn,
+  encryptedFloat4OrdColumn,
+  encryptedFloat4OrdOreColumn,
+  encryptedFloat8Column,
+  encryptedFloat8EqColumn,
+  encryptedFloat8OrdColumn,
+  encryptedFloat8OrdOreColumn,
+  encryptedInt2Column,
+  encryptedInt2EqColumn,
+  encryptedInt2OrdColumn,
+  encryptedInt2OrdOreColumn,
+  encryptedInt4Column,
+  encryptedInt4EqColumn,
+  encryptedInt4OrdColumn,
+  encryptedInt4OrdOreColumn,
+  encryptedInt8Column,
+  encryptedInt8EqColumn,
+  encryptedInt8OrdColumn,
+  encryptedInt8OrdOreColumn,
+  encryptedNumericColumn,
+  encryptedNumericEqColumn,
+  encryptedNumericOrdColumn,
+  encryptedNumericOrdOreColumn,
   encryptedTable,
+  encryptedTextColumn,
+  encryptedTextEqColumn,
+  encryptedTextMatchColumn,
+  encryptedTextOrdColumn,
+  encryptedTextOrdOreColumn,
   encryptedTextSearchColumn,
+  encryptedTimestamptzColumn,
+  encryptedTimestamptzEqColumn,
+  encryptedTimestamptzOrdColumn,
+  encryptedTimestamptzOrdOreColumn,
 } from '@/schema/v3'
+
+const domainCases = [
+  [
+    'eql_v3.int4',
+    encryptedInt4Column,
+    EncryptedInt4Column,
+    'number',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int4_eq',
+    encryptedInt4EqColumn,
+    EncryptedInt4EqColumn,
+    'number',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int4_ord_ore',
+    encryptedInt4OrdOreColumn,
+    EncryptedInt4OrdOreColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int4_ord',
+    encryptedInt4OrdColumn,
+    EncryptedInt4OrdColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int2',
+    encryptedInt2Column,
+    EncryptedInt2Column,
+    'number',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int2_eq',
+    encryptedInt2EqColumn,
+    EncryptedInt2EqColumn,
+    'number',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int2_ord_ore',
+    encryptedInt2OrdOreColumn,
+    EncryptedInt2OrdOreColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int2_ord',
+    encryptedInt2OrdColumn,
+    EncryptedInt2OrdColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int8',
+    encryptedInt8Column,
+    EncryptedInt8Column,
+    'bigint',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int8_eq',
+    encryptedInt8EqColumn,
+    EncryptedInt8EqColumn,
+    'bigint',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int8_ord_ore',
+    encryptedInt8OrdOreColumn,
+    EncryptedInt8OrdOreColumn,
+    'bigint',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.int8_ord',
+    encryptedInt8OrdColumn,
+    EncryptedInt8OrdColumn,
+    'bigint',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.date',
+    encryptedDateColumn,
+    EncryptedDateColumn,
+    'date',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.date_eq',
+    encryptedDateEqColumn,
+    EncryptedDateEqColumn,
+    'date',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.date_ord_ore',
+    encryptedDateOrdOreColumn,
+    EncryptedDateOrdOreColumn,
+    'date',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.date_ord',
+    encryptedDateOrdColumn,
+    EncryptedDateOrdColumn,
+    'date',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.timestamptz',
+    encryptedTimestamptzColumn,
+    EncryptedTimestamptzColumn,
+    'date',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.timestamptz_eq',
+    encryptedTimestamptzEqColumn,
+    EncryptedTimestamptzEqColumn,
+    'date',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.timestamptz_ord_ore',
+    encryptedTimestamptzOrdOreColumn,
+    EncryptedTimestamptzOrdOreColumn,
+    'date',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.timestamptz_ord',
+    encryptedTimestamptzOrdColumn,
+    EncryptedTimestamptzOrdColumn,
+    'date',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.numeric',
+    encryptedNumericColumn,
+    EncryptedNumericColumn,
+    'number',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.numeric_eq',
+    encryptedNumericEqColumn,
+    EncryptedNumericEqColumn,
+    'number',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.numeric_ord_ore',
+    encryptedNumericOrdOreColumn,
+    EncryptedNumericOrdOreColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.numeric_ord',
+    encryptedNumericOrdColumn,
+    EncryptedNumericOrdColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.text',
+    encryptedTextColumn,
+    EncryptedTextColumn,
+    'string',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.text_eq',
+    encryptedTextEqColumn,
+    EncryptedTextEqColumn,
+    'string',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.text_match',
+    encryptedTextMatchColumn,
+    EncryptedTextMatchColumn,
+    'string',
+    {
+      match: {
+        tokenizer: { kind: 'ngram', token_length: 3 },
+        token_filters: [{ kind: 'downcase' }],
+        k: 6,
+        m: 2048,
+        include_original: true,
+      },
+    },
+    { equality: false, orderAndRange: false, freeTextSearch: true },
+  ],
+  [
+    'eql_v3.text_ord_ore',
+    encryptedTextOrdOreColumn,
+    EncryptedTextOrdOreColumn,
+    'string',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.text_ord',
+    encryptedTextOrdColumn,
+    EncryptedTextOrdColumn,
+    'string',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.bool',
+    encryptedBoolColumn,
+    EncryptedBoolColumn,
+    'boolean',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float4',
+    encryptedFloat4Column,
+    EncryptedFloat4Column,
+    'number',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float4_eq',
+    encryptedFloat4EqColumn,
+    EncryptedFloat4EqColumn,
+    'number',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float4_ord_ore',
+    encryptedFloat4OrdOreColumn,
+    EncryptedFloat4OrdOreColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float4_ord',
+    encryptedFloat4OrdColumn,
+    EncryptedFloat4OrdColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float8',
+    encryptedFloat8Column,
+    EncryptedFloat8Column,
+    'number',
+    {},
+    { equality: false, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float8_eq',
+    encryptedFloat8EqColumn,
+    EncryptedFloat8EqColumn,
+    'number',
+    { unique: { token_filters: [] } },
+    { equality: true, orderAndRange: false, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float8_ord_ore',
+    encryptedFloat8OrdOreColumn,
+    EncryptedFloat8OrdOreColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+  [
+    'eql_v3.float8_ord',
+    encryptedFloat8OrdColumn,
+    EncryptedFloat8OrdColumn,
+    'number',
+    { ore: {} },
+    { equality: true, orderAndRange: true, freeTextSearch: false },
+  ],
+] as const
+
+describe('eql_v3 concrete domain columns', () => {
+  it.each(
+    domainCases,
+  )('%s builder exposes name, config, type, and capabilities', (eqlType, factory, Klass, castAs, indexes, capabilities) => {
+    const col = factory('value')
+    expect(col).toBeInstanceOf(Klass)
+    expect(col.getName()).toBe('value')
+    expect(col.getEqlType()).toBe(eqlType)
+    expect(col.getQueryCapabilities()).toStrictEqual(capabilities)
+    expect(col.isQueryable()).toBe(Object.values(capabilities).some(Boolean))
+    expect(col.build()).toStrictEqual({ cast_as: castAs, indexes })
+    expect(col.build()).not.toHaveProperty('eqlType')
+    expect(col.build()).not.toHaveProperty('queryCapabilities')
+  })
+})
 
 describe('eql_v3 text_search column', () => {
   it('returns an EncryptedTextSearchColumn with the correct name', () => {
@@ -98,6 +506,17 @@ describe('eql_v3 text_search column', () => {
   it('getEqlType() returns the concrete domain name', () => {
     const col = encryptedTextSearchColumn('email')
     expect(col.getEqlType()).toBe('eql_v3.text_search')
+  })
+
+  it('exposes full query capabilities and is queryable', () => {
+    expect(
+      encryptedTextSearchColumn('email').getQueryCapabilities(),
+    ).toStrictEqual({
+      equality: true,
+      orderAndRange: true,
+      freeTextSearch: true,
+    })
+    expect(encryptedTextSearchColumn('email').isQueryable()).toBe(true)
   })
 
   it('eqlType metadata is absent from build() output', () => {
@@ -235,6 +654,25 @@ describe('eql_v3 buildEncryptConfig', () => {
     })
     expect(() => buildEncryptConfig(a, b)).toThrow(
       /duplicate table name "users"/,
+    )
+  })
+})
+
+describe('eql_v3 query capability misuse', () => {
+  it('throws when querying a storage-only v3 column at runtime', () => {
+    const raw = encryptedTextColumn('raw')
+    expect(() => resolveIndexType(raw as never)).toThrow(
+      /no indexes configured/,
+    )
+  })
+
+  it('throws when a query type is not configured on a queryable v3 column', () => {
+    const matchOnly = encryptedTextMatchColumn('body')
+    expect(() => resolveIndexType(matchOnly, 'equality')).toThrow(
+      /Index type "unique" is not configured/,
+    )
+    expect(() => resolveIndexType(matchOnly, 'orderAndRange')).toThrow(
+      /Index type "ore" is not configured/,
     )
   })
 })
