@@ -80,7 +80,7 @@ describe('eql_v3 schema type inference', () => {
     expectTypeOf<Plaintext>().toEqualTypeOf<{
       name: string
       age: number
-      id64: bigint
+      id64: string
       active: boolean
       createdAt: Date
       score: number

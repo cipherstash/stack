@@ -66,17 +66,22 @@ export type EncryptedQuery = CipherStashEncryptedQuery
  * Plaintext values the SDK accepts for encryption.
  *
  * Widens the FFI's `JsPlaintext` (`string | number | boolean |
- * Record<string, unknown> | JsPlaintext[]`) with `Date` and `bigint`. Both are
- * officially supported cast targets — they appear in the FFI's `CastAs` union
- * (`'bigint'`, `'date'`, `'timestamp'`, …) and are handled at runtime — but they
- * are omitted from the FFI's `JsPlaintext` INPUT union. v3 date / timestamptz /
- * int8 domains decrypt to `Date` / `bigint`, so the single-value `encrypt` /
- * `encryptQuery` entry points must accept those same values on the way in.
+ * Record<string, unknown> | JsPlaintext[]`) with `Date`. `Date` is a supported
+ * cast target that is omitted from the FFI's `JsPlaintext` INPUT union, but it
+ * serializes at the boundary via `toJSON` (ISO string), so it is accepted on the
+ * way in.
  *
- * When the upstream FFI `JsPlaintext` is corrected to include these, this alias
- * can collapse back to `= JsPlaintext`.
+ * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
+ * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
+ * BigInt"), and `decrypt` has no `castAs` context to reconstruct one on the way
+ * out. v3 int8 domains therefore use `string` plaintext (lossless across the
+ * full int8 range) for now. `bigint` returns once the upstream FFI input union
+ * supports it on input and returns it on decrypt.
+ *
+ * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
+ * arm can collapse back into `JsPlaintext`.
  */
-export type Plaintext = JsPlaintext | Date | bigint
+export type Plaintext = JsPlaintext | Date
 
 // ---------------------------------------------------------------------------
 // Client configuration

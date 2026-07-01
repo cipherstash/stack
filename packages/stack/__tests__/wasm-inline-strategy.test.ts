@@ -58,6 +58,22 @@ describe('wasm-inline resolveStrategy', () => {
     expect(vi.mocked(AccessKeyStrategy.create)).not.toHaveBeenCalled()
   })
 
+  it('throws when the access-key arm is missing workspaceCrn or accessKey', () => {
+    // JS callers bypass the compile-time union, so the no-strategy arm must
+    // reject a missing CRN or access key instead of forwarding `undefined`
+    // into `AccessKeyStrategy.create`.
+    expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — no strategy, no accessKey
+      resolveStrategy({ workspaceCrn: CRN } as any),
+    ).toThrowError(/`config\.workspaceCrn` and `config\.accessKey` are required/)
+    expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — no strategy, no workspaceCrn
+      resolveStrategy({ accessKey: 'CSAK.test' } as any),
+    ).toThrowError(/`config\.workspaceCrn` and `config\.accessKey` are required/)
+    // The guard must short-circuit *before* building a strategy.
+    expect(vi.mocked(AccessKeyStrategy.create)).not.toHaveBeenCalled()
+  })
+
   it('throws when both strategy and accessKey are supplied', () => {
     const both = {
       workspaceCrn: CRN,

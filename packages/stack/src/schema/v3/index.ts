@@ -899,7 +899,13 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   : K extends 'number'
     ? number
     : K extends 'bigint'
-      ? bigint
+      ? // int8 domains accept/return `string` until the native FFI supports
+        // bigint I/O. The domain's `cast_as` stays `'bigint'` → `'big_int'`, so
+        // server-side casting is unchanged; only the JS plaintext type differs.
+        // `string` is lossless across the full int8 range (`number` would
+        // corrupt values above 2^53). Revert to `bigint` once the FFI accepts
+        // it on input and returns it on decrypt.
+        string
       : K extends 'boolean'
         ? boolean
         : K extends 'date'
