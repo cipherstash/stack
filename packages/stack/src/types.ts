@@ -193,14 +193,20 @@ export type EncryptionClientConfig = {
  * This deliberately uses the `_columnType` brand rather than `build().columns`:
  * `BuildableTable.build()` is typed to return `Record<string, ColumnSchema>`,
  * which erases the literal keys and would mark EVERY model field as encrypted.
+ *
+ * The fallbacks resolve to `Record<never, never>` (a no-key type), NOT `never`:
+ * a value typed as the bare structural `BuildableTable` carries no `_columnType`
+ * brand, and `keyof never` is `string | number | symbol` — which would wrongly
+ * mark EVERY model field as encrypted. `keyof Record<never, never>` is `never`,
+ * so `EncryptedFromBuildableTable` degrades gracefully to the model unchanged.
  */
 export type BuildableTableColumns<T extends BuildableTable> = T extends {
   readonly _columnType: infer C
 }
   ? C extends Record<string, unknown>
     ? C
-    : never
-  : never
+    : Record<never, never>
+  : Record<never, never>
 
 /**
  * Maps a plaintext model type to its encrypted form using a buildable table.

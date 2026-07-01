@@ -548,6 +548,29 @@ describe('eql_v3 text_search column', () => {
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
   })
+
+  it('clones caller opts on freeTextSearch(): mutating them before build() does not leak', () => {
+    // build() deep-clones at build time, but if freeTextSearch stored the
+    // caller's nested tokenizer / token_filters by reference, a caller mutating
+    // their own opts object between freeTextSearch(opts) and build() would leak
+    // the mutation into the emitted config. freeTextSearch must clone on write.
+    const opts = {
+      tokenizer: { kind: 'ngram' as const, token_length: 3 },
+      token_filters: [{ kind: 'downcase' as const }],
+    }
+    const col = encryptedTextSearchColumn('email').freeTextSearch(opts)
+
+    // Mutate the caller's own opts AFTER freeTextSearch but BEFORE build().
+    opts.tokenizer.token_length = 999
+    opts.token_filters.push({ kind: 'downcase' as const })
+
+    const built = col.build()
+    expect(built.indexes.match.tokenizer).toEqual({
+      kind: 'ngram',
+      token_length: 3,
+    })
+    expect(built.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+  })
 })
 
 describe('eql_v3 encryptedTable', () => {

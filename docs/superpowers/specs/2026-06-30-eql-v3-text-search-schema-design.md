@@ -52,7 +52,7 @@ const users = encryptedTable('users', {
 ## Background — what `eql_v3.text_search` is
 
 Source of truth:
-`/Users/tobyhede/src/encrypt-query-language/.worktrees/eql_v3/release/cipherstash-encrypt-v3.sql`.
+`<eql-v3-worktree>/release/cipherstash-encrypt-v3.sql`.
 
 `eql_v3.text_search` is a Postgres `CREATE DOMAIN ... AS jsonb` whose `CHECK`
 requires an object containing `v, i, c, hm, ob, bf` (with `v = '2'`). The domain
