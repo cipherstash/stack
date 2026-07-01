@@ -7,7 +7,12 @@ import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
-import type { Client, EncryptedQueryResult, EncryptQueryOptions } from '@/types'
+import type {
+  Client,
+  EncryptedQueryResult,
+  EncryptQueryOptions,
+  Plaintext,
+} from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
@@ -20,7 +25,7 @@ import { EncryptionOperation } from './base-operation'
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
-    private plaintext: JsPlaintext | null | undefined,
+    private plaintext: Plaintext | null | undefined,
     private opts: EncryptQueryOptions,
   ) {
     super()
@@ -55,7 +60,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
       return { data: null }
     }
 
-    const plaintext: JsPlaintext = this.plaintext
+    const plaintext: Plaintext = this.plaintext
 
     const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
@@ -83,7 +88,9 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext,
+          // `Plaintext` widens the FFI `JsPlaintext` with Date/bigint; cast at
+          // the FFI boundary until the upstream input union is corrected.
+          plaintext: plaintext as JsPlaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
@@ -114,7 +121,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
 export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
-    private plaintext: JsPlaintext | null | undefined,
+    private plaintext: Plaintext | null | undefined,
     private opts: EncryptQueryOptions,
     private lockContext: LockContextInput,
     auditMetadata?: Record<string, unknown>,
@@ -140,7 +147,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       return { data: null }
     }
 
-    const plaintext: JsPlaintext = this.plaintext
+    const plaintext: Plaintext = this.plaintext
 
     const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
@@ -170,7 +177,9 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
         )
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          plaintext,
+          // `Plaintext` widens the FFI `JsPlaintext` with Date/bigint; cast at
+          // the FFI boundary until the upstream input union is corrected.
+          plaintext: plaintext as JsPlaintext,
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,

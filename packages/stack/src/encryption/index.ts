@@ -1,5 +1,5 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type JsPlaintext, newClient } from '@cipherstash/protect-ffi'
+import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
@@ -8,8 +8,6 @@ import type { LockContext } from '@/identity'
 import {
   buildEncryptConfig,
   type EncryptConfig,
-  type EncryptedTable,
-  type EncryptedTableColumn,
   encryptConfigSchema,
   // Imported type-only for the TSDoc {@link} references in the comments below.
   type encryptedColumn,
@@ -18,15 +16,17 @@ import {
 } from '@/schema'
 import type {
   AuthStrategy,
+  BuildableTable,
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
   Encrypted,
-  EncryptedFromSchema,
+  EncryptedFromBuildableTable,
   EncryptionClientConfig,
   EncryptOptions,
   EncryptQueryOptions,
   KeysetIdentifier,
+  Plaintext,
   ScalarQueryTerm,
 } from '@/types'
 import { logger } from '@/utils/logger'
@@ -207,7 +207,7 @@ export class EncryptionClient {
    * @see {@link LockContext}
    * @see {@link EncryptOperation}
    */
-  encrypt(plaintext: JsPlaintext, opts: EncryptOptions): EncryptOperation {
+  encrypt(plaintext: Plaintext, opts: EncryptOptions): EncryptOperation {
     return new EncryptOperation(this.client, plaintext, opts)
   }
 
@@ -265,7 +265,7 @@ export class EncryptionClient {
    * - Object/Array plaintext → `steVecTerm` (containment queries like `{ role: 'admin' }`)
    */
   encryptQuery(
-    plaintext: JsPlaintext,
+    plaintext: Plaintext,
     opts: EncryptQueryOptions,
   ): EncryptQueryOperation
 
@@ -276,10 +276,10 @@ export class EncryptionClient {
   encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
 
   encryptQuery(
-    plaintextOrTerms: JsPlaintext | readonly ScalarQueryTerm[],
+    plaintextOrTerms: Plaintext | readonly ScalarQueryTerm[],
     opts?: EncryptQueryOptions,
   ): EncryptQueryOperation | BatchEncryptQueryOperation {
-    // Discriminate between ScalarQueryTerm[] and JsPlaintext (which can also be an array)
+    // Discriminate between ScalarQueryTerm[] and Plaintext (which can also be an array)
     // using a type guard function
     if (isScalarQueryTermArray(plaintextOrTerms)) {
       return new BatchEncryptQueryOperation(this.client, plaintextOrTerms)
@@ -305,7 +305,7 @@ export class EncryptionClient {
 
     return new EncryptQueryOperation(
       this.client,
-      plaintextOrTerms as JsPlaintext,
+      plaintextOrTerms as Plaintext,
       opts,
     )
   }
@@ -399,13 +399,10 @@ export class EncryptionClient {
    * }
    * ```
    */
-  encryptModel<
-    T extends Record<string, unknown>,
-    S extends EncryptedTableColumn = EncryptedTableColumn,
-  >(
+  encryptModel<T extends Record<string, unknown>, Table extends BuildableTable>(
     input: T,
-    table: EncryptedTable<S>,
-  ): EncryptModelOperation<EncryptedFromSchema<T, S>> {
+    table: Table,
+  ): EncryptModelOperation<EncryptedFromBuildableTable<T, Table>> {
     return new EncryptModelOperation(
       this.client,
       input as Record<string, unknown>,
@@ -494,11 +491,11 @@ export class EncryptionClient {
    */
   bulkEncryptModels<
     T extends Record<string, unknown>,
-    S extends EncryptedTableColumn = EncryptedTableColumn,
+    Table extends BuildableTable,
   >(
     input: Array<T>,
-    table: EncryptedTable<S>,
-  ): BulkEncryptModelsOperation<EncryptedFromSchema<T, S>> {
+    table: Table,
+  ): BulkEncryptModelsOperation<EncryptedFromBuildableTable<T, Table>> {
     return new BulkEncryptModelsOperation(
       this.client,
       input as Array<Record<string, unknown>>,
