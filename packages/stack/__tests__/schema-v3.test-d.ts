@@ -12,7 +12,19 @@ import type {
   InferEncrypted,
   InferPlaintext,
 } from '@/schema/v3'
-import { encryptedTable, encryptedTextSearchColumn } from '@/schema/v3'
+import {
+  encryptedBoolColumn,
+  encryptedFloat8Column,
+  encryptedInt4Column,
+  encryptedInt8Column,
+  encryptedTable,
+  encryptedTextColumn,
+  encryptedTextEqColumn,
+  encryptedTextMatchColumn,
+  encryptedTextSearchColumn,
+  encryptedTimestamptzColumn,
+  encryptedTimestamptzOrdColumn,
+} from '@/schema/v3'
 import type { Encrypted } from '@/types'
 
 describe('eql_v3 schema type inference', () => {
@@ -51,6 +63,39 @@ describe('eql_v3 schema type inference', () => {
     })
     type Enc = InferEncrypted<typeof users>
     expectTypeOf<Enc>().toEqualTypeOf<{ email: Encrypted }>()
+  })
+
+  it('InferPlaintext maps v3 concrete domains to plaintext TypeScript types', () => {
+    const metrics = encryptedTable('metrics', {
+      name: encryptedTextColumn('name'),
+      age: encryptedInt4Column('age'),
+      id64: encryptedInt8Column('id64'),
+      active: encryptedBoolColumn('active'),
+      createdAt: encryptedTimestamptzColumn('created_at'),
+      score: encryptedFloat8Column('score'),
+    })
+
+    type Plaintext = InferPlaintext<typeof metrics>
+
+    expectTypeOf<Plaintext>().toEqualTypeOf<{
+      name: string
+      age: number
+      id64: bigint
+      active: boolean
+      createdAt: Date
+      score: number
+    }>()
+  })
+
+  it('v3 domain classes remain nominal by literal domain definition', () => {
+    const int8 = encryptedInt8Column('id64')
+    const bool = encryptedBoolColumn('active')
+
+    expectTypeOf(int8).not.toEqualTypeOf<typeof bool>()
+
+    // @ts-expect-error - storage-only bool is not assignable to storage-only int8
+    const invalid: typeof int8 = bool
+    void invalid
   })
 })
 
@@ -128,5 +173,130 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
       // @ts-expect-error - EncryptedField is not assignable to BuildableQueryColumn
       column: v2usersWithField.profile.email,
     })
+  })
+
+  it('encryptQuery accepts queryable v3 columns with explicit capability metadata', () => {
+    const users = encryptedTable('users', {
+      emailEq: encryptedTextEqColumn('email_eq'),
+      emailMatch: encryptedTextMatchColumn('email_match'),
+      emailSearch: encryptedTextSearchColumn('email_search'),
+      createdAt: encryptedTimestamptzOrdColumn('created_at'),
+    })
+    const client = {} as EncryptionClient
+
+    expectTypeOf(client.encryptQuery).toBeCallableWith('alice@example.com', {
+      table: users,
+      column: users.emailEq,
+    })
+    expectTypeOf(client.encryptQuery).toBeCallableWith('ali', {
+      table: users,
+      column: users.emailMatch,
+      queryType: 'freeTextSearch',
+    })
+    expectTypeOf(client.encryptQuery).toBeCallableWith(new Date(), {
+      table: users,
+      column: users.createdAt,
+      queryType: 'orderAndRange',
+    })
+    expectTypeOf(client.encryptQuery).toBeCallableWith('alice@example.com', {
+      table: users,
+      column: users.emailSearch,
+      queryType: 'equality',
+    })
+  })
+
+  it('encryptQuery rejects storage-only v3 columns at compile time', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextColumn('email'),
+      active: encryptedBoolColumn('active'),
+    })
+    const client = {} as EncryptionClient
+
+    client.encryptQuery('alice@example.com', {
+      table: users,
+      // @ts-expect-error - storage-only v3 text column is not queryable
+      column: users.email,
+    })
+
+    client.encryptQuery(true, {
+      table: users,
+      // @ts-expect-error - storage-only v3 bool column is not queryable
+      column: users.active,
+    })
+  })
+})
+
+describe('eql_v3 model encryption inference', () => {
+  it('encryptModel and bulkEncryptModels infer encrypted fields from v3 tables', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+      active: encryptedBoolColumn('active'),
+    })
+    const client = {} as EncryptionClient
+
+    const encryptedOne = client.encryptModel(
+      { id: 'u1', email: 'alice@example.com', active: true, untouched: 42 },
+      users,
+    )
+    expectTypeOf(encryptedOne).toEqualTypeOf<
+      import('@/encryption').EncryptModelOperation<{
+        id: string
+        email: Encrypted
+        active: Encrypted
+        untouched: number
+      }>
+    >()
+
+    const encryptedMany = client.bulkEncryptModels(
+      [{ id: 'u1', email: 'alice@example.com', active: true }],
+      users,
+    )
+    expectTypeOf(encryptedMany).toEqualTypeOf<
+      import('@/encryption').BulkEncryptModelsOperation<{
+        id: string
+        email: Encrypted
+        active: Encrypted
+      }>
+    >()
+  })
+
+  it('v3 encryptModel preserves unrelated and nullable fields', () => {
+    const users = encryptedTable('users', {
+      email: encryptedTextSearchColumn('email'),
+    })
+    const client = {} as EncryptionClient
+
+    const encrypted = client.encryptModel(
+      { id: 'u1', email: null as string | null, untouched: 42 },
+      users,
+    )
+
+    expectTypeOf(encrypted).toEqualTypeOf<
+      import('@/encryption').EncryptModelOperation<{
+        id: string
+        email: Encrypted | null
+        untouched: number
+      }>
+    >()
+  })
+
+  it('v2 encryptModel inference still preserves non-schema fields after widening', () => {
+    const users = v2EncryptedTable('users', {
+      email: encryptedColumn('email').equality(),
+    })
+    const client = {} as EncryptionClient
+
+    const encrypted = client.encryptModel(
+      { id: 'u1', email: 'alice@example.com', age: 30 },
+      users,
+    )
+
+    expectTypeOf(encrypted).toEqualTypeOf<
+      import('@/encryption').EncryptModelOperation<{
+        id: string
+        email: Encrypted
+        age: number
+      }>
+    >()
   })
 })
