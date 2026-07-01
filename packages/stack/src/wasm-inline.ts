@@ -399,12 +399,16 @@ export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   if (cfg.strategy) return cfg.strategy
   // No strategy → the access-key arm, where `workspaceCrn` and `accessKey`
   // are both required (and so present at runtime); the union widens their
-  // static types to `string | undefined`, hence the casts.
+  // static types to `string | undefined`, hence the casts. Guard at runtime
+  // so plain JS / Deno callers that bypass the compile-time union fail loudly
+  // instead of forwarding `undefined` into `AccessKeyStrategy.create`.
+  if (!cfg.workspaceCrn || !cfg.accessKey) {
+    throw new Error(
+      '[encryption]: `config.workspaceCrn` and `config.accessKey` are required when `config.strategy` is not provided.',
+    )
+  }
   // `AccessKeyStrategy.create` takes the full workspace CRN — the region is
   // derived from it inside `@cipherstash/auth`, so the CRN stays the single
   // source of truth with no manual region split.
-  return AccessKeyStrategy.create(
-    cfg.workspaceCrn as string,
-    cfg.accessKey as string,
-  )
+  return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey)
 }

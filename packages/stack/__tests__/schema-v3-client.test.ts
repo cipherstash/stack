@@ -177,17 +177,22 @@ describeLive('eql_v3 client integration', () => {
     expect(matchTerm).not.toHaveProperty('c')
   }, 30000)
 
-  it('round-trips representative bigint and date-like v3 storage domains', async () => {
+  it('round-trips a representative int8 storage domain (string plaintext)', async () => {
+    // int8 domains use `string` plaintext until the native FFI supports bigint
+    // I/O. `string` is lossless across the full int8 range (this value exceeds
+    // Number.MAX_SAFE_INTEGER); `cast_as: big_int` handles server-side casting.
     const int8Encrypted = unwrapResult(
-      await protectClient.encrypt(1234567890123456789n, {
+      await protectClient.encrypt('1234567890123456789', {
         table: users,
         column: users.externalId,
       }),
     )
     expect(unwrapResult(await protectClient.decrypt(int8Encrypted))).toBe(
-      1234567890123456789n,
+      '1234567890123456789',
     )
+  }, 30000)
 
+  it('round-trips a representative date storage domain', async () => {
     const day = new Date('2026-07-01T00:00:00.000Z')
     const dateEncrypted = unwrapResult(
       await protectClient.encrypt(day, {
@@ -195,6 +200,10 @@ describeLive('eql_v3 client integration', () => {
         column: users.createdOn,
       }),
     )
+    // Assertion pending live verification: `decrypt` has no `castAs` context, so
+    // whether a `date` domain returns a `Date` or an ISO string is FFI-dependent.
+    // If this returns a string, that is a separate pre-existing gap to handle as
+    // a follow-up (client-side Date reconstruction or a string assertion).
     expect(unwrapResult(await protectClient.decrypt(dateEncrypted))).toEqual(
       day,
     )

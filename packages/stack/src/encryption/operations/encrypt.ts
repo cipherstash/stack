@@ -88,9 +88,9 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
         const { metadata } = this.getAuditData()
 
         return await ffiEncrypt(this.client, {
-          // `Plaintext` widens the FFI `JsPlaintext` with Date/bigint (both
-          // runtime-supported cast targets); cast at the FFI boundary until the
-          // upstream `JsPlaintext` input union is corrected.
+          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
+          // `toJSON` at the boundary); cast until the upstream `JsPlaintext` input
+          // union is corrected to include it.
           plaintext: this.plaintext as JsPlaintext,
           column: this.column.getName(),
           table: this.table.tableName,
@@ -158,6 +158,14 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
 
         if (plaintext === null) {
           return null as unknown as Encrypted
+        }
+
+        if (typeof plaintext === 'number' && Number.isNaN(plaintext)) {
+          throw new Error('[encryption]: Cannot encrypt NaN value')
+        }
+
+        if (typeof plaintext === 'number' && !Number.isFinite(plaintext)) {
+          throw new Error('[encryption]: Cannot encrypt Infinity value')
         }
 
         const { metadata } = this.getAuditData()
