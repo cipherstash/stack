@@ -62,6 +62,22 @@ export type Encrypted = CipherStashEncrypted
  * storage-shaped {@link Encrypted} payload instead. */
 export type EncryptedQuery = CipherStashEncryptedQuery
 
+/**
+ * Plaintext values the SDK accepts for encryption.
+ *
+ * Widens the FFI's `JsPlaintext` (`string | number | boolean |
+ * Record<string, unknown> | JsPlaintext[]`) with `Date` and `bigint`. Both are
+ * officially supported cast targets — they appear in the FFI's `CastAs` union
+ * (`'bigint'`, `'date'`, `'timestamp'`, …) and are handled at runtime — but they
+ * are omitted from the FFI's `JsPlaintext` INPUT union. v3 date / timestamptz /
+ * int8 domains decrypt to `Date` / `bigint`, so the single-value `encrypt` /
+ * `encryptQuery` entry points must accept those same values on the way in.
+ *
+ * When the upstream FFI `JsPlaintext` is corrected to include these, this alias
+ * can collapse back to `= JsPlaintext`.
+ */
+export type Plaintext = JsPlaintext | Date | bigint
+
 // ---------------------------------------------------------------------------
 // Client configuration
 // ---------------------------------------------------------------------------
@@ -145,9 +161,17 @@ export interface BuildableColumn {
  *  `EncryptedColumn` qualifies via the nominal arm; a v3 queryable concrete
  *  type qualifies via the `getEqlType()` structural arm; `EncryptedField` (no
  *  `getEqlType`, not an `EncryptedColumn`) is rejected. */
-export type BuildableQueryColumn =
-  | EncryptedColumn
-  | (BuildableColumn & { getEqlType(): string })
+export interface BuildableV3QueryableColumn extends BuildableColumn {
+  getEqlType(): string
+  getQueryCapabilities(): {
+    equality: boolean
+    orderAndRange: boolean
+    freeTextSearch: boolean
+  }
+  isQueryable(): true
+}
+
+export type BuildableQueryColumn = EncryptedColumn | BuildableV3QueryableColumn
 
 /** Structural contract for a table builder the client can consume. Satisfied by
  *  v2 and v3 `EncryptedTable` alike. */
@@ -159,6 +183,40 @@ export interface BuildableTable {
 export type EncryptionClientConfig = {
   schemas: AtLeastOneCsTable<BuildableTable>
   config?: ClientConfig
+}
+
+/**
+ * The literal column map of a buildable table, read from its type-level
+ * `_columnType` brand. Both v2 and v3 `EncryptedTable` carry this brand, so this
+ * recovers the literal column keys structurally.
+ *
+ * This deliberately uses the `_columnType` brand rather than `build().columns`:
+ * `BuildableTable.build()` is typed to return `Record<string, ColumnSchema>`,
+ * which erases the literal keys and would mark EVERY model field as encrypted.
+ */
+export type BuildableTableColumns<T extends BuildableTable> = T extends {
+  readonly _columnType: infer C
+}
+  ? C extends Record<string, unknown>
+    ? C
+    : never
+  : never
+
+/**
+ * Maps a plaintext model type to its encrypted form using a buildable table.
+ *
+ * Fields whose keys match a column defined in `Table` (via its `_columnType`
+ * brand) become `Encrypted` (`Encrypted | null` when the source field is
+ * nullable); all other fields retain their original types from `T`. Works for
+ * both v2 and v3 tables. See {@link EncryptedFromSchema} for the v2-specific
+ * variant retained for backward compatibility.
+ */
+export type EncryptedFromBuildableTable<T, Table extends BuildableTable> = {
+  [K in keyof T]: [K] extends [keyof BuildableTableColumns<Table>]
+    ? null extends T[K]
+      ? Encrypted | null
+      : Encrypted
+    : T[K]
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +241,7 @@ export type EncryptedReturnType =
   | 'escaped-composite-literal'
 
 export type SearchTerm = {
-  value: JsPlaintext
+  value: Plaintext
   column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
   table: BuildableTable
   returnType?: EncryptedReturnType
@@ -266,7 +324,7 @@ export type EncryptedFromSchema<T, S extends EncryptedTableColumn> = {
 // position-stable output.
 export type BulkEncryptPayload = Array<{
   id?: string
-  plaintext: JsPlaintext | null
+  plaintext: Plaintext | null
 }>
 
 export type BulkEncryptedData = Array<{ id?: string; data: Encrypted | null }>
@@ -344,5 +402,5 @@ export type QueryTermBase = {
 export type EncryptQueryOptions = QueryTermBase
 
 export type ScalarQueryTerm = QueryTermBase & {
-  value: JsPlaintext
+  value: Plaintext
 }
