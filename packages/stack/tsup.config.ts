@@ -20,6 +20,7 @@ export default defineConfig([
       'src/dynamodb/index.ts',
       'src/supabase/index.ts',
       'src/encryption/index.ts',
+      'src/encryption/v3.ts',
       'src/errors/index.ts',
     ],
     format: ['cjs', 'esm'],
