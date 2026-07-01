@@ -180,7 +180,7 @@ describeLive('eql_v3 client integration', () => {
   it('round-trips a representative int8 storage domain (string plaintext)', async () => {
     // int8 domains use `string` plaintext until the native FFI supports bigint
     // I/O. `string` is lossless across the full int8 range (this value exceeds
-    // Number.MAX_SAFE_INTEGER); `cast_as: big_int` handles server-side casting.
+    // Number.MAX_SAFE_INTEGER); `cast_as: bigint` handles server-side casting.
     const int8Encrypted = unwrapResult(
       await protectClient.encrypt('1234567890123456789', {
         table: users,
