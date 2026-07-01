@@ -6,8 +6,7 @@ import {
 import { isEncryptedPayload } from '@/encryption/helpers'
 import type { AuditData } from '@/encryption/operations/base-operation'
 import type { Context } from '@/identity'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
-import type { Client, Decrypted, Encrypted } from '@/types'
+import type { BuildableTable, Client, Decrypted, Encrypted } from '@/types'
 
 /**
  * Sets a value at a nested path in an object, creating intermediate objects as needed.
@@ -207,7 +206,7 @@ function prepareFieldsForDecryption<T extends Record<string, unknown>>(
  */
 function prepareFieldsForEncryption<T extends Record<string, unknown>>(
   model: T,
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
 ): {
   otherFields: Record<string, unknown>
   operationFields: Record<string, unknown>
@@ -326,7 +325,7 @@ export async function decryptModelFields<T extends Record<string, unknown>>(
  */
 export async function encryptModelFields(
   model: Record<string, unknown>,
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   auditData?: AuditData,
 ): Promise<Record<string, unknown>> {
@@ -437,7 +436,7 @@ export async function decryptModelFieldsWithLockContext<
  */
 export async function encryptModelFieldsWithLockContext(
   model: Record<string, unknown>,
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   lockContext: Context,
   auditData?: AuditData,
@@ -496,7 +495,7 @@ export async function encryptModelFieldsWithLockContext(
  */
 function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
   models: T[],
-  table?: EncryptedTable<EncryptedTableColumn>,
+  table?: BuildableTable,
 ): {
   otherFields: Record<string, unknown>[]
   operationFields: Record<string, unknown>[]
@@ -643,7 +642,7 @@ function fieldsForModelIndex(
  */
 export async function bulkEncryptModels(
   models: Record<string, unknown>[],
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   auditData?: AuditData,
 ): Promise<Record<string, unknown>[]> {
@@ -822,7 +821,7 @@ export async function bulkDecryptModelsWithLockContext<
  */
 export async function bulkEncryptModelsWithLockContext(
   models: Record<string, unknown>[],
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   lockContext: Context,
   auditData?: AuditData,

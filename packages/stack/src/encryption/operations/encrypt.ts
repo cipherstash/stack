@@ -12,6 +12,7 @@ import type {
   Client,
   Encrypted,
   EncryptOptions,
+  Plaintext,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
@@ -23,13 +24,13 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   // short-circuit. The public `Encryption.encrypt()` signature still
   // rejects null at the type layer; this is defense in depth for callers
   // that reach this class through casts or dynamic field walking.
-  private plaintext: JsPlaintext | null
+  private plaintext: Plaintext | null
   private column: BuildableColumn
   private table: BuildableTable
 
   constructor(
     client: Client,
-    plaintext: JsPlaintext | null,
+    plaintext: Plaintext | null,
     opts: EncryptOptions,
   ) {
     super()
@@ -87,7 +88,10 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
         const { metadata } = this.getAuditData()
 
         return await ffiEncrypt(this.client, {
-          plaintext: this.plaintext,
+          // `Plaintext` widens the FFI `JsPlaintext` with Date/bigint (both
+          // runtime-supported cast targets); cast at the FFI boundary until the
+          // upstream `JsPlaintext` input union is corrected.
+          plaintext: this.plaintext as JsPlaintext,
           column: this.column.getName(),
           table: this.table.tableName,
           unverifiedContext: metadata,
@@ -108,7 +112,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   public getOperation(): {
     client: Client
-    plaintext: JsPlaintext | null
+    plaintext: Plaintext | null
     column: BuildableColumn
     table: BuildableTable
   } {
@@ -160,7 +164,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
         const lockContext = resolveLockContext(this.lockContext)
 
         return await ffiEncrypt(client, {
-          plaintext,
+          plaintext: plaintext as JsPlaintext,
           column: column.getName(),
           table: table.tableName,
           lockContext,
