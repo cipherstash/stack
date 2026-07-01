@@ -913,7 +913,7 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
  * conditional would collapse because those subclasses are structurally
  * assignable to one another.
  */
-type PlaintextForColumn<C> =
+export type PlaintextForColumn<C> =
   C extends EncryptedV3Column<infer D> ? PlaintextFromKind<D['castAs']> : never
 
 /**
@@ -931,3 +931,78 @@ export type InferPlaintext<T extends EncryptedTable<EncryptedV3TableColumn>> =
  */
 export type InferEncrypted<T extends EncryptedTable<EncryptedV3TableColumn>> =
   T extends EncryptedTable<infer C> ? { [K in keyof C]: Encrypted } : never
+
+// ---------------------------------------------------------------------------
+// Typed-client surface helpers (@cipherstash/stack/v3)
+// ---------------------------------------------------------------------------
+
+/**
+ * The user-facing `queryType` names a v3 column supports, derived 1:1 from its
+ * capability flags. Resolves to `never` for a storage-only column (all flags
+ * `false`) and for any non-v3 value. The names mirror the {@link QueryCapabilities}
+ * keys and the first three {@link import('@/types').QueryTypeName} members.
+ */
+export type QueryTypesForColumn<C> =
+  C extends EncryptedV3Column<infer D>
+    ?
+        | (D['capabilities']['equality'] extends true ? 'equality' : never)
+        | (D['capabilities']['orderAndRange'] extends true
+            ? 'orderAndRange'
+            : never)
+        | (D['capabilities']['freeTextSearch'] extends true
+            ? 'freeTextSearch'
+            : never)
+    : never
+
+/** Any v3 table, regardless of its column map. */
+export type AnyV3Table = EncryptedTable<EncryptedV3TableColumn>
+
+/** Union of the concrete column builders declared on a v3 table. */
+export type ColumnsOf<T extends AnyV3Table> =
+  T extends EncryptedTable<infer C> ? C[keyof C] : never
+
+/**
+ * Union of the *queryable* column builders on a v3 table. Storage-only columns
+ * (whose {@link QueryTypesForColumn} is `never`) are filtered out, so they can't
+ * be passed to a query method.
+ */
+export type QueryableColumnsOf<T extends AnyV3Table> =
+  T extends EncryptedTable<infer C>
+    ? {
+        [K in keyof C]: [QueryTypesForColumn<C[K]>] extends [never]
+          ? never
+          : C[K]
+      }[keyof C]
+    : never
+
+/**
+ * The accepted input model for {@link import('@/encryption/v3').TypedEncryptionClient.encryptModel}.
+ * `T` is inferred from the argument: keys that name a schema column are pinned to
+ * the column's plaintext type (nullable if the field is nullable), so a wrong-typed
+ * field fails assignability; all other keys pass through unchanged.
+ */
+export type V3ModelInput<Table extends AnyV3Table, T> = {
+  [K in keyof T]: K extends keyof InferPlaintext<Table>
+    ? null extends T[K]
+      ? InferPlaintext<Table>[K] | null
+      : InferPlaintext<Table>[K]
+    : T[K]
+}
+
+/** The encrypted result model: schema columns become `Encrypted`, others pass through. */
+export type V3EncryptedModel<Table extends AnyV3Table, T> = {
+  [K in keyof T]: K extends keyof InferPlaintext<Table>
+    ? null extends T[K]
+      ? Encrypted | null
+      : Encrypted
+    : T[K]
+}
+
+/** The decrypted result model: schema columns become their plaintext type, others pass through. */
+export type V3DecryptedModel<Table extends AnyV3Table, T> = {
+  [K in keyof T]: K extends keyof InferPlaintext<Table>
+    ? null extends T[K]
+      ? InferPlaintext<Table>[K] | null
+      : InferPlaintext<Table>[K]
+    : T[K]
+}

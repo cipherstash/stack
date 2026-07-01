@@ -132,6 +132,16 @@
 				"default": "./dist/schema/v3/index.cjs"
 			}
 		},
+		"./v3": {
+			"import": {
+				"types": "./dist/encryption/v3.d.ts",
+				"default": "./dist/encryption/v3.js"
+			},
+			"require": {
+				"types": "./dist/encryption/v3.d.cts",
+				"default": "./dist/encryption/v3.cjs"
+			}
+		},
 		"./types": {
 			"import": {
 				"types": "./dist/types-public.d.ts",
