@@ -664,6 +664,24 @@ describe('eql_v3 buildEncryptConfig', () => {
     expect(Object.keys(config.tables).sort()).toEqual(['posts', 'users'])
   })
 
+  it('keys columns by DB name (getName), not the JS property name', () => {
+    // A camelCase JS key mapping to a snake_case DB column must register the
+    // config under the DB name — `encrypt`/`decrypt` look columns up by
+    // `column.getName()`, so keying by the JS property name makes the FFI
+    // report "column not found in Encrypt config" at encrypt time.
+    const users = encryptedTable('accounts', {
+      externalId: encryptedInt8Column('external_id'),
+      createdOn: encryptedDateColumn('created_on'),
+    })
+    const config = buildEncryptConfig(users)
+    expect(Object.keys(config.tables.accounts).sort()).toEqual([
+      'created_on',
+      'external_id',
+    ])
+    expect(config.tables.accounts).not.toHaveProperty('externalId')
+    expect(config.tables.accounts).not.toHaveProperty('createdOn')
+  })
+
   it('throws when two tables share the same tableName (no silent drop)', () => {
     // v3-only additive guard: keying config.tables by name means a duplicate
     // would silently overwrite the earlier table. Fail loudly instead so the
