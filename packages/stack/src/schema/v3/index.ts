@@ -461,9 +461,14 @@ export class EncryptedTextSearchColumn extends EncryptedV3Column<
     // A fresh defaults object per call supplies the `?? ` fallbacks, so no
     // nested default object is ever shared into `this.matchOpts` by reference.
     const defaults = defaultMatchOpts()
+    // Clone-on-write: deep-copy the nested tokenizer / token_filters when
+    // storing them so a caller mutating their own opts object between
+    // freeTextSearch(opts) and build() cannot leak into the emitted config.
+    const tokenizer = opts?.tokenizer ?? defaults.tokenizer
+    const token_filters = opts?.token_filters ?? defaults.token_filters
     this.matchOpts = {
-      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
-      token_filters: opts?.token_filters ?? defaults.token_filters,
+      tokenizer: { ...tokenizer },
+      token_filters: token_filters.map((f) => ({ ...f })),
       k: opts?.k ?? defaults.k,
       m: opts?.m ?? defaults.m,
       include_original: opts?.include_original ?? defaults.include_original,
