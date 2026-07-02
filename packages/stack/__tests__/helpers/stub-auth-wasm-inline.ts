@@ -13,3 +13,11 @@ export const AccessKeyStrategy = {
     )
   },
 }
+
+export const OidcFederationStrategy = {
+  create: (): never => {
+    throw new Error(
+      '[test stub]: auth/wasm-inline OidcFederationStrategy.create not implemented',
+    )
+  },
+}
