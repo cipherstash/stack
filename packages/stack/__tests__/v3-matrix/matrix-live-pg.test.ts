@@ -157,12 +157,17 @@ beforeAll(async () => {
   const colNames = domains.map(([t]) => `"${slug(t)}"`)
   const insertRow = async (enc: Record<string, unknown>): Promise<number> => {
     const casts = domains.map(([t], i) => `$${i + 2}::${t}`)
-    const values = domains.map(([t]) => enc[slug(t)]) as never[]
+    // `sql.json(...)` (not the bare ciphertext object): postgres.js only infers
+    // an explicit wire type for `Parameter`/`Date`/`Uint8Array`/boolean/bigint —
+    // a plain object falls through to `'' + x` (`Bind()` in
+    // postgres/src/connection.js), i.e. the literal string `"[object Object]"`,
+    // which Postgres rejects as invalid JSON before the domain cast ever runs.
+    const values = domains.map(([t]) => sql.json(enc[slug(t)] as never))
     const [row] = await sql.unsafe<Row[]>(
       `INSERT INTO ${TABLE_NAME} (test_run_id, ${colNames.join(', ')})
        VALUES ($1, ${casts.join(', ')})
        RETURNING id`,
-      [TEST_RUN_ID, ...values] as never[],
+      [TEST_RUN_ID, ...values],
     )
     return row.id
   }
@@ -236,7 +241,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.eq_term("${col}") = eql_v3.hmac_256($2::jsonb)`,
-      [TEST_RUN_ID, eqTerms[col]] as never[],
+      [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
   })
@@ -249,7 +254,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.ord_term("${col}") = eql_v3.ore_block_256($2::jsonb)`,
-      [TEST_RUN_ID, ordTerms[col]] as never[],
+      [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
   })
@@ -262,7 +267,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.match_term("${col}") @> eql_v3.bloom_filter($2::jsonb)`,
-      [TEST_RUN_ID, matchTerms[col]] as never[],
+      [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idB])
   })
