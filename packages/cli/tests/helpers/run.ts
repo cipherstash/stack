@@ -71,17 +71,32 @@ export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
   return new Promise<RunResult>((res, rej) => {
     child.on('error', rej)
     child.on('close', (code, signal) => {
-      const raw = stdout + stderr
-      res({
-        // `code` is null when the child was terminated by `signal`; keep it
-        // null rather than masking a kill/crash as a clean 0 exit.
-        exitCode: code,
-        signal,
-        output: stripAnsi(raw),
-        raw,
-        stdout: stripAnsi(stdout),
-        stderr: stripAnsi(stderr),
-      })
+      res(buildRunResult(code, signal, stdout, stderr))
     })
   })
+}
+
+/**
+ * Pure `close`-event → {@link RunResult} mapping, factored out of `run()` so
+ * the exit-code/signal handling can be unit-tested directly without spawning
+ * a real child process (see `run.test.ts`). Node guarantees exactly one of
+ * `code`/`signal` is non-null on `'close'` — this must never coerce a null
+ * `code` to `0`, or a signal-terminated child (crash, SIGKILL, OOM) would be
+ * misreported as a clean exit.
+ */
+export function buildRunResult(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+  stdout: string,
+  stderr: string,
+): RunResult {
+  const raw = stdout + stderr
+  return {
+    exitCode: code,
+    signal,
+    output: stripAnsi(raw),
+    raw,
+    stdout: stripAnsi(stdout),
+    stderr: stripAnsi(stderr),
+  }
 }

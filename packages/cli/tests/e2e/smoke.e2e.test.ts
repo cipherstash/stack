@@ -1,9 +1,11 @@
-import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { messages } from '../../src/messages.js'
 import { render } from '../helpers/pty.js'
+import { run } from '../helpers/run.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(
@@ -21,11 +23,28 @@ describe('stash CLI — non-interactive smoke', () => {
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
     expect(r.output).toContain('db install')
-    // dotenv v17 prints an `injected env (N) from …` banner on every
-    // `config()` call unless `quiet: true` is passed. Guard against that
-    // noise regressing back into the CLI's stdout (it also destabilises the
-    // PTY output capture these e2e tests rely on).
-    expect(r.output).not.toContain('injected env')
+    // The dotenv "injected env" banner regression guard lives in the
+    // dedicated test below — this cwd has no .env file, so a bare
+    // `not.toContain('injected env')` here would pass vacuously.
+  })
+
+  it('suppresses dotenv v17\'s "injected env" banner when a .env file exists in cwd', async () => {
+    // dotenv v17 prints an `injected env (N) from …` banner to stdout on
+    // every `config()` call that actually injects a variable, unless
+    // `quiet: true` is passed. The repo has no `.env` anywhere, so exercising
+    // this requires a real .env file in the spawned process's cwd — without
+    // it, `config()` never finds anything to inject and the banner can never
+    // appear regardless of whether `quiet: true` is present in the CLI.
+    const tmpDir = mkdtempSync(join(tmpdir(), 'stash-dotenv-quiet-'))
+    try {
+      writeFileSync(join(tmpDir, '.env'), 'STASH_DOTENV_QUIET_TEST=1\n')
+      const r = await run(['--version'], { cwd: tmpDir })
+      expect(r.exitCode).toBe(0)
+      expect(r.output).toContain(pkg.version)
+      expect(r.output).not.toContain('injected env')
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true })
+    }
   })
 
   it('--version prints the package version', async () => {
@@ -77,5 +96,31 @@ describe('stash CLI — non-interactive smoke', () => {
     // `migrateNotImplemented` is a runner-aware factory; the runner-agnostic
     // suffix is the stable assertion target.
     expect(r.output).toContain('stash db migrate" is not yet implemented.')
+  })
+
+  // The two cases below exercise `run()` directly rather than `render()`.
+  // Every existing `run()` consumer only asserted `exitCode === 0`
+  // (runner-aware-help.e2e.test.ts) and every exit-1 case above still went
+  // through `render()`, so `run()`'s actual purpose — correctly propagating
+  // a non-zero/null exit code instead of masking it — was untested by
+  // anything that used `run()`.
+  it('run(): surfaces a non-zero exit code + error output for an unknown command', async () => {
+    const r = await run(['definitely-not-a-command'])
+    expect(r.exitCode).toBe(1)
+    expect(r.output).toContain(messages.cli.unknownCommand)
+    expect(r.output).toContain('definitely-not-a-command')
+  })
+
+  it('run(): splits stdout/stderr into independent channels on a failure path', async () => {
+    // The unknown-command error is written via `console.error` (stderr); the
+    // HELP banner that follows it is written via `console.log` (stdout).
+    // Assert on the dedicated `stdout`/`stderr` fields — not just the
+    // combined `output` — so a regression that wired both `data` handlers
+    // to the same buffer would be caught.
+    const r = await run(['definitely-not-a-command'])
+    expect(r.stderr).toContain(messages.cli.unknownCommand)
+    expect(r.stderr).not.toContain(messages.cli.usagePrefix)
+    expect(r.stdout).toContain(messages.cli.usagePrefix)
+    expect(r.stdout).not.toContain(messages.cli.unknownCommand)
   })
 })
