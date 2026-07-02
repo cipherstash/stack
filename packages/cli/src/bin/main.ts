@@ -4,10 +4,16 @@ import { config } from 'dotenv'
 // not overwrite vars that are already set, so loading .env.local first means
 // its values win over .env for the same keys. Users can still set anything in
 // the real environment to override both.
-config({ path: '.env.local' })
-config({ path: '.env.development.local' })
-config({ path: '.env.development' })
-config({ path: '.env' })
+//
+// `quiet: true` suppresses dotenv v17's `injected env (N) from …` banner,
+// which it now prints to stdout on every `config()` call. Without it the CLI
+// emits four noisy, non-deterministic banner lines (with rotating tips) ahead
+// of its own output on every invocation — restoring the silent behaviour of
+// dotenv v16.
+config({ path: '.env.local', quiet: true })
+config({ path: '.env.development.local', quiet: true })
+config({ path: '.env.development', quiet: true })
+config({ path: '.env', quiet: true })
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
