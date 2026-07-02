@@ -21,7 +21,12 @@ import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
-import { type EqlV3TypeName, typedEntries, V3_MATRIX } from './catalog'
+import {
+  type DomainSpec,
+  type EqlV3TypeName,
+  typedEntries,
+  V3_MATRIX,
+} from './catalog'
 
 const LIVE_CIPHERSTASH_ENABLED = Boolean(
   process.env.CS_WORKSPACE_CRN &&
@@ -34,22 +39,31 @@ const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 /** `eql_v3.int4_ord` → `int4_ord`: a valid, per-domain-unique column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
+// `as const satisfies Record<...>` gives `V3_MATRIX` a narrower type than
+// `Record<EqlV3TypeName, DomainSpec>` (rows that omit the optional
+// `errorSamples` field literally lack that key, rather than typing it
+// `undefined`). Explicit type arguments pin `typedEntries`'s inferred `V` back
+// to the declared `DomainSpec` shape — without them, `spec` below is inferred
+// as the union of all 35 distinct row literals, and `.errorSamples` fails to
+// resolve on members that omit the key (`tsc` catches this; `vitest run`
+// alone would not, since it only transpiles `.test.ts` files, never
+// typechecks them).
+const domains = typedEntries<EqlV3TypeName, DomainSpec>(V3_MATRIX)
+
 // One mega table: one column per catalog domain. Column names (the slugs) are
 // unique and never collide with `EncryptedTable` reserved property names.
 const columns = Object.fromEntries(
-  typedEntries(V3_MATRIX).map(([t, spec]) => [slug(t), spec.builder(slug(t))]),
+  domains.map(([t, spec]) => [slug(t), spec.builder(slug(t))]),
 )
 const table = encryptedTable('v3_matrix_live', columns as never)
 
 // Batch the samples into as few model rows as the widest sample set requires:
 // row `i` carries every domain's `samples[i]` (domains with fewer samples are
 // simply absent from later rows, and `encryptModel` skips absent fields).
-const maxSamples = Math.max(
-  ...typedEntries(V3_MATRIX).map(([, spec]) => spec.samples.length),
-)
+const maxSamples = Math.max(...domains.map(([, spec]) => spec.samples.length))
 const modelRows = Array.from({ length: maxSamples }, (_, i) => {
   const row: Record<string, unknown> = {}
-  for (const [t, spec] of typedEntries(V3_MATRIX)) {
+  for (const [t, spec] of domains) {
     if (i < spec.samples.length) row[slug(t)] = spec.samples[i]
   }
   return row
@@ -57,10 +71,10 @@ const modelRows = Array.from({ length: maxSamples }, (_, i) => {
 
 // Flatten to one assertion per (domain, sample) — labelled so vitest reports the
 // exact domain + sample index that fails.
-const roundTripCases = typedEntries(V3_MATRIX).flatMap(([t, spec]) =>
+const roundTripCases = domains.flatMap(([t, spec]) =>
   spec.samples.map((sample, i) => [`${t} #${i}`, slug(t), sample, i] as const),
 )
-const errorCases = typedEntries(V3_MATRIX).flatMap(([t, spec]) =>
+const errorCases = domains.flatMap(([t, spec]) =>
   (spec.errorSamples ?? []).map(
     (bad) => [`${t} (${bad})`, slug(t), bad] as const,
   ),
