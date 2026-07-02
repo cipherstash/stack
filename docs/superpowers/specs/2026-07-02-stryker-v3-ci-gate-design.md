@@ -170,9 +170,22 @@ implementation, not a silent choice.
 
 These can be added later if the single-file gate proves insufficient.
 
-## Open questions / assumptions made in the user's absence
+## Decisions confirmed
 
-- **Test execution model** was answered as *lean, no DB* by recommendation (the
-  clarifying question timed out). Revisit if full DB-backed accuracy is wanted.
-- **Exact `break` value** is deferred to the baseline measurement step.
-- Stryker `9.x` exact patch version to be pinned at implementation time.
+- **Test execution model: lean, no DB — confirmed by the user ("Start lean").**
+  Stryker runs only the pure v3 tests; the live pg/client blocks self-skip. A
+  full DB-backed run can be added later as a separate workflow if the lean
+  baseline proves too weak.
+- **Single workflow, no split — confirmed.** rundown's two-workflow split
+  (blocking producer + advisory PR) is driven by its Stryker Dashboard
+  incremental baseline and its advisory-PR choice, neither of which applies here.
+  One `stryker-v3.yml` runs on both `push: main` and `pull_request`, blocking, in
+  the shape of `fta-v3.yml`. A second `stryker-v3-full.yml` (DB-backed, on
+  main/nightly) is only introduced if/when full accuracy is wanted.
+
+## Deferred to implementation
+
+- **Exact `break` value** — deferred to the baseline measurement step (run
+  Stryker once, set `break` just below the measured score). If the baseline is
+  very low, surface it before wiring the gate.
+- **Stryker `9.x` exact patch version** — pinned at implementation time.
