@@ -6,12 +6,15 @@ import {
   EncryptedTable,
   EncryptedTextSearchColumn,
   encryptedDateColumn,
+  encryptedDateOrdColumn,
+  encryptedInt4OrdColumn,
   encryptedTable,
-  encryptedTextColumn,
   encryptedTextMatchColumn,
+  encryptedTextOrdColumn,
   encryptedTextSearchColumn,
   encryptedTimestamptzColumn,
 } from '@/schema/v3'
+import { type DomainSpec, typedEntries, V3_MATRIX } from './v3-matrix/catalog'
 
 describe('eql_v3 text_search column', () => {
   it('LOAD-BEARING: default build() deep-equals the v2 equality+order+match column', () => {
@@ -265,21 +268,97 @@ describe('eql_v3 buildEncryptConfig', () => {
   })
 })
 
-describe('eql_v3 query capability misuse', () => {
-  it('throws when querying a storage-only v3 column at runtime', () => {
-    const raw = encryptedTextColumn('raw')
-    expect(() => resolveIndexType(raw as never)).toThrow(
+// The scalar query types a caller can request against a v3 domain. `searchableJson`
+// / steVec are JSONB-only and out of scope for the scalar matrix.
+const SCALAR_QUERY_TYPES = [
+  'equality',
+  'orderAndRange',
+  'freeTextSearch',
+] as const
+
+// The ground-truth for whether `resolveIndexType` accepts a (domain, queryType)
+// pair: does the domain carry the index that query resolves to? Derived from the
+// catalog's `indexes` data, AMENDED for the equality-via-ORE rule — an
+// order-capable column answers equality via its `ore` index, not `unique`. This
+// mirrors `resolveIndexType`'s real logic, so it needs no live FFI.
+function queryTypeAllowed(
+  indexes: DomainSpec['indexes'],
+  queryType: (typeof SCALAR_QUERY_TYPES)[number],
+): boolean {
+  const idx = indexes ?? {}
+  if (queryType === 'equality') return Boolean(idx.unique || idx.ore)
+  if (queryType === 'orderAndRange') return Boolean(idx.ore)
+  return Boolean(idx.match) // freeTextSearch
+}
+
+describe('eql_v3 catalog-driven query capability sweep', () => {
+  // The Rust harness's `blocker_combos` analog: attempt every scalar queryType
+  // against every domain and assert the throw/allow outcome the domain's
+  // configured indexes dictate. Supersedes the two hand-picked cases that used
+  // to live here — they are now just two of the generated rows.
+  it.each(
+    typedEntries(V3_MATRIX).flatMap(([eqlType, spec]) =>
+      SCALAR_QUERY_TYPES.map(
+        (queryType) => [eqlType, spec, queryType] as const,
+      ),
+    ),
+  )('%s + queryType=%s: gating matches configured indexes', (_eqlType, spec, queryType) => {
+    const col = spec.builder('value')
+    if (queryTypeAllowed(spec.indexes, queryType)) {
+      expect(() => resolveIndexType(col as never, queryType)).not.toThrow()
+    } else {
+      // Broad message match: for a blocked equality the resolver reports the
+      // missing `unique`; for orderAndRange/freeTextSearch the missing ore/match.
+      expect(() => resolveIndexType(col as never, queryType)).toThrow(
+        /not configured/,
+      )
+    }
+  })
+
+  it.each(
+    typedEntries(V3_MATRIX).filter(
+      ([, spec]) => Object.keys(spec.indexes ?? {}).length === 0,
+    ),
+  )('%s: querying a storage-only column with no queryType throws', (_eqlType, spec) => {
+    expect(() => resolveIndexType(spec.builder('value') as never)).toThrow(
       /no indexes configured/,
     )
   })
 
-  it('throws when a query type is not configured on a queryable v3 column', () => {
+  // Spot-check the exact messages for a queryable-but-misused column, so the
+  // broad regex above doesn't let a message regression slip through.
+  it('reports the specific missing index for a match-only column', () => {
     const matchOnly = encryptedTextMatchColumn('body')
     expect(() => resolveIndexType(matchOnly, 'equality')).toThrow(
       /Index type "unique" is not configured/,
     )
     expect(() => resolveIndexType(matchOnly, 'orderAndRange')).toThrow(
       /Index type "ore" is not configured/,
+    )
+  })
+})
+
+describe('eql_v3 equality via ORE on order-capable columns (regression)', () => {
+  // The capability contract documents equality as answerable "via `ob`", so an
+  // order-capable column resolves equality to its `ore` index (same term as
+  // orderAndRange, distinguished by the SQL `=` operator) instead of throwing on
+  // the absent `unique` index. One domain per plaintext axis.
+  it.each([
+    ['int4_ord', encryptedInt4OrdColumn],
+    ['date_ord', encryptedDateOrdColumn],
+    ['text_ord', encryptedTextOrdColumn],
+  ] as const)('%s resolves equality to the ore index', (_name, builder) => {
+    expect(resolveIndexType(builder('value'), 'equality')).toEqual({
+      indexType: 'ore',
+    })
+  })
+
+  it('preserves v2: an orderAndRange-only column still throws on equality (no-v2-change)', () => {
+    // v2 EncryptedColumn has no getQueryCapabilities, so the equality-via-ORE
+    // branch never fires for it — the equality-without-unique throw is unchanged.
+    const v2OrderOnly = encryptedColumn('x').orderAndRange()
+    expect(() => resolveIndexType(v2OrderOnly, 'equality')).toThrow(
+      /Index type "unique" is not configured/,
     )
   })
 })
