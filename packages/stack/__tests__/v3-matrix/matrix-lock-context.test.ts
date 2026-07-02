@@ -9,7 +9,7 @@
  * thread `identityClaim` through to the FFI. Mocks `@cipherstash/protect-ffi` so
  * it runs deterministically in CI without credentials.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LockContext } from '@/identity'
 import { Encryption } from '@/index'
 
@@ -73,11 +73,23 @@ function unwrap(result: any) {
 const lastOpts = (fn: any) => fn.mock.calls.at(-1)[1]
 
 let typed: ReturnType<typeof typedClient>
+let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  prevWorkspaceCrn = process.env.CS_WORKSPACE_CRN
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
   typed = typedClient(await Encryption({ schemas: [users] as never }), users)
+})
+
+afterEach(() => {
+  // Restore the prior value so this suite doesn't leak env state into
+  // other Vitest suites sharing the worker.
+  if (prevWorkspaceCrn === undefined) {
+    delete process.env.CS_WORKSPACE_CRN
+  } else {
+    process.env.CS_WORKSPACE_CRN = prevWorkspaceCrn
+  }
 })
 
 describe('v3 typed client lock-context wiring', () => {
