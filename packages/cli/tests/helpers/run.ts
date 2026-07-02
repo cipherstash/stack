@@ -59,19 +59,24 @@ export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
 
   let stdout = ''
   let stderr = ''
+  // Preserve the true interleaving order of the combined transcript by
+  // recording chunks as they arrive, while keeping stdout/stderr separate.
+  const chunks: string[] = []
   child.stdout.setEncoding('utf8')
   child.stderr.setEncoding('utf8')
   child.stdout.on('data', (d: string) => {
     stdout += d
+    chunks.push(d)
   })
   child.stderr.on('data', (d: string) => {
     stderr += d
+    chunks.push(d)
   })
 
   return new Promise<RunResult>((res, rej) => {
     child.on('error', rej)
     child.on('close', (code, signal) => {
-      res(buildRunResult(code, signal, stdout, stderr))
+      res(buildRunResult(code, signal, stdout, stderr, chunks.join('')))
     })
   })
 }
@@ -83,14 +88,20 @@ export function run(args: string[], opts: RunOptions = {}): Promise<RunResult> {
  * `code`/`signal` is non-null on `'close'` — this must never coerce a null
  * `code` to `0`, or a signal-terminated child (crash, SIGKILL, OOM) would be
  * misreported as a clean exit.
+ *
+ * `raw` defaults to `stdout + stderr` (fine for the unit tests below, which
+ * pass pre-baked strings with no real interleaving to preserve); `run()`
+ * itself always passes the chunk-interleaved transcript explicitly, since
+ * naive concatenation can reorder output relative to a real child process's
+ * actual stdout/stderr write sequence.
  */
 export function buildRunResult(
   code: number | null,
   signal: NodeJS.Signals | null,
   stdout: string,
   stderr: string,
+  raw: string = stdout + stderr,
 ): RunResult {
-  const raw = stdout + stderr
   return {
     exitCode: code,
     signal,
