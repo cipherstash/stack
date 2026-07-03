@@ -60,3 +60,7 @@ claim below is actually implemented and each placeholder is resolved.
 - [ ] **Architecture diagram URLs** — restore the absolute
   `https://raw.githubusercontent.com/cipherstash/stack/main/…` prefix on the four `<picture>` paths
   (currently relative for PR preview; TODO comment in place, also flagged in `readme-visual-assets.md`).
+- [ ] **Social preview card** — upload the 1280×640 og:image via repo Settings → General → Social
+  preview, and set the About description to the brief's one-liner ("Searchable, application-level
+  encryption for building privacy-first apps.") — it doubles as the `og:description`. Verify with a
+  fresh link paste (spec: Asset 4 in `readme-visual-assets.md`).

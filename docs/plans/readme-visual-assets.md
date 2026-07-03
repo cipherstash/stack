@@ -162,6 +162,37 @@ keys per call) — a two-bar or two-line comparison redrawn in brand style from 
 
 ---
 
+## Asset 4 — Repo social preview card (og:image)
+
+**Goal.** Control the link preview when the repo is shared (Slack, Discord, X, LinkedIn, …). Without
+it, GitHub serves an auto-generated card — repo name plus contributor stats — that says nothing about
+what the Stack does.
+
+**Placement.** Not embedded in the README: uploaded via **repo Settings → General → Social preview**.
+GitHub then serves it as `og:image` / `twitter:image` for links to the repo and its files (issues, PRs,
+and commits keep their own auto-generated cards).
+
+**Companion text.** The `og:description` comes from the repo's **About description** field — GitHub
+doesn't allow arbitrary meta tags. Set it to the messaging brief's one-liner:
+*"Searchable, application-level encryption for building privacy-first apps."*
+
+**Spec.**
+
+- **1280×640px** (2:1 ratio), PNG, under 1 MB (GitHub minimum 640×320).
+- Single theme — no light/dark switching exists for og:images. Use the dark brand look of
+  cipherstash.com, which also matches how most chat clients render cards.
+- Content readable in one glance, three elements max: CipherStash logo + "CipherStash Stack" wordmark,
+  the one-liner tagline, and a tiny code fragment selling the sizzle (e.g. `email eql_v3.text_match`
+  or `.ilike("email", "%@acme.com") // runs on ciphertext`).
+- **Safe margins:** keep text ≥64px from every edge — some clients crop edges and round corners.
+- Keep the export in-repo (`docs/images/social-preview.png`) so it's version-controlled, even though
+  GitHub serves its own uploaded copy.
+
+**Shipping steps:** upload via Settings → Social preview, set the About description, then verify with
+a fresh paste into Slack/Discord (previews are cached — use opengraph.xyz or similar to confirm).
+
+---
+
 ## Suggested files
 
 | File | Asset | Status |
@@ -174,6 +205,7 @@ keys per call) — a two-bar or two-line comparison redrawn in brand style from 
 | `docs/images/type-safety.mp4` | Optional higher-quality GitHub embed | todo |
 | `docs/images/perf-latency-light.svg` | Flat-latency chart — light | todo |
 | `docs/images/perf-latency-dark.svg` | Flat-latency chart — dark | todo |
+| `docs/images/social-preview.png` | Repo social preview card (1280×640) | todo |
 
 The architecture diagram is embedded in the README via a single `<picture>` element that selects one
 of the four variants from **two** dimensions at once — theme (`prefers-color-scheme`) and viewport width
