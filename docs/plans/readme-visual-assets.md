@@ -141,3 +141,8 @@ The architecture diagram is embedded in the README via a single `<picture>` elem
 of the four variants from **two** dimensions at once — theme (`prefers-color-scheme`) and viewport width
 (`max-width: 600px`) — with the desktop-light `<img>` as the universal fallback for npm and older
 renderers. `<source>` order is most-specific first (dark+narrow → dark → light+narrow → fallback).
+
+> **Pre-merge TODO:** while the PR is open, the four paths are **relative** (`docs/images/…`) so they
+> preview on the branch. They must be restored to the absolute
+> `https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/…` prefix before merge, or they
+> render on GitHub but break on the npm package page.
