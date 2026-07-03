@@ -225,16 +225,12 @@ describeLive('eql_v3 client integration', () => {
   // the `createdOn` date case above. (`matrix-live.test.ts` is the canonical
   // generic coverage for all timestamp tiers; this pins the named column.)
   //
-  // SKIPPED (CI run 28569708268, PR #540): fails against live credentials —
-  // decrypted `occurredAt` comes back at midnight (`00:00:00.000Z`), losing
-  // the time-of-day. Root cause: `@cipherstash/protect-ffi`'s native
-  // `CastAs` has a distinct `'timestamp'` variant (full date+time) separate
-  // from `'date'` (calendar-date only), but this SDK's `CastAs`/`PlaintextKind`
-  // types never included `'timestamp'` — every `timestamp` domain sets
-  // `cast_as: 'date'`, identical to the plain `date` domain, so the native
-  // layer truncates it. Pre-existing SDK gap, not a test bug; re-enable once
-  // `timestamp` gets its own native cast_as.
-  it.skip('round-trips a timestamp occurredAt column through the model path', async () => {
+  // Time-of-day preservation: every `timestamp` domain now sets
+  // `cast_as: 'timestamp'` (distinct from `'date'`), so the native FFI keeps the
+  // full instant instead of truncating to midnight. This test pins that — a
+  // ms-zeroed `12:34:56` value must round-trip exactly. (Was skipped while every
+  // timestamp domain wrongly set `cast_as: 'date'`; re-enabled with that fix.)
+  it('round-trips a timestamp occurredAt column through the model path', async () => {
     const typed = typedClient(protectClient, users)
     // Zero milliseconds: the FFI drops sub-second precision, so a ms-bearing
     // instant would perturb the reconstructed value.

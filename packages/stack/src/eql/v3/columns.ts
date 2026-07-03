@@ -23,8 +23,10 @@ export type QueryCapabilities = Readonly<{
 }>
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
- * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'boolean' | 'date'
+ * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use.
+ * `timestamp` decrypts to `Date` just like `date`, but carries the full instant
+ * (its `cast_as` tells the FFI not to truncate the time-of-day). */
+type PlaintextKind = 'string' | 'number' | 'boolean' | 'date' | 'timestamp'
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -166,22 +168,22 @@ export const DATE_ORD = {
 
 export const TIMESTAMP = {
   eqlType: 'eql_v3.timestamp',
-  castAs: 'date',
+  castAs: 'timestamp',
   capabilities: STORAGE_ONLY,
 } as const
 export const TIMESTAMP_EQ = {
   eqlType: 'eql_v3.timestamp_eq',
-  castAs: 'date',
+  castAs: 'timestamp',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TIMESTAMP_ORD_ORE = {
   eqlType: 'eql_v3.timestamp_ord_ore',
-  castAs: 'date',
+  castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TIMESTAMP_ORD = {
   eqlType: 'eql_v3.timestamp_ord',
-  castAs: 'date',
+  castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 
@@ -618,7 +620,7 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
     ? number
     : K extends 'boolean'
       ? boolean
-      : K extends 'date'
+      : K extends 'date' | 'timestamp'
         ? Date
         : never
 

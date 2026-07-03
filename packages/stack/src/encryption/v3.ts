@@ -137,9 +137,12 @@ function rowReconstructor(
   // config keyed by DB name — bridge the two via the table's property→DB map.
   const { columns } = table.build()
   const propToDb = table.buildColumnKeyMap()
-  // Only date columns need per-row work; resolve them up front.
+  // Only date-like columns need per-row work; resolve them up front.
   const dateProperties = Object.entries(propToDb)
-    .filter(([, dbName]) => columns[dbName]?.cast_as === 'date')
+    .filter(([, dbName]) => {
+      const castAs = columns[dbName]?.cast_as
+      return castAs === 'date' || castAs === 'timestamp'
+    })
     .map(([property]) => property)
 
   return (row) => {

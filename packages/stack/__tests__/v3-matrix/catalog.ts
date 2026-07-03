@@ -217,10 +217,10 @@ export const V3_MATRIX = {
   'eql_v3.date_ord_ore': { builder: types.DateOrdOre, ColumnClass: EncryptedDateOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   'eql_v3.date_ord': { builder: types.DateOrd, ColumnClass: EncryptedDateOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   // timestamp
-  'eql_v3.timestamp': { builder: types.Timestamp, ColumnClass: EncryptedTimestampColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
-  'eql_v3.timestamp_eq': { builder: types.TimestampEq, ColumnClass: EncryptedTimestampEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
-  'eql_v3.timestamp_ord_ore': { builder: types.TimestampOrdOre, ColumnClass: EncryptedTimestampOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  'eql_v3.timestamp_ord': { builder: types.TimestampOrd, ColumnClass: EncryptedTimestampOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.timestamp': { builder: types.Timestamp, ColumnClass: EncryptedTimestampColumn, castAs: 'timestamp', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
+  'eql_v3.timestamp_eq': { builder: types.TimestampEq, ColumnClass: EncryptedTimestampEqColumn, castAs: 'timestamp', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
+  'eql_v3.timestamp_ord_ore': { builder: types.TimestampOrdOre, ColumnClass: EncryptedTimestampOrdOreColumn, castAs: 'timestamp', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.timestamp_ord': { builder: types.TimestampOrd, ColumnClass: EncryptedTimestampOrdColumn, castAs: 'timestamp', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   // numeric
   'eql_v3.numeric': { builder: types.Numeric, ColumnClass: EncryptedNumericColumn, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: NUMERIC_S, errorSamples: NUM_ERR },
   'eql_v3.numeric_eq': { builder: types.NumericEq, ColumnClass: EncryptedNumericEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },

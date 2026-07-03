@@ -458,3 +458,22 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
     })
   })
 })
+
+describe('eql_v3 timestamp domains emit cast_as "timestamp" (time-of-day preserved)', () => {
+  // The FFI has a distinct `timestamp` cast (full date+time) separate from
+  // `date` (calendar-date only). Every timestamp domain must emit
+  // `cast_as: 'timestamp'` so the native layer keeps the time-of-day instead of
+  // truncating to midnight (see schema-v3-client occurredAt round-trip).
+  it.each([
+    ['timestamp', types.Timestamp],
+    ['timestamp_eq', types.TimestampEq],
+    ['timestamp_ord_ore', types.TimestampOrdOre],
+    ['timestamp_ord', types.TimestampOrd],
+  ] as const)('%s emits cast_as "timestamp"', (_name, builder) => {
+    expect(builder('c').build().cast_as).toBe('timestamp')
+  })
+
+  it('the plain date domain still emits cast_as "date"', () => {
+    expect(types.Date('c').build().cast_as).toBe('date')
+  })
+})

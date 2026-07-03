@@ -38,15 +38,29 @@ export const eqlCastAsEnum = z
     'double',
     'boolean',
     'date',
+    'timestamp',
     'jsonb',
   ])
   .default('text')
 
 /**
  * SDK-facing data types — developer-friendly aliases accepted by `dataType()`.
+ *
+ * `timestamp` is distinct from `date`: `date` is calendar-date only (time-of-day
+ * truncated to midnight), while `timestamp` preserves the full date+time. v3
+ * `timestamp` domains set `cast_as: 'timestamp'` so the FFI keeps the instant.
  */
 export const castAsEnum = z
-  .enum(['bigint', 'boolean', 'date', 'number', 'string', 'json', 'text'])
+  .enum([
+    'bigint',
+    'boolean',
+    'date',
+    'timestamp',
+    'number',
+    'string',
+    'json',
+    'text',
+  ])
   .default('text')
 
 /**
@@ -69,6 +83,8 @@ export function toEqlCastAs(value: CastAs): EqlCastAs {
       return 'boolean'
     case 'date':
       return 'date'
+    case 'timestamp':
+      return 'timestamp'
     case 'json':
       return 'jsonb'
   }
