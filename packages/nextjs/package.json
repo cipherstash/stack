@@ -39,6 +39,7 @@
 	"devDependencies": {
 		"@clerk/nextjs": "catalog:security",
 		"dotenv": "^17.4.2",
+		"next": "catalog:security",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
 		"vitest": "catalog:repo"

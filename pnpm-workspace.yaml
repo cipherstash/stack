@@ -27,6 +27,21 @@ catalogs:
     next: 15.5.18
     vite: 8.0.13
 
+# Security overrides for open Dependabot alerts on transitive deps that
+# Dependabot cannot PR against. Each selector is scoped to the vulnerable
+# range so nothing outside it moves. NOTE: the top-level `overrides` block
+# in the root package.json is npm-format and IGNORED by pnpm — overrides
+# must live here (or under `pnpm.overrides`) to take effect.
+overrides:
+  'next@<15.5.18': '~15.5.18'
+  'lodash@<4.18.0': '^4.18.0'
+  'js-cookie@<3.0.7': '^3.0.7'
+  'postcss@<8.5.10': '^8.5.10'
+  'vite@>=7.0.0 <7.3.5': '~7.3.5'
+  'esbuild@>=0.27.3 <0.28.1': '^0.28.1'
+  'js-yaml@<3.15.0': '>=3.15.0 <4'
+  'js-yaml@>=4.0.0 <4.2.0': '^4.2.0'
+
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
 # updates have the same community-discovery window.
@@ -44,6 +59,10 @@ blockExoticSubdeps: true
 #                                 WASM-inline variant); also tracked in lockstep
 #                                 with protect-ffi for the WASM path.
 minimumReleaseAgeExclude:
+  # TEMPORARY (added 2026-07-03): js-yaml 3.15.0 is the security release for
+  # GHSA merge-key DoS and was published 6 days ago — one day short of the
+  # cooldown. Remove this entry once it has matured (after 2026-07-04).
+  - js-yaml
   - '@prisma-next/*'
   - '@cipherstash/protect-ffi'
   - '@cipherstash/protect-ffi-*'
