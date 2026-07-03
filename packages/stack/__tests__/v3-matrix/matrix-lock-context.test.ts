@@ -37,14 +37,10 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 }))
 
 import * as ffi from '@cipherstash/protect-ffi'
-import {
-  encryptedTable,
-  encryptedTextEqColumn,
-  typedClient,
-} from '@/encryption/v3'
+import { encryptedTable, typedClient, types } from '@/encryption/v3'
 
 const users = encryptedTable('users', {
-  email: encryptedTextEqColumn('email'),
+  email: types.TextEq('email'),
 })
 
 const IDENTITY_CLAIM = { identityClaim: ['sub'] }

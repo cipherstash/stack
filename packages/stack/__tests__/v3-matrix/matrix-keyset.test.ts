@@ -6,15 +6,11 @@
 import 'dotenv/config'
 import { ensureKeyset } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
-import {
-  EncryptionV3,
-  encryptedTable,
-  encryptedTextEqColumn,
-} from '@/encryption/v3'
+import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
 
 const users = encryptedTable('v3_keyset_users', {
-  email: encryptedTextEqColumn('email'),
+  email: types.TextEq('email'),
 })
 
 const LIVE_CIPHERSTASH_ENABLED = Boolean(
