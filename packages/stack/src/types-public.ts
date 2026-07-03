@@ -14,6 +14,11 @@
 // Query types (public only)
 export type {
   AuthStrategy,
+  BuildableColumn,
+  BuildableQueryColumn,
+  BuildableTable,
+  BuildableTableColumns,
+  BuildableV3QueryableColumn,
   BulkDecryptedData,
   BulkDecryptPayload,
   BulkEncryptedData,
@@ -25,6 +30,7 @@ export type {
   DecryptionResult,
   Encrypted,
   EncryptedFields,
+  EncryptedFromBuildableTable,
   EncryptedFromSchema,
   EncryptedQuery,
   EncryptedQueryResult,
