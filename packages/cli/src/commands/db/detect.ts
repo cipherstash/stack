@@ -34,7 +34,7 @@ export function detectSupabase(databaseUrl: string | undefined): boolean {
 export interface SupabaseProjectInfo {
   /**
    * Whether the migrations directory exists AND is a directory. Used to pick
-   * the migration-vs-direct default in the `db install --supabase` prompt.
+   * the migration-vs-direct default in the `eql install --supabase` prompt.
    */
   hasMigrationsDir: boolean
   /**

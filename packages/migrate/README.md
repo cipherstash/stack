@@ -12,7 +12,7 @@ Each column walks through these phases:
 schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
 ```
 
-State is tracked in an append-only `cipherstash.cs_migrations` table installed by `stash db install`. The EQL intent (which indexes, which cast_as) continues to live in `eql_v2_configuration` so Proxy continues to work against the same database.
+State is tracked in an append-only `cipherstash.cs_migrations` table installed by `stash eql install`. The EQL intent (which indexes, which cast_as) continues to live in `eql_v2_configuration` so Proxy continues to work against the same database.
 
 ## API
 
@@ -32,7 +32,7 @@ import {
 
 ### `installMigrationsSchema(client)`
 
-Creates `cipherstash.cs_migrations` idempotently. Normally called by `stash db install`.
+Creates `cipherstash.cs_migrations` idempotently. Normally called by `stash eql install`.
 
 ### `runBackfill({ db, encryptionClient, tableSchema, tableName, plaintextColumn, encryptedColumn, pkColumn, schemaColumnKey, chunkSize?, signal?, onProgress? })`
 

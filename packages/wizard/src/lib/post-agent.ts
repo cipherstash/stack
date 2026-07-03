@@ -41,14 +41,14 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     cwd,
   )
 
-  // Step 2: Run runner stash db install if the project doesn't yet
-  // have a stash.config.ts. `db install` scaffolds the config and installs
+  // Step 2: Run runner stash eql install if the project doesn't yet
+  // have a stash.config.ts. `eql install` scaffolds the config and installs
   // EQL in a single step (CIP-2986).
   if (!gathered.hasStashConfig) {
     await runStep(
-      `Running ${runner} stash db install...`,
-      `${runner} stash db install complete`,
-      `${runner} stash db install`,
+      `Running ${runner} stash eql install...`,
+      `${runner} stash eql install complete`,
+      `${runner} stash eql install`,
       cwd,
     )
   }

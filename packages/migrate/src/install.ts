@@ -3,7 +3,7 @@ import type { ClientBase } from 'pg'
 /**
  * DDL for `cipherstash.cs_migrations` — the append-only per-column event
  * log that tracks encryption-migration runtime state (phase, backfill
- * cursor, rows processed). Installed by `stash db install`.
+ * cursor, rows processed). Installed by `stash eql install`.
  *
  * All statements are `CREATE … IF NOT EXISTS` so running the installer
  * multiple times or alongside an existing deployment is safe.
@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS cs_migrations_column_id_desc
 
 /**
  * Create the `cipherstash` schema and `cs_migrations` table if they do not
- * already exist. Safe to call on every `stash db install` invocation.
+ * already exist. Safe to call on every `stash eql install` invocation.
  *
  * Requires `CREATE SCHEMA` privileges on the database. If the caller lacks
  * them, the query will fail and the error bubbles up — the CLI currently

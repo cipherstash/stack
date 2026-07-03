@@ -18,7 +18,7 @@ import { SUPABASE_PERMISSIONS_SQL } from '../installer/index.js'
  * Mirrors the production function but imported for testing.
  */
 function migrationHeader(runner: string): string {
-  return `-- CipherStash EQL — installed by \`${runner} stash db install --supabase --migration\`.
+  return `-- CipherStash EQL — installed by \`${runner} stash eql install --supabase --migration\`.
 --
 -- This migration installs the CipherStash Encrypt Query Language (EQL) types,
 -- functions, and operators into the \`eql_v2\` schema, then grants Supabase's
@@ -136,7 +136,7 @@ describe('writeSupabaseEqlMigration', () => {
     const contents = fs.readFileSync(result.path, 'utf-8')
     // Header comment block includes the detected runner instruction
     expect(contents).toMatch(
-      /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash db install --supabase --migration`/,
+      /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash eql install --supabase --migration`/,
     )
     expect(contents).toContain('CipherStash')
     // EQL SQL body — the bundled supabase variant defines eql_v2.
@@ -253,18 +253,18 @@ describe('migrationHeader', () => {
   it('renders the header with the provided runner for npx', () => {
     const header = migrationHeader('npx')
     expect(header).toContain(
-      '-- CipherStash EQL — installed by `npx stash db install --supabase --migration`.',
+      '-- CipherStash EQL — installed by `npx stash eql install --supabase --migration`.',
     )
   })
 
   it('renders the header with the provided runner for bunx', () => {
     const header = migrationHeader('bunx')
-    expect(header).toContain('bunx stash db install')
+    expect(header).toContain('bunx stash eql install')
   })
 
   it('renders the header with the provided runner for pnpm dlx', () => {
     const header = migrationHeader('pnpm dlx')
-    expect(header).toContain('pnpm dlx stash db install')
+    expect(header).toContain('pnpm dlx stash eql install')
   })
 
   it('includes all expected documentation lines', () => {

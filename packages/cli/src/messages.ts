@@ -35,8 +35,14 @@ export const messages = {
     selectRegion: 'Select a region',
     cancelled: 'Cancelled.',
   },
+  eql: {
+    unknownSubcommand: 'Unknown eql subcommand',
+  },
   db: {
     unknownSubcommand: 'Unknown db subcommand',
+    /** Warning shown when the deprecated `db install` alias is used. */
+    installDeprecated: (stashRef: string) =>
+      `"${stashRef} db install" is deprecated — use "${stashRef} eql install" instead.`,
     migrateNotImplemented: (stashRef: string) =>
       `"${stashRef} db migrate" is not yet implemented.`,
     /** Source labels surfaced after DATABASE_URL resolution. */

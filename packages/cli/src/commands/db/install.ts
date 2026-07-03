@@ -71,7 +71,7 @@ export interface InstallOptions {
 export type SupabaseInstallMode = 'migration' | 'direct'
 
 export async function installCommand(options: InstallOptions) {
-  p.intro(runnerCommand(detectPackageManager(), 'stash db install'))
+  p.intro(runnerCommand(detectPackageManager(), 'stash eql install'))
 
   // Validate mutually-exclusive / supabase-required flags BEFORE doing any
   // I/O. `--migration` and `--direct` only make sense in the Supabase flow;
@@ -84,7 +84,7 @@ export async function installCommand(options: InstallOptions) {
     process.exit(1)
   }
 
-  // Scaffold stash.config.ts if missing. `db install` is the single command
+  // Scaffold stash.config.ts if missing. `eql install` is the single command
   // that gets a project from zero to installed EQL — no separate setup step
   // (CIP-2986).
   const configReady = await ensureStashConfig()
@@ -101,7 +101,7 @@ export async function installCommand(options: InstallOptions) {
   })
   s.stop('Configuration loaded.')
 
-  // Safety net: if the user ran `db install` without first running `init`,
+  // Safety net: if the user ran `eql install` without first running `init`,
   // scaffold the encryption client file so config.client points somewhere
   // real. No-op when the file already exists.
   ensureEncryptionClient(config.client, process.cwd(), config.databaseUrl)
@@ -139,7 +139,7 @@ export async function installCommand(options: InstallOptions) {
       // moving part we'd rather defer until someone needs it.
       if (options.latest) {
         p.log.error(
-          '`db install --supabase --migration --latest` is not yet supported. Please open an issue at https://github.com/cipherstash/stack/issues if you need this.',
+          '`eql install --supabase --migration --latest` is not yet supported. Please open an issue at https://github.com/cipherstash/stack/issues if you need this.',
         )
         p.outro('Installation aborted.')
         process.exit(1)
@@ -430,7 +430,7 @@ async function generateDrizzleMigration(
   // Step 4: Write the EQL SQL (and cs_migrations tracking schema) into
   // the migration file. Bundling both means `drizzle-kit migrate` rolls
   // everything needed for `stash encrypt ...` out to each environment
-  // in one go, rather than requiring an out-of-band `stash db install`.
+  // in one go, rather than requiring an out-of-band `stash eql install`.
   s.start('Writing EQL SQL into migration file...')
 
   const migrationContents = `${eqlSql}\n\n-- CipherStash encryption-migration tracking schema.\n-- Tracks per-column phase + backfill progress for \`stash encrypt\`.\n${MIGRATIONS_SCHEMA_SQL.trim()}\n`
@@ -501,7 +501,7 @@ export function validateInstallFlags(options: InstallOptions): string | null {
           : null
 
   if (subFlag !== null && options.supabase !== true) {
-    return `\`${subFlag}\` requires \`--supabase\`. Re-run with \`db install --supabase ${subFlag}\`.`
+    return `\`${subFlag}\` requires \`--supabase\`. Re-run with \`eql install --supabase ${subFlag}\`.`
   }
 
   return null

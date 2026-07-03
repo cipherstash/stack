@@ -90,7 +90,7 @@ export default defineConfig({
 })
 ```
 
-`db install` will scaffold this file for you if it's missing.
+`eql install` will scaffold this file for you if it's missing.
 
 ### Config options
 
@@ -130,7 +130,7 @@ Init is the **scaffold** save-point. It does mechanical setup only — no agent 
 2. **Resolve database** — picks up `DATABASE_URL` from `.env`/`.env.local` or prompts for it. Verifies the connection.
 3. **Build schema** — auto-detects your framework (Drizzle from `drizzle.config.*` / `drizzle-orm` / `drizzle-kit` in `package.json`; Supabase from the `DATABASE_URL` host) and silently writes a placeholder client to `./src/encryption/index.ts`. Only prompts you if a file already exists at that path.
 4. **Install dependencies** — single combined prompt for `@cipherstash/stack` and `stash`. Skipped entirely when both are already in `node_modules`.
-5. **Install EQL** — runs the equivalent of `stash db install` against the resolved database (Drizzle migration, Supabase migration, or direct, per detection). Skipped if EQL is already installed.
+5. **Install EQL** — runs the equivalent of `stash eql install` against the resolved database (Drizzle migration, Supabase migration, or direct, per detection). Skipped if EQL is already installed.
 6. **Gather context** — detects available coding agents (Claude Code, Codex, Cursor, Windsurf, Cline) and writes `.cipherstash/context.json` with integration, package manager, schemas, env keys, and detected agents.
 
 When init finishes, it prints a checkmark panel of completed phases and an interactive **chain prompt** (default-yes): *"Continue to `stash plan` now to draft your encryption plan?"* Yes auto-launches `stash plan`. No prints "Next: run `stash plan` to draft your encryption plan." Non-TTY (CI, pipes) skips the prompt and prints the hint.
@@ -257,20 +257,22 @@ stash auth login
 
 Opens a browser-based device code flow and saves a token to `~/.cipherstash/auth.json`. Database-touching commands check for this file before running.
 
-### `db install` — Configure the database and install EQL extensions
+### `eql install` — Configure the database and install EQL extensions
 
 ```bash
-stash db install
-stash db install --supabase
-stash db install --supabase --migration
-stash db install --supabase --direct
-stash db install --drizzle
-stash db install --force
+stash eql install
+stash eql install --supabase
+stash eql install --supabase --migration
+stash eql install --supabase --direct
+stash eql install --drizzle
+stash eql install --force
 ```
 
-`stash init` runs `db install` automatically as part of its EQL install phase. Run `db install` directly when you skipped init, when you need flags init doesn't expose (`--migration`, `--migrations-dir`, `--exclude-operator-family`), or when re-installing/upgrading EQL on its own.
+`stash db install` is a deprecated alias for this command — it still works but prints a deprecation warning. Always use `eql install` in new instructions.
 
-`db install` is the single command that gets a project from zero to installed EQL:
+`stash init` runs `eql install` automatically as part of its EQL install phase. Run `eql install` directly when you skipped init, when you need flags init doesn't expose (`--migration`, `--migrations-dir`, `--exclude-operator-family`), or when re-installing/upgrading EQL on its own.
+
+`eql install` is the single command that gets a project from zero to installed EQL:
 
 1. Scaffolds `stash.config.ts` if missing (auto-detects an existing client file at common locations, otherwise prompts).
 2. Loads the config.
@@ -298,7 +300,7 @@ stash db install --force
 
 `--migration`, `--direct`, and `--migrations-dir` only make sense in the Supabase flow and require `--supabase` to be passed explicitly. They never auto-enable `--supabase`.
 
-#### `db install --drizzle`
+#### `eql install --drizzle`
 
 When `--drizzle` is passed, the CLI:
 1. Runs `drizzle-kit generate --custom --name=<name>` to scaffold an empty migration.
@@ -307,7 +309,7 @@ When `--drizzle` is passed, the CLI:
 
 You then run `npx drizzle-kit migrate` to apply it. Requires `drizzle-kit` as a dev dependency.
 
-#### `db install --supabase --migration`
+#### `eql install --supabase --migration`
 
 Writes the EQL SQL to `supabase/migrations/00000000000000_cipherstash_eql.sql`. The all-zero timestamp ensures this migration runs before any user migrations that reference `eql_v2_encrypted`. Run `supabase db reset` (local) or `supabase migration up` (remote) to apply it.
 
@@ -331,7 +333,7 @@ stash db upgrade --latest
 | `--exclude-operator-family` | Skip operator family creation |
 | `--latest` | Fetch latest EQL from GitHub instead of bundled |
 
-The EQL install SQL is idempotent and safe to re-run. The command checks the current version, re-runs the install SQL, then reports the new version. If EQL is not installed, it suggests running `db install` instead.
+The EQL install SQL is idempotent and safe to re-run. The command checks the current version, re-runs the install SQL, then reports the new version. If EQL is not installed, it suggests running `eql install` instead.
 
 ### `db validate` — Validate encryption schema
 
@@ -437,7 +439,7 @@ Reports:
 stash db test-connection
 ```
 
-Verifies the database URL in your config is valid and the database is reachable. Reports the database name, connected role, and PostgreSQL server version. Useful for debugging connection issues before running `db install`.
+Verifies the database URL in your config is valid and the database is reachable. Reports the database name, connected role, and PostgreSQL server version. Useful for debugging connection issues before running `eql install`.
 
 ### `db migrate` — Run pending encrypt config migrations
 
@@ -451,7 +453,7 @@ Not yet implemented — placeholder for future encrypt-config migration tooling.
 
 The `encrypt` group is the cutover-step toolset: it runs the database-side work that takes an existing plaintext column the rest of the way to encrypted, after the encryption-rollout PR is deployed and dual-writes are live in production. The internal event log uses `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped` as machine-readable phase names; the user-facing story is the rollout/cutover model documented in the `stash-encryption` skill.
 
-It drives the `@cipherstash/migrate` library, which records every transition in a `cipherstash.cs_migrations` table (installed by `stash db install`) and reads the user's intent from `.cipherstash/migrations.json`. This section documents the CLI surface.
+It drives the `@cipherstash/migrate` library, which records every transition in a `cipherstash.cs_migrations` table (installed by `stash eql install`) and reads the user's intent from `.cipherstash/migrations.json`. This section documents the CLI surface.
 
 The examples below show the bare `stash` form, which works after `stash init` adds the CLI as a project dev dep. See the "CLI Usage" section above for how to invoke it through your package manager before that.
 
@@ -639,7 +641,7 @@ if (await installer.isInstalled()) {
 
 - Node.js >= 22
 - PostgreSQL database with sufficient permissions (see `checkPermissions()`)
-- A `stash.config.ts` file with a valid `databaseUrl` (or run `stash init` / `stash db install` to scaffold it)
+- A `stash.config.ts` file with a valid `databaseUrl` (or run `stash init` / `stash eql install` to scaffold it)
 - Peer dependency: `@cipherstash/stack` >= 0.6.0
 
 ## Common issues
@@ -650,7 +652,7 @@ The database role needs `CREATE` privileges on the database and public schema, o
 
 ### Config not found
 
-`stash.config.ts` must be in the project root or a parent directory. The file must `export default defineConfig(...)`. The fastest fix is `stash init`, which scaffolds the config (and authenticates, installs deps, installs EQL, and writes `.cipherstash/context.json` in the same run). For a CLI-only setup, `stash db install` also scaffolds the config.
+`stash.config.ts` must be in the project root or a parent directory. The file must `export default defineConfig(...)`. The fastest fix is `stash init`, which scaffolds the config (and authenticates, installs deps, installs EQL, and writes `.cipherstash/context.json` in the same run). For a CLI-only setup, `stash eql install` also scaffolds the config.
 
 ### Supabase environments
 

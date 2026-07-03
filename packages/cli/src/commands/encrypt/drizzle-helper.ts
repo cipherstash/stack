@@ -6,7 +6,7 @@ import { detectPackageManager, runnerArgv } from '@/commands/init/utils.js'
 
 /**
  * Scaffold a custom Drizzle Kit migration file with a known name and write
- * the supplied SQL into it. Mirrors the dance `db install --drizzle` already
+ * the supplied SQL into it. Mirrors the dance `eql install --drizzle` already
  * does — `drizzle-kit generate --custom` creates the file and records the
  * journal entry / snapshot, then we overwrite the empty body with our SQL.
  *
