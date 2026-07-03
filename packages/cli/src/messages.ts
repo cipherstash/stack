@@ -40,9 +40,9 @@ export const messages = {
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',
-    /** Warning shown when the deprecated `db install` alias is used. */
-    installDeprecated: (stashRef: string) =>
-      `"${stashRef} db install" is deprecated — use "${stashRef} eql install" instead.`,
+    /** Warning shown when a deprecated `db <sub>` alias for `eql <sub>` is used. */
+    aliasDeprecated: (stashRef: string, sub: string) =>
+      `"${stashRef} db ${sub}" is deprecated — use "${stashRef} eql ${sub}" instead.`,
     migrateNotImplemented: (stashRef: string) =>
       `"${stashRef} db migrate" is not yet implemented.`,
     /** Source labels surfaced after DATABASE_URL resolution. */

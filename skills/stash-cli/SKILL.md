@@ -247,7 +247,7 @@ Use the JSON form for scripts; it has a stable shape (`active`, `completed`, per
 
 Run `status` after every transition during a rollout. It is the canonical "where am I?" surface; agents working through the rollout should re-read it as they go rather than tracking state mentally.
 
-For the deeper, raw views that touch only the database, use `stash db status` (EQL installation state) and `stash encrypt status` (per-column migration phase, EQL state, backfill progress with drift detection).
+For the deeper, raw views that touch only the database, use `stash eql status` (EQL installation state) and `stash encrypt status` (per-column migration phase, EQL state, backfill progress with drift detection).
 
 ### `auth login` — Authenticate with CipherStash
 
@@ -315,13 +315,13 @@ Writes the EQL SQL to `supabase/migrations/00000000000000_cipherstash_eql.sql`. 
 
 Direct-push installs (`--supabase --direct`) do **not** survive `supabase db reset` — the reset drops the database and reruns only files in `supabase/migrations/`. Use `--migration` for projects that use `supabase db reset`.
 
-### `db upgrade` — Upgrade EQL extensions
+### `eql upgrade` — Upgrade EQL extensions
 
 ```bash
-stash db upgrade
-stash db upgrade --dry-run
-stash db upgrade --supabase
-stash db upgrade --latest
+stash eql upgrade
+stash eql upgrade --dry-run
+stash eql upgrade --supabase
+stash eql upgrade --latest
 ```
 
 **Flags:**
@@ -422,10 +422,10 @@ Use after `stash db push` when the new config purely adds columns or changes ind
 
 Errors out with a clear message when there is no pending configuration to activate.
 
-### `db status` — Show EQL installation status
+### `eql status` — Show EQL installation status
 
 ```bash
-stash db status
+stash eql status
 ```
 
 Reports:

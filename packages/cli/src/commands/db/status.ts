@@ -6,7 +6,7 @@ import { EQLInstaller } from '@/installer/index.js'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const pm = detectPackageManager()
-  p.intro(runnerCommand(pm, 'stash db status'))
+  p.intro(runnerCommand(pm, 'stash eql status'))
 
   const s = p.spinner()
 

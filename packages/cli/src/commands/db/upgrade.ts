@@ -11,7 +11,7 @@ export async function upgradeCommand(options: {
   databaseUrl?: string
 }) {
   const pm = detectPackageManager()
-  p.intro(runnerCommand(pm, 'stash db upgrade'))
+  p.intro(runnerCommand(pm, 'stash eql upgrade'))
 
   const s = p.spinner()
 

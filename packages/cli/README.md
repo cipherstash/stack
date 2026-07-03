@@ -61,7 +61,7 @@ export default defineConfig({
 
 The CLI loads `.env` files automatically before reading the config, so `process.env` references work without extra setup. The config file is resolved by walking up from the current working directory.
 
-Commands that consume `stash.config.ts`: `eql install`, `db upgrade`, `db push`, `db validate`, `db status`, `db test-connection`, `schema build`. `eql install` will scaffold `stash.config.ts` for you if it's missing.
+Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db push`, `db validate`, `eql status`, `db test-connection`, `schema build`. `eql install` will scaffold `stash.config.ts` for you if it's missing.
 
 ---
 
@@ -183,12 +183,12 @@ The `--supabase` flag uses a Supabase-specific SQL variant and grants `USAGE`, t
 
 ---
 
-### `npx stash db upgrade`
+### `npx stash eql upgrade`
 
 Upgrade an existing EQL installation to the version bundled with the package (or the latest from GitHub).
 
 ```bash
-npx stash db upgrade [options]
+npx stash eql upgrade [options]
 ```
 
 | Flag | Description |
@@ -260,12 +260,12 @@ npx stash db migrate
 
 ---
 
-### `npx stash db status`
+### `npx stash eql status`
 
 Show the current state of EQL in your database.
 
 ```bash
-npx stash db status
+npx stash eql status
 ```
 
 Reports EQL installation status and version, database permission status, and whether an active encrypt config exists in `eql_v2_configuration` (relevant only for CipherStash Proxy).
