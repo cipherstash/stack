@@ -67,6 +67,14 @@ describe('eql_v3 text_search column', () => {
     expect(built.indexes.match.m).toBe(4096)
   })
 
+  it('.freeTextSearch() with no argument is a no-op: build() equals the default build()', () => {
+    // Pins the opts === undefined branch: every `opts?.x ?? default` falls
+    // through, so a bare call must emit exactly the default match block.
+    expect(types.TextSearch('email').freeTextSearch().build()).toStrictEqual(
+      types.TextSearch('email').build(),
+    )
+  })
+
   it('.freeTextSearch() is tuning-only: unique and ore indexes stay present', () => {
     const built = types.TextSearch('email').freeTextSearch({ k: 8 }).build()
     expect(built.indexes.unique).toEqual({ token_filters: [] })
@@ -118,6 +126,33 @@ describe('eql_v3 text_search column', () => {
       token_length: 3,
     })
     expect(built.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+  })
+})
+
+describe('eql_v3 text_match column', () => {
+  it('built columns share no mutable state: mutating one build() output does not affect another', () => {
+    // Same aliasing guard as the text_search test above, but through the base
+    // class indexesForCapabilities() match clone — text_match has no build()
+    // override, so a regression there (e.g. sharing a defaultMatchOpts() result
+    // across builds) would slip past the text_search-only test.
+    const a = types.TextMatch('a').build()
+    const b = types.TextMatch('b').build()
+
+    a.indexes.match.k = 999
+    a.indexes.match.token_filters.push({ kind: 'downcase' })
+    a.indexes.match.tokenizer = { kind: 'standard' }
+
+    expect(b.indexes.match.k).toBe(6)
+    expect(b.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+    expect(b.indexes.match.tokenizer).toEqual({
+      kind: 'ngram',
+      token_length: 3,
+    })
+
+    // A fresh build() of an independent column is also pristine.
+    const c = types.TextMatch('c').build()
+    expect(c.indexes.match.k).toBe(6)
+    expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
   })
 })
 
@@ -205,6 +240,10 @@ describe('eql_v3 encryptedTable', () => {
 })
 
 describe('eql_v3 buildEncryptConfig', () => {
+  it('zero tables yields an empty config (client-boundary Encryption() still rejects it)', () => {
+    expect(buildEncryptConfig()).toStrictEqual({ v: 1, tables: {} })
+  })
+
   it('produces a { v: 1, tables } config', () => {
     const users = encryptedTable('users', {
       email: types.TextSearch('email'),
