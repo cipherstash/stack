@@ -180,6 +180,28 @@ describe('eql_v3 encryptedTable', () => {
       },
     })
   })
+
+  it('build() throws when two columns resolve to the same DB name (no silent overwrite)', () => {
+    // Columns are keyed in the built config by DB name (`getName()`), so two JS
+    // properties whose builders resolve to the same name would silently
+    // overwrite — the later one wins and the first column's config is lost.
+    // Fail loudly, matching the reserved-key and duplicate-tableName guards.
+    const users = encryptedTable('users', {
+      email: types.TextEq('contact'),
+      contactEmail: types.TextMatch('contact'),
+    })
+    expect(() => users.build()).toThrow(/duplicate column name "contact"/)
+  })
+
+  it('build() surfaces the duplicate DB name through buildEncryptConfig', () => {
+    const users = encryptedTable('users', {
+      email: types.TextEq('contact'),
+      contactEmail: types.TextMatch('contact'),
+    })
+    expect(() => buildEncryptConfig(users)).toThrow(
+      /duplicate column name "contact"/,
+    )
+  })
 })
 
 describe('eql_v3 buildEncryptConfig', () => {

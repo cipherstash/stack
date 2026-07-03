@@ -32,7 +32,17 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
       // so a camelCase JS key mapping to a snake_case DB column (e.g.
       // `createdOn: types.Date('created_on')`) must register under
       // `created_on` or the FFI reports "column not found in Encrypt config".
-      builtColumns[builder.getName()] = builder.build()
+      const name = builder.getName()
+      // Two JS properties resolving to the same DB name would silently overwrite
+      // here (later wins), dropping the first column's config. Fail loudly —
+      // matching the duplicate-tableName guard in buildEncryptConfig and the
+      // reserved-key guard in encryptedTable.
+      if (Object.hasOwn(builtColumns, name)) {
+        throw new Error(
+          `[eql/v3]: duplicate column name "${name}" in table "${this.tableName}" — two columns resolve to the same DB name`,
+        )
+      }
+      builtColumns[name] = builder.build()
     }
     return {
       tableName: this.tableName,
