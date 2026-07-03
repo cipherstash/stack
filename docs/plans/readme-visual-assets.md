@@ -128,9 +128,16 @@ Compress with Gifski / `gifsicle -O3`.
 
 ## Suggested files
 
-| File | Asset |
-|------|-------|
-| `docs/images/architecture-light.svg` | Architecture (light) |
-| `docs/images/architecture-dark.svg` | Architecture (dark) |
-| `docs/images/type-safety.gif` | Autocomplete/type-safety demo |
-| `docs/images/type-safety.mp4` | Optional higher-quality GitHub embed |
+| File | Asset | Status |
+|------|-------|--------|
+| `docs/images/architecture-light.svg` | Architecture — desktop, light (1400×660) | ✅ shipped |
+| `docs/images/architecture-dark.svg` | Architecture — desktop, dark (1400×660) | ✅ shipped |
+| `docs/images/architecture-stacked-light.svg` | Architecture — mobile/stacked, light (760×1100) | ✅ shipped |
+| `docs/images/architecture-stacked-dark.svg` | Architecture — mobile/stacked, dark (760×1100) | ✅ shipped |
+| `docs/images/type-safety.gif` | Autocomplete/type-safety demo | todo |
+| `docs/images/type-safety.mp4` | Optional higher-quality GitHub embed | todo |
+
+The architecture diagram is embedded in the README via a single `<picture>` element that selects one
+of the four variants from **two** dimensions at once — theme (`prefers-color-scheme`) and viewport width
+(`max-width: 600px`) — with the desktop-light `<img>` as the universal fallback for npm and older
+renderers. `<source>` order is most-specific first (dark+narrow → dark → light+narrow → fallback).

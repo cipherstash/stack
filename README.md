@@ -128,6 +128,19 @@ await client
 
 ## How it works
 
+<p align="center">
+  <picture>
+    <!-- Dark theme · narrow viewport (mobile) -->
+    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-dark.svg">
+    <!-- Dark theme · wide viewport (desktop) -->
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-dark.svg">
+    <!-- Light theme · narrow viewport (mobile) -->
+    <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-light.svg">
+    <!-- Light theme · wide viewport (desktop) — universal fallback (npm, older renderers) -->
+    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, rooted in your own AWS KMS. Plaintext and root keys never reach CipherStash, and every decryption is logged for audit." width="880" src="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-light.svg">
+  </picture>
+</p>
+
 Encryption happens in your application. Ciphertext is stored as an [EQL][eql] JSON payload in your database;
 plaintext and root keys never reach CipherStash. Per-value keys are issued in bulk by ZeroKMS (so millions
 of unique keys stay fast), and every decryption is logged for compliance.
