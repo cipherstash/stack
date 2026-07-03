@@ -14,8 +14,10 @@ claim below is actually implemented and each placeholder is resolved.
   `.ilike()` on encrypted columns (encrypt-filters-in / decrypt-results-out), as published.
 - [ ] **Prisma Next** — `cipherstash.EncryptedString()` in `schema.prisma` and the `cipherstashIlike`
   operator, as published.
-- [ ] **Raw SDK** — quick-start guides exist for the `types` / `encryptedTable` authoring surface on
-  `@cipherstash/stack/eql/v3` (PR #541).
+- [ ] **Raw SDK** — the searchable-encryption section shows
+  `import { encryptedTable, types } from "@cipherstash/stack/eql/v3"` with `types.TextMatch` /
+  `types.Int4Ord`; confirm the subpath and namespace ship as in PR #541, and that quick-start guides
+  cover this surface.
 
 ## EQL v3 claims
 

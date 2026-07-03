@@ -120,7 +120,16 @@ Encrypted types exist for text, integers, floats, numerics, dates, timestamps, b
 your schema documents itself — and encrypted data stays indexable with standard Postgres indexes. No
 special index engine, no SQL rewrites. ORMs pick the types up transparently: declare the column as
 encrypted in `schema.prisma` or your Drizzle table and the Stack handles the rest. Only raw `pg` needs
-a manual [schema][schema] defined in the client.
+a client-side [schema][schema] — declared with the same type names:
+
+```typescript
+import { encryptedTable, types } from "@cipherstash/stack/eql/v3";
+
+const users = encryptedTable("users", {
+  email: types.TextMatch("email"),  // ↔ eql_v3.text_match
+  salary: types.Int4Ord("salary"),  // ↔ eql_v3.int4_ord
+});
+```
 
 → [Searchable encryption][searchable-encryption] · [Schema][schema] · [Encrypt & decrypt][encrypt-decrypt] · [Bulk & model operations][model-ops]
 
