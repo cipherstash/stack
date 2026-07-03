@@ -50,19 +50,15 @@ const LIVE_EQL_V3_PG_ENABLED = Boolean(
     process.env.CS_CLIENT_KEY &&
     process.env.CS_CLIENT_ACCESS_KEY,
 )
-// SKIPPED (CI run 28569708268, PR #540): `beforeAll` crashes with
-// `PostgresError: invalid input syntax for type json` on the dynamic 35-column
-// INSERT, before any of the 35 per-domain cases run. Root cause not yet
-// pinned — the CI log's stack trace bottoms out inside postgres.js's
-// connection handler with no frame back to this file or the offending
-// parameter/domain, and the identical ciphertext values round-trip fine via
-// FFI-only in the sibling `matrix-live.test.ts`, so the break is specific to
-// how this file hands them to Postgres. Needs live query/parameter logging or
-// a local repro against a real `eql_v3` install to isolate before fixing.
-// Force-skipped (not just gated on credentials) until then — swap back to
-// `LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip` once fixed.
-void LIVE_EQL_V3_PG_ENABLED
-const describeLivePg = describe.skip
+// Previously force-skipped (CI run 28569708268, PR #540): `beforeAll` crashed
+// with `PostgresError: invalid input syntax for type json` on the dynamic
+// 35-column INSERT. Root cause was a postgres.js serialization gap — a bare
+// ciphertext object stringified to `"[object Object]"` — now fixed by wrapping
+// every INSERT param in `sql.json(...)` (see `beforeAll`; the fix landed right
+// after the skip and the skip was simply left stale). Re-enabled here as an
+// ordinary credential-gated suite: it runs in CI (which supplies DATABASE_URL +
+// CS_* creds) and self-skips locally when they are absent.
+const describeLivePg = LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip
 
 const databaseUrl = process.env.DATABASE_URL
 const sql = LIVE_EQL_V3_PG_ENABLED
