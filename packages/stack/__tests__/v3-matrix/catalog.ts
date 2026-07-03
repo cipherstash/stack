@@ -152,6 +152,10 @@ type Indexes = ColumnSchema['indexes']
 const NONE: Indexes = {}
 const UNIQUE_IDX: Indexes = { unique: { token_filters: [] } }
 const ORE_IDX: Indexes = { ore: {} }
+// Text order domains (`text_ord`, `text_ord_ore`) carry BOTH `hm` (unique) and
+// `ob` (ore): their eql_v3 SQL domains require `hm` because text equality is
+// HMAC-based, unlike numeric/date order domains which answer equality via `ob`.
+const TEXT_ORD_IDX: Indexes = { unique: { token_filters: [] }, ore: {} }
 const MATCH_BLOCK: NonNullable<Indexes>['match'] = {
   tokenizer: { kind: 'ngram', token_length: 3 },
   token_filters: [{ kind: 'downcase' }],
@@ -218,8 +222,8 @@ export const V3_MATRIX = {
   'eql_v3.text': { builder: types.Text, ColumnClass: EncryptedTextColumn, castAs: 'string', capabilities: STORAGE, indexes: NONE, samples: TEXT_S },
   'eql_v3.text_eq': { builder: types.TextEq, ColumnClass: EncryptedTextEqColumn, castAs: 'string', capabilities: EQ, indexes: UNIQUE_IDX, samples: TEXT_S },
   'eql_v3.text_match': { builder: types.TextMatch, ColumnClass: EncryptedTextMatchColumn, castAs: 'string', capabilities: MATCH_ONLY, indexes: MATCH_IDX, samples: TEXT_S },
-  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: ORE_IDX, samples: TEXT_S },
-  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: ORE_IDX, samples: TEXT_S },
+  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_S },
+  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_S },
   'eql_v3.text_search': { builder: types.TextSearch, ColumnClass: EncryptedTextSearchColumn, castAs: 'string', capabilities: FULL, indexes: TEXT_SEARCH_IDX, samples: TEXT_S },
   // bool
   'eql_v3.bool': { builder: types.Bool, ColumnClass: EncryptedBoolColumn, castAs: 'boolean', capabilities: STORAGE, indexes: NONE, samples: BOOL_S },
