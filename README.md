@@ -1,3 +1,6 @@
+<!-- Doc-driven README: this describes the EQLv3-based Stack slightly ahead of current code capabilities.
+     Before merging to main, work through docs/plans/readme-go-live-checklist.md — it tracks every claim
+     and code example that must be confirmed implemented first. -->
 <div align="center">
   <a href="https://cipherstash.com?utm_source=github&utm_medium=stack_readme">
     <img alt="CipherStash" width="128" height="128" src="https://cipherstash.com/brand/cipherstash-logo-dark.svg">
@@ -59,7 +62,7 @@ const rows = await db.orm.User
 ```typescript
 export const usersTable = pgTable("users", {
   id: integer("id").primaryKey(),
-  email: encryptedType<string>("email", { equality: true, freeTextSearch: true }),
+  email: types.TextMatch("email"), // → eql_v3.text_match — the type is the config
 });
 
 const results = await db.select().from(usersTable)
