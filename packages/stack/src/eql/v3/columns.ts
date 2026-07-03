@@ -316,21 +316,33 @@ function defaultMatchOpts(): BuiltMatchIndexOpts {
 }
 
 /**
- * Translate a domain's semantic {@link QueryCapabilities} into the concrete EQL
- * index block emitted by `build()`.
+ * Translate a domain's semantic {@link QueryCapabilities} (plus its plaintext
+ * `castAs`, which decides how equality is answered) into the concrete EQL index
+ * block emitted by `build()`.
  *
- * - equality WITHOUT order/range → `unique` (the `hm` HMAC index).
- * - order/range → `ore` ONLY. The EQL `ob` key supports both equality and
- *   range, so an order-capable column does NOT also emit `unique`.
- * - free-text search → `match` (the `bf` bloom-filter index), deep-cloned from
+ * - `unique` (the `hm` HMAC index) whenever equality is answered via HMAC:
+ *   equality-only domains of ANY type, AND text order domains. Text equality is
+ *   HMAC-based — the `eql_v3.text_ord` / `eql_v3.text_ord_ore` SQL domains
+ *   REQUIRE `hm` in the stored ciphertext (their `eql_v3.eq_term` extracts it).
+ * - `ore` for any order/range domain (the `ob` term). For numeric/date order
+ *   domains `ob` also answers equality (via the SQL `=` operator), so those emit
+ *   `ore` ONLY — no `hm`. Text order domains emit BOTH `unique` and `ore`.
+ * - `match` (the `bf` bloom-filter index) for free-text search, deep-cloned from
  *   the per-call defaults so no nested object is ever shared across columns.
  */
 function indexesForCapabilities(
   capabilities: QueryCapabilities,
+  castAs: PlaintextKind,
 ): ColumnSchema['indexes'] {
   const indexes: ColumnSchema['indexes'] = {}
 
-  if (capabilities.equality && !capabilities.orderAndRange) {
+  // Text equality is always HMAC-based, so a text order domain (`string` +
+  // order/range) still needs `unique`; numeric/date order domains answer
+  // equality via `ob` and must NOT emit `unique`.
+  if (
+    capabilities.equality &&
+    (!capabilities.orderAndRange || castAs === 'string')
+  ) {
     indexes.unique = { token_filters: [] }
   }
 
@@ -398,7 +410,10 @@ export class EncryptedV3Column<D extends V3DomainDefinition> {
   build(): ColumnSchema {
     return {
       cast_as: this.definition.castAs,
-      indexes: indexesForCapabilities(this.definition.capabilities),
+      indexes: indexesForCapabilities(
+        this.definition.capabilities,
+        this.definition.castAs,
+      ),
     }
   }
 }

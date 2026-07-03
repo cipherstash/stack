@@ -356,14 +356,16 @@ describe('eql_v3 catalog-driven query capability sweep', () => {
 })
 
 describe('eql_v3 equality via ORE on order-capable columns (regression)', () => {
-  // The capability contract documents equality as answerable "via `ob`", so an
-  // order-capable column resolves equality to its `ore` index (same term as
-  // orderAndRange, distinguished by the SQL `=` operator) instead of throwing on
-  // the absent `unique` index. One domain per plaintext axis.
+  // The capability contract documents equality as answerable "via `ob`", so a
+  // numeric/date order-capable column (which has NO `hm`) resolves equality to
+  // its `ore` index (same term as orderAndRange, distinguished by the SQL `=`
+  // operator) instead of throwing on the absent `unique` index. (Text order
+  // domains DO carry `hm` and resolve equality to `unique` instead — see the
+  // text-order regression below.)
   it.each([
     ['int4_ord', types.Int4Ord],
     ['date_ord', types.DateOrd],
-    ['text_ord', types.TextOrd],
+    ['numeric_ord', types.NumericOrd],
   ] as const)('%s resolves equality to the ore index', (_name, builder) => {
     expect(resolveIndexType(builder('value'), 'equality')).toEqual({
       indexType: 'ore',
@@ -377,5 +379,43 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
     expect(() => resolveIndexType(v2OrderOnly, 'equality')).toThrow(
       /Index type "unique" is not configured/,
     )
+  })
+})
+
+describe('eql_v3 text order domains carry the hm (unique) index (regression)', () => {
+  // The `eql_v3.text_ord` and `eql_v3.text_ord_ore` SQL domains require BOTH
+  // `hm` (HMAC) and `ob` (ORE) in the stored ciphertext: text equality is
+  // HMAC-based (their `eql_v3.eq_term` extracts `hm`), unlike numeric/date order
+  // domains which answer equality via `ob` and need only ORE. So text order
+  // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
+  // fails with `value for domain eql_v3.text_ord_ore violates check constraint`.
+  it.each([
+    ['text_ord_ore', types.TextOrdOre],
+    ['text_ord', types.TextOrd],
+  ] as const)('%s emits both unique (hm) and ore (ob)', (_name, builder) => {
+    expect(builder('c').build().indexes).toStrictEqual({
+      unique: { token_filters: [] },
+      ore: {},
+    })
+  })
+
+  it.each([
+    ['int4_ord_ore', types.Int4OrdOre],
+    ['int4_ord', types.Int4Ord],
+    ['date_ord_ore', types.DateOrdOre],
+    ['numeric_ord', types.NumericOrd],
+  ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {
+    expect(builder('c').build().indexes).toStrictEqual({ ore: {} })
+  })
+
+  // With `unique` present, text order equality resolves to the hm index (not
+  // ORE): `resolvesEqualityViaOre` only fires when `unique` is ABSENT.
+  it.each([
+    ['text_ord_ore', types.TextOrdOre],
+    ['text_ord', types.TextOrd],
+  ] as const)('%s resolves equality to the unique (hm) index', (_name, builder) => {
+    expect(resolveIndexType(builder('value'), 'equality')).toEqual({
+      indexType: 'unique',
+    })
   })
 })
