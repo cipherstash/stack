@@ -4,8 +4,9 @@
   </a>
   <h1>CipherStash Stack for TypeScript</h1>
 
-  <p><b>Field-level encryption for TypeScript apps — search encrypted data without decrypting it, with
-  zero-knowledge key management. Every value gets its own key, and your keys never leave your AWS KMS.</b></p>
+  <p><b>Searchable, application-level encryption for building privacy-first apps. Encrypt fields in your
+  app, keep them fully queryable in Postgres, and let built-in zero-knowledge key management handle the
+  rest — CipherStash can never see your data or your keys.</b></p>
 
   <a href="https://www.npmjs.com/package/@cipherstash/stack"><img alt="npm version" src="https://img.shields.io/npm/v/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
   <a href="https://www.npmjs.com/package/@cipherstash/stack"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
@@ -19,103 +20,154 @@
 
 <br/>
 
-> **CipherStash never sees your plaintext.** Data is encrypted in your app with a unique key per value via
-> [ZeroKMS][zerokms], rooted in your own [AWS KMS][aws-kms] — so a database breach leaks only ciphertext.
-> [See the security architecture →][security-architecture]
+> **CipherStash never sees your plaintext — or your keys.** Data is encrypted in your app with a unique
+> key per value, and keys are derived inside your application via [ZeroKMS][zerokms] — so a database
+> breach leaks only ciphertext. [See the security architecture →][security-architecture]
 
-## Quick start
+## Encrypted fields. Real queries. Your tools.
 
-You'll need a free CipherStash account to provision keys and a workspace — it takes about a minute.
+The `email` column below is stored as ciphertext with a unique key per row — and the search still works,
+because the query runs on the ciphertext. No decrypt-and-scan, no query rewrites.
 
-**1. Create a free account** → **[cipherstash.com/signup][signup]**
+**Supabase** — same Supabase.js calls; filters are encrypted on the way in, results decrypted on the way out:
 
-**2. Initialize your project** — the wizard authenticates you, builds an encryption schema, and wires up your database:
+```typescript
+const db = encryptedSupabase({ encryptionClient, supabaseClient });
+
+const { data } = await db.from("users", users)
+  .select("id, name, email")
+  .ilike("email", "%@acme.com"); // encrypted free-text match
+```
+
+**Prisma Next** — declare encrypted columns in `schema.prisma`, query with type-safe operators:
+
+```prisma
+model User {
+  id    String @id
+  email cipherstash.EncryptedString()
+}
+```
+
+```typescript
+const rows = await db.orm.User
+  .where((u) => u.email.cipherstashIlike("%@acme.com"))
+  .all();
+```
+
+**Drizzle** — encrypted column types in your table, auto-encrypting operators in your queries:
+
+```typescript
+export const usersTable = pgTable("users", {
+  id: integer("id").primaryKey(),
+  email: encryptedType<string>("email", { equality: true, freeTextSearch: true }),
+});
+
+const results = await db.select().from(usersTable)
+  .where(await ops.ilike(usersTable.email, "%@acme.com"));
+```
+
+## Quick starts
+
+Pick the guide for the stack you're already on. Each takes about 5 minutes, starts on the
+**free developer tier** ([sign up][signup]), and begins with the same setup wizard:
 
 ```bash
 npx stash init
 ```
 
-**3. Encrypt, search, and decrypt:**
+| Quick start | Guide |
+|---|---|
+| **Supabase** | [Supabase quickstart →][supabase] |
+| **Prisma Next** | [Prisma Next quickstart →][prisma-next] |
+| **Drizzle ORM** | [Drizzle quickstart →][drizzle] |
+| **Raw PostgreSQL (`pg`)** | [PostgreSQL quickstart →][encryption] |
+| **DynamoDB** | [DynamoDB quickstart →][dynamodb] |
 
-```typescript
-import { Encryption } from "@cipherstash/stack";
-import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema";
-
-// Define which columns are encrypted — and how you want to query them
-const users = encryptedTable("users", {
-  email: types.TextSearch("email"), // equality + order/range + free-text search
-});
-
-const client = await Encryption({ schemas: [users] });
-
-// Encrypt → store the ciphertext in your own database
-const enc = await client.encrypt("alice@example.com", { table: users, column: users.email });
-
-// Search WITHOUT decrypting — the part nobody else does
-const term = await client.encryptQuery("alice@example.com", {
-  table: users, column: users.email, queryType: "equality",
-});
-// → drop term.data straight into your WHERE clause
-
-// Decrypt when you need the plaintext back
-const dec = await client.decrypt(enc.data);
-```
-
-Prefer the long version? Follow the **[5-minute quickstart →][quickstart]**
+> The Stack also ships a `stash` CLI for auth, schema, and database setup. See the [SDK reference][reference].
 
 ## What's in the Stack
 
-Three building blocks for protecting sensitive data in TypeScript apps — use one, or all three together.
-
 ### 🔐 Searchable encryption
 
-Encrypt individual fields and still run real queries against them — exact match, full-text search,
-range/sorting, and encrypted JSONB — all on ciphertext, in PostgreSQL.
+Encrypt individual fields and still run real queries against them — all on ciphertext, in PostgreSQL:
 
-```typescript
-const users = encryptedTable("users", {
-  email: encryptedColumn("email").equality().freeTextSearch().orderAndRange(),
-  metadata: encryptedColumn("metadata").searchableJson(), // encrypted JSONB queries
-});
+| Query type | Operations | Docs |
+|---|---|---|
+| **Equality** | `=`, `IN` | [Equality queries →][query-equality] |
+| **Free-text search** | `LIKE` / `ILIKE`, match | [Text search →][query-match] |
+| **Range & ordering** | `<`, `>`, `BETWEEN`, `ORDER BY`, `MIN`/`MAX` | [Range queries →][query-range] |
+| **Encrypted JSON** | field access (`->`, `->>`), containment (`@>`) | [JSON queries →][query-json] |
+
+With [EQL v3][eql], the column type *is* the configuration. Declare a column with the encrypted type
+that names its data type and the operations it supports, and it's ready to query — there's no per-column
+search configuration to maintain in your client:
+
+```sql
+CREATE TABLE users (
+  id          serial PRIMARY KEY,
+  username    text,                 -- plaintext — business as usual
+  email       eql_v3.text_match,    -- encrypted · free-text search
+  ssn         eql_v3.text_eq,       -- encrypted · equality
+  salary      eql_v3.int4_ord,      -- encrypted · range + ORDER BY
+  preferences eql_v3.json           -- encrypted · field access + containment
+);
 ```
+
+Encrypted types exist for text, integers, floats, numerics, dates, timestamps, booleans, and JSON, so
+your schema documents itself — and encrypted data stays indexable with standard Postgres indexes. No
+special index engine, no SQL rewrites. ORMs pick the types up transparently: declare the column as
+encrypted in `schema.prisma` or your Drizzle table and the Stack handles the rest. Only raw `pg` needs
+a manual [schema][schema] defined in the client.
 
 → [Searchable encryption][searchable-encryption] · [Schema][schema] · [Encrypt & decrypt][encrypt-decrypt] · [Bulk & model operations][model-ops]
 
-### 🔗 ORM & database integrations
+### 🔑 Authentication
 
-Drop encryption into the stack you already use. Type-safe operators let you query encrypted columns
-exactly like normal ones.
+How you authenticate to ZeroKMS depends on who's asking for keys:
 
-| Integration | Status | Guide |
-|---|---|---|
-| PostgreSQL (raw SQL) | ✅ | [Docs][encryption] |
-| Supabase | ✅ | [Docs][supabase] |
-| Drizzle ORM | ✅ | [Docs][drizzle] |
-| Prisma (Prisma Next) | ✅ | [Docs][prisma-next] |
-| DynamoDB | ✅ | [Docs][dynamodb] |
-
-```typescript
-// Drizzle: query encrypted columns with auto-encrypting operators
-const results = await db.select().from(usersTable)
-  .where(await ops.eq(usersTable.email, "alice@example.com"));
-```
-
-### 👤 Identity-aware encryption
-
-Bind a record's encryption key to the end user's identity, so only *that* user can decrypt their data.
-`OidcFederationStrategy` federates your identity provider's OIDC JWT into the client — every ZeroKMS
-request then authenticates *as that user* — and `.withLockContext({ identityClaim })` binds the data key to
-a claim. Works with any OIDC provider: Clerk, Supabase Auth, Auth0, Okta, and more.
+- **Device auth** — browser-based login for local development: `npx stash auth login` opens your
+  browser and saves credentials to your local CipherStash profile. No secrets in your repo or shell.
+- **Access key auth** — service-level credentials for servers, workers, and CI, supplied via `CS_*`
+  environment variables.
+- **OIDC federation** — federate your identity provider's JWT so every key request authenticates *as the
+  signed-in user*, not as your app. Supported providers: **Supabase Auth**, **Clerk**, **Okta**, and **Auth0**
+  (any OIDC-compliant provider works).
 
 ```typescript
-import { Encryption, OidcFederationStrategy } from "@cipherstash/stack";
+// Access key (default) — reads CS_* env vars, no config needed
+const client = await Encryption({ schemas: [users] });
 
-// Authenticate every request as the signed-in user via their OIDC JWT
+// OIDC federation — every ZeroKMS request authenticates as the end user
 const client = await Encryption({
   schemas: [users],
   config: { strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()) },
 });
+```
 
+→ [Authentication][auth]
+
+### 🗝️ Built-in key management
+
+Key management is built in, powered by [ZeroKMS][zerokms] — no AWS KMS to wire up, no key vault to run,
+no rotation schedule to babysit:
+
+- **A unique key for every value** — not one key per table or per database.
+- **Automatic key rotation** — handled for you, with zero downtime.
+- **CipherStash can never see your keys.** Keys are *derived inside your application*; neither plaintext
+  keys nor plaintext data ever leave your infrastructure.
+- **Fast at scale** — bulk key operations handle up to 10,000 keys in a single call, up to 14× faster
+  than AWS KMS at peak ([benchmarks][benches]).
+- **Every decryption is logged** — a built-in audit trail of who decrypted what, and when.
+
+## Advanced features
+
+### 👤 Identity-aware encryption
+
+Building on OIDC federation, you can bind a record's encryption key to the end user's identity, so only
+*that* user can decrypt their data: `.withLockContext({ identityClaim })` ties the data key to a claim in
+the user's JWT, enforced cryptographically by ZeroKMS.
+
+```typescript
 // Bind the data key to a claim — the same claim is required to decrypt
 await client
   .encrypt("alice@example.com", { table: users, column: users.email })
@@ -124,7 +176,12 @@ await client
 
 → [Identity-aware encryption][identity]
 
-> The Stack also ships a `stash` CLI for auth, schema, and database setup. See the [SDK reference][reference].
+### 🗂️ Keysets for multitenancy & sovereignty
+
+Partition your keys into **keysets** — independent key hierarchies within a single workspace. Give each
+tenant its own keyset for cryptographic tenant isolation (revoking a keyset renders that tenant's data
+permanently unreadable), or pin keysets to a region to meet data-sovereignty requirements without
+re-architecting your app. [Keysets →][keysets]
 
 ## How it works
 
@@ -140,21 +197,116 @@ await client
     <!-- Light theme · narrow viewport (mobile) -->
     <source media="(max-width: 600px)" srcset="docs/images/architecture-stacked-light.svg">
     <!-- Light theme · wide viewport (desktop) — universal fallback (npm, older renderers) -->
-    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, rooted in your own AWS KMS. Plaintext and root keys never reach CipherStash, and every decryption is logged for audit." width="880" src="docs/images/architecture-light.svg">
+    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, derived in your app. Plaintext and keys never reach CipherStash, and every decryption is logged for audit." width="880" src="docs/images/architecture-light.svg">
   </picture>
 </p>
 
-Encryption happens in your application. Ciphertext is stored as an [EQL][eql] JSON payload in your database;
-plaintext and root keys never reach CipherStash. Per-value keys are issued in bulk by ZeroKMS (so millions
+Encryption happens in your application. Ciphertext is stored as an [EQL][eql] payload in your database;
+plaintext and keys never reach CipherStash. Per-value keys are issued in bulk by ZeroKMS (so millions
 of unique keys stay fast), and every decryption is logged for compliance.
 
 → [Security architecture][security-architecture] · [ZeroKMS][zerokms]
+
+## Performance
+
+Encrypted queries stay fast — latency is flat from 10k to 10M rows. Measured in [cipherstash/benches][benches]:
+
+| Operation | Median latency (up to 10M rows) |
+|---|---|
+| Equality lookup | ~0.1 ms |
+| Range query | ~0.5 ms |
+| JSON field equality | ~0.1 ms |
+
+<!-- TODO: embed a purpose-built latency chart here (theme-aware light/dark SVG pair in docs/images/,
+     same treatment as the architecture diagram): one line per query family (equality, range, JSON)
+     staying flat from 10k → 10M rows, regenerated from cipherstash/benches data. The charts committed
+     to the benches repo are internal-report style (matplotlib) and not README-quality.
+     See docs/plans/readme-visual-assets.md → Asset 3. -->
 
 ## Why CipherStash
 
 - **Trusted data access** — only your end-users can access their sensitive data, enforced cryptographically.
 - **Shrink the blast radius** — a breached vulnerability exposes only what one user can decrypt, not your whole table.
-- **Meet compliance faster** — exceed the encryption requirements of SOC 2 and ISO 27001, with an audit trail of every decryption.
+- **Audit trail built in** — every decryption event is recorded, no extra tooling to bolt on.
+- **Meet compliance faster** — exceed the encryption requirements of SOC 2 and ISO 27001, with FIPS-compliant
+  cryptography and BYOK for teams that need it.
+
+## FAQ
+
+<details>
+<summary><b>Can CipherStash ever see my data, or my encryption keys?</b></summary>
+
+No, never. Encryption and decryption happen in your application, and keys are derived within your own
+environment. Plaintext and keys never leave your control and never reach CipherStash.
+</details>
+
+<details>
+<summary><b>How well does it scale?</b></summary>
+
+Latency stays flat as data grows — exact-match lookups hold at ~0.1 ms and range queries at ~0.5 ms from
+10k up to 10M rows ([cipherstash/benches][benches]). ZeroKMS handles keys in bulk (up to 10,000 per
+call), so key management isn't the bottleneck.
+</details>
+
+<details>
+<summary><b>What does migration look like?</b></summary>
+
+Install EQL on your Postgres database (`npx stash init` and the [quick starts](#quick-starts) handle
+this), declare the columns you want protected with the encrypted type that fits each one (for example
+`eql_v3.text_match` for searchable text or `eql_v3.int4_ord` for range queries), and encrypt values in
+your app before writing. You can adopt it column-by-column — no big-bang rewrite — and your existing
+Postgres indexes keep working.
+</details>
+
+<details>
+<summary><b>Do I have to change how I write queries?</b></summary>
+
+No. Query encrypted columns with the same Supabase.js, Prisma, or Drizzle calls you use today — there
+are no SQL rewrites.
+</details>
+
+<details>
+<summary><b>Do I need to run a KMS or key vault?</b></summary>
+
+No. Key management is built in through ZeroKMS. If you want to control the root key, Bring Your Own Key
+lets you root it in your own KMS.
+</details>
+
+<details>
+<summary><b>Does it work with Supabase Auth and Row Level Security?</b></summary>
+
+Yes. It integrates with Supabase Auth and runs alongside RLS — it complements them, it doesn't replace
+them.
+</details>
+
+<details>
+<summary><b>I already use Row Level Security — do I need this?</b></summary>
+
+RLS and CipherStash solve different problems, and they're strongest together. RLS decides which rows a
+role may query, but the data underneath is plaintext — so anything that bypasses RLS reveals it in the
+clear: a leaked `service_role` key, a misconfigured policy, a SQL injection running as an elevated role,
+a stolen backup, or the database host itself. CipherStash stores only ciphertext and keeps the keys
+outside the database, so those same bypasses reveal nothing readable. Keep RLS for authorization; add
+CipherStash so a bypass never becomes a breach.
+</details>
+
+<details>
+<summary><b>Is there a free tier?</b></summary>
+
+Yes — a free developer tier, so you can build encryption in from day one.
+</details>
+
+## Start free
+
+Encryption is far cheaper to design in than to retrofit — and it's what unlocks regulated and enterprise
+customers. The developer tier is **free**, so you can add encryption from your very first migration:
+
+```bash
+npx stash init
+```
+
+Signing up is the wizard's first step if you don't have an account yet — or
+[create your free account][signup] in the browser first, and `stash init` will pick it up.
 
 ## Install
 
@@ -167,21 +319,6 @@ npm install @cipherstash/stack   # or: yarn / pnpm / bun add @cipherstash/stack
 > native `require`. [Bundling guide →][bundling]
 
 **Requirements:** Node.js ≥ 18.
-
-## Migrating from Protect.js
-
-> [!NOTE]
-> **`@cipherstash/protect` (Protect.js) is now legacy and in maintenance mode.** It still receives critical
-> security fixes, but all new development has moved to `@cipherstash/stack`. New projects should use the
-> Stack; existing Protect.js users can migrate with the mapping below.
-
-| `@cipherstash/protect` | `@cipherstash/stack` |
-|---|---|
-| `protect(config)` | `Encryption(config)` |
-| `csTable` / `csColumn` | `encryptedTable` / `encryptedColumn` |
-| `@cipherstash/protect/identify` | `@cipherstash/stack/identity` |
-
-Method signatures and the `Result` (`data` / `failure`) pattern are unchanged. [Full migration guide →][reference]
 
 ## Documentation & community
 
@@ -212,8 +349,15 @@ disclosure, see [SECURITY.md][security-policy]. [MIT licensed][license].
 [security-architecture]: https://cipherstash.com/docs/stack/reference/security-architecture?utm_source=github&utm_medium=stack_readme
 [zerokms]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_readme
 [bundling]: https://cipherstash.com/docs/stack/deploy/bundling?utm_source=github&utm_medium=stack_readme
+<!-- TODO: placeholder doc links below — point at real pages once the EQL v3 docs land. -->
+[query-equality]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#equality
+[query-match]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#free-text-search
+[query-range]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#range-and-ordering
+[query-json]: https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption?utm_source=github&utm_medium=stack_readme#json
+[auth]: https://cipherstash.com/docs/stack/cipherstash/authentication?utm_source=github&utm_medium=stack_readme
+[keysets]: https://cipherstash.com/docs/stack/cipherstash/kms?utm_source=github&utm_medium=stack_readme#keysets
+[benches]: https://github.com/cipherstash/benches
 [eql]: https://github.com/cipherstash/encrypt-query-language
-[aws-kms]: https://docs.aws.amazon.com/kms/latest/developerguide/overview.html
 [discord]: https://discord.gg/5qwXUFb6PB
 [examples]: ./examples
 [contribute]: ./CONTRIBUTE.md

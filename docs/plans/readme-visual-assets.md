@@ -126,6 +126,42 @@ Compress with Gifski / `gifsicle -O3`.
 
 ---
 
+## Asset 3 — Performance "flat latency" chart
+
+**Goal.** Make the scaling claim visual: *encrypted query latency stays flat from 10k to 10M rows.* A
+line that refuses to go up is more convincing than any table.
+
+**Placement.** In the `## Performance` section of the root README, under the latency table (a TODO
+comment marks the spot).
+
+**Why not embed the existing benches charts?** Reviewed the `cipherstash/benches` repo:
+
+- `report/query_*_chart.png` — matplotlib internal-report style; each chart also plots a
+  "with decryption" series (~24 ms, dominated by round-trip decrypt cost) that visually buries the
+  sub-millisecond headline. Light-theme only. Not README-quality.
+- `kms-app/results-ec2/**/latency.svg` / `throughput.svg` — the ZeroKMS vs AWS KMS story, cleanly
+  styled and the closest embeddable candidate, but light-theme only and annotated with red
+  "had failures" markers (on ZeroKMS points too, in the throughput chart) that invite the wrong
+  questions in a marketing context.
+
+**Spec.**
+
+- Line chart, x-axis: rows (log scale: 10k · 100k · 1M · 10M); y-axis: median query latency (ms).
+- Three flat lines near the floor: equality (~0.1 ms), range (~0.5 ms), JSON field equality (~0.1 ms).
+- Optional fourth reference: a subtle plaintext-baseline band, showing encrypted ≈ plaintext.
+- Callout label: **"Latency stays flat from 10k → 10M rows."**
+- Theme-aware light/dark SVG pair, same `<picture>` treatment and palette as the architecture diagram.
+- Regenerate from `cipherstash/benches` data on each benchmark refresh; attribute the repo in the caption.
+
+**Alt text:**
+> "Line chart of median encrypted-query latency versus table size. Equality, range, and JSON queries
+> hold steady at well under one millisecond as row counts grow from ten thousand to ten million."
+
+**Stretch:** a second chart for the ZeroKMS vs AWS KMS bulk-key story (up to 14× throughput, 10,000
+keys per call) — a two-bar or two-line comparison redrawn in brand style from `kms-app` data.
+
+---
+
 ## Suggested files
 
 | File | Asset | Status |
@@ -136,6 +172,8 @@ Compress with Gifski / `gifsicle -O3`.
 | `docs/images/architecture-stacked-dark.svg` | Architecture — mobile/stacked, dark (760×1100) | ✅ shipped |
 | `docs/images/type-safety.gif` | Autocomplete/type-safety demo | todo |
 | `docs/images/type-safety.mp4` | Optional higher-quality GitHub embed | todo |
+| `docs/images/perf-latency-light.svg` | Flat-latency chart — light | todo |
+| `docs/images/perf-latency-dark.svg` | Flat-latency chart — dark | todo |
 
 The architecture diagram is embedded in the README via a single `<picture>` element that selects one
 of the four variants from **two** dimensions at once — theme (`prefers-color-scheme`) and viewport width
