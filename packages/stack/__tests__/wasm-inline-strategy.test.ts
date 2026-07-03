@@ -65,11 +65,15 @@ describe('wasm-inline resolveStrategy', () => {
     expect(() =>
       // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — no strategy, no accessKey
       resolveStrategy({ workspaceCrn: CRN } as any),
-    ).toThrowError(/`config\.workspaceCrn` and `config\.accessKey` are required/)
+    ).toThrowError(
+      /`config\.workspaceCrn` and `config\.accessKey` are required/,
+    )
     expect(() =>
       // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — no strategy, no workspaceCrn
       resolveStrategy({ accessKey: 'CSAK.test' } as any),
-    ).toThrowError(/`config\.workspaceCrn` and `config\.accessKey` are required/)
+    ).toThrowError(
+      /`config\.workspaceCrn` and `config\.accessKey` are required/,
+    )
     // The guard must short-circuit *before* building a strategy.
     expect(vi.mocked(AccessKeyStrategy.create)).not.toHaveBeenCalled()
   })
