@@ -8,11 +8,7 @@
  */
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
-import {
-  EncryptionV3,
-  encryptedTable,
-  encryptedTextEqColumn,
-} from '@/encryption/v3'
+import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 import { LockContext } from '@/identity'
 import { unwrapResult } from '../fixtures'
 
@@ -25,7 +21,7 @@ const LIVE_CIPHERSTASH_ENABLED = Boolean(
 const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 const users = encryptedTable('v3_identity_live_users', {
-  email: encryptedTextEqColumn('email'),
+  email: types.TextEq('email'),
 })
 
 describeLive('v3 typed client identity-aware operations (live)', () => {

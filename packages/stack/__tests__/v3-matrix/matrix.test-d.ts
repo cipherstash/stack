@@ -16,7 +16,7 @@ import {
   type InferPlaintext,
   type QueryableColumnsOf,
   type QueryTypesForColumn,
-} from '@/schema/v3'
+} from '@/eql/v3'
 import { type EqlV3TypeName, V3_MATRIX } from './catalog'
 
 // One mixed-tier table spanning every capability tier + plaintext axis, built
