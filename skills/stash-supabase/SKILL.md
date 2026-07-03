@@ -401,6 +401,111 @@ type EncryptedSupabaseError = {
 - `EncryptedQueryBuilder`
 - `PendingOrCondition`
 - `SupabaseClientLike`
+- `EncryptedSupabaseV3Config`, `EncryptedSupabaseV3Instance`, `EncryptedQueryBuilderV3` (EQL v3)
+
+## EQL v3 (native `eql_v3.*` domains)
+
+`encryptedSupabaseV3` is the EQL v3 counterpart of `encryptedSupabase` for
+schemas authored with `@cipherstash/stack/eql/v3`. The public surface and call
+shape are **identical to v2** — same filter methods, `withLockContext`,
+`audit` — only the schema type and the wire encoding differ. Columns are
+stored in their native `eql_v3.*` domain (a `DOMAIN … AS jsonb` with a CHECK)
+instead of the v2 composite `eql_v2_encrypted`.
+
+### Setup
+
+```typescript
+import { Encryption } from "@cipherstash/stack"
+import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
+import { encryptedSupabaseV3 } from "@cipherstash/stack/supabase"
+
+const users = encryptedTable("users", {
+  email:  types.TextSearch("email"),        // eql_v3.text_search — eq + range + free-text
+  amount: types.Int4Ord("amount"),          // eql_v3.int4_ord    — eq + range
+  joined: types.TimestamptzOrd("joined_at") // eql_v3.timestamptz_ord — eq + range, decrypts to Date
+})
+
+const client = await Encryption({ schemas: [users] })
+const es = encryptedSupabaseV3({ encryptionClient: client, supabaseClient: supabase })
+
+await es.from("users", users).insert({ email: "a@b.com", amount: 30 })
+await es.from("users", users).select("id, email, amount").eq("email", "a@b.com")
+await es.from("users", users).select("id, amount").gte("amount", 10).lte("amount", 100)
+```
+
+Rows default to the table's inferred plaintext shape; pass an explicit row
+type for full typing over passthrough columns:
+
+```typescript
+type UserRow = { id: number; email: string; amount: number; joined: Date }
+const builder = es.from<typeof users, UserRow>("users", users)
+```
+
+A JS property may map to a different DB column name
+(`joined: types.TimestamptzOrd("joined_at")`) — filters, selects, and results
+are translated automatically, and `date`/`timestamptz` columns decrypt to real
+`Date` objects.
+
+### Database schema (per-domain columns)
+
+Each column is declared with its native domain — the `types.*` member name
+maps to the `eql_v3.<name>` domain (strip the `eql_v3.` prefix and PascalCase):
+
+```sql
+CREATE TABLE users (
+  id SERIAL PRIMARY KEY,
+  email eql_v3.text_search,
+  amount eql_v3.int4_ord,
+  joined_at eql_v3.timestamptz_ord
+);
+```
+
+### Install EQL v3 on Supabase
+
+```bash
+stash db install --eql-version 3 --supabase
+```
+
+This installs the opclass-stripped v3 bundle (operator classes need superuser,
+which Supabase does not grant) and applies the `eql_v3` grants for the
+`anon` / `authenticated` / `service_role` roles.
+
+**Manual step (same class of requirement as v2's `eql_v2`):** add `eql_v3` to
+the project's **Exposed schemas** (Dashboard → Settings → API → Exposed
+schemas). This puts the `eql_v3` operators on PostgREST's search_path so bare
+`col = term` filters resolve to the encrypted comparison. **If the schema is
+not exposed, the operators do not error — they silently fall back to base
+jsonb comparison and return wrong rows.** After changing the setting, verify
+with a known-value round-trip: insert a row, filter for it by an encrypted
+column, and assert the hit.
+
+### v3-specific behaviour
+
+- **Filter operands are full envelopes.** Every `eql_v3.*` domain CHECK
+  requires the storage keys (`v`/`i`/`c` plus the domain's index terms), and
+  the SQL operators coerce their operand into the domain — so the adapter
+  encrypts each filter value with the full storage path. This is internal;
+  the call shape is unchanged.
+- **`like`/`ilike` are emitted as PostgREST `cs`** (`@>` bloom-filter
+  containment) — the v3 domains define no LIKE operator. Match is tokenized
+  and downcased, so `like` and `ilike` behave identically; don't include `%`
+  wildcards in the pattern.
+- **Free-text search needs `include_original: false`** on the column's match
+  index (`types.TextSearch("email").freeTextSearch({ include_original: false })`)
+  for substring patterns to match. With the default `include_original: true`,
+  the full-envelope operand's bloom carries the whole pattern as an extra
+  token that only matches when the pattern equals the stored value.
+- **Storage-only domains are not filterable** (e.g. `types.Bool`,
+  `types.Text`): a filter on one is a type error with an explicit row type and
+  a clear runtime error otherwise.
+
+### Shared caveats (identical to v2)
+
+- **No `ORDER BY` on encrypted columns** — operator families need superuser,
+  which Supabase lacks. Range *filtering* (`gte`/`lte`/…) works. (OPE index
+  terms that are natively orderable — btree + `ORDER BY` on Supabase — are in
+  active development; out of scope here.)
+- **Operator visibility requires the exposed schema + grants** (above).
 
 ## Migrating an Existing Column to Encrypted
 
