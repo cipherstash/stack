@@ -50,7 +50,7 @@ describe('supply chain — pnpm configuration', () => {
   it('minimumReleaseAgeExclude contains only first-party packages', () => {
     // The cooldown exclusion list exists for first-party packages that ship
     // on their own release cadence. Third-party security fixes must use the
-    // one-off bypass (`pnpm install --config.minimumReleaseAge=0` with an
+    // one-off bypass (`pnpm install --config.minimum-release-age=0` with an
     // exact pin) instead — a name-scoped exclusion exempts every future
     // release of the package. See SKILL.md "Bypass the install cooldown".
     const ws = readYaml('pnpm-workspace.yaml') as {

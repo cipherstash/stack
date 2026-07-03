@@ -140,10 +140,11 @@ When CVE response needs a patch faster than 7 days:
    run can only admit that one release.
 2. Run a one-off install with the cooldown disabled for that single run
    (pnpm ≥ 10 has no dedicated flag; the CLI config override is the one-off
-   equivalent and does not persist):
+   equivalent and does not persist — kebab-case is the canonical form,
+   though pnpm 10.x accepts the camelCase spelling too):
 
 ```bash
-pnpm install --config.minimumReleaseAge=0
+pnpm install --config.minimum-release-age=0
 ```
 
 Once the patched version is in `pnpm-lock.yaml`, normal and
