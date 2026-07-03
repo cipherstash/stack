@@ -46,6 +46,44 @@ describe('supply chain — pnpm configuration', () => {
     expect(Array.isArray(allow)).toBe(true)
     expect(allow.length).toBeLessThanOrEqual(3)
   })
+
+  it('minimumReleaseAgeExclude contains only first-party packages', () => {
+    // The cooldown exclusion list exists for first-party packages that ship
+    // on their own release cadence. Third-party security fixes must use the
+    // one-off bypass (`pnpm install --config.minimumReleaseAge=0` with an
+    // exact pin) instead — a name-scoped exclusion exempts every future
+    // release of the package. See SKILL.md "Bypass the install cooldown".
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      minimumReleaseAgeExclude?: string[]
+    }
+    const FIRST_PARTY = [/^@prisma-next\//, /^@cipherstash\//]
+    for (const entry of ws.minimumReleaseAgeExclude ?? []) {
+      expect(
+        FIRST_PARTY.some((re) => re.test(entry)),
+        `"${entry}" is not a first-party cooldown exclusion`,
+      ).toBe(true)
+    }
+  })
+
+  it('security overrides stay range-scoped and remain a small allowlist (≤12 entries)', () => {
+    // Every override must be scoped to the advisory's vulnerable range
+    // (`pkg@<range>`), never a blanket `pkg` pin — a blanket pin silently
+    // rewrites versions outside the vulnerable range forever. The count cap
+    // mirrors onlyBuiltDependencies: growth forces a conscious review.
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      overrides?: Record<string, string>
+    }
+    const selectors = Object.keys(ws.overrides ?? {})
+    expect(selectors.length).toBeLessThanOrEqual(12)
+    for (const selector of selectors) {
+      // A version-scoped selector has an `@` after the package name
+      // (position > 0 handles `@scope/pkg@range`).
+      expect(
+        selector.lastIndexOf('@') > 0,
+        `override "${selector}" is not scoped to a version range`,
+      ).toBe(true)
+    }
+  })
 })
 
 describe('supply chain — registry pinning (.npmrc)', () => {
