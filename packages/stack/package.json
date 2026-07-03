@@ -51,8 +51,8 @@
 			"schema": [
 				"./dist/schema/index.d.ts"
 			],
-			"schema/v3": [
-				"./dist/schema/v3/index.d.ts"
+			"eql/v3": [
+				"./dist/eql/v3/index.d.ts"
 			],
 			"v3": [
 				"./dist/encryption/v3.d.ts"
@@ -125,14 +125,14 @@
 				"default": "./dist/schema/index.cjs"
 			}
 		},
-		"./schema/v3": {
+		"./eql/v3": {
 			"import": {
-				"types": "./dist/schema/v3/index.d.ts",
-				"default": "./dist/schema/v3/index.js"
+				"types": "./dist/eql/v3/index.d.ts",
+				"default": "./dist/eql/v3/index.js"
 			},
 			"require": {
-				"types": "./dist/schema/v3/index.d.cts",
-				"default": "./dist/schema/v3/index.cjs"
+				"types": "./dist/eql/v3/index.d.cts",
+				"default": "./dist/eql/v3/index.cjs"
 			}
 		},
 		"./v3": {
@@ -217,7 +217,7 @@
 		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
 		"build": "tsup",
 		"dev": "tsup --watch",
-		"analyze:complexity": "fta src/schema/v3 --score-cap 72",
+		"analyze:complexity": "fta src/eql/v3 --score-cap 72",
 		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",

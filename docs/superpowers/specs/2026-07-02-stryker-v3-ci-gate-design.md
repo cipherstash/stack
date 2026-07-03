@@ -7,7 +7,7 @@ Branch: feat/eql-v3-text-search-schema
 ## Goal
 
 Add StrykerJS mutation testing scoped to **EQL v3 only**
-(`packages/stack/src/schema/v3/`) and wire it into CI as a **blocking** check.
+(`packages/stack/src/eql/v3/`) and wire it into CI as a **blocking** check.
 The gate mirrors the existing `fta-v3.yml` complexity gate: paths-filtered to v3,
 directory-scoped, and blocking (no `continue-on-error`).
 
@@ -29,11 +29,15 @@ test-effectiveness gate (dynamic).
 
 1. **stack uses Vitest 3.2.4, not Jest.** rundown's Jest-runner config is not
    reusable. We use `@stryker-mutator/vitest-runner`.
-2. **v3 scope is a single file:** `packages/stack/src/schema/v3/index.ts`
-   (~992 lines). Because the mutate scope is one file, the project-wide aggregate
-   mutation score *is* that file's score. rundown needed a custom per-file gate
-   script (`assert-mutation-score.mjs`) only because a single collapsing file can
-   hide behind a green aggregate across many files. **We do not need that script.**
+2. **v3 scope is a small directory:** `packages/stack/src/eql/v3/` — four
+   cohesive files (`columns.ts`, `types.ts`, `table.ts`, `index.ts`), split out
+   of the former single `schema/v3/index.ts`. NOTE: an earlier draft of this
+   spec assumed a *single file*, from which it concluded the project-wide
+   aggregate score *is* that file's score and no per-file gate script was needed.
+   That premise no longer holds — the mutate scope is now four files. With only
+   four small files the aggregate is still a faithful signal, so start with an
+   aggregate `break` threshold only (no `assert-mutation-score.mjs`), but add
+   per-file gating if any one file's score later diverges from the aggregate.
 3. **Live/DB tests self-skip without env.** `schema-v3-pg.test.ts` (guarded by
    `DATABASE_URL` + `CS_*`) and `schema-v3-client.test.ts` (guarded by `CS_*`)
    skip their `describe` blocks when the env vars are absent. So a CI run with no
@@ -41,7 +45,7 @@ test-effectiveness gate (dynamic).
    pure `schema-v3.test.ts` (~21 KB) and `typed-client-v3.test.ts` provide the
    coverage. The gate stays as lean as the FTA job (no DB, no credentials).
 4. **No build step needed.** Vitest transpiles TS on the fly and the tests import
-   from `@/schema/v3` (source, via the `@/` alias), so Stryker instruments source
+   from `@/eql/v3` (source, via the `@/` alias), so Stryker instruments source
    directly — no `pnpm build` required.
 5. **Supply-chain rule.** Tooling must be a pinned devDependency installed via
    `--frozen-lockfile` (no `pnpm dlx` / `npx`), matching how `fta-cli@3.0.0` is
@@ -49,7 +53,7 @@ test-effectiveness gate (dynamic).
 
 ## Scope decisions
 
-- **Mutate scope: `schema/v3` only** (`src/schema/v3/**/*.ts`). Matches the FTA
+- **Mutate scope: `eql/v3` only** (`src/eql/v3/**/*.ts`). Matches the FTA
   gate exactly. `src/encryption/v3.ts` is also v3 but is outside the current FTA
   scope and is **excluded here** to keep the gate consistent and lean.
 - **Test execution: lean, no DB.** Stryker runs only the v3 runtime test files;
@@ -89,7 +93,7 @@ export default {
   testRunner: 'vitest',
   plugins: ['@stryker-mutator/vitest-runner'],
   vitest: { configFile: 'vitest.stryker.config.ts' },
-  mutate: ['src/schema/v3/**/*.ts'],
+  mutate: ['src/eql/v3/**/*.ts'],
   coverageAnalysis: 'perTest',
   reporters: ['clear-text', 'progress', 'html', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
@@ -122,7 +126,7 @@ Add to `packages/stack/package.json` scripts:
 A near-clone of `fta-v3.yml`:
 
 - `on: push (main) / pull_request (**)` with `paths:`:
-  - `packages/stack/src/schema/v3/**`
+  - `packages/stack/src/eql/v3/**`
   - `packages/stack/package.json`
   - `packages/stack/stryker.config.mjs`
   - `packages/stack/vitest.stryker.config.ts`
@@ -141,7 +145,7 @@ Implementation therefore includes a **baseline step**:
 
 1. Install deps and run `pnpm --filter @cipherstash/stack run test:mutation`
    locally.
-2. Record the reported mutation score for `schema/v3`.
+2. Record the reported mutation score for `eql/v3`.
 3. Set `thresholds.break` just **below** the measured score (a small buffer, the
    way FTA sets `--score-cap 72` against a current 71.08). This ensures the
    current state passes while any regression that lowers the score fails the gate.
@@ -163,12 +167,13 @@ implementation, not a silent choice.
 ## Out of scope (YAGNI)
 
 - Stryker Dashboard reporter and incremental baseline.
-- Per-file gate script (`assert-mutation-score.mjs`) — unnecessary for a single
-  mutate file.
+- Per-file gate script (`assert-mutation-score.mjs`) — deferred: start with an
+  aggregate `break` across the four `src/eql/v3/**` files; add per-file gating
+  only if one file's score later diverges from the aggregate (see fact #2).
 - Advisory PR comment job.
 - Postgres-backed mutation runs / mutating `src/encryption/v3.ts`.
 
-These can be added later if the single-file gate proves insufficient.
+These can be added later if the aggregate gate proves insufficient.
 
 ## Decisions confirmed
 

@@ -1,5 +1,4 @@
-import type { ColumnSchema, EncryptConfig, MatchIndexOpts } from '@/schema'
-import type { Encrypted } from '@/types'
+import type { ColumnSchema, MatchIndexOpts } from '@/schema'
 
 /**
  * The query capabilities a v3 concrete domain exposes. These are SDK-facing
@@ -86,43 +85,46 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
 // by `typeof <CONST>`; the literal `eqlType`/`castAs`/`capabilities` on each is
 // what makes the otherwise-empty subclasses nominally distinct (see
 // V3DomainDefinition). Order mirrors eql-bindings `CATALOG` order.
-const INT4 = {
+//
+// Exported for the `types` namespace factory (see ./types); they are internal
+// building blocks and are intentionally NOT re-exported from the public barrel.
+export const INT4 = {
   eqlType: 'eql_v3.int4',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-const INT4_EQ = {
+export const INT4_EQ = {
   eqlType: 'eql_v3.int4_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-const INT4_ORD_ORE = {
+export const INT4_ORD_ORE = {
   eqlType: 'eql_v3.int4_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-const INT4_ORD = {
+export const INT4_ORD = {
   eqlType: 'eql_v3.int4_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const INT2 = {
+export const INT2 = {
   eqlType: 'eql_v3.int2',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-const INT2_EQ = {
+export const INT2_EQ = {
   eqlType: 'eql_v3.int2_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-const INT2_ORD_ORE = {
+export const INT2_ORD_ORE = {
   eqlType: 'eql_v3.int2_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-const INT2_ORD = {
+export const INT2_ORD = {
   eqlType: 'eql_v3.int2_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
@@ -135,138 +137,138 @@ const INT2_ORD = {
 // 2^53. Re-add INT8/INT8_EQ/INT8_ORD_ORE/INT8_ORD and their builders once the
 // FFI accepts a lossless bigint on input and returns it on decrypt.
 
-const DATE = {
+export const DATE = {
   eqlType: 'eql_v3.date',
   castAs: 'date',
   capabilities: STORAGE_ONLY,
 } as const
-const DATE_EQ = {
+export const DATE_EQ = {
   eqlType: 'eql_v3.date_eq',
   castAs: 'date',
   capabilities: EQUALITY_ONLY,
 } as const
-const DATE_ORD_ORE = {
+export const DATE_ORD_ORE = {
   eqlType: 'eql_v3.date_ord_ore',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
-const DATE_ORD = {
+export const DATE_ORD = {
   eqlType: 'eql_v3.date_ord',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const TIMESTAMPTZ = {
+export const TIMESTAMPTZ = {
   eqlType: 'eql_v3.timestamptz',
   castAs: 'date',
   capabilities: STORAGE_ONLY,
 } as const
-const TIMESTAMPTZ_EQ = {
+export const TIMESTAMPTZ_EQ = {
   eqlType: 'eql_v3.timestamptz_eq',
   castAs: 'date',
   capabilities: EQUALITY_ONLY,
 } as const
-const TIMESTAMPTZ_ORD_ORE = {
+export const TIMESTAMPTZ_ORD_ORE = {
   eqlType: 'eql_v3.timestamptz_ord_ore',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
-const TIMESTAMPTZ_ORD = {
+export const TIMESTAMPTZ_ORD = {
   eqlType: 'eql_v3.timestamptz_ord',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const NUMERIC = {
+export const NUMERIC = {
   eqlType: 'eql_v3.numeric',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-const NUMERIC_EQ = {
+export const NUMERIC_EQ = {
   eqlType: 'eql_v3.numeric_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-const NUMERIC_ORD_ORE = {
+export const NUMERIC_ORD_ORE = {
   eqlType: 'eql_v3.numeric_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-const NUMERIC_ORD = {
+export const NUMERIC_ORD = {
   eqlType: 'eql_v3.numeric_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const TEXT = {
+export const TEXT = {
   eqlType: 'eql_v3.text',
   castAs: 'string',
   capabilities: STORAGE_ONLY,
 } as const
-const TEXT_EQ = {
+export const TEXT_EQ = {
   eqlType: 'eql_v3.text_eq',
   castAs: 'string',
   capabilities: EQUALITY_ONLY,
 } as const
-const TEXT_MATCH = {
+export const TEXT_MATCH = {
   eqlType: 'eql_v3.text_match',
   castAs: 'string',
   capabilities: MATCH_ONLY,
 } as const
-const TEXT_ORD_ORE = {
+export const TEXT_ORD_ORE = {
   eqlType: 'eql_v3.text_ord_ore',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
-const TEXT_ORD = {
+export const TEXT_ORD = {
   eqlType: 'eql_v3.text_ord',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const BOOL = {
+export const BOOL = {
   eqlType: 'eql_v3.bool',
   castAs: 'boolean',
   capabilities: STORAGE_ONLY,
 } as const
 
-const FLOAT4 = {
+export const FLOAT4 = {
   eqlType: 'eql_v3.float4',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-const FLOAT4_EQ = {
+export const FLOAT4_EQ = {
   eqlType: 'eql_v3.float4_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-const FLOAT4_ORD_ORE = {
+export const FLOAT4_ORD_ORE = {
   eqlType: 'eql_v3.float4_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-const FLOAT4_ORD = {
+export const FLOAT4_ORD = {
   eqlType: 'eql_v3.float4_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-const FLOAT8 = {
+export const FLOAT8 = {
   eqlType: 'eql_v3.float8',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-const FLOAT8_EQ = {
+export const FLOAT8_EQ = {
   eqlType: 'eql_v3.float8_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-const FLOAT8_ORD_ORE = {
+export const FLOAT8_ORD_ORE = {
   eqlType: 'eql_v3.float8_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-const FLOAT8_ORD = {
+export const FLOAT8_ORD = {
   eqlType: 'eql_v3.float8_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
@@ -365,7 +367,7 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
  * `EncryptedDateColumn`, both storage-only) are NOT mutually assignable. This
  * nominality is what keeps plaintext inference precise.
  */
-class EncryptedV3Column<D extends V3DomainDefinition> {
+export class EncryptedV3Column<D extends V3DomainDefinition> {
   constructor(
     private readonly columnName: string,
     private readonly definition: D,
@@ -483,70 +485,35 @@ export class EncryptedTextSearchColumn extends EncryptedV3Column<
   }
 }
 
-/**
- * Define an `eql_v3.text_search` column. The concrete type carries all three
- * capabilities (equality + order/range + free-text match). Chain
- * `.freeTextSearch(opts)` to tune the match index.
- *
- * Querying defaults to EQUALITY — pass `queryType: 'freeTextSearch'` to
- * `encryptQuery` for free-text match. See {@link EncryptedTextSearchColumn}.
- */
-export function encryptedTextSearchColumn(
-  columnName: string,
-): EncryptedTextSearchColumn {
-  return new EncryptedTextSearchColumn(columnName)
-}
-
 // ---------------------------------------------------------------------------
-// Concrete domain columns and builders
+// Concrete domain columns
 //
 // Every concrete class is an empty subclass parameterised by its literal domain
-// definition (see EncryptedV3Column). The paired builder passes the SAME literal
-// constant so the instance's private `definition` field carries full literal
-// type data — that is what keeps distinct domains nominally incompatible.
+// definition (see EncryptedV3Column). The `types` namespace (see ./types)
+// constructs these with the SAME literal constant so the instance's private
+// `definition` field carries full literal type data — that is what keeps
+// distinct domains nominally incompatible.
 // ---------------------------------------------------------------------------
 
 // int4
 export class EncryptedInt4Column extends EncryptedV3Column<typeof INT4> {}
-export const encryptedInt4Column = (columnName: string) =>
-  new EncryptedInt4Column(columnName, INT4)
-
 export class EncryptedInt4EqColumn extends EncryptedV3Column<typeof INT4_EQ> {}
-export const encryptedInt4EqColumn = (columnName: string) =>
-  new EncryptedInt4EqColumn(columnName, INT4_EQ)
-
 export class EncryptedInt4OrdOreColumn extends EncryptedV3Column<
   typeof INT4_ORD_ORE
 > {}
-export const encryptedInt4OrdOreColumn = (columnName: string) =>
-  new EncryptedInt4OrdOreColumn(columnName, INT4_ORD_ORE)
-
 export class EncryptedInt4OrdColumn extends EncryptedV3Column<
   typeof INT4_ORD
 > {}
-export const encryptedInt4OrdColumn = (columnName: string) =>
-  new EncryptedInt4OrdColumn(columnName, INT4_ORD)
 
 // int2
 export class EncryptedInt2Column extends EncryptedV3Column<typeof INT2> {}
-export const encryptedInt2Column = (columnName: string) =>
-  new EncryptedInt2Column(columnName, INT2)
-
 export class EncryptedInt2EqColumn extends EncryptedV3Column<typeof INT2_EQ> {}
-export const encryptedInt2EqColumn = (columnName: string) =>
-  new EncryptedInt2EqColumn(columnName, INT2_EQ)
-
 export class EncryptedInt2OrdOreColumn extends EncryptedV3Column<
   typeof INT2_ORD_ORE
 > {}
-export const encryptedInt2OrdOreColumn = (columnName: string) =>
-  new EncryptedInt2OrdOreColumn(columnName, INT2_ORD_ORE)
-
 export class EncryptedInt2OrdColumn extends EncryptedV3Column<
   typeof INT2_ORD
 > {}
-export const encryptedInt2OrdColumn = (columnName: string) =>
-  new EncryptedInt2OrdColumn(columnName, INT2_ORD)
 
 // int8 (bigint) domain builders are intentionally omitted pending FFI support
 // for lossless bigint round-tripping — see the note by the INT4/DATE domain
@@ -554,150 +521,79 @@ export const encryptedInt2OrdColumn = (columnName: string) =>
 
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
-export const encryptedDateColumn = (columnName: string) =>
-  new EncryptedDateColumn(columnName, DATE)
-
 export class EncryptedDateEqColumn extends EncryptedV3Column<typeof DATE_EQ> {}
-export const encryptedDateEqColumn = (columnName: string) =>
-  new EncryptedDateEqColumn(columnName, DATE_EQ)
-
 export class EncryptedDateOrdOreColumn extends EncryptedV3Column<
   typeof DATE_ORD_ORE
 > {}
-export const encryptedDateOrdOreColumn = (columnName: string) =>
-  new EncryptedDateOrdOreColumn(columnName, DATE_ORD_ORE)
-
 export class EncryptedDateOrdColumn extends EncryptedV3Column<
   typeof DATE_ORD
 > {}
-export const encryptedDateOrdColumn = (columnName: string) =>
-  new EncryptedDateOrdColumn(columnName, DATE_ORD)
 
 // timestamptz
 export class EncryptedTimestamptzColumn extends EncryptedV3Column<
   typeof TIMESTAMPTZ
 > {}
-export const encryptedTimestamptzColumn = (columnName: string) =>
-  new EncryptedTimestamptzColumn(columnName, TIMESTAMPTZ)
-
 export class EncryptedTimestamptzEqColumn extends EncryptedV3Column<
   typeof TIMESTAMPTZ_EQ
 > {}
-export const encryptedTimestamptzEqColumn = (columnName: string) =>
-  new EncryptedTimestamptzEqColumn(columnName, TIMESTAMPTZ_EQ)
-
 export class EncryptedTimestamptzOrdOreColumn extends EncryptedV3Column<
   typeof TIMESTAMPTZ_ORD_ORE
 > {}
-export const encryptedTimestamptzOrdOreColumn = (columnName: string) =>
-  new EncryptedTimestamptzOrdOreColumn(columnName, TIMESTAMPTZ_ORD_ORE)
-
 export class EncryptedTimestamptzOrdColumn extends EncryptedV3Column<
   typeof TIMESTAMPTZ_ORD
 > {}
-export const encryptedTimestamptzOrdColumn = (columnName: string) =>
-  new EncryptedTimestamptzOrdColumn(columnName, TIMESTAMPTZ_ORD)
 
 // numeric
 export class EncryptedNumericColumn extends EncryptedV3Column<typeof NUMERIC> {}
-export const encryptedNumericColumn = (columnName: string) =>
-  new EncryptedNumericColumn(columnName, NUMERIC)
-
 export class EncryptedNumericEqColumn extends EncryptedV3Column<
   typeof NUMERIC_EQ
 > {}
-export const encryptedNumericEqColumn = (columnName: string) =>
-  new EncryptedNumericEqColumn(columnName, NUMERIC_EQ)
-
 export class EncryptedNumericOrdOreColumn extends EncryptedV3Column<
   typeof NUMERIC_ORD_ORE
 > {}
-export const encryptedNumericOrdOreColumn = (columnName: string) =>
-  new EncryptedNumericOrdOreColumn(columnName, NUMERIC_ORD_ORE)
-
 export class EncryptedNumericOrdColumn extends EncryptedV3Column<
   typeof NUMERIC_ORD
 > {}
-export const encryptedNumericOrdColumn = (columnName: string) =>
-  new EncryptedNumericOrdColumn(columnName, NUMERIC_ORD)
 
-// text (text_search stays defined above with its match-tuning override)
+// text (text_search is defined above with its match-tuning override)
 export class EncryptedTextColumn extends EncryptedV3Column<typeof TEXT> {}
-export const encryptedTextColumn = (columnName: string) =>
-  new EncryptedTextColumn(columnName, TEXT)
-
 export class EncryptedTextEqColumn extends EncryptedV3Column<typeof TEXT_EQ> {}
-export const encryptedTextEqColumn = (columnName: string) =>
-  new EncryptedTextEqColumn(columnName, TEXT_EQ)
-
 export class EncryptedTextMatchColumn extends EncryptedV3Column<
   typeof TEXT_MATCH
 > {}
-export const encryptedTextMatchColumn = (columnName: string) =>
-  new EncryptedTextMatchColumn(columnName, TEXT_MATCH)
-
 export class EncryptedTextOrdOreColumn extends EncryptedV3Column<
   typeof TEXT_ORD_ORE
 > {}
-export const encryptedTextOrdOreColumn = (columnName: string) =>
-  new EncryptedTextOrdOreColumn(columnName, TEXT_ORD_ORE)
-
 export class EncryptedTextOrdColumn extends EncryptedV3Column<
   typeof TEXT_ORD
 > {}
-export const encryptedTextOrdColumn = (columnName: string) =>
-  new EncryptedTextOrdColumn(columnName, TEXT_ORD)
 
 // bool
 export class EncryptedBoolColumn extends EncryptedV3Column<typeof BOOL> {}
-export const encryptedBoolColumn = (columnName: string) =>
-  new EncryptedBoolColumn(columnName, BOOL)
 
 // float4
 export class EncryptedFloat4Column extends EncryptedV3Column<typeof FLOAT4> {}
-export const encryptedFloat4Column = (columnName: string) =>
-  new EncryptedFloat4Column(columnName, FLOAT4)
-
 export class EncryptedFloat4EqColumn extends EncryptedV3Column<
   typeof FLOAT4_EQ
 > {}
-export const encryptedFloat4EqColumn = (columnName: string) =>
-  new EncryptedFloat4EqColumn(columnName, FLOAT4_EQ)
-
 export class EncryptedFloat4OrdOreColumn extends EncryptedV3Column<
   typeof FLOAT4_ORD_ORE
 > {}
-export const encryptedFloat4OrdOreColumn = (columnName: string) =>
-  new EncryptedFloat4OrdOreColumn(columnName, FLOAT4_ORD_ORE)
-
 export class EncryptedFloat4OrdColumn extends EncryptedV3Column<
   typeof FLOAT4_ORD
 > {}
-export const encryptedFloat4OrdColumn = (columnName: string) =>
-  new EncryptedFloat4OrdColumn(columnName, FLOAT4_ORD)
 
 // float8
 export class EncryptedFloat8Column extends EncryptedV3Column<typeof FLOAT8> {}
-export const encryptedFloat8Column = (columnName: string) =>
-  new EncryptedFloat8Column(columnName, FLOAT8)
-
 export class EncryptedFloat8EqColumn extends EncryptedV3Column<
   typeof FLOAT8_EQ
 > {}
-export const encryptedFloat8EqColumn = (columnName: string) =>
-  new EncryptedFloat8EqColumn(columnName, FLOAT8_EQ)
-
 export class EncryptedFloat8OrdOreColumn extends EncryptedV3Column<
   typeof FLOAT8_ORD_ORE
 > {}
-export const encryptedFloat8OrdOreColumn = (columnName: string) =>
-  new EncryptedFloat8OrdOreColumn(columnName, FLOAT8_ORD_ORE)
-
 export class EncryptedFloat8OrdColumn extends EncryptedV3Column<
   typeof FLOAT8_ORD
 > {}
-export const encryptedFloat8OrdColumn = (columnName: string) =>
-  new EncryptedFloat8OrdColumn(columnName, FLOAT8_ORD)
 
 /**
  * Union of every v3 concrete column type. Used as the value type for v3 table
@@ -748,137 +644,6 @@ export type EncryptedV3TableColumn = {
   [key: string]: AnyEncryptedV3Column
 }
 
-interface TableDefinition {
-  tableName: string
-  columns: Record<string, ColumnSchema>
-}
-
-/**
- * A v3 encrypted table. Mirrors the v2 `EncryptedTable` but only accepts v3
- * column builders. Emits the same `{ tableName, columns }` definition shape.
- */
-export class EncryptedTable<T extends EncryptedV3TableColumn> {
-  /** @internal Type-level brand so TypeScript can infer `T` from `EncryptedTable<T>`. */
-  declare readonly _columnType: T
-
-  constructor(
-    public readonly tableName: string,
-    public readonly columnBuilders: T,
-  ) {}
-
-  build(): TableDefinition {
-    const builtColumns: Record<string, ColumnSchema> = {}
-    for (const builder of Object.values(this.columnBuilders)) {
-      // Key by the column's DB name (`getName()`), NOT the JS property name.
-      // `encrypt`/`decrypt` look columns up in the config by `column.getName()`,
-      // so a camelCase JS key mapping to a snake_case DB column (e.g.
-      // `createdOn: encryptedDateColumn('created_on')`) must register under
-      // `created_on` or the FFI reports "column not found in Encrypt config".
-      builtColumns[builder.getName()] = builder.build()
-    }
-    return {
-      tableName: this.tableName,
-      columns: builtColumns,
-    }
-  }
-
-  /**
-   * Map each column's JS property name to its DB column name (`getName()`).
-   * The model path matches user models by property name but must address the
-   * encrypt config and FFI by DB name — `build()` keys columns by DB name, so
-   * the two only agree when property == name. This recovers the mapping that
-   * `build()` discards.
-   */
-  buildColumnKeyMap(): Record<string, string> {
-    const map: Record<string, string> = {}
-    for (const [property, builder] of Object.entries(this.columnBuilders)) {
-      map[property] = builder.getName()
-    }
-    return map
-  }
-}
-
-/**
- * Own instance members of {@link EncryptedTable} that a column name must not
- * shadow. Because {@link encryptedTable} copies column builders onto the
- * instance for accessor access (`users.email`), a column named e.g. `build`
- * would otherwise overwrite the method that {@link buildEncryptConfig} relies
- * on. `_columnType` is a type-only `declare` (no runtime property) so it is
- * listed explicitly here rather than caught by the `in` check below.
- */
-const RESERVED_TABLE_KEYS = new Set([
-  'tableName',
-  'columnBuilders',
-  '_columnType',
-  'build',
-  'buildColumnKeyMap',
-])
-
-/**
- * Whether a column name would collide with a reserved property on the table
- * object — either an own member ({@link RESERVED_TABLE_KEYS}) or any inherited
- * `Object.prototype` member (`constructor`, `toString`, `valueOf`,
- * `hasOwnProperty`, …). The `in` check covers the prototype chain so assigning
- * the column as an own property can never shadow a prototype method/accessor.
- */
-function isReservedTableKey(tableBuilder: object, colName: string): boolean {
-  return RESERVED_TABLE_KEYS.has(colName) || colName in tableBuilder
-}
-
-/**
- * Define a v3 encrypted table. Intentionally shadows the v2 `encryptedTable`
- * name but lives on the `/v3` subpath — the importer picks the model by import
- * path. The returned object is also a column accessor (`users.email`).
- */
-export function encryptedTable<T extends EncryptedV3TableColumn>(
-  tableName: string,
-  columns: T,
-): EncryptedTable<T> & T {
-  const tableBuilder = new EncryptedTable(
-    tableName,
-    columns,
-  ) as EncryptedTable<T> & T
-
-  for (const [colName, colBuilder] of Object.entries(columns)) {
-    if (isReservedTableKey(tableBuilder, colName)) {
-      throw new Error(
-        `Column name "${colName}" collides with a reserved EncryptedTable property`,
-      )
-    }
-    ;(tableBuilder as EncryptedV3TableColumn)[colName] = colBuilder
-  }
-
-  return tableBuilder
-}
-
-/**
- * Build an `EncryptConfig` (`v: 1`) from one or more v3 tables. Emits the same
- * shape as v2's `buildEncryptConfig`.
- */
-export function buildEncryptConfig(
-  ...tables: Array<EncryptedTable<EncryptedV3TableColumn>>
-): EncryptConfig {
-  const config: EncryptConfig = {
-    v: 1,
-    tables: {},
-  }
-
-  for (const tb of tables) {
-    const tableDef = tb.build()
-    // Config tables are keyed by name, so a duplicate would silently overwrite
-    // the earlier table. Fail loudly instead. (v3-only additive guard; v2's
-    // buildEncryptConfig keeps its existing silent-overwrite behavior.)
-    if (Object.hasOwn(config.tables, tableDef.tableName)) {
-      throw new Error(
-        `[schema/v3]: duplicate table name "${tableDef.tableName}" passed to buildEncryptConfig — each table must have a unique name`,
-      )
-    }
-    config.tables[tableDef.tableName] = tableDef.columns
-  }
-
-  return config
-}
-
 /** Map a domain's {@link PlaintextKind} to its TypeScript plaintext type. */
 type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
@@ -901,37 +666,6 @@ export type PlaintextForColumn<C> =
   C extends EncryptedV3Column<infer D> ? PlaintextFromKind<D['castAs']> : never
 
 /**
- * The concrete EQL v3 type string for a single column, read from the literal
- * domain definition carried on the base class's private field (mirrors
- * {@link PlaintextForColumn}). Distributes over a union of columns, so
- * `EqlTypeForColumn<AnyEncryptedV3Column>` yields the union of every domain's
- * `eqlType` — the canonical, source-of-truth key set for a type-driven test
- * matrix keyed by domain.
- */
-export type EqlTypeForColumn<C> =
-  C extends EncryptedV3Column<infer D> ? D['eqlType'] : never
-
-/**
- * Infer the plaintext (decrypted) shape from a v3 table schema. Each column maps
- * to the TypeScript type of its domain's `castAs` kind.
- */
-export type InferPlaintext<T extends EncryptedTable<EncryptedV3TableColumn>> =
-  T extends EncryptedTable<infer C>
-    ? { [K in keyof C]: PlaintextForColumn<C[K]> }
-    : never
-
-/**
- * Infer the encrypted shape from a v3 table schema. See {@link InferPlaintext}
- * for why no key-remap filter is needed in the flat single-type model.
- */
-export type InferEncrypted<T extends EncryptedTable<EncryptedV3TableColumn>> =
-  T extends EncryptedTable<infer C> ? { [K in keyof C]: Encrypted } : never
-
-// ---------------------------------------------------------------------------
-// Typed-client surface helpers (@cipherstash/stack/v3)
-// ---------------------------------------------------------------------------
-
-/**
  * The user-facing `queryType` names a v3 column supports, derived 1:1 from its
  * capability flags. Resolves to `never` for a storage-only column (all flags
  * `false`) and for any non-v3 value. The names mirror the {@link QueryCapabilities}
@@ -949,55 +683,13 @@ export type QueryTypesForColumn<C> =
             : never)
     : never
 
-/** Any v3 table, regardless of its column map. */
-export type AnyV3Table = EncryptedTable<EncryptedV3TableColumn>
-
-/** Union of the concrete column builders declared on a v3 table. */
-export type ColumnsOf<T extends AnyV3Table> =
-  T extends EncryptedTable<infer C> ? C[keyof C] : never
-
 /**
- * Union of the *queryable* column builders on a v3 table. Storage-only columns
- * (whose {@link QueryTypesForColumn} is `never`) are filtered out, so they can't
- * be passed to a query method.
+ * The concrete EQL v3 type string for a single column, read from the literal
+ * domain definition carried on the base class's private field (mirrors
+ * {@link PlaintextForColumn}). Distributes over a union of columns, so
+ * `EqlTypeForColumn<AnyEncryptedV3Column>` yields the union of every domain's
+ * `eqlType` — the canonical, source-of-truth key set for a type-driven test
+ * matrix keyed by domain.
  */
-export type QueryableColumnsOf<T extends AnyV3Table> =
-  T extends EncryptedTable<infer C>
-    ? {
-        [K in keyof C]: [QueryTypesForColumn<C[K]>] extends [never]
-          ? never
-          : C[K]
-      }[keyof C]
-    : never
-
-/**
- * The accepted input model for {@link import('@/encryption/v3').TypedEncryptionClient.encryptModel}.
- * `T` is inferred from the argument: keys that name a schema column are pinned to
- * the column's plaintext type (nullable if the field is nullable), so a wrong-typed
- * field fails assignability; all other keys pass through unchanged.
- */
-export type V3ModelInput<Table extends AnyV3Table, T> = {
-  [K in keyof T]: K extends keyof InferPlaintext<Table>
-    ? null extends T[K]
-      ? InferPlaintext<Table>[K] | null
-      : InferPlaintext<Table>[K]
-    : T[K]
-}
-
-/** The encrypted result model: schema columns become `Encrypted`, others pass through. */
-export type V3EncryptedModel<Table extends AnyV3Table, T> = {
-  [K in keyof T]: K extends keyof InferPlaintext<Table>
-    ? null extends T[K]
-      ? Encrypted | null
-      : Encrypted
-    : T[K]
-}
-
-/** The decrypted result model: schema columns become their plaintext type, others pass through. */
-export type V3DecryptedModel<Table extends AnyV3Table, T> = {
-  [K in keyof T]: K extends keyof InferPlaintext<Table>
-    ? null extends T[K]
-      ? InferPlaintext<Table>[K] | null
-      : InferPlaintext<Table>[K]
-    : T[K]
-}
+export type EqlTypeForColumn<C> =
+  C extends EncryptedV3Column<infer D> ? D['eqlType'] : never

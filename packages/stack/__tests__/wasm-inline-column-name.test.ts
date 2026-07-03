@@ -17,8 +17,8 @@ vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ({
   newClient: vi.fn(),
 }))
 
+import { types } from '../src/eql/v3'
 import { encryptedColumn, encryptedField } from '../src/schema'
-import { encryptedTextSearchColumn } from '../src/schema/v3'
 import { getColumnName } from '../src/wasm-inline'
 
 describe('wasm-inline getColumnName', () => {
@@ -36,7 +36,7 @@ describe('wasm-inline getColumnName', () => {
     // entry, but the old `instanceof EncryptedColumn || EncryptedField` gate
     // threw at runtime. The entry now resolves the name structurally so a v3
     // column genuinely round-trips through WasmEncryptionClient.encrypt().
-    expect(getColumnName(encryptedTextSearchColumn('email'))).toBe('email')
+    expect(getColumnName(types.TextSearch('email'))).toBe('email')
   })
 
   it('throws when given a value that does not expose getName()', () => {

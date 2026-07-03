@@ -74,7 +74,7 @@ export type EncryptedQuery = CipherStashEncryptedQuery
  * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
  * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
  * BigInt") and rejects a `string` for a `big_int` column. The v3 int8 domains
- * are therefore omitted from the SDK entirely (see `schema/v3`) until the FFI
+ * are therefore omitted from the SDK entirely (see `eql/v3`) until the FFI
  * supports lossless bigint I/O; `bigint` returns here alongside them.
  *
  * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
