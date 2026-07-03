@@ -1,6 +1,4 @@
 import type { Result } from '@byteslice/result'
-import type { EncryptionError } from '@/errors'
-import type { LockContextInput } from '@/identity'
 import type {
   AnyV3Table,
   ColumnsOf,
@@ -10,7 +8,9 @@ import type {
   V3DecryptedModel,
   V3EncryptedModel,
   V3ModelInput,
-} from '@/schema/v3'
+} from '@/eql/v3'
+import type { EncryptionError } from '@/errors'
+import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
@@ -197,9 +197,9 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
  *
  * @example
  * ```typescript
- * import { EncryptionV3, encryptedTable, encryptedTextSearchColumn } from "@cipherstash/stack/v3"
+ * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
  *
- * const users = encryptedTable("users", { email: encryptedTextSearchColumn("email") })
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
  * const client = await EncryptionV3({ schemas: [users] })
  *
  * await client.encrypt("a@b.com", { table: users, column: users.email })
@@ -220,6 +220,7 @@ export async function EncryptionV3<
   return typedClient(client, ...config.schemas)
 }
 
-// Single import surface: re-export the v3 builders + type helpers so
-// `@cipherstash/stack/v3` provides everything needed to author and use a schema.
-export * from '@/schema/v3'
+// Single import surface: re-export the v3 `types` namespace + table API + type
+// helpers so `@cipherstash/stack/v3` provides everything needed to author and
+// use a schema.
+export * from '@/eql/v3'

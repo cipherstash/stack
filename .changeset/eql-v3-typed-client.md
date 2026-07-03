@@ -4,8 +4,8 @@
 
 Add a strongly-typed EQL v3 client surface on a new `@cipherstash/stack/v3`
 subpath (`EncryptionV3`, `typedClient`, `TypedEncryptionClient`). It re-exports
-the v3 schema builders, so a single import provides everything needed to author
-and use a v3 schema.
+the v3 `types` namespace and table API (from `@cipherstash/stack/eql/v3`), so a
+single import provides everything needed to author and use a v3 schema.
 
 Every method derives its types from the concrete `table` / `column` builder
 arguments:

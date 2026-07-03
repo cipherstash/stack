@@ -2,14 +2,8 @@ import 'dotenv/config'
 import postgres from 'postgres'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import {
-  encryptedBoolColumn,
-  encryptedInt4OrdColumn,
-  encryptedTable,
-  encryptedTextEqColumn,
-  encryptedTextSearchColumn,
-} from '@/schema/v3'
 import type { Encrypted } from '@/types'
 import { unwrapResult } from './fixtures'
 import { installEqlV3IfNeeded } from './helpers/eql-v3'
@@ -30,13 +24,13 @@ const sql = LIVE_EQL_V3_PG_ENABLED
   : (undefined as unknown as postgres.Sql)
 
 const table = encryptedTable('protect_ci_v3_text_search', {
-  email: encryptedTextSearchColumn('email'),
+  email: types.TextSearch('email'),
 })
 
 const typedTable = encryptedTable('protect_ci_v3_typed_domains', {
-  age: encryptedInt4OrdColumn('age'),
-  nickname: encryptedTextEqColumn('nickname'),
-  active: encryptedBoolColumn('active'),
+  age: types.Int4Ord('age'),
+  nickname: types.TextEq('nickname'),
+  active: types.Bool('active'),
 })
 
 const TEST_RUN_ID = `test-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`

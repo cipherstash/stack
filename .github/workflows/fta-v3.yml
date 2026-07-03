@@ -11,14 +11,14 @@ on:
     branches:
       - 'main'
     paths:
-      - 'packages/stack/src/schema/v3/**'
+      - 'packages/stack/src/eql/v3/**'
       - 'packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
   pull_request:
     branches:
       - "**"
     paths:
-      - 'packages/stack/src/schema/v3/**'
+      - 'packages/stack/src/eql/v3/**'
       - 'packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
 
