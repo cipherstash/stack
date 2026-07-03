@@ -242,6 +242,34 @@ describe('validateInstallFlags', () => {
     expect(err).toMatch(/mutually exclusive/i)
   })
 
+  it('accepts --eql-version 2 and 3', () => {
+    expect(validateInstallFlags({ eqlVersion: '2' })).toBeNull()
+    expect(validateInstallFlags({ eqlVersion: '3' })).toBeNull()
+    expect(
+      validateInstallFlags({ eqlVersion: '3', supabase: true, direct: true }),
+    ).toBeNull()
+  })
+
+  it('rejects an unknown --eql-version value', () => {
+    expect(validateInstallFlags({ eqlVersion: '4' })).toMatch(/--eql-version/)
+  })
+
+  it('rejects --eql-version 3 with --drizzle, --migration, or --latest', () => {
+    expect(validateInstallFlags({ eqlVersion: '3', drizzle: true })).toMatch(
+      /--drizzle/,
+    )
+    expect(
+      validateInstallFlags({
+        eqlVersion: '3',
+        supabase: true,
+        migration: true,
+      }),
+    ).toMatch(/--migration/)
+    expect(validateInstallFlags({ eqlVersion: '3', latest: true })).toMatch(
+      /--latest/,
+    )
+  })
+
   it('does NOT auto-imply --supabase from --migration', () => {
     // Even with --supabase: false explicitly, --migration must error.
     const err = validateInstallFlags({ supabase: false, migration: true })

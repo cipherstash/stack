@@ -156,7 +156,9 @@ DB / EQL Flags:
   --direct                   (eql install, requires --supabase) Run the SQL directly against the database (mutually exclusive with --migration)
   --migrations-dir <path>    (eql install, requires --supabase) Override the Supabase migrations directory (default: supabase/migrations)
   --exclude-operator-family  (eql install, eql upgrade, db validate) Skip operator family creation
-  --latest                   (eql install, eql upgrade) Fetch the latest EQL from GitHub
+  --eql-version <2|3>        (eql install) EQL generation to install (default: 2). v3 installs the
+                             native eql_v3.* domain schema; direct install only for now
+  --latest                   (eql install, eql upgrade) Fetch the latest EQL from GitHub (v2 only)
   --database-url <url>       (all db / eql / schema commands) Override DATABASE_URL for this run only — never written to disk
 
 Examples:
@@ -229,6 +231,7 @@ async function runInstall(
     migration: flags.migration,
     direct: flags.direct,
     migrationsDir: values['migrations-dir'],
+    eqlVersion: values['eql-version'],
     databaseUrl: values['database-url'],
   })
 }

@@ -65,6 +65,12 @@ export interface InstallOptions {
    * never persisted. See `src/config/database-url.ts`.
    */
   databaseUrl?: string
+  /**
+   * EQL generation to install: `'2'` (default, composite `eql_v2_encrypted`)
+   * or `'3'` (native `eql_v3.*` domain schema). v3 currently supports the
+   * direct install path only — not `--drizzle`, `--migration`, or `--latest`.
+   */
+  eqlVersion?: string
 }
 
 /** Resolved install mode for the Supabase non-Drizzle branch. */
@@ -110,6 +116,18 @@ export async function installCommand(options: InstallOptions) {
   // CIP-2985.
   const resolved = resolveProviderOptions(options, config.databaseUrl)
 
+  const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
+
+  // v3 supports the direct install path only. Explicit --drizzle/--migration
+  // are rejected up-front by validateInstallFlags; auto-DETECTED drizzle or
+  // migration modes fall back to direct here rather than erroring.
+  if (eqlVersion === 3 && resolved.drizzle) {
+    p.log.info(
+      'EQL v3 does not support the Drizzle migration path yet — installing directly.',
+    )
+    resolved.drizzle = false
+  }
+
   if (resolved.drizzle) {
     await generateDrizzleMigration(s, {
       name: options.name,
@@ -126,7 +144,8 @@ export async function installCommand(options: InstallOptions) {
   // running SQL directly. Detection of `supabase/migrations/` only seeds the
   // prompt default — it never enables `--supabase`. Direct install is the
   // historical default and remains the fallback when nothing else applies.
-  if (resolved.supabase) {
+  // v3 skips the mode selection entirely: direct install only for now.
+  if (resolved.supabase && eqlVersion === 2) {
     const projectInfo = detectSupabaseProject(
       process.cwd(),
       options.migrationsDir,
@@ -205,7 +224,7 @@ export async function installCommand(options: InstallOptions) {
 
   if (!options.force) {
     s.start('Checking if EQL is already installed...')
-    const installed = await installer.isInstalled()
+    const installed = await installer.isInstalled({ eqlVersion })
     s.stop(installed ? 'EQL is already installed.' : 'EQL is not installed.')
 
     if (installed) {
@@ -216,11 +235,14 @@ export async function installCommand(options: InstallOptions) {
   }
 
   const source = options.latest ? 'from GitHub (latest)' : 'bundled'
-  s.start(`Installing EQL extensions (${source})...`)
+  s.start(
+    `Installing EQL ${eqlVersion === 3 ? 'v3 ' : ''}extensions (${source})...`,
+  )
   await installer.install({
     excludeOperatorFamily,
     supabase: resolved.supabase,
     latest: options.latest,
+    eqlVersion,
   })
   s.stop('EQL extensions installed.')
 
@@ -489,6 +511,27 @@ async function generateDrizzleMigration(
 export function validateInstallFlags(options: InstallOptions): string | null {
   if (options.migration && options.direct) {
     return '`--migration` and `--direct` are mutually exclusive. Pick one.'
+  }
+
+  if (
+    options.eqlVersion !== undefined &&
+    options.eqlVersion !== '2' &&
+    options.eqlVersion !== '3'
+  ) {
+    return `Unknown \`--eql-version ${options.eqlVersion}\`. Supported values: 2, 3.`
+  }
+
+  if (options.eqlVersion === '3') {
+    const incompatible = options.drizzle
+      ? '--drizzle'
+      : options.migration
+        ? '--migration'
+        : options.latest
+          ? '--latest'
+          : null
+    if (incompatible) {
+      return `\`--eql-version 3\` does not support \`${incompatible}\` yet — v3 currently installs via the direct path only.`
+    }
   }
 
   const subFlag =
