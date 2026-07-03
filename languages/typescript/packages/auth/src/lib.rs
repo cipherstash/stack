@@ -646,6 +646,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn index_dts_retains_hand_written_reexports() {
+        // The union test above only guards `AuthErrorCode`. The other three
+        // hand-written pieces of `index.d.ts` are equally load-bearing but
+        // NAPI-RS cannot emit them, so a regen or careless edit that drops any
+        // of them compiles green: the node tests import `AuthError` as an
+        // `import type` (erased at runtime) and vitest never runs `tsc`. Pin
+        // them by string presence so a deletion fails here.
+        let dts = include_str!("../index.d.ts");
+        for needle in [
+            // The native re-export the whole generated surface flows through.
+            "export * from \"./native\"",
+            "export interface AuthError extends Error",
+            "export declare const OAuthStrategy",
+        ] {
+            assert!(
+                dts.contains(needle),
+                "index.d.ts lost hand-written {needle:?}",
+            );
+        }
+    }
+
     // --- Shared helpers ---
 
     fn device_code_json() -> serde_json::Value {
