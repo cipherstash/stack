@@ -1,5 +1,11 @@
 # EQL v3 `text_search` Schema DSL Implementation Plan
 
+> **Superseded (2026-07-03):** this plan built the DSL on `@cipherstash/stack/schema/v3`
+> with `encryptedTextSearchColumn(...)`. That surface has since been renamed to
+> `@cipherstash/stack/eql/v3` and the factories replaced by the `types` namespace
+> (`types.TextSearch(...)`). Retained as a historical execution record — do not
+> re-run against the current tree.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an EQL v3 authoring DSL (`encryptedTextSearchColumn`, plus v3 `encryptedTable` / `buildEncryptConfig`) on a new `@cipherstash/stack/schema/v3` subpath that emits the existing `EncryptConfig` shape with zero native-client changes.

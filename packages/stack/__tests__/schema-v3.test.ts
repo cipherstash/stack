@@ -1,24 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
-import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import {
   buildEncryptConfig,
   EncryptedTable,
   EncryptedTextSearchColumn,
-  encryptedDateColumn,
-  encryptedDateOrdColumn,
-  encryptedInt4OrdColumn,
   encryptedTable,
-  encryptedTextMatchColumn,
-  encryptedTextOrdColumn,
-  encryptedTextSearchColumn,
-  encryptedTimestamptzColumn,
-} from '@/schema/v3'
+  types,
+} from '@/eql/v3'
+import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import { type DomainSpec, typedEntries, V3_MATRIX } from './v3-matrix/catalog'
 
 describe('eql_v3 text_search column', () => {
   it('LOAD-BEARING: default build() deep-equals the v2 equality+order+match column', () => {
-    const v3 = encryptedTextSearchColumn('email').build()
+    const v3 = types.TextSearch('email').build()
     const v2 = encryptedColumn('email')
       .equality()
       .orderAndRange()
@@ -29,7 +23,8 @@ describe('eql_v3 text_search column', () => {
   })
 
   it('.freeTextSearch(opts) overrides each provided key and keeps the rest as defaults', () => {
-    const built = encryptedTextSearchColumn('email')
+    const built = types
+      .TextSearch('email')
       .freeTextSearch({
         tokenizer: { kind: 'ngram', token_length: 4 },
         k: 8,
@@ -51,7 +46,8 @@ describe('eql_v3 text_search column', () => {
     // LOAD-BEARING: `[] ?? default` evaluates to `[]` (an empty array is not
     // nullish), so an explicit empty array must OVERRIDE the downcase default,
     // not fall back to it. Mirrors v2 (schema-builders.test.ts).
-    const built = encryptedTextSearchColumn('email')
+    const built = types
+      .TextSearch('email')
       .freeTextSearch({ token_filters: [] })
       .build()
     expect(built.indexes.match.token_filters).toEqual([])
@@ -62,7 +58,8 @@ describe('eql_v3 text_search column', () => {
     // accumulated matchOpts — so the second call resets k back to its default
     // of 6. This is intentional: it mirrors v2 exactly. Pinned here so a future
     // "merge against current state" change can't silently slip in.
-    const built = encryptedTextSearchColumn('email')
+    const built = types
+      .TextSearch('email')
       .freeTextSearch({ k: 8 })
       .freeTextSearch({ m: 4096 })
       .build()
@@ -71,9 +68,7 @@ describe('eql_v3 text_search column', () => {
   })
 
   it('.freeTextSearch() is tuning-only: unique and ore indexes stay present', () => {
-    const built = encryptedTextSearchColumn('email')
-      .freeTextSearch({ k: 8 })
-      .build()
+    const built = types.TextSearch('email').freeTextSearch({ k: 8 }).build()
     expect(built.indexes.unique).toEqual({ token_filters: [] })
     expect(built.indexes.ore).toEqual({})
   })
@@ -81,8 +76,8 @@ describe('eql_v3 text_search column', () => {
   it('built columns share no mutable state: mutating one build() output does not affect another', () => {
     // Guards against the shared-defaults aliasing bug: defaults come from a
     // per-instance factory and build() deep-clones the match block.
-    const a = encryptedTextSearchColumn('a').build()
-    const b = encryptedTextSearchColumn('b').build()
+    const a = types.TextSearch('a').build()
+    const b = types.TextSearch('b').build()
 
     // Mutate every nested level of a's match block.
     a.indexes.match.k = 999
@@ -97,7 +92,7 @@ describe('eql_v3 text_search column', () => {
     })
 
     // A second build() of an independent column is also pristine.
-    const c = encryptedTextSearchColumn('c').build()
+    const c = types.TextSearch('c').build()
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
   })
@@ -111,7 +106,7 @@ describe('eql_v3 text_search column', () => {
       tokenizer: { kind: 'ngram' as const, token_length: 3 },
       token_filters: [{ kind: 'downcase' as const }],
     }
-    const col = encryptedTextSearchColumn('email').freeTextSearch(opts)
+    const col = types.TextSearch('email').freeTextSearch(opts)
 
     // Mutate the caller's own opts AFTER freeTextSearch but BEFORE build().
     opts.tokenizer.token_length = 999
@@ -129,7 +124,7 @@ describe('eql_v3 text_search column', () => {
 describe('eql_v3 encryptedTable', () => {
   it('creates a table exposing column builders as properties', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     expect(users).toBeInstanceOf(EncryptedTable)
     expect(users.tableName).toBe('users')
@@ -137,7 +132,7 @@ describe('eql_v3 encryptedTable', () => {
   })
 
   it('table.email returns the same builder instance passed in', () => {
-    const emailCol = encryptedTextSearchColumn('email')
+    const emailCol = types.TextSearch('email')
     const users = encryptedTable('users', { email: emailCol })
     expect(users.email).toBe(emailCol)
   })
@@ -157,14 +152,14 @@ describe('eql_v3 encryptedTable', () => {
   ])('throws when a column name (%s) collides with a reserved property', (reserved) => {
     expect(() =>
       encryptedTable('users', {
-        [reserved]: encryptedTextSearchColumn(reserved),
+        [reserved]: types.TextSearch(reserved),
       }),
     ).toThrow(/reserved EncryptedTable property/)
   })
 
   it('build() assembles { tableName, columns } with built column configs', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const built = users.build()
     expect(built.tableName).toBe('users')
@@ -190,7 +185,7 @@ describe('eql_v3 encryptedTable', () => {
 describe('eql_v3 buildEncryptConfig', () => {
   it('produces a { v: 1, tables } config', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const config = buildEncryptConfig(users)
     expect(config.v).toBe(1)
@@ -200,7 +195,7 @@ describe('eql_v3 buildEncryptConfig', () => {
 
   it('emits a config that passes encryptConfigSchema.parse()', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const config = buildEncryptConfig(users)
     expect(() => encryptConfigSchema.parse(config)).not.toThrow()
@@ -208,10 +203,10 @@ describe('eql_v3 buildEncryptConfig', () => {
 
   it('supports multiple tables', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const posts = encryptedTable('posts', {
-      body: encryptedTextSearchColumn('body'),
+      body: types.TextSearch('body'),
     })
     const config = buildEncryptConfig(users, posts)
     expect(Object.keys(config.tables).sort()).toEqual(['posts', 'users'])
@@ -223,8 +218,8 @@ describe('eql_v3 buildEncryptConfig', () => {
     // `column.getName()`, so keying by the JS property name makes the FFI
     // report "column not found in Encrypt config" at encrypt time.
     const users = encryptedTable('accounts', {
-      createdOn: encryptedDateColumn('created_on'),
-      lastSeen: encryptedTimestamptzColumn('last_seen'),
+      createdOn: types.Date('created_on'),
+      lastSeen: types.Timestamptz('last_seen'),
     })
     const config = buildEncryptConfig(users)
     expect(Object.keys(config.tables.accounts).sort()).toEqual([
@@ -240,9 +235,9 @@ describe('eql_v3 buildEncryptConfig', () => {
     // FFI/config by DB name. `build()` discards the property→name relationship
     // (it keys by DB name); `buildColumnKeyMap()` recovers it.
     const users = encryptedTable('accounts', {
-      createdOn: encryptedDateColumn('created_on'),
-      lastSeen: encryptedTimestamptzColumn('last_seen'),
-      email: encryptedTextSearchColumn('email'),
+      createdOn: types.Date('created_on'),
+      lastSeen: types.Timestamptz('last_seen'),
+      email: types.TextSearch('email'),
     })
     expect(users.buildColumnKeyMap()).toEqual({
       createdOn: 'created_on',
@@ -257,10 +252,10 @@ describe('eql_v3 buildEncryptConfig', () => {
     // footgun surfaces at build time. (v2 keeps its silent-overwrite behavior
     // unchanged — the no-v2-change constraint.)
     const a = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const b = encryptedTable('users', {
-      name: encryptedTextSearchColumn('name'),
+      name: types.TextSearch('name'),
     })
     expect(() => buildEncryptConfig(a, b)).toThrow(
       /duplicate table name "users"/,
@@ -328,7 +323,7 @@ describe('eql_v3 catalog-driven query capability sweep', () => {
   // Spot-check the exact messages for a queryable-but-misused column, so the
   // broad regex above doesn't let a message regression slip through.
   it('reports the specific missing index for a match-only column', () => {
-    const matchOnly = encryptedTextMatchColumn('body')
+    const matchOnly = types.TextMatch('body')
     expect(() => resolveIndexType(matchOnly, 'equality')).toThrow(
       /Index type "unique" is not configured/,
     )
@@ -344,9 +339,9 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
   // orderAndRange, distinguished by the SQL `=` operator) instead of throwing on
   // the absent `unique` index. One domain per plaintext axis.
   it.each([
-    ['int4_ord', encryptedInt4OrdColumn],
-    ['date_ord', encryptedDateOrdColumn],
-    ['text_ord', encryptedTextOrdColumn],
+    ['int4_ord', types.Int4Ord],
+    ['date_ord', types.DateOrd],
+    ['text_ord', types.TextOrd],
   ] as const)('%s resolves equality to the ore index', (_name, builder) => {
     expect(resolveIndexType(builder('value'), 'equality')).toEqual({
       indexType: 'ore',

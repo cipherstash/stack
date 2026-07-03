@@ -1,5 +1,10 @@
 # EQL v3 Typed Schema Implementation Plan
 
+> **Superseded (2026-07-03):** this plan added per-domain `encrypted<Domain>Column`
+> builders on `@cipherstash/stack/schema/v3`. Those builders are now the `types`
+> namespace (`types.TextEq` / `types.Int4Ord` / …) on `@cipherstash/stack/eql/v3`.
+> Retained as a historical execution record — do not re-run against the current tree.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Expand `@cipherstash/stack/schema/v3` from the current `text_search` slice to all generated EQL v3 SQL domains with domain-precise builders, explicit query capability metadata, and structurally widened client/model support while preserving v2 behavior.

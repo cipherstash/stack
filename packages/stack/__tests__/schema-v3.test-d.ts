@@ -1,5 +1,11 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import { Encryption, type EncryptionClient } from '@/encryption'
+import type {
+  EncryptedTextSearchColumn,
+  InferEncrypted,
+  InferPlaintext,
+} from '@/eql/v3'
+import { encryptedTable, types } from '@/eql/v3'
 // v2 column builders — used to prove the v3 table type rejects a v2 column and
 // to assert v2 backward-compat against the widened client types.
 import {
@@ -7,35 +13,17 @@ import {
   encryptedField,
   encryptedTable as v2EncryptedTable,
 } from '@/schema'
-import type {
-  EncryptedTextSearchColumn,
-  InferEncrypted,
-  InferPlaintext,
-} from '@/schema/v3'
-import {
-  encryptedBoolColumn,
-  encryptedDateColumn,
-  encryptedFloat8Column,
-  encryptedInt4Column,
-  encryptedTable,
-  encryptedTextColumn,
-  encryptedTextEqColumn,
-  encryptedTextMatchColumn,
-  encryptedTextSearchColumn,
-  encryptedTimestamptzColumn,
-  encryptedTimestamptzOrdColumn,
-} from '@/schema/v3'
 import type { Encrypted } from '@/types'
 
 describe('eql_v3 schema type inference', () => {
-  it('encryptedTextSearchColumn returns an EncryptedTextSearchColumn', () => {
-    const col = encryptedTextSearchColumn('email')
+  it('types.TextSearch returns an EncryptedTextSearchColumn', () => {
+    const col = types.TextSearch('email')
     expectTypeOf(col).toEqualTypeOf<EncryptedTextSearchColumn>()
   })
 
   it('encryptedTable exposes column builders as typed properties', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     expectTypeOf(users.email).toEqualTypeOf<EncryptedTextSearchColumn>()
     expectTypeOf(users.tableName).toBeString()
@@ -50,8 +38,8 @@ describe('eql_v3 schema type inference', () => {
 
   it('InferPlaintext maps each column to string', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
-      name: encryptedTextSearchColumn('name'),
+      email: types.TextSearch('email'),
+      name: types.TextSearch('name'),
     })
     type Plaintext = InferPlaintext<typeof users>
     expectTypeOf<Plaintext>().toEqualTypeOf<{ email: string; name: string }>()
@@ -59,7 +47,7 @@ describe('eql_v3 schema type inference', () => {
 
   it('InferEncrypted maps each column to Encrypted', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     type Enc = InferEncrypted<typeof users>
     expectTypeOf<Enc>().toEqualTypeOf<{ email: Encrypted }>()
@@ -67,11 +55,11 @@ describe('eql_v3 schema type inference', () => {
 
   it('InferPlaintext maps v3 concrete domains to plaintext TypeScript types', () => {
     const metrics = encryptedTable('metrics', {
-      name: encryptedTextColumn('name'),
-      age: encryptedInt4Column('age'),
-      active: encryptedBoolColumn('active'),
-      createdAt: encryptedTimestamptzColumn('created_at'),
-      score: encryptedFloat8Column('score'),
+      name: types.Text('name'),
+      age: types.Int4('age'),
+      active: types.Bool('active'),
+      createdAt: types.Timestamptz('created_at'),
+      score: types.Float8('score'),
     })
 
     type Plaintext = InferPlaintext<typeof metrics>
@@ -86,8 +74,8 @@ describe('eql_v3 schema type inference', () => {
   })
 
   it('v3 domain classes remain nominal by literal domain definition', () => {
-    const date = encryptedDateColumn('created_on')
-    const bool = encryptedBoolColumn('active')
+    const date = types.Date('created_on')
+    const bool = types.Bool('active')
 
     expectTypeOf(date).not.toEqualTypeOf<typeof bool>()
 
@@ -99,7 +87,7 @@ describe('eql_v3 schema type inference', () => {
 
 describe('eql_v3 client integration (type-level acceptance)', () => {
   const v3users = encryptedTable('users', {
-    email: encryptedTextSearchColumn('email'),
+    email: types.TextSearch('email'),
   })
 
   it('Encryption accepts a v3 schema', () => {
@@ -175,10 +163,10 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
 
   it('encryptQuery accepts queryable v3 columns with explicit capability metadata', () => {
     const users = encryptedTable('users', {
-      emailEq: encryptedTextEqColumn('email_eq'),
-      emailMatch: encryptedTextMatchColumn('email_match'),
-      emailSearch: encryptedTextSearchColumn('email_search'),
-      createdAt: encryptedTimestamptzOrdColumn('created_at'),
+      emailEq: types.TextEq('email_eq'),
+      emailMatch: types.TextMatch('email_match'),
+      emailSearch: types.TextSearch('email_search'),
+      createdAt: types.TimestamptzOrd('created_at'),
     })
     const client = {} as EncryptionClient
 
@@ -205,8 +193,8 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
 
   it('encryptQuery rejects storage-only v3 columns at compile time', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextColumn('email'),
-      active: encryptedBoolColumn('active'),
+      email: types.Text('email'),
+      active: types.Bool('active'),
     })
     const client = {} as EncryptionClient
 
@@ -227,8 +215,8 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
 describe('eql_v3 model encryption inference', () => {
   it('encryptModel and bulkEncryptModels infer encrypted fields from v3 tables', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
-      active: encryptedBoolColumn('active'),
+      email: types.TextSearch('email'),
+      active: types.Bool('active'),
     })
     const client = {} as EncryptionClient
 
@@ -260,7 +248,7 @@ describe('eql_v3 model encryption inference', () => {
 
   it('v3 encryptModel preserves unrelated and nullable fields', () => {
     const users = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const client = {} as EncryptionClient
 
@@ -286,7 +274,7 @@ describe('eql_v3 model encryption inference', () => {
     // must resolve to `never` here, not `keyof never` (= string|number|symbol),
     // which would wrongly encrypt all fields including `id` and `untouched`.
     const usersConcrete = encryptedTable('users', {
-      email: encryptedTextSearchColumn('email'),
+      email: types.TextSearch('email'),
     })
     const table: import('@/types').BuildableTable = usersConcrete
     const client = {} as EncryptionClient
@@ -309,7 +297,7 @@ describe('eql_v3 model encryption inference', () => {
     // ('occurredAt'). Model inference keys off the PROPERTY name, so `occurredAt`
     // must become `Encrypted` while unrelated fields are preserved verbatim.
     const events = encryptedTable('events', {
-      occurredAt: encryptedTimestamptzColumn('created_at'),
+      occurredAt: types.Timestamptz('created_at'),
     })
     const client = {} as EncryptionClient
 

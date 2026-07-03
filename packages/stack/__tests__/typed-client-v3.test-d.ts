@@ -3,13 +3,9 @@ import type { EncryptionClient } from '@/encryption'
 // Everything comes from the single `@cipherstash/stack/v3` surface (re-exported
 // from src/encryption/v3.ts), exercising the re-export at the same time.
 import {
-  encryptedInt4OrdColumn,
   encryptedTable,
-  encryptedTextColumn,
-  encryptedTextEqColumn,
-  encryptedTextSearchColumn,
-  encryptedTimestamptzOrdColumn,
   typedClient,
+  types,
   type V3DecryptedModel,
   type V3EncryptedModel,
 } from '@/encryption/v3'
@@ -17,16 +13,16 @@ import type { Encrypted } from '@/types'
 
 // A v3 table mixing every relevant capability tier:
 const users = encryptedTable('users', {
-  email: encryptedTextEqColumn('email'), // equality only
-  bio: encryptedTextSearchColumn('bio'), // equality + order + free-text
-  note: encryptedTextColumn('note'), // storage only (not queryable)
-  createdAt: encryptedTimestamptzOrdColumn('created_at'), // equality + order
+  email: types.TextEq('email'), // equality only
+  bio: types.TextSearch('bio'), // equality + order + free-text
+  note: types.Text('note'), // storage only (not queryable)
+  createdAt: types.TimestamptzOrd('created_at'), // equality + order
 })
 
 // A second registered table whose `weight` domain (int4_ord) is NOT present in
 // `users`, so borrowing it is a genuine cross-table type error.
 const other = encryptedTable('other', {
-  weight: encryptedInt4OrdColumn('weight'),
+  weight: types.Int4Ord('weight'),
 })
 
 const client = typedClient({} as EncryptionClient, users, other)

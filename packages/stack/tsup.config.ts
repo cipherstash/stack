@@ -15,7 +15,7 @@ export default defineConfig([
       'src/identity/index.ts',
       'src/secrets/index.ts',
       'src/schema/index.ts',
-      'src/schema/v3/index.ts',
+      'src/eql/v3/index.ts',
       'src/drizzle/index.ts',
       'src/dynamodb/index.ts',
       'src/supabase/index.ts',
