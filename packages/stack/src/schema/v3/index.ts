@@ -901,6 +901,17 @@ export type PlaintextForColumn<C> =
   C extends EncryptedV3Column<infer D> ? PlaintextFromKind<D['castAs']> : never
 
 /**
+ * The concrete EQL v3 type string for a single column, read from the literal
+ * domain definition carried on the base class's private field (mirrors
+ * {@link PlaintextForColumn}). Distributes over a union of columns, so
+ * `EqlTypeForColumn<AnyEncryptedV3Column>` yields the union of every domain's
+ * `eqlType` — the canonical, source-of-truth key set for a type-driven test
+ * matrix keyed by domain.
+ */
+export type EqlTypeForColumn<C> =
+  C extends EncryptedV3Column<infer D> ? D['eqlType'] : never
+
+/**
  * Infer the plaintext (decrypted) shape from a v3 table schema. Each column maps
  * to the TypeScript type of its domain's `castAs` kind.
  */

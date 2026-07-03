@@ -160,7 +160,7 @@ jobs:
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
 
   # Verifies @cipherstash/stack/wasm-inline works under Deno — i.e. the
-  # WASM build of protect-ffi 0.25+ and auth 0.38+ can round-trip an
+  # WASM build of protect-ffi 0.26+ and auth 0.40+ can round-trip an
   # encryption against ZeroKMS / CTS in a runtime with no native
   # bindings available. The deno.json deliberately omits --allow-ffi so
   # a silent fallback to the NAPI module is impossible.

@@ -193,7 +193,10 @@ export class LockContext {
     return withResult(
       () => ({
         context: this.context,
-        ctsToken: this.ctsToken,
+        // Only include `ctsToken` when one was actually set, so the
+        // returned shape matches the optional `ctsToken?` type rather
+        // than carrying an explicit `undefined`.
+        ...(this.ctsToken ? { ctsToken: this.ctsToken } : {}),
       }),
       (error) => ({
         type: EncryptionErrorTypes.CtsTokenError,

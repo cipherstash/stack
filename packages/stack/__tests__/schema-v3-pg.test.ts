@@ -320,4 +320,86 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
 
     expect(rows.map((row) => row.id)).toContain(inserted.id)
   }, 30000)
+
+  // Correctness proof for the equality-via-ORE fix (Part A). The deterministic
+  // regression proves `resolveIndexType` resolves equality to `ore` instead of
+  // throwing; this proves the resulting term actually SELECTS the right rows
+  // against real Postgres, using the SQL `=` operator on the ORE term.
+  it('selects the exact row for an equality term via ORE on an int4_ord column', async () => {
+    async function insertAge(age: number): Promise<number> {
+      const ageCt = unwrapResult(
+        await protectClient.encrypt(age, {
+          table: typedTable,
+          column: typedTable.age,
+        }),
+      ) as postgres.JSONValue
+      const nick = unwrapResult(
+        await protectClient.encrypt(`nick-${age}`, {
+          table: typedTable,
+          column: typedTable.nickname,
+        }),
+      ) as postgres.JSONValue
+      const act = unwrapResult(
+        await protectClient.encrypt(true, {
+          table: typedTable,
+          column: typedTable.active,
+        }),
+      ) as postgres.JSONValue
+      const [row] = await sql<{ id: number }[]>`
+        INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
+        VALUES (
+          ${sql.json(ageCt)}::eql_v3.int4_ord,
+          ${sql.json(nick)}::eql_v3.text_eq,
+          ${sql.json(act)}::eql_v3.bool,
+          ${TEST_RUN_ID}
+        )
+        RETURNING id
+      `
+      return row.id
+    }
+
+    const ids = {
+      thirty: await insertAge(30),
+      thirtySeven: await insertAge(37),
+      fortyTwo: await insertAge(42),
+    }
+
+    // Equality term encrypted with queryType:'equality' — post-fix this resolves
+    // to the ore (`ob`) term; the SQL `=` operator makes it an equality match.
+    const equalityTerm = unwrapResult(
+      await protectClient.encryptQuery(37, {
+        table: typedTable,
+        column: typedTable.age,
+        queryType: 'equality',
+      }),
+    ) as postgres.JSONValue
+
+    const matched = await sql<{ id: number }[]>`
+      SELECT id
+      FROM protect_ci_v3_typed_domains
+      WHERE test_run_id = ${TEST_RUN_ID}
+        AND eql_v3.ord_term(age) = eql_v3.ore_block_256(${sql.json(equalityTerm)}::jsonb)
+      ORDER BY id
+    `
+    // Exactly the age=37 row — not the 30 or 42 rows.
+    expect(matched.map((row) => row.id)).toEqual([ids.thirtySeven])
+    expect(matched.map((row) => row.id)).not.toContain(ids.thirty)
+    expect(matched.map((row) => row.id)).not.toContain(ids.fortyTwo)
+
+    // A non-matching value selects nothing.
+    const missTerm = unwrapResult(
+      await protectClient.encryptQuery(99, {
+        table: typedTable,
+        column: typedTable.age,
+        queryType: 'equality',
+      }),
+    ) as postgres.JSONValue
+    const none = await sql<{ id: number }[]>`
+      SELECT id
+      FROM protect_ci_v3_typed_domains
+      WHERE test_run_id = ${TEST_RUN_ID}
+        AND eql_v3.ord_term(age) = eql_v3.ore_block_256(${sql.json(missTerm)}::jsonb)
+    `
+    expect(none).toHaveLength(0)
+  }, 30000)
 })

@@ -90,7 +90,7 @@ describe('CJS consumers can require the built bundles', () => {
     const v3Bundle = path.join(distDir, 'schema', 'v3', 'index.cjs')
     const script = [
       `const v3 = require(${JSON.stringify(v3Bundle)})`,
-      `const required = ['encryptedTextSearchColumn', 'encryptedInt4Column', 'encryptedBoolColumn', 'encryptedTimestamptzColumn']`,
+      `const required = ['encryptedTextSearchColumn', 'encryptedInt4Column', 'encryptedBoolColumn', 'encryptedTimestamptzColumn', 'encryptedTable', 'buildEncryptConfig']`,
       `const missing = required.filter((k) => typeof v3[k] !== 'function')`,
       `if (missing.length > 0) { throw new Error('missing v3 CJS exports: ' + missing.join(', ')) }`,
     ].join('\n')

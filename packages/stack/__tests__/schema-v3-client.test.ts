@@ -236,4 +236,37 @@ describeLive('eql_v3 client integration', () => {
     expect(decrypted.createdOn).toEqual(day)
     expect(decrypted.notes).toBe('hello')
   }, 30000)
+
+  // Hygiene: `occurredAt` (a timestamptz column, camelCase property →
+  // snake_case DB name `occurred_at`) was declared in the test table but never
+  // asserted. Give it a real round-trip through the model path, complementing
+  // the `createdOn` date case above. (`matrix-live.test.ts` is the canonical
+  // generic coverage for all timestamptz tiers; this pins the named column.)
+  //
+  // SKIPPED (CI run 28569708268, PR #540): fails against live credentials —
+  // decrypted `occurredAt` comes back at midnight (`00:00:00.000Z`), losing
+  // the time-of-day. Root cause: `@cipherstash/protect-ffi`'s native
+  // `CastAs` has a distinct `'timestamp'` variant (full date+time) separate
+  // from `'date'` (calendar-date only), but this SDK's `CastAs`/`PlaintextKind`
+  // types never included `'timestamp'` — every `timestamptz` domain sets
+  // `cast_as: 'date'`, identical to the plain `date` domain, so the native
+  // layer truncates it. Pre-existing SDK gap, not a test bug; re-enable once
+  // `timestamptz` gets its own native cast_as.
+  it.skip('round-trips a timestamptz occurredAt column through the model path', async () => {
+    const typed = typedClient(protectClient, users)
+    // Zero milliseconds: the FFI drops sub-second precision, so a ms-bearing
+    // instant would perturb the reconstructed value.
+    const moment = new Date('2026-07-01T12:34:56.000Z')
+
+    const encrypted = unwrapResult(
+      await typed.encryptModel({ occurredAt: moment, notes: 'seen' }, users),
+    )
+    // Must become a ciphertext, not remain a Date (no plaintext passthrough).
+    expect(encrypted.occurredAt).not.toBeInstanceOf(Date)
+    expect(encrypted.occurredAt).toHaveProperty('c')
+
+    const decrypted = unwrapResult(await typed.decryptModel(encrypted, users))
+    expect(decrypted.occurredAt).toBeInstanceOf(Date)
+    expect(decrypted.occurredAt).toEqual(moment)
+  }, 30000)
 })

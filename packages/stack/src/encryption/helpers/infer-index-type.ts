@@ -77,6 +77,27 @@ export function validateIndexType(
 }
 
 /**
+ * v3-only: an order-capable column answers EQUALITY via its `ore` (`ob`) index.
+ *
+ * The v3 capability contract (`src/schema/v3`) documents `equality` as "exact-match
+ * lookups (EQL `hm`, or comparison via `ob`)", so an order-capable column with only
+ * an `ore` index still supports equality — the equality-vs-range distinction is made
+ * by the SQL comparison operator (`=` vs `>=`), NOT by the ciphertext (the FFI emits
+ * the same `ob` term either way). The default `equality → unique` mapping would
+ * wrongly reject these columns.
+ *
+ * Gated on `getQueryCapabilities`, which only v3 queryable columns expose — a v2
+ * `EncryptedColumn` lacks it and so never matches, preserving v2's
+ * equality-without-unique throw unchanged (the no-v2-change constraint).
+ */
+function resolvesEqualityViaOre(column: BuildableQueryColumn): boolean {
+  if (!('getQueryCapabilities' in column)) return false
+  if (!column.getQueryCapabilities().equality) return false
+  const indexes = column.build().indexes ?? {}
+  return !indexes.unique && !!indexes.ore
+}
+
+/**
  * Resolve the index type and query operation for a query.
  * Validates the index type is configured on the column when queryType is explicit.
  * For ste_vec columns without explicit queryType, infers queryOp from plaintext shape.
@@ -97,6 +118,14 @@ export function resolveIndexType(
     : inferIndexType(column)
 
   if (queryType) {
+    // An order-capable v3 column answers equality via its `ore` index (`ob`
+    // term) — the same term `orderAndRange` emits, distinguished only by the SQL
+    // `=` operator. Resolve to `ore` (queryOp undefined) instead of throwing on
+    // the missing `unique` index. v2 columns never enter here (see helper).
+    if (queryType === 'equality' && resolvesEqualityViaOre(column)) {
+      return { indexType: 'ore' }
+    }
+
     validateIndexType(column, indexType)
 
     // For searchableJson, infer queryOp from plaintext type (not from mapping)
