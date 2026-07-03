@@ -195,7 +195,7 @@
 		"release": "tsup"
 	},
 	"devDependencies": {
-		"@clack/prompts": "^1.4.0",
+		"@clack/prompts": "^1.6.0",
 		"@supabase/supabase-js": "^2.105.4",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
@@ -216,7 +216,7 @@
 		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/protect-ffi": "0.26.0",
 		"evlog": "1.11.0",
-		"uuid": "14.0.0",
+		"uuid": "14.0.1",
 		"zod": "3.25.76"
 	},
 	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies — pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. Required because @cipherstash/stack re-exports the Node auth strategies (OidcFederationStrategy, AccessKeyStrategy, …). All seven names share a single catalog entry to keep them in lockstep.",

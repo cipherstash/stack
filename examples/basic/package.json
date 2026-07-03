@@ -13,7 +13,7 @@
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
     "dotenv": "^17.4.2",
-    "pg": "8.20.0"
+    "pg": "8.22.0"
   },
   "devDependencies": {
     "stash": "workspace:*",
