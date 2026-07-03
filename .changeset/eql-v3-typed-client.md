@@ -11,7 +11,7 @@ Every method derives its types from the concrete `table` / `column` builder
 arguments:
 
 - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
-  (`text → string`, `int8 → bigint`, `timestamptz → Date`, …).
+  (`text → string`, `int8 → bigint`, `timestamp → Date`, …).
 - `encryptQuery` constrains `queryType` to the column's capabilities and rejects
   storage-only columns at compile time.
 - `encryptModel` / `bulkEncryptModels` validate schema-column fields against their

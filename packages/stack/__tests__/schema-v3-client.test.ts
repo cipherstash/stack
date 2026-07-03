@@ -18,7 +18,7 @@ const users = encryptedTable('schema_v3_client_users', {
   // match models by JS property (`createdOn`) yet address the FFI/config by DB
   // name (`created_on`). The round-trip tests below exercise that mapping.
   createdOn: types.Date('created_on'),
-  occurredAt: types.Timestamptz('occurred_at'),
+  occurredAt: types.Timestamp('occurred_at'),
 })
 
 describeLive('eql_v3 client integration', () => {
@@ -219,22 +219,22 @@ describeLive('eql_v3 client integration', () => {
     expect(decrypted.notes).toBe('hello')
   }, 30000)
 
-  // Hygiene: `occurredAt` (a timestamptz column, camelCase property →
+  // Hygiene: `occurredAt` (a timestamp column, camelCase property →
   // snake_case DB name `occurred_at`) was declared in the test table but never
   // asserted. Give it a real round-trip through the model path, complementing
   // the `createdOn` date case above. (`matrix-live.test.ts` is the canonical
-  // generic coverage for all timestamptz tiers; this pins the named column.)
+  // generic coverage for all timestamp tiers; this pins the named column.)
   //
   // SKIPPED (CI run 28569708268, PR #540): fails against live credentials —
   // decrypted `occurredAt` comes back at midnight (`00:00:00.000Z`), losing
   // the time-of-day. Root cause: `@cipherstash/protect-ffi`'s native
   // `CastAs` has a distinct `'timestamp'` variant (full date+time) separate
   // from `'date'` (calendar-date only), but this SDK's `CastAs`/`PlaintextKind`
-  // types never included `'timestamp'` — every `timestamptz` domain sets
+  // types never included `'timestamp'` — every `timestamp` domain sets
   // `cast_as: 'date'`, identical to the plain `date` domain, so the native
   // layer truncates it. Pre-existing SDK gap, not a test bug; re-enable once
-  // `timestamptz` gets its own native cast_as.
-  it.skip('round-trips a timestamptz occurredAt column through the model path', async () => {
+  // `timestamp` gets its own native cast_as.
+  it.skip('round-trips a timestamp occurredAt column through the model path', async () => {
     const typed = typedClient(protectClient, users)
     // Zero milliseconds: the FFI drops sub-second precision, so a ms-bearing
     // instant would perturb the reconstructed value.

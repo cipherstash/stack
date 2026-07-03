@@ -164,23 +164,23 @@ export const DATE_ORD = {
   capabilities: ORDER_AND_RANGE,
 } as const
 
-export const TIMESTAMPTZ = {
-  eqlType: 'eql_v3.timestamptz',
+export const TIMESTAMP = {
+  eqlType: 'eql_v3.timestamp',
   castAs: 'date',
   capabilities: STORAGE_ONLY,
 } as const
-export const TIMESTAMPTZ_EQ = {
-  eqlType: 'eql_v3.timestamptz_eq',
+export const TIMESTAMP_EQ = {
+  eqlType: 'eql_v3.timestamp_eq',
   castAs: 'date',
   capabilities: EQUALITY_ONLY,
 } as const
-export const TIMESTAMPTZ_ORD_ORE = {
-  eqlType: 'eql_v3.timestamptz_ord_ore',
+export const TIMESTAMP_ORD_ORE = {
+  eqlType: 'eql_v3.timestamp_ord_ore',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
-export const TIMESTAMPTZ_ORD = {
-  eqlType: 'eql_v3.timestamptz_ord',
+export const TIMESTAMP_ORD = {
+  eqlType: 'eql_v3.timestamp_ord',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
@@ -496,18 +496,18 @@ export class EncryptedDateOrdColumn extends EncryptedV3Column<
   typeof DATE_ORD
 > {}
 
-// timestamptz
-export class EncryptedTimestamptzColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ
+// timestamp
+export class EncryptedTimestampColumn extends EncryptedV3Column<
+  typeof TIMESTAMP
 > {}
-export class EncryptedTimestamptzEqColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ_EQ
+export class EncryptedTimestampEqColumn extends EncryptedV3Column<
+  typeof TIMESTAMP_EQ
 > {}
-export class EncryptedTimestamptzOrdOreColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ_ORD_ORE
+export class EncryptedTimestampOrdOreColumn extends EncryptedV3Column<
+  typeof TIMESTAMP_ORD_ORE
 > {}
-export class EncryptedTimestamptzOrdColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ_ORD
+export class EncryptedTimestampOrdColumn extends EncryptedV3Column<
+  typeof TIMESTAMP_ORD
 > {}
 
 // numeric
@@ -579,10 +579,10 @@ export type AnyEncryptedV3Column =
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
   | EncryptedDateOrdColumn
-  | EncryptedTimestamptzColumn
-  | EncryptedTimestamptzEqColumn
-  | EncryptedTimestamptzOrdOreColumn
-  | EncryptedTimestamptzOrdColumn
+  | EncryptedTimestampColumn
+  | EncryptedTimestampEqColumn
+  | EncryptedTimestampOrdOreColumn
+  | EncryptedTimestampOrdColumn
   | EncryptedNumericColumn
   | EncryptedNumericEqColumn
   | EncryptedNumericOrdOreColumn

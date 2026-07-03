@@ -37,7 +37,7 @@ import {
  * Every method derives its types from the concrete `table` / `column` builder
  * arguments (which carry their branded types at the call site), so:
  * - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
- *   (`text → string`, `timestamptz → Date`, …);
+ *   (`text → string`, `timestamp → Date`, …);
  * - `encryptQuery` additionally constrains `queryType` to the column's
  *   capabilities and rejects storage-only columns outright;
  * - `encryptModel` / `bulkEncryptModels` validate schema-column fields against

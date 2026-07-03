@@ -54,10 +54,10 @@ import {
   EncryptedTextOrdColumn,
   EncryptedTextOrdOreColumn,
   EncryptedTextSearchColumn,
-  EncryptedTimestamptzColumn,
-  EncryptedTimestamptzEqColumn,
-  EncryptedTimestamptzOrdColumn,
-  EncryptedTimestamptzOrdOreColumn,
+  EncryptedTimestampColumn,
+  EncryptedTimestampEqColumn,
+  EncryptedTimestampOrdColumn,
+  EncryptedTimestampOrdOreColumn,
   types,
 } from '@/eql/v3'
 import type { ColumnSchema } from '@/schema'
@@ -216,11 +216,11 @@ export const V3_MATRIX = {
   'eql_v3.date_eq': { builder: types.DateEq, ColumnClass: EncryptedDateEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
   'eql_v3.date_ord_ore': { builder: types.DateOrdOre, ColumnClass: EncryptedDateOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   'eql_v3.date_ord': { builder: types.DateOrd, ColumnClass: EncryptedDateOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  // timestamptz
-  'eql_v3.timestamptz': { builder: types.Timestamptz, ColumnClass: EncryptedTimestamptzColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
-  'eql_v3.timestamptz_eq': { builder: types.TimestamptzEq, ColumnClass: EncryptedTimestamptzEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
-  'eql_v3.timestamptz_ord_ore': { builder: types.TimestamptzOrdOre, ColumnClass: EncryptedTimestamptzOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  'eql_v3.timestamptz_ord': { builder: types.TimestamptzOrd, ColumnClass: EncryptedTimestamptzOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  // timestamp
+  'eql_v3.timestamp': { builder: types.Timestamp, ColumnClass: EncryptedTimestampColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
+  'eql_v3.timestamp_eq': { builder: types.TimestampEq, ColumnClass: EncryptedTimestampEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
+  'eql_v3.timestamp_ord_ore': { builder: types.TimestampOrdOre, ColumnClass: EncryptedTimestampOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.timestamp_ord': { builder: types.TimestampOrd, ColumnClass: EncryptedTimestampOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   // numeric
   'eql_v3.numeric': { builder: types.Numeric, ColumnClass: EncryptedNumericColumn, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: NUMERIC_S, errorSamples: NUM_ERR },
   'eql_v3.numeric_eq': { builder: types.NumericEq, ColumnClass: EncryptedNumericEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },

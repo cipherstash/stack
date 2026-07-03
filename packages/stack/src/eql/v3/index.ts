@@ -49,10 +49,10 @@ export {
   EncryptedTextOrdColumn,
   EncryptedTextOrdOreColumn,
   EncryptedTextSearchColumn,
-  EncryptedTimestamptzColumn,
-  EncryptedTimestamptzEqColumn,
-  EncryptedTimestamptzOrdColumn,
-  EncryptedTimestamptzOrdOreColumn,
+  EncryptedTimestampColumn,
+  EncryptedTimestampEqColumn,
+  EncryptedTimestampOrdColumn,
+  EncryptedTimestampOrdOreColumn,
   TEXT_SEARCH_EQL_TYPE,
 } from './columns'
 export type {

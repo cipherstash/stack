@@ -280,7 +280,7 @@ describe('eql_v3 buildEncryptConfig', () => {
     // report "column not found in Encrypt config" at encrypt time.
     const users = encryptedTable('accounts', {
       createdOn: types.Date('created_on'),
-      lastSeen: types.Timestamptz('last_seen'),
+      lastSeen: types.Timestamp('last_seen'),
     })
     const config = buildEncryptConfig(users)
     expect(Object.keys(config.tables.accounts).sort()).toEqual([
@@ -297,7 +297,7 @@ describe('eql_v3 buildEncryptConfig', () => {
     // (it keys by DB name); `buildColumnKeyMap()` recovers it.
     const users = encryptedTable('accounts', {
       createdOn: types.Date('created_on'),
-      lastSeen: types.Timestamptz('last_seen'),
+      lastSeen: types.Timestamp('last_seen'),
       email: types.TextSearch('email'),
     })
     expect(users.buildColumnKeyMap()).toEqual({

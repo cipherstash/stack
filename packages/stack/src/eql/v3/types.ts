@@ -35,10 +35,10 @@ import {
   EncryptedTextOrdColumn,
   EncryptedTextOrdOreColumn,
   EncryptedTextSearchColumn,
-  EncryptedTimestamptzColumn,
-  EncryptedTimestamptzEqColumn,
-  EncryptedTimestamptzOrdColumn,
-  EncryptedTimestamptzOrdOreColumn,
+  EncryptedTimestampColumn,
+  EncryptedTimestampEqColumn,
+  EncryptedTimestampOrdColumn,
+  EncryptedTimestampOrdOreColumn,
   FLOAT4,
   FLOAT4_EQ,
   FLOAT4_ORD,
@@ -64,10 +64,10 @@ import {
   TEXT_MATCH,
   TEXT_ORD,
   TEXT_ORD_ORE,
-  TIMESTAMPTZ,
-  TIMESTAMPTZ_EQ,
-  TIMESTAMPTZ_ORD,
-  TIMESTAMPTZ_ORD_ORE,
+  TIMESTAMP,
+  TIMESTAMP_EQ,
+  TIMESTAMP_ORD,
+  TIMESTAMP_ORD_ORE,
 } from './columns'
 
 /**
@@ -75,7 +75,7 @@ import {
  * EQL v3 column; the member name mirrors the underlying `eql_v3.<name>` domain
  * (strip the `eql_v3.` prefix, PascalCase each `_`-separated segment). So
  * `types.TextEq('actor')` builds an `eql_v3.text_eq` column, `types.Int4Ord`
- * an `eql_v3.int4_ord`, `types.Timestamptz` an `eql_v3.timestamptz`, and so on.
+ * an `eql_v3.int4_ord`, `types.Timestamp` an `eql_v3.timestamp`, and so on.
  *
  * Each factory returns the CONCRETE column class instance (never the widened
  * `AnyEncryptedV3Column`) so per-column plaintext / query-capability inference
@@ -87,7 +87,7 @@ import {
  * const events = encryptedTable('events', {
  *   actor:     types.TextEq('actor'),           // equality
  *   weight:    types.Int4Ord('weight'),         // order + range
- *   createdAt: types.Timestamptz('created_at'), // storage only
+ *   createdAt: types.Timestamp('created_at'), // storage only
  * })
  * ```
  *
@@ -118,15 +118,14 @@ export const types = {
     new EncryptedDateOrdOreColumn(name, DATE_ORD_ORE),
   DateOrd: (name: string) => new EncryptedDateOrdColumn(name, DATE_ORD),
 
-  // timestamptz
-  Timestamptz: (name: string) =>
-    new EncryptedTimestamptzColumn(name, TIMESTAMPTZ),
-  TimestamptzEq: (name: string) =>
-    new EncryptedTimestamptzEqColumn(name, TIMESTAMPTZ_EQ),
-  TimestamptzOrdOre: (name: string) =>
-    new EncryptedTimestamptzOrdOreColumn(name, TIMESTAMPTZ_ORD_ORE),
-  TimestamptzOrd: (name: string) =>
-    new EncryptedTimestamptzOrdColumn(name, TIMESTAMPTZ_ORD),
+  // timestamp
+  Timestamp: (name: string) => new EncryptedTimestampColumn(name, TIMESTAMP),
+  TimestampEq: (name: string) =>
+    new EncryptedTimestampEqColumn(name, TIMESTAMP_EQ),
+  TimestampOrdOre: (name: string) =>
+    new EncryptedTimestampOrdOreColumn(name, TIMESTAMP_ORD_ORE),
+  TimestampOrd: (name: string) =>
+    new EncryptedTimestampOrdColumn(name, TIMESTAMP_ORD),
 
   // numeric
   Numeric: (name: string) => new EncryptedNumericColumn(name, NUMERIC),
