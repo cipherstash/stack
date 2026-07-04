@@ -1,4 +1,9 @@
 import type { ColumnSchema, MatchIndexOpts } from '@/schema'
+import {
+  type BuiltMatchIndexOpts,
+  cloneMatchOpts,
+  defaultMatchOpts,
+} from '@/schema/match-defaults'
 
 /**
  * The query capabilities a v3 concrete domain exposes. These are SDK-facing
@@ -275,47 +280,6 @@ export const FLOAT8_ORD = {
 } as const
 
 /**
- * Fully-resolved match-index options: every field present and non-`undefined`.
- *
- * `MatchIndexOpts` (the user-facing tuning input) has all fields optional —
- * each is `.default(...).optional()` in the zod schema, so its inferred type is
- * `T | undefined`. This type pins the BUILT/resolved shape explicitly via
- * `NonNullable<...>`, which states the non-null intent directly and is robust
- * regardless of `Required<>`'s subtle, `exactOptionalPropertyTypes`-dependent
- * stripping semantics. (v2 uses `Required<MatchIndexOpts>` and that compiles
- * fine under this repo's tsconfig — `strict: true`, NO `exactOptionalPropertyTypes`
- * — so this is a clarity/robustness choice, not a fix for a present break.)
- */
-type BuiltMatchIndexOpts = {
-  tokenizer: NonNullable<MatchIndexOpts['tokenizer']>
-  token_filters: NonNullable<MatchIndexOpts['token_filters']>
-  k: NonNullable<MatchIndexOpts['k']>
-  m: NonNullable<MatchIndexOpts['m']>
-  include_original: NonNullable<MatchIndexOpts['include_original']>
-}
-
-/**
- * Default match-index parameters. These mirror the v2 `freeTextSearch()`
- * builder defaults EXACTLY (note `include_original: true`, which is the v2
- * builder default rather than the zod-schema default of `false`).
- *
- * This is a FACTORY (not a shared `const`) so every caller gets fresh, unaliased
- * nested objects (`tokenizer`, `token_filters` and the `{ kind: 'downcase' }`
- * inside it). A shared const would be shallow-copied by `{ ...DEFAULT }`, leaving
- * those nested objects aliased across every column — a caller mutating one built
- * config could then corrupt the defaults used by later columns.
- */
-function defaultMatchOpts(): BuiltMatchIndexOpts {
-  return {
-    tokenizer: { kind: 'ngram', token_length: 3 },
-    token_filters: [{ kind: 'downcase' }],
-    k: 6,
-    m: 2048,
-    include_original: true,
-  }
-}
-
-/**
  * Translate a domain's semantic {@link QueryCapabilities} (plus its plaintext
  * `castAs`, which decides how equality is answered) into the concrete EQL index
  * block emitted by `build()`.
@@ -351,12 +315,9 @@ function indexesForCapabilities(
   }
 
   if (capabilities.freeTextSearch) {
-    const match = defaultMatchOpts()
-    indexes.match = {
-      ...match,
-      tokenizer: { ...match.tokenizer },
-      token_filters: match.token_filters.map((f) => ({ ...f })),
-    }
+    // The factory returns fresh, unaliased nested objects per call, so no
+    // column's emitted match block ever shares state with another's.
+    indexes.match = defaultMatchOpts()
   }
 
   return indexes
@@ -467,15 +428,13 @@ export class EncryptedTextSearchColumn extends EncryptedV3Column<
     // Clone-on-write: deep-copy the nested tokenizer / token_filters when
     // storing them so a caller mutating their own opts object between
     // freeTextSearch(opts) and build() cannot leak into the emitted config.
-    const tokenizer = opts?.tokenizer ?? defaults.tokenizer
-    const token_filters = opts?.token_filters ?? defaults.token_filters
-    this.matchOpts = {
-      tokenizer: { ...tokenizer },
-      token_filters: token_filters.map((f) => ({ ...f })),
+    this.matchOpts = cloneMatchOpts({
+      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
+      token_filters: opts?.token_filters ?? defaults.token_filters,
       k: opts?.k ?? defaults.k,
       m: opts?.m ?? defaults.m,
       include_original: opts?.include_original ?? defaults.include_original,
-    }
+    })
     return this
   }
 
@@ -490,11 +449,7 @@ export class EncryptedTextSearchColumn extends EncryptedV3Column<
       indexes: {
         unique: { token_filters: [] },
         ore: {},
-        match: {
-          ...this.matchOpts,
-          tokenizer: { ...this.matchOpts.tokenizer },
-          token_filters: this.matchOpts.token_filters.map((f) => ({ ...f })),
-        },
+        match: cloneMatchOpts(this.matchOpts),
       },
     }
   }

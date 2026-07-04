@@ -21,20 +21,13 @@ import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
+import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
   typedEntries,
   V3_MATRIX,
 } from './catalog'
-
-const LIVE_CIPHERSTASH_ENABLED = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 /** `eql_v3.int4_ord` → `int4_ord`: a valid, per-domain-unique column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { BuildableTable, Encrypted } from '@/types'
+import { defaultMatchOpts } from './match-defaults'
 
 // ------------------------
 // Zod schemas
@@ -351,17 +352,15 @@ export class EncryptedColumn {
    * ```
    */
   freeTextSearch(opts?: MatchIndexOpts) {
-    // Provide defaults
+    // Shared defaults (schema/match-defaults) — one source of truth with the
+    // EQL v3 domain builders. The factory returns fresh nested objects.
+    const defaults = defaultMatchOpts()
     this.indexesValue.match = {
-      tokenizer: opts?.tokenizer ?? { kind: 'ngram', token_length: 3 },
-      token_filters: opts?.token_filters ?? [
-        {
-          kind: 'downcase',
-        },
-      ],
-      k: opts?.k ?? 6,
-      m: opts?.m ?? 2048,
-      include_original: opts?.include_original ?? true,
+      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
+      token_filters: opts?.token_filters ?? defaults.token_filters,
+      k: opts?.k ?? defaults.k,
+      m: opts?.m ?? defaults.m,
+      include_original: opts?.include_original ?? defaults.include_original,
     }
     return this
   }
