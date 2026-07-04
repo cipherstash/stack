@@ -33,9 +33,10 @@
 import 'dotenv/config'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { Encryption } from '@/encryption'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
-import { installEqlV3IfNeeded } from '../helpers/eql-v3'
+import { assertV3WireEnvelope, installEqlV3IfNeeded } from '../helpers/eql-v3'
 import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
@@ -105,6 +106,7 @@ const storageDomains = domains.filter(
 type Row = { id: number }
 
 let client: Awaited<ReturnType<typeof EncryptionV3>>
+let termClient: Awaited<ReturnType<typeof Encryption>>
 let idA: number
 let idB: number
 // Query terms, pre-encrypted once in `beforeAll` (not per `it.each` case).
@@ -117,6 +119,15 @@ beforeAll(async () => {
 
   await installEqlV3IfNeeded(sql)
   client = await EncryptionV3({ schemas: [table] as never })
+  // INTERIM (CIP-3402): protect-ffi 0.27 has no v3 scalar query wire shape —
+  // scalar encryptQuery on the v3-wire client throws EQL_V3_QUERY_UNSUPPORTED.
+  // Query terms come from a second, explicitly v2-wire client: the
+  // eql_v3_internal extractors below read only the term keys from the jsonb,
+  // and index terms are identical across wire formats.
+  termClient = await Encryption({
+    schemas: [table] as never,
+    config: { eqlVersion: 2 },
+  })
 
   const columnDefs = domains
     .map(([t]) => `"${slug(t)}" ${t} NOT NULL`)
@@ -142,6 +153,12 @@ beforeAll(async () => {
   const [encA, encB] = unwrapResult(
     await client.bulkEncryptModels([rowA, rowB] as never, table as never),
   ) as Array<Record<string, unknown>>
+
+  // Generation handshake: fail loudly on client/bundle wire-format skew
+  // before the 35-column INSERT turns it into an opaque 23514.
+  for (const [name, value] of Object.entries(encA)) {
+    assertV3WireEnvelope(value, `matrix-live-pg seed column ${name}`)
+  }
 
   const colNames = domains.map(([t]) => `"${slug(t)}"`)
   const insertRow = async (enc: Record<string, unknown>): Promise<number> => {
@@ -174,7 +191,7 @@ beforeAll(async () => {
   // statically-known type for `encryptQuery` to key off in the first place.
   for (const [t, spec] of eqDomains) {
     eqTerms[slug(t)] = unwrapResult(
-      await client.encryptQuery(
+      await termClient.encryptQuery(
         spec.samples[0] as never,
         {
           table,
@@ -186,7 +203,7 @@ beforeAll(async () => {
   }
   for (const [t, spec] of ordDomains) {
     ordTerms[slug(t)] = unwrapResult(
-      await client.encryptQuery(
+      await termClient.encryptQuery(
         spec.samples[0] as never,
         {
           table,
@@ -201,7 +218,7 @@ beforeAll(async () => {
   // match proof targets row B instead of the usual row A.
   for (const [t] of matchDomains) {
     matchTerms[slug(t)] = unwrapResult(
-      await client.encryptQuery(
+      await termClient.encryptQuery(
         'ada' as never,
         {
           table,
@@ -229,7 +246,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.eq_term("${col}") = eql_v3.hmac_256($2::jsonb)`,
+           AND eql_v3.eq_term("${col}") = eql_v3_internal.hmac_256($2::jsonb)`,
       [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
@@ -242,7 +259,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.ord_term("${col}") = eql_v3.ore_block_256($2::jsonb)`,
+           AND eql_v3.ord_term("${col}") = eql_v3_internal.ore_block_256($2::jsonb)`,
       [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
@@ -255,7 +272,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.match_term("${col}") @> eql_v3.bloom_filter($2::jsonb)`,
+           AND eql_v3.match_term("${col}") @> eql_v3_internal.bloom_filter($2::jsonb)`,
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idB])

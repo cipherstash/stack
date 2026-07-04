@@ -16,7 +16,7 @@ import { encryptedSupabase, encryptedSupabaseV3 } from '@/supabase'
 // ---------------------------------------------------------------------------
 
 type FakeEnvelope = {
-  v: 2
+  v: 3
   i: { t: string; c: string }
   c: string
   hm: string
@@ -26,7 +26,7 @@ type FakeEnvelope = {
 function fakeEnvelope(value: unknown, column: string): FakeEnvelope {
   const pt = value instanceof Date ? value.toISOString() : value
   return {
-    v: 2,
+    v: 3,
     i: { t: 'tbl', c: column },
     c: `ct:${String(pt)}`,
     hm: `hm:${String(pt)}`,

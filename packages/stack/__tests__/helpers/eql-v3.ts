@@ -136,3 +136,26 @@ export async function installEqlV3IfNeeded(
     reserved.release()
   }
 }
+
+/**
+ * Version-handshake guard for the live suites: assert that a payload the
+ * client just produced is a v:3-wire envelope matching the installed bundle's
+ * domain CHECK pins (`VALUE->>'v' = '3'`, eql-3.0.0-alpha.2). A mismatch means
+ * generation skew — a stale protect-ffi pin, missing `eqlVersion: 3` wiring,
+ * or a stale vendored bundle — exactly the drift class that previously went
+ * unnoticed (PR #547 originally wrote v2-wire data against v:2 CHECK pins).
+ * Fail loudly and name the skew instead of letting inserts fail with an
+ * opaque 23514 (or, worse, a mismatched bundle silently accept them).
+ */
+export function assertV3WireEnvelope(payload: unknown, context: string): void {
+  const v =
+    typeof payload === 'object' && payload !== null
+      ? (payload as Record<string, unknown>).v
+      : undefined
+  if (v !== 3) {
+    throw new Error(
+      `EQL generation skew (${context}): client emitted an envelope with v=${JSON.stringify(v)} but the installed eql_v3 bundle (eql-3.0.0-alpha.2) pins v='3'. ` +
+        'Check the @cipherstash/protect-ffi version (needs >= 0.27.0), the eqlVersion wiring (EncryptionV3 / Encryption auto-detection), and the vendored bundle generation.',
+    )
+  }
+}

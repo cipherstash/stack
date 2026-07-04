@@ -98,7 +98,7 @@ describe('EQLInstaller', () => {
     it('returns true when schema exists', async () => {
       mockConnect.mockResolvedValue(undefined)
       mockQuery.mockResolvedValue({
-        rows: [{ schema_name: 'eql_v2' }],
+        rows: [{ found: 1 }],
         rowCount: 1,
       })
       mockEnd.mockResolvedValue(undefined)
@@ -110,6 +110,7 @@ describe('EQLInstaller', () => {
 
       const result = await installer.isInstalled()
       expect(result).toBe(true)
+      expect(mockQuery).toHaveBeenCalledWith(expect.any(String), [['eql_v2']])
     })
   })
 
@@ -274,9 +275,8 @@ describe('EQLInstaller', () => {
       ).rejects.toThrow('not supported for EQL v3')
     })
 
-    it('checks the eql_v3 schema for isInstalled({ eqlVersion: 3 })', async () => {
+    it('requires BOTH eql_v3 and eql_v3_internal for isInstalled({ eqlVersion: 3 })', async () => {
       mockConnect.mockResolvedValue(undefined)
-      mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
       mockEnd.mockResolvedValue(undefined)
 
       const { EQLInstaller } = await import('@/installer/index.ts')
@@ -284,9 +284,54 @@ describe('EQLInstaller', () => {
         databaseUrl: 'postgresql://localhost:5432/test',
       })
 
-      await installer.isInstalled({ eqlVersion: 3 })
+      // Current-generation install: both schemas present
+      mockQuery.mockResolvedValue({ rows: [{ found: 2 }], rowCount: 1 })
+      await expect(installer.isInstalled({ eqlVersion: 3 })).resolves.toBe(true)
+      expect(mockQuery).toHaveBeenCalledWith(expect.any(String), [
+        ['eql_v3', 'eql_v3_internal'],
+      ])
 
-      expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ['eql_v3'])
+      // STALE pre-alpha.2 install: eql_v3 exists but eql_v3_internal does not
+      // — must report NOT installed so an install run replaces it instead of
+      // a stale surface silently accepting wrong-generation wire data.
+      mockQuery.mockResolvedValue({ rows: [{ found: 1 }], rowCount: 1 })
+      await expect(installer.isInstalled({ eqlVersion: 3 })).resolves.toBe(
+        false,
+      )
+    })
+
+    it('grants eql_v3 AND eql_v3_internal for the v3 supabase install', async () => {
+      mockConnect.mockResolvedValue(undefined)
+      mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
+      mockEnd.mockResolvedValue(undefined)
+
+      const { EQLInstaller, SUPABASE_PERMISSIONS_SQL_V3 } = await import(
+        '@/installer/index.ts'
+      )
+      const installer = new EQLInstaller({
+        databaseUrl: 'postgresql://localhost:5432/test',
+      })
+
+      await installer.install({ eqlVersion: 3, supabase: true })
+
+      const otherCalls = mockQuery.mock.calls
+        .map((call: unknown[]) => call[0])
+        .filter(
+          (sql: unknown): sql is string =>
+            typeof sql === 'string' &&
+            sql !== 'BEGIN' &&
+            sql !== 'COMMIT' &&
+            sql !== 'ROLLBACK',
+        )
+      expect(otherCalls[1]).toBe(SUPABASE_PERMISSIONS_SQL_V3)
+      // The eql_v3 operators call SECURITY INVOKER functions that live in
+      // eql_v3_internal — the roles need grants on BOTH schemas.
+      expect(SUPABASE_PERMISSIONS_SQL_V3).toContain(
+        'GRANT USAGE ON SCHEMA eql_v3 ',
+      )
+      expect(SUPABASE_PERMISSIONS_SQL_V3).toContain(
+        'GRANT USAGE ON SCHEMA eql_v3_internal ',
+      )
     })
 
     it('rolls back on SQL execution failure', async () => {

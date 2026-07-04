@@ -55,15 +55,20 @@ type V3ColumnLike = {
  * - **Mutation encoding** — the raw encrypted payload object is sent (the
  *   `eql_v3.*` domains are `DOMAIN … AS jsonb`), not v2's `{ data: … }`
  *   composite wrap.
- * - **Query-term encoding** — every filter operand is the FULL storage
- *   envelope from `encrypt()`, serialized as jsonb text. This is load-bearing:
- *   each `eql_v3.*` domain CHECK requires the storage keys (`v`/`i`/`c` plus
- *   the domain's index terms), and the SQL operator functions coerce their
- *   jsonb operand into the domain — so a narrowed `encryptQuery` term (which
- *   carries no `c`) fails the CHECK with 23514 for EVERY domain, not just
- *   `text_search`. The full envelope satisfies the CHECK by construction and
- *   the operators extract the term they need (`eq_term`/`ord_term`/
- *   `match_term`).
+ * - **Query-term encoding (INTERIM — tracked as CIP-3402)** — every filter
+ *   operand is the FULL storage envelope from `encrypt()`, serialized as
+ *   jsonb text. Why it is required today: each `eql_v3.*` domain CHECK
+ *   requires the storage keys (`v`/`i`/`c` plus the domain's index terms),
+ *   the SQL operator functions coerce their jsonb operand into the domain,
+ *   and protect-ffi has no v3 scalar query wire shape (`encryptQuery` throws
+ *   `EQL_V3_QUERY_UNSUPPORTED` on a v3 client) — so a term-only operand is
+ *   impossible for EVERY domain, not just `text_search`. The full envelope
+ *   satisfies the CHECK by construction and the operators extract the term
+ *   they need (`eq_term`/`ord_term`/`match_term`). Caveat: operands carry a
+ *   real ciphertext plus ALL index terms through PostgREST GET query strings
+ *   (URL logs/proxies). Replaced by the EQL-side term-only scalar query
+ *   envelope when it ships — see {@link encryptCollectedTerms}, the single
+ *   swap point.
  * - **`like`/`ilike`** — the v3 domains define no LIKE operator; free-text
  *   match is `@>` on the bloom filter. Encrypted pattern filters are emitted
  *   as PostgREST `cs` instead. (Match is tokenized + downcased, so `like` and

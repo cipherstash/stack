@@ -23,9 +23,18 @@ const users = encryptedTable('schema_v3_client_users', {
 
 describeLive('eql_v3 client integration', () => {
   let protectClient: EncryptionClient
+  // INTERIM (CIP-3402): protect-ffi 0.27 has no v3 scalar query wire shape —
+  // scalar encryptQuery on the v3-wire client throws EQL_V3_QUERY_UNSUPPORTED.
+  // Query-term shape assertions run against a second, explicitly v2-wire client
+  // over the same schemas (index terms are identical across wire formats).
+  let termClient: EncryptionClient
 
   beforeAll(async () => {
     protectClient = await Encryption({ schemas: [users] })
+    termClient = await Encryption({
+      schemas: [users],
+      config: { eqlVersion: 2 },
+    })
   })
 
   it('encrypts and decrypts a text_search column', async () => {
@@ -38,7 +47,8 @@ describeLive('eql_v3 client integration', () => {
 
     expect(encrypted).toMatchObject({
       i: { t: 'schema_v3_client_users', c: 'email' },
-      v: 2,
+      // v3-wire storage envelope (eqlVersion: 3 client over v3 schemas)
+      v: 3,
     })
     expect(encrypted).toHaveProperty('c')
     expect(encrypted).toHaveProperty('hm')
@@ -51,7 +61,7 @@ describeLive('eql_v3 client integration', () => {
 
   it('auto-infers equality query terms for text_search columns', async () => {
     const queryTerm = unwrapResult(
-      await protectClient.encryptQuery('ada@example.com', {
+      await termClient.encryptQuery('ada@example.com', {
         table: users,
         column: users.email,
       }),
@@ -59,15 +69,29 @@ describeLive('eql_v3 client integration', () => {
 
     expect(queryTerm).toMatchObject({
       i: { t: 'schema_v3_client_users', c: 'email' },
+      // v2-wire: terms come from the interim v2 term client (CIP-3402)
       v: 2,
     })
     expect(queryTerm).toHaveProperty('hm')
     expect(queryTerm).not.toHaveProperty('c')
   }, 30000)
 
+  it('rejects scalar encryptQuery on the v3-wire client (no v3 scalar query wire shape yet)', async () => {
+    // Pins the FFI behaviour the Supabase adapter's interim full-envelope
+    // operand path depends on: under eqlVersion 3, scalar index queries
+    // throw EQL_V3_QUERY_UNSUPPORTED until an EQL scalar query envelope
+    // exists (CIP-3402).
+    const result = await protectClient.encryptQuery('ada@example.com', {
+      table: users,
+      column: users.email,
+    })
+    expect(result.failure).toBeDefined()
+    expect(result.failure?.message).toMatch(/unsupported|eqlVersion/i)
+  }, 30000)
+
   it('encrypts explicit freeTextSearch and orderAndRange query terms', async () => {
     const matchTerm = unwrapResult(
-      await protectClient.encryptQuery('Ada Lovelace', {
+      await termClient.encryptQuery('Ada Lovelace', {
         table: users,
         column: users.email,
         queryType: 'freeTextSearch',
@@ -75,7 +99,7 @@ describeLive('eql_v3 client integration', () => {
     )
 
     const orderTerm = unwrapResult(
-      await protectClient.encryptQuery('ada@example.com', {
+      await termClient.encryptQuery('ada@example.com', {
         table: users,
         column: users.email,
         queryType: 'orderAndRange',
@@ -97,7 +121,7 @@ describeLive('eql_v3 client integration', () => {
     )
     expect(encryptedText).toMatchObject({
       i: { t: 'schema_v3_client_users', c: 'notes' },
-      v: 2,
+      v: 3,
     })
     expect(encryptedText).toHaveProperty('c')
     expect(encryptedText).not.toHaveProperty('hm')
@@ -119,7 +143,7 @@ describeLive('eql_v3 client integration', () => {
 
   it('encrypts equality and order query terms for typed v3 columns', async () => {
     const equalityTerm = unwrapResult(
-      await protectClient.encryptQuery('ada', {
+      await termClient.encryptQuery('ada', {
         table: users,
         column: users.nickname,
       }),
@@ -128,7 +152,7 @@ describeLive('eql_v3 client integration', () => {
     expect(equalityTerm).not.toHaveProperty('c')
 
     const orderTerm = unwrapResult(
-      await protectClient.encryptQuery(37, {
+      await termClient.encryptQuery(37, {
         table: users,
         column: users.age,
         queryType: 'orderAndRange',
@@ -151,7 +175,7 @@ describeLive('eql_v3 client integration', () => {
     expect(encrypted).not.toHaveProperty('ob')
 
     const matchTerm = unwrapResult(
-      await protectClient.encryptQuery('Lovelace', {
+      await termClient.encryptQuery('Lovelace', {
         table: users,
         column: users.body,
         queryType: 'freeTextSearch',

@@ -9,6 +9,7 @@ const EQL_INSTALL_URL = `https://github.com/cipherstash/encrypt-query-language/r
 const EQL_INSTALL_NO_OPERATOR_FAMILY_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt-supabase.sql`
 const EQL_SCHEMA_NAME = 'eql_v2'
 const EQL_V3_SCHEMA_NAME = 'eql_v3'
+const EQL_V3_INTERNAL_SCHEMA_NAME = 'eql_v3_internal'
 
 /**
  * Which EQL generation to install / inspect. `2` is the composite
@@ -46,9 +47,20 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT USAGE O
 /** The v2 (`eql_v2`) Supabase grants block. See {@link supabasePermissionsSql}. */
 export const SUPABASE_PERMISSIONS_SQL = supabasePermissionsSql(EQL_SCHEMA_NAME)
 
-/** The v3 (`eql_v3`) Supabase grants block. See {@link supabasePermissionsSql}. */
+/**
+ * The v3 Supabase grants block: `eql_v3` AND `eql_v3_internal`. The bundle's
+ * functions are all SECURITY INVOKER (deliberately, so PostgreSQL can inline
+ * them), and the `eql_v3` operators call into SEM extractors/comparators that
+ * live in `eql_v3_internal` — so the calling role itself needs USAGE/EXECUTE
+ * on the internal schema too, or every encrypted query fails `42501`.
+ *
+ * Grants ≠ exposure: only `eql_v3` goes in the dashboard's Exposed schemas;
+ * `eql_v3_internal` must stay unexposed (the split exists so the Supabase
+ * Table-Builder type picker shows only the column domains).
+ */
 export const SUPABASE_PERMISSIONS_SQL_V3 =
-  supabasePermissionsSql(EQL_V3_SCHEMA_NAME)
+  supabasePermissionsSql(EQL_V3_SCHEMA_NAME) +
+  supabasePermissionsSql(EQL_V3_INTERNAL_SCHEMA_NAME)
 
 /**
  * Get the directory of the current file, supporting both ESM and CJS.
@@ -192,16 +204,27 @@ export class EQLInstaller {
    */
   async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
     const client = new pg.Client({ connectionString: this.databaseUrl })
+    const eqlVersion = options?.eqlVersion ?? 2
 
     try {
       await client.connect()
 
+      // v3 is generation-aware: a pre-alpha.2 install has eql_v3 but no
+      // eql_v3_internal (and pins v:2 envelopes in its domain CHECKs) — treat
+      // it as NOT installed so an install run replaces it (the bundle opens by
+      // dropping both schemas) instead of a stale surface silently accepting
+      // wrong-generation wire data.
+      const requiredSchemas =
+        eqlVersion === 3
+          ? [EQL_V3_SCHEMA_NAME, EQL_V3_INTERNAL_SCHEMA_NAME]
+          : [EQL_SCHEMA_NAME]
+
       const result = await client.query(
-        'SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1',
-        [schemaNameFor(options?.eqlVersion ?? 2)],
+        'SELECT count(*)::int AS found FROM information_schema.schemata WHERE schema_name = ANY($1)',
+        [requiredSchemas],
       )
 
-      return result.rowCount !== null && result.rowCount > 0
+      return result.rows[0]?.found === requiredSchemas.length
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
@@ -343,7 +366,13 @@ export class EQLInstaller {
     client: pg.Client,
     eqlVersion: EqlVersion,
   ): Promise<void> {
-    await client.query(supabasePermissionsSql(schemaNameFor(eqlVersion)))
+    // v3 grants cover eql_v3 AND eql_v3_internal (SECURITY INVOKER functions
+    // in the internal schema back the eql_v3 operators).
+    await client.query(
+      eqlVersion === 3
+        ? SUPABASE_PERMISSIONS_SQL_V3
+        : supabasePermissionsSql(schemaNameFor(eqlVersion)),
+    )
   }
 
   /**

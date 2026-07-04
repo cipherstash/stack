@@ -6,7 +6,7 @@ import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import type { Encrypted } from '@/types'
 import { unwrapResult } from './fixtures'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
+import { assertV3WireEnvelope, installEqlV3IfNeeded } from './helpers/eql-v3'
 import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from './helpers/live-gate'
 
 const databaseUrl = process.env.DATABASE_URL
@@ -35,14 +35,24 @@ type InsertedRow = {
 type EncryptionPayload = postgres.JSONValue
 
 let protectClient: EncryptionClient
+// INTERIM (CIP-3402): protect-ffi 0.27 has no v3 scalar query wire shape —
+// scalar encryptQuery on a v3-wire client throws EQL_V3_QUERY_UNSUPPORTED.
+// Query terms are built with a second, explicitly v2-wire client over the
+// same schemas; the eql_v3_internal extractors these tests feed terms to
+// (hmac_256 / bloom_filter / ore_block_256) read only the term keys from the
+// jsonb, and index terms are identical across wire formats.
+let termClient: EncryptionClient
 
 async function encryptValue(value: string): Promise<EncryptionPayload> {
-  return unwrapResult(
+  const payload = unwrapResult(
     await protectClient.encrypt(value, {
       table,
       column: table.email,
     }),
   ) as EncryptionPayload
+  // Generation handshake: fail loudly on client/bundle wire-format skew.
+  assertV3WireEnvelope(payload, 'schema-v3-pg encryptValue')
+  return payload
 }
 
 async function encryptQueryTerm(
@@ -50,7 +60,7 @@ async function encryptQueryTerm(
   queryType?: 'equality' | 'freeTextSearch' | 'orderAndRange',
 ): Promise<EncryptionPayload> {
   return unwrapResult(
-    await protectClient.encryptQuery(value, {
+    await termClient.encryptQuery(value, {
       table,
       column: table.email,
       queryType,
@@ -94,6 +104,11 @@ beforeAll(async () => {
 
   await installEqlV3IfNeeded(sql)
   protectClient = await Encryption({ schemas: [table, typedTable] })
+  // v2-wire term client (see the INTERIM note above the declarations).
+  termClient = await Encryption({
+    schemas: [table, typedTable],
+    config: { eqlVersion: 2 },
+  })
 
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_text_search (
@@ -156,7 +171,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(row)).resolves.toBe('roundtrip@example.com')
   }, 30000)
 
-  it('queries equality terms with eql_v3.eq_term and eql_v3.hmac_256', async () => {
+  it('queries equality terms with eql_v3.eq_term and eql_v3_internal.hmac_256', async () => {
     const ids = await seedRows()
     const equalityTerm = await encryptQueryTerm('grace@example.com', 'equality')
 
@@ -164,7 +179,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.eq_term(email) = eql_v3.hmac_256(${sql.json(equalityTerm)}::jsonb)
+        AND eql_v3.eq_term(email) = eql_v3_internal.hmac_256(${sql.json(equalityTerm)}::jsonb)
       ORDER BY id
     `
 
@@ -172,7 +187,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(rows[0])).resolves.toBe('grace@example.com')
   }, 30000)
 
-  it('queries free-text terms with eql_v3.match_term and eql_v3.bloom_filter', async () => {
+  it('queries free-text terms with eql_v3.match_term and eql_v3_internal.bloom_filter', async () => {
     await seedRows()
     const matchTerm = await encryptQueryTerm('example.com', 'freeTextSearch')
 
@@ -180,14 +195,14 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.match_term(email) @> eql_v3.bloom_filter(${sql.json(matchTerm)}::jsonb)
+        AND eql_v3.match_term(email) @> eql_v3_internal.bloom_filter(${sql.json(matchTerm)}::jsonb)
       ORDER BY label
     `
 
     expect(rows.map((row) => row.label)).toEqual(['ada', 'grace'])
   }, 30000)
 
-  it('queries range terms with eql_v3.ord_term and eql_v3.ore_block_256', async () => {
+  it('queries range terms with eql_v3.ord_term and eql_v3_internal.ore_block_256', async () => {
     await seedRows()
     const lower = await encryptQueryTerm('grace@example.com', 'orderAndRange')
     const upper = await encryptQueryTerm('zora@example.org', 'orderAndRange')
@@ -196,8 +211,8 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(email) >= eql_v3.ore_block_256(${sql.json(lower)}::jsonb)
-        AND eql_v3.ord_term(email) <= eql_v3.ore_block_256(${sql.json(upper)}::jsonb)
+        AND eql_v3.ord_term(email) >= eql_v3_internal.ore_block_256(${sql.json(lower)}::jsonb)
+        AND eql_v3.ord_term(email) <= eql_v3_internal.ore_block_256(${sql.json(upper)}::jsonb)
       ORDER BY eql_v3.ord_term(email)
     `
 
@@ -289,7 +304,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     `
 
     const ageTerm = unwrapResult(
-      await protectClient.encryptQuery(30, {
+      await termClient.encryptQuery(30, {
         table: typedTable,
         column: typedTable.age,
         queryType: 'orderAndRange',
@@ -300,7 +315,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) >= eql_v3.ore_block_256(${sql.json(ageTerm)}::jsonb)
+        AND eql_v3.ord_term(age) >= eql_v3_internal.ore_block_256(${sql.json(ageTerm)}::jsonb)
     `
 
     expect(rows.map((row) => row.id)).toContain(inserted.id)
@@ -352,7 +367,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     // Equality term encrypted with queryType:'equality' — post-fix this resolves
     // to the ore (`ob`) term; the SQL `=` operator makes it an equality match.
     const equalityTerm = unwrapResult(
-      await protectClient.encryptQuery(37, {
+      await termClient.encryptQuery(37, {
         table: typedTable,
         column: typedTable.age,
         queryType: 'equality',
@@ -363,7 +378,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) = eql_v3.ore_block_256(${sql.json(equalityTerm)}::jsonb)
+        AND eql_v3.ord_term(age) = eql_v3_internal.ore_block_256(${sql.json(equalityTerm)}::jsonb)
       ORDER BY id
     `
     // Exactly the age=37 row — not the 30 or 42 rows.
@@ -373,7 +388,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
 
     // A non-matching value selects nothing.
     const missTerm = unwrapResult(
-      await protectClient.encryptQuery(99, {
+      await termClient.encryptQuery(99, {
         table: typedTable,
         column: typedTable.age,
         queryType: 'equality',
@@ -383,7 +398,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) = eql_v3.ore_block_256(${sql.json(missTerm)}::jsonb)
+        AND eql_v3.ord_term(age) = eql_v3_internal.ore_block_256(${sql.json(missTerm)}::jsonb)
     `
     expect(none).toHaveLength(0)
   }, 30000)
