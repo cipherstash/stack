@@ -7,7 +7,7 @@ Helpers for using [CipherStash encryption](https://github.com/cipherstash/stack)
 
 [![Built by CipherStash](https://raw.githubusercontent.com/cipherstash/meta/refs/heads/main/csbadge.svg)](https://cipherstash.com)
 [![NPM version](https://img.shields.io/npm/v/@cipherstash/protect-dynamodb.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/@cipherstash/protect-dynamodb)
-[![License](https://img.shields.io/npm/l/@cipherstash/protect.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
+[![License](https://img.shields.io/npm/l/@cipherstash/protect-dynamodb.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 
 ## Installation
 
