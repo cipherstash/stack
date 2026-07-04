@@ -8,5 +8,5 @@ This package is part of the [CipherStash Stack](https://github.com/cipherstash/s
 - [Identity-aware encryption](https://cipherstash.com/docs/stack/cipherstash/encryption/identity)
 
 > [!IMPORTANT]
-> `@cipherstash/stack` relies on a native Node.js module and must be excluded from bundling.
-> See the [bundling guide](https://cipherstash.com/docs/stack/deploy/bundling) for the required `serverExternalPackages` configuration in Next.js.
+> The default `@cipherstash/stack` entry relies on a native Node.js module and must be excluded from bundling — see the [bundling guide](https://cipherstash.com/docs/stack/deploy/bundling) for the required `serverExternalPackages` configuration in Next.js.
+> Alternatively, `@cipherstash/stack/wasm-inline` is designed to be bundled (no native module) and works in edge/serverless runtimes.
