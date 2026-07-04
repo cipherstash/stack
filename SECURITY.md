@@ -5,52 +5,22 @@ This document describes the security posture, reporting process, and guidelines 
 
 ## Supported Packages
 
-This repository contains the JavaScript/TypeScript SDK for CipherStash and related packages.
+This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It publishes the following packages to npm:
 
-The below tables list each package along with the currently supported (receiving security updates).
+| Package | Description |
+| ------- | ----------- |
+| `@cipherstash/stack` | Main package: encryption client and all integrations |
+| `stash` | CipherStash CLI |
+| `@cipherstash/protect` | Core encryption library (re-exported via `@cipherstash/stack`) |
+| `@cipherstash/schema` | Schema builder utilities |
+| `@cipherstash/drizzle` | Drizzle ORM integration |
+| `@cipherstash/nextjs` | Next.js helpers |
+| `@cipherstash/protect-dynamodb` | DynamoDB helpers |
+| `@cipherstash/migrate` | Plaintext-to-encrypted column migration tooling |
+| `@cipherstash/prisma-next` | Prisma Next integration (searchable field-level encryption for Postgres) |
+| `@cipherstash/wizard` | AI-powered encryption setup |
 
-### `@cipherstash/stack`
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.4.x   | :white_check_mark: |
-| < 0.4  | :x: |
-
-### `@cipherstash/protect`
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 10.1.x   | :white_check_mark: |
-| 9.6.x   | :white_check_mark:  |
-| < 9.6   | :x: |
-
-### `@cipherstash/drizzle`
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.1.x   | :white_check_mark: |
-| < 1.1  | :x: |
-
-### `@cipherstash/schema`
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 2.0.x   | :white_check_mark: |
-| < 2.0  | :x: |
-
-### `@cipherstash/protect-dynamodb`
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| < 5.1  | :x: |
-
-### `@cipherstash/nextjs`
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 4.0.x   | :white_check_mark: |
-| < 4.0  | :x: |
+**Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.
 
 All packages follow semantic versioning and undergo internal security review, automated analysis, and reproducible builds as part of our SDLC.
 
@@ -97,9 +67,9 @@ We will never take legal action against good-faith security researchers who foll
 
 The following are **in scope**:
 
-- The `cipherstash/protectjs` GitHub repository
-- All published NPM packages under the `@cipherstash/protect*` namespace
-- Protect.js cryptographic implementations, configuration layers, and CLI tooling
+- The `cipherstash/stack` GitHub repository
+- All npm packages published from this repository (listed under Supported Packages above)
+- CipherStash Stack cryptographic implementations, configuration layers, and CLI tooling
 - Key-handling, authenticated encryption behaviour, JSON/JSONB field-level encryption flows
 - Documentation or code examples that could lead to insecure usage
 - CipherStash’s internal infrastructure
@@ -107,7 +77,7 @@ The following are **in scope**:
 
 The following are **out of scope**:
 
-- Example applications in the `examples` dir (though we are still grateful for any relevant disclosires there)
+- Example applications in the `examples` dir (though we are still grateful for any relevant disclosures there)
 - Social engineering, physical attacks, or denial-of-service
 - Attacks requiring privileged access to developer machines or CI/CD infrastructure
 
@@ -137,8 +107,19 @@ To maintain a strong security posture, contributors MUST:
 
 ## CI/CD Supply-Chain Hardening
 
+This repo applies a set of supply-chain controls sourced from
+[lirantal/npm-security-best-practices](https://github.com/lirantal/npm-security-best-practices):
+a post-install script policy, a 7-day dependency cooldown (pnpm
+`minimumReleaseAge`, mirrored by Dependabot's cooldown), exotic-dependency
+blocking (`blockExoticSubdeps`), frozen-lockfile CI, registry pinning, and
+CODEOWNERS coverage of supply-chain-critical paths. These controls are
+validated by `e2e/tests/supply-chain.e2e.test.ts` so silent regressions fail
+CI. See `skills/stash-supply-chain-security/SKILL.md` for the full guide.
+
 The `release.yml` workflow publishes packages to npm using OIDC trusted
-publishing and an `NPM_TOKEN`.
+publishing (`id-token: write`). There is no long-lived `NPM_TOKEN` — the
+workflow deliberately avoids one, and setting one would bypass trusted
+publishing.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:

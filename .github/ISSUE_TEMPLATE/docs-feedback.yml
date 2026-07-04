@@ -35,7 +35,7 @@ body:
     id: terms
     attributes:
       label: Code of conduct
-      description: By submitting this issue, you agree to follow our [Code of conduct](https://github.com/cipherstash/protectjs/blob/main/CODE_OF_CONDUCT.md). 
+      description: By submitting this issue, you agree to follow our [Code of conduct](https://github.com/cipherstash/stack/blob/main/CODE_OF_CONDUCT.md). 
       options:
         - label: I agree to follow this project's Code of conduct
           required: true
