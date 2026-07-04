@@ -117,7 +117,9 @@ validated by `e2e/tests/supply-chain.e2e.test.ts` so silent regressions fail
 CI. See `skills/stash-supply-chain-security/SKILL.md` for the full guide.
 
 The `release.yml` workflow publishes packages to npm using OIDC trusted
-publishing and an `NPM_TOKEN`.
+publishing (`id-token: write`). There is no long-lived `NPM_TOKEN` — the
+workflow deliberately avoids one, and setting one would bypass trusted
+publishing.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:

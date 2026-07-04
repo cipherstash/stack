@@ -12,7 +12,7 @@ Please use the GitHub issue tracker to report bugs, suggest features, or documen
 
 This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https://pnpm.io/) workspaces:
 
-```
+```text
 .
 ├── packages/
 │   ├── stack/            <-- Main package (@cipherstash/stack)

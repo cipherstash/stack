@@ -62,7 +62,7 @@ REQUIRED DX & SCRIPTS (per example)
   - `seed` → seed sensible data
   - `demo` → prints proof of encryption & queries
   - `typecheck` → `tsc --noEmit`
-- `.env.example` includes DB vars and the **exact** CipherStash env names (do not invent):
+- Local dev auth: prefer the CipherStash profile via `npx stash auth login` (no env vars needed). For CI/deployment, `.env.example` includes DB vars and the **exact** CipherStash env names (do not invent):
   `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`
 
 PROJECT LAYOUT (monorepo, minimal)

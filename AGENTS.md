@@ -124,7 +124,7 @@ Three rules to remember when editing CI or pnpm config:
 
 ## Critical Gotchas (read before coding)
 
-- **Native Node.js module**: `@cipherstash/stack` relies on `@cipherstash/protect-ffi` (Node-API). It must be loaded via native Node.js `require`. Do NOT bundle this module; configure bundlers to externalize it. See the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
+- **Native module vs WASM entry**: The default `@cipherstash/stack` entry relies on `@cipherstash/protect-ffi` (Node-API) and must be loaded via native Node.js `require` — if your tooling bundles server code with it, externalize the module. For bundled or non-Node runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions), use `@cipherstash/stack/wasm-inline` instead: it inlines the WASM build into the JS bundle, so no externalization is needed. See the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
 - **Do not log plaintext**: The library never logs plaintext by design. Don't add logs that risk leaking sensitive data.
 - **Result shape is contract**: Operations return `{ data }` or `{ failure }`. Preserve this shape and error `type` values in `EncryptionErrorTypes`.
 - **Encrypted payload shape is contract**: Keys like `c` in the EQL payload are validated by tests and downstream tools. Don't change them.
@@ -161,8 +161,10 @@ pnpm changeset:publish
 
 ## Bundling and Deployment Notes
 
-- When integrating into frameworks/build tools, ensure native modules are externalized and loaded via Node's runtime require.
-- For Next.js, configure `serverExternalPackages`; for SST/serverless and npm-lockfile-v3 quirks on Linux, see the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
+- Two deployment paths:
+  - **Native (default entry)**: keep `@cipherstash/protect-ffi` external and loaded via Node's runtime require — e.g. Next.js `serverExternalPackages`. Covers Node servers where native modules are fine.
+  - **WASM (`@cipherstash/stack/wasm-inline`)**: designed to be bundled — no native module, no externalization. Use for edge/serverless runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions) or wherever bundler externalization is awkward.
+- For SST/serverless and npm-lockfile-v3 quirks on Linux, see the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
 
 ## Adding Features Safely (LLM checklist)
 
@@ -219,7 +221,7 @@ pnpm changeset:publish
 
 ## Troubleshooting
 
-- Module load errors on Linux/serverless: review the bundling guide (https://cipherstash.com/docs/stack/deploy/bundling).
+- Module load errors on Linux/serverless: switch to `@cipherstash/stack/wasm-inline`, or review the bundling guide (https://cipherstash.com/docs/stack/deploy/bundling).
 - Can't decrypt after encrypting with a lock context: ensure the exact same lock context is provided to decrypt.
 - Tests failing due to missing credentials: provide `CS_*` env vars; lock-context tests are skipped without `USER_JWT`.
 - Performance testing: prefer bulk operations (`bulkEncrypt*` / `bulkDecrypt*`) to exercise ZeroKMS bulk speed.

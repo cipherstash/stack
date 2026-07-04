@@ -15,7 +15,7 @@
     "eql"
   ],
   "license": "MIT",
-  "author": "CipherStash <hello@cipherstash.com>",
+  "author": "CipherStash <humans@cipherstash.com>",
   "files": [
     "dist",
     "README.md",

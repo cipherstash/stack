@@ -2,7 +2,7 @@
   "name": "@cipherstash/stack-monorepo",
   "description": "CipherStash Stack for JavaScript/TypeScript",
   "private": true,
-  "author": "CipherStash <hello@cipherstash.com>",
+  "author": "CipherStash <humans@cipherstash.com>",
   "keywords": [
     "encrypted",
     "query",
