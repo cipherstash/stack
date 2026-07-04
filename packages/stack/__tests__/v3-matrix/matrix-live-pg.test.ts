@@ -272,7 +272,11 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const decrypted = unwrapResult(await client.decrypt(row.value as never))
     const expected = spec.samples[0]
     if (expected instanceof Date) {
-      expect(decrypted).toEqual(expected)
+      // Lone-ciphertext decrypt has no column identity, so the cast_as-driven
+      // Date reconstruction (a decrypt-MODEL feature) cannot apply — the FFI
+      // returns the serialized instant (e.g. '2026-07-01T00:00:00Z'). Parse
+      // before comparing; toEqual on Dates compares the time value.
+      expect(new Date(decrypted as string)).toEqual(expected)
     } else {
       expect(decrypted).toBe(expected)
     }
