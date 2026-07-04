@@ -5,6 +5,7 @@ import { typedClient } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import { unwrapResult } from './fixtures'
+import { describeLive, LIVE_CIPHERSTASH_ENABLED } from './helpers/live-gate'
 
 const users = encryptedTable('schema_v3_client_users', {
   email: types.TextSearch('email'),
@@ -19,15 +20,6 @@ const users = encryptedTable('schema_v3_client_users', {
   createdOn: types.Date('created_on'),
   occurredAt: types.Timestamptz('occurred_at'),
 })
-
-const LIVE_CIPHERSTASH_ENABLED = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-
-const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 describeLive('eql_v3 client integration', () => {
   let protectClient: EncryptionClient

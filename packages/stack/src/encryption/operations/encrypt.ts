@@ -4,6 +4,7 @@ import {
   type JsPlaintext,
 } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
 import type {
@@ -71,19 +72,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
           return null as unknown as Encrypted
         }
 
-        if (
-          typeof this.plaintext === 'number' &&
-          Number.isNaN(this.plaintext)
-        ) {
-          throw new Error('[encryption]: Cannot encrypt NaN value')
-        }
-
-        if (
-          typeof this.plaintext === 'number' &&
-          !Number.isFinite(this.plaintext)
-        ) {
-          throw new Error('[encryption]: Cannot encrypt Infinity value')
-        }
+        assertValidNumericValue(this.plaintext)
 
         const { metadata } = this.getAuditData()
 
@@ -160,13 +149,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
           return null as unknown as Encrypted
         }
 
-        if (typeof plaintext === 'number' && Number.isNaN(plaintext)) {
-          throw new Error('[encryption]: Cannot encrypt NaN value')
-        }
-
-        if (typeof plaintext === 'number' && !Number.isFinite(plaintext)) {
-          throw new Error('[encryption]: Cannot encrypt Infinity value')
-        }
+        assertValidNumericValue(plaintext)
 
         const { metadata } = this.getAuditData()
         const lockContext = resolveLockContext(this.lockContext)

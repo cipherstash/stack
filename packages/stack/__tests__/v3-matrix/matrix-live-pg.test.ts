@@ -36,6 +36,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
 import { installEqlV3IfNeeded } from '../helpers/eql-v3'
+import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
@@ -43,13 +44,6 @@ import {
   V3_MATRIX,
 } from './catalog'
 
-const LIVE_EQL_V3_PG_ENABLED = Boolean(
-  process.env.DATABASE_URL &&
-    process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
 // Previously force-skipped (CI run 28569708268, PR #540): `beforeAll` crashed
 // with `PostgresError: invalid input syntax for type json` on the dynamic
 // 35-column INSERT. Root cause was a postgres.js serialization gap — a bare
@@ -58,7 +52,6 @@ const LIVE_EQL_V3_PG_ENABLED = Boolean(
 // after the skip and the skip was simply left stale). Re-enabled here as an
 // ordinary credential-gated suite: it runs in CI (which supplies DATABASE_URL +
 // CS_* creds) and self-skips locally when they are absent.
-const describeLivePg = LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip
 
 const databaseUrl = process.env.DATABASE_URL
 const sql = LIVE_EQL_V3_PG_ENABLED

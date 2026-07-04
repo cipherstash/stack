@@ -8,18 +8,11 @@ import { ensureKeyset } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
+import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const users = encryptedTable('v3_keyset_users', {
   email: types.TextEq('email'),
 })
-
-const LIVE_CIPHERSTASH_ENABLED = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 describe('EncryptionV3 keyset config (deterministic)', () => {
   it('rejects an invalid keyset id before touching the network', async () => {
