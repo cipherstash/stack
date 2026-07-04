@@ -119,6 +119,20 @@ describe("csFederate", () => {
     // wasm resources released.
     expect(free).toHaveBeenCalledOnce();
   });
+
+  it("defaults the cookie name to cs_token_<workspaceId> from the CRN when omitted", async () => {
+    const responseHeaders = new Headers();
+    await csFederate({
+      request: requestWith(),
+      responseHeaders,
+      workspaceCrn: WORKSPACE_CRN,
+      getJwt: () => "jwt",
+      // cookieName intentionally omitted — must NOT collapse to `cs_token`.
+    });
+    expect(responseHeaders.get("set-cookie")).toMatch(
+      new RegExp(`^cs_token_${WORKSPACE_ID}=`),
+    );
+  });
 });
 
 describe("csFederationMiddleware", () => {
@@ -181,6 +195,24 @@ describe("csAuthHeader", () => {
   it("returns null on a malformed header rather than throwing", () => {
     const headers = new Headers({ [CS_TOKEN_HEADER]: "not-valid-base64url!!" });
     expect(csAuthHeader(headers)).toBeNull();
+  });
+
+  it("rejects a structurally-incomplete TokenResult (spoof/partial payload)", () => {
+    // Missing workspaceId/subject/issuer — decodes fine but isn't a TokenResult.
+    const partial = new Headers({
+      [CS_TOKEN_HEADER]: encodeTokenHeader({
+        token: "header.payload.signature",
+      } as never),
+    });
+    expect(csAuthHeader(partial)).toBeNull();
+
+    // services present but not a string→string map.
+    const badServices = new Headers({
+      [CS_TOKEN_HEADER]: encodeTokenHeader(
+        tokenResult({ services: { zerokms: 123 } }) as never,
+      ),
+    });
+    expect(csAuthHeader(badServices)).toBeNull();
   });
 
   it("honours a custom header name", async () => {

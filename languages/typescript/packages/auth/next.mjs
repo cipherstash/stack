@@ -32,7 +32,7 @@ export function csTokenCookieName(workspaceId) {
  * @property {string} workspaceCrn                          `crn:<region>:<workspace-id>`
  * @property {() => string | Promise<string>} getJwt        Mints the current third-party OIDC JWT (Clerk, …)
  * @property {string} [baseUrl]                             Pin federation to a CTS host / mock (overrides region discovery)
- * @property {string} [cookieName]                          Override the cookie name (default `cs_token_<workspaceId>` — pass it explicitly)
+ * @property {string} [cookieName]                          Override the cookie name (defaults to `cs_token_<workspaceId>`, derived from `workspaceCrn`)
  * @property {boolean} [secure=true]                        Cookie `Secure` flag — set `false` only for localhost HTTP dev
  * @property {"Strict" | "Lax" | "None"} [sameSite="Lax"]   Cookie `SameSite`
  */
@@ -57,10 +57,16 @@ export async function csFederate(options) {
     sameSite,
   } = options;
 
+  // Default to the per-workspace cookie name derived from the CRN
+  // (`crn:<region>:<workspace-id>`). Without this, omitting `cookieName` falls
+  // back to the cookieStore default (`cs_token`), collapsing every workspace's
+  // token into one cookie and causing cross-workspace cache collisions.
+  const workspaceId = workspaceCrn.split(":").at(-1);
   const store = cookieStore({
     request,
     responseHeaders,
-    name: cookieName,
+    name:
+      cookieName ?? (workspaceId ? csTokenCookieName(workspaceId) : undefined),
     secure,
     sameSite,
   });
@@ -140,12 +146,36 @@ export function csAuthHeader(headers, options) {
   } catch {
     return null;
   }
-  if (!warmed || typeof warmed.token !== "string") return null;
+  // Validate the FULL TokenResult shape, not just `token`. The header is
+  // attacker-influenceable (a client could send its own `x-cs-cts-token`), so a
+  // malformed/spoofed payload must be rejected here rather than surfacing as
+  // undefined `subject`/`workspaceId`/`issuer`/`services` fields downstream.
+  if (!isTokenResult(warmed)) return null;
   return {
     requiresFederation: false,
     getToken: async () => warmed,
     free() {},
   };
+}
+
+/**
+ * Structural guard for a decoded {@link import("./wasm-types.d.ts").TokenResult}:
+ * `token`/`subject`/`workspaceId`/`issuer` are non-empty strings and `services`
+ * is a string→string map.
+ *
+ * @param {unknown} v
+ * @returns {v is import("./wasm-types.d.ts").TokenResult}
+ */
+function isTokenResult(v) {
+  if (!v || typeof v !== "object") return false;
+  for (const key of ["token", "subject", "workspaceId", "issuer"]) {
+    if (typeof v[key] !== "string" || v[key].length === 0) return false;
+  }
+  if (!v.services || typeof v.services !== "object") return false;
+  for (const endpoint of Object.values(v.services)) {
+    if (typeof endpoint !== "string") return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
