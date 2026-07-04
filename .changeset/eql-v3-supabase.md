@@ -27,7 +27,7 @@ shape (no index-signature widening — widening would disable the storage-only
 filter guard). Filtering or inserting plaintext passthrough columns requires
 an explicit row type: `es.from<typeof users, UserRow>('users', users)`.
 
-The CLI gains an EQL v3 path: `stash db install --eql-version 3` installs the
+The CLI gains an EQL v3 path: `stash eql install --eql-version 3` installs the
 vendored v3 bundle (`--supabase` selects the opclass-stripped variant and
 applies the `eql_v3` grants for the Supabase roles); `stash db upgrade` also
 accepts `--eql-version`, and `stash db status` reports v2 and v3 installs

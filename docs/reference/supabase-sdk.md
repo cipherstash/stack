@@ -104,10 +104,10 @@ and PascalCase each `_`-separated segment (`types.TextEq` → `eql_v3.text_eq`,
 
 ```bash
 # v2 (default)
-stash db install --supabase
+stash eql install --supabase
 
 # v3
-stash db install --eql-version 3 --supabase
+stash eql install --eql-version 3 --supabase
 ```
 
 The `--supabase` install uses the opclass-stripped bundle (operator classes /

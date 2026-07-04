@@ -467,7 +467,7 @@ CREATE TABLE users (
 ### Install EQL v3 on Supabase
 
 ```bash
-stash db install --eql-version 3 --supabase
+stash eql install --eql-version 3 --supabase
 ```
 
 This installs the opclass-stripped v3 bundle (operator classes need superuser,

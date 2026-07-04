@@ -14,7 +14,7 @@ const eqlV3SqlPath = resolve(
 // packages/cli/scripts/build-eql-v3-sql.mjs from the fixture above; CI keeps
 // the two in sync). Reading the shipped artifact instead of re-stripping here
 // means the live Supabase suite installs exactly what
-// `stash db install --eql-version 3 --supabase` installs.
+// `stash eql install --eql-version 3 --supabase` installs.
 const eqlV3SupabaseSqlPath = resolve(
   helperDir,
   '../../../cli/src/sql/cipherstash-encrypt-v3-supabase.sql',
