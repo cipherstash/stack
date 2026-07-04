@@ -13,6 +13,7 @@ const {
   AccessKeyStrategy,
   DeviceSessionStrategy,
   OAuthStrategy,
+  beginDeviceCodeFlow,
 } = require("../index.js") as typeof import("../index");
 
 const VALID_CRN = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY";
@@ -106,5 +107,19 @@ describe("DeviceSessionStrategy.fromProfile", () => {
 
   it("is what the deprecated OAuthStrategy alias points at", () => {
     expect(OAuthStrategy).toBe(DeviceSessionStrategy);
+  });
+});
+
+describe("toFailure re-throw contract", () => {
+  it("propagates a non-sentinel error instead of converting it to a failure", async () => {
+    // The migration's safety premise: only sentineled domain errors become
+    // `{ failure }`; anything else (a genuine bug/panic) must keep propagating
+    // as an error. napi's argument coercion throws a plain, sentinel-free
+    // TypeError — drive it through a wrapped async function and require a
+    // rejection, not a resolved Result. A `toFailure` that swallowed
+    // non-sentinel errors into failures would resolve here and fail the test.
+    await expect(
+      beginDeviceCodeFlow(123 as unknown as string, "cli"),
+    ).rejects.toThrow(/Failed to convert/);
   });
 });

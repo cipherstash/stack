@@ -500,6 +500,51 @@ mod tests {
         assert_eq!(error_code_of(&err), "WORKSPACE_MISMATCH");
     }
 
+    fn auth_failure_of(err: &JsValue) -> JsValue {
+        js_sys::Reflect::get(err, &JsValue::from_str("__authFailure"))
+            .expect("error should carry the __authFailure brand")
+    }
+
+    fn field(obj: &JsValue, key: &str) -> Option<String> {
+        js_sys::Reflect::get(obj, &JsValue::from_str(key))
+            .ok()
+            .and_then(|v| v.as_string())
+    }
+
+    /// The `__authFailure` object is the only thing `wasm-inline.mjs`'s
+    /// `toFailure` reads to build a `Result` failure — `.code` above is just
+    /// legacy parity. Pin the full serialized envelope (type + structured
+    /// payload + help + message) so dropping the attachment, or the serializer
+    /// losing a field, fails here rather than silently breaking the whole
+    /// wasm Result path.
+    #[wasm_bindgen_test]
+    fn to_js_error_attaches_auth_failure_object_with_payload_and_help() {
+        let err = to_js_error(AuthError::WorkspaceMismatch(
+            stack_auth::WorkspaceMismatch {
+                expected_workspace: "ZVATKW3VHMFG27DY".parse().unwrap(),
+                token_workspace: "AAAAAAAAAAAAAAAA".parse().unwrap(),
+            },
+        ));
+        let details = auth_failure_of(&err);
+        assert_eq!(
+            field(&details, "type").as_deref(),
+            Some("WORKSPACE_MISMATCH")
+        );
+        assert_eq!(
+            field(&details, "expected").as_deref(),
+            Some("ZVATKW3VHMFG27DY")
+        );
+        assert_eq!(
+            field(&details, "actual").as_deref(),
+            Some("AAAAAAAAAAAAAAAA")
+        );
+        assert!(
+            field(&details, "help").is_some(),
+            "help must ride along in __authFailure"
+        );
+        assert!(field(&details, "message").is_some());
+    }
+
     #[wasm_bindgen_test]
     fn token_result_from_extracts_jwt_claims() {
         let token = make_service_token("https://cts.example.com/", "https://zerokms.example.com/");

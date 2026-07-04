@@ -863,6 +863,39 @@ mod tests {
                 "expected help in envelope, got: {json}"
             );
         }
+
+        // `device_client_to_napi_error` splits on the variant: `Auth` must
+        // defer to the canonical `to_napi_error` serialization (help +
+        // structured payload preserved), while non-Auth variants synthesize
+        // the flat `{ type, message }` shape. Routing `Auth` through the
+        // synth arm would silently drop help/payload.
+        #[test]
+        fn device_client_auth_arm_preserves_full_envelope() {
+            let ws = |s: &str| s.parse::<cts_common::WorkspaceId>().unwrap();
+            let err = device_client_to_napi_error(DeviceClientError::Auth(
+                AuthError::WorkspaceMismatch(stack_auth::WorkspaceMismatch {
+                    expected_workspace: ws("ZVATKW3VHMFG27DY"),
+                    token_workspace: ws("AAAAAAAAAAAAAAAA"),
+                }),
+            ));
+            let json = assertions::failure_json(&err);
+            assert_eq!(json["type"], "WORKSPACE_MISMATCH");
+            assert_eq!(json["expected"], "ZVATKW3VHMFG27DY");
+            assert_eq!(json["actual"], "AAAAAAAAAAAAAAAA");
+            assert!(
+                json["help"].as_str().is_some(),
+                "Auth arm must carry help through the canonical envelope, got: {json}"
+            );
+
+            // Non-Auth variant still yields the flat synth shape.
+            let err = device_client_to_napi_error(DeviceClientError::Profile(
+                stack_profile::ProfileError::HomeDirNotFound,
+            ));
+            let json = assertions::failure_json(&err);
+            assert_eq!(json["type"], "STORE_ERROR");
+            assert!(json["message"].as_str().is_some());
+            assert!(json.get("help").is_none());
+        }
     }
 
     // The `baseUrl` override parsing (empty/absent/valid/malformed semantics)

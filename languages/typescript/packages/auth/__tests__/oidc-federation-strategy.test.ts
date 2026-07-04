@@ -214,6 +214,24 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     expect(cr.failure?.type).toBe("INVALID_CRN");
   });
 
+  it("attaches diagnostic help to an INVALID_CRN failure", () => {
+    // INVALID_CRN carries `#[diagnostic(help(...))]`, so its envelope includes
+    // `help` — pins the `help !== undefined` branch of `toFailure` in index.js
+    // with a content assertion, not just presence: the text must survive the
+    // __CS_FAIL__ envelope round-trip intact.
+    const cr = OidcFederationStrategy.create("not-a-crn", () =>
+      Promise.resolve("h.p.s"),
+    );
+    expect(cr.failure?.type).toBe("INVALID_CRN");
+    expect(typeof cr.failure?.help).toBe("string");
+    expect(cr.failure?.help).toMatch(/crn:<region>:<workspace-id>/);
+    // The same help is mirrored onto the live Error for loggers that only
+    // see the error object.
+    expect((cr.failure?.error as Error & { help?: string }).help).toBe(
+      cr.failure?.help,
+    );
+  });
+
   it("rejects a CRN whose workspace segment is malformed with .type", () => {
     // "not-a-crn" above fails at the `crn:` prefix; this is the distinct path
     // where the prefix/region parse but the workspace segment fails validation
