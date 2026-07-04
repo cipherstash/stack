@@ -14,6 +14,7 @@
 // minted token to the same-request render via a request header — because a
 // `Set-Cookie` written now is not readable in the same request.
 
+import { decodeBase64Url, encodeBase64Url } from "./base64url.mjs";
 import { cookieStore } from "./cookies.mjs";
 import { OidcFederationStrategy } from "./wasm-inline.mjs";
 
@@ -132,6 +133,15 @@ export async function csFederationMiddleware(options) {
  * Next's `headers()` result). Returns `null` when no warmed token is present,
  * so callers can fall back to a cold federation.
  *
+ * SECURITY: the header payload is opaque base64url JSON, NOT authenticated. The
+ * `isTokenResult` guard only rejects malformed *shape*, not a forged-but-valid
+ * payload. Only trust this in a context where the inbound client-supplied header
+ * is stripped before the request reaches here — i.e. a middleware that always
+ * overwrites/deletes {@link CS_TOKEN_HEADER} on ingress (the dashboard does
+ * this). Cryptographically pinning the payload to the app (AEAD seal/open with
+ * an app-held key) so an un-stripped header can't be forged is tracked in
+ * CIP-3112.
+ *
  * @param {{ get(name: string): string | null }} headers
  * @param {CsAuthHeaderOptions} [options]
  * @returns {WarmedAuthStrategy | null}
@@ -161,7 +171,11 @@ export function csAuthHeader(headers, options) {
 /**
  * Structural guard for a decoded {@link import("./wasm-types.d.ts").TokenResult}:
  * `token`/`subject`/`workspaceId`/`issuer` are non-empty strings and `services`
- * is a string→string map.
+ * is a NON-EMPTY string→string map. A federated CTS token always carries at
+ * least one service endpoint (e.g. `zerokms`), so an empty `services` signals a
+ * partial/spoofed payload — reject it here rather than let the consumer read an
+ * `undefined` endpoint. Rejection is safe: the caller falls back to a cold
+ * federation, which re-derives the real token.
  *
  * @param {unknown} v
  * @returns {v is import("./wasm-types.d.ts").TokenResult}
@@ -172,14 +186,18 @@ function isTokenResult(v) {
     if (typeof v[key] !== "string" || v[key].length === 0) return false;
   }
   if (!v.services || typeof v.services !== "object") return false;
-  for (const endpoint of Object.values(v.services)) {
+  const endpoints = Object.values(v.services);
+  if (endpoints.length === 0) return false;
+  for (const endpoint of endpoints) {
     if (typeof endpoint !== "string") return false;
   }
   return true;
 }
 
 // ---------------------------------------------------------------------------
-// Header payload codec — base64url(JSON) keeps the value header-safe and opaque
+// Header payload codec — base64url(JSON) keeps the value header-safe and opaque.
+// NOTE: this is opaque, NOT authenticated — see the security caveat on
+// csAuthHeader. base64url primitives are shared with `/cookies` via base64url.mjs.
 // ---------------------------------------------------------------------------
 
 /**
@@ -196,33 +214,4 @@ export function encodeTokenHeader(result) {
  */
 export function decodeTokenHeader(value) {
   return JSON.parse(decodeBase64Url(value));
-}
-
-/**
- * @param {string} input
- * @returns {string}
- */
-function encodeBase64Url(input) {
-  const bytes = new TextEncoder().encode(input);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++)
-    binary += String.fromCharCode(bytes[i]);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-/**
- * @param {string} input
- * @returns {string}
- */
-function decodeBase64Url(input) {
-  const padded = input.replaceAll("-", "+").replaceAll("_", "/");
-  const pad =
-    padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  const binary = atob(padded + pad);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
 }

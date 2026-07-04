@@ -59,6 +59,8 @@
     "wasm-inline.d.ts",
     "cookies.mjs",
     "cookies.d.ts",
+    "base64url.mjs",
+    "base64url.d.ts",
     "next.mjs",
     "next.d.ts",
     "wasm/"

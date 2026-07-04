@@ -28,7 +28,10 @@ export interface CsFederateOptions {
   getJwt: () => string | Promise<string>;
   /** Pin federation to a specific CTS host / mock, overriding region discovery. */
   baseUrl?: string;
-  /** Cookie name — pass `csTokenCookieName(workspaceId)` for the per-workspace default. */
+  /**
+   * Cookie name. Defaults to `cs_token_<workspace-id>` derived from
+   * `workspaceCrn` (per-workspace cache). Only set this to override that name.
+   */
   cookieName?: string;
   /** Cookie `Secure` flag — set `false` only for localhost HTTP dev. Default `true`. */
   secure?: boolean;

@@ -213,6 +213,12 @@ describe("csAuthHeader", () => {
       ),
     });
     expect(csAuthHeader(badServices)).toBeNull();
+
+    // services present but EMPTY — a federated token always has >=1 endpoint.
+    const emptyServices = new Headers({
+      [CS_TOKEN_HEADER]: encodeTokenHeader(tokenResult({ services: {} })),
+    });
+    expect(csAuthHeader(emptyServices)).toBeNull();
   });
 
   it("honours a custom header name", async () => {
