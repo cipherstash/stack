@@ -179,6 +179,21 @@ const FLOAT4_S = [0, 77.5, -117.25, 0.5] as const
 const FLOAT8_S = [0, -117.123456, 1e15, -1e15] as const
 const NUMERIC_S = [0, 12345.678, -42, -0.5] as const
 const TEXT_S = ['', 'ada@example.com', 'Ada Lovelace'] as const
+// Samples for the ob-carrying text domains (text_ord, text_ord_ore,
+// text_search). These CANNOT include '' like TEXT_S: their eql_v3 SQL domain
+// CHECKs demand a non-empty ore term (`jsonb_array_length(VALUE->'ob') > 0`),
+// and the ORE term of the empty string has zero blocks — storing '' in one of
+// these domains is rejected by Postgres with a check-constraint violation
+// (observed live: matrix-live-pg's seed INSERT failed `text_ord_ore_check`).
+// The '' edge stays covered where it IS storable: text, text_eq, text_match.
+// Row-A/row-B constraints preserved: samples[0] ≠ samples[1] (ord equality
+// proof selects row A only), and the match proof's 'ada' substring occurs in
+// samples[1] only (text_search match proof targets row B).
+const TEXT_ORD_S = [
+  'grace@example.net',
+  'ada@example.com',
+  'Ada Lovelace',
+] as const
 const BOOL_S = [true, false] as const
 const DATE_S = [
   new Date('2026-07-01T00:00:00.000Z'),
@@ -222,9 +237,9 @@ export const V3_MATRIX = {
   'eql_v3.text': { builder: types.Text, ColumnClass: EncryptedTextColumn, castAs: 'string', capabilities: STORAGE, indexes: NONE, samples: TEXT_S },
   'eql_v3.text_eq': { builder: types.TextEq, ColumnClass: EncryptedTextEqColumn, castAs: 'string', capabilities: EQ, indexes: UNIQUE_IDX, samples: TEXT_S },
   'eql_v3.text_match': { builder: types.TextMatch, ColumnClass: EncryptedTextMatchColumn, castAs: 'string', capabilities: MATCH_ONLY, indexes: MATCH_IDX, samples: TEXT_S },
-  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_S },
-  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_S },
-  'eql_v3.text_search': { builder: types.TextSearch, ColumnClass: EncryptedTextSearchColumn, castAs: 'string', capabilities: FULL, indexes: TEXT_SEARCH_IDX, samples: TEXT_S },
+  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_ORD_S },
+  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_ORD_S },
+  'eql_v3.text_search': { builder: types.TextSearch, ColumnClass: EncryptedTextSearchColumn, castAs: 'string', capabilities: FULL, indexes: TEXT_SEARCH_IDX, samples: TEXT_ORD_S },
   // bool
   'eql_v3.bool': { builder: types.Bool, ColumnClass: EncryptedBoolColumn, castAs: 'boolean', capabilities: STORAGE, indexes: NONE, samples: BOOL_S },
   // float4
