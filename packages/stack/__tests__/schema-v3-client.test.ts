@@ -9,16 +9,16 @@ import { describeLive, LIVE_CIPHERSTASH_ENABLED } from './helpers/live-gate'
 
 const users = encryptedTable('schema_v3_client_users', {
   email: types.TextSearch('email'),
-  age: types.Int4Ord('age'),
+  age: types.IntegerOrd('age'),
   nickname: types.TextEq('nickname'),
   body: types.TextMatch('body'),
   notes: types.Text('notes'),
-  active: types.Bool('active'),
+  active: types.Boolean('active'),
   // camelCase JS property → snake_case DB name on purpose: the model path must
   // match models by JS property (`createdOn`) yet address the FFI/config by DB
   // name (`created_on`). The round-trip tests below exercise that mapping.
   createdOn: types.Date('created_on'),
-  occurredAt: types.Timestamptz('occurred_at'),
+  occurredAt: types.Timestamp('occurred_at'),
 })
 
 describeLive('eql_v3 client integration', () => {
@@ -161,7 +161,7 @@ describeLive('eql_v3 client integration', () => {
     expect(matchTerm).not.toHaveProperty('c')
   }, 30000)
 
-  // int8 (bigint) storage domains are omitted from the v3 SDK until the native
+  // bigint (int8) storage domains are omitted from the v3 SDK until the native
   // protect-ffi supports lossless bigint round-tripping — a `bigint` fails JSON
   // serialization and a `string` is rejected for a `big_int` column. Re-add a
   // round-trip test alongside the domain builders when the FFI lands.
@@ -219,22 +219,19 @@ describeLive('eql_v3 client integration', () => {
     expect(decrypted.notes).toBe('hello')
   }, 30000)
 
-  // Hygiene: `occurredAt` (a timestamptz column, camelCase property →
+  // Hygiene: `occurredAt` (a timestamp column, camelCase property →
   // snake_case DB name `occurred_at`) was declared in the test table but never
   // asserted. Give it a real round-trip through the model path, complementing
   // the `createdOn` date case above. (`matrix-live.test.ts` is the canonical
-  // generic coverage for all timestamptz tiers; this pins the named column.)
+  // generic coverage for all timestamp tiers; this pins the named column.)
   //
-  // SKIPPED (CI run 28569708268, PR #540): fails against live credentials —
-  // decrypted `occurredAt` comes back at midnight (`00:00:00.000Z`), losing
-  // the time-of-day. Root cause: `@cipherstash/protect-ffi`'s native
-  // `CastAs` has a distinct `'timestamp'` variant (full date+time) separate
-  // from `'date'` (calendar-date only), but this SDK's `CastAs`/`PlaintextKind`
-  // types never included `'timestamp'` — every `timestamptz` domain sets
-  // `cast_as: 'date'`, identical to the plain `date` domain, so the native
-  // layer truncates it. Pre-existing SDK gap, not a test bug; re-enable once
-  // `timestamptz` gets its own native cast_as.
-  it.skip('round-trips a timestamptz occurredAt column through the model path', async () => {
+  // Previously SKIPPED (CI run 28569708268, PR #540): decrypted `occurredAt`
+  // came back at midnight (`00:00:00.000Z`), losing the time-of-day, because
+  // every timestamp domain set `cast_as: 'date'` and the native layer
+  // truncates 'date' values to the calendar date. Re-enabled now that the
+  // timestamp domains emit the FFI's distinct `cast_as: 'timestamp'`
+  // (full date+time) variant.
+  it('round-trips a timestamp occurredAt column through the model path', async () => {
     const typed = typedClient(protectClient, users)
     // Zero milliseconds: the FFI drops sub-second precision, so a ms-bearing
     // instant would perturb the reconstructed value.

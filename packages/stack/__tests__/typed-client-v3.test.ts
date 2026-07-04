@@ -3,7 +3,7 @@ import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, typedClient, types } from '@/encryption/v3'
 
 const table = encryptedTable('t', {
-  when: types.Timestamptz('when'),
+  when: types.Timestamp('when'),
   note: types.Text('note'),
   // camelCase JS property → snake_case DB name: reconstruction must key by the
   // JS property (how the decrypted row is keyed), not the DB column name.

@@ -84,7 +84,7 @@ export function encryptedSupabase(
  *
  * const users = encryptedTable('users', {
  *   email:  types.TextSearch('email'),  // eql_v3.text_search
- *   amount: types.Int4Ord('amount'),    // eql_v3.int4_ord
+ *   amount: types.IntegerOrd('amount'), // eql_v3.integer_ord
  * })
  *
  * const client = await Encryption({ schemas: [users] })

@@ -13,6 +13,7 @@ import { defaultMatchOpts } from './match-defaults'
  * - `"bigint"`
  * - `"boolean"`
  * - `"date"`
+ * - `"timestamp"`
  * - `"number"`
  * - `"string"`
  * - `"json"`
@@ -38,6 +39,7 @@ export const eqlCastAsEnum = z
     'double',
     'boolean',
     'date',
+    'timestamp',
     'jsonb',
   ])
   .default('text')
@@ -46,7 +48,16 @@ export const eqlCastAsEnum = z
  * SDK-facing data types — developer-friendly aliases accepted by `dataType()`.
  */
 export const castAsEnum = z
-  .enum(['bigint', 'boolean', 'date', 'number', 'string', 'json', 'text'])
+  .enum([
+    'bigint',
+    'boolean',
+    'date',
+    'timestamp',
+    'number',
+    'string',
+    'json',
+    'text',
+  ])
   .default('text')
 
 /**
@@ -69,6 +80,8 @@ export function toEqlCastAs(value: CastAs): EqlCastAs {
       return 'boolean'
     case 'date':
       return 'date'
+    case 'timestamp':
+      return 'timestamp'
     case 'json':
       return 'jsonb'
   }

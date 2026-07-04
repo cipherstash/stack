@@ -306,7 +306,9 @@ export class EncryptedQueryBuilderV3Impl<
 
     const out: Record<string, unknown> = { ...row }
     for (const [key, dbName] of Object.entries(keyToDb)) {
-      if (this.columnSchemas[dbName]?.cast_as !== 'date') continue
+      // Both 'date' and 'timestamp' columns decrypt to a JS `Date`.
+      const castAs = this.columnSchemas[dbName]?.cast_as
+      if (castAs !== 'date' && castAs !== 'timestamp') continue
       const value = out[key]
       if (value == null || value instanceof Date) continue
       if (typeof value === 'string' || typeof value === 'number') {

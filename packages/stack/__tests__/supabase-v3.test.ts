@@ -37,8 +37,8 @@ const supabase = SUPABASE_ENABLED
 // only matches when the pattern equals the stored value.
 const table = encryptedTable('protect-ci-v3', {
   email: types.TextSearch('email').freeTextSearch({ include_original: false }),
-  age: types.Int4Ord('age'),
-  registeredAt: types.TimestamptzOrd('registered_at'),
+  age: types.IntegerOrd('age'),
+  registeredAt: types.TimestampOrd('registered_at'),
 })
 
 type ProtectCiV3Row = {
@@ -67,10 +67,10 @@ beforeAll(async () => {
       CREATE TABLE IF NOT EXISTS "protect-ci-v3" (
         id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
         email eql_v3.text_search,
-        age eql_v3.int4_ord,
-        registered_at eql_v3.timestamptz_ord,
+        age eql_v3.integer_ord,
+        registered_at eql_v3.timestamp_ord,
         "otherField" TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMP DEFAULT NOW(),
         test_run_id TEXT
       )
     `
@@ -256,7 +256,7 @@ describe.skipIf(!SUPABASE_ENABLED)(
       expect(data![0].email).toContain(needle)
     }, 30000)
 
-    it('filters an int4_ord column by equality', async () => {
+    it('filters an integer_ord column by equality', async () => {
       const es = await makeInstance()
 
       const { data: insertedData, error: insertError } = await es
@@ -287,7 +287,7 @@ describe.skipIf(!SUPABASE_ENABLED)(
     // env gating as the rest of the suite. Assert range FILTERING only —
     // ORDER BY on the encrypted column is unsupported on Supabase (no
     // operator families).
-    it('filters an int4_ord column by range (gte/lte)', async () => {
+    it('filters an integer_ord column by range (gte/lte)', async () => {
       const es = await makeInstance()
 
       const { data: insertedData, error: insertError } = await es
@@ -314,7 +314,7 @@ describe.skipIf(!SUPABASE_ENABLED)(
       expect(data![0].age).toBe(25)
     }, 30000)
 
-    it('filters a timestamptz_ord column by range with Date values', async () => {
+    it('filters a timestamp_ord column by range with Date values', async () => {
       const es = await makeInstance()
 
       const { data: insertedData, error: insertError } = await es

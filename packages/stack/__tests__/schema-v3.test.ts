@@ -280,7 +280,7 @@ describe('eql_v3 buildEncryptConfig', () => {
     // report "column not found in Encrypt config" at encrypt time.
     const users = encryptedTable('accounts', {
       createdOn: types.Date('created_on'),
-      lastSeen: types.Timestamptz('last_seen'),
+      lastSeen: types.Timestamp('last_seen'),
     })
     const config = buildEncryptConfig(users)
     expect(Object.keys(config.tables.accounts).sort()).toEqual([
@@ -297,7 +297,7 @@ describe('eql_v3 buildEncryptConfig', () => {
     // (it keys by DB name); `buildColumnKeyMap()` recovers it.
     const users = encryptedTable('accounts', {
       createdOn: types.Date('created_on'),
-      lastSeen: types.Timestamptz('last_seen'),
+      lastSeen: types.Timestamp('last_seen'),
       email: types.TextSearch('email'),
     })
     expect(users.buildColumnKeyMap()).toEqual({
@@ -402,7 +402,7 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
   // domains DO carry `hm` and resolve equality to `unique` instead — see the
   // text-order regression below.)
   it.each([
-    ['int4_ord', types.Int4Ord],
+    ['integer_ord', types.IntegerOrd],
     ['date_ord', types.DateOrd],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s resolves equality to the ore index', (_name, builder) => {
@@ -439,8 +439,8 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   })
 
   it.each([
-    ['int4_ord_ore', types.Int4OrdOre],
-    ['int4_ord', types.Int4Ord],
+    ['integer_ord_ore', types.IntegerOrdOre],
+    ['integer_ord', types.IntegerOrd],
     ['date_ord_ore', types.DateOrdOre],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {

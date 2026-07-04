@@ -37,7 +37,7 @@ import {
  * Every method derives its types from the concrete `table` / `column` builder
  * arguments (which carry their branded types at the call site), so:
  * - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
- *   (`text → string`, `timestamptz → Date`, …);
+ *   (`text → string`, `timestamp → Date`, …);
  * - `encryptQuery` additionally constrains `queryType` to the column's
  *   capabilities and rejects storage-only columns outright;
  * - `encryptModel` / `bulkEncryptModels` validate schema-column fields against
@@ -127,7 +127,7 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
  * row-invariant, but non-trivial to build — is derived once per call site,
  * not once per row on the bulk path.
  *
- * NOTE: `bigint` (int8) reconstruction is intentionally absent — int8 domains are
+ * NOTE: `bigint` reconstruction is intentionally absent — bigint domains are
  * omitted from the v3 SDK until the native FFI supports lossless bigint I/O.
  */
 function rowReconstructor(
@@ -137,9 +137,14 @@ function rowReconstructor(
   // config keyed by DB name — bridge the two via the table's property→DB map.
   const { columns } = table.build()
   const propToDb = table.buildColumnKeyMap()
-  // Only date columns need per-row work; resolve them up front.
+  // Only date/timestamp columns need per-row work; resolve them up front.
+  // Both kinds decrypt to a JS `Date` — 'timestamp' additionally preserves
+  // the time-of-day component through the FFI.
   const dateProperties = Object.entries(propToDb)
-    .filter(([, dbName]) => columns[dbName]?.cast_as === 'date')
+    .filter(([, dbName]) => {
+      const castAs = columns[dbName]?.cast_as
+      return castAs === 'date' || castAs === 'timestamp'
+    })
     .map(([property]) => property)
 
   return (row) => {

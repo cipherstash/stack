@@ -10,6 +10,7 @@ const EXPECTED_MAPPING: Readonly<Record<string, string>> = {
   bigint: 'big_int',
   boolean: 'boolean',
   date: 'date',
+  timestamp: 'timestamp',
   number: 'double',
   string: 'text',
   json: 'jsonb',

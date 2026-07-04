@@ -16,13 +16,13 @@ const users = encryptedTable('users', {
   email: types.TextEq('email'), // equality only
   bio: types.TextSearch('bio'), // equality + order + free-text
   note: types.Text('note'), // storage only (not queryable)
-  createdAt: types.TimestamptzOrd('created_at'), // equality + order
+  createdAt: types.TimestampOrd('created_at'), // equality + order
 })
 
-// A second registered table whose `weight` domain (int4_ord) is NOT present in
+// A second registered table whose `weight` domain (integer_ord) is NOT present in
 // `users`, so borrowing it is a genuine cross-table type error.
 const other = encryptedTable('other', {
-  weight: types.Int4Ord('weight'),
+  weight: types.IntegerOrd('weight'),
 })
 
 const client = typedClient({} as EncryptionClient, users, other)
@@ -78,7 +78,7 @@ describe('typed v3 client — encryptQuery constrains queryType to capabilities'
     client.encryptQuery(new Date(), {
       table: users,
       column: users.createdAt, // equality + order, no free-text
-      // @ts-expect-error - timestamptz_ord column does not support 'freeTextSearch'
+      // @ts-expect-error - timestamp_ord column does not support 'freeTextSearch'
       queryType: 'freeTextSearch',
     })
   })
@@ -127,7 +127,7 @@ describe('typed v3 client — model encrypt validates schema fields', () => {
 describe('typed v3 client — model decrypt yields precise plaintext', () => {
   it('reconstructs schema columns to their plaintext type regardless of the input field type', () => {
     // Input is the encrypted row; output pins each schema column to its plaintext
-    // type (Date for timestamptz, string for text).
+    // type (Date for timestamp, string for text).
     expectTypeOf<
       V3DecryptedModel<
         typeof users,
@@ -166,7 +166,7 @@ describe('typed v3 client — soundness', () => {
     // error is the column itself failing the `ColumnsOf<typeof users>` constraint.
     client.encrypt('x', {
       table: users,
-      // @ts-expect-error - int4_ord column from `other` is not in ColumnsOf<typeof users>
+      // @ts-expect-error - integer_ord column from `other` is not in ColumnsOf<typeof users>
       column: other.weight,
     })
   })

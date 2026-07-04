@@ -22,12 +22,12 @@ import { type EqlV3TypeName, V3_MATRIX } from './catalog'
 // One mixed-tier table spanning every capability tier + plaintext axis, built
 // from the catalog's own builders.
 const records = encryptedTable('records', {
-  count: V3_MATRIX['eql_v3.int4'].builder('count'), // number, storage-only
-  score: V3_MATRIX['eql_v3.int4_eq'].builder('score'), // number, equality
-  rank: V3_MATRIX['eql_v3.int4_ord'].builder('rank'), // number, order + range
-  createdAt: V3_MATRIX['eql_v3.timestamptz_ord'].builder('created_at'), // date
+  count: V3_MATRIX['eql_v3.integer'].builder('count'), // number, storage-only
+  score: V3_MATRIX['eql_v3.integer_eq'].builder('score'), // number, equality
+  rank: V3_MATRIX['eql_v3.integer_ord'].builder('rank'), // number, order + range
+  createdAt: V3_MATRIX['eql_v3.timestamp_ord'].builder('created_at'), // date
   email: V3_MATRIX['eql_v3.text_search'].builder('email'), // string, full-text
-  active: V3_MATRIX['eql_v3.bool'].builder('active'), // boolean, storage-only
+  active: V3_MATRIX['eql_v3.boolean'].builder('active'), // boolean, storage-only
 })
 
 describe('eql_v3 type-driven matrix (types)', () => {
@@ -67,23 +67,24 @@ describe('eql_v3 type-driven matrix (types)', () => {
     type Queryable = QueryableColumnsOf<typeof records>
 
     // A queryable column is a member of the set...
-    const ok: Queryable = V3_MATRIX['eql_v3.int4_eq'].builder('score')
+    const ok: Queryable = V3_MATRIX['eql_v3.integer_eq'].builder('score')
     expectTypeOf(ok).toExtend<Queryable>()
 
     // ...but a storage-only column is not.
-    // @ts-expect-error - storage-only int4 column is excluded from QueryableColumnsOf
-    const _notQueryable: Queryable = V3_MATRIX['eql_v3.int4'].builder('count')
+    // @ts-expect-error - storage-only integer column is excluded from QueryableColumnsOf
+    const _notQueryable: Queryable =
+      V3_MATRIX['eql_v3.integer'].builder('count')
 
-    // @ts-expect-error - storage-only bool column is excluded from QueryableColumnsOf
+    // @ts-expect-error - storage-only boolean column is excluded from QueryableColumnsOf
     const _boolNotQueryable: Queryable =
-      V3_MATRIX['eql_v3.bool'].builder('active')
+      V3_MATRIX['eql_v3.boolean'].builder('active')
   })
 
   it('anchors the catalog key union to the real column source of truth', () => {
     // `EqlV3TypeName` is derived from `AnyEncryptedV3Column`, so every real
     // domain name is a member — no hand-copied list.
     expectTypeOf<'eql_v3.text_search'>().toExtend<EqlV3TypeName>()
-    expectTypeOf<'eql_v3.bool'>().toExtend<EqlV3TypeName>()
+    expectTypeOf<'eql_v3.boolean'>().toExtend<EqlV3TypeName>()
 
     // A key outside the real domain set is rejected — this is what makes the
     // `Record<EqlV3TypeName, DomainSpec>` catalog a compile-time coverage check.

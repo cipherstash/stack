@@ -15,9 +15,9 @@ declare const supabaseClient: SupabaseClientLike
 
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
-  amount: types.Int4Ord('amount'),
-  createdAt: types.TimestamptzOrd('created_at'),
-  active: types.Bool('active'),
+  amount: types.IntegerOrd('amount'),
+  createdAt: types.TimestampOrd('created_at'),
+  active: types.Boolean('active'),
 })
 
 type UserRow = {
@@ -78,7 +78,7 @@ describe('encryptedSupabaseV3 typing', () => {
   it('rejects filters on storage-only columns at the type level', () => {
     const builder = es.from<typeof users, UserRow>('users', users)
 
-    // active is eql_v3.bool — storage-only, not filterable
+    // active is eql_v3.boolean — storage-only, not filterable
     // @ts-expect-error — storage-only column is excluded from filter keys
     builder.eq('active', true)
     // @ts-expect-error — storage-only column is excluded from filter keys

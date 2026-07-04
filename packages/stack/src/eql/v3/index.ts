@@ -3,7 +3,7 @@
 // Curated on purpose: it re-exports the `types` namespace, the concrete column
 // classes (load-bearing for the `AnyEncryptedV3Column` union and nominal
 // typing), the table API, and the inference type aliases. It deliberately does
-// NOT re-export the per-domain literal consts (`INT4`, `TEXT_EQ`, …) — those are
+// NOT re-export the per-domain literal consts (`INTEGER`, `TEXT_EQ`, …) — those are
 // internal building blocks for `types` — and there are no standalone
 // `encrypted<Domain>Column` factories any more: `types.*` is the single
 // authoring API.
@@ -18,27 +18,27 @@ export type {
 } from './columns'
 
 export {
-  EncryptedBoolColumn,
+  EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
   EncryptedDateOrdColumn,
   EncryptedDateOrdOreColumn,
-  EncryptedFloat4Column,
-  EncryptedFloat4EqColumn,
-  EncryptedFloat4OrdColumn,
-  EncryptedFloat4OrdOreColumn,
-  EncryptedFloat8Column,
-  EncryptedFloat8EqColumn,
-  EncryptedFloat8OrdColumn,
-  EncryptedFloat8OrdOreColumn,
-  EncryptedInt2Column,
-  EncryptedInt2EqColumn,
-  EncryptedInt2OrdColumn,
-  EncryptedInt2OrdOreColumn,
-  EncryptedInt4Column,
-  EncryptedInt4EqColumn,
-  EncryptedInt4OrdColumn,
-  EncryptedInt4OrdOreColumn,
+  EncryptedRealColumn,
+  EncryptedRealEqColumn,
+  EncryptedRealOrdColumn,
+  EncryptedRealOrdOreColumn,
+  EncryptedDoubleColumn,
+  EncryptedDoubleEqColumn,
+  EncryptedDoubleOrdColumn,
+  EncryptedDoubleOrdOreColumn,
+  EncryptedSmallintColumn,
+  EncryptedSmallintEqColumn,
+  EncryptedSmallintOrdColumn,
+  EncryptedSmallintOrdOreColumn,
+  EncryptedIntegerColumn,
+  EncryptedIntegerEqColumn,
+  EncryptedIntegerOrdColumn,
+  EncryptedIntegerOrdOreColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
@@ -49,10 +49,10 @@ export {
   EncryptedTextOrdColumn,
   EncryptedTextOrdOreColumn,
   EncryptedTextSearchColumn,
-  EncryptedTimestamptzColumn,
-  EncryptedTimestamptzEqColumn,
-  EncryptedTimestamptzOrdColumn,
-  EncryptedTimestamptzOrdOreColumn,
+  EncryptedTimestampColumn,
+  EncryptedTimestampEqColumn,
+  EncryptedTimestampOrdColumn,
+  EncryptedTimestampOrdOreColumn,
   TEXT_SEARCH_EQL_TYPE,
 } from './columns'
 export type {

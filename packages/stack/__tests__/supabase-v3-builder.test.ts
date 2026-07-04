@@ -190,9 +190,9 @@ function createMockSupabase(resultData: unknown = []) {
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
   nickname: types.TextEq('nickname'),
-  amount: types.Int4Ord('amount'),
-  createdAt: types.TimestamptzOrd('created_at'),
-  active: types.Bool('active'),
+  amount: types.IntegerOrd('amount'),
+  createdAt: types.TimestampOrd('created_at'),
+  active: types.Boolean('active'),
 })
 
 const usersV2 = encryptedTableV2('users', {
@@ -381,7 +381,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   it('rejects filters on storage-only columns', async () => {
     const { from } = v3Instance()
 
-    // active is eql_v3.bool — storage only
+    // active is eql_v3.boolean — storage only
     const { error, status } = await from()
       .select('id')
       // biome-ignore lint/suspicious/noExplicitAny: intentionally bypassing the type guard to prove the runtime guard
