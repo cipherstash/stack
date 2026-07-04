@@ -50,6 +50,56 @@ let strategy = AccessKeyStrategy::new(crn, key)?;
 # }
 ```
 
+## Error handling
+
+Every fallible operation returns [`AuthError`], a structured enum in which
+each variant wraps a dedicated error struct. Errors are designed to tell the
+developer exactly what to do next:
+
+- **Stable machine-readable codes** — [`AuthError::error_code`] returns a
+  `SCREAMING_CASE` identifier (e.g. `NOT_AUTHENTICATED`,
+  `WORKSPACE_MISMATCH`) suitable for logs, metrics, and programmatic
+  handling. The same taxonomy crosses the FFI boundary: the
+  [`@cipherstash/auth`](https://www.npmjs.com/package/@cipherstash/auth) npm
+  package surfaces these codes as the `type` discriminant of its typed
+  `AuthFailure` union.
+- **Actionable help** — every variant implements
+  [`miette::Diagnostic`](https://docs.rs/miette), so `help()` (and `url()`
+  when present) carry remediation guidance, e.g. `NOT_AUTHENTICATED` says
+  ``Log in with `stash login`, or set `CS_CLIENT_ACCESS_KEY` for
+  service-to-service auth.`` Applications that render errors through miette
+  (like the Stash CLI) show this automatically.
+- **Structured payload** — variants carry typed fields rather than
+  pre-formatted strings; e.g. [`WorkspaceMismatch`] exposes
+  `expected_workspace` and `token_workspace` so callers can act on the
+  values, not parse a message.
+
+```no_run
+use miette::Diagnostic;
+use stack_auth::{AuthError, AutoStrategy};
+
+fn report(err: &AuthError) {
+    eprintln!("[{}] {err}", err.error_code());
+    if let Some(help) = err.help() {
+        eprintln!("  help: {help}");
+    }
+    if let Some(url) = err.url() {
+        eprintln!("  more: {url}");
+    }
+    if let AuthError::WorkspaceMismatch(m) = err {
+        eprintln!(
+            "  token belongs to {}, strategy expects {}",
+            m.token_workspace, m.expected_workspace
+        );
+    }
+}
+
+match AutoStrategy::detect() {
+    Ok(_strategy) => { /* authenticated */ }
+    Err(err) => report(&err),
+}
+```
+
 ## Extensibility
 
 `stack-auth` exposes two layers that can be plugged independently:
