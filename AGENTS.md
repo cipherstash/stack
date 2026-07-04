@@ -178,7 +178,12 @@ pnpm changeset:publish
    - `pnpm --filter <changed-pkg> build`
    - `pnpm --filter <changed-pkg> test`
 6. If APIs change, update usage examples in this repo and flag that the docs site (cipherstash.com/docs, maintained separately) needs a corresponding update.
-7. **Add a changeset before opening or finalising the PR** when the
+7. **Keep the meta files honest.** If your change adds/removes/renames a
+   package, example, skill, or subpath export, update the Repository
+   Layout in this file and the package list in `SECURITY.md` in the
+   same PR. These files have drifted badly before; don't let them.
+
+8. **Add a changeset before opening or finalising the PR** when the
    change affects a published package's public behaviour or surface
    (new feature, bug fix, breaking change, UX-visible tweak). Run
    `pnpm changeset` (interactive) or hand-write a markdown file under
