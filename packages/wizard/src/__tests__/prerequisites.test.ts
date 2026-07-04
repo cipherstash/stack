@@ -40,7 +40,7 @@ describe('checkPrerequisites missing-list copy', () => {
     const r = await checkPrerequisites(tmp)
     expect(r.ok).toBe(false)
     expect(r.missing.join('\n')).toContain('Run: bunx stash auth login')
-    expect(r.missing.join('\n')).toContain('Run: bunx stash db install')
+    expect(r.missing.join('\n')).toContain('Run: bunx stash eql install')
     expect(r.missing.join('\n')).not.toMatch(/\bnpx\b/)
   })
 

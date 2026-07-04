@@ -8,7 +8,7 @@ export function createPrismaNextProvider(): InitProvider {
     // Note: Prisma Next absorbs the EQL bundle install and schema
     // scaffold steps via its migration framework. The next-steps list
     // below therefore points at `prisma-next migration plan|apply`
-    // instead of `stash db install`, and at `cipherstashFromStack`
+    // instead of `stash eql install`, and at `cipherstashFromStack`
     // instead of an `encryption/index.ts` placeholder.
     getNextSteps(_state, pm: PackageManager): string[] {
       const stash = runnerCommand(pm, 'stash')

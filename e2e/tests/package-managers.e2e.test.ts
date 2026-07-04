@@ -51,18 +51,18 @@ describe('CLI init providers — package-manager-aware Next Steps', () => {
     {
       label: 'base',
       create: createBaseProvider,
-      firstStep: (r) => `Set up your database: ${r} stash db install`,
+      firstStep: (r) => `Set up your database: ${r} stash eql install`,
     },
     {
       label: 'drizzle',
       create: createDrizzleProvider,
-      firstStep: (r) => `Set up your database: ${r} stash db install --drizzle`,
+      firstStep: (r) => `Set up your database: ${r} stash eql install --drizzle`,
     },
     {
       label: 'supabase',
       create: createSupabaseProvider,
       firstStep: (r) =>
-        `Install EQL: ${r} stash db install --supabase (prompts for migration vs direct)`,
+        `Install EQL: ${r} stash eql install --supabase (prompts for migration vs direct)`,
     },
   ]
 
@@ -158,12 +158,12 @@ describe.skipIf(!authConfigured)(
         { pm: 'yarn' as const, lockfile: 'yarn.lock' },
       ])('uses $pm runner when $lockfile is present', ({ pm, lockfile }) => {
         const out = runWizard({ lockfile })
-        expect(out).toContain(`Run: ${RUNNER[pm]} stash db install`)
+        expect(out).toContain(`Run: ${RUNNER[pm]} stash eql install`)
       })
 
       it('falls back to npx when no lockfile and no user agent', () => {
         const out = runWizard({})
-        expect(out).toContain('Run: npx stash db install')
+        expect(out).toContain('Run: npx stash eql install')
       })
     })
 
@@ -174,7 +174,7 @@ describe.skipIf(!authConfigured)(
         { pm: 'yarn' as const, userAgent: 'yarn/4.0.0 npm/? node/v20.0.0' },
       ])('uses $pm runner when UA is $userAgent', ({ pm, userAgent }) => {
         const out = runWizard({ userAgent })
-        expect(out).toContain(`Run: ${RUNNER[pm]} stash db install`)
+        expect(out).toContain(`Run: ${RUNNER[pm]} stash eql install`)
       })
     })
 
@@ -184,7 +184,7 @@ describe.skipIf(!authConfigured)(
           lockfile: 'pnpm-lock.yaml',
           userAgent: 'bun/1.1.40 npm/? node/v22.3.0',
         })
-        expect(out).toContain('Run: bunx stash db install')
+        expect(out).toContain('Run: bunx stash eql install')
       })
 
       it('npm user agent is ignored in favour of a lockfile', () => {
@@ -192,7 +192,7 @@ describe.skipIf(!authConfigured)(
           lockfile: 'bun.lock',
           userAgent: 'npm/10.2.4 node/v20.0.0',
         })
-        expect(out).toContain('Run: bunx stash db install')
+        expect(out).toContain('Run: bunx stash eql install')
       })
     })
   },

@@ -211,7 +211,7 @@ describe('renderSetupPrompt — plan mode (rollout, default)', () => {
 
   it('allows read-only inspection commands and points at `stash status`', () => {
     const out = renderSetupPrompt(planCtx)
-    expect(out).toMatch(/db status/)
+    expect(out).toMatch(/eql status/)
     expect(out).toContain('## Where am I?')
     expect(out).toMatch(/pnpm dlx stash status/)
     expect(out).toMatch(/Read-only/i)

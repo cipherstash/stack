@@ -11,7 +11,7 @@ export function createBaseProvider(): InitProvider {
         ? `edit ${state.clientFilePath} directly`
         : 'edit your encryption schema directly'
       return [
-        `Set up your database: ${cli} db install`,
+        `Set up your database: ${cli} eql install`,
         `Customize your schema: ${cli} wizard (AI-guided, automated) — or ${manualEdit}`,
         'Quickstart: https://cipherstash.com/docs/stack/quickstart',
         'Dashboard: https://dashboard.cipherstash.com/workspaces',

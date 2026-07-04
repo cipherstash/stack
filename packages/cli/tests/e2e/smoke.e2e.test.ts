@@ -22,7 +22,9 @@ describe('stash CLI — non-interactive smoke', () => {
     // Command-list items — these are the literal command names users type, not
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
-    expect(r.output).toContain('db install')
+    expect(r.output).toContain('eql install')
+    expect(r.output).toContain('eql upgrade')
+    expect(r.output).toContain('eql status')
     // The dotenv "injected env" banner regression guard lives in the
     // dedicated test below — this cwd has no .env file, so a bare
     // `not.toContain('injected env')` here would pass vacuously.
@@ -87,6 +89,36 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(exitCode).toBe(1)
     expect(r.output).toContain(messages.db.unknownSubcommand)
     expect(r.output).toContain('bogus-sub')
+  })
+
+  it('eql bogus-sub exits 1 with help', async () => {
+    const r = render(['eql', 'bogus-sub'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(1)
+    expect(r.output).toContain(messages.eql.unknownSubcommand)
+    expect(r.output).toContain('bogus-sub')
+  })
+
+  // `--migration` without `--supabase` fails flag validation before any I/O
+  // or prompt, so these two cases can observe the install entry path
+  // deterministically without a database.
+  it('db install still works as a deprecated alias and warns', async () => {
+    const r = render(['db', 'install', '--migration'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(1)
+    // Runner-aware factory — assert on the runner-agnostic suffix.
+    expect(r.output).toContain('stash db install" is deprecated')
+    expect(r.output).toContain('eql install" instead')
+    // The alias reaches the real install command (its flag validation ran).
+    expect(r.output).toContain('requires `--supabase`')
+  })
+
+  it('eql install routes to the install command without a deprecation warning', async () => {
+    const r = render(['eql', 'install', '--migration'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(1)
+    expect(r.output).not.toContain('is deprecated')
+    expect(r.output).toContain('requires `--supabase`')
   })
 
   it('db migrate is a stub that exits 0 with a "not yet implemented" warning', async () => {

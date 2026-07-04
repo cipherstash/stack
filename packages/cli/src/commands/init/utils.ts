@@ -150,7 +150,7 @@ export function combinedInstallCommands(
  *   yarn → `yarn dlx`
  *
  * `ref` is appended verbatim, so callers may pass `'stash'` or
- * `'stash db install'`.
+ * `'stash eql install'`.
  */
 export function runnerCommand(pm: PackageManager, ref: string): string {
   switch (pm) {

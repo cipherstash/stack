@@ -146,8 +146,8 @@ describe('runnerCommand', () => {
   })
 
   it('passes the package reference through verbatim (multi-word args allowed)', () => {
-    expect(runnerCommand('bun', 'stash db install')).toBe(
-      'bunx stash db install',
+    expect(runnerCommand('bun', 'stash eql install')).toBe(
+      'bunx stash eql install',
     )
   })
 })
