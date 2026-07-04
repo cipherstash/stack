@@ -11,14 +11,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 import { LockContext } from '@/identity'
 import { unwrapResult } from '../fixtures'
-
-const LIVE_CIPHERSTASH_ENABLED = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
+import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const users = encryptedTable('v3_identity_live_users', {
   email: types.TextEq('email'),

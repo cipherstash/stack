@@ -7,16 +7,7 @@ import { Encryption } from '@/index'
 import type { Encrypted } from '@/types'
 import { unwrapResult } from './fixtures'
 import { installEqlV3IfNeeded } from './helpers/eql-v3'
-
-const LIVE_EQL_V3_PG_ENABLED = Boolean(
-  process.env.DATABASE_URL &&
-    process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-
-const describeLivePg = LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip
+import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from './helpers/live-gate'
 
 const databaseUrl = process.env.DATABASE_URL
 const sql = LIVE_EQL_V3_PG_ENABLED
