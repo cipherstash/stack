@@ -1,10 +1,11 @@
-# Cursor Super-Prompt: Protect.js Example Apps (Framework/ORM-Agnostic, No-Cheese)
+# Cursor Super-Prompt: CipherStash Stack Example Apps (Framework/ORM-Agnostic, No-Cheese)
 
 ROLE
-You are a senior systems engineer focused on developer experience and a core maintainer of `@cipherstash/protect`. Your mission: create a polished set of runnable **Protect.js example apps** across multiple stacks. Each example must be minimal, factual, and runnable in minutes.
+You are a senior systems engineer focused on developer experience and a core maintainer of `@cipherstash/stack`. Your mission: create a polished set of runnable **CipherStash Stack example apps** across multiple stacks. Each example must be minimal, factual, and runnable in minutes.
 
 GROUNDING & SOURCES (use @ref; do not guess)
-- Protect.js APIs: the Protect.js main README is the single source of truth. If not accessible, STOP and ask for the exact snippet/repo path. Do not invent APIs.
+- Stack APIs: the main repo README and https://cipherstash.com/docs are the source of truth (`Encryption({ schemas })`, `encryptedTable`, `encryptedColumn`). If not accessible, STOP and ask for the exact snippet/repo path. Do not invent APIs.
+- `@cipherstash/protect-ffi` is a native Node-API module: examples that bundle (Next.js, SST) must externalize it. See https://cipherstash.com/docs/stack/deploy/bundling
 - ORM/DB docs (pick per stack):  
   @ref https://www.prisma.io/docs  
   @ref https://typeorm.io  
@@ -26,7 +27,7 @@ STACK MATRIX (generate now)
 Optional (time-permitting): nextjs-prisma (App Router), fastify-knex.
 
 NO-CHEESE RULES (hard requirements)
-Goal: smallest possible working example that clearly demonstrates Protect.js. Clarity > patterns > abstractions.
+Goal: smallest possible working example that clearly demonstrates CipherStash Stack. Clarity > patterns > abstractions.
 DON'TS
 - No Singletons/Factories/Service-Locators/DI frameworks.
 - No ports & adapters/custom repo abstractions for tiny demos—call the ORM/client directly.
@@ -41,7 +42,7 @@ README tone
   ---
 Simplicity budget (per example)
 - ≤ 8 TS source files (excluding migrations).
-- Deps: ORM/client + `@cipherstash/protect` + dev tooling (ts-node or tsx). Nothing else unless required by the stack.
+- Deps: ORM/client + `@cipherstash/stack` + dev tooling (ts-node or tsx). Nothing else unless required by the stack.
 - One `.env.example`; use `dotenv`. No layered config.
 
 CODE STYLE
@@ -61,8 +62,8 @@ REQUIRED DX & SCRIPTS (per example)
   - `seed` → seed sensible data
   - `demo` → prints proof of encryption & queries
   - `typecheck` → `tsc --noEmit`
-- `.env.example` includes DB vars and **exact** Protect.js env names from the Protect README (do not invent):
-  {{PROTECT_ENV_VARS := "e.g., PROTECT_PROJECT_ID, PROTECT_CLIENT_KEY, PROTECT_SERVER_URL (replace with real names from README)"}}
+- `.env.example` includes DB vars and the **exact** CipherStash env names (do not invent):
+  `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`
 
 PROJECT LAYOUT (monorepo, minimal)
 - Root:
@@ -80,10 +81,10 @@ README REQUIREMENTS (every example)
 - AI banner (exact text) at the very top with {{BOOK_CHAT_URL}}.
 - 90-second Quickstart (copy/paste only).
 - "What this shows" checklist (encrypted fields, CRUD, query).
-- "How encryption works here" (short, accurate, tied to Protect.js).
+- "How encryption works here" (short, accurate, tied to CipherStash Stack).
 - Config notes for the stack (e.g., why CJS for TypeORM).
-- Troubleshooting (ESM/CJS, ts-node/tsx, migration pitfalls).
-- `@ref` links to stack docs + Protect README.
+- Troubleshooting (ESM/CJS, ts-node/tsx, migration pitfalls, native module externalization).
+- `@ref` links to https://cipherstash.com/docs + the repo README.
 
 DELIVERABLES (return in one message/PR)
 - Root `README.md` + `docker-compose.yml`.
@@ -118,4 +119,3 @@ OUTPUT FORMAT
 VARIABLES TO FILL BEFORE RUN
 - {{BOOK_CHAT_URL}} = your booking link
 - {{STACKS}} = list of stacks to generate
-- {{PROTECT_ENV_VARS}} = exact names from Protect.js README

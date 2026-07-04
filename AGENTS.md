@@ -1,4 +1,4 @@
-This is the Protect.js repository - End-to-end, per-value encryption for JavaScript/TypeScript with zero‑knowledge key management (via CipherStash ZeroKMS). Encrypted data is stored as EQL JSON payloads; searchable encryption is currently supported for PostgreSQL.
+This is the CipherStash Stack repository (`cipherstash/stack`) - End-to-end, per-value encryption for JavaScript/TypeScript with zero‑knowledge key management (via CipherStash ZeroKMS). Encrypted data is stored as EQL JSON payloads; searchable encryption is currently supported for PostgreSQL.
 
 ## Prerequisites
 
@@ -72,20 +72,26 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/schema`, `@cipherstash/stack/identity`, `@cipherstash/stack/secrets`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/supabase`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/client`, `@cipherstash/stack/types`
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/secrets`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
 - `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
   - `src/index.ts`: Public API (`Encryption`, exports)
   - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`
   - `src/ffi/operations/*`: Encrypt/decrypt/model/bulk/query operations (thenable pattern with optional `.withLockContext()`)
   - `__tests__/*`: End-to-end and API contract tests (Vitest)
+- `packages/cli`: The `stash` CLI — auth, init, encryption schema, database setup (`stash eql install`), and secrets. Has its own `AGENTS.md`.
+- `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
+- `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
+- `packages/prisma-next`: Prisma Next integration (`@cipherstash/prisma-next`) — searchable field-level encryption for Postgres
 - `packages/schema`: Schema builder utilities and types (`encryptedTable`, `encryptedColumn`, `encryptedField`)
 - `packages/drizzle`: Drizzle ORM integration (`encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators`)
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/protect-dynamodb`: DynamoDB helpers (`encryptedDynamoDB`)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
-- `examples/*`: Working apps (basic, drizzle, nextjs-clerk, next-drizzle-mysql, dynamo, hono-supabase)
-- `docs/*`: Concepts, how-to guides (Next.js bundling, SST, npm lockfile v3), reference
-- `skills/*`: Agent skills (`stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-secrets`, `stash-supabase`, `stash-supply-chain-security`)
+- `packages/bench`: Performance / index-engagement benchmarks (private, not published)
+- `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
+- `examples/*`: Working apps (basic, prisma, supabase-worker)
+- `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-secrets`, `stash-supabase`, `stash-supply-chain-security`)
 
 ## Supply Chain Security
 
@@ -118,10 +124,7 @@ Three rules to remember when editing CI or pnpm config:
 
 ## Critical Gotchas (read before coding)
 
-- **Native Node.js module**: `@cipherstash/stack` relies on `@cipherstash/protect-ffi` (Node-API). It must be loaded via native Node.js `require`. Do NOT bundle this module; configure bundlers to externalize it.
-  - Next.js: see `docs/how-to/nextjs-external-packages.md`
-  - SST/Serverless: see `docs/how-to/sst-external-packages.md`
-  - npm lockfile v3 on Linux: see `docs/how-to/npm-lockfile-v3.md`
+- **Native Node.js module**: `@cipherstash/stack` relies on `@cipherstash/protect-ffi` (Node-API). It must be loaded via native Node.js `require`. Do NOT bundle this module; configure bundlers to externalize it. See the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
 - **Do not log plaintext**: The library never logs plaintext by design. Don't add logs that risk leaking sensitive data.
 - **Result shape is contract**: Operations return `{ data }` or `{ failure }`. Preserve this shape and error `type` values in `EncryptionErrorTypes`.
 - **Encrypted payload shape is contract**: Keys like `c` in the EQL payload are validated by tests and downstream tools. Don't change them.
@@ -159,8 +162,7 @@ pnpm changeset:publish
 ## Bundling and Deployment Notes
 
 - When integrating into frameworks/build tools, ensure native modules are externalized and loaded via Node's runtime require.
-- For Next.js, configure `serverExternalPackages` as documented in `docs/how-to/nextjs-external-packages.md`.
-- For serverless/Linux targets with npm lockfile v3, see `docs/how-to/npm-lockfile-v3.md` to avoid runtime load errors.
+- For Next.js, configure `serverExternalPackages`; for SST/serverless and npm-lockfile-v3 quirks on Linux, see the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
 
 ## Adding Features Safely (LLM checklist)
 
@@ -175,7 +177,7 @@ pnpm changeset:publish
    - `pnpm run code:fix`
    - `pnpm --filter <changed-pkg> build`
    - `pnpm --filter <changed-pkg> test`
-6. Update docs in `docs/*` and usage examples if APIs change.
+6. If APIs change, update usage examples in this repo and flag that the docs site (cipherstash.com/docs, maintained separately) needs a corresponding update.
 7. **Add a changeset before opening or finalising the PR** when the
    change affects a published package's public behaviour or surface
    (new feature, bug fix, breaking change, UX-visible tweak). Run
@@ -198,26 +200,21 @@ pnpm changeset:publish
    `CHANGELOG.md` entries, so a missing changeset means the change
    ships invisibly.
 
-## Useful Links in this repo
+## Useful Links
 
 - `README.md` for quickstart and feature overview
-- `docs/concepts/searchable-encryption.md`
-- `docs/concepts/aws-kms-vs-cipherstash-comparison.md`
-- `docs/reference/schema.md`
-- `docs/reference/searchable-encryption-postgres.md`
-- `docs/reference/configuration.md`
-- `docs/reference/identity.md`
-- `docs/reference/secrets.md`
-- `docs/reference/dynamodb.md`
-- `docs/reference/supabase-sdk.md`
-- `docs/reference/drizzle/drizzle.md`
-- `docs/how-to/nextjs-external-packages.md`
-- `docs/how-to/sst-external-packages.md`
-- `docs/how-to/npm-lockfile-v3.md`
+- `packages/cli/AGENTS.md` for CLI-specific guidance
+- `e2e/README.md` for the cross-package E2E suite
+- `skills/*/SKILL.md` for per-integration agent guides
+- User-facing docs (concepts, reference, how-to) live on the docs site:
+  - https://cipherstash.com/docs
+  - https://cipherstash.com/docs/stack/quickstart
+  - https://cipherstash.com/docs/stack/reference
+  - https://cipherstash.com/docs/stack/deploy/bundling
 
 ## Troubleshooting
 
-- Module load errors on Linux/serverless: review the npm lockfile v3 guide.
+- Module load errors on Linux/serverless: review the bundling guide (https://cipherstash.com/docs/stack/deploy/bundling).
 - Can't decrypt after encrypting with a lock context: ensure the exact same lock context is provided to decrypt.
 - Tests failing due to missing credentials: provide `CS_*` env vars; lock-context tests are skipped without `USER_JWT`.
 - Performance testing: prefer bulk operations (`bulkEncrypt*` / `bulkDecrypt*`) to exercise ZeroKMS bulk speed.
