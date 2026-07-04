@@ -618,6 +618,27 @@ function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
 }
 
 /**
+ * Collect the per-model fields out of a bulk-operation result map keyed by
+ * `${modelIndex}-${fieldKey}` ids, splitting each id at the FIRST hyphen
+ * only. Field keys may themselves contain hyphens (a `some-field` column, or
+ * a nested `profile.some-field` path), so a naive `split('-')` would truncate
+ * the field key at its first hyphen and silently drop the value during model
+ * reconstruction.
+ */
+function fieldsForModelIndex(
+  fields: Record<string, unknown>,
+  modelIndex: number,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [id, value] of Object.entries(fields)) {
+    const sep = id.indexOf('-')
+    if (Number.parseInt(id.slice(0, sep), 10) !== modelIndex) continue
+    result[id.slice(sep + 1)] = value
+  }
+  return result
+}
+
+/**
  * Helper function to convert multiple decrypted models to models with encrypted fields
  */
 export async function bulkEncryptModels(
@@ -666,17 +687,7 @@ export async function bulkEncryptModels(
     }
 
     // Then, reconstruct the encrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(encryptedData)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(encryptedData, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
@@ -733,17 +744,7 @@ export async function bulkDecryptModels<T extends Record<string, unknown>>(
     }
 
     // Then, reconstruct the decrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(decryptedFields)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(decryptedFields, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
@@ -805,17 +806,7 @@ export async function bulkDecryptModelsWithLockContext<
     }
 
     // Then, reconstruct the decrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(decryptedFields)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(decryptedFields, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
@@ -878,17 +869,7 @@ export async function bulkEncryptModelsWithLockContext(
     }
 
     // Then, reconstruct the encrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(encryptedData)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(encryptedData, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
