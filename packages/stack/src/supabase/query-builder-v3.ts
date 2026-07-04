@@ -24,6 +24,12 @@ import type {
  * The subset of a v3 column builder the dialect relies on. Structural rather
  * than the concrete class union so the runtime `instanceof EncryptedV3Column`
  * gate and this type stay independent.
+ *
+ * Deliberately NOT `BuildableQueryColumn`'s `BuildableV3QueryableColumn` arm,
+ * despite the overlapping members: that type pins `isQueryable(): true`, and
+ * this map intentionally retains storage-only columns (whose `isQueryable()`
+ * is `false`) so a filter on one produces a precise error instead of passing
+ * through unencrypted.
  */
 type V3ColumnLike = {
   getName(): string
@@ -79,6 +85,14 @@ export class EncryptedQueryBuilderV3Impl<
   private columnSchemas: Record<string, ColumnSchema>
   /** Column builders keyed by BOTH property name and DB name. */
   private v3Columns: Record<string, V3ColumnLike>
+  /**
+   * Result-row key → DB column name for the columns the current select
+   * produces, including user-chosen PostgREST aliases (`ts:created_at` keys
+   * rows by `ts`). Populated by {@link buildSelectString}; consumed by
+   * {@link postprocessDecryptedRow} so aliased date columns still get `Date`
+   * reconstruction.
+   */
+  private selectKeyToDb: Record<string, string> = {}
 
   constructor(
     tableName: string,
@@ -129,7 +143,12 @@ export class EncryptedQueryBuilderV3Impl<
 
   protected override buildSelectString(): string | null {
     if (this.selectColumns === null) return null
-    return addJsonbCastsV3(this.selectColumns, this.propToDb)
+    const { select, keyToDb } = addJsonbCastsV3(
+      this.selectColumns,
+      this.propToDb,
+    )
+    this.selectKeyToDb = keyToDb
+    return select
   }
 
   /** v3 domains are plain jsonb — send the raw payload, keyed by DB name. */
@@ -162,6 +181,14 @@ export class EncryptedQueryBuilderV3Impl<
         const column = term.column as unknown as V3ColumnLike
         const queryType = term.queryType ?? 'equality'
         const capabilities = column.getQueryCapabilities()
+
+        // encrypt(null) short-circuits to null, which JSON.stringify would
+        // turn into the literal string "null" — a silently-wrong operand.
+        if (term.value == null) {
+          throw new Error(
+            `[supabase v3]: cannot encrypt a null filter value for column "${column.getName()}" — use .is('${column.getName()}', null) for NULL checks`,
+          )
+        }
 
         if (
           queryType !== 'equality' &&
@@ -205,6 +232,17 @@ export class EncryptedQueryBuilderV3Impl<
     )
   }
 
+  /**
+   * The single source of the encrypted wire-operator remap: `like`/`ilike`
+   * on an encrypted column become PostgREST `cs` (bloom-filter `@>`) — the
+   * `eql_v3.*` domains define no LIKE operator. Every pattern-bearing seam
+   * (`applyPatternFilter`, `notFilterOperator`, `transformOrConditions`)
+   * derives its operator here so they cannot drift apart.
+   */
+  private encryptedFilterOp(op: string, wasEncrypted: boolean): string {
+    return wasEncrypted && (op === 'like' || op === 'ilike') ? 'cs' : op
+  }
+
   /** Encrypted pattern filters go through the bloom-filter `@>` (`cs`). */
   protected override applyPatternFilter(
     q: SupabaseQueryBuilder,
@@ -213,8 +251,9 @@ export class EncryptedQueryBuilderV3Impl<
     value: unknown,
     wasEncrypted: boolean,
   ): SupabaseQueryBuilder {
-    if (wasEncrypted) {
-      return q.filter(column, 'cs', value)
+    const wireOp = this.encryptedFilterOp(op, wasEncrypted)
+    if (wireOp !== op) {
+      return q.filter(column, wireOp, value)
     }
     return super.applyPatternFilter(q, column, op, value, wasEncrypted)
   }
@@ -223,24 +262,18 @@ export class EncryptedQueryBuilderV3Impl<
     op: FilterOp,
     wasEncrypted: boolean,
   ): string {
-    if (wasEncrypted && (op === 'like' || op === 'ilike')) {
-      return 'cs'
-    }
-    return op
+    return this.encryptedFilterOp(op, wasEncrypted)
   }
 
   protected override transformOrConditions(
     conditions: PendingOrCondition[],
     encryptedIndexes: Set<number>,
   ): PendingOrCondition[] {
-    return conditions.map((cond, j) => {
-      const column = this.filterColumnName(cond.column)
-      const op =
-        encryptedIndexes.has(j) && (cond.op === 'like' || cond.op === 'ilike')
-          ? ('cs' as FilterOp)
-          : cond.op
-      return { ...cond, column, op }
-    })
+    return conditions.map((cond, j) => ({
+      ...cond,
+      column: this.filterColumnName(cond.column),
+      op: this.encryptedFilterOp(cond.op, encryptedIndexes.has(j)) as FilterOp,
+    }))
   }
 
   /** Rebuild `Date` values from the encrypt-config `cast_as`, mirroring the
@@ -248,17 +281,23 @@ export class EncryptedQueryBuilderV3Impl<
   protected override postprocessDecryptedRow(
     row: Record<string, unknown>,
   ): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...row }
+    // Row key → DB column name for every key an encrypted column can appear
+    // under: the select's actual keys (including user-chosen aliases like
+    // `ts:created_at`) plus the static property/DB names as a fallback for
+    // paths with no recorded select.
+    const keyToDb: Record<string, string> = { ...this.selectKeyToDb }
     for (const [property, dbName] of Object.entries(this.propToDb)) {
+      keyToDb[property] ??= dbName
+      keyToDb[dbName] ??= dbName
+    }
+
+    const out: Record<string, unknown> = { ...row }
+    for (const [key, dbName] of Object.entries(keyToDb)) {
       if (this.columnSchemas[dbName]?.cast_as !== 'date') continue
-      // Rows are keyed by property name when selected via the aliasing cast
-      // helper, but a caller selecting by raw DB name gets DB-name keys.
-      for (const key of property === dbName ? [property] : [property, dbName]) {
-        const value = out[key]
-        if (value == null || value instanceof Date) continue
-        if (typeof value === 'string' || typeof value === 'number') {
-          out[key] = new Date(value)
-        }
+      const value = out[key]
+      if (value == null || value instanceof Date) continue
+      if (typeof value === 'string' || typeof value === 'number') {
+        out[key] = new Date(value)
       }
     }
     return out

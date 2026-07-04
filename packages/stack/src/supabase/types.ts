@@ -74,10 +74,18 @@ export type EncryptedQueryBuilderV3<
 > = EncryptedQueryBuilder<Row, V3FilterableKeys<Table, Row> & StringKeyOf<Row>>
 
 export interface EncryptedSupabaseV3Instance {
+  /**
+   * `Row` defaults to exactly the table's inferred plaintext shape — NOT
+   * widened with an index signature. Widening would collapse
+   * {@link V3FilterableKeys} to `string` and silently disable the
+   * storage-only-column filter guard. The trade-off: with the default `Row`,
+   * plaintext passthrough columns (`id`, `created_at`, …) are not filterable
+   * or insertable at the type level — pass an explicit `Row` that includes
+   * them (`es.from<typeof users, UserRow>(…)`).
+   */
   from<
     Table extends AnyV3Table,
-    Row extends Record<string, unknown> = InferPlaintext<Table> &
-      Record<string, unknown>,
+    Row extends Record<string, unknown> = InferPlaintext<Table>,
   >(tableName: string, table: Table): EncryptedQueryBuilderV3<Table, Row>
 }
 
@@ -353,7 +361,7 @@ export interface EncryptedQueryBuilder<
     conditions: PendingOrCondition[],
     options?: { referencedTable?: string; foreignTable?: string },
   ): EncryptedQueryBuilder<T, FK>
-  match(query: Partial<T>): EncryptedQueryBuilder<T, FK>
+  match(query: Partial<Pick<T, FK>>): EncryptedQueryBuilder<T, FK>
   order<K extends StringKeyOf<T>>(
     column: K,
     options?: {

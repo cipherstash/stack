@@ -38,7 +38,10 @@ const FILE_MARKER = /^--! @file (.+)$/
 const EXCLUDE = /operator_class\.sql$/
 
 function stripOperatorClassChunks(sql) {
-  const lines = sql.split('\n')
+  // \r?\n: a CRLF-checked-out source would otherwise defeat the `$`-anchored
+  // EXCLUDE match (belt-and-braces — the removedChunks assertion below would
+  // still catch it loudly).
+  const lines = sql.split(/\r?\n/)
   const out = []
   let skipping = false
   let removedChunks = 0

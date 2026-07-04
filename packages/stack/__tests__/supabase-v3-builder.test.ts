@@ -200,13 +200,27 @@ const usersV2 = encryptedTableV2('users', {
   age: encryptedColumn('age').dataType('number').equality().orderAndRange(),
 })
 
+// Explicit row type: the default `Row` is exactly the table's plaintext shape,
+// so passthrough columns (id, note) need an explicit `Row` to be filterable /
+// insertable at the type level.
+type UserRow = {
+  id: number
+  email: string
+  nickname: string
+  amount: number
+  createdAt: Date
+  active: boolean
+  note: string
+}
+
 function v3Instance(resultData: unknown = []) {
   const supabase = createMockSupabase(resultData)
   const es = encryptedSupabaseV3({
     encryptionClient: createMockEncryptionClient(),
     supabaseClient: supabase.client,
   })
-  return { es, supabase }
+  const from = () => es.from<typeof users, UserRow>('users', users)
+  return { es, from, supabase }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,12 +229,10 @@ function v3Instance(resultData: unknown = []) {
 
 describe('encryptedSupabaseV3 wire encoding', () => {
   it('inserts the raw encrypted payload keyed by DB column name (no composite wrap)', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
     const createdAt = new Date('2026-01-02T03:04:05.000Z')
-    await es
-      .from('users', users)
-      .insert({ email: 'a@b.com', createdAt, note: 'plain' })
+    await from().insert({ email: 'a@b.com', createdAt, note: 'plain' })
 
     const [insert] = supabase.callsFor('insert')
     expect(insert).toBeDefined()
@@ -236,11 +248,9 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('bulk-inserts raw encrypted payloads keyed by DB column name', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es
-      .from('users', users)
-      .insert([{ email: 'a@b.com' }, { email: 'b@c.com' }])
+    await from().insert([{ email: 'a@b.com' }, { email: 'b@c.com' }])
 
     const [insert] = supabase.callsFor('insert')
     const body = insert.args[0] as Record<string, unknown>[]
@@ -250,18 +260,18 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('adds ::jsonb casts and aliases property names to DB names in select', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email, createdAt')
+    await from().select('id, email, createdAt')
 
     const [select] = supabase.callsFor('select')
     expect(select.args[0]).toBe('id, email::jsonb, createdAt:created_at::jsonb')
   })
 
   it('encrypts equality operands as full-envelope jsonb text', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email').eq('email', 'a@b.com')
+    await from().select('id, email').eq('email', 'a@b.com')
 
     const eqCalls = supabase.callsFor('eq')
     expect(eqCalls).toHaveLength(1)
@@ -276,19 +286,19 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('passes non-encrypted filters through untouched', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email').eq('id', 42)
+    await from().select('id, email').eq('id', 42)
 
     const eqCalls = supabase.callsFor('eq')
     expect(eqCalls[0].args).toEqual(['id', 42])
   })
 
   it('maps property names to DB names in range filters', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    const from = new Date('2026-01-01T00:00:00.000Z')
-    await es.from('users', users).select('id, createdAt').gte('createdAt', from)
+    const lowerBound = new Date('2026-01-01T00:00:00.000Z')
+    await from().select('id, createdAt').gte('createdAt', lowerBound)
 
     const [gte] = supabase.callsFor('gte')
     expect(gte.args[0]).toBe('created_at')
@@ -296,10 +306,10 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('emits encrypted like/ilike as PostgREST cs (bloom-filter containment)', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email').like('email', 'a@b')
-    await es.from('users', users).select('id, email').ilike('email', 'a@b')
+    await from().select('id, email').like('email', 'a@b')
+    await from().select('id, email').ilike('email', 'a@b')
 
     const filterCalls = supabase.callsFor('filter')
     expect(filterCalls).toHaveLength(2)
@@ -314,21 +324,18 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('keeps like on plain columns as like', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email').like('note', '%x%')
+    await from().select('id, email').like('note', '%x%')
 
     expect(supabase.callsFor('like')).toHaveLength(1)
     expect(supabase.callsFor('filter')).toHaveLength(0)
   })
 
   it('maps not(like) on encrypted columns to not(cs)', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es
-      .from('users', users)
-      .select('id, email')
-      .not('email', 'like', 'a@b')
+    await from().select('id, email').not('email', 'like', 'a@b')
 
     const [not] = supabase.callsFor('not')
     expect(not.args[0]).toBe('email')
@@ -336,12 +343,9 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('encrypts each element of an in() filter', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es
-      .from('users', users)
-      .select('id, nickname')
-      .in('nickname', ['ada', 'grace'])
+    await from().select('id, nickname').in('nickname', ['ada', 'grace'])
 
     const [inCall] = supabase.callsFor('in')
     expect(inCall.args[0]).toBe('nickname')
@@ -352,12 +356,9 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('maps match() keys to DB names and encrypts values', async () => {
-    const { es, supabase } = v3Instance()
+    const { from, supabase } = v3Instance()
 
-    await es
-      .from('users', users)
-      .select('id, nickname')
-      .match({ nickname: 'ada', id: 7 })
+    await from().select('id, nickname').match({ nickname: 'ada', id: 7 })
 
     const [match] = supabase.callsFor('match')
     const query = match.args[0] as Record<string, unknown>
@@ -366,11 +367,10 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('rejects a query type the column does not support', async () => {
-    const { es } = v3Instance()
+    const { from } = v3Instance()
 
     // nickname is eql_v3.text_eq — equality only, no order/range
-    const { error, status } = await es
-      .from('users', users)
+    const { error, status } = await from()
       .select('id, nickname')
       .gte('nickname', 'a')
 
@@ -379,11 +379,10 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   })
 
   it('rejects filters on storage-only columns', async () => {
-    const { es } = v3Instance()
+    const { from } = v3Instance()
 
     // active is eql_v3.bool — storage only
-    const { error, status } = await es
-      .from('users', users)
+    const { error, status } = await from()
       .select('id')
       // biome-ignore lint/suspicious/noExplicitAny: intentionally bypassing the type guard to prove the runtime guard
       .eq('active' as any, true as any)
@@ -403,11 +402,9 @@ describe('encryptedSupabaseV3 wire encoding', () => {
         ),
       },
     ]
-    const { es } = v3Instance(rows)
+    const { from } = v3Instance(rows)
 
-    const { data, error } = await es
-      .from('users', users)
-      .select('id, email, createdAt')
+    const { data, error } = await from().select('id, email, createdAt')
 
     expect(error).toBeNull()
     expect(data).toHaveLength(1)
@@ -416,6 +413,96 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect((data![0].createdAt as Date).toISOString()).toBe(
       '2026-01-02T03:04:05.000Z',
     )
+  })
+
+  it('reconstructs Date values selected under a user-chosen PostgREST alias', async () => {
+    const rows = [
+      {
+        id: 1,
+        ts: fakeEnvelope(new Date('2026-01-02T03:04:05.000Z'), 'created_at'),
+      },
+    ]
+    const { from, supabase } = v3Instance(rows)
+
+    const { data, error } = await from().select('id, ts:createdAt')
+
+    // The alias resolves through the property to the DB column…
+    const [select] = supabase.callsFor('select')
+    expect(select.args[0]).toBe('id, ts:created_at::jsonb')
+
+    // …and the aliased key still gets cast_as-driven Date reconstruction.
+    expect(error).toBeNull()
+    const row = data![0] as Record<string, unknown>
+    expect(row.ts).toBeInstanceOf(Date)
+    expect((row.ts as Date).toISOString()).toBe('2026-01-02T03:04:05.000Z')
+  })
+
+  it('rebuilds structured or() conditions with DB names, cs remap, and encrypted operands', async () => {
+    const { from, supabase } = v3Instance()
+
+    await from()
+      .select('id, email, createdAt')
+      .or([
+        { column: 'email', op: 'ilike', value: 'a@b' },
+        { column: 'createdAt', op: 'gte', value: new Date('2026-01-01') },
+        { column: 'id', op: 'eq', value: 7 },
+      ])
+
+    const [or] = supabase.callsFor('or')
+    const orString = or.args[0] as string
+
+    // Encrypted ilike → cs, property → DB name, operand = quoted envelope
+    expect(orString).toContain('email.cs.')
+    expect(orString).not.toContain('email.ilike.')
+    expect(orString).toContain('created_at.gte.')
+    // Plain condition passes through untouched
+    expect(orString).toContain('id.eq.7')
+    // Encrypted operands are the full envelope (double-quoted by the
+    // or-string formatter because JSON contains reserved characters)
+    expect(orString).toContain('"{')
+  })
+
+  it('rebuilds string-form or() with encrypted conditions remapped', async () => {
+    const { from, supabase } = v3Instance()
+
+    await from().select('id, email').or('email.eq.a@b.com,id.eq.7')
+
+    const [or] = supabase.callsFor('or')
+    const orString = or.args[0] as string
+    // The encrypted value is substituted; the plain condition survives as-is
+    expect(orString).toContain('email.eq."{')
+    expect(orString).toContain('id.eq.7')
+  })
+
+  it('passes a string-form or() through verbatim when no condition is encrypted', async () => {
+    const { from, supabase } = v3Instance()
+
+    await from().select('id').or('id.eq.7,note.eq.x')
+
+    const [or] = supabase.callsFor('or')
+    expect(or.args[0]).toBe('id.eq.7,note.eq.x')
+  })
+
+  it('rejects a null operand with a pointer to .is()', async () => {
+    const { from } = v3Instance()
+
+    const { error, status } = await from()
+      .select('id, email')
+      // biome-ignore lint/suspicious/noExplicitAny: intentionally bypassing the type guard to prove the runtime guard
+      .eq('email', null as any)
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('null filter value')
+    expect(error?.message).toContain(".is('email', null)")
+  })
+
+  it('still routes .is() null checks through untouched', async () => {
+    const { from, supabase } = v3Instance()
+
+    await from().select('id, email').is('email', null)
+
+    const [isCall] = supabase.callsFor('is')
+    expect(isCall.args).toEqual(['email', null])
   })
 })
 

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import {
   chooseSupabaseInstallMode,
+  routeInstallPathForEqlVersion,
   validateInstallFlags,
 } from '../commands/db/install.js'
 import {
@@ -268,6 +269,37 @@ describe('validateInstallFlags', () => {
     expect(validateInstallFlags({ eqlVersion: '3', latest: true })).toMatch(
       /--latest/,
     )
+  })
+})
+
+describe('routeInstallPathForEqlVersion', () => {
+  it('passes v2 routing through untouched', () => {
+    expect(
+      routeInstallPathForEqlVersion(2, { supabase: false, drizzle: true }),
+    ).toEqual({ drizzle: true, useSupabaseInstallModeSelection: false })
+    expect(
+      routeInstallPathForEqlVersion(2, { supabase: true, drizzle: false }),
+    ).toEqual({ drizzle: false, useSupabaseInstallModeSelection: true })
+  })
+
+  it('falls back from auto-detected drizzle to direct for v3, with a notice', () => {
+    const routing = routeInstallPathForEqlVersion(3, {
+      supabase: false,
+      drizzle: true,
+    })
+    expect(routing.drizzle).toBe(false)
+    expect(routing.useSupabaseInstallModeSelection).toBe(false)
+    expect(routing.notice).toMatch(/Drizzle/)
+  })
+
+  it('skips the supabase migration-vs-direct mode selection for v3', () => {
+    const routing = routeInstallPathForEqlVersion(3, {
+      supabase: true,
+      drizzle: false,
+    })
+    expect(routing.drizzle).toBe(false)
+    expect(routing.useSupabaseInstallModeSelection).toBe(false)
+    expect(routing.notice).toBeUndefined()
   })
 
   it('does NOT auto-imply --supabase from --migration', () => {

@@ -433,12 +433,16 @@ await es.from("users", users).select("id, email, amount").eq("email", "a@b.com")
 await es.from("users", users).select("id, amount").gte("amount", 10).lte("amount", 100)
 ```
 
-Rows default to the table's inferred plaintext shape; pass an explicit row
-type for full typing over passthrough columns:
+Rows default to **exactly** the table's inferred plaintext shape. That keeps
+the storage-only-column filter guard active (see below), but it means
+plaintext passthrough columns (`id`, `created_at`, …) are not filterable or
+insertable at the type level in the default case — pass an explicit row type
+that includes them:
 
 ```typescript
 type UserRow = { id: number; email: string; amount: number; joined: Date }
 const builder = es.from<typeof users, UserRow>("users", users)
+builder.eq("id", 1) // ok — id is in UserRow
 ```
 
 A JS property may map to a different DB column name
@@ -496,8 +500,10 @@ column, and assert the hit.
   the full-envelope operand's bloom carries the whole pattern as an extra
   token that only matches when the pattern equals the stored value.
 - **Storage-only domains are not filterable** (e.g. `types.Bool`,
-  `types.Text`): a filter on one is a type error with an explicit row type and
-  a clear runtime error otherwise.
+  `types.Text`): a filter (including `.match()`) on one is a type error, and
+  always a clear runtime error.
+- **Null filter values are rejected** with a pointer to `.is(column, null)` —
+  a null cannot be encrypted into an operand.
 
 ### Shared caveats (identical to v2)
 

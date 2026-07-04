@@ -103,8 +103,7 @@ export function encryptedSupabaseV3(
   return {
     from<
       Table extends AnyV3Table,
-      Row extends Record<string, unknown> = InferPlaintext<Table> &
-        Record<string, unknown>,
+      Row extends Record<string, unknown> = InferPlaintext<Table>,
     >(tableName: string, table: Table) {
       return new EncryptedQueryBuilderV3Impl<Row>(
         tableName,

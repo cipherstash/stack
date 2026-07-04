@@ -10,41 +10,38 @@ const eqlV3SqlPath = resolve(
   helperDir,
   '../fixtures/eql-v3/cipherstash-encrypt-v3.sql',
 )
+// The CLI-vendored Supabase variant (opclass chunks stripped by
+// packages/cli/scripts/build-eql-v3-sql.mjs from the fixture above; CI keeps
+// the two in sync). Reading the shipped artifact instead of re-stripping here
+// means the live Supabase suite installs exactly what
+// `stash db install --eql-version 3 --supabase` installs.
+const eqlV3SupabaseSqlPath = resolve(
+  helperDir,
+  '../../../cli/src/sql/cipherstash-encrypt-v3-supabase.sql',
+)
+
+/**
+ * The `eql_v3` grants for the Supabase roles. Mirrors the CLI's
+ * `SUPABASE_PERMISSIONS_SQL_V3` (`supabasePermissionsSql('eql_v3')` in
+ * packages/cli/src/installer/index.ts) — inlined rather than imported because
+ * the stack package cannot resolve the cli package's dependency graph (pg)
+ * from its test context.
+ */
+const EQL_V3_SUPABASE_GRANTS = `
+  GRANT USAGE ON SCHEMA eql_v3 TO anon, authenticated, service_role;
+  GRANT SELECT ON ALL TABLES IN SCHEMA eql_v3 TO anon, authenticated, service_role;
+  GRANT EXECUTE ON ALL ROUTINES IN SCHEMA eql_v3 TO anon, authenticated, service_role;
+  GRANT USAGE ON ALL SEQUENCES IN SCHEMA eql_v3 TO anon, authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3 GRANT SELECT ON TABLES TO anon, authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3 GRANT EXECUTE ON ROUTINES TO anon, authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3 GRANT USAGE ON SEQUENCES TO anon, authenticated, service_role;
+`
 
 async function hasEqlV3TextSearch(sql: postgres.Sql): Promise<boolean> {
   const [row] = await sql<{ installed: boolean }[]>`
     SELECT to_regtype('eql_v3.text_search') IS NOT NULL AS installed
   `
   return row?.installed ?? false
-}
-
-/**
- * Strip the two `CREATE OPERATOR CLASS`/`FAMILY` chunks from the v3 bundle.
- * They require superuser, which Supabase does not grant. Mirrors the upstream
- * build's `**\/*operator_class.sql` exclusion glob via the bundle's
- * `--! @file` markers (same logic as packages/cli/scripts/build-eql-v3-sql.mjs,
- * which vendors the stripped bundle for the CLI).
- */
-function stripOperatorClassChunks(sql: string): string {
-  const lines = sql.split('\n')
-  const out: string[] = []
-  let skipping = false
-
-  for (const line of lines) {
-    const marker = line.match(/^--! @file (.+)$/)
-    if (marker) {
-      skipping = /operator_class\.sql$/.test(marker[1])
-    }
-    if (!skipping) out.push(line)
-  }
-
-  const stripped = out.join('\n')
-  if (/CREATE OPERATOR (CLASS|FAMILY)/.test(stripped)) {
-    throw new Error(
-      'Stripped EQL v3 bundle still contains CREATE OPERATOR CLASS/FAMILY statements',
-    )
-  }
-  return stripped
 }
 
 /**
@@ -75,25 +72,16 @@ export async function installEqlV3IfNeeded(
     try {
       if (await hasEqlV3TextSearch(reserved)) return
 
-      let eqlV3Sql = await readFile(eqlV3SqlPath, 'utf8')
-      if (options?.supabase) {
-        eqlV3Sql = stripOperatorClassChunks(eqlV3Sql)
-      }
+      const eqlV3Sql = await readFile(
+        options?.supabase ? eqlV3SupabaseSqlPath : eqlV3SqlPath,
+        'utf8',
+      )
       await reserved.unsafe(eqlV3Sql)
 
       if (options?.supabase) {
-        // Same grants the CLI applies (supabasePermissionsSql keyed to
-        // eql_v3): the Supabase roles don't own the schema, and without these
-        // every encrypted query fails 42501 over PostgREST.
-        await reserved.unsafe(`
-          GRANT USAGE ON SCHEMA eql_v3 TO anon, authenticated, service_role;
-          GRANT SELECT ON ALL TABLES IN SCHEMA eql_v3 TO anon, authenticated, service_role;
-          GRANT EXECUTE ON ALL ROUTINES IN SCHEMA eql_v3 TO anon, authenticated, service_role;
-          GRANT USAGE ON ALL SEQUENCES IN SCHEMA eql_v3 TO anon, authenticated, service_role;
-          ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3 GRANT SELECT ON TABLES TO anon, authenticated, service_role;
-          ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3 GRANT EXECUTE ON ROUTINES TO anon, authenticated, service_role;
-          ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA eql_v3 GRANT USAGE ON SEQUENCES TO anon, authenticated, service_role;
-        `)
+        // The Supabase roles don't own the schema; without these grants every
+        // encrypted query fails 42501 over PostgREST.
+        await reserved.unsafe(EQL_V3_SUPABASE_GRANTS)
       }
 
       if (!(await hasEqlV3TextSearch(reserved))) {

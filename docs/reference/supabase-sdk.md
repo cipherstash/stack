@@ -51,18 +51,22 @@ plus `.withLockContext(lockContext)` and `.audit(config)`.
 
 ### Typing (v3)
 
-`es.from('users', users)` infers rows from the table (schema columns get their
-domain plaintext types — `types.Int4Ord` → `number`, `types.TimestamptzOrd` →
-`Date`, …). Pass an explicit row type to also pin passthrough columns:
+`es.from('users', users)` infers rows as **exactly** the table's plaintext
+shape (schema columns get their domain plaintext types — `types.Int4Ord` →
+`number`, `types.TimestamptzOrd` → `Date`, …). Storage-only columns (e.g.
+`types.Bool`) are excluded from every filter method — including `.match()` —
+at the type level; filtering one is always a clear runtime error.
+
+Plaintext passthrough columns (`id`, `created_at`, …) are not part of the
+default row type, so filtering or inserting them needs an explicit row type
+(deliberate: widening the default with an index signature would silently
+disable the storage-only guard):
 
 ```typescript
 type UserRow = { id: number; email: string; amount: number }
 const builder = es.from<typeof users, UserRow>('users', users)
+builder.eq('id', 1) // ok — id is in UserRow
 ```
-
-With an explicit row type, storage-only columns (e.g. `types.Bool`) are
-excluded from the filter methods at the type level; filtering one is always a
-clear runtime error.
 
 ### Property ↔ DB column names (v3)
 
@@ -151,6 +155,9 @@ These are internal to the adapter but explain observable behaviour:
   pattern equals the stored value.
 - **Mutations send the raw encrypted payload** (the domains are
   `DOMAIN … AS jsonb`), unlike v2's `{ data: … }` composite wrap.
+- **Null filter values are rejected** with a pointer to `.is(column, null)` —
+  a null cannot be encrypted into an operand, and silently passing it through
+  would compare against the jsonb literal `null`.
 
 ## Caveats (shared by v2 and v3)
 

@@ -32,7 +32,7 @@ type UserRow = {
 const es = encryptedSupabaseV3({ encryptionClient, supabaseClient })
 
 describe('encryptedSupabaseV3 typing', () => {
-  it('defaults rows to InferPlaintext of the table plus passthrough fields', async () => {
+  it('defaults rows to exactly InferPlaintext of the table', async () => {
     const builder = es.from('users', users)
     const { data } = await builder.select('id, email, amount')
 
@@ -41,6 +41,23 @@ describe('encryptedSupabaseV3 typing', () => {
     expectTypeOf(data![0].amount).toEqualTypeOf<number>()
     expectTypeOf(data![0].createdAt).toEqualTypeOf<Date>()
     expectTypeOf(data![0].active).toEqualTypeOf<boolean>()
+  })
+
+  it('narrows filter keys in the DEFAULT-Row case (no index-signature widening)', () => {
+    const builder = es.from('users', users)
+
+    builder.eq('email', 'a@b.com')
+    builder.gte('amount', 10)
+
+    // Storage-only column: excluded even without an explicit Row — the
+    // default Row is exactly InferPlaintext, so V3FilterableKeys stays narrow
+    // instead of collapsing to string.
+    // @ts-expect-error — storage-only column is excluded from filter keys
+    builder.eq('active', true)
+
+    // Passthrough (non-schema) columns need an explicit Row to be filterable.
+    // @ts-expect-error — not a schema column; pass an explicit Row type
+    builder.eq('id', 1)
   })
 
   it('pins filter value types to the column plaintext with an explicit row type', () => {
@@ -66,6 +83,10 @@ describe('encryptedSupabaseV3 typing', () => {
     builder.eq('active', true)
     // @ts-expect-error — storage-only column is excluded from filter keys
     builder.is('active', true)
+    // match() is FK-narrowed like every other filter method
+    builder.match({ email: 'a@b.com', amount: 3 })
+    // @ts-expect-error — storage-only column is excluded from match()
+    builder.match({ active: true })
   })
 
   it('accepts plaintext model values on insert', () => {

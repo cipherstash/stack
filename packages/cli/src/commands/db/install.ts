@@ -121,14 +121,12 @@ export async function installCommand(options: InstallOptions) {
   // v3 supports the direct install path only. Explicit --drizzle/--migration
   // are rejected up-front by validateInstallFlags; auto-DETECTED drizzle or
   // migration modes fall back to direct here rather than erroring.
-  if (eqlVersion === 3 && resolved.drizzle) {
-    p.log.info(
-      'EQL v3 does not support the Drizzle migration path yet — installing directly.',
-    )
-    resolved.drizzle = false
+  const routing = routeInstallPathForEqlVersion(eqlVersion, resolved)
+  if (routing.notice) {
+    p.log.info(routing.notice)
   }
 
-  if (resolved.drizzle) {
+  if (routing.drizzle) {
     await generateDrizzleMigration(s, {
       name: options.name,
       out: options.out,
@@ -145,7 +143,7 @@ export async function installCommand(options: InstallOptions) {
   // prompt default — it never enables `--supabase`. Direct install is the
   // historical default and remains the fallback when nothing else applies.
   // v3 skips the mode selection entirely: direct install only for now.
-  if (resolved.supabase && eqlVersion === 2) {
+  if (routing.useSupabaseInstallModeSelection) {
     const projectInfo = detectSupabaseProject(
       process.cwd(),
       options.migrationsDir,
@@ -178,7 +176,7 @@ export async function installCommand(options: InstallOptions) {
     p.log.info('Dry run — no changes will be made.')
     const source = options.latest
       ? 'Would download EQL install script from GitHub'
-      : 'Would use bundled EQL install script'
+      : `Would use bundled EQL${eqlVersion === 3 ? ' v3' : ''} install script`
     p.note(`${source}\nWould execute the SQL against the database`, 'Dry Run')
     p.outro('Dry run complete.')
     return
@@ -508,6 +506,39 @@ async function generateDrizzleMigration(
  *
  * Returns a user-facing error message, or `null` when the flags are valid.
  */
+/**
+ * Route the install between the drizzle / supabase-migration / direct paths
+ * for the requested EQL generation. Pure — no I/O, no prompts — so the v3
+ * fallback behaviour is unit-testable.
+ *
+ * v3 supports the direct path only: auto-detected drizzle falls back to
+ * direct with a user-facing notice (explicit `--drizzle`/`--migration` are
+ * already rejected by {@link validateInstallFlags}), and the Supabase
+ * migration-vs-direct mode selection is skipped entirely.
+ */
+export function routeInstallPathForEqlVersion(
+  eqlVersion: 2 | 3,
+  resolved: { supabase: boolean; drizzle: boolean },
+): {
+  drizzle: boolean
+  useSupabaseInstallModeSelection: boolean
+  notice?: string
+} {
+  if (eqlVersion === 3) {
+    return {
+      drizzle: false,
+      useSupabaseInstallModeSelection: false,
+      notice: resolved.drizzle
+        ? 'EQL v3 does not support the Drizzle migration path yet — installing directly.'
+        : undefined,
+    }
+  }
+  return {
+    drizzle: resolved.drizzle,
+    useSupabaseInstallModeSelection: resolved.supabase,
+  }
+}
+
 export function validateInstallFlags(options: InstallOptions): string | null {
   if (options.migration && options.direct) {
     return '`--migration` and `--direct` are mutually exclusive. Pick one.'

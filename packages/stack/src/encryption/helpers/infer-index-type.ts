@@ -79,7 +79,7 @@ export function validateIndexType(
 /**
  * v3-only: an order-capable column answers EQUALITY via its `ore` (`ob`) index.
  *
- * The v3 capability contract (`src/schema/v3`) documents `equality` as "exact-match
+ * The v3 capability contract (`src/eql/v3`) documents `equality` as "exact-match
  * lookups (EQL `hm`, or comparison via `ob`)", so an order-capable column with only
  * an `ore` index still supports equality — the equality-vs-range distinction is made
  * by the SQL comparison operator (`=` vs `>=`), NOT by the ciphertext (the FFI emits
