@@ -15,7 +15,9 @@
  *
  * Every case runs against both a v2 fluent-builder column and a v3 domain
  * column: the guards live on the shared `EncryptOperationWithLockContext`, so
- * both schema styles must take the identical short-circuit path.
+ * both schema styles must take the identical short-circuit path. Each style
+ * gets its own client — one client emits exactly one EQL wire format, so
+ * `Encryption` rejects a mixed v2 + v3 schema set outright.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,20 +48,25 @@ const usersV3 = encryptedTableV3('users_v3', {
 // biome-ignore lint/suspicious/noExplicitAny: test helper reads the Result union
 const failure = (result: any) => result.failure
 
-let client: Awaited<ReturnType<typeof Encryption>>
+const clients: Record<
+  'v2 fluent builder' | 'v3 domain type',
+  Awaited<ReturnType<typeof Encryption>>
+> = {} as never
 
 beforeEach(async () => {
   vi.clearAllMocks()
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
-  client = await Encryption({ schemas: [users, usersV3] })
+  clients['v2 fluent builder'] = await Encryption({ schemas: [users] })
+  clients['v3 domain type'] = await Encryption({ schemas: [usersV3] })
 })
 
 describe.each([
   ['v2 fluent builder', { column: users.score, table: users }],
   ['v3 domain type', { column: usersV3.score, table: usersV3 }],
-] as const)('encrypt with lock context rejects non-finite numbers (%s)', (_variant, target) => {
+] as const)('encrypt with lock context rejects non-finite numbers (%s)', (variant, target) => {
+  const client = () => clients[variant]
   it('rejects NaN and never reaches the FFI', async () => {
-    const result = await client
+    const result = await client()
       .encrypt(Number.NaN, target)
       .withLockContext(new LockContext())
 
@@ -69,7 +76,7 @@ describe.each([
   })
 
   it('rejects +Infinity and never reaches the FFI', async () => {
-    const result = await client
+    const result = await client()
       .encrypt(Number.POSITIVE_INFINITY, target)
       .withLockContext(new LockContext())
 
@@ -79,7 +86,7 @@ describe.each([
   })
 
   it('rejects -Infinity and never reaches the FFI', async () => {
-    const result = await client
+    const result = await client()
       .encrypt(Number.NEGATIVE_INFINITY, target)
       .withLockContext(new LockContext())
 
@@ -91,7 +98,7 @@ describe.each([
   it('accepts a finite number and forwards it to the FFI', async () => {
     // Positive control: proves the guards above reject *because* of the value,
     // not because the lock-context path is broken for all numbers.
-    const result = await client
+    const result = await client()
       .encrypt(42, target)
       .withLockContext(new LockContext())
 

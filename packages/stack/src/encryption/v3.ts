@@ -209,6 +209,12 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
  * counterpart to {@link Encryption}. Mirrors its config, then retypes the client
  * against the provided v3 `schemas`.
  *
+ * The underlying client is created with `eqlVersion: 3` (protect-ffi 0.27+),
+ * so `encrypt` / `encryptModel` emit EQL v3 wire payloads for the
+ * per-capability `eql_v3` domains. Pass an explicit `config.eqlVersion` to
+ * override — e.g. `2` to write v2-wire from a v3 schema set during a
+ * migration.
+ *
  * @example
  * ```typescript
  * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
@@ -229,7 +235,12 @@ export async function EncryptionV3<
     schemas: config.schemas as unknown as Parameters<
       typeof Encryption
     >[0]['schemas'],
-    config: config.config,
+    // v3 schemas emit the EQL v3 wire format. Auto-detection in
+    // `Encryption` would resolve the same way (every v3 table carries the
+    // `buildColumnKeyMap` marker), but the version is set explicitly here
+    // so the contract doesn't hinge on duck-typing — while still honouring
+    // a caller's explicit override.
+    config: { ...config.config, eqlVersion: config.config?.eqlVersion ?? 3 },
   })
   return typedClient(client, ...config.schemas)
 }

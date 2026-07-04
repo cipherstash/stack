@@ -1,7 +1,9 @@
 import type {
   AuthStrategy,
   Encrypted as CipherStashEncrypted,
+  EncryptedPayload as CipherStashEncryptedPayload,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedV3Query as CipherStashEncryptedV3Query,
   JsPlaintext,
   newClient,
   QueryOpName,
@@ -49,18 +51,27 @@ export type Client = Awaited<ReturnType<typeof newClient>> | undefined
 export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 
 /** Structural type representing encrypted data stored in the database. Always
- * carries a ciphertext. See also `EncryptedValue` for branded nominal typing,
+ * carries a ciphertext. Covers BOTH wire formats: the EQL v2.3 payloads
+ * (`k: "ct"` / `k: "sv"`) and the EQL v3 payloads (flat `{v: 3, i, c, …}`
+ * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Which format
+ * `encrypt` produces is selected by the client's
+ * {@link ClientConfig.eqlVersion}; `decrypt` accepts both regardless.
+ * v3 scalars carry no `k` discriminator, so narrow with `'k' in payload`
+ * before reading it. See also `EncryptedValue` for branded nominal typing,
  * and {@link EncryptedQuery} for the search-term shape returned by
  * `encryptQuery`. */
-export type Encrypted = CipherStashEncrypted
+export type Encrypted = CipherStashEncryptedPayload
 
 /** Structural type representing an encrypted query term (search needle)
  * returned by `encryptQuery` / `encryptQueryBulk` for scalar
  * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
- * queries. Carries no ciphertext — matched against stored values, never
- * decrypted. JSON containment queries (`ste_vec_term`) return a
- * storage-shaped {@link Encrypted} payload instead. */
-export type EncryptedQuery = CipherStashEncryptedQuery
+ * queries, plus — under `eqlVersion: 3` — the `eql_v3.jsonb_query`
+ * containment needle. Carries no ciphertext — matched against stored
+ * values, never decrypted. v2 JSON containment queries (`ste_vec_term`)
+ * return a storage-shaped {@link Encrypted} payload instead. */
+export type EncryptedQuery =
+  | CipherStashEncryptedQuery
+  | CipherStashEncryptedV3Query
 
 /**
  * Plaintext values the SDK accepts for encryption.
@@ -147,6 +158,31 @@ export type ClientConfig = {
    * @see {@link AuthStrategy}
    */
   strategy?: AuthStrategy
+
+  /**
+   * The EQL wire version the client emits — one FFI client always emits
+   * exactly one wire format.
+   *
+   * - `2` (the protect-ffi default): payloads target the
+   *   `eql_v2_encrypted` column type.
+   * - `3`: payloads target the per-capability `eql_v3` domains
+   *   (`eql_v3.text_eq`, `eql_v3.integer_ord_ore`, `eql_v3.json`, …),
+   *   derived from each column's `cast_as` and indexes.
+   *
+   * When omitted, {@link Encryption} auto-detects from the schema set:
+   * EQL v3 tables (from `@cipherstash/stack/v3`, marked by
+   * `buildColumnKeyMap()`) select `3`; v2 tables leave the FFI default
+   * (`2`) untouched. Mixing v2 and v3 tables in one client is an error —
+   * split them across two clients instead.
+   *
+   * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
+   * v3 data can coexist during a migration.
+   *
+   * v3 limitation (protect-ffi 0.27): `encryptQuery` supports only JSON
+   * containment queries — scalar-index and selector queries throw
+   * `EQL_V3_QUERY_UNSUPPORTED` until a v3 scalar query wire shape exists.
+   */
+  eqlVersion?: 2 | 3
 }
 
 type AtLeastOneCsTable<T> = [T, ...T[]]
