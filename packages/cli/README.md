@@ -1,7 +1,7 @@
 # stash
 
 [![npm version](https://img.shields.io/npm/v/stash.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/stash)
-[![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/protectjs/blob/main/LICENSE.md)
+[![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 
 The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), schema building, and encrypted secrets management. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
 
