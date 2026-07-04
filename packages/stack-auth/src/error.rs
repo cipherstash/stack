@@ -7,7 +7,7 @@
 //!
 //! The enum is a thin dispatcher: `Display`/`Diagnostic` delegate to the inner
 //! struct via `transparent`, and [`AuthError::error_code`] / the `Serialize`
-//! impl delegate through [`AuthError::kind`]. Ergonomic `From<Foreign>` impls
+//! impl delegate through `AuthError::kind`. Ergonomic `From<Foreign>` impls
 //! keep `?` working at call sites that lift a foreign error directly.
 
 use std::convert::Infallible;
@@ -17,7 +17,7 @@ use crate::access_key;
 /// Behaviour shared by every concrete error wrapped in an [`AuthError`] variant.
 ///
 /// Implemented by the per-error structs so each owns its FFI code and any
-/// structured payload; [`AuthError`] dispatches to it via [`AuthError::kind`].
+/// structured payload; [`AuthError`] dispatches to it via `AuthError::kind`.
 pub trait AuthErrorKind: std::error::Error + miette::Diagnostic {
     /// Stable machine-readable identifier surfaced across FFI boundaries
     /// (e.g. JS `Error.code`). Named `error_code` to avoid colliding with
@@ -437,5 +437,44 @@ impl From<stack_profile::ProfileError> for AuthError {
 impl From<Infallible> for AuthError {
     fn from(never: Infallible) -> Self {
         match never {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialize_emits_type_message_help_and_payload() {
+        let expected: cts_common::WorkspaceId = "ZVATKW3VHMFG27DY".parse().unwrap();
+        let actual: cts_common::WorkspaceId = "AAAAAAAAAAAAAAAA".parse().unwrap();
+        let (expected_s, actual_s) = (expected.to_string(), actual.to_string());
+
+        let err = AuthError::WorkspaceMismatch(WorkspaceMismatch {
+            expected_workspace: expected,
+            token_workspace: actual,
+        });
+        let json = serde_json::to_value(&err).unwrap();
+
+        // Generic fields the enum emits for every variant.
+        assert_eq!(json["type"], "WORKSPACE_MISMATCH");
+        assert_eq!(json["message"], err.to_string());
+        // `help` comes from the miette diagnostic (present on this variant).
+        assert!(json.get("help").is_some(), "help should be serialized");
+        // Structured payload from `AuthErrorKind::payload`.
+        assert_eq!(json["expected"], expected_s);
+        assert_eq!(json["actual"], actual_s);
+    }
+
+    #[test]
+    fn serialize_variant_without_payload_emits_only_generic_fields() {
+        let err = AuthError::MissingWorkspaceCrn(MissingWorkspaceCrn);
+        let json = serde_json::to_value(&err).unwrap();
+
+        assert_eq!(json["type"], "MISSING_WORKSPACE_CRN");
+        assert_eq!(json["message"], err.to_string());
+        // No per-variant payload keys — the payload loop contributes nothing.
+        assert!(json.get("expected").is_none());
+        assert!(json.get("actual").is_none());
     }
 }
