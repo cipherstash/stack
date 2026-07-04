@@ -46,7 +46,14 @@ function toFailure(err) {
  */
 function wrapAsync(fn) {
   return function (...args) {
-    return fn.apply(this, args).then((data) => ({ data }), toFailure);
+    // napi argument coercion throws synchronously, before a Promise exists —
+    // surface it as a rejection so a `Promise`-returning signature never
+    // throws. (Coercion errors carry no sentinel, so they stay errors.)
+    try {
+      return fn.apply(this, args).then((data) => ({ data }), toFailure);
+    } catch (err) {
+      return Promise.reject(err);
+    }
   };
 }
 
@@ -78,21 +85,37 @@ for (const Strategy of [
   Strategy.prototype.getToken = wrapAsync(Strategy.prototype.getToken);
 }
 
-// Wrap strategy factory methods (sync, can throw)
-const origDetect = native.AutoStrategy.detect;
-native.AutoStrategy.detect = wrapSync(origDetect);
+// napi defines class static methods as non-writable (and this file is sloppy
+// mode), so the factories can't be Result-wrapped by patching the native
+// class in place — the assignment silently no-ops. Each strategy instead gets
+// a thin facade class whose static factories run through `wrapSync`.
+// Instances are the native ones — their async `getToken()` is already
+// wrapped via the prototype patch above. (Facade instances are never
+// constructed, so `instanceof` against these classes is not part of the
+// contract.)
+// The native factory must be invoked as a method of its native class —
+// napi needs the class as the receiver to construct the returned instance —
+// hence the closure form rather than passing the unbound static to wrapSync.
+class AutoStrategy {
+  static detect(options) {
+    return wrapSync(() => native.AutoStrategy.detect(options))();
+  }
+}
 
-const origCreate = native.AccessKeyStrategy.create;
-native.AccessKeyStrategy.create = wrapSync(origCreate);
+class AccessKeyStrategy {
+  static create(workspaceCrn, accessKey) {
+    return wrapSync(() =>
+      native.AccessKeyStrategy.create(workspaceCrn, accessKey),
+    )();
+  }
+}
 
-const origFromProfile = native.DeviceSessionStrategy.fromProfile;
-native.DeviceSessionStrategy.fromProfile = wrapSync(origFromProfile);
+class DeviceSessionStrategy {
+  static fromProfile() {
+    return wrapSync(() => native.DeviceSessionStrategy.fromProfile())();
+  }
+}
 
-// napi defines class static methods as non-writable, so a factory's
-// synchronously-thrown errors can't be `.code`-enriched by patching the
-// native class in place. Expose a thin wrapper whose static factories run
-// through `wrapSync`. Instances are the native ones — their async
-// `getToken()` is already enriched via the prototype patch above.
 const NativeOidcFederationStrategy = native.OidcFederationStrategy;
 class OidcFederationStrategy {
   static create(workspaceCrn, getJwt, baseUrl) {
@@ -123,13 +146,17 @@ class OidcFederationStrategy {
   }
 }
 
-// Export wrapped top-level functions alongside native re-exports
+// Export wrapped top-level functions alongside native re-exports. The facade
+// classes shadow their native counterparts from the `...native` spread.
 module.exports = {
   ...native,
+  AutoStrategy,
+  AccessKeyStrategy,
+  DeviceSessionStrategy,
   OidcFederationStrategy,
   // Deprecated alias: `OAuthStrategy` was renamed to `DeviceSessionStrategy`.
   // Kept so existing consumers don't break; remove in a future major.
-  OAuthStrategy: native.DeviceSessionStrategy,
+  OAuthStrategy: DeviceSessionStrategy,
   beginDeviceCodeFlow: wrapAsync(native.beginDeviceCodeFlow),
   bindClientDevice: wrapAsync(native.bindClientDevice),
 };
