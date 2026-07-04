@@ -133,6 +133,26 @@ describe("csFederate", () => {
       new RegExp(`^cs_token_${WORKSPACE_ID}=`),
     );
   });
+
+  it("frees the wasm strategy even when getToken rejects (finally path)", async () => {
+    // Override the default fake with one whose getToken throws, so the
+    // try/finally's error branch — the reason the finally exists — is exercised.
+    create.mockImplementation(() => {
+      getToken.mockRejectedValue(new Error("federation failed"));
+      return { getToken, free };
+    });
+
+    await expect(
+      csFederate({
+        request: requestWith(),
+        responseHeaders: new Headers(),
+        workspaceCrn: WORKSPACE_CRN,
+        getJwt: () => "jwt",
+      }),
+    ).rejects.toThrow("federation failed");
+    // free() still ran despite the throw.
+    expect(free).toHaveBeenCalledOnce();
+  });
 });
 
 describe("csFederationMiddleware", () => {
@@ -219,6 +239,13 @@ describe("csAuthHeader", () => {
       [CS_TOKEN_HEADER]: encodeTokenHeader(tokenResult({ services: {} })),
     });
     expect(csAuthHeader(emptyServices)).toBeNull();
+
+    // Field PRESENT but empty string — distinct from missing; must still reject
+    // (isTokenResult's `.length === 0` branch). workspaceId is representative.
+    const emptyField = new Headers({
+      [CS_TOKEN_HEADER]: encodeTokenHeader(tokenResult({ workspaceId: "" })),
+    });
+    expect(csAuthHeader(emptyField)).toBeNull();
   });
 
   it("honours a custom header name", async () => {
