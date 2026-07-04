@@ -172,6 +172,19 @@ export class EncryptedQueryBuilderV3Impl<
    * Encrypt every filter operand as a full storage envelope (see the class
    * doc for why `encryptQuery` terms cannot be used), serialized to jsonb
    * text for the PostgREST filter value.
+   *
+   * INTERIM + single swap point. The full-envelope operand is a tracked
+   * workaround (Linear CIP-3402), not the design: it carries a real
+   * decryptable ciphertext `c` plus ALL of the column's index terms, and
+   * PostgREST filters travel in GET query strings — so operands can land in
+   * URL logs, proxies, and Supabase request logs (query terms are meant to
+   * be index-terms-only). When the EQL term-only scalar query envelope (the
+   * scalar analog of `eql_v3.jsonb_query`) ships, swapping the encryption
+   * call inside THIS method — and its `JSON.stringify` wire encoding — must
+   * be the ONLY change needed: every consuming seam (filter application,
+   * `or`/`not` transforms, the wire-operator remap) treats the returned
+   * operand as an opaque, already-encoded string and is encoding-agnostic.
+   * Do not let operand-encoding knowledge leak out of this method.
    */
   protected override async encryptCollectedTerms(
     terms: ScalarQueryTerm[],

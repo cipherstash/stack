@@ -1,5 +1,11 @@
 # EQL v3 Schema DSL — `text_search` (Increment 1)
 
+> **Superseded (re-baseline, 2026-07-05):** written against the
+> pre-`eql-3.0.0-alpha.2` EQL v3 surface — old domain names (`int4`,
+> `timestamptz`, …, since renamed to SQL-standard `integer`, `timestamp`, …),
+> `v: 2` envelope pins, and no `eql_v3_internal` schema. Retained as a
+> historical design record; the shipped surface is the re-baselined one.
+
 > **Superseded (2026-07-03):** the authoring surface described below has moved.
 > The subpath is now `@cipherstash/stack/eql/v3` (not `schema/v3`) and columns
 > are authored via the `types` namespace — `types.TextSearch('email')` replaces

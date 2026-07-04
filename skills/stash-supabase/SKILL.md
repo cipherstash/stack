@@ -420,9 +420,9 @@ import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
 import { encryptedSupabaseV3 } from "@cipherstash/stack/supabase"
 
 const users = encryptedTable("users", {
-  email:  types.TextSearch("email"),        // eql_v3.text_search — eq + range + free-text
-  amount: types.Int4Ord("amount"),          // eql_v3.int4_ord    — eq + range
-  joined: types.TimestamptzOrd("joined_at") // eql_v3.timestamptz_ord — eq + range, decrypts to Date
+  email:  types.TextSearch("email"),      // eql_v3.text_search — eq + range + free-text
+  amount: types.IntegerOrd("amount"),     // eql_v3.integer_ord — eq + range
+  joined: types.TimestampOrd("joined_at") // eql_v3.timestamp_ord — eq + range, decrypts to Date
 })
 
 const client = await Encryption({ schemas: [users] })
@@ -446,21 +446,23 @@ builder.eq("id", 1) // ok — id is in UserRow
 ```
 
 A JS property may map to a different DB column name
-(`joined: types.TimestamptzOrd("joined_at")`) — filters, selects, and results
-are translated automatically, and `date`/`timestamptz` columns decrypt to real
+(`joined: types.TimestampOrd("joined_at")`) — filters, selects, and results
+are translated automatically, and `date`/`timestamp` columns decrypt to real
 `Date` objects.
 
 ### Database schema (per-domain columns)
 
 Each column is declared with its native domain — the `types.*` member name
-maps to the `eql_v3.<name>` domain (strip the `eql_v3.` prefix and PascalCase):
+maps to the `eql_v3.<name>` domain (strip the `eql_v3.` prefix and PascalCase).
+The domains use SQL-standard type names (`integer`, `smallint`, `real`,
+`double`, `boolean`, `timestamp`):
 
 ```sql
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email eql_v3.text_search,
-  amount eql_v3.int4_ord,
-  joined_at eql_v3.timestamptz_ord
+  amount eql_v3.integer_ord,
+  joined_at eql_v3.timestamp_ord
 );
 ```
 
@@ -471,8 +473,11 @@ stash eql install --eql-version 3 --supabase
 ```
 
 This installs the opclass-stripped v3 bundle (operator classes need superuser,
-which Supabase does not grant) and applies the `eql_v3` grants for the
-`anon` / `authenticated` / `service_role` roles.
+which Supabase does not grant) and applies the grants for the
+`anon` / `authenticated` / `service_role` roles. The vendored bundle is the
+`eql-3.0.0-alpha.2` release artifact; it creates two schemas — `eql_v3` (the
+column domains and operators) and `eql_v3_internal` (SEM internals) — and the
+installer applies the role grants to both.
 
 **Manual step (same class of requirement as v2's `eql_v2`):** add `eql_v3` to
 the project's **Exposed schemas** (Dashboard → Settings → API → Exposed
@@ -483,23 +488,42 @@ jsonb comparison and return wrong rows.** After changing the setting, verify
 with a known-value round-trip: insert a row, filter for it by an encrypted
 column, and assert the hit.
 
+Expose `eql_v3` **only** — do NOT expose `eql_v3_internal`. The internals
+schema exists precisely so that only the column domains are exposed (e.g.
+Supabase's Table-Builder type picker shows just the domains). It still needs —
+and receives — the role grants; grants and exposure are independent.
+
 ### v3-specific behaviour
 
-- **Filter operands are full envelopes.** Every `eql_v3.*` domain CHECK
-  requires the storage keys (`v`/`i`/`c` plus the domain's index terms), and
-  the SQL operators coerce their operand into the domain — so the adapter
-  encrypts each filter value with the full storage path. This is internal;
-  the call shape is unchanged.
+All envelopes (stored payloads and filter operands) are versioned `v: 3`.
+
+- **INTERIM — filter operands are full envelopes.** This is a workaround, not
+  the design (tracked as Linear **CIP-3402**). Why it is required today: every
+  `eql_v3.*` domain CHECK requires the storage keys (`v`/`i`/`c` plus the
+  domain's index terms), and the SQL operators coerce their operand into the
+  domain — so the adapter encrypts each filter value with the full storage
+  path. The call shape is unchanged.
+
+  **Security caveat:** query terms are meant to be index-terms-only by design,
+  but a full-envelope operand carries a real decryptable ciphertext `c` plus
+  **all** of the column's index terms, and PostgREST filters travel in GET
+  query strings — so these envelopes can land in URL logs, intermediate
+  proxies, and Supabase request logs. The planned fix is an EQL-side term-only
+  scalar query envelope (the scalar analog of `eql_v3.jsonb_query`); once it
+  ships, operands stop carrying ciphertext.
 - **`like`/`ilike` are emitted as PostgREST `cs`** (`@>` bloom-filter
   containment) — the v3 domains define no LIKE operator. Match is tokenized
   and downcased, so `like` and `ilike` behave identically; don't include `%`
   wildcards in the pattern.
-- **Free-text search needs `include_original: false`** on the column's match
-  index (`types.TextSearch("email").freeTextSearch({ include_original: false })`)
+- **INTERIM — free-text search needs `include_original: false`** on the
+  column's match index
+  (`types.TextSearch("email").freeTextSearch({ include_original: false })`)
   for substring patterns to match. With the default `include_original: true`,
   the full-envelope operand's bloom carries the whole pattern as an extra
-  token that only matches when the pattern equals the stored value.
-- **Storage-only domains are not filterable** (e.g. `types.Bool`,
+  token that only matches when the pattern equals the stored value. This is a
+  symptom of the same full-envelope interim mechanism above and goes away with
+  the term-only query envelope (CIP-3402).
+- **Storage-only domains are not filterable** (e.g. `types.Boolean`,
   `types.Text`): a filter (including `.match()`) on one is a type error, and
   always a clear runtime error.
 - **Null filter values are rejected** with a pointer to `.is(column, null)` —

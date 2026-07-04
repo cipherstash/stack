@@ -26,7 +26,7 @@ import { createClient } from '@supabase/supabase-js'
 
 const users = encryptedTable('users', {
   email:  types.TextSearch('email'),   // eql_v3.text_search
-  amount: types.Int4Ord('amount'),     // eql_v3.int4_ord
+  amount: types.IntegerOrd('amount'),  // eql_v3.integer_ord
 })
 
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!)
@@ -52,9 +52,9 @@ plus `.withLockContext(lockContext)` and `.audit(config)`.
 ### Typing (v3)
 
 `es.from('users', users)` infers rows as **exactly** the table's plaintext
-shape (schema columns get their domain plaintext types — `types.Int4Ord` →
-`number`, `types.TimestamptzOrd` → `Date`, …). Storage-only columns (e.g.
-`types.Bool`) are excluded from every filter method — including `.match()` —
+shape (schema columns get their domain plaintext types — `types.IntegerOrd` →
+`number`, `types.TimestampOrd` → `Date`, …). Storage-only columns (e.g.
+`types.Boolean`) are excluded from every filter method — including `.match()` —
 at the type level; filtering one is always a clear runtime error.
 
 Plaintext passthrough columns (`id`, `created_at`, …) are not part of the
@@ -74,13 +74,13 @@ A v3 column can map a JS property to a different DB name:
 
 ```typescript
 const events = encryptedTable('events', {
-  createdAt: types.TimestamptzOrd('created_at'),
+  createdAt: types.TimestampOrd('created_at'),
 })
 ```
 
 The adapter resolves the mapping everywhere: filters and mutations address
 `created_at`, selects alias it back (`createdAt:created_at::jsonb`), and
-result rows are keyed by `createdAt`. `date` / `timestamptz` columns decrypt
+result rows are keyed by `createdAt`. `date` / `timestamp` columns decrypt
 to real `Date` objects (reconstructed from the encrypt-config `cast_as`).
 
 ## Database setup
@@ -91,14 +91,16 @@ to real `Date` objects (reconstructed from the encrypt-config `cast_as`).
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email eql_v3.text_search,
-  amount eql_v3.int4_ord,
-  created_at eql_v3.timestamptz_ord
+  amount eql_v3.integer_ord,
+  created_at eql_v3.timestamp_ord
 );
 ```
 
 The `types.*` member name maps to the domain name: strip the `eql_v3.` prefix
 and PascalCase each `_`-separated segment (`types.TextEq` → `eql_v3.text_eq`,
-`types.Int4Ord` → `eql_v3.int4_ord`, `types.Timestamptz` → `eql_v3.timestamptz`).
+`types.IntegerOrd` → `eql_v3.integer_ord`, `types.Timestamp` → `eql_v3.timestamp`).
+The domains use SQL-standard type names (`integer`, `smallint`, `real`,
+`double`, `boolean`, `timestamp`).
 
 ### Install EQL
 
@@ -115,12 +117,24 @@ families require superuser, which Supabase does not grant) and applies the
 schema grants for `anon`, `authenticated`, and `service_role`. Without the
 grants, encrypted queries fail with `42501`.
 
+The vendored v3 bundle is the [`eql-3.0.0-alpha.2`](https://github.com/cipherstash/encrypt-query-language/releases/tag/eql-3.0.0-alpha.2)
+release artifact. It installs two schemas: `eql_v3` (the column domains and
+operators) and `eql_v3_internal` (SEM internals — support functions and types
+the domains depend on). The installer applies role grants to **both** schemas;
+`eql_v3_internal` needs the grants but must never be exposed (see below).
+
 ### Exposed schemas (manual, required)
 
 For a bare `col <op> term` filter to reach the custom operator, the EQL schema
 (`eql_v2` for v2, `eql_v3` for v3) must be on PostgREST's request-time
 search_path — add it to **Dashboard → Settings → API → Exposed schemas**
 ([Supabase custom-schemas guide](https://supabase.com/docs/guides/api/using-custom-schemas)).
+
+For v3, expose `eql_v3` **only**. SEM internals live in a separate
+`eql_v3_internal` schema precisely so that exposing `eql_v3` (and Supabase's
+Table-Builder type picker) surfaces just the column domains — do not add
+`eql_v3_internal` to Exposed schemas. It still receives role grants (the
+installer applies them); grants and exposure are independent.
 
 > **Warning — silent fallback.** If the schema is not exposed, the operators
 > do not error: comparisons silently fall back to the base jsonb operators and
@@ -130,21 +144,33 @@ search_path — add it to **Dashboard → Settings → API → Exposed schemas**
 
 ## v3 encoding details
 
-These are internal to the adapter but explain observable behaviour:
+These are internal to the adapter but explain observable behaviour. Envelopes
+(stored payloads and filter operands alike) are versioned `v: 3`.
 
-- **Filter operands are full storage envelopes.** Every `eql_v3.*` domain
+- **INTERIM — filter operands are full storage envelopes.** This is a
+  workaround, not the design, and it is tracked for replacement
+  (Linear **CIP-3402**). Why it is required today: every `eql_v3.*` domain
   CHECK requires the storage keys (`v`/`i`/`c` plus the domain's index terms:
-  `hm` for `text_eq`, `ob` for `int4_ord`, all three for `text_search`), and
-  the SQL operator functions coerce their jsonb operand into the domain. A
-  narrowed query-only term (no ciphertext) fails the CHECK with `23514` for
+  `hm` for `text_eq`, `ob` for `integer_ord`, all three for `text_search`),
+  and the SQL operator functions coerce their jsonb operand into the domain.
+  A narrowed query-only term (no ciphertext) fails the CHECK with `23514` for
   every domain, so the adapter encrypts each filter value with the full
   storage path and the operators extract the term they need
   (`eq_term`/`ord_term`/`match_term`).
+
+  **Security caveat:** query terms are supposed to be index-terms-only by
+  design, but a full-envelope operand carries a real, decryptable ciphertext
+  `c` plus **all** of the column's index terms — and PostgREST filters travel
+  in GET query strings, so these envelopes can land in URL logs, intermediate
+  proxies, and Supabase request logs. The planned fix is an EQL-side
+  **term-only scalar query envelope** (the scalar analog of the existing
+  `eql_v3.jsonb_query`) that the domains/operators accept without storage
+  keys; once it ships, operands stop carrying ciphertext.
 - **`like`/`ilike` are emitted as PostgREST `cs`** (`@>` bloom containment) —
   the v3 domains define no LIKE operator. Match is tokenized + downcased, so
   `like` and `ilike` behave identically; do not include `%` wildcards.
-- **Free-text search needs `include_original: false`** on the column's match
-  index for substring patterns to match:
+- **INTERIM — free-text search needs `include_original: false`** on the
+  column's match index for substring patterns to match:
 
   ```typescript
   types.TextSearch('email').freeTextSearch({ include_original: false })
@@ -152,7 +178,10 @@ These are internal to the adapter but explain observable behaviour:
 
   With the default `include_original: true`, the full-envelope operand's bloom
   carries the whole pattern as an extra token that only matches when the
-  pattern equals the stored value.
+  pattern equals the stored value. This requirement is a symptom of the same
+  full-envelope interim mechanism above — a term-only query envelope encodes
+  the pattern as a query (not as a stored value), so the requirement goes away
+  with CIP-3402.
 - **Mutations send the raw encrypted payload** (the domains are
   `DOMAIN … AS jsonb`), unlike v2's `{ data: … }` composite wrap.
 - **Null filter values are rejected** with a pointer to `.is(column, null)` —
