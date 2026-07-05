@@ -185,10 +185,11 @@ describeLive('eql_v3 client integration', () => {
     expect(matchTerm).not.toHaveProperty('c')
   }, 30000)
 
-  // bigint (int8) storage domains are omitted from the v3 SDK until the native
-  // protect-ffi supports lossless bigint round-tripping — a `bigint` fails JSON
-  // serialization and a `string` is rejected for a `big_int` column. Re-add a
-  // round-trip test alongside the domain builders when the FFI lands.
+  // bigint (int8) domains exist in the SDK (types.Bigint*) but their LIVE
+  // round-trips are gated on the next protect-ffi release — 0.27.0's
+  // JsPlaintext cannot marshal a JS `bigint` across the Neon boundary, so a
+  // live encrypt throws at runtime. Live coverage lands via the v3 matrix
+  // (catalog `liveGate`) once the pin is bumped.
 
   // A `date` domain decrypts to an ISO 8601 string from the native FFI, so the
   // single-value `decrypt` path returns a string (a lone ciphertext carries no

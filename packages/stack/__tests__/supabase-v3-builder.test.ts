@@ -24,14 +24,38 @@ type FakeEnvelope = {
 }
 
 function fakeEnvelope(value: unknown, column: string): FakeEnvelope {
-  const pt = value instanceof Date ? value.toISOString() : value
+  // `pt` is mock plumbing (real envelopes never carry plaintext) and must stay
+  // JSON-safe: the v3 filter path JSON.stringifies the whole operand envelope,
+  // mirroring the real-world invariant that post-encryption envelopes are
+  // JSON-serializable. A raw `bigint` would make JSON.stringify throw, so it
+  // is carried as a tagged string and decoded by `fakePlaintext`.
+  const pt =
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'bigint'
+        ? { $bigint: value.toString() }
+        : value
+  const label = typeof value === 'bigint' ? `${value}n` : String(pt)
   return {
     v: 3,
     i: { t: 'tbl', c: column },
-    c: `ct:${String(pt)}`,
-    hm: `hm:${String(pt)}`,
+    c: `ct:${label}`,
+    hm: `hm:${label}`,
     pt,
   }
+}
+
+/** Undo `fakeEnvelope`'s plaintext encoding (the mock decrypt). */
+function fakePlaintext(envelope: FakeEnvelope): unknown {
+  const { pt } = envelope
+  if (
+    typeof pt === 'object' &&
+    pt !== null &&
+    '$bigint' in (pt as Record<string, unknown>)
+  ) {
+    return BigInt((pt as { $bigint: string }).$bigint)
+  }
+  return pt
 }
 
 function isFakeEnvelope(value: unknown): value is FakeEnvelope {
@@ -104,7 +128,7 @@ function createMockEncryptionClient() {
     decryptModel: (model: Record<string, unknown>) => {
       const out: Record<string, unknown> = {}
       for (const [key, value] of Object.entries(model)) {
-        out[key] = isFakeEnvelope(value) ? value.pt : value
+        out[key] = isFakeEnvelope(value) ? fakePlaintext(value) : value
       }
       return operation(out)
     },
@@ -114,7 +138,7 @@ function createMockEncryptionClient() {
         models.map((model) => {
           const out: Record<string, unknown> = {}
           for (const [key, value] of Object.entries(model)) {
-            out[key] = isFakeEnvelope(value) ? value.pt : value
+            out[key] = isFakeEnvelope(value) ? fakePlaintext(value) : value
           }
           return out
         }),
@@ -191,6 +215,7 @@ const users = encryptedTable('users', {
   email: types.TextSearch('email'),
   nickname: types.TextEq('nickname'),
   amount: types.IntegerOrd('amount'),
+  balance: types.BigintOrd('balance'),
   createdAt: types.TimestampOrd('created_at'),
   active: types.Boolean('active'),
 })
@@ -208,6 +233,7 @@ type UserRow = {
   email: string
   nickname: string
   amount: number
+  balance: bigint
   createdAt: Date
   active: boolean
   note: string
@@ -303,6 +329,60 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     const [gte] = supabase.callsFor('gte')
     expect(gte.args[0]).toBe('created_at')
     expect(JSON.parse(gte.args[1] as string).c).toBeDefined()
+  })
+
+  // bigint (eql_v3.bigint_ord) — the adapter is value-generic: the bigint
+  // travels to encrypt() unchanged, and only the POST-encryption envelope
+  // (which never contains a raw bigint) is JSON-encoded on the filter wire.
+  // MOCK-based: live bigint encryption is gated on the next protect-ffi
+  // release (0.27.0's JsPlaintext has no JS BigInt support).
+  it('passes a bigint insert value to encrypt unchanged (i64::MAX)', async () => {
+    const { from, supabase } = v3Instance()
+
+    await from().insert({ balance: 9223372036854775807n, note: 'plain' })
+
+    const [insert] = supabase.callsFor('insert')
+    const body = insert.args[0] as Record<string, unknown>
+    expect(isFakeEnvelope(body.balance)).toBe(true)
+    // The mock encrypt saw the bigint itself — the label is stringified from
+    // the original bigint value, not a precision-lossy number.
+    expect((body.balance as FakeEnvelope).c).toBe('ct:9223372036854775807n')
+    expect(body.note).toBe('plain')
+  })
+
+  it('encrypts bigint eq/gte operands as full-envelope jsonb text (JSON-safe)', async () => {
+    const { from, supabase } = v3Instance()
+
+    await from().select('id, balance').eq('balance', -9223372036854775808n)
+    await from().select('id, balance').gte('balance', 42n)
+
+    const [eq] = supabase.callsFor('eq')
+    expect(eq.args[0]).toBe('balance')
+    // JSON.stringify of the envelope must not throw on a bigint operand —
+    // the envelope is JSON-safe because the raw bigint never lands in it.
+    const eqParsed = JSON.parse(eq.args[1] as string)
+    expect(eqParsed.c).toBe('ct:-9223372036854775808n')
+    expect(eqParsed.hm).toBeDefined()
+
+    const [gte] = supabase.callsFor('gte')
+    expect(gte.args[0]).toBe('balance')
+    expect(JSON.parse(gte.args[1] as string).c).toBe('ct:42n')
+  })
+
+  it('returns a JS bigint from decrypted rows (no reconstruction, no JSON mangling)', async () => {
+    const rows = [
+      {
+        id: 1,
+        balance: fakeEnvelope(9223372036854775807n, 'balance'),
+      },
+    ]
+    const { from } = v3Instance(rows)
+
+    const { data, error } = await from().select('id, balance')
+
+    expect(error).toBeNull()
+    expect(data![0].balance).toBe(9223372036854775807n)
+    expect(typeof data![0].balance).toBe('bigint')
   })
 
   it('emits encrypted like/ilike as PostgREST cs (bloom-filter containment)', async () => {

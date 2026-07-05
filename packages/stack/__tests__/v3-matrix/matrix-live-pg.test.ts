@@ -1,7 +1,9 @@
 /**
- * Live Postgres coverage for ALL 35 v3 domains — one query-correctness proof
+ * Live Postgres coverage for the v3 domains — one query-correctness proof
  * per domain, dispatched by capability tier, against a real installed eql_v3
- * extension.
+ * extension. Domains with a catalog `liveGate` (currently the bigint family,
+ * pending the next protect-ffi release) are excluded and reported as
+ * explicit skips.
  *
  * `matrix-live.test.ts` proves every domain round-trips through live FFI
  * ciphertext, but never touches SQL. `schema-v3-pg.test.ts` proves real SQL
@@ -14,7 +16,7 @@
  * each kind of v3 domain in SQL — useful reference for engineers and agents
  * writing new domain-consuming code.
  *
- * ONE mega table (all 35 domains, one column each, like `matrix-live.test.ts`),
+ * ONE mega table (every non-gated domain, one column each, like `matrix-live.test.ts`),
  * two seeded rows (`samples[0]` / `samples[1]` from the catalog — every domain
  * has at least two), one query per domain proving it selects the expected row
  * and not the other. Dispatch mirrors the priority `resolveIndexType` itself
@@ -65,7 +67,16 @@ const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).s
 /** `eql_v3.integer_ord` -> `integer_ord`: a valid, unique Postgres column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
-const domains = typedEntries(V3_MATRIX)
+// Live-gated domains (currently the bigint family) are excluded from the mega
+// table, the seed INSERT, and the term encryption: their samples cannot pass
+// through the installed protect-ffi (0.27.0 has no JS BigInt support — the
+// v2-wire term client and the v3 seed path would BOTH throw at runtime in
+// `beforeAll`, taking every other domain's proof down with them). Each gated
+// domain gets an explicit skip naming the gate instead (see
+// `DomainSpec.liveGate` in the catalog).
+const allDomains = typedEntries<EqlV3TypeName, DomainSpec>(V3_MATRIX)
+const domains = allDomains.filter(([, spec]) => !spec.liveGate)
+const gatedDomains = allDomains.filter(([, spec]) => spec.liveGate)
 
 const columns = Object.fromEntries(
   domains.map(([t, spec]) => [slug(t), spec.builder(slug(t))]),
@@ -155,7 +166,7 @@ beforeAll(async () => {
   ) as Array<Record<string, unknown>>
 
   // Generation handshake: fail loudly on client/bundle wire-format skew
-  // before the 35-column INSERT turns it into an opaque 23514.
+  // before the wide multi-column INSERT turns it into an opaque 23514.
   for (const [name, value] of Object.entries(encA)) {
     assertV3WireEnvelope(value, `matrix-live-pg seed column ${name}`)
   }
@@ -238,64 +249,75 @@ afterAll(async () => {
   await sql.end()
 }, 30000)
 
-describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
-  it.each(
-    eqDomains,
-  )('%s: eq_term/hmac_256 selects the exact row', async (eqlType) => {
-    const col = slug(eqlType)
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+describeLivePg(
+  'v3 matrix live Postgres coverage (all non-gated domains)',
+  () => {
+    it.each(
+      eqDomains,
+    )('%s: eq_term/hmac_256 selects the exact row', async (eqlType) => {
+      const col = slug(eqlType)
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.eq_term("${col}") = eql_v3_internal.hmac_256($2::jsonb)`,
-      [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idA])
-  })
+        [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([idA])
+    })
 
-  it.each(
-    ordDomains,
-  )('%s: ord_term/ore_block_256 equality-via-ORE selects the exact row', async (eqlType) => {
-    const col = slug(eqlType)
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+    it.each(
+      ordDomains,
+    )('%s: ord_term/ore_block_256 equality-via-ORE selects the exact row', async (eqlType) => {
+      const col = slug(eqlType)
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.ord_term("${col}") = eql_v3_internal.ore_block_256($2::jsonb)`,
-      [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idA])
-  })
+        [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([idA])
+    })
 
-  it.each(
-    matchDomains,
-  )('%s: match_term/bloom_filter selects row B (containing "ada"), not row A', async (eqlType) => {
-    const col = slug(eqlType)
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
+    it.each(
+      matchDomains,
+    )('%s: match_term/bloom_filter selects row B (containing "ada"), not row A', async (eqlType) => {
+      const col = slug(eqlType)
+      const rows = await sql.unsafe<Row[]>(
+        `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.match_term("${col}") @> eql_v3_internal.bloom_filter($2::jsonb)`,
-      [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idB])
-  })
+        [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
+      )
+      expect(rows.map((r) => r.id)).toEqual([idB])
+    })
 
-  it.each(
-    storageDomains,
-  )('%s: ciphertext survives a real INSERT/SELECT and still decrypts', async (eqlType, spec) => {
-    const col = slug(eqlType)
-    const [row] = await sql.unsafe<Array<{ value: unknown }>>(
-      `SELECT "${col}"::jsonb AS value FROM ${TABLE_NAME} WHERE id = $1`,
-      [idA],
-    )
-    const decrypted = unwrapResult(await client.decrypt(row.value as never))
-    const expected = spec.samples[0]
-    if (expected instanceof Date) {
-      // Lone-ciphertext decrypt has no column identity, so the cast_as-driven
-      // Date reconstruction (a decrypt-MODEL feature) cannot apply — the FFI
-      // returns the serialized instant (e.g. '2026-07-01T00:00:00Z'). Parse
-      // before comparing; toEqual on Dates compares the time value.
-      expect(new Date(decrypted as string)).toEqual(expected)
-    } else {
-      expect(decrypted).toBe(expected)
+    // Live-gated domains: explicit, reason-bearing skips so deferred coverage
+    // is visible in the vitest report rather than silently absent.
+    if (gatedDomains.length > 0) {
+      it.skip.each(
+        gatedDomains,
+      )('%s live Postgres proof (see skip reason in catalog liveGate)', () => {})
     }
-  })
-})
+
+    it.each(
+      storageDomains,
+    )('%s: ciphertext survives a real INSERT/SELECT and still decrypts', async (eqlType, spec) => {
+      const col = slug(eqlType)
+      const [row] = await sql.unsafe<Array<{ value: unknown }>>(
+        `SELECT "${col}"::jsonb AS value FROM ${TABLE_NAME} WHERE id = $1`,
+        [idA],
+      )
+      const decrypted = unwrapResult(await client.decrypt(row.value as never))
+      const expected = spec.samples[0]
+      if (expected instanceof Date) {
+        // Lone-ciphertext decrypt has no column identity, so the cast_as-driven
+        // Date reconstruction (a decrypt-MODEL feature) cannot apply — the FFI
+        // returns the serialized instant (e.g. '2026-07-01T00:00:00Z'). Parse
+        // before comparing; toEqual on Dates compares the time value.
+        expect(new Date(decrypted as string)).toEqual(expected)
+      } else {
+        expect(decrypted).toBe(expected)
+      }
+    })
+  },
+)

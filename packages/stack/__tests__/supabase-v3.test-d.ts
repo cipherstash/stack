@@ -16,6 +16,7 @@ declare const supabaseClient: SupabaseClientLike
 const users = encryptedTable('users', {
   email: types.TextSearch('email'),
   amount: types.IntegerOrd('amount'),
+  balance: types.BigintOrd('balance'),
   createdAt: types.TimestampOrd('created_at'),
   active: types.Boolean('active'),
 })
@@ -24,6 +25,7 @@ type UserRow = {
   id: number
   email: string
   amount: number
+  balance: bigint
   createdAt: Date
   active: boolean
   note: string
@@ -39,6 +41,7 @@ describe('encryptedSupabaseV3 typing', () => {
     // Schema columns carry their domain plaintext types
     expectTypeOf(data![0].email).toEqualTypeOf<string>()
     expectTypeOf(data![0].amount).toEqualTypeOf<number>()
+    expectTypeOf(data![0].balance).toEqualTypeOf<bigint>()
     expectTypeOf(data![0].createdAt).toEqualTypeOf<Date>()
     expectTypeOf(data![0].active).toEqualTypeOf<boolean>()
   })
@@ -67,12 +70,19 @@ describe('encryptedSupabaseV3 typing', () => {
     builder.gte('amount', 10)
     builder.gte('createdAt', new Date())
     builder.eq('id', 1)
+    // bigint columns pin filter values to `bigint`
+    builder.eq('balance', 42n)
+    builder.gte('balance', 9223372036854775807n)
 
     // Wrong value type for a column
     // @ts-expect-error — email is a string column
     builder.eq('email', 42)
     // @ts-expect-error — amount is a number column
     builder.gte('amount', 'ten')
+    // @ts-expect-error — balance is a bigint column; number is not assignable
+    builder.gte('balance', 42)
+    // @ts-expect-error — balance is a bigint column; string is not assignable
+    builder.eq('balance', '42')
   })
 
   it('rejects filters on storage-only columns at the type level', () => {
@@ -94,9 +104,12 @@ describe('encryptedSupabaseV3 typing', () => {
 
     builder.insert({ email: 'a@b.com', amount: 3, createdAt: new Date() })
     builder.insert([{ email: 'a@b.com' }, { note: 'plain' }])
+    builder.insert({ balance: 9223372036854775807n })
 
     // @ts-expect-error — createdAt is a Date column
     builder.insert({ createdAt: 'not-a-date' })
+    // @ts-expect-error — balance is a bigint column; number is not assignable
+    builder.insert({ balance: 42 })
   })
 
   it('resolves responses to the row type', () => {

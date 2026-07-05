@@ -25,6 +25,7 @@ const records = encryptedTable('records', {
   count: V3_MATRIX['eql_v3.integer'].builder('count'), // number, storage-only
   score: V3_MATRIX['eql_v3.integer_eq'].builder('score'), // number, equality
   rank: V3_MATRIX['eql_v3.integer_ord'].builder('rank'), // number, order + range
+  balance: V3_MATRIX['eql_v3.bigint_ord'].builder('balance'), // bigint, order + range
   createdAt: V3_MATRIX['eql_v3.timestamp_ord'].builder('created_at'), // date
   email: V3_MATRIX['eql_v3.text_search'].builder('email'), // string, full-text
   active: V3_MATRIX['eql_v3.boolean'].builder('active'), // boolean, storage-only
@@ -36,6 +37,7 @@ describe('eql_v3 type-driven matrix (types)', () => {
       count: number
       score: number
       rank: number
+      balance: bigint
       createdAt: Date
       email: string
       active: boolean
@@ -50,6 +52,9 @@ describe('eql_v3 type-driven matrix (types)', () => {
       QueryTypesForColumn<typeof records.score>
     >().toEqualTypeOf<'equality'>()
     expectTypeOf<QueryTypesForColumn<typeof records.rank>>().toEqualTypeOf<
+      'equality' | 'orderAndRange'
+    >()
+    expectTypeOf<QueryTypesForColumn<typeof records.balance>>().toEqualTypeOf<
       'equality' | 'orderAndRange'
     >()
     expectTypeOf<QueryTypesForColumn<typeof records.createdAt>>().toEqualTypeOf<

@@ -403,6 +403,7 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
   // text-order regression below.)
   it.each([
     ['integer_ord', types.IntegerOrd],
+    ['bigint_ord', types.BigintOrd],
     ['date_ord', types.DateOrd],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s resolves equality to the ore index', (_name, builder) => {
@@ -441,6 +442,8 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   it.each([
     ['integer_ord_ore', types.IntegerOrdOre],
     ['integer_ord', types.IntegerOrd],
+    ['bigint_ord_ore', types.BigintOrdOre],
+    ['bigint_ord', types.BigintOrd],
     ['date_ord_ore', types.DateOrdOre],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {
