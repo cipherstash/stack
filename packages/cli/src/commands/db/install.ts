@@ -559,7 +559,11 @@ export function validateInstallFlags(options: InstallOptions): string | null {
         ? '--migration'
         : options.latest
           ? '--latest'
-          : null
+          : // --migrations-dir only feeds the Supabase v2 migration-file path;
+            // the v3 direct install would silently ignore it — reject instead.
+            options.migrationsDir !== undefined
+            ? '--migrations-dir'
+            : null
     if (incompatible) {
       return `\`--eql-version 3\` does not support \`${incompatible}\` yet — v3 currently installs via the direct path only.`
     }

@@ -269,6 +269,15 @@ describe('validateInstallFlags', () => {
     expect(validateInstallFlags({ eqlVersion: '3', latest: true })).toMatch(
       /--latest/,
     )
+    // --migrations-dir only feeds the v2 Supabase migration-file path; the v3
+    // direct install would silently ignore it (flagged in review of #547).
+    expect(
+      validateInstallFlags({
+        eqlVersion: '3',
+        supabase: true,
+        migrationsDir: 'db/migrations',
+      }),
+    ).toMatch(/--migrations-dir/)
   })
 })
 
