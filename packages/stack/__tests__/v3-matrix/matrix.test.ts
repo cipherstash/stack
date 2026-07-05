@@ -33,4 +33,12 @@ describe('eql_v3 type-driven domain matrix (runtime)', () => {
       indexes: spec.indexes,
     })
   })
+
+  it.each([
+    'eql_v3.text_ord_ore',
+    'eql_v3.text_ord',
+    'eql_v3.text_search',
+  ] as const)('%s uses non-empty positive samples for live Postgres inserts', (eqlType) => {
+    expect(V3_MATRIX[eqlType].samples[0]).not.toBe('')
+  })
 })

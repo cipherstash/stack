@@ -101,8 +101,11 @@ const ordDomains = domains.filter(
 const storageDomains = domains.filter(
   ([, spec]) => proofKindFor(spec.indexes) === 'storage',
 )
-const textOrderDomains = domains.filter(
-  ([t]) => t === 'eql_v3.text_ord_ore' || t === 'eql_v3.text_ord',
+const textOreDomains = domains.filter(
+  ([t]) =>
+    t === 'eql_v3.text_ord_ore' ||
+    t === 'eql_v3.text_ord' ||
+    t === 'eql_v3.text_search',
 )
 
 type Row = { id: number }
@@ -199,9 +202,9 @@ beforeAll(async () => {
       ),
     )
   }
-  // text_match/text_search: query a substring of row B's sample. Row A's
-  // shared `TEXT_S[0]` is `''` — a degenerate containment target — so the
-  // match proof targets row B instead of the usual row A.
+  // text_match/text_search: query a substring of whichever seeded sample
+  // contains "ada". `text_match` still uses the shared TEXT_S with an empty row
+  // A, while `text_search` uses non-empty TEXT_ORE_S to satisfy its `ob` check.
   for (const [t] of matchDomains) {
     matchTerms[slug(t)] = unwrapResult(
       await client.encryptQuery(
@@ -252,7 +255,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
   })
 
   it.each(
-    textOrderDomains,
+    textOreDomains,
   )('%s: encrypted empty string is rejected by the Postgres domain', async (eqlType) => {
     const col = slug(eqlType)
     const column = (table as unknown as Record<string, unknown>)[col] as never
@@ -270,15 +273,16 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
 
   it.each(
     matchDomains,
-  )('%s: match_term/bloom_filter selects row B (containing "ada"), not row A', async (eqlType) => {
+  )('%s: match_term/bloom_filter selects the row containing "ada"', async (eqlType, spec) => {
     const col = slug(eqlType)
+    const expectedId = String(spec.samples[0]).includes('ada') ? idA : idB
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.match_term("${col}") @> eql_v3.bloom_filter($2::jsonb)`,
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
-    expect(rows.map((r) => r.id)).toEqual([idB])
+    expect(rows.map((r) => r.id)).toEqual([expectedId])
   })
 
   it.each(
