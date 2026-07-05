@@ -64,6 +64,19 @@ const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).s
 /** `eql_v3.int4_ord` -> `int4_ord`: a valid, unique Postgres column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
+const expectDecryptedStorageValue = (
+  decrypted: unknown,
+  expected: unknown,
+): void => {
+  if (expected instanceof Date) {
+    expect(typeof decrypted).toBe('string')
+    expect(new Date(decrypted)).toEqual(expected)
+    return
+  }
+
+  expect(decrypted).toBe(expected)
+}
+
 const domains = typedEntries(V3_MATRIX)
 
 const columns = Object.fromEntries(
@@ -295,10 +308,6 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     )
     const decrypted = unwrapResult(await client.decrypt(row.value as never))
     const expected = spec.samples[0]
-    if (expected instanceof Date) {
-      expect(decrypted).toEqual(expected)
-    } else {
-      expect(decrypted).toBe(expected)
-    }
+    expectDecryptedStorageValue(decrypted, expected)
   })
 })
