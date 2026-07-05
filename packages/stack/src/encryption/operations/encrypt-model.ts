@@ -2,8 +2,7 @@ import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
-import type { Client } from '@/types'
+import type { BuildableTable, Client } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import {
   encryptModelFields,
@@ -17,12 +16,12 @@ export class EncryptModelOperation<
 > extends EncryptionOperation<T> {
   private client: Client
   private model: Record<string, unknown>
-  private table: EncryptedTable<EncryptedTableColumn>
+  private table: BuildableTable
 
   constructor(
     client: Client,
     model: Record<string, unknown>,
-    table: EncryptedTable<EncryptedTableColumn>,
+    table: BuildableTable,
   ) {
     super()
     this.client = client
@@ -75,7 +74,7 @@ export class EncryptModelOperation<
   public getOperation(): {
     client: Client
     model: Record<string, unknown>
-    table: EncryptedTable<EncryptedTableColumn>
+    table: BuildableTable
   } {
     return {
       client: this.client,

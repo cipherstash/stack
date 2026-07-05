@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import {
   chooseSupabaseInstallMode,
+  routeInstallPathForEqlVersion,
   validateInstallFlags,
 } from '../commands/db/install.js'
 import {
@@ -240,6 +241,74 @@ describe('validateInstallFlags', () => {
       direct: true,
     })
     expect(err).toMatch(/mutually exclusive/i)
+  })
+
+  it('accepts --eql-version 2 and 3', () => {
+    expect(validateInstallFlags({ eqlVersion: '2' })).toBeNull()
+    expect(validateInstallFlags({ eqlVersion: '3' })).toBeNull()
+    expect(
+      validateInstallFlags({ eqlVersion: '3', supabase: true, direct: true }),
+    ).toBeNull()
+  })
+
+  it('rejects an unknown --eql-version value', () => {
+    expect(validateInstallFlags({ eqlVersion: '4' })).toMatch(/--eql-version/)
+  })
+
+  it('rejects --eql-version 3 with --drizzle, --migration, or --latest', () => {
+    expect(validateInstallFlags({ eqlVersion: '3', drizzle: true })).toMatch(
+      /--drizzle/,
+    )
+    expect(
+      validateInstallFlags({
+        eqlVersion: '3',
+        supabase: true,
+        migration: true,
+      }),
+    ).toMatch(/--migration/)
+    expect(validateInstallFlags({ eqlVersion: '3', latest: true })).toMatch(
+      /--latest/,
+    )
+    // --migrations-dir only feeds the v2 Supabase migration-file path; the v3
+    // direct install would silently ignore it (flagged in review of #547).
+    expect(
+      validateInstallFlags({
+        eqlVersion: '3',
+        supabase: true,
+        migrationsDir: 'db/migrations',
+      }),
+    ).toMatch(/--migrations-dir/)
+  })
+})
+
+describe('routeInstallPathForEqlVersion', () => {
+  it('passes v2 routing through untouched', () => {
+    expect(
+      routeInstallPathForEqlVersion(2, { supabase: false, drizzle: true }),
+    ).toEqual({ drizzle: true, useSupabaseInstallModeSelection: false })
+    expect(
+      routeInstallPathForEqlVersion(2, { supabase: true, drizzle: false }),
+    ).toEqual({ drizzle: false, useSupabaseInstallModeSelection: true })
+  })
+
+  it('falls back from auto-detected drizzle to direct for v3, with a notice', () => {
+    const routing = routeInstallPathForEqlVersion(3, {
+      supabase: false,
+      drizzle: true,
+    })
+    expect(routing.drizzle).toBe(false)
+    expect(routing.useSupabaseInstallModeSelection).toBe(false)
+    expect(routing.notice).toMatch(/Drizzle/)
+  })
+
+  it('skips the supabase migration-vs-direct mode selection for v3', () => {
+    const routing = routeInstallPathForEqlVersion(3, {
+      supabase: true,
+      drizzle: false,
+    })
+    expect(routing.drizzle).toBe(false)
+    expect(routing.useSupabaseInstallModeSelection).toBe(false)
+    expect(routing.notice).toBeUndefined()
   })
 
   it('does NOT auto-imply --supabase from --migration', () => {

@@ -51,6 +51,12 @@
 			"schema": [
 				"./dist/schema/index.d.ts"
 			],
+			"eql/v3": [
+				"./dist/eql/v3/index.d.ts"
+			],
+			"v3": [
+				"./dist/encryption/v3.d.ts"
+			],
 			"types": [
 				"./dist/types-public.d.ts"
 			],
@@ -117,6 +123,26 @@
 			"require": {
 				"types": "./dist/schema/index.d.cts",
 				"default": "./dist/schema/index.cjs"
+			}
+		},
+		"./eql/v3": {
+			"import": {
+				"types": "./dist/eql/v3/index.d.ts",
+				"default": "./dist/eql/v3/index.js"
+			},
+			"require": {
+				"types": "./dist/eql/v3/index.d.cts",
+				"default": "./dist/eql/v3/index.cjs"
+			}
+		},
+		"./v3": {
+			"import": {
+				"types": "./dist/encryption/v3.d.ts",
+				"default": "./dist/encryption/v3.js"
+			},
+			"require": {
+				"types": "./dist/encryption/v3.d.cts",
+				"default": "./dist/encryption/v3.cjs"
 			}
 		},
 		"./types": {
@@ -191,7 +217,10 @@
 		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
 		"build": "tsup",
 		"dev": "tsup --watch",
+		"analyze:complexity": "fta src/eql/v3 --score-cap 72",
+		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
+		"test:types": "vitest --run --typecheck.only",
 		"release": "tsup"
 	},
 	"devDependencies": {
@@ -201,6 +230,7 @@
 		"dotenv": "17.4.2",
 		"drizzle-orm": "^0.45.2",
 		"execa": "^9.5.2",
+		"fta-cli": "3.0.0",
 		"json-schema-to-typescript": "^15.0.2",
 		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
@@ -214,7 +244,7 @@
 	"dependencies": {
 		"@byteslice/result": "0.2.0",
 		"@cipherstash/auth": "catalog:repo",
-		"@cipherstash/protect-ffi": "0.26.0",
+		"@cipherstash/protect-ffi": "0.27.0",
 		"evlog": "1.11.0",
 		"uuid": "14.0.0",
 		"zod": "3.25.76"

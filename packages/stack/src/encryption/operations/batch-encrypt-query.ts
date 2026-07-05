@@ -2,6 +2,7 @@ import { type Result, withResult } from '@byteslice/result'
 import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedV3Query as CipherStashEncryptedV3Query,
 } from '@cipherstash/protect-ffi'
 import {
   encryptQueryBulk as ffiEncryptQueryBulk,
@@ -82,7 +83,11 @@ function buildQueryPayload(
  */
 function assembleResults(
   totalLength: number,
-  encryptedValues: (CipherStashEncrypted | CipherStashEncryptedQuery)[],
+  encryptedValues: (
+    | CipherStashEncrypted
+    | CipherStashEncryptedQuery
+    | CipherStashEncryptedV3Query
+  )[],
   nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[],
 ): EncryptedQueryResult[] {
   const results: EncryptedQueryResult[] = new Array(totalLength).fill(null)

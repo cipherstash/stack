@@ -69,6 +69,79 @@ export function addJsonbCasts(
 }
 
 /**
+ * Parse a Supabase select string and add `::jsonb` casts to encrypted EQL v3
+ * columns, resolving JS property names to DB column names via PostgREST
+ * aliasing.
+ *
+ * Input:  `'id, email, createdAt'` with `{ email: 'email', createdAt: 'created_at' }`
+ * Output: `'id, email::jsonb, createdAt:created_at::jsonb'`
+ *
+ * - A property whose DB name differs is emitted as `prop:db_name::jsonb`
+ *   (PostgREST rename syntax), so result rows come back keyed by the JS
+ *   property name.
+ * - A DB column name used directly is cast in place (`db_name::jsonb`).
+ * - Tokens that already carry a cast, or contain parens/dots (functions,
+ *   foreign tables), are left untouched — same rules as the v2 helper.
+ *
+ * Besides the rewritten select string, returns `keyToDb`: every result-row
+ * key this select produces for an encrypted column, mapped to its DB column
+ * name — including user-chosen PostgREST aliases (`ts:created_at` → rows
+ * keyed `ts`). The v3 builder uses it to reconstruct `Date` values on keys
+ * the static property↔DB map cannot see.
+ */
+export function addJsonbCastsV3(
+  columns: string,
+  propToDb: Record<string, string>,
+): { select: string; keyToDb: Record<string, string> } {
+  const dbNames = new Set(Object.values(propToDb))
+  const keyToDb: Record<string, string> = {}
+
+  const select = columns
+    .split(',')
+    .map((col) => {
+      const trimmed = col.trim()
+
+      if (!trimmed) return col
+      if (trimmed.includes('::')) return col
+      if (trimmed.includes('(') || trimmed.includes('.')) return col
+
+      const leadingWhitespace = col.match(/^(\s*)/)?.[1] ?? ''
+
+      // Already-aliased token: `alias:column`
+      const aliasMatch = trimmed.match(
+        /^([A-Za-z_][A-Za-z0-9_]*):([A-Za-z_][A-Za-z0-9_]*)$/,
+      )
+      if (aliasMatch) {
+        const [, alias, name] = aliasMatch
+        const db = propToDb[name] ?? (dbNames.has(name) ? name : undefined)
+        if (db !== undefined) {
+          keyToDb[alias] = db
+          return `${leadingWhitespace}${alias}:${db}::jsonb`
+        }
+        return col
+      }
+
+      const db = propToDb[trimmed]
+      if (db !== undefined) {
+        keyToDb[trimmed] = db
+        return db === trimmed
+          ? `${leadingWhitespace}${trimmed}::jsonb`
+          : `${leadingWhitespace}${trimmed}:${db}::jsonb`
+      }
+
+      if (dbNames.has(trimmed)) {
+        keyToDb[trimmed] = trimmed
+        return `${leadingWhitespace}${trimmed}::jsonb`
+      }
+
+      return col
+    })
+    .join(',')
+
+  return { select, keyToDb }
+}
+
+/**
  * Map a Supabase filter operation to a CipherStash query type.
  */
 export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {

@@ -71,8 +71,6 @@ import {
   buildEncryptConfig,
   type CastAs,
   type EncryptConfig,
-  EncryptedColumn,
-  EncryptedField,
   type EncryptedTable,
   type EncryptedTableColumn,
   encryptConfigSchema,
@@ -355,12 +353,26 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
   return { ...config, tables }
 }
 
-function getColumnName(col: EncryptOptions['column']): string {
-  if (col instanceof EncryptedColumn || col instanceof EncryptedField) {
+/**
+ * Resolve a column's name structurally. Accepts any column builder exposing
+ * `getName()` — v2 `EncryptedColumn` / `EncryptedField` AND v3 column builders
+ * (e.g. `EncryptedTextSearchColumn`) alike — matching the structural
+ * `BuildableColumn` contract that `EncryptOptions.column` was widened to.
+ *
+ * An `instanceof EncryptedColumn || EncryptedField` gate would type-check after
+ * the widening but throw at runtime for a v3 column, breaking the type promise;
+ * resolving the name structurally keeps the wasm-inline encrypt entry honest.
+ * The `typeof` check still fails loudly for plain JS callers passing a value
+ * that is not a column builder.
+ *
+ * @internal exported for unit-test coverage.
+ */
+export function getColumnName(col: EncryptOptions['column']): string {
+  if (typeof col?.getName === 'function') {
     return col.getName()
   }
   throw new Error(
-    '[encryption]: opts.column must be an EncryptedColumn or EncryptedField',
+    '[encryption]: opts.column must be a column builder exposing getName()',
   )
 }
 
@@ -387,12 +399,16 @@ export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   if (cfg.strategy) return cfg.strategy
   // No strategy → the access-key arm, where `workspaceCrn` and `accessKey`
   // are both required (and so present at runtime); the union widens their
-  // static types to `string | undefined`, hence the casts.
+  // static types to `string | undefined`, hence the casts. Guard at runtime
+  // so plain JS / Deno callers that bypass the compile-time union fail loudly
+  // instead of forwarding `undefined` into `AccessKeyStrategy.create`.
+  if (!cfg.workspaceCrn || !cfg.accessKey) {
+    throw new Error(
+      '[encryption]: `config.workspaceCrn` and `config.accessKey` are required when `config.strategy` is not provided.',
+    )
+  }
   // `AccessKeyStrategy.create` takes the full workspace CRN — the region is
   // derived from it inside `@cipherstash/auth`, so the CRN stays the single
   // source of truth with no manual region split.
-  return AccessKeyStrategy.create(
-    cfg.workspaceCrn as string,
-    cfg.accessKey as string,
-  )
+  return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey)
 }

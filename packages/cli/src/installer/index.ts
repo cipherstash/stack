@@ -8,25 +8,59 @@ const EQL_VERSION = 'eql-2.3.1'
 const EQL_INSTALL_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
 const EQL_INSTALL_NO_OPERATOR_FAMILY_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt-supabase.sql`
 const EQL_SCHEMA_NAME = 'eql_v2'
+const EQL_V3_SCHEMA_NAME = 'eql_v3'
+const EQL_V3_INTERNAL_SCHEMA_NAME = 'eql_v3_internal'
 
 /**
- * SQL block that grants the EQL schema, tables, routines, and sequences to
- * Supabase's built-in roles (`anon`, `authenticated`, `service_role`).
+ * Which EQL generation to install / inspect. `2` is the composite
+ * `eql_v2_encrypted` type; `3` is the native `eql_v3.*` domain schema.
+ */
+export type EqlVersion = 2 | 3
+
+function schemaNameFor(eqlVersion: EqlVersion): string {
+  return eqlVersion === 3 ? EQL_V3_SCHEMA_NAME : EQL_SCHEMA_NAME
+}
+
+/**
+ * Build the SQL block that grants an EQL schema, tables, routines, and
+ * sequences to Supabase's built-in roles (`anon`, `authenticated`,
+ * `service_role`).
  *
  * Supabase uses dedicated roles that don't own the schema, so explicit grants
- * are required. We expose this as a single multi-statement string so it can be
+ * are required. Returned as a single multi-statement string so it can be
  * executed in one `client.query()` (Postgres accepts multi-statement strings)
  * AND embedded directly into a Supabase migration file. One source of truth
- * for both the runtime install path and the generated migration file.
+ * for both the runtime install path and the generated migration file, shared
+ * by the v2 (`eql_v2`) and v3 (`eql_v3`) installs.
  */
-export const SUPABASE_PERMISSIONS_SQL = `GRANT USAGE ON SCHEMA ${EQL_SCHEMA_NAME} TO anon, authenticated, service_role;
-GRANT SELECT ON ALL TABLES IN SCHEMA ${EQL_SCHEMA_NAME} TO anon, authenticated, service_role;
-GRANT EXECUTE ON ALL ROUTINES IN SCHEMA ${EQL_SCHEMA_NAME} TO anon, authenticated, service_role;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${EQL_SCHEMA_NAME} TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${EQL_SCHEMA_NAME} GRANT SELECT ON TABLES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${EQL_SCHEMA_NAME} GRANT EXECUTE ON ROUTINES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${EQL_SCHEMA_NAME} GRANT USAGE ON SEQUENCES TO anon, authenticated, service_role;
+export function supabasePermissionsSql(schemaName: string): string {
+  return `GRANT USAGE ON SCHEMA ${schemaName} TO anon, authenticated, service_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA ${schemaName} TO anon, authenticated, service_role;
+GRANT EXECUTE ON ALL ROUTINES IN SCHEMA ${schemaName} TO anon, authenticated, service_role;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${schemaName} TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT SELECT ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT EXECUTE ON ROUTINES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT USAGE ON SEQUENCES TO anon, authenticated, service_role;
 `
+}
+
+/** The v2 (`eql_v2`) Supabase grants block. See {@link supabasePermissionsSql}. */
+export const SUPABASE_PERMISSIONS_SQL = supabasePermissionsSql(EQL_SCHEMA_NAME)
+
+/**
+ * The v3 Supabase grants block: `eql_v3` AND `eql_v3_internal`. The bundle's
+ * functions are all SECURITY INVOKER (deliberately, so PostgreSQL can inline
+ * them), and the `eql_v3` operators call into SEM extractors/comparators that
+ * live in `eql_v3_internal` — so the calling role itself needs USAGE/EXECUTE
+ * on the internal schema too, or every encrypted query fails `42501`.
+ *
+ * Grants ≠ exposure: only `eql_v3` goes in the dashboard's Exposed schemas;
+ * `eql_v3_internal` must stay unexposed (the split exists so the Supabase
+ * Table-Builder type picker shows only the column domains).
+ */
+export const SUPABASE_PERMISSIONS_SQL_V3 =
+  supabasePermissionsSql(EQL_V3_SCHEMA_NAME) +
+  supabasePermissionsSql(EQL_V3_INTERNAL_SCHEMA_NAME)
 
 /**
  * Get the directory of the current file, supporting both ESM and CJS.
@@ -165,20 +199,32 @@ export class EQLInstaller {
   }
 
   /**
-   * Check whether the EQL extension is installed by looking for the `eql_v2` schema.
+   * Check whether the EQL extension is installed by looking for its schema
+   * (`eql_v2` by default, `eql_v3` when `eqlVersion: 3`).
    */
-  async isInstalled(): Promise<boolean> {
+  async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
     const client = new pg.Client({ connectionString: this.databaseUrl })
+    const eqlVersion = options?.eqlVersion ?? 2
 
     try {
       await client.connect()
 
+      // v3 is generation-aware: a pre-alpha.2 install has eql_v3 but no
+      // eql_v3_internal (and pins v:2 envelopes in its domain CHECKs) — treat
+      // it as NOT installed so an install run replaces it (the bundle opens by
+      // dropping both schemas) instead of a stale surface silently accepting
+      // wrong-generation wire data.
+      const requiredSchemas =
+        eqlVersion === 3
+          ? [EQL_V3_SCHEMA_NAME, EQL_V3_INTERNAL_SCHEMA_NAME]
+          : [EQL_SCHEMA_NAME]
+
       const result = await client.query(
-        'SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1',
-        [EQL_SCHEMA_NAME],
+        'SELECT count(*)::int AS found FROM information_schema.schemata WHERE schema_name = ANY($1)',
+        [requiredSchemas],
       )
 
-      return result.rowCount !== null && result.rowCount > 0
+      return result.rows[0]?.found === requiredSchemas.length
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {
@@ -195,7 +241,10 @@ export class EQLInstaller {
    * This is best-effort: if the schema exists but no version metadata is
    * available, `'unknown'` is returned.
    */
-  async getInstalledVersion(): Promise<string | null> {
+  async getInstalledVersion(options?: {
+    eqlVersion?: EqlVersion
+  }): Promise<string | null> {
+    const schemaName = schemaNameFor(options?.eqlVersion ?? 2)
     const client = new pg.Client({ connectionString: this.databaseUrl })
 
     try {
@@ -203,7 +252,7 @@ export class EQLInstaller {
 
       const schemaResult = await client.query(
         'SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1',
-        [EQL_SCHEMA_NAME],
+        [schemaName],
       )
 
       if (schemaResult.rowCount === null || schemaResult.rowCount === 0) {
@@ -215,7 +264,7 @@ export class EQLInstaller {
       // we fall back to 'unknown'.
       try {
         const versionResult = await client.query(
-          `SELECT ${EQL_SCHEMA_NAME}.version() AS version`,
+          `SELECT ${schemaName}.version() AS version`,
         )
 
         if (versionResult.rows.length > 0 && versionResult.rows[0].version) {
@@ -249,12 +298,26 @@ export class EQLInstaller {
     excludeOperatorFamily?: boolean
     supabase?: boolean
     latest?: boolean
+    eqlVersion?: EqlVersion
   }): Promise<void> {
-    const { supabase = false, latest = false } = options ?? {}
+    const { supabase = false, latest = false, eqlVersion = 2 } = options ?? {}
     const excludeOperatorFamily = options?.excludeOperatorFamily || supabase
+
+    if (latest && eqlVersion === 3) {
+      // No public v3 release artifacts exist yet — the v3 bundles are vendored
+      // from the generated monolith (see scripts/build-eql-v3-sql.mjs).
+      throw new Error(
+        '`--latest` is not supported for EQL v3 yet: no public v3 release artifacts exist. Use the bundled install.',
+      )
+    }
+
     const sql = latest
       ? await this.downloadInstallScript(excludeOperatorFamily)
-      : this.loadBundledInstallScript({ excludeOperatorFamily, supabase })
+      : this.loadBundledInstallScript({
+          excludeOperatorFamily,
+          supabase,
+          eqlVersion,
+        })
 
     const client = new pg.Client({ connectionString: this.databaseUrl })
 
@@ -272,7 +335,7 @@ export class EQLInstaller {
       await client.query(sql)
 
       if (supabase) {
-        await this.grantSupabasePermissions(client)
+        await this.grantSupabasePermissions(client, eqlVersion)
       }
 
       await client.query('COMMIT')
@@ -291,16 +354,25 @@ export class EQLInstaller {
   }
 
   /**
-   * Grant Supabase roles access to the eql_v2 schema.
+   * Grant Supabase roles access to the installed EQL schema.
    *
    * Supabase uses dedicated roles (anon, authenticated, service_role) that
-   * don't own the schema, so explicit grants are required. Issues
-   * {@link SUPABASE_PERMISSIONS_SQL} as a single multi-statement query —
+   * don't own the schema, so explicit grants are required. Issues the
+   * {@link supabasePermissionsSql} block as a single multi-statement query —
    * Postgres accepts that and it keeps the SQL identical to what we'd write
    * into a Supabase migration file.
    */
-  private async grantSupabasePermissions(client: pg.Client): Promise<void> {
-    await client.query(SUPABASE_PERMISSIONS_SQL)
+  private async grantSupabasePermissions(
+    client: pg.Client,
+    eqlVersion: EqlVersion,
+  ): Promise<void> {
+    // v3 grants cover eql_v3 AND eql_v3_internal (SECURITY INVOKER functions
+    // in the internal schema back the eql_v3 operators).
+    await client.query(
+      eqlVersion === 3
+        ? SUPABASE_PERMISSIONS_SQL_V3
+        : supabasePermissionsSql(schemaNameFor(eqlVersion)),
+    )
   }
 
   /**
@@ -309,6 +381,7 @@ export class EQLInstaller {
   private loadBundledInstallScript(options: {
     excludeOperatorFamily: boolean
     supabase: boolean
+    eqlVersion: EqlVersion
   }): string {
     const filename = resolveBundledFilename(options)
 
@@ -358,11 +431,21 @@ export class EQLInstaller {
  * - `supabase: true` → Supabase-specific variant
  * - `excludeOperatorFamily: true` → no operator family variant
  * - default → standard install
+ *
+ * For EQL v3 the Supabase variant IS the no-operator-family variant (the v3
+ * bundle's only superuser-requiring statements are its two operator-class
+ * chunks), so both flags resolve to the same file.
  */
 function resolveBundledFilename(options: {
   excludeOperatorFamily: boolean
   supabase: boolean
+  eqlVersion?: EqlVersion
 }): string {
+  if ((options.eqlVersion ?? 2) === 3) {
+    if (options.supabase || options.excludeOperatorFamily)
+      return 'cipherstash-encrypt-v3-supabase.sql'
+    return 'cipherstash-encrypt-v3.sql'
+  }
   if (options.supabase) return 'cipherstash-encrypt-supabase.sql'
   if (options.excludeOperatorFamily)
     return 'cipherstash-encrypt-no-operator-family.sql'
@@ -373,11 +456,16 @@ function resolveBundledFilename(options: {
  * Load the bundled EQL install SQL. Used by the Drizzle migration path.
  */
 export function loadBundledEqlSql(
-  options: { excludeOperatorFamily?: boolean; supabase?: boolean } = {},
+  options: {
+    excludeOperatorFamily?: boolean
+    supabase?: boolean
+    eqlVersion?: EqlVersion
+  } = {},
 ): string {
   const filename = resolveBundledFilename({
     excludeOperatorFamily: options.excludeOperatorFamily ?? false,
     supabase: options.supabase ?? false,
+    eqlVersion: options.eqlVersion ?? 2,
   })
 
   try {

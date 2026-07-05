@@ -24,7 +24,10 @@ const supabase = SUPABASE_ENABLED
 const table = encryptedTable('protect-ci', {
   encrypted: encryptedColumn('encrypted').freeTextSearch().equality(),
   age: encryptedColumn('age').dataType('number').equality(),
-  score: encryptedColumn('score').dataType('number').equality(),
+  // orderAndRange backs the encrypted range test below — the "range filtering
+  // works on Supabase" claim needs a CI-covered v2 baseline, not just the
+  // one-off live spike (see the v3 suite's matching range test).
+  score: encryptedColumn('score').dataType('number').equality().orderAndRange(),
 })
 
 // Row type for the protect-ci table
@@ -281,6 +284,52 @@ describe.skipIf(!SUPABASE_ENABLED)(
       // Verify we found our specific row with encrypted age match
       expect(data).toHaveLength(1)
       expect(data![0].age).toBe(testAge)
+    }, 30000)
+
+    // Encrypted RANGE filtering on Supabase previously had no CI coverage —
+    // the custom ORE operator's resolution over PostgREST rested on a one-off
+    // live spike. This is the v2 baseline the v3 suite's range test mirrors.
+    // Range needs real ORE terms (live ZeroKMS), same gating as the suite.
+    // Note: range FILTERING only — ORDER BY on an encrypted column is
+    // unsupported on Supabase (operator families need superuser).
+    it('should filter encrypted number data with a range (gte/lte)', async () => {
+      const protectClient = await Encryption({ schemas: [table] })
+      const eSupabase = encryptedSupabase({
+        encryptionClient: protectClient,
+        supabaseClient: supabase,
+      })
+
+      const models = [
+        { score: 10, otherField: 'low' },
+        { score: 25, otherField: 'mid' },
+        { score: 90, otherField: 'high' },
+      ]
+
+      const { data: insertedData, error: insertError } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .insert(models.map((m) => ({ ...m, test_run_id: TEST_RUN_ID })))
+        .select('id')
+
+      if (insertError) {
+        throw new Error(`[protect]: ${insertError.message}`)
+      }
+
+      insertedIds.push(...insertedData!.map((d) => d.id))
+
+      const { data, error } = await eSupabase
+        .from<ProtectCiRow>('protect-ci', table)
+        .select('id, score, otherField')
+        .gte('score', 20)
+        .lte('score', 30)
+        .eq('test_run_id', TEST_RUN_ID)
+
+      if (error) {
+        throw new Error(`[protect]: ${error.message}`)
+      }
+
+      expect(data).toHaveLength(1)
+      expect(data![0].score).toBe(25)
+      expect(data![0].otherField).toBe('mid')
     }, 30000)
   },
 )

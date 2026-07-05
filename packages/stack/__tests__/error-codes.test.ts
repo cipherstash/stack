@@ -246,15 +246,16 @@ describe('FFI Error Code Preservation', () => {
 
   describe('bulkDecrypt error codes', () => {
     it(
-      'returns undefined code for malformed ciphertexts (non-FFI validation)',
+      'returns per-item errors for malformed ciphertexts (fallible FFI decrypt)',
       async () => {
-        // bulkDecrypt uses the "fallible" FFI API (decryptBulkFallible) which normally:
+        // bulkDecrypt uses the "fallible" FFI API (decryptBulkFallible):
         // - Succeeds at the operation level
         // - Returns per-item results with either { data } or { error }
         //
-        // However, malformed ciphertexts cause parsing errors BEFORE the fallible API,
-        // which throws and triggers a top-level failure (not per-item errors).
-        // These pre-FFI errors don't have structured FFI error codes.
+        // protect-ffi < 0.27 threw a top-level pre-FFI parsing error for
+        // malformed ciphertexts; 0.27 moved ciphertext parsing INTO the
+        // fallible API (structured as INVALID_CIPHERTEXT), so the operation
+        // now succeeds and each bad item carries its own { error } result.
         const invalidCiphertexts = [
           { data: { i: { t: 'test_table', c: 'email' }, v: 2, c: 'invalid1' } },
           { data: { i: { t: 'test_table', c: 'email' }, v: 2, c: 'invalid2' } },
@@ -262,10 +263,13 @@ describe('FFI Error Code Preservation', () => {
 
         const result = await protectClient.bulkDecrypt(invalidCiphertexts)
 
-        expect(result.failure).toBeDefined()
-        expect(result.failure?.type).toBe(EncryptionErrorTypes.DecryptionError)
-        // FFI parsing errors don't have structured error codes
-        expect(result.failure?.code).toBeUndefined()
+        expect(result.failure).toBeUndefined()
+        if (result.failure) throw new Error('unreachable: asserted above')
+        expect(result.data).toHaveLength(2)
+        for (const item of result.data) {
+          expect(item).toHaveProperty('error')
+          expect((item as { error?: unknown }).error).toBeTruthy()
+        }
       },
       FFI_TEST_TIMEOUT,
     )

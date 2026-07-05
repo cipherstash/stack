@@ -1,15 +1,17 @@
 import type {
   AuthStrategy,
   Encrypted as CipherStashEncrypted,
+  EncryptedPayload as CipherStashEncryptedPayload,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedV3Query as CipherStashEncryptedV3Query,
   JsPlaintext,
   newClient,
   QueryOpName,
 } from '@cipherstash/protect-ffi'
 import type {
+  ColumnSchema,
   EncryptedColumn,
   EncryptedField,
-  EncryptedTable,
   EncryptedTableColumn,
   // Imported type-only for the TSDoc {@link} references in the comments below.
   encryptedColumn,
@@ -49,18 +51,47 @@ export type Client = Awaited<ReturnType<typeof newClient>> | undefined
 export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 
 /** Structural type representing encrypted data stored in the database. Always
- * carries a ciphertext. See also `EncryptedValue` for branded nominal typing,
+ * carries a ciphertext. Covers BOTH wire formats: the EQL v2.3 payloads
+ * (`k: "ct"` / `k: "sv"`) and the EQL v3 payloads (flat `{v: 3, i, c, …}`
+ * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Which format
+ * `encrypt` produces is selected by the client's
+ * {@link ClientConfig.eqlVersion}; `decrypt` accepts both regardless.
+ * v3 scalars carry no `k` discriminator, so narrow with `'k' in payload`
+ * before reading it. See also `EncryptedValue` for branded nominal typing,
  * and {@link EncryptedQuery} for the search-term shape returned by
  * `encryptQuery`. */
-export type Encrypted = CipherStashEncrypted
+export type Encrypted = CipherStashEncryptedPayload
 
 /** Structural type representing an encrypted query term (search needle)
  * returned by `encryptQuery` / `encryptQueryBulk` for scalar
  * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
- * queries. Carries no ciphertext — matched against stored values, never
- * decrypted. JSON containment queries (`ste_vec_term`) return a
- * storage-shaped {@link Encrypted} payload instead. */
-export type EncryptedQuery = CipherStashEncryptedQuery
+ * queries, plus — under `eqlVersion: 3` — the `eql_v3.jsonb_query`
+ * containment needle. Carries no ciphertext — matched against stored
+ * values, never decrypted. v2 JSON containment queries (`ste_vec_term`)
+ * return a storage-shaped {@link Encrypted} payload instead. */
+export type EncryptedQuery =
+  | CipherStashEncryptedQuery
+  | CipherStashEncryptedV3Query
+
+/**
+ * Plaintext values the SDK accepts for encryption.
+ *
+ * Widens the FFI's `JsPlaintext` (`string | number | boolean |
+ * Record<string, unknown> | JsPlaintext[]`) with `Date`. `Date` is a supported
+ * cast target that is omitted from the FFI's `JsPlaintext` INPUT union, but it
+ * serializes at the boundary via `toJSON` (ISO string), so it is accepted on the
+ * way in.
+ *
+ * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
+ * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
+ * BigInt") and rejects a `string` for a `big_int` column. The v3 int8 domains
+ * are therefore omitted from the SDK entirely (see `eql/v3`) until the FFI
+ * supports lossless bigint I/O; `bigint` returns here alongside them.
+ *
+ * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
+ * arm can collapse back into `JsPlaintext`.
+ */
+export type Plaintext = JsPlaintext | Date
 
 // ---------------------------------------------------------------------------
 // Client configuration
@@ -127,13 +158,122 @@ export type ClientConfig = {
    * @see {@link AuthStrategy}
    */
   strategy?: AuthStrategy
+
+  /**
+   * The EQL wire version the client emits — one FFI client always emits
+   * exactly one wire format.
+   *
+   * - `2` (the protect-ffi default): payloads target the
+   *   `eql_v2_encrypted` column type.
+   * - `3`: payloads target the per-capability `eql_v3` domains
+   *   (`eql_v3.text_eq`, `eql_v3.integer_ord_ore`, `eql_v3.json`, …),
+   *   derived from each column's `cast_as` and indexes.
+   *
+   * When omitted, {@link Encryption} auto-detects from the schema set:
+   * EQL v3 tables (from `@cipherstash/stack/v3`, marked by
+   * `buildColumnKeyMap()`) select `3`; v2 tables leave the FFI default
+   * (`2`) untouched. Mixing v2 and v3 tables in one client is an error —
+   * split them across two clients instead.
+   *
+   * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
+   * v3 data can coexist during a migration.
+   *
+   * v3 limitation (protect-ffi 0.27): `encryptQuery` supports only JSON
+   * containment queries — scalar-index and selector queries throw
+   * `EQL_V3_QUERY_UNSUPPORTED` until a v3 scalar query wire shape exists.
+   */
+  eqlVersion?: 2 | 3
 }
 
 type AtLeastOneCsTable<T> = [T, ...T[]]
 
+/** Structural contract for a column builder the client can consume for STORAGE
+ *  (`encrypt`). Satisfied by v2 `EncryptedColumn` / `EncryptedField` AND v3
+ *  `EncryptedTextSearchColumn` — fields ARE encryptable, so this stays wide. */
+export interface BuildableColumn {
+  getName(): string
+  build(): ColumnSchema
+}
+
+/** Structural contract for a column the client can consume for QUERIES
+ *  (`encryptQuery` / search terms). Narrower than `BuildableColumn`: it must
+ *  EXCLUDE non-queryable `EncryptedField` (a field has no indexes). A v2
+ *  `EncryptedColumn` qualifies via the nominal arm; a v3 queryable concrete
+ *  type qualifies via the `getEqlType()` structural arm; `EncryptedField` (no
+ *  `getEqlType`, not an `EncryptedColumn`) is rejected. */
+export interface BuildableV3QueryableColumn extends BuildableColumn {
+  getEqlType(): string
+  getQueryCapabilities(): {
+    equality: boolean
+    orderAndRange: boolean
+    freeTextSearch: boolean
+  }
+  isQueryable(): true
+}
+
+export type BuildableQueryColumn = EncryptedColumn | BuildableV3QueryableColumn
+
+/** Structural contract for a table builder the client can consume. Satisfied by
+ *  v2 and v3 `EncryptedTable` alike. */
+export interface BuildableTable {
+  tableName: string
+  build(): { tableName: string; columns: Record<string, ColumnSchema> }
+  /**
+   * Optional map from a model field's JS property name to its encrypt-config
+   * column name (the DB name). Present when the two can differ — v3 tables key
+   * their config by DB name (`column.getName()`) while models are written with
+   * JS property keys, so the model path must match by property but address the
+   * FFI/config by DB name.
+   *
+   * Absent on v2 tables, whose `build()` already keys columns by the JS property
+   * name; the model path then matches and addresses by that same key.
+   */
+  buildColumnKeyMap?(): Record<string, string>
+}
+
 export type EncryptionClientConfig = {
-  schemas: AtLeastOneCsTable<EncryptedTable<EncryptedTableColumn>>
+  schemas: AtLeastOneCsTable<BuildableTable>
   config?: ClientConfig
+}
+
+/**
+ * The literal column map of a buildable table, read from its type-level
+ * `_columnType` brand. Both v2 and v3 `EncryptedTable` carry this brand, so this
+ * recovers the literal column keys structurally.
+ *
+ * This deliberately uses the `_columnType` brand rather than `build().columns`:
+ * `BuildableTable.build()` is typed to return `Record<string, ColumnSchema>`,
+ * which erases the literal keys and would mark EVERY model field as encrypted.
+ *
+ * The fallbacks resolve to `Record<never, never>` (a no-key type), NOT `never`:
+ * a value typed as the bare structural `BuildableTable` carries no `_columnType`
+ * brand, and `keyof never` is `string | number | symbol` — which would wrongly
+ * mark EVERY model field as encrypted. `keyof Record<never, never>` is `never`,
+ * so `EncryptedFromBuildableTable` degrades gracefully to the model unchanged.
+ */
+export type BuildableTableColumns<T extends BuildableTable> = T extends {
+  readonly _columnType: infer C
+}
+  ? C extends Record<string, unknown>
+    ? C
+    : Record<never, never>
+  : Record<never, never>
+
+/**
+ * Maps a plaintext model type to its encrypted form using a buildable table.
+ *
+ * Fields whose keys match a column defined in `Table` (via its `_columnType`
+ * brand) become `Encrypted` (`Encrypted | null` when the source field is
+ * nullable); all other fields retain their original types from `T`. Works for
+ * both v2 and v3 tables. See {@link EncryptedFromSchema} for the v2-specific
+ * variant retained for backward compatibility.
+ */
+export type EncryptedFromBuildableTable<T, Table extends BuildableTable> = {
+  [K in keyof T]: [K] extends [keyof BuildableTableColumns<Table>]
+    ? null extends T[K]
+      ? Encrypted | null
+      : Encrypted
+    : T[K]
 }
 
 // ---------------------------------------------------------------------------
@@ -147,8 +287,8 @@ export type EncryptionClientConfig = {
  */
 export type EncryptOptions = {
   /** The column or nested field to encrypt into. From {@link EncryptedColumn} or {@link EncryptedField}. */
-  column: EncryptedColumn | EncryptedField
-  table: EncryptedTable<EncryptedTableColumn>
+  column: BuildableColumn // storage: fields are encryptable, so stays wide
+  table: BuildableTable
 }
 
 /** Format for encrypted query/search term return values */
@@ -158,9 +298,9 @@ export type EncryptedReturnType =
   | 'escaped-composite-literal'
 
 export type SearchTerm = {
-  value: JsPlaintext
-  column: EncryptedColumn
-  table: EncryptedTable<EncryptedTableColumn>
+  value: Plaintext
+  column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
+  table: BuildableTable
   returnType?: EncryptedReturnType
 }
 
@@ -241,7 +381,7 @@ export type EncryptedFromSchema<T, S extends EncryptedTableColumn> = {
 // position-stable output.
 export type BulkEncryptPayload = Array<{
   id?: string
-  plaintext: JsPlaintext | null
+  plaintext: Plaintext | null
 }>
 
 export type BulkEncryptedData = Array<{ id?: string; data: Encrypted | null }>
@@ -310,8 +450,8 @@ export const queryTypeToQueryOp: Partial<Record<QueryTypeName, QueryOpName>> = {
 
 /** @internal */
 export type QueryTermBase = {
-  column: EncryptedColumn
-  table: EncryptedTable<EncryptedTableColumn>
+  column: BuildableQueryColumn // query: excludes non-queryable EncryptedField
+  table: BuildableTable
   queryType?: QueryTypeName
   returnType?: EncryptedReturnType
 }
@@ -319,5 +459,5 @@ export type QueryTermBase = {
 export type EncryptQueryOptions = QueryTermBase
 
 export type ScalarQueryTerm = QueryTermBase & {
-  value: JsPlaintext
+  value: Plaintext
 }

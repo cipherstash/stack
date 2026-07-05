@@ -1,5 +1,5 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type JsPlaintext, newClient } from '@cipherstash/protect-ffi'
+import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
@@ -8,8 +8,6 @@ import type { LockContext } from '@/identity'
 import {
   buildEncryptConfig,
   type EncryptConfig,
-  type EncryptedTable,
-  type EncryptedTableColumn,
   encryptConfigSchema,
   // Imported type-only for the TSDoc {@link} references in the comments below.
   type encryptedColumn,
@@ -18,15 +16,17 @@ import {
 } from '@/schema'
 import type {
   AuthStrategy,
+  BuildableTable,
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
   Encrypted,
-  EncryptedFromSchema,
+  EncryptedFromBuildableTable,
   EncryptionClientConfig,
   EncryptOptions,
   EncryptQueryOptions,
   KeysetIdentifier,
+  Plaintext,
   ScalarQueryTerm,
 } from '@/types'
 import { logger } from '@/utils/logger'
@@ -64,6 +64,47 @@ export const noClientError = () =>
     'The Encryption client has not been initialized. Please call init() before using the client.',
   )
 
+/**
+ * Resolve the EQL wire version for a client from its schema set.
+ *
+ * One FFI client emits exactly one wire format, so the whole schema set must
+ * agree. EQL v3 tables (from `@cipherstash/stack/v3`) are detected by their
+ * `buildColumnKeyMap()` marker — v2 tables don't have one:
+ *
+ * - every schema is v3 → `3`;
+ * - no schema is v3 → `undefined`, leaving the FFI's v2 default (and its
+ *   byte-identical v2 output) untouched;
+ * - a mix of the two → throws: the v2 tables target `eql_v2_encrypted`
+ *   columns and the v3 tables target `eql_v3` domains, so no single wire
+ *   format serves both. Split them across two clients.
+ *
+ * An explicit `config.eqlVersion` bypasses detection (the wire format is
+ * then unambiguous — e.g. writing v2-wire from a v3 schema set during a
+ * migration), but a mixed schema set still throws.
+ *
+ * @internal exported for unit-test coverage of the detection matrix.
+ */
+export function resolveEqlVersion(
+  schemas: readonly BuildableTable[],
+  explicit?: 2 | 3,
+): 2 | 3 | undefined {
+  const v3Count = schemas.filter(
+    (schema) => typeof schema.buildColumnKeyMap === 'function',
+  ).length
+
+  if (v3Count > 0 && v3Count < schemas.length) {
+    throw new Error(
+      '[encryption]: cannot mix EQL v2 and EQL v3 tables in one client — one client emits exactly one wire format. Create separate clients for the v2 and v3 schemas.',
+    )
+  }
+
+  if (explicit !== undefined) {
+    return explicit
+  }
+
+  return v3Count === 0 ? undefined : 3
+}
+
 /** The EncryptionClient is the main entry point for interacting with the CipherStash Encryption library.
  * It provides methods for encrypting and decrypting individual values, as well as models (objects) and bulk operations.
  *
@@ -87,6 +128,7 @@ export class EncryptionClient {
     clientKey?: string
     keyset?: KeysetIdentifier
     strategy?: AuthStrategy
+    eqlVersion?: 2 | 3
   }): Promise<Result<EncryptionClient, EncryptionError>> {
     return await withResult(
       async () => {
@@ -108,6 +150,10 @@ export class EncryptionClient {
         // from the credentials in clientOpts (the clientKey is still used
         // for encryption). Passing `strategy: undefined` is equivalent to
         // omitting it, so the default credentials path is unaffected.
+        // `eqlVersion` selects the wire format `encrypt`/`encryptQuery`
+        // emit (protect-ffi 0.27+); `eqlVersion: undefined` is likewise
+        // equivalent to omitting it, leaving the FFI's v2 default — and
+        // its byte-identical v2 output — untouched.
         this.client = await newClient({
           encryptConfig: validated,
           clientOpts: {
@@ -118,6 +164,7 @@ export class EncryptionClient {
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
           strategy: config.strategy,
+          eqlVersion: config.eqlVersion,
         })
 
         this.encryptConfig = validated
@@ -207,7 +254,7 @@ export class EncryptionClient {
    * @see {@link LockContext}
    * @see {@link EncryptOperation}
    */
-  encrypt(plaintext: JsPlaintext, opts: EncryptOptions): EncryptOperation {
+  encrypt(plaintext: Plaintext, opts: EncryptOptions): EncryptOperation {
     return new EncryptOperation(this.client, plaintext, opts)
   }
 
@@ -265,7 +312,7 @@ export class EncryptionClient {
    * - Object/Array plaintext → `steVecTerm` (containment queries like `{ role: 'admin' }`)
    */
   encryptQuery(
-    plaintext: JsPlaintext,
+    plaintext: Plaintext,
     opts: EncryptQueryOptions,
   ): EncryptQueryOperation
 
@@ -276,12 +323,14 @@ export class EncryptionClient {
   encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
 
   encryptQuery(
-    plaintextOrTerms: JsPlaintext | readonly ScalarQueryTerm[],
+    plaintextOrTerms: Plaintext | readonly ScalarQueryTerm[],
     opts?: EncryptQueryOptions,
   ): EncryptQueryOperation | BatchEncryptQueryOperation {
-    // Discriminate between ScalarQueryTerm[] and JsPlaintext (which can also be an array)
-    // using a type guard function
-    if (isScalarQueryTermArray(plaintextOrTerms)) {
+    // Discriminate between ScalarQueryTerm[] and Plaintext (which can also be an
+    // array) using a type guard function. Only route to batch mode when no opts
+    // are supplied — an explicit EncryptQueryOptions forces the single-plaintext
+    // path even if the plaintext value happens to be an array.
+    if (!opts && isScalarQueryTermArray(plaintextOrTerms)) {
       return new BatchEncryptQueryOperation(this.client, plaintextOrTerms)
     }
 
@@ -305,7 +354,7 @@ export class EncryptionClient {
 
     return new EncryptQueryOperation(
       this.client,
-      plaintextOrTerms as JsPlaintext,
+      plaintextOrTerms as Plaintext,
       opts,
     )
   }
@@ -399,13 +448,10 @@ export class EncryptionClient {
    * }
    * ```
    */
-  encryptModel<
-    T extends Record<string, unknown>,
-    S extends EncryptedTableColumn = EncryptedTableColumn,
-  >(
+  encryptModel<T extends Record<string, unknown>, Table extends BuildableTable>(
     input: T,
-    table: EncryptedTable<S>,
-  ): EncryptModelOperation<EncryptedFromSchema<T, S>> {
+    table: Table,
+  ): EncryptModelOperation<EncryptedFromBuildableTable<T, Table>> {
     return new EncryptModelOperation(
       this.client,
       input as Record<string, unknown>,
@@ -494,11 +540,11 @@ export class EncryptionClient {
    */
   bulkEncryptModels<
     T extends Record<string, unknown>,
-    S extends EncryptedTableColumn = EncryptedTableColumn,
+    Table extends BuildableTable,
   >(
     input: Array<T>,
-    table: EncryptedTable<S>,
-  ): BulkEncryptModelsOperation<EncryptedFromSchema<T, S>> {
+    table: Table,
+  ): BulkEncryptModelsOperation<EncryptedFromBuildableTable<T, Table>> {
     return new BulkEncryptModelsOperation(
       this.client,
       input as Array<Record<string, unknown>>,
@@ -705,9 +751,16 @@ export const Encryption = async (
   const client = new EncryptionClient()
   const encryptConfig = buildEncryptConfig(...schemas)
 
+  // Resolve the wire format for this client: an explicit
+  // `config.eqlVersion` wins; otherwise it is auto-detected from the
+  // schema set (v3 tables → 3, v2 tables → the FFI's v2 default). A mixed
+  // v2 + v3 schema set throws — one client emits exactly one wire format.
+  const eqlVersion = resolveEqlVersion(schemas, clientConfig?.eqlVersion)
+
   const result = await client.init({
     encryptConfig,
     ...clientConfig,
+    eqlVersion,
   })
 
   if (result.failure) {
