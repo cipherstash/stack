@@ -34,7 +34,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.8
+      - uses: pnpm/action-setup@v6.0.9
         name: Install pnpm
         with:
           run_install: false
