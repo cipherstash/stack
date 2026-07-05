@@ -53,9 +53,10 @@ plus `.withLockContext(lockContext)` and `.audit(config)`.
 
 `es.from('users', users)` infers rows as **exactly** the table's plaintext
 shape (schema columns get their domain plaintext types — `types.IntegerOrd` →
-`number`, `types.TimestampOrd` → `Date`, …). Storage-only columns (e.g.
-`types.Boolean`) are excluded from every filter method — including `.match()` —
-at the type level; filtering one is always a clear runtime error.
+`number`, `types.BigintOrd` → `bigint`, `types.TimestampOrd` → `Date`, …).
+Storage-only columns (e.g. `types.Boolean`) are excluded from every filter
+method — including `.match()` — at the type level; filtering one is always a
+clear runtime error.
 
 Plaintext passthrough columns (`id`, `created_at`, …) are not part of the
 default row type, so filtering or inserting them needs an explicit row type
@@ -99,8 +100,23 @@ CREATE TABLE users (
 The `types.*` member name maps to the domain name: strip the `eql_v3.` prefix
 and PascalCase each `_`-separated segment (`types.TextEq` → `eql_v3.text_eq`,
 `types.IntegerOrd` → `eql_v3.integer_ord`, `types.Timestamp` → `eql_v3.timestamp`).
-The domains use SQL-standard type names (`integer`, `smallint`, `real`,
-`double`, `boolean`, `timestamp`).
+The domains use SQL-standard type names (`integer`, `smallint`, `bigint`,
+`real`, `double`, `boolean`, `timestamp`).
+
+#### bigint domains (`types.Bigint` / `BigintEq` / `BigintOrdOre` / `BigintOrd`)
+
+Plaintext is a JS `bigint` — encrypt takes a `bigint` and decrypt always
+returns a `bigint` (never a precision-lossy `number`). Bounds are the full
+PostgreSQL `bigint`/i64 range (`-2^63 … 2^63 - 1`), enforced at the
+protect-ffi boundary: an out-of-range value surfaces as an encryption error
+from the FFI, not a silent truncation.
+
+> **GATED — pending protect-ffi release.** The bigint domains are fully typed
+> and schema-complete in the SDK, but LIVE encrypt/decrypt requires the next
+> `@cipherstash/protect-ffi` release: the current 0.27.0 `JsPlaintext` cannot
+> marshal a JS `bigint` across the native boundary, so encrypting a `bigint`
+> throws at runtime today. Once the release ships and the pin is bumped, the
+> live paths work without further SDK changes.
 
 ### Install EQL
 

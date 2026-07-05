@@ -422,6 +422,7 @@ import { encryptedSupabaseV3 } from "@cipherstash/stack/supabase"
 const users = encryptedTable("users", {
   email:  types.TextSearch("email"),      // eql_v3.text_search — eq + range + free-text
   amount: types.IntegerOrd("amount"),     // eql_v3.integer_ord — eq + range
+  balance: types.BigintOrd("balance"),    // eql_v3.bigint_ord — eq + range, JS bigint in/out
   joined: types.TimestampOrd("joined_at") // eql_v3.timestamp_ord — eq + range, decrypts to Date
 })
 
@@ -450,18 +451,30 @@ A JS property may map to a different DB column name
 are translated automatically, and `date`/`timestamp` columns decrypt to real
 `Date` objects.
 
+**bigint domains** (`types.Bigint` / `BigintEq` / `BigintOrdOre` /
+`BigintOrd`): plaintext is a JS `bigint` — inserts and filter operands take a
+`bigint`, and the column always decrypts back to a `bigint` (never a
+precision-lossy `number`). Bounds are the full PostgreSQL `bigint`/i64 range
+(`-2^63 … 2^63 - 1`), enforced at the protect-ffi boundary — out-of-range
+values surface as encryption errors, not silent truncation. **GATED:** live
+encrypt/decrypt requires the next `@cipherstash/protect-ffi` release (0.27.0
+cannot marshal a JS `bigint` across the native boundary and throws at
+runtime); the SDK types and schema surface are complete now and need no
+further changes once the pin is bumped.
+
 ### Database schema (per-domain columns)
 
 Each column is declared with its native domain — the `types.*` member name
 maps to the `eql_v3.<name>` domain (strip the `eql_v3.` prefix and PascalCase).
-The domains use SQL-standard type names (`integer`, `smallint`, `real`,
-`double`, `boolean`, `timestamp`):
+The domains use SQL-standard type names (`integer`, `smallint`, `bigint`,
+`real`, `double`, `boolean`, `timestamp`):
 
 ```sql
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   email eql_v3.text_search,
   amount eql_v3.integer_ord,
+  balance eql_v3.bigint_ord,
   joined_at eql_v3.timestamp_ord
 );
 ```
