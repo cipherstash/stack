@@ -23,7 +23,13 @@ export type QueryCapabilities = Readonly<{
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'boolean' | 'date' | 'timestamp'
+type PlaintextKind =
+  | 'string'
+  | 'number'
+  | 'bigint'
+  | 'boolean'
+  | 'date'
+  | 'timestamp'
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -135,12 +141,32 @@ export const SMALLINT_ORD = {
   capabilities: ORDER_AND_RANGE,
 } as const
 
-// NOTE: bigint (int8) domains are intentionally NOT defined yet. The native
-// protect-ffi build cannot round-trip a 64-bit int losslessly: a JS `bigint`
-// fails JSON serialization, and a `string` is rejected for a `big_int` column
-// ("Cannot convert String to BigInt"), while `number` loses precision above
-// 2^53. Re-add BIGINT/BIGINT_EQ/BIGINT_ORD_ORE/BIGINT_ORD and their builders once the
-// FFI accepts a lossless bigint on input and returns it on decrypt.
+// bigint (int8) domains. Plaintext is a JS `bigint` (always decrypts to
+// `bigint`); bounds are the full i64 range, enforced at the protect-ffi
+// boundary. GATED — live encrypt/decrypt requires the next protect-ffi
+// release: the installed 0.27.0 `JsPlaintext` cannot marshal a JS `bigint`
+// across the Neon boundary, so live paths throw at runtime until the pin is
+// bumped (`*_ord_ope` variants are out of scope — CIP-3403).
+export const BIGINT = {
+  eqlType: 'eql_v3.bigint',
+  castAs: 'bigint',
+  capabilities: STORAGE_ONLY,
+} as const
+export const BIGINT_EQ = {
+  eqlType: 'eql_v3.bigint_eq',
+  castAs: 'bigint',
+  capabilities: EQUALITY_ONLY,
+} as const
+export const BIGINT_ORD_ORE = {
+  eqlType: 'eql_v3.bigint_ord_ore',
+  castAs: 'bigint',
+  capabilities: ORDER_AND_RANGE,
+} as const
+export const BIGINT_ORD = {
+  eqlType: 'eql_v3.bigint_ord',
+  castAs: 'bigint',
+  capabilities: ORDER_AND_RANGE,
+} as const
 
 export const DATE = {
   eqlType: 'eql_v3.date',
@@ -494,9 +520,18 @@ export class EncryptedSmallintOrdColumn extends EncryptedV3Column<
   typeof SMALLINT_ORD
 > {}
 
-// bigint (int8) domain builders are intentionally omitted pending FFI support
-// for lossless bigint round-tripping — see the note by the INTEGER/DATE domain
-// definitions above.
+// bigint (int8) — live round-trips are gated on the next protect-ffi release;
+// see the note by the BIGINT domain definitions above.
+export class EncryptedBigintColumn extends EncryptedV3Column<typeof BIGINT> {}
+export class EncryptedBigintEqColumn extends EncryptedV3Column<
+  typeof BIGINT_EQ
+> {}
+export class EncryptedBigintOrdOreColumn extends EncryptedV3Column<
+  typeof BIGINT_ORD_ORE
+> {}
+export class EncryptedBigintOrdColumn extends EncryptedV3Column<
+  typeof BIGINT_ORD
+> {}
 
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
@@ -585,6 +620,10 @@ export type AnyEncryptedV3Column =
   | EncryptedSmallintEqColumn
   | EncryptedSmallintOrdOreColumn
   | EncryptedSmallintOrdColumn
+  | EncryptedBigintColumn
+  | EncryptedBigintEqColumn
+  | EncryptedBigintOrdOreColumn
+  | EncryptedBigintOrdColumn
   | EncryptedDateColumn
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
@@ -626,11 +665,13 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
   : K extends 'number'
     ? number
-    : K extends 'boolean'
-      ? boolean
-      : K extends 'date' | 'timestamp'
-        ? Date
-        : never
+    : K extends 'bigint'
+      ? bigint
+      : K extends 'boolean'
+        ? boolean
+        : K extends 'date' | 'timestamp'
+          ? Date
+          : never
 
 /**
  * The plaintext type for a single v3 column, read from the literal domain

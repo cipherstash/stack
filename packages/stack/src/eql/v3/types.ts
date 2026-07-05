@@ -1,26 +1,30 @@
 import {
+  BIGINT,
+  BIGINT_EQ,
+  BIGINT_ORD,
+  BIGINT_ORD_ORE,
   BOOLEAN,
   DATE,
   DATE_EQ,
   DATE_ORD,
   DATE_ORD_ORE,
+  DOUBLE,
+  DOUBLE_EQ,
+  DOUBLE_ORD,
+  DOUBLE_ORD_ORE,
+  EncryptedBigintColumn,
+  EncryptedBigintEqColumn,
+  EncryptedBigintOrdColumn,
+  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
   EncryptedDateOrdColumn,
   EncryptedDateOrdOreColumn,
-  EncryptedRealColumn,
-  EncryptedRealEqColumn,
-  EncryptedRealOrdColumn,
-  EncryptedRealOrdOreColumn,
   EncryptedDoubleColumn,
   EncryptedDoubleEqColumn,
   EncryptedDoubleOrdColumn,
   EncryptedDoubleOrdOreColumn,
-  EncryptedSmallintColumn,
-  EncryptedSmallintEqColumn,
-  EncryptedSmallintOrdColumn,
-  EncryptedSmallintOrdOreColumn,
   EncryptedIntegerColumn,
   EncryptedIntegerEqColumn,
   EncryptedIntegerOrdColumn,
@@ -29,6 +33,14 @@ import {
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
   EncryptedNumericOrdOreColumn,
+  EncryptedRealColumn,
+  EncryptedRealEqColumn,
+  EncryptedRealOrdColumn,
+  EncryptedRealOrdOreColumn,
+  EncryptedSmallintColumn,
+  EncryptedSmallintEqColumn,
+  EncryptedSmallintOrdColumn,
+  EncryptedSmallintOrdOreColumn,
   EncryptedTextColumn,
   EncryptedTextEqColumn,
   EncryptedTextMatchColumn,
@@ -39,18 +51,6 @@ import {
   EncryptedTimestampEqColumn,
   EncryptedTimestampOrdColumn,
   EncryptedTimestampOrdOreColumn,
-  REAL,
-  REAL_EQ,
-  REAL_ORD,
-  REAL_ORD_ORE,
-  DOUBLE,
-  DOUBLE_EQ,
-  DOUBLE_ORD,
-  DOUBLE_ORD_ORE,
-  SMALLINT,
-  SMALLINT_EQ,
-  SMALLINT_ORD,
-  SMALLINT_ORD_ORE,
   INTEGER,
   INTEGER_EQ,
   INTEGER_ORD,
@@ -59,6 +59,14 @@ import {
   NUMERIC_EQ,
   NUMERIC_ORD,
   NUMERIC_ORD_ORE,
+  REAL,
+  REAL_EQ,
+  REAL_ORD,
+  REAL_ORD_ORE,
+  SMALLINT,
+  SMALLINT_EQ,
+  SMALLINT_ORD,
+  SMALLINT_ORD_ORE,
   TEXT,
   TEXT_EQ,
   TEXT_MATCH,
@@ -93,8 +101,9 @@ import {
  *
  * `types.TextSearch` keeps the chainable `.freeTextSearch(opts)` tuner (the
  * only capability-bearing chain — every other domain is fully described by its
- * type). bigint domains are intentionally absent pending lossless FFI
- * round-tripping (see ./columns).
+ * type). The bigint domains take/return a JS `bigint` (i64-bounded at the
+ * protect-ffi boundary); their LIVE encrypt/decrypt paths are gated on the
+ * next protect-ffi release (see ./columns).
  */
 export const types = {
   // integer
@@ -113,6 +122,14 @@ export const types = {
     new EncryptedSmallintOrdOreColumn(name, SMALLINT_ORD_ORE),
   SmallintOrd: (name: string) =>
     new EncryptedSmallintOrdColumn(name, SMALLINT_ORD),
+
+  // bigint (int8) — plaintext is a JS `bigint`; live paths gated on the next
+  // protect-ffi release (see ./columns)
+  Bigint: (name: string) => new EncryptedBigintColumn(name, BIGINT),
+  BigintEq: (name: string) => new EncryptedBigintEqColumn(name, BIGINT_EQ),
+  BigintOrdOre: (name: string) =>
+    new EncryptedBigintOrdOreColumn(name, BIGINT_ORD_ORE),
+  BigintOrd: (name: string) => new EncryptedBigintOrdColumn(name, BIGINT_ORD),
 
   // date
   Date: (name: string) => new EncryptedDateColumn(name, DATE),

@@ -77,21 +77,23 @@ export type EncryptedQuery =
  * Plaintext values the SDK accepts for encryption.
  *
  * Widens the FFI's `JsPlaintext` (`string | number | boolean |
- * Record<string, unknown> | JsPlaintext[]`) with `Date`. `Date` is a supported
- * cast target that is omitted from the FFI's `JsPlaintext` INPUT union, but it
- * serializes at the boundary via `toJSON` (ISO string), so it is accepted on the
- * way in.
+ * Record<string, unknown> | JsPlaintext[]`) with `Date` and `bigint`. `Date`
+ * is a supported cast target that is omitted from the FFI's `JsPlaintext`
+ * INPUT union, but it serializes at the boundary via `toJSON` (ISO string),
+ * so it is accepted on the way in.
  *
- * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
- * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
- * BigInt") and rejects a `string` for a `big_int` column. The v3 int8 domains
- * are therefore omitted from the SDK entirely (see `eql/v3`) until the FFI
- * supports lossless bigint I/O; `bigint` returns here alongside them.
+ * `bigint` is the plaintext for the v3 int8/bigint domains (see `eql/v3`),
+ * which always decrypt to a JS `bigint`. GATED — live paths require the next
+ * `@cipherstash/protect-ffi` release: the installed 0.27.0 `JsPlaintext`
+ * cannot marshal a JS `bigint` across the Neon boundary, so encrypting a
+ * `bigint` through it throws at runtime today. i64 bounds
+ * (`-2^63 … 2^63 - 1`) are enforced at the protect-ffi boundary, not here —
+ * out-of-range values surface as encryption errors from the FFI.
  *
- * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
- * arm can collapse back into `JsPlaintext`.
+ * When the upstream FFI `JsPlaintext` includes `Date` and `bigint`, both
+ * extra arms can collapse back into `JsPlaintext`.
  */
-export type Plaintext = JsPlaintext | Date
+export type Plaintext = JsPlaintext | Date | bigint
 
 // ---------------------------------------------------------------------------
 // Client configuration

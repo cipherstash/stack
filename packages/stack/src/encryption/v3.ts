@@ -127,8 +127,11 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
  * row-invariant, but non-trivial to build — is derived once per call site,
  * not once per row on the bulk path.
  *
- * NOTE: `bigint` reconstruction is intentionally absent — bigint domains are
- * omitted from the v3 SDK until the native FFI supports lossless bigint I/O.
+ * NOTE: `bigint` columns need NO reconstruction here — once the protect-ffi
+ * release with JS `BigInt` support in `JsPlaintext` ships, the FFI returns a
+ * real JS `bigint` through the Neon boundary, and the model decrypt path
+ * (`model-helpers.ts`) passes decrypted values through without any JSON
+ * round-trip that could destroy it.
  */
 function rowReconstructor(
   table: AnyV3Table,
