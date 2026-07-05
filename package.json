@@ -56,12 +56,12 @@
     "test:scripts": "vitest run --config scripts/vitest.config.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
+    "@biomejs/biome": "^2.5.1",
     "@changesets/cli": "^2.31.0",
-    "@types/node": "^22.19.19",
-    "js-yaml": "^4.1.1",
+    "@types/node": "^22.20.0",
+    "js-yaml": "^4.3.0",
     "rimraf": "^6.1.3",
-    "turbo": "2.9.14",
+    "turbo": "2.10.0",
     "vitest": "catalog:repo"
   },
   "packageManager": "pnpm@10.33.2",
@@ -91,7 +91,7 @@
     "vite": "catalog:security",
     "pg": "^8.16.3",
     "postgres": "^3.4.7",
-    "js-yaml": "4.1.1",
+    "js-yaml": "4.3.0",
     "test-exclude": "^7.0.1",
     "glob": ">=11.1.0",
     "qs": ">=6.14.1",
