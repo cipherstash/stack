@@ -101,6 +101,9 @@ const ordDomains = domains.filter(
 const storageDomains = domains.filter(
   ([, spec]) => proofKindFor(spec.indexes) === 'storage',
 )
+const textOrderDomains = domains.filter(
+  ([t]) => t === 'eql_v3.text_ord_ore' || t === 'eql_v3.text_ord',
+)
 
 type Row = { id: number }
 
@@ -246,6 +249,23 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
+  })
+
+  it.each(
+    textOrderDomains,
+  )('%s: encrypted empty string is rejected by the Postgres domain', async (eqlType) => {
+    const col = slug(eqlType)
+    const column = (table as unknown as Record<string, unknown>)[col] as never
+    const encrypted = unwrapResult(
+      await client.encrypt('', {
+        table: table as never,
+        column,
+      }),
+    )
+
+    await expect(
+      sql.unsafe(`SELECT $1::${eqlType}`, [sql.json(encrypted as never)]),
+    ).rejects.toThrow(/violates check constraint/)
   })
 
   it.each(

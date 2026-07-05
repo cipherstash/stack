@@ -179,6 +179,13 @@ const FLOAT4_S = [0, 77.5, -117.25, 0.5] as const
 const FLOAT8_S = [0, -117.123456, 1e15, -1e15] as const
 const NUMERIC_S = [0, 12345.678, -42, -0.5] as const
 const TEXT_S = ['', 'ada@example.com', 'Ada Lovelace'] as const
+// Text order domains require a non-empty ORE (`ob`) term to satisfy the real
+// Postgres domain checks. Empty-string rejection is covered in matrix-live-pg.
+const TEXT_ORD_S = [
+  'ada@example.com',
+  'grace@example.com',
+  'zora@example.org',
+] as const
 const BOOL_S = [true, false] as const
 const DATE_S = [
   new Date('2026-07-01T00:00:00.000Z'),
@@ -222,8 +229,8 @@ export const V3_MATRIX = {
   'eql_v3.text': { builder: types.Text, ColumnClass: EncryptedTextColumn, castAs: 'string', capabilities: STORAGE, indexes: NONE, samples: TEXT_S },
   'eql_v3.text_eq': { builder: types.TextEq, ColumnClass: EncryptedTextEqColumn, castAs: 'string', capabilities: EQ, indexes: UNIQUE_IDX, samples: TEXT_S },
   'eql_v3.text_match': { builder: types.TextMatch, ColumnClass: EncryptedTextMatchColumn, castAs: 'string', capabilities: MATCH_ONLY, indexes: MATCH_IDX, samples: TEXT_S },
-  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_S },
-  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_S },
+  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_ORD_S },
+  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_ORD_S },
   'eql_v3.text_search': { builder: types.TextSearch, ColumnClass: EncryptedTextSearchColumn, castAs: 'string', capabilities: FULL, indexes: TEXT_SEARCH_IDX, samples: TEXT_S },
   // bool
   'eql_v3.bool': { builder: types.Bool, ColumnClass: EncryptedBoolColumn, castAs: 'boolean', capabilities: STORAGE, indexes: NONE, samples: BOOL_S },
