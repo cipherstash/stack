@@ -631,17 +631,20 @@ mod tests {
 
     #[test]
     fn index_dts_retains_hand_written_reexports() {
-        // The union test above only guards `AuthErrorCode`. The other three
+        // The union test above only guards the `AuthFailure` codes. The other
         // hand-written pieces of `index.d.ts` are equally load-bearing but
-        // NAPI-RS cannot emit them, so a regen or careless edit that drops any
-        // of them compiles green: the node tests import `AuthError` as an
-        // `import type` (erased at runtime) and vitest never runs `tsc`. Pin
-        // them by string presence so a deletion fails here.
+        // NAPI-RS cannot emit them — they describe the `Result` contract, not the
+        // raw throwing bindings — so a regen or careless edit that drops any of
+        // them compiles green: the node tests import these as `import type`
+        // (erased at runtime) and vitest never runs `tsc`. Pin them by string
+        // presence so a deletion fails here.
         let dts = include_str!("../index.d.ts");
         for needle in [
-            // The native re-export the whole generated surface flows through.
-            "export * from \"./native\"",
-            "export interface AuthError extends Error",
+            // The native type re-use that ties this file to `native.d.ts`.
+            "from \"./native\"",
+            // The discriminated failure union returned in the `Result` arm.
+            "export type AuthFailure =",
+            // The deprecated runtime alias `index.js` still exports.
             "export declare const OAuthStrategy",
         ] {
             assert!(
