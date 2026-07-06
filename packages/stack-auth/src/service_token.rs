@@ -75,7 +75,7 @@ impl ServiceToken {
         self.decoded
             .as_ref()
             .map(|d| d.subject.as_str())
-            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
+            .map_err(|reason| AuthError::InvalidToken(crate::error::InvalidToken(reason.clone())))
     }
 
     /// Return the workspace identifier from the JWT claims.
@@ -88,7 +88,7 @@ impl ServiceToken {
         self.decoded
             .as_ref()
             .map(|d| &d.workspace)
-            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
+            .map_err(|reason| AuthError::InvalidToken(crate::error::InvalidToken(reason.clone())))
     }
 
     /// Verify the token's `workspace` claim matches `expected`, returning the
@@ -110,10 +110,12 @@ impl ServiceToken {
     pub(crate) fn verify_workspace(self, expected: WorkspaceId) -> Result<Self, AuthError> {
         let token_workspace = *self.workspace_id()?;
         if token_workspace != expected {
-            return Err(AuthError::WorkspaceMismatch {
-                expected_workspace: expected,
-                token_workspace,
-            });
+            return Err(AuthError::WorkspaceMismatch(
+                crate::error::WorkspaceMismatch {
+                    expected_workspace: expected,
+                    token_workspace,
+                },
+            ));
         }
         Ok(self)
     }
@@ -130,7 +132,7 @@ impl ServiceToken {
         self.decoded
             .as_ref()
             .map(|d| &d.issuer)
-            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
+            .map_err(|reason| AuthError::InvalidToken(crate::error::InvalidToken(reason.clone())))
     }
 
     /// Return the decoded services map from the JWT claims.
@@ -143,7 +145,7 @@ impl ServiceToken {
         self.decoded
             .as_ref()
             .map(|d| &d.services)
-            .map_err(|reason| AuthError::InvalidToken(reason.clone()))
+            .map_err(|reason| AuthError::InvalidToken(crate::error::InvalidToken(reason.clone())))
     }
 
     /// Return the ZeroKMS endpoint URL from the `services` claim.
@@ -160,9 +162,9 @@ impl ServiceToken {
             .get(ServiceType::ZeroKms)
             .cloned()
             .ok_or_else(|| {
-                AuthError::InvalidToken(
+                AuthError::InvalidToken(crate::error::InvalidToken(
                     "Token does not include a ZeroKMS endpoint in the services claim".into(),
-                )
+                ))
             })
     }
 
@@ -212,7 +214,7 @@ fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> 
     // in `AuthError::InvalidToken(reason)`, and we don't want "Invalid token:
     // Invalid token: ..." in the final message.
     crate::decode_jwt_payload_wasm(token_str).map_err(|e| match e {
-        crate::AuthError::InvalidToken(reason) => reason,
+        crate::AuthError::InvalidToken(crate::error::InvalidToken(reason)) => reason,
         other => other.to_string(),
     })
 }
@@ -438,10 +440,10 @@ mod tests {
             .verify_workspace(expected)
             .expect_err("a different expected workspace must be rejected");
         match err {
-            AuthError::WorkspaceMismatch {
+            AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
                 expected_workspace,
                 token_workspace,
-            } => {
+            }) => {
                 assert_eq!(expected_workspace.to_string(), "AAAAAAAAAAAAAAAA");
                 assert_eq!(token_workspace.to_string(), "ZVATKW3VHMFG27DY");
             }

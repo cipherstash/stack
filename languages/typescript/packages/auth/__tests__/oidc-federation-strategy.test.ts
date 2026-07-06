@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { AuthError } from "../index";
 import { MockCtsServer } from "./helpers/mock-cts-server";
 
 const { OidcFederationStrategy } =
@@ -53,17 +52,66 @@ function memStore() {
   };
 }
 
+/** Unwrap a `create` Result, failing the test if it returned a failure. */
+function mustCreate(
+  ...args: Parameters<typeof OidcFederationStrategy.create>
+): InstanceType<typeof OidcFederationStrategy> {
+  const cr = OidcFederationStrategy.create(...args);
+  if (cr.failure) {
+    expect.unreachable(`create failed: ${cr.failure.type}`);
+  }
+  return cr.data;
+}
+
+/** Unwrap a `createWithStore` Result, failing the test if it returned a failure. */
+function mustCreateWithStore(
+  ...args: Parameters<typeof OidcFederationStrategy.createWithStore>
+): InstanceType<typeof OidcFederationStrategy> {
+  const cr = OidcFederationStrategy.createWithStore(...args);
+  if (cr.failure) {
+    expect.unreachable(`createWithStore failed: ${cr.failure.type}`);
+  }
+  return cr.data;
+}
+
 describe("OidcFederationStrategy (TypeScript / vitest)", () => {
   it("federates a third-party JWT into a CTS service token", async () => {
     server.mockAuthorizeEndpoint();
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, jwt.getJwt);
+    const strategy = mustCreate(WORKSPACE_CRN, jwt.getJwt);
 
-    const result = await strategy.getToken();
+    const r = await strategy.getToken();
+    if (r.failure) {
+      expect.unreachable(`getToken failed: ${r.failure.type}`);
+    }
+    const result = r.data;
 
     expect(result.token).not.toBe("");
     expect(result.workspaceId).toBe(WORKSPACE_ID);
     expect(jwt.calls()).toBe(1);
+  });
+
+  it("surfaces WORKSPACE_MISMATCH with the expected/actual payload", async () => {
+    // The federated token carries a different workspace than the strategy's CRN,
+    // so workspace verification fails. This is the flagship structured-payload
+    // failure — it exercises the `...payload` spread end to end (the named
+    // help/url destructure doesn't), so it guards `failure.expected`/`.actual`
+    // against a serde key rename or a spread regression at the JS boundary.
+    const MISMATCHED_WORKSPACE = "AAAAAAAAAAAAAAAA";
+    server.mockAuthorizeEndpointWithWorkspace(MISMATCHED_WORKSPACE);
+    const strategy = mustCreate(WORKSPACE_CRN, countingJwt().getJwt);
+
+    const r = await strategy.getToken();
+    if (!r.failure) {
+      expect.unreachable("expected a WORKSPACE_MISMATCH failure");
+    }
+    const { failure } = r;
+    if (failure.type !== "WORKSPACE_MISMATCH") {
+      expect.unreachable(`expected WORKSPACE_MISMATCH, got ${failure.type}`);
+    }
+    expect(failure.expected).toBe(WORKSPACE_ID);
+    expect(failure.actual).toBe(MISMATCHED_WORKSPACE);
+    expect(failure.error).toBeInstanceOf(Error);
   });
 
   it("re-federates after the cached token expires", async () => {
@@ -72,7 +120,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     server.mockAuthorizeEndpoint(0);
     server.mockAuthorizeEndpoint(0);
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, jwt.getJwt);
+    const strategy = mustCreate(WORKSPACE_CRN, jwt.getJwt);
 
     await strategy.getToken();
     await strategy.getToken();
@@ -80,18 +128,14 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     expect(jwt.calls()).toBe(2);
   });
 
-  it("surfaces a getJwt rejection as an error with .code", async () => {
+  it("surfaces a getJwt rejection as a failure with .type", async () => {
     server.mockAuthorizeEndpoint();
-    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, () =>
+    const strategy = mustCreate(WORKSPACE_CRN, () =>
       Promise.reject(new Error("provider unavailable")),
     );
 
-    try {
-      await strategy.getToken();
-      expect.unreachable("getToken should reject when getJwt rejects");
-    } catch (err) {
-      expect((err as AuthError).code).toBe("SERVER_ERROR");
-    }
+    const r = await strategy.getToken();
+    expect(r.failure?.type).toBe("SERVER_ERROR");
   });
 
   it("honours an explicit baseUrl override over CS_CTS_HOST", async () => {
@@ -106,15 +150,18 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     const override = await MockCtsServer.start();
     try {
       override.mockAuthorizeEndpoint();
-      const strategy = OidcFederationStrategy.create(
+      const strategy = mustCreate(
         WORKSPACE_CRN,
         () => Promise.resolve("header.payload.signature"),
         override.baseUrl,
       );
 
-      const result = await strategy.getToken();
+      const r = await strategy.getToken();
+      if (r.failure) {
+        expect.unreachable(`getToken failed: ${r.failure.type}`);
+      }
 
-      expect(result.workspaceId).toBe(WORKSPACE_ID);
+      expect(r.data.workspaceId).toBe(WORKSPACE_ID);
     } finally {
       await override.close();
     }
@@ -132,7 +179,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     try {
       override.mockAuthorizeEndpoint();
       const store = memStore();
-      const strategy = OidcFederationStrategy.createWithStore(
+      const strategy = mustCreateWithStore(
         WORKSPACE_CRN,
         () => Promise.resolve("header.payload.signature"),
         store.load,
@@ -140,9 +187,12 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
         override.baseUrl,
       );
 
-      const result = await strategy.getToken();
+      const r = await strategy.getToken();
+      if (r.failure) {
+        expect.unreachable(`getToken failed: ${r.failure.type}`);
+      }
 
-      expect(result.workspaceId).toBe(WORKSPACE_ID);
+      expect(r.data.workspaceId).toBe(WORKSPACE_ID);
       expect(store.saved()).not.toBeNull();
     } finally {
       await override.close();
@@ -152,68 +202,75 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
   it("rejects a malformed baseUrl with INVALID_URL", () => {
     // The napi twin of the wasm `..._rejects_invalid_base_url` test: a
     // non-empty, unparseable override must surface through the factory as a
-    // coded INVALID_URL error (via `maybe_base_url(...)? → to_napi_error`), not
+    // coded INVALID_URL failure (via `maybe_base_url(...)? → to_napi_error`), not
     // a silent fallback or an un-coded throw.
-    try {
-      OidcFederationStrategy.create(
-        WORKSPACE_CRN,
-        () => Promise.resolve("h.p.s"),
-        "not a url",
-      );
-      expect.unreachable("create should throw on a malformed baseUrl");
-    } catch (err) {
-      expect((err as AuthError).code).toBe("INVALID_URL");
-    }
+    const cr = OidcFederationStrategy.create(
+      WORKSPACE_CRN,
+      () => Promise.resolve("h.p.s"),
+      "not a url",
+    );
+    expect(cr.failure?.type).toBe("INVALID_URL");
   });
 
   it("treats an empty baseUrl as absent (falls back to CS_CTS_HOST)", async () => {
     // An empty-string override must be a no-op, not an INVALID_URL — so
     // federation still resolves against CS_CTS_HOST's mock.
     server.mockAuthorizeEndpoint();
-    const strategy = OidcFederationStrategy.create(
+    const strategy = mustCreate(
       WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       "",
     );
 
-    const result = await strategy.getToken();
-
-    expect(result.workspaceId).toBe(WORKSPACE_ID);
-  });
-
-  it("rejects an invalid workspace CRN with .code", () => {
-    try {
-      OidcFederationStrategy.create("not-a-crn", () =>
-        Promise.resolve("h.p.s"),
-      );
-      expect.unreachable("create should throw on a malformed workspace CRN");
-    } catch (err) {
-      expect((err as AuthError).code).toBe("INVALID_CRN");
+    const r = await strategy.getToken();
+    if (r.failure) {
+      expect.unreachable(`getToken failed: ${r.failure.type}`);
     }
+
+    expect(r.data.workspaceId).toBe(WORKSPACE_ID);
   });
 
-  it("rejects a CRN whose workspace segment is malformed with .code", () => {
+  it("rejects an invalid workspace CRN with .type", () => {
+    const cr = OidcFederationStrategy.create("not-a-crn", () =>
+      Promise.resolve("h.p.s"),
+    );
+    expect(cr.failure?.type).toBe("INVALID_CRN");
+  });
+
+  it("attaches diagnostic help to an INVALID_CRN failure", () => {
+    // INVALID_CRN carries `#[diagnostic(help(...))]`, so its envelope includes
+    // `help` — pins the `help !== undefined` branch of `toFailure` in index.js
+    // with a content assertion, not just presence: the text must survive the
+    // __CS_FAIL__ envelope round-trip intact.
+    const cr = OidcFederationStrategy.create("not-a-crn", () =>
+      Promise.resolve("h.p.s"),
+    );
+    expect(cr.failure?.type).toBe("INVALID_CRN");
+    expect(typeof cr.failure?.help).toBe("string");
+    expect(cr.failure?.help).toMatch(/crn:<region>:<workspace-id>/);
+    // The same help is mirrored onto the live Error for loggers that only
+    // see the error object.
+    expect((cr.failure?.error as Error & { help?: string }).help).toBe(
+      cr.failure?.help,
+    );
+  });
+
+  it("rejects a CRN whose workspace segment is malformed with .type", () => {
     // "not-a-crn" above fails at the `crn:` prefix; this is the distinct path
     // where the prefix/region parse but the workspace segment fails validation
     // — what the old INVALID_WORKSPACE_ID case covered before the CRN switch.
-    try {
-      OidcFederationStrategy.create(
-        "crn:ap-southeast-2.aws:not-a-valid-workspace",
-        () => Promise.resolve("h.p.s"),
-      );
-      expect.unreachable(
-        "create should throw on a malformed workspace segment",
-      );
-    } catch (err) {
-      expect((err as AuthError).code).toBe("INVALID_CRN");
-    }
+    const cr = OidcFederationStrategy.create(
+      "crn:ap-southeast-2.aws:not-a-valid-workspace",
+      () => Promise.resolve("h.p.s"),
+    );
+    expect(cr.failure?.type).toBe("INVALID_CRN");
   });
 
   it("persists the federated token to the store", async () => {
     server.mockAuthorizeEndpoint();
     const store = memStore();
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.createWithStore(
+    const strategy = mustCreateWithStore(
       WORKSPACE_CRN,
       jwt.getJwt,
       store.load,
@@ -230,7 +287,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // First strategy federates and populates the shared store.
     server.mockAuthorizeEndpoint();
     const store = memStore();
-    const first = OidcFederationStrategy.createWithStore(
+    const first = mustCreateWithStore(
       WORKSPACE_CRN,
       () => Promise.resolve("h.p.s"),
       store.load,
@@ -243,15 +300,18 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // would throw — proving the token came from the store, not the network.
     server.clearMocks();
     server.mockAuthorizeEndpointError();
-    const second = OidcFederationStrategy.createWithStore(
+    const second = mustCreateWithStore(
       WORKSPACE_CRN,
       () => Promise.reject(new Error("getJwt must not be called")),
       store.load,
       store.save,
     );
 
-    const result = await second.getToken();
-    expect(result.workspaceId).toBe(WORKSPACE_ID);
+    const r = await second.getToken();
+    if (r.failure) {
+      expect.unreachable(`getToken failed: ${r.failure.type}`);
+    }
+    expect(r.data.workspaceId).toBe(WORKSPACE_ID);
   });
 
   it("re-federates when the stored token JSON is malformed", async () => {
@@ -260,7 +320,7 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     // runs fresh. A version that `unwrap()`ed the parse would fail this.
     server.mockAuthorizeEndpoint();
     const jwt = countingJwt();
-    const strategy = OidcFederationStrategy.createWithStore(
+    const strategy = mustCreateWithStore(
       WORKSPACE_CRN,
       jwt.getJwt,
       () => Promise.resolve("}{ not json"),
@@ -273,39 +333,30 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     expect(jwt.calls()).toBe(1);
   });
 
-  it("surfaces a non-string getJwt result as an error with .code", async () => {
+  it("surfaces a non-string getJwt result as a failure with .type", async () => {
     // Mirrors the wasm `js_oidc_provider_errors_on_non_string_result` test:
     // a `Promise<number>` fails napi's `Promise<String>` coercion and must
-    // surface as a clean SERVER_ERROR rejection, not a panic or hung promise.
+    // surface as a clean SERVER_ERROR failure, not a panic or hung promise.
     server.mockAuthorizeEndpoint();
-    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, () =>
+    const strategy = mustCreate(WORKSPACE_CRN, () =>
       Promise.resolve(42 as unknown as string),
     );
 
-    try {
-      await strategy.getToken();
-      expect.unreachable(
-        "getToken should reject on a non-string getJwt result",
-      );
-    } catch (err) {
-      expect((err as AuthError).code).toBe("SERVER_ERROR");
-    }
+    const r = await strategy.getToken();
+    expect(r.failure?.type).toBe("SERVER_ERROR");
   });
 
-  it("surfaces a federation server error with .code", async () => {
+  it("surfaces a federation server error with .type", async () => {
     // Negative twin of the happy path: a real federation request reaching
-    // /api/authorise and getting a 500 must reject with an enriched `.code`,
+    // /api/authorise and getting a 500 must surface a failure with a `.type`,
     // not resolve or throw an un-coded error.
     server.mockAuthorizeEndpointError();
-    const strategy = OidcFederationStrategy.create(WORKSPACE_CRN, () =>
+    const strategy = mustCreate(WORKSPACE_CRN, () =>
       Promise.resolve("header.payload.signature"),
     );
 
-    try {
-      await strategy.getToken();
-      expect.unreachable("getToken should reject when /api/authorise 500s");
-    } catch (err) {
-      expect(err as AuthError).toHaveProperty("code");
-    }
+    const r = await strategy.getToken();
+    expect(r.failure).toBeTruthy();
+    expect(r.failure?.type).toBeTruthy();
   });
 });

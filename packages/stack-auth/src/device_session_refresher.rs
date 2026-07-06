@@ -137,8 +137,16 @@ impl DeviceSessionRefresher {
         };
         let lock = tokio::task::spawn_blocking(move || store.lock_exclusive(Token::FILENAME))
             .await
-            .map_err(|e| AuthError::Server(format!("refresh lock task join failed: {e}")))?
-            .map_err(|e| AuthError::Server(format!("failed to acquire refresh lock: {e}")))?;
+            .map_err(|e| {
+                AuthError::Server(crate::error::ServerError(format!(
+                    "refresh lock task join failed: {e}"
+                )))
+            })?
+            .map_err(|e| {
+                AuthError::Server(crate::error::ServerError(format!(
+                    "failed to acquire refresh lock: {e}"
+                )))
+            })?;
         Ok(Some(lock))
     }
 

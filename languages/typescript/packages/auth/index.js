@@ -1,44 +1,80 @@
-// Wrapper that loads the native napi-rs module and enriches errors with a
-// machine-readable `.code` property by parsing the "CODE: message" format
-// that the Rust side produces.
+// Wrapper that loads the native napi-rs module and converts its outcomes into
+// the `@byteslice/result` shape: `{ data }` on success, `{ failure }` on a
+// domain error. The Rust side never reaches the caller as a throw — every
+// `AuthError` crosses the FFI boundary as a `__CS_FAIL__`-sentineled JSON blob
+// in the rejection/throw, which we parse here into a typed `failure`. Only a
+// genuine panic (no sentinel) propagates as a thrown exception.
 
 const native = require("./stack-auth-node.js");
 
-const CODE_RE = /^([A-Z_]+): /;
+// Must match `FAILURE_SENTINEL` in src/lib.rs.
+const FAILURE_SENTINEL = "__CS_FAIL__";
 
 /**
- * Parse the "CODE: message" format produced by the Rust bindings and attach
- * `.code` to the Error object.
+ * Convert a thrown/rejected native error into a `Result` `failure`.
+ *
+ * Domain failures carry the sentinel + serialized `AuthError`
+ * (`{ type, message, help?, url?, ...payload }`); we reuse the thrown `Error`
+ * as the live `failure.error`, restoring its message and attaching the
+ * structured fields. Anything without the sentinel is a real bug/panic and is
+ * re-thrown unchanged.
  */
-function enrichError(err) {
-  if (err instanceof Error) {
-    const match = CODE_RE.exec(err.message);
-    if (match) {
-      err.code = match[1];
-      err.message = err.message.slice(match[0].length);
-    }
+function toFailure(err) {
+  if (!(err instanceof Error) || !err.message.startsWith(FAILURE_SENTINEL)) {
+    throw err;
   }
-  throw err;
+  let envelope;
+  try {
+    envelope = JSON.parse(err.message.slice(FAILURE_SENTINEL.length));
+  } catch {
+    // Sentinel present but the tail isn't valid JSON. Can't happen with the
+    // current Rust producer (always emits valid JSON), but if it ever did,
+    // don't mask the real failure as an opaque SyntaxError — re-throw it.
+    throw err;
+  }
+  const { type, message, help, url, ...payload } = envelope;
+  err.message = message;
+  err.code = type;
+  // Spread payload first so the fixed `type`/`error` keys — and the `help`/`url`
+  // re-asserted below — always win over a colliding payload key.
+  const failure = { ...payload, type, error: err };
+  if (help !== undefined) {
+    err.help = help;
+    failure.help = help;
+  }
+  if (url !== undefined) {
+    err.url = url;
+    failure.url = url;
+  }
+  return { failure };
 }
 
 /**
- * Wrap an async function so that rejected errors get `.code` enrichment.
+ * Wrap an async native function so it resolves to `{ data }` / `{ failure }`
+ * and never rejects for a domain error.
  */
 function wrapAsync(fn) {
   return function (...args) {
-    return fn.apply(this, args).catch(enrichError);
+    // napi argument coercion throws synchronously, before a Promise exists —
+    // surface it as a rejection so a `Promise`-returning signature never
+    // throws. (Coercion errors carry no sentinel, so they stay errors.)
+    try {
+      return fn.apply(this, args).then((data) => ({ data }), toFailure);
+    } catch (err) {
+      return Promise.reject(err);
+    }
   };
 }
 
 /**
- * Wrap a sync function so that thrown errors get `.code` enrichment.
+ * Wrap a sync native function so it returns `{ data }` / `{ failure }`.
  */
 function wrapSync(fn) {
   return function (...args) {
     try {
-      return fn.apply(this, args);
+      return { data: fn.apply(this, args) };
     } catch (err) {
-      enrichError(err);
+      return toFailure(err);
     }
   };
 }
@@ -58,21 +94,37 @@ for (const Strategy of [
   Strategy.prototype.getToken = wrapAsync(Strategy.prototype.getToken);
 }
 
-// Wrap strategy factory methods (sync, can throw)
-const origDetect = native.AutoStrategy.detect;
-native.AutoStrategy.detect = wrapSync(origDetect);
+// napi defines class static methods as non-writable (and this file is sloppy
+// mode), so the factories can't be Result-wrapped by patching the native
+// class in place — the assignment silently no-ops. Each strategy instead gets
+// a thin facade class whose static factories run through `wrapSync`.
+// Instances are the native ones — their async `getToken()` is already
+// wrapped via the prototype patch above. (Facade instances are never
+// constructed, so `instanceof` against these classes is not part of the
+// contract.)
+// The native factory must be invoked as a method of its native class —
+// napi needs the class as the receiver to construct the returned instance —
+// hence the closure form rather than passing the unbound static to wrapSync.
+class AutoStrategy {
+  static detect(options) {
+    return wrapSync(() => native.AutoStrategy.detect(options))();
+  }
+}
 
-const origCreate = native.AccessKeyStrategy.create;
-native.AccessKeyStrategy.create = wrapSync(origCreate);
+class AccessKeyStrategy {
+  static create(workspaceCrn, accessKey) {
+    return wrapSync(() =>
+      native.AccessKeyStrategy.create(workspaceCrn, accessKey),
+    )();
+  }
+}
 
-const origFromProfile = native.DeviceSessionStrategy.fromProfile;
-native.DeviceSessionStrategy.fromProfile = wrapSync(origFromProfile);
+class DeviceSessionStrategy {
+  static fromProfile() {
+    return wrapSync(() => native.DeviceSessionStrategy.fromProfile())();
+  }
+}
 
-// napi defines class static methods as non-writable, so a factory's
-// synchronously-thrown errors can't be `.code`-enriched by patching the
-// native class in place. Expose a thin wrapper whose static factories run
-// through `wrapSync`. Instances are the native ones — their async
-// `getToken()` is already enriched via the prototype patch above.
 const NativeOidcFederationStrategy = native.OidcFederationStrategy;
 class OidcFederationStrategy {
   static create(workspaceCrn, getJwt, baseUrl) {
@@ -103,13 +155,17 @@ class OidcFederationStrategy {
   }
 }
 
-// Export wrapped top-level functions alongside native re-exports
+// Export wrapped top-level functions alongside native re-exports. The facade
+// classes shadow their native counterparts from the `...native` spread.
 module.exports = {
   ...native,
+  AutoStrategy,
+  AccessKeyStrategy,
+  DeviceSessionStrategy,
   OidcFederationStrategy,
   // Deprecated alias: `OAuthStrategy` was renamed to `DeviceSessionStrategy`.
   // Kept so existing consumers don't break; remove in a future major.
-  OAuthStrategy: native.DeviceSessionStrategy,
+  OAuthStrategy: DeviceSessionStrategy,
   beginDeviceCodeFlow: wrapAsync(native.beginDeviceCodeFlow),
   bindClientDevice: wrapAsync(native.bindClientDevice),
 };

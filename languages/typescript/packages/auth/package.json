@@ -1,6 +1,7 @@
 {
   "name": "@cipherstash/auth",
   "version": "0.40.0",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "index.js",
   "types": "index.d.ts",
   "browser": false,
@@ -47,6 +48,7 @@
     "index.d.ts",
     "native.d.ts",
     "README.md",
+    "LICENSE",
     "stack-auth-node.js",
     "wasm-types.d.ts",
     "wasm-inline.mjs",
@@ -72,16 +74,31 @@
     "@cipherstash/auth-win32-x64-msvc": "0.40.0"
   },
   "peerDependenciesMeta": {
-    "@cipherstash/auth-darwin-x64": { "optional": true },
-    "@cipherstash/auth-darwin-arm64": { "optional": true },
-    "@cipherstash/auth-linux-x64-gnu": { "optional": true },
-    "@cipherstash/auth-linux-arm64-gnu": { "optional": true },
-    "@cipherstash/auth-linux-x64-musl": { "optional": true },
-    "@cipherstash/auth-win32-x64-msvc": { "optional": true }
+    "@cipherstash/auth-darwin-x64": {
+      "optional": true
+    },
+    "@cipherstash/auth-darwin-arm64": {
+      "optional": true
+    },
+    "@cipherstash/auth-linux-x64-gnu": {
+      "optional": true
+    },
+    "@cipherstash/auth-linux-arm64-gnu": {
+      "optional": true
+    },
+    "@cipherstash/auth-linux-x64-musl": {
+      "optional": true
+    },
+    "@cipherstash/auth-win32-x64-msvc": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@byteslice/result": "^0.3.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2",
-    "vitest": "^3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3"
   }
 }

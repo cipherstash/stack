@@ -7,8 +7,8 @@ use napi::threadsafe_function::{ErrorStrategy, ThreadsafeFunction, ThreadsafeFun
 use napi::tokio::sync::oneshot;
 use napi_derive::napi;
 use stack_auth::{
-    AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, OidcProvider,
-    PendingDeviceCode, SecretToken, ServiceToken, Token, TokenStore,
+    AlreadyConsumed, AuthError, AuthStrategy, DeviceClientError, DeviceCodeStrategy, InternalError,
+    OidcProvider, PendingDeviceCode, SecretToken, ServerError, ServiceToken, Token, TokenStore,
 };
 use vitaminc_protected::OpaqueDebug;
 use zeroize::Zeroizing;
@@ -17,12 +17,20 @@ use zeroize::Zeroizing;
 // Error helpers
 // ---------------------------------------------------------------------------
 
+/// Sentinel prefix that marks a `napi::Error` whose `reason` carries a
+/// serialized [`AuthError`] (a domain failure) rather than an arbitrary throw.
+/// `index.js` keys on this to convert the rejection into a `Result` `failure`
+/// envelope; anything without it is re-thrown as a genuine error/panic.
+const FAILURE_SENTINEL: &str = "__CS_FAIL__";
+
 fn to_napi_error(err: AuthError) -> napi::Error {
-    // Delegate to the canonical `AuthError::error_code` mapping in `stack-auth`
-    // rather than re-deriving it here — mirrors the wasm binding's `to_js_error`.
-    // The `CODE: message` format is parsed back into an `Error.code` by index.js.
-    let code = err.error_code();
-    napi::Error::new(Status::GenericFailure, format!("{code}: {err}"))
+    // `napi::Error` only carries a string `reason`, so the structured failure
+    // (`{ type, message, help?, url?, ...payload }`) travels as a JSON blob
+    // behind the sentinel. `index.js` parses it back into the `Result` failure.
+    let json = serde_json::to_string(&err).unwrap_or_else(|_| {
+        serde_json::json!({ "type": err.error_code(), "message": err.to_string() }).to_string()
+    });
+    napi::Error::new(Status::GenericFailure, format!("{FAILURE_SENTINEL}{json}"))
 }
 
 /// Surface a JS callback failure on stderr so it isn't silently swallowed —
@@ -37,7 +45,7 @@ fn warn_callback(name: &str, detail: &str) {
 fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn> {
     workspace_crn
         .parse()
-        .map_err(|e| to_napi_error(AuthError::InvalidCrn(e)))
+        .map_err(|e| to_napi_error(AuthError::from(e)))
 }
 
 // ---------------------------------------------------------------------------
@@ -242,17 +250,17 @@ impl OidcProvider for NapiOidcProvider {
         if status != Status::Ok {
             let detail = format!("callback dispatch failed: {status:?}");
             warn_callback("getJwt", &detail);
-            return Err(AuthError::Server(format!("getJwt {detail}")));
+            return Err(AuthError::Server(ServerError(format!("getJwt {detail}"))));
         }
         let promise = rx.await.map_err(|_| {
             warn_callback("getJwt", "callback did not run");
-            AuthError::Server("getJwt callback did not run".to_string())
+            AuthError::Server(ServerError("getJwt callback did not run".to_string()))
         })?;
         // `SecretToken` owns the JWT and zeroes it on drop (it's `ZeroizeOnDrop`),
         // so the awaited `String` moves straight in — no intermediate `Zeroizing`.
         let jwt = promise.await.map_err(|e| {
             warn_callback("getJwt", &format!("promise rejected: {e}"));
-            AuthError::Server(format!("getJwt rejected: {e}"))
+            AuthError::Server(ServerError(format!("getJwt rejected: {e}")))
         })?;
         Ok(SecretToken::new(jwt))
     }
@@ -469,14 +477,9 @@ impl DeviceCodeResult {
         let pending = self
             .pending
             .lock()
-            .map_err(|_| napi::Error::new(Status::GenericFailure, "Lock poisoned"))?
+            .map_err(|_| to_napi_error(AuthError::Internal(InternalError("lock poisoned".into()))))?
             .take()
-            .ok_or_else(|| {
-                napi::Error::new(
-                    Status::GenericFailure,
-                    "Device code handle has already been consumed",
-                )
-            })?;
+            .ok_or_else(|| to_napi_error(AuthError::AlreadyConsumed(AlreadyConsumed)))?;
 
         let token = pending.poll_for_token().await.map_err(to_napi_error)?;
 
@@ -492,17 +495,13 @@ impl DeviceCodeResult {
     /// afterwards.
     #[napi]
     pub fn open_in_browser(&self) -> Result<bool> {
-        let guard = self
-            .pending
-            .lock()
-            .map_err(|_| napi::Error::new(Status::GenericFailure, "Lock poisoned"))?;
+        let guard = self.pending.lock().map_err(|_| {
+            to_napi_error(AuthError::Internal(InternalError("lock poisoned".into())))
+        })?;
 
         match guard.as_ref() {
             Some(pending) => Ok(pending.open_in_browser()),
-            None => Err(napi::Error::new(
-                Status::GenericFailure,
-                "Device code handle has already been consumed",
-            )),
+            None => Err(to_napi_error(AuthError::AlreadyConsumed(AlreadyConsumed))),
         }
     }
 }
@@ -523,19 +522,11 @@ impl DeviceCodeResult {
 // Exported functions
 // ---------------------------------------------------------------------------
 
-fn device_client_error_code(err: &DeviceClientError) -> &'static str {
-    match err {
-        DeviceClientError::Profile(_) => "STORE_ERROR",
-        DeviceClientError::Auth(auth_err) => auth_err.error_code(),
-        DeviceClientError::Request(_) => "REQUEST_ERROR",
-        DeviceClientError::Server { .. } => "SERVER_ERROR",
-        DeviceClientError::InvalidUrl(_) => "INVALID_URL",
-    }
-}
-
 fn device_client_to_napi_error(err: DeviceClientError) -> napi::Error {
-    let code = device_client_error_code(&err);
-    napi::Error::new(Status::GenericFailure, format!("{code}: {err}"))
+    // Route through the canonical `AuthError` mapping (`From<DeviceClientError>`
+    // in stack-auth) so the code/help/payload envelope comes from the one
+    // `to_napi_error` path rather than a parallel code table and hand-built blob.
+    to_napi_error(err.into())
 }
 
 /// Provision a device client in ZeroKMS after login.
@@ -576,56 +567,76 @@ mod tests {
     use mocktail::prelude::*;
     use tempfile::TempDir;
 
-    /// `index.d.ts` is hand-written and re-exports the generated `native.d.ts`,
-    /// plus the `AuthErrorCode` union NAPI-RS can't emit. That union must list
-    /// exactly the codes `AuthError::error_code()` can return, plus
-    /// `UNKNOWN_ERROR` (the `index.js` fallback).
-    ///
-    /// The expected set is the exported [`AuthError::ERROR_CODES`] constant — a
-    /// real symbol the compiler resolves, not a scrape of the core crate's
-    /// source text. A core-crate test pins that constant against `error_code`'s
-    /// exhaustive match, so adding an `AuthError` variant forces a new code
-    /// there, which this test then requires the TS union to include; forget to
-    /// update `index.d.ts` and this fails.
+    /// The hand-written `AuthFailure` discriminated unions in `index.d.ts` and
+    /// `wasm-inline.d.ts` must list exactly the codes the Rust `AuthError` can
+    /// emit. The expected set is the exported [`AuthError::ERROR_CODES`]
+    /// constant — a real symbol the compiler resolves, not a scrape of the core
+    /// crate's source text. A core-crate test pins that constant against the
+    /// per-error `AuthErrorKind::error_code` impls, so adding an `AuthError`
+    /// variant forces a new code there, which this test then requires the TS
+    /// unions to include; forget to update them and this fails.
     #[test]
-    fn ts_auth_error_code_union_matches_error_codes() {
+    fn ts_auth_failure_union_matches_error_codes() {
         use std::collections::BTreeSet;
 
-        // The codes `AuthError::error_code` can return, plus the `UNKNOWN_ERROR`
-        // fallback the JS layer adds (never returned by `error_code`).
-        let mut expected: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
-        expected.insert("UNKNOWN_ERROR");
+        // The codes the Rust `AuthError` can emit — the canonical set exported
+        // by stack-auth, not a scrape of `error.rs`.
+        let expected: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
 
-        // The hand-written `index.d.ts` union — lines of the form `  | 'CODE'`.
-        let dts = include_str!("../index.d.ts");
-        let union: BTreeSet<&str> = dts
-            .lines()
-            .filter_map(|line| {
-                line.trim()
-                    .strip_prefix("| '")
-                    .and_then(|rest| rest.strip_suffix('\''))
-            })
-            .collect();
+        // Each TS union member is `... { type: "CODE" ... }`; pull every literal.
+        let codes_in = |dts: &str| -> BTreeSet<String> {
+            dts.match_indices("type: \"")
+                .map(|(i, _)| {
+                    let after = &dts[i + "type: \"".len()..];
+                    let close = after
+                        .find('"')
+                        .expect("TS union type missing closing quote");
+                    after[..close].to_string()
+                })
+                .collect()
+        };
 
-        assert_eq!(
-            union, expected,
-            "AuthErrorCode union in index.d.ts drifted from AuthError::ERROR_CODES",
-        );
+        for (name, dts) in [
+            ("index.d.ts", include_str!("../index.d.ts")),
+            ("wasm-inline.d.ts", include_str!("../wasm-inline.d.ts")),
+        ] {
+            let union = codes_in(dts);
+            let expected: BTreeSet<String> = expected.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                union, expected,
+                "AuthFailure union in {name} drifted from AuthError::ERROR_CODES",
+            );
+
+            // The tag scrape above only checks `type` literals. `WORKSPACE_MISMATCH`
+            // is the one variant carrying a structured payload (`WorkspaceMismatch::payload`
+            // in error.rs emits `expected`/`actual`), so pin those field names in the
+            // union too — a serde key rename or a dropped `.d.ts` field would otherwise
+            // leave the declared shape silently lying. A JS runtime test
+            // (`oidc-federation-strategy.test.ts`) drives it end-to-end through the
+            // `...payload` spread.
+            assert!(
+                dts.contains("type: \"WORKSPACE_MISMATCH\"; expected: string; actual: string"),
+                "{name}: WORKSPACE_MISMATCH union member must declare `expected: string; actual: string`",
+            );
+        }
     }
 
     #[test]
     fn index_dts_retains_hand_written_reexports() {
-        // The union test above only guards `AuthErrorCode`. The other three
+        // The union test above only guards the `AuthFailure` codes. The other
         // hand-written pieces of `index.d.ts` are equally load-bearing but
-        // NAPI-RS cannot emit them, so a regen or careless edit that drops any
-        // of them compiles green: the node tests import `AuthError` as an
-        // `import type` (erased at runtime) and vitest never runs `tsc`. Pin
-        // them by string presence so a deletion fails here.
+        // NAPI-RS cannot emit them — they describe the `Result` contract, not the
+        // raw throwing bindings — so a regen or careless edit that drops any of
+        // them compiles green: the node tests import these as `import type`
+        // (erased at runtime) and vitest never runs `tsc`. Pin them by string
+        // presence so a deletion fails here.
         let dts = include_str!("../index.d.ts");
         for needle in [
-            // The native re-export the whole generated surface flows through.
-            "export * from \"./native\"",
-            "export interface AuthError extends Error",
+            // The native type re-use that ties this file to `native.d.ts`.
+            "from \"./native\"",
+            // The discriminated failure union returned in the `Result` arm.
+            "export type AuthFailure =",
+            // The deprecated runtime alias `index.js` still exports.
             "export declare const OAuthStrategy",
         ] {
             assert!(
@@ -633,6 +644,22 @@ mod tests {
                 "index.d.ts lost hand-written {needle:?}",
             );
         }
+    }
+
+    /// The `__CS_FAIL__` sentinel is declared in both Rust (`FAILURE_SENTINEL`)
+    /// and JS (`index.js`), and every napi domain error depends on the two
+    /// agreeing: `toFailure` only recognizes a failure whose message starts with
+    /// it, re-throwing anything else as a panic. If the two drift, every failure
+    /// silently becomes a thrown error and no other test catches it. Pin that
+    /// `index.js` declares exactly the Rust value.
+    #[test]
+    fn failure_sentinel_matches_index_js() {
+        let js = include_str!("../index.js");
+        let expected = format!("const FAILURE_SENTINEL = \"{FAILURE_SENTINEL}\";");
+        assert!(
+            js.contains(&expected),
+            "index.js must declare `{expected}` — the __CS_FAIL__ sentinel drifted from src/lib.rs",
+        );
     }
 
     // --- Shared helpers ---
@@ -763,12 +790,24 @@ mod tests {
     }
 
     mod assertions {
-        /// Assert that a NAPI error's reason contains the expected error code prefix.
+        /// Parse the `__CS_FAIL__`-sentineled JSON failure envelope that a
+        /// `napi::Error` now carries (see `to_napi_error`).
+        pub(super) fn failure_json(err: &napi::Error) -> serde_json::Value {
+            let reason = err
+                .reason
+                .strip_prefix(crate::FAILURE_SENTINEL)
+                .unwrap_or_else(|| panic!("error reason missing failure sentinel: {}", err.reason));
+            serde_json::from_str(reason)
+                .unwrap_or_else(|e| panic!("failure JSON did not parse ({e}): {reason}"))
+        }
+
+        /// Assert the failure envelope's `type` matches the expected code.
         pub(super) fn has_error_code(err: &napi::Error, expected_code: &str) {
-            assert!(
-                err.reason.contains(&format!("{expected_code}: ")),
-                "expected '{expected_code}: ...' but got: {}",
-                err.reason
+            let json = failure_json(err);
+            assert_eq!(
+                json.get("type").and_then(|v| v.as_str()),
+                Some(expected_code),
+                "expected type {expected_code:?} but got envelope: {json}"
             );
         }
     }
@@ -778,81 +817,79 @@ mod tests {
     mod error_mapping {
         use super::*;
 
-        // Pins the exact `AuthError::error_code` strings the napi FFI contract
-        // depends on: `to_napi_error` embeds them as the `CODE:` prefix that
-        // index.js parses back into `Error.code`. The mapping itself lives in
-        // `stack-auth`; this guards that the codes the JS wrapper keys on can't
-        // drift without a failing test here.
+        // `to_napi_error` is the napi FFI seam: it serializes an `AuthError`
+        // into the `__CS_FAIL__`-sentineled JSON envelope (`{ type, message,
+        // help?, ...payload }`) that index.js turns into a `Result` failure.
+        // The canonical `error_code` mapping is exhaustively pinned in the core
+        // `stack-auth` crate; here we guard the FFI envelope shape itself.
         #[test]
-        fn maps_all_auth_error_variants() {
-            assert_eq!(
-                AuthError::AccessDenied.error_code(),
-                "ACCESS_DENIED",
-                "AccessDenied should map to ACCESS_DENIED"
-            );
-            assert_eq!(
-                AuthError::TokenExpired.error_code(),
-                "EXPIRED_TOKEN",
-                "TokenExpired should map to EXPIRED_TOKEN"
-            );
-            assert_eq!(
-                AuthError::InvalidGrant.error_code(),
-                "INVALID_GRANT",
-                "InvalidGrant should map to INVALID_GRANT"
-            );
-            assert_eq!(
-                AuthError::InvalidClient.error_code(),
-                "INVALID_CLIENT",
-                "InvalidClient should map to INVALID_CLIENT"
-            );
-            assert_eq!(
-                AuthError::InvalidUrl("http://[".parse::<url::Url>().unwrap_err()).error_code(),
-                "INVALID_URL",
-                "InvalidUrl should map to INVALID_URL"
-            );
-            assert_eq!(
-                AuthError::Region(Region::new("invalid").unwrap_err()).error_code(),
-                "INVALID_REGION",
-                "Region should map to INVALID_REGION"
-            );
-            assert_eq!(
-                AuthError::Server("test".to_string()).error_code(),
-                "SERVER_ERROR",
-                "Server should map to SERVER_ERROR"
-            );
-            assert_eq!(
-                AuthError::NotAuthenticated.error_code(),
-                "NOT_AUTHENTICATED",
-                "NotAuthenticated should map to NOT_AUTHENTICATED"
-            );
-            assert_eq!(
-                AuthError::MissingWorkspaceCrn.error_code(),
-                "MISSING_WORKSPACE_CRN",
-                "MissingWorkspaceCrn should map to MISSING_WORKSPACE_CRN"
-            );
-            assert_eq!(
-                AuthError::InvalidAccessKey(
-                    "bad-key".parse::<stack_auth::AccessKey>().unwrap_err()
-                )
-                .error_code(),
-                "INVALID_ACCESS_KEY",
-                "InvalidAccessKey should map to INVALID_ACCESS_KEY"
-            );
-            assert_eq!(
-                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err())
-                    .error_code(),
-                "INVALID_CRN",
-                "InvalidCrn should map to INVALID_CRN"
+        fn serializes_failure_envelope() {
+            let err = to_napi_error(AuthError::AccessDenied(stack_auth::AccessDenied));
+            assertions::has_error_code(&err, "ACCESS_DENIED");
+
+            let err = to_napi_error(AuthError::Server(ServerError(
+                "something broke".to_string(),
+            )));
+            let json = assertions::failure_json(&err);
+            assert_eq!(json["type"], "SERVER_ERROR");
+            assert_eq!(json["message"], "Server error: something broke");
+        }
+
+        // A variant carrying structured payload + diagnostic help surfaces both
+        // in the envelope, so a JS consumer can narrow on them.
+        #[test]
+        fn envelope_includes_payload_and_help() {
+            let ws = |s: &str| s.parse::<cts_common::WorkspaceId>().unwrap();
+            let err = to_napi_error(AuthError::WorkspaceMismatch(
+                stack_auth::WorkspaceMismatch {
+                    expected_workspace: ws("ZVATKW3VHMFG27DY"),
+                    token_workspace: ws("AAAAAAAAAAAAAAAA"),
+                },
+            ));
+            let json = assertions::failure_json(&err);
+            assert_eq!(json["type"], "WORKSPACE_MISMATCH");
+            assert_eq!(json["expected"], "ZVATKW3VHMFG27DY");
+            assert_eq!(json["actual"], "AAAAAAAAAAAAAAAA");
+            assert!(
+                json["help"].as_str().is_some(),
+                "expected help in envelope, got: {json}"
             );
         }
 
+        // `device_client_to_napi_error` routes every `DeviceClientError` through
+        // its canonical `AuthError` mapping. A help-carrying error (here an
+        // `Auth`-wrapped `WorkspaceMismatch`) must keep its help + structured
+        // payload; a help-less one (`Profile` -> `Store`) yields just
+        // type + message. A regression that dropped the canonical routing would
+        // lose the help/payload here.
         #[test]
-        fn formats_as_code_colon_message() {
-            let err = to_napi_error(AuthError::AccessDenied);
-            assertions::has_error_code(&err, "ACCESS_DENIED");
+        fn device_client_auth_arm_preserves_full_envelope() {
+            let ws = |s: &str| s.parse::<cts_common::WorkspaceId>().unwrap();
+            let err = device_client_to_napi_error(DeviceClientError::Auth(
+                AuthError::WorkspaceMismatch(stack_auth::WorkspaceMismatch {
+                    expected_workspace: ws("ZVATKW3VHMFG27DY"),
+                    token_workspace: ws("AAAAAAAAAAAAAAAA"),
+                }),
+            ));
+            let json = assertions::failure_json(&err);
+            assert_eq!(json["type"], "WORKSPACE_MISMATCH");
+            assert_eq!(json["expected"], "ZVATKW3VHMFG27DY");
+            assert_eq!(json["actual"], "AAAAAAAAAAAAAAAA");
+            assert!(
+                json["help"].as_str().is_some(),
+                "Auth arm must carry help through the canonical envelope, got: {json}"
+            );
 
-            let err = to_napi_error(AuthError::Server("something broke".to_string()));
-            assertions::has_error_code(&err, "SERVER_ERROR");
+            // Non-Auth variant routes through `From<DeviceClientError>` to the
+            // canonical `Store` error: same `STORE_ERROR` code, and no help
+            // (StoreError carries none).
+            let err = device_client_to_napi_error(DeviceClientError::Profile(
+                stack_profile::ProfileError::HomeDirNotFound,
+            ));
+            let json = assertions::failure_json(&err);
+            assert_eq!(json["type"], "STORE_ERROR");
+            assert!(json["message"].as_str().is_some());
+            assert!(json.get("help").is_none());
         }
     }
 
@@ -1047,11 +1084,7 @@ mod tests {
                     let result = consumed_result(&server, &dir).await;
                     let err = result.poll_for_token().await.unwrap_err();
 
-                    assert!(
-                        err.reason.contains("already been consumed"),
-                        "second poll_for_token call should fail with consumed error, got: {}",
-                        err.reason
-                    );
+                    assertions::has_error_code(&err, "ALREADY_CONSUMED");
                 }
 
                 #[tokio::test(start_paused = true)]
@@ -1068,11 +1101,7 @@ mod tests {
                     let result = consumed_result(&server, &dir).await;
                     let err = result.open_in_browser().unwrap_err();
 
-                    assert!(
-                        err.reason.contains("already been consumed"),
-                        "open_in_browser after consume should fail, got: {}",
-                        err.reason
-                    );
+                    assertions::has_error_code(&err, "ALREADY_CONSUMED");
                 }
             }
         }

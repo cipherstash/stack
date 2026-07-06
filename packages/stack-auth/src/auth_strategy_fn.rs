@@ -127,10 +127,12 @@ mod tests {
 
     #[tokio::test]
     async fn closure_errors_propagate_unchanged() {
-        let strategy = AuthStrategyFn::new(|| async { Err(AuthError::AccessDenied) });
+        let strategy = AuthStrategyFn::new(|| async {
+            Err(AuthError::AccessDenied(crate::error::AccessDenied))
+        });
         let err = (&strategy).get_token().await.unwrap_err();
         assert!(
-            matches!(err, AuthError::AccessDenied),
+            matches!(err, AuthError::AccessDenied(_)),
             "AccessDenied from the closure should surface verbatim, got: {err:?}"
         );
     }

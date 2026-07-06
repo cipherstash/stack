@@ -109,7 +109,9 @@ impl AutoStrategy {
     ) -> Result<Self, AuthError> {
         // 1. Access key from environment
         if let Some(access_key) = access_key {
-            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn)?;
+            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn(
+                crate::error::MissingWorkspaceCrn,
+            ))?;
             let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::new(workspace_crn, key)?;
             return Ok(Self::AccessKey(strategy));
@@ -128,18 +130,20 @@ impl AutoStrategy {
         }
 
         // 3. No credentials found
-        Err(AuthError::NotAuthenticated)
+        Err(AuthError::NotAuthenticated(crate::error::NotAuthenticated))
     }
 
     #[cfg(target_arch = "wasm32")]
     fn detect_inner(access_key: Option<String>, crn: Option<Crn>) -> Result<Self, AuthError> {
         if let Some(access_key) = access_key {
-            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn)?;
+            let workspace_crn = crn.ok_or(AuthError::MissingWorkspaceCrn(
+                crate::error::MissingWorkspaceCrn,
+            ))?;
             let key: crate::AccessKey = access_key.parse()?;
             let strategy = AccessKeyStrategy::new(workspace_crn, key)?;
             return Ok(Self::AccessKey(strategy));
         }
-        Err(AuthError::NotAuthenticated)
+        Err(AuthError::NotAuthenticated(crate::error::NotAuthenticated))
     }
 }
 
@@ -196,7 +200,7 @@ impl AutoStrategyBuilder {
             Some(crn) => Some(crn),
             None => std::env::var("CS_WORKSPACE_CRN")
                 .ok()
-                .map(|s| s.parse::<Crn>().map_err(AuthError::InvalidCrn))
+                .map(|s| s.parse::<Crn>().map_err(AuthError::from))
                 .transpose()?,
         };
 
@@ -300,7 +304,7 @@ mod tests {
             let result =
                 AutoStrategy::detect_inner(Some("CSAKtestKeyId.testKeySecret".into()), None, None);
 
-            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
+            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn(_))));
         }
 
         #[test]
@@ -329,14 +333,14 @@ mod tests {
 
             let result = AutoStrategy::detect_inner(None, None, Some(store));
 
-            assert!(matches!(result, Err(AuthError::NotAuthenticated)));
+            assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
 
         #[test]
         fn no_credentials_returns_not_authenticated() {
             let result = AutoStrategy::detect_inner(None, None, None);
 
-            assert!(matches!(result, Err(AuthError::NotAuthenticated)));
+            assert!(matches!(result, Err(AuthError::NotAuthenticated(_))));
         }
 
         #[test]
@@ -384,7 +388,7 @@ mod tests {
                 std::env::set_var("CS_WORKSPACE_CRN", val);
             }
 
-            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn)));
+            assert!(matches!(result, Err(AuthError::MissingWorkspaceCrn(_))));
         }
 
         #[test]

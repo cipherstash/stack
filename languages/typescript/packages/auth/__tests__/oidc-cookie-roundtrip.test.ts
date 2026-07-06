@@ -38,21 +38,35 @@ function requestWith(cookie?: string): Request {
   });
 }
 
+/** Unwrap a `createWithStore` Result, failing the test if it returned a failure. */
+function mustCreateWithStore(
+  ...args: Parameters<typeof OidcFederationStrategy.createWithStore>
+): InstanceType<typeof OidcFederationStrategy> {
+  const cr = OidcFederationStrategy.createWithStore(...args);
+  if (cr.failure) {
+    expect.unreachable(`createWithStore failed: ${cr.failure.type}`);
+  }
+  return cr.data;
+}
+
 describe("OidcFederationStrategy + cookieStore round-trip", () => {
   it("writes the federated CTS token to a Set-Cookie header", async () => {
     server.mockAuthorizeEndpoint();
     const responseHeaders = new Headers();
     const store = cookieStore({ request: requestWith(), responseHeaders });
 
-    const strategy = OidcFederationStrategy.createWithStore(
+    const strategy = mustCreateWithStore(
       WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       store.load,
       store.save,
     );
-    const result = await strategy.getToken();
+    const r = await strategy.getToken();
+    if (r.failure) {
+      expect.unreachable(`getToken failed: ${r.failure.type}`);
+    }
 
-    expect(result.workspaceId).toBe(WORKSPACE_ID);
+    expect(r.data.workspaceId).toBe(WORKSPACE_ID);
     const setCookie = responseHeaders.get("set-cookie");
     expect(setCookie).toBeTruthy();
     expect(setCookie).toMatch(/^cs_token=/);
@@ -66,7 +80,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       request: requestWith(),
       responseHeaders: firstHeaders,
     });
-    const first = OidcFederationStrategy.createWithStore(
+    const first = mustCreateWithStore(
       WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       firstStore.load,
@@ -83,15 +97,18 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       request: requestWith(cookie),
       responseHeaders: new Headers(),
     });
-    const second = OidcFederationStrategy.createWithStore(
+    const second = mustCreateWithStore(
       WORKSPACE_CRN,
       () => Promise.reject(new Error("getJwt must not be called")),
       secondStore.load,
       secondStore.save,
     );
 
-    const result = await second.getToken();
-    expect(result.workspaceId).toBe(WORKSPACE_ID);
+    const r = await second.getToken();
+    if (r.failure) {
+      expect.unreachable(`getToken failed: ${r.failure.type}`);
+    }
+    expect(r.data.workspaceId).toBe(WORKSPACE_ID);
   });
 
   it("re-federates when the cookie holds an expired token", async () => {
@@ -102,7 +119,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       request: requestWith(),
       responseHeaders: firstHeaders,
     });
-    const first = OidcFederationStrategy.createWithStore(
+    const first = mustCreateWithStore(
       WORKSPACE_CRN,
       () => Promise.resolve("header.payload.signature"),
       firstStore.load,
@@ -120,7 +137,7 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       request: requestWith(cookie),
       responseHeaders: new Headers(),
     });
-    const second = OidcFederationStrategy.createWithStore(
+    const second = mustCreateWithStore(
       WORKSPACE_CRN,
       () => {
         getJwtCalls += 1;
@@ -130,8 +147,11 @@ describe("OidcFederationStrategy + cookieStore round-trip", () => {
       secondStore.save,
     );
 
-    const result = await second.getToken();
-    expect(result.workspaceId).toBe(WORKSPACE_ID);
+    const r = await second.getToken();
+    if (r.failure) {
+      expect.unreachable(`getToken failed: ${r.failure.type}`);
+    }
+    expect(r.data.workspaceId).toBe(WORKSPACE_ID);
     expect(getJwtCalls).toBe(1);
   });
 });

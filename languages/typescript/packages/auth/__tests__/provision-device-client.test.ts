@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import type { AuthError } from "../index";
 import { MockCtsServer } from "./helpers/mock-cts-server";
 import { saveTestToken } from "./helpers/test-fixtures";
 
@@ -54,7 +53,10 @@ describe("provision device client (TypeScript / vitest)", () => {
     server.mockCreateClientEndpoint();
     saveTestToken(profileDir, server.baseUrl);
 
-    await bindClientDevice();
+    const r = await bindClientDevice();
+    if (r.failure) {
+      expect.unreachable(`bindClientDevice failed: ${r.failure.type}`);
+    }
 
     const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
@@ -73,7 +75,10 @@ describe("provision device client (TypeScript / vitest)", () => {
     });
     writeFileSync(join(workspaceDir(), "secretkey.json"), existing);
 
-    await bindClientDevice();
+    const r = await bindClientDevice();
+    if (r.failure) {
+      expect.unreachable(`bindClientDevice failed: ${r.failure.type}`);
+    }
 
     const raw = readFileSync(join(workspaceDir(), "secretkey.json"), "utf-8");
     const secretKey = JSON.parse(raw);
@@ -84,32 +89,27 @@ describe("provision device client (TypeScript / vitest)", () => {
     server.mockCreateClientConflict();
     saveTestToken(profileDir, server.baseUrl);
 
-    await bindClientDevice();
+    const r = await bindClientDevice();
+    if (r.failure) {
+      expect.unreachable(`bindClientDevice failed: ${r.failure.type}`);
+    }
 
     expect(existsSync(join(workspaceDir(), "secretkey.json"))).toBe(false);
   });
 
-  it("throws on server error", async () => {
+  it("fails on server error", async () => {
     // No mock endpoint — server will return an error for unmatched route.
     saveTestToken(profileDir, server.baseUrl);
 
-    try {
-      await bindClientDevice();
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(Error);
-    }
+    const r = await bindClientDevice();
+    expect(r.failure).toBeTruthy();
+    expect(r.failure?.error).toBeInstanceOf(Error);
   });
 
-  it("throws STORE_ERROR when auth token is missing", async () => {
+  it("fails with STORE_ERROR when auth token is missing", async () => {
     // No token saved — should fail trying to load auth.json
-    try {
-      await bindClientDevice();
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const authErr = err as AuthError;
-      expect(authErr).toBeInstanceOf(Error);
-      expect(authErr.code).toBe("STORE_ERROR");
-    }
+    const r = await bindClientDevice();
+    expect(r.failure?.error).toBeInstanceOf(Error);
+    expect(r.failure?.type).toBe("STORE_ERROR");
   });
 });

@@ -31,15 +31,43 @@ fn module_init() {
     console_error_panic_hook::set_once();
 }
 
-/// Attach a machine-readable `.code` to a JS error object.
-fn attach_code(js_err: impl Into<JsValue>, code: &str) -> JsValue {
-    let v: JsValue = js_err.into();
-    let _ = js_sys::Reflect::set(&v, &JsValue::from_str("code"), &JsValue::from_str(code));
-    v
-}
-
+/// Build a JS `Error` carrying the structured failure for the `.mjs` shim to
+/// turn into a `Result` `failure`.
+///
+/// The serialized [`AuthError`] (`{ type, message, help?, url?, ...payload }`)
+/// is attached as a branded `__authFailure` property — a plain JS object, via
+/// `serialize_maps_as_objects` — and `.code` is kept on the error for parity
+/// with the previous contract.
 fn to_js_error(err: AuthError) -> JsValue {
-    attach_code(js_sys::Error::new(&err.to_string()), err.error_code())
+    let js_err: JsValue = js_sys::Error::new(&err.to_string()).into();
+
+    let serializer = Serializer::new().serialize_maps_as_objects(true);
+    // Always attach the `__authFailure` brand. If full serialization ever fails,
+    // fall back to a minimal `{ type, message }` object so the shim still sees a
+    // domain failure and returns `{ failure }` rather than re-throwing it as a
+    // panic — mirrors the napi seam's `unwrap_or_else` fallback in node/src/lib.rs.
+    let details = err.serialize(&serializer).unwrap_or_else(|_| {
+        let fallback = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &fallback,
+            &JsValue::from_str("type"),
+            &JsValue::from_str(err.error_code()),
+        );
+        let _ = js_sys::Reflect::set(
+            &fallback,
+            &JsValue::from_str("message"),
+            &JsValue::from_str(&err.to_string()),
+        );
+        fallback.into()
+    });
+    let _ = js_sys::Reflect::set(&js_err, &JsValue::from_str("__authFailure"), &details);
+    let _ = js_sys::Reflect::set(
+        &js_err,
+        &JsValue::from_str("code"),
+        &JsValue::from_str(err.error_code()),
+    );
+
+    js_err
 }
 
 #[derive(Serialize)]
@@ -184,22 +212,27 @@ impl OidcProvider for JsOidcProvider {
     async fn fetch(&self) -> Result<SecretToken, AuthError> {
         let promise = self.get_jwt.call0(&JsValue::NULL).map_err(|err| {
             warn_callback("getJwt", "synchronous throw", &err);
-            AuthError::Server(format!("getJwt callback threw: {}", js_error_detail(&err)))
+            AuthError::Server(stack_auth::ServerError(format!(
+                "getJwt callback threw: {}",
+                js_error_detail(&err)
+            )))
         })?;
         let result = JsFuture::from(js_sys::Promise::from(promise))
             .await
             .map_err(|err| {
                 warn_callback("getJwt", "promise rejection", &err);
-                AuthError::Server(format!(
+                AuthError::Server(stack_auth::ServerError(format!(
                     "getJwt callback rejected: {}",
                     js_error_detail(&err)
-                ))
+                )))
             })?;
         // `SecretToken` owns the JWT string and zeroes its heap buffer on drop
         // (it's `ZeroizeOnDrop`) — it carries the bearer credential between the
         // JS boundary and the federation HTTP request.
         let jwt = result.as_string().ok_or_else(|| {
-            AuthError::Server("getJwt callback did not return a string".to_string())
+            AuthError::Server(stack_auth::ServerError(
+                "getJwt callback did not return a string".to_string(),
+            ))
         })?;
         Ok(SecretToken::new(jwt))
     }
@@ -211,7 +244,7 @@ impl OidcProvider for JsOidcProvider {
 fn parse_workspace_crn(workspace_crn: &str) -> Result<cts_common::Crn, JsValue> {
     workspace_crn
         .parse()
-        .map_err(|e| to_js_error(AuthError::InvalidCrn(e)))
+        .map_err(|e| to_js_error(AuthError::from(e)))
 }
 
 enum AccessKeyStrategyInner {
@@ -459,9 +492,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn to_js_error_attaches_code_property() {
-        let err = to_js_error(AuthError::AccessDenied);
+        let err = to_js_error(AuthError::AccessDenied(stack_auth::AccessDenied));
         assert_eq!(error_code_of(&err), "ACCESS_DENIED");
-        let err = to_js_error(AuthError::Server("boom".into()));
+        let err = to_js_error(AuthError::Server(stack_auth::ServerError("boom".into())));
         assert_eq!(error_code_of(&err), "SERVER_ERROR");
     }
 
@@ -474,11 +507,58 @@ mod tests {
     /// target.
     #[wasm_bindgen_test]
     fn workspace_mismatch_maps_to_workspace_mismatch_code() {
-        let err = to_js_error(AuthError::WorkspaceMismatch {
-            expected_workspace: "ZVATKW3VHMFG27DY".parse().unwrap(),
-            token_workspace: "AAAAAAAAAAAAAAAA".parse().unwrap(),
-        });
+        let err = to_js_error(AuthError::WorkspaceMismatch(
+            stack_auth::WorkspaceMismatch {
+                expected_workspace: "ZVATKW3VHMFG27DY".parse().unwrap(),
+                token_workspace: "AAAAAAAAAAAAAAAA".parse().unwrap(),
+            },
+        ));
         assert_eq!(error_code_of(&err), "WORKSPACE_MISMATCH");
+    }
+
+    fn auth_failure_of(err: &JsValue) -> JsValue {
+        js_sys::Reflect::get(err, &JsValue::from_str("__authFailure"))
+            .expect("error should carry the __authFailure brand")
+    }
+
+    fn field(obj: &JsValue, key: &str) -> Option<String> {
+        js_sys::Reflect::get(obj, &JsValue::from_str(key))
+            .ok()
+            .and_then(|v| v.as_string())
+    }
+
+    /// The `__authFailure` object is the only thing `wasm-inline.mjs`'s
+    /// `toFailure` reads to build a `Result` failure — `.code` above is just
+    /// legacy parity. Pin the full serialized envelope (type + structured
+    /// payload + help + message) so dropping the attachment, or the serializer
+    /// losing a field, fails here rather than silently breaking the whole
+    /// wasm Result path.
+    #[wasm_bindgen_test]
+    fn to_js_error_attaches_auth_failure_object_with_payload_and_help() {
+        let err = to_js_error(AuthError::WorkspaceMismatch(
+            stack_auth::WorkspaceMismatch {
+                expected_workspace: "ZVATKW3VHMFG27DY".parse().unwrap(),
+                token_workspace: "AAAAAAAAAAAAAAAA".parse().unwrap(),
+            },
+        ));
+        let details = auth_failure_of(&err);
+        assert_eq!(
+            field(&details, "type").as_deref(),
+            Some("WORKSPACE_MISMATCH")
+        );
+        assert_eq!(
+            field(&details, "expected").as_deref(),
+            Some("ZVATKW3VHMFG27DY")
+        );
+        assert_eq!(
+            field(&details, "actual").as_deref(),
+            Some("AAAAAAAAAAAAAAAA")
+        );
+        assert!(
+            field(&details, "help").is_some(),
+            "help must ride along in __authFailure"
+        );
+        assert!(field(&details, "message").is_some());
     }
 
     #[wasm_bindgen_test]

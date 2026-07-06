@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import type { DeviceCodeResult, AuthResult, AuthError } from "../index";
+import type { DeviceCodeResult } from "../index";
 import { MockCtsServer } from "./helpers/mock-cts-server";
 
 const { beginDeviceCodeFlow } =
@@ -20,7 +20,11 @@ async function startServer(): Promise<MockCtsServer> {
 // The production `beginDeviceCodeFlow` resolves its auth host from CS_CTS_HOST
 // (set in `beforeEach` below), so no test-only base-URL override is needed.
 async function beginFlow(): Promise<DeviceCodeResult> {
-  return beginDeviceCodeFlow("ap-southeast-2.aws", "test-client");
+  const r = await beginDeviceCodeFlow("ap-southeast-2.aws", "test-client");
+  if (r.failure) {
+    expect.unreachable(`beginDeviceCodeFlow failed: ${r.failure.type}`);
+  }
+  return r.data;
 }
 
 // ---------------------------------------------------------------------------
@@ -30,15 +34,10 @@ async function beginFlow(): Promise<DeviceCodeResult> {
 describe("device code flow (TypeScript / vitest)", () => {
   // ---------- Error enrichment (no server needed) ----------
 
-  it("attaches .code for INVALID_REGION", async () => {
-    try {
-      await beginDeviceCodeFlow("not-a-region", "test-client");
-      expect.unreachable("should have thrown");
-    } catch (err) {
-      const authErr = err as AuthError;
-      expect(authErr).toBeInstanceOf(Error);
-      expect(authErr.code).toBe("INVALID_REGION");
-    }
+  it("attaches .type for INVALID_REGION", async () => {
+    const r = await beginDeviceCodeFlow("not-a-region", "test-client");
+    expect(r.failure?.error).toBeInstanceOf(Error);
+    expect(r.failure?.type).toBe("INVALID_REGION");
   });
 
   // ---------- Tests that need the mock server ----------
@@ -75,56 +74,50 @@ describe("device code flow (TypeScript / vitest)", () => {
     it("pollForToken resolves with auth metadata on success", async () => {
       server.mockTokenEndpoint();
       const result = await beginFlow();
-      const auth: AuthResult = await result.pollForToken();
+      const pr = await result.pollForToken();
+      if (pr.failure) {
+        expect.unreachable(`pollForToken failed: ${pr.failure.type}`);
+      }
+      const auth = pr.data;
 
       expect(auth.expiresAt).toBeGreaterThan(0);
       expect(auth.expiresIn).toBeGreaterThanOrEqual(3598);
       expect(auth.expiresIn).toBeLessThanOrEqual(3600);
     });
 
-    it("pollForToken rejects on second call (consumed handle)", async () => {
+    it("pollForToken fails on second call (consumed handle)", async () => {
       server.mockTokenEndpoint();
       const result = await beginFlow();
 
       // First call succeeds — consumes the handle
-      await result.pollForToken();
-
-      // Second call should fail
-      try {
-        await result.pollForToken();
-        expect.unreachable("should have thrown");
-      } catch (err) {
-        expect(err).toBeInstanceOf(Error);
-        expect((err as Error).message).toMatch(/already been consumed/);
+      const first = await result.pollForToken();
+      if (first.failure) {
+        expect.unreachable(`first pollForToken failed: ${first.failure.type}`);
       }
+
+      // Second call should surface a failure
+      const second = await result.pollForToken();
+      expect(second.failure?.error).toBeInstanceOf(Error);
+      expect(second.failure?.type).toBe("ALREADY_CONSUMED");
+      expect(second.failure?.error.message).toMatch(/already consumed/i);
     });
 
-    it("pollForToken rejects with enriched ACCESS_DENIED", async () => {
+    it("pollForToken fails with enriched ACCESS_DENIED", async () => {
       server.mockTokenEndpointError("access_denied");
       const result = await beginFlow();
 
-      try {
-        await result.pollForToken();
-        expect.unreachable("should have thrown");
-      } catch (err) {
-        const authErr = err as AuthError;
-        expect(authErr).toBeInstanceOf(Error);
-        expect(authErr.code).toBe("ACCESS_DENIED");
-      }
+      const pr = await result.pollForToken();
+      expect(pr.failure?.error).toBeInstanceOf(Error);
+      expect(pr.failure?.type).toBe("ACCESS_DENIED");
     });
 
-    it("pollForToken rejects with enriched EXPIRED_TOKEN", async () => {
+    it("pollForToken fails with enriched EXPIRED_TOKEN", async () => {
       server.mockTokenEndpointError("expired_token");
       const result = await beginFlow();
 
-      try {
-        await result.pollForToken();
-        expect.unreachable("should have thrown");
-      } catch (err) {
-        const authErr = err as AuthError;
-        expect(authErr).toBeInstanceOf(Error);
-        expect(authErr.code).toBe("EXPIRED_TOKEN");
-      }
+      const pr = await result.pollForToken();
+      expect(pr.failure?.error).toBeInstanceOf(Error);
+      expect(pr.failure?.type).toBe("EXPIRED_TOKEN");
     });
   });
 });

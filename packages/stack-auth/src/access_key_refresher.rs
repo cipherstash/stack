@@ -63,7 +63,9 @@ impl Refresher for AccessKeyRefresher {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             tracing::debug!(%status, %body, "access key auth failed");
-            return Err(AuthError::Server(format!("{status}: {body}")));
+            return Err(AuthError::Server(crate::error::ServerError(format!(
+                "{status}: {body}"
+            ))));
         }
 
         let auth_resp: AuthoriseResponse = resp.json().await?;
