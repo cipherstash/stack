@@ -57,6 +57,7 @@ Pair the `wasm-inline` entry with the `cookies` helper to back the strategy with
 // supabase/functions/get-token/index.ts
 import { AccessKeyStrategy } from "@cipherstash/auth/wasm-inline";
 import { cookieStore } from "@cipherstash/auth/cookies";
+import { Encryption } from "@cipherstash/stack";
 
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
@@ -70,18 +71,15 @@ Deno.serve(async (req) => {
     return Response.json({ error: created.failure.type }, { status: 500, headers: responseHeaders });
   }
 
-  const result = await created.data.getToken();
-  if (result.failure) {
-    return Response.json({ error: result.failure.type }, { status: 500, headers: responseHeaders });
-  }
-  const { token, workspaceId, services } = result.data;
-  // `token` is the bearer credential; pass as `Authorization: Bearer ${token}`
-  // to ZeroKMS at `services.zerokms`.
+  // Hand the strategy to a CipherStash SDK — e.g. `Encryption` from
+  // `@cipherstash/stack` — which acquires and refreshes CTS tokens internally,
+  // so your code never handles a raw bearer token. You don't call `getToken()`
+  // yourself. (Need the token itself? See "Working with tokens directly" at the
+  // end of this README.)
+  const encryption = new Encryption({ authStrategy: created.data });
 
-  return new Response(
-    JSON.stringify({ workspaceId, services }),
-    { headers: responseHeaders },
-  );
+  // ... encrypt / decrypt with `encryption` ...
+  return Response.json({ ok: true }, { headers: responseHeaders });
 });
 ```
 
@@ -90,15 +88,15 @@ Deno.serve(async (req) => {
 ```jsonc
 {
   "imports": {
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^1/wasm-inline",
-    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^1/cookies"
+    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@^0.41/wasm-inline",
+    "@cipherstash/auth/cookies":     "npm:@cipherstash/auth@^0.41/cookies"
   }
 }
 ```
 
 Nothing extra in `supabase/config.toml` — no `static_files`, no asset copying, no bundler plugins. The `wasm-inline` entry embeds the wasm module as base64 inside the JS shim, so it loads with zero runtime config.
 
-`getToken()` resolves to a `Result`; on success `result.data` is `{ token, subject, workspaceId, issuer, services }` where `services` is a plain object (e.g. `{ zerokms: "https://..." }`). See [Error handling](#error-handling).
+In the recommended flow you never call `getToken()` — the SDK does, internally. If you have a lower-level need for the raw token, see [Working with tokens directly](#working-with-tokens-directly-use-with-care). Factory and token failures are handled the same way; see [Error handling](#error-handling).
 
 For Cloudflare Workers the shape is identical; env access becomes `env.CS_CLIENT_ACCESS_KEY` instead of `Deno.env.get(...)`.
 
@@ -109,6 +107,7 @@ When the end user is already signed in with a third-party OIDC provider (Clerk, 
 ```ts
 import { OidcFederationStrategy } from "@cipherstash/auth/wasm-inline";
 import { cookieStore } from "@cipherstash/auth/cookies";
+import { Encryption } from "@cipherstash/stack";
 
 Deno.serve(async (req) => {
   const responseHeaders = new Headers({ "content-type": "application/json" });
@@ -123,12 +122,12 @@ Deno.serve(async (req) => {
     return Response.json({ error: created.failure.type }, { status: 500, headers: responseHeaders });
   }
 
-  const result = await created.data.getToken();
-  if (result.failure) {
-    return Response.json({ error: result.failure.type }, { status: 500, headers: responseHeaders });
-  }
-  const { token, services } = result.data;
-  return new Response(JSON.stringify({ services }), { headers: responseHeaders });
+  // As above, pass the strategy to a CipherStash SDK rather than calling
+  // `getToken()` yourself — the SDK owns token acquisition and refresh.
+  const encryption = new Encryption({ authStrategy: created.data });
+
+  // ... encrypt / decrypt with `encryption` ...
+  return Response.json({ ok: true }, { headers: responseHeaders });
 });
 ```
 
@@ -268,12 +267,38 @@ const strategy = created.data;
 
 Failure `type`s: `INVALID_ACCESS_KEY`, `ACCESS_DENIED`, `EXPIRED_TOKEN`, `INVALID_GRANT`, `INVALID_CLIENT`, `INVALID_REGION`, `INVALID_URL`, `INVALID_TOKEN`, `SERVER_ERROR`, `REQUEST_ERROR`, `NOT_AUTHENTICATED`, `MISSING_WORKSPACE_CRN`, `INVALID_CRN`, `WORKSPACE_MISMATCH`, `INVALID_WORKSPACE_ID`, `ALREADY_CONSUMED`, `INTERNAL_ERROR`, `STORE_ERROR`. Each `failure` also carries the live `error: Error` and optional `help`/`url`. Only a genuine internal panic still throws.
 
-> **Migrating from the throw-based API (pre-1.0):** replace
+> **Migrating from the throw-based API (0.40.x and earlier):** replace
 > `try { const t = await s.getToken(); … } catch (err) { err.code }`
 > with `const r = await s.getToken(); if (r.failure) { r.failure.type } else { r.data }`.
 > Factories (`AccessKeyStrategy.create`, `AutoStrategy.detect`,
 > `OidcFederationStrategy.create`, `DeviceSessionStrategy.fromProfile`) now
 > return a `Result` too, so unwrap `.data` before use.
+
+## Working with tokens directly (use with care)
+
+The recommended integration is to hand your strategy to a CipherStash SDK — e.g.
+`Encryption` from `@cipherstash/stack`, as shown above. The SDK calls
+`getToken()` internally and manages refresh, so your code never handles a raw
+credential.
+
+If you have a lower-level need, `getToken()` returns the bearer token directly.
+Treat it as a secret: never log it, return it to a browser, or persist it
+outside a secure store.
+
+```ts
+const result = await strategy.getToken();
+if (result.failure) {
+  console.error(result.failure.type);
+  return;
+}
+const { token, workspaceId, services } = result.data;
+// `token` is the bearer credential — send it as `Authorization: Bearer ${token}`
+// to a CTS service (e.g. ZeroKMS at `services.zerokms`).
+```
+
+`result.data` is `{ token, subject, workspaceId, issuer, services }`, where
+`services` is a plain object (e.g. `{ zerokms: "https://..." }`). See
+[Error handling](#error-handling) for the failure arm.
 
 ## License
 
