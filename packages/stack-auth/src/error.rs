@@ -320,6 +320,36 @@ pub enum AuthError {
 }
 
 impl AuthError {
+    /// The complete set of codes [`AuthError::error_code`] can return — the
+    /// stable, machine-readable contract surfaced across FFI (JS `Error.code`,
+    /// Node-API codes, the `index.d.ts` / `wasm-inline.d.ts` `AuthFailure`
+    /// unions). The bindings derive their expected union from this constant
+    /// rather than re-scraping the per-error [`AuthErrorKind::error_code`] impls,
+    /// and `auth_error_code_is_stable_for_every_variant` pins that it stays in
+    /// lockstep with what `error_code` actually returns.
+    pub const ERROR_CODES: &'static [&'static str] = &[
+        "REQUEST_ERROR",
+        "ACCESS_DENIED",
+        "INVALID_GRANT",
+        "INVALID_CLIENT",
+        "INVALID_URL",
+        "INVALID_REGION",
+        "INVALID_CRN",
+        "WORKSPACE_MISMATCH",
+        "INVALID_WORKSPACE_ID",
+        "MISSING_WORKSPACE_CRN",
+        "NOT_AUTHENTICATED",
+        "EXPIRED_TOKEN",
+        "INVALID_ACCESS_KEY",
+        "INVALID_TOKEN",
+        "SERVER_ERROR",
+        "ALREADY_CONSUMED",
+        "INTERNAL_ERROR",
+        // `Store` (and its code) only exists off-wasm — see the enum above.
+        #[cfg(not(target_arch = "wasm32"))]
+        "STORE_ERROR",
+    ];
+
     /// Dispatch to the wrapped concrete error as a trait object.
     fn kind(&self) -> &dyn AuthErrorKind {
         match self {
@@ -347,7 +377,8 @@ impl AuthError {
 
     /// Stable machine-readable identifier for surfacing across FFI boundaries
     /// (e.g. JS `Error.code`, Node-API error codes). Delegates to the wrapped
-    /// error's [`AuthErrorKind::error_code`].
+    /// error's [`AuthErrorKind::error_code`]; every value it can return is
+    /// listed in [`AuthError::ERROR_CODES`].
     pub fn error_code(&self) -> &'static str {
         self.kind().error_code()
     }

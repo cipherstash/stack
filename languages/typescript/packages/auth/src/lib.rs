@@ -589,38 +589,19 @@ mod tests {
 
     /// The hand-written `AuthFailure` discriminated unions in `index.d.ts` and
     /// `wasm-inline.d.ts` must list exactly the codes the Rust `AuthError` can
-    /// emit. The expected set is *derived* from the per-error
-    /// `AuthErrorKind::error_code` impls in the core crate's `error.rs` — not a
-    /// hand-kept mirror — so there's no parallel list to drift. Each impl
-    /// returns a bare `"CODE"` literal on its own line; add an `AuthError`
-    /// variant (which must impl `AuthErrorKind`) and forget to update the TS
-    /// unions, and this fails.
+    /// emit. The expected set is the exported [`AuthError::ERROR_CODES`]
+    /// constant — a real symbol the compiler resolves, not a scrape of the core
+    /// crate's source text. A core-crate test pins that constant against the
+    /// per-error `AuthErrorKind::error_code` impls, so adding an `AuthError`
+    /// variant forces a new code there, which this test then requires the TS
+    /// unions to include; forget to update them and this fails.
     #[test]
     fn ts_auth_failure_union_matches_error_codes() {
         use std::collections::BTreeSet;
 
-        // The codes returned by each `AuthErrorKind::error_code` impl: bare
-        // SCREAMING_CASE string literals on their own line in `error.rs`. The
-        // node crate depends on stack-auth, so this resolves to the core crate.
-        const ERROR_SRC: &str = include_str!("../../src/error.rs");
-        let is_code =
-            |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_uppercase() || b == b'_');
-        let expected: BTreeSet<&str> = ERROR_SRC
-            .lines()
-            .filter_map(|line| {
-                let t = line.trim();
-                t.strip_prefix('"')
-                    .and_then(|r| r.strip_suffix('"'))
-                    .filter(|code| is_code(code))
-            })
-            .collect();
-
-        // A mis-scoped parse (empty/garbage) should fail loudly here, not pass.
-        assert!(
-            expected.len() >= 15,
-            "parsed only {} error codes from error.rs — the source parse likely broke",
-            expected.len(),
-        );
+        // The codes the Rust `AuthError` can emit — the canonical set exported
+        // by stack-auth, not a scrape of `error.rs`.
+        let expected: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
 
         // Each TS union member is `... { type: "CODE" ... }`; pull every literal.
         let codes_in = |dts: &str| -> BTreeSet<String> {
@@ -643,7 +624,7 @@ mod tests {
             let expected: BTreeSet<String> = expected.iter().map(|s| s.to_string()).collect();
             assert_eq!(
                 union, expected,
-                "AuthFailure union in {name} drifted from AuthError error codes",
+                "AuthFailure union in {name} drifted from AuthError::ERROR_CODES",
             );
         }
     }
