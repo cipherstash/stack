@@ -44,7 +44,7 @@ jobs:
       # `--ignore-scripts` and no workspace build keep this off the napi
       # toolchain entirely — versioning only reads/writes package.json + md.
       - name: Install changesets
-        run: npm install --no-workspaces --ignore-scripts
+        run: npm ci --no-workspaces --ignore-scripts
 
       - name: Create Version Packages PR
         uses: changesets/action@v1

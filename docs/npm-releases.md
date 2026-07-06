@@ -10,7 +10,7 @@
 
 Releasing the `stack-auth` **crate** (release-plz → crates.io) is independent of
 publishing the `@cipherstash/auth` **npm package** that binds to it. Hand-editing
-the npm `package.json` version caused real drift (a phantom `0.39.0` publish, a
+the npm `package.json` version caused real drift (an unintended `0.39.0` publish, a
 `0.40.0`/`0.38.0` mismatch, a reconstructed changelog — see PR #2057).
 
 We do **not** want lock-step version numbers. We want a reliable, low-ceremony
@@ -50,8 +50,9 @@ registry** and never read or write each other's files:
 - **Not managed** (build artifacts / private): the `npm/*` platform sub-packages
   (`@cipherstash/auth-darwin-x64`, …) — stamped from the main version at publish
   time (`publish-auth-npm.yml:198-221`); the `0.0.0-pre` wasm package; and
-  non-product packages (`load-tests`, health-checks). Excluded both by the
-  `workspaces` globs and the `ignore` list in `.changeset/config.json`.
+  non-product packages (`load-tests`, health-checks). Excluded purely by the
+  `workspaces` globs in the root `package.json` — the `.changeset/config.json`
+  `ignore` list is empty (see "Validation log" for why it was dropped).
 
 ## What the spike validated
 
@@ -85,7 +86,7 @@ the effect on the existing `npm install` steps was checked empirically:
   optional deps per runner.
 
 The release workflow installs only the changesets CLI
-(`npm install --no-workspaces --ignore-scripts`), so the versioning job never
+(`npm ci --no-workspaces --ignore-scripts`), so the versioning job never
 touches the napi toolchain.
 
 ### Still deferred (follow-ups, not blocking this PR)
