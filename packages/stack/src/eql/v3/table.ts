@@ -211,11 +211,14 @@ export type V3EncryptedModel<Table extends AnyV3Table, T> = {
     : T[K]
 }
 
-/** The decrypted result model: schema columns become their plaintext type, others pass through. */
-export type V3DecryptedModel<Table extends AnyV3Table, T> = {
-  [K in keyof T]: K extends keyof InferPlaintext<Table>
-    ? null extends T[K]
-      ? InferPlaintext<Table>[K] | null
-      : InferPlaintext<Table>[K]
-    : T[K]
-}
+/**
+ * The decrypted result model: schema columns become their plaintext type, others
+ * pass through. Structurally identical to {@link V3ModelInput} — decrypt yields
+ * the same plaintext shape encrypt accepts — so it is aliased rather than
+ * re-declared to keep the input and output shapes from silently drifting when
+ * one copy is edited. The distinct name is kept for call-site readability.
+ */
+export type V3DecryptedModel<Table extends AnyV3Table, T> = V3ModelInput<
+  Table,
+  T
+>
