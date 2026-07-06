@@ -156,13 +156,18 @@ impl AuthErrorKind for WorkspaceMismatch {
         codes::WORKSPACE_MISMATCH
     }
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
-        match serde_json::json!({
-            "expected": self.expected_workspace.to_string(),
-            "actual": self.token_workspace.to_string(),
-        }) {
-            serde_json::Value::Object(map) => map,
-            _ => serde_json::Map::new(),
-        }
+        [
+            (
+                "expected".to_string(),
+                self.expected_workspace.to_string().into(),
+            ),
+            (
+                "actual".to_string(),
+                self.token_workspace.to_string().into(),
+            ),
+        ]
+        .into_iter()
+        .collect()
     }
 }
 
@@ -490,6 +495,25 @@ impl From<access_key::InvalidAccessKey> for AuthError {
 impl From<stack_profile::ProfileError> for AuthError {
     fn from(e: stack_profile::ProfileError) -> Self {
         Self::Store(StoreError(e))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<crate::DeviceClientError> for AuthError {
+    fn from(e: crate::DeviceClientError) -> Self {
+        use crate::DeviceClientError as E;
+        match e {
+            // Every non-`Auth` variant has a canonical `AuthError` equivalent —
+            // route through it so `bind_client_device` failures carry the same
+            // code/help/payload as every other path. `Auth` already is one.
+            E::Profile(e) => e.into(),
+            E::Auth(e) => e,
+            E::Request(e) => e.into(),
+            E::InvalidUrl(e) => e.into(),
+            E::Server { status, body } => {
+                Self::Server(ServerError(format!("ZeroKMS returned {status}: {body}")))
+            }
+        }
     }
 }
 

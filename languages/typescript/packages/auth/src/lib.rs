@@ -522,31 +522,11 @@ impl DeviceCodeResult {
 // Exported functions
 // ---------------------------------------------------------------------------
 
-fn device_client_error_code(err: &DeviceClientError) -> &'static str {
-    match err {
-        DeviceClientError::Profile(_) => "STORE_ERROR",
-        DeviceClientError::Auth(auth_err) => auth_err.error_code(),
-        DeviceClientError::Request(_) => "REQUEST_ERROR",
-        DeviceClientError::Server { .. } => "SERVER_ERROR",
-        DeviceClientError::InvalidUrl(_) => "INVALID_URL",
-    }
-}
-
 fn device_client_to_napi_error(err: DeviceClientError) -> napi::Error {
-    // When it wraps an `AuthError`, defer to the canonical serialization so
-    // help/payload are preserved; otherwise synthesize a `{ type, message }`
-    // failure envelope behind the same sentinel.
-    match err {
-        DeviceClientError::Auth(auth_err) => to_napi_error(auth_err),
-        other => {
-            let json = serde_json::json!({
-                "type": device_client_error_code(&other),
-                "message": other.to_string(),
-            })
-            .to_string();
-            napi::Error::new(Status::GenericFailure, format!("{FAILURE_SENTINEL}{json}"))
-        }
-    }
+    // Route through the canonical `AuthError` mapping (`From<DeviceClientError>`
+    // in stack-auth) so the code/help/payload envelope comes from the one
+    // `to_napi_error` path rather than a parallel code table and hand-built blob.
+    to_napi_error(err.into())
 }
 
 /// Provision a device client in ZeroKMS after login.
@@ -864,11 +844,12 @@ mod tests {
             );
         }
 
-        // `device_client_to_napi_error` splits on the variant: `Auth` must
-        // defer to the canonical `to_napi_error` serialization (help +
-        // structured payload preserved), while non-Auth variants synthesize
-        // the flat `{ type, message }` shape. Routing `Auth` through the
-        // synth arm would silently drop help/payload.
+        // `device_client_to_napi_error` routes every `DeviceClientError` through
+        // its canonical `AuthError` mapping. A help-carrying error (here an
+        // `Auth`-wrapped `WorkspaceMismatch`) must keep its help + structured
+        // payload; a help-less one (`Profile` -> `Store`) yields just
+        // type + message. A regression that dropped the canonical routing would
+        // lose the help/payload here.
         #[test]
         fn device_client_auth_arm_preserves_full_envelope() {
             let ws = |s: &str| s.parse::<cts_common::WorkspaceId>().unwrap();
@@ -887,7 +868,9 @@ mod tests {
                 "Auth arm must carry help through the canonical envelope, got: {json}"
             );
 
-            // Non-Auth variant still yields the flat synth shape.
+            // Non-Auth variant routes through `From<DeviceClientError>` to the
+            // canonical `Store` error: same `STORE_ERROR` code, and no help
+            // (StoreError carries none).
             let err = device_client_to_napi_error(DeviceClientError::Profile(
                 stack_profile::ProfileError::HomeDirNotFound,
             ));
