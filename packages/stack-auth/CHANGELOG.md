@@ -1,5 +1,60 @@
 
 
+### Documentation
+
+- document the typed-error / diagnostic-help contract
+- recommend passing the strategy to an SDK, not getToken
+- fix cookies.d.ts example for the Result API
+- fix wasm-inline.mjs JSDoc for the Result API
+- note the instanceof break in the changelog
+
+### Features
+
+- add actionable miette help to AuthError variants
+- serialize AuthError across the FFI boundary
+- return a Result instead of throwing
+
+### Fixes
+
+- resolve doc + CRAP CI gates on error.rs
+- wrap napi static factories via facade classes
+- update index.d.ts guard for the Result-typed surface
+- mirror help/url onto failure.error on the wasm seam
+- always brand the JS error with __authFailure
+- guard wasm-inline getToken against a synchronous throw
+- harden failure envelope against parse + key collision
+
+### Miscellaneous
+
+- bump vite in /packages/stack-auth/node
+- make changesets adoption review-ready (CIP-3278)
+- release as 0.41.0, not 1.0.0
+- bundle the LICENSE in the published package
+- drive the 0.41.0 release via changesets
+
+### Refactoring
+
+- hand-written index.d.ts re-exporter, drop apply-dts script
+- derive .d.ts drift set from AuthError::ERROR_CODES
+- decompose AuthError into per-error structs
+- adopt AuthError::ERROR_CODES for the AuthFailure drift guards
+- define AuthError codes as named constants
+- route DeviceClientError through AuthError; tidy payload
+
+### Testing
+
+- port re-lock-window cancellation regression test (CIP-3159)
+- derive drift-test expected set from error_code() source
+- cover all #[diagnostic(help)] variants, not just one
+- behavioural guards for the index.d.ts split, not source-text checks
+- close coverage gaps in the index.d.ts split guards
+- migrate tests, examples and docs to Result; v1.0.0
+- close FFI-envelope coverage gaps from PR review
+- guard the __CS_FAIL__ sentinel; clean up temp dir
+- cover From<DeviceClientError> for the CRAP gate
+- cover WORKSPACE_MISMATCH payload end-to-end
+
+
 
 ### CI
 
