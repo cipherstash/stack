@@ -84,6 +84,18 @@ describe('CJS consumers can require the built bundles', () => {
     expect(cjsEntries).toContain('dist/index.cjs')
     expect(cjsEntries).toContain('dist/encryption/index.cjs')
     expect(cjsEntries).toContain('dist/eql/v3/index.cjs')
+    expect(cjsEntries).toContain('dist/eql/v3/prisma/index.cjs')
+  })
+
+  it('exposes the prisma integration from the CJS bundle', () => {
+    const prismaBundle = path.join(distDir, 'eql', 'v3', 'prisma', 'index.cjs')
+    const script = [
+      `const prisma = require(${JSON.stringify(prismaBundle)})`,
+      `if (typeof prisma.encryptedPrisma !== 'function') { throw new Error('missing prisma CJS export: encryptedPrisma') }`,
+      `if (typeof prisma.createEncryptedWhere !== 'function') { throw new Error('missing prisma CJS export: createEncryptedWhere') }`,
+      `if (typeof prisma.PrismaEncryptedColumnError !== 'function') { throw new Error('missing prisma CJS export: PrismaEncryptedColumnError') }`,
+    ].join('\n')
+    execFileSync(process.execPath, ['-e', script])
   })
 
   it('exposes the v3 `types` namespace + table API from the CJS bundle', () => {

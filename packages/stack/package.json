@@ -135,6 +135,16 @@
 				"default": "./dist/eql/v3/index.cjs"
 			}
 		},
+		"./eql/v3/prisma": {
+			"import": {
+				"types": "./dist/eql/v3/prisma/index.d.ts",
+				"default": "./dist/eql/v3/prisma/index.js"
+			},
+			"require": {
+				"types": "./dist/eql/v3/prisma/index.d.cts",
+				"default": "./dist/eql/v3/prisma/index.cjs"
+			}
+		},
 		"./v3": {
 			"import": {
 				"types": "./dist/encryption/v3.d.ts",
