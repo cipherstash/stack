@@ -2,9 +2,9 @@
 
 > Adopts [changesets](https://github.com/changesets/changesets) for the `@cipherstash`
 > npm products while release-plz keeps owning the Rust crates. Tracking issue:
-> [CIP-3278](https://linear.app/cipherstash/issue/CIP-3278). Scope of the
-> initial PR: **versioning** (the Version Packages PR); publishing stays manual
-> for now (see "Still deferred").
+> [CIP-3278](https://linear.app/cipherstash/issue/CIP-3278). Covers the full
+> loop: **versioning** (the Version Packages PR) **and publishing** (the native
+> matrix workflows, auto-triggered when a version bump lands on `main`).
 
 ## Why
 
@@ -30,18 +30,29 @@ registry** and never read or write each other's files:
 
 ## How a release works
 
-1. **Contributor**: change a JS/TS package, then `npx changeset` (from repo root)
-   → pick package(s) + bump level + summary → commit the generated
-   `.changeset/*.md` with your code. No hand-edited versions or changelogs.
+1. **Contributor**: change a JS/TS package, then `npx changeset` (from repo root,
+   after a root `npm install`) → pick package(s) + bump level + summary → commit
+   the generated `.changeset/*.md` with your code. No hand-edited versions or
+   changelogs.
 2. **On merge to `main`**: `.github/workflows/release-npm.yml` runs the
    `changesets/action`, which opens/updates a **"Version Packages" PR** applying
-   the accumulated bumps to `package.json` + `CHANGELOG.md`.
+   the accumulated bumps to `package.json` + `CHANGELOG.md` (and re-syncs the root
+   `package-lock.json` via the `version-packages` script).
 3. **Cut the release**: merge the Version Packages PR.
-4. **Publish artifacts**: the existing `publish-auth-npm.yml` builds the napi
-   matrix + wasm and publishes to npm, reading the version changesets just wrote
-   (`publish-auth-npm.yml:187` already does `jq -r .version package.json`). The
-   release workflow here deliberately does **not** publish — napi packages need
-   the matrix build the bespoke workflow already owns.
+4. **Publish (automated)**: merging step 3 bumps each product's
+   `node/package.json` on `main`. Each publish workflow
+   (`publish-auth-npm.yml`, `publish-profile-npm.yml`) is **path-filtered on its
+   own `node/package.json`**, so the bump triggers it; a `preflight` job then
+   publishes **only if that version is not already on npm** (so any other push
+   touching `package.json` is a no-op). It builds the napi matrix (+ wasm for
+   auth) and publishes, reading the version changesets just wrote. The release
+   workflow itself deliberately does **not** publish — napi packages need the
+   matrix build the bespoke workflows own.
+
+The seam: `release-npm.yml` versions; the `publish-*-npm.yml` matrix workflows
+publish. The **Version Packages PR merge is the single human gate** — there is no
+separate publish approval, matching `cipherstash/stack` (whose pure-JS packages
+let `changesets/action` publish inline; ours can't because of the native matrix).
 
 ## Scope
 
@@ -89,15 +100,29 @@ The release workflow installs only the changesets CLI
 (`npm ci --no-workspaces --ignore-scripts`), so the versioning job never
 touches the napi toolchain.
 
-### Still deferred (follow-ups, not blocking this PR)
+### Operational notes
 
-- **Publish stays manual.** This PR wires *versioning* (the Version Packages
-  PR). Auto-triggering `publish-auth-npm.yml` on the Version PR merge is a
-  separate change.
+- **"Allow GitHub Actions to create and approve pull requests" must be on.**
+  Without it, `release-npm.yml` runs green but silently opens no Version Packages
+  PR (a 403 the workflow can't self-guard). Repo → Settings → Actions → General.
+- **First `@cipherstash/profile` publish.** Profile and its `@cipherstash/profile-*`
+  platform sub-packages are not yet on npm; the first Version Packages merge that
+  bumps profile creates them. Auth is already published, so its guard skips until
+  the next bump.
 - **CHANGELOG handover.** The first `changeset version` will prepend a
   changesets-formatted section above the existing hand-written history (same
   `## x.y.z` shape), so no migration is required; merging this PR with no
   pending `.changeset/*.md` is a no-op.
+
+### Still deferred (follow-ups, not blocking this PR)
+
+- **npm provenance / OIDC trusted publishing.** The matrix workflows authenticate
+  with `NPM_TOKEN`. Moving to OIDC trusted publishing (as `cipherstash/stack`
+  does) would add provenance attestations; it needs per-package npm config and a
+  GitHub-hosted publish runner.
+- **Optional publish approval gate.** Publishing is gated only by the Version
+  Packages PR review/merge. If a stricter gate is wanted, add a GitHub
+  Environment (e.g. `npm-publish`) with required reviewers to the `publish` jobs.
 
 ## Extending to Python / C# / Ruby (and future stack-encrypt, stack-zerokms)
 

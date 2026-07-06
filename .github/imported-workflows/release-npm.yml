@@ -3,10 +3,14 @@
 # Owns the *versioning* half of npm releases: on push to main, the changesets
 # action opens/updates a "Version Packages" PR that applies accumulated
 # .changeset/*.md entries to package.json + CHANGELOG.md for the @cipherstash
-# npm products. It deliberately does NOT publish — the @cipherstash/auth and
-# @cipherstash/profile packages need a matrix napi/wasm build, so actual
-# publishing stays with the existing publish-auth-npm.yml (triggered manually,
-# or auto-triggered off the Version Packages PR merge in a follow-up).
+# npm products. It deliberately does NOT publish here — the @cipherstash/auth
+# and @cipherstash/profile packages need a matrix napi/wasm build.
+#
+# Publishing is automated but lives in the per-product matrix workflows: merging
+# the Version Packages PR bumps each product's node/package.json on main, which
+# triggers publish-auth-npm.yml / publish-profile-npm.yml (path-filtered on that
+# file, with an npm-version guard so only a genuine bump publishes). That merge
+# is the human gate.
 #
 # This is the seam with release-plz: release-plz owns Cargo.* + crates.io;
 # this owns package.json + npm. They never touch the same files.
@@ -49,9 +53,15 @@ jobs:
       - name: Create Version Packages PR
         uses: changesets/action@v1
         with:
-          # `version` regenerates package.json + CHANGELOG from .changeset/*.md.
-          # No `publish:` on purpose — see header comment.
-          version: npx changeset version
+          # `version-packages` (root package.json) runs `changeset version` to
+          # regenerate package.json + CHANGELOG from .changeset/*.md, then
+          # `npm install --package-lock-only` so the root lockfile's recorded
+          # member versions re-sync in the same commit (otherwise they drift).
+          # Run via `npm run` — not `npx` — so the local `.bin/changeset`
+          # resolves and `&&` executes in a shell.
+          # No `publish:` on purpose — publishing is the matrix workflows' job
+          # (see header comment).
+          version: npm run version-packages
           title: "Release: version @cipherstash npm packages"
           commit: "chore(release): version @cipherstash npm packages"
         env:

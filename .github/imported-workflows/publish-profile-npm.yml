@@ -1,22 +1,25 @@
-name: "Publish @cipherstash/auth to npm"
+name: "Publish @cipherstash/profile to npm"
 
 on:
   # Automated publish, driven by changesets (see docs/npm-releases.md).
-  # Merging the "Version Packages" PR bumps `packages/stack-auth/node/package.json`
-  # on `main`; that push triggers this workflow, and the `preflight` job below
-  # publishes iff the new version is not already on npm (so ordinary pushes that
-  # touch package.json for other reasons are no-ops). The Version Packages PR
-  # review/merge is the human gate — there is no separate approval step, matching
-  # cipherstash/stack.
+  # Merging the "Version Packages" PR bumps
+  # `packages/stack-profile/node/package.json` on `main`; that push triggers this
+  # workflow, and the `preflight` job below publishes iff the new version is not
+  # already on npm (so ordinary pushes that touch package.json for other reasons
+  # are no-ops). The Version Packages PR review/merge is the human gate — there
+  # is no separate approval step, matching cipherstash/stack.
   #
-  # `@cipherstash/auth` is versioned independently of the Rust `stack-auth` crate,
-  # so this must NOT trigger on release-plz's `stack-auth-v*` tags — that would
-  # ship the node package at the Rust crate's version.
+  # `@cipherstash/profile` is versioned independently of the Rust `stack-profile`
+  # crate, so this must NOT trigger on release-plz's `stack-profile-v*` tags.
+  #
+  # Mirrors publish-auth-npm.yml minus the wasm build — stack-profile has no wasm
+  # target — and stamps its platform pins under `optionalDependencies` (auth uses
+  # `peerDependencies` for Deno's strict resolver; profile has no such constraint).
   push:
     branches:
       - main
     paths:
-      - packages/stack-auth/node/package.json
+      - packages/stack-profile/node/package.json
   # Manual runs default to a dry run; flip `dry_run` off to force a real publish
   # (e.g. to re-publish a version the automated path skipped).
   workflow_dispatch:
@@ -36,10 +39,10 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  WORKING_DIR: packages/stack-auth/node
+  WORKING_DIR: packages/stack-profile/node
 
 concurrency:
-  group: publish-auth-npm
+  group: publish-profile-npm
   cancel-in-progress: false
 
 jobs:
@@ -80,13 +83,13 @@ jobs:
           # Idempotency guard (push path only): skip if this exact version is
           # already published. `npm view` exits non-zero / empty when the exact
           # version does not exist.
-          PUBLISHED=$(npm view "@cipherstash/auth@$VERSION" version 2>/dev/null || true)
+          PUBLISHED=$(npm view "@cipherstash/profile@$VERSION" version 2>/dev/null || true)
           if [ "${{ github.event_name }}" = "push" ] && [ "$PUBLISHED" = "$VERSION" ]; then
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::@cipherstash/auth@$VERSION already on npm — nothing to publish."
+            echo "::notice::@cipherstash/profile@$VERSION already on npm — nothing to publish."
           else
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Will $( [ "$DRY_RUN" = "true" ] && echo 'dry-run' || echo 'publish') @cipherstash/auth@$VERSION."
+            echo "::notice::Will $( [ "$DRY_RUN" = "true" ] && echo 'dry-run' || echo 'publish') @cipherstash/profile@$VERSION."
           fi
 
   build:
@@ -149,12 +152,7 @@ jobs:
 
       - name: Build native module
         working-directory: ${{ env.WORKING_DIR }}
-        # `--dts native.d.ts` matches package.json's `build` script: napi writes
-        # its generated typings to `native.d.ts`, leaving the hand-written
-        # `index.d.ts` re-exporter untouched. Without it, napi clobbers
-        # `index.d.ts` in this job's tree. Harmless today (only `*.node` is
-        # uploaded), but a footgun if this job ever packs or uploads dts files.
-        run: npx napi build --platform --release --target ${{ matrix.target }} --strip --dts native.d.ts
+        run: npx napi build --platform --release --target ${{ matrix.target }} --strip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -163,59 +161,9 @@ jobs:
           path: ${{ env.WORKING_DIR }}/*.node
           if-no-files-found: error
 
-  build-wasm:
-    name: Build - wasm32 (bundler target)
-    needs: preflight
-    if: needs.preflight.outputs.should_publish == 'true'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.90.0
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install wasm-pack
-        # The `jetli/wasm-pack-action` GitHub Action is rejected by the
-        # cipherstash org allowlist (unverified creator). Install a pinned
-        # version from the official GitHub release so CI is reproducible and
-        # not exposed to upstream installer-script changes.
-        env:
-          WASM_PACK_VERSION: v0.13.1
-        run: |
-          set -euo pipefail
-          curl -fsSL "https://github.com/rustwasm/wasm-pack/releases/download/${WASM_PACK_VERSION}/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-            -o /tmp/wasm-pack.tar.gz
-          tar -xzf /tmp/wasm-pack.tar.gz -C /tmp
-          sudo install -m 0755 "/tmp/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" /usr/local/bin/wasm-pack
-          wasm-pack --version
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-
-      - name: Build wasm artifact
-        # Single source of truth shared with local `npm run build:wasm`:
-        # wasm-pack → strip wasm-pack metadata → emit inline-bytes shim.
-        working-directory: ${{ env.WORKING_DIR }}
-        run: npm run build:wasm
-
-      - name: Upload wasm artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: bindings-wasm32
-          path: ${{ env.WORKING_DIR }}/wasm/
-          if-no-files-found: error
-
   publish:
     name: Publish
-    needs: [preflight, build, build-wasm]
+    needs: [preflight, build]
     runs-on: ubuntu-latest
 
     steps:
@@ -240,15 +188,6 @@ jobs:
         working-directory: ${{ env.WORKING_DIR }}
         run: npx napi artifacts --dir artifacts
 
-      - name: Move wasm artifact into wasm/
-        # `napi artifacts` only knows about the per-platform .node files;
-        # the wasm32 build is bundled directly into the main package.
-        working-directory: ${{ env.WORKING_DIR }}
-        run: |
-          mkdir -p wasm
-          mv artifacts/bindings-wasm32/* wasm/
-          ls -la wasm/
-
       - name: Determine version and npm tag
         id: version
         run: |
@@ -270,13 +209,11 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          # Update peerDependencies (the napi platform sub-packages) to match
-          # the publish version. They live under `peerDependencies` rather than
-          # `optionalDependencies` so Deno's strict npm resolver doesn't choke
-          # on platform packages that don't apply to the consumer's runtime.
+          # Pin the napi platform sub-packages to the publish version. Profile
+          # keeps these under `optionalDependencies` (standard napi layout).
           jq --arg v "$VERSION" '
-            .peerDependencies |= with_entries(
-              if (.key | startswith("@cipherstash/auth-"))
+            .optionalDependencies |= with_entries(
+              if (.key | startswith("@cipherstash/profile-"))
               then .value = $v
               else .
               end
