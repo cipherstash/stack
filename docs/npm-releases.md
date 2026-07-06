@@ -54,7 +54,7 @@ registry** and never read or write each other's files:
   `workspaces` globs in the root `package.json` — the `.changeset/config.json`
   `ignore` list is empty (see "Validation log" for why it was dropped).
 
-## What the spike validated
+## What this validates
 
 - `changeset status` discovers **exactly** `@cipherstash/auth` and
   `@cipherstash/profile`, ignoring the platform sub-packages and wasm. (See
@@ -146,7 +146,7 @@ non-Rust binding regardless of which intent model wins.
 
 ## Validation log
 
-Run on the spike branch with two throwaway changesets (since removed):
+Run during development with two throwaway changesets (since removed):
 
 ```
 $ npx @changesets/cli status
