@@ -43,6 +43,17 @@ function toFailure(err) {
   return { failure };
 }
 
+// Mirror index.js's `wrapAsync`: a synchronous throw from the inner `getToken`
+// (e.g. calling it after `free()` — "null pointer passed to rust") becomes a
+// rejection, so a Promise-returning method never throws synchronously.
+function settleGetToken(inner) {
+  try {
+    return inner.getToken().then((data) => ({ data }), toFailure);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+}
+
 export class AccessKeyStrategy {
   #inner;
 
@@ -91,7 +102,7 @@ export class AccessKeyStrategy {
 
   /** @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>} */
   getToken() {
-    return this.#inner.getToken().then((data) => ({ data }), toFailure);
+    return settleGetToken(this.#inner);
   }
 
   free() {
@@ -149,7 +160,7 @@ export class OidcFederationStrategy {
 
   /** @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>} */
   getToken() {
-    return this.#inner.getToken().then((data) => ({ data }), toFailure);
+    return settleGetToken(this.#inner);
   }
 
   free() {
