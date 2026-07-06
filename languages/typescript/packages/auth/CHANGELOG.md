@@ -44,6 +44,13 @@
 
 - Adds a runtime dependency on `@byteslice/result` (zero-dependency, MIT).
 
+- **`instanceof` on the strategy classes now returns `false`.** The exported
+  `AutoStrategy` / `AccessKeyStrategy` / `DeviceSessionStrategy` are thin facades
+  over the native classes, and the factories hand back the strategy inside
+  `result.data`, so `result.data instanceof AccessKeyStrategy` is now `false` (it
+  was `true` on `main`, when the factory returned the instance directly). Gate on
+  `result.failure` and use `result.data` rather than `instanceof`.
+
 ## 0.40.0
 
 ### New Features
