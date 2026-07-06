@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.41.0
+
+### Minor Changes
+
+- 28fc5b1: **Errors are now returned, not thrown.** Every fallible operation returns a
+  [`@byteslice/result`](https://www.npmjs.com/package/@byteslice/result)
+  `Result` — `{ data }` on success, `{ failure }` on a domain error — instead of
+  throwing. This applies to `getToken()`, the strategy factories
+  (`AccessKeyStrategy.create`, `AutoStrategy.detect`,
+  `DeviceSessionStrategy.fromProfile`, `OidcFederationStrategy.create` /
+  `.createWithStore`), `beginDeviceCodeFlow`, `DeviceCodeResult.pollForToken` /
+  `openInBrowser`, and `bindClientDevice`. The same applies to the
+  `@cipherstash/auth/wasm-inline` entry.
+
+  `failure` is a discriminated union (`AuthFailure`) tagged by `type` (the codes
+  formerly on `err.code`), carrying the live `error: Error`, optional
+  `help`/`url`, and per-variant payload (e.g. `WORKSPACE_MISMATCH`'s `expected`
+  / `actual`). Only a genuine internal panic still throws.
+
+  Migration:
+
+  ```ts
+  // before
+  try {
+    const { token } = await strategy.getToken();
+  } catch (err) {
+    if (err.code === "EXPIRED_TOKEN") {
+      /* … */
+    }
+  }
+
+  // after
+  const result = await strategy.getToken();
+  if (result.failure) {
+    if (result.failure.type === "EXPIRED_TOKEN") {
+      /* … */
+    }
+  } else {
+    const { token } = result.data;
+  }
+  ```
+
+  Two new failure `type`s surface caller/runtime states that previously threw
+  as bare errors: `ALREADY_CONSUMED` (reusing a consumed `DeviceCodeResult`
+  handle) and `INTERNAL_ERROR`.
+
+  Adds a runtime dependency on `@byteslice/result` (zero-dependency, MIT).
+
+  **`instanceof` on the strategy classes now returns `false`.** The exported
+  `AutoStrategy` / `AccessKeyStrategy` / `DeviceSessionStrategy` are thin facades
+  over the native classes, and the factories hand back the strategy inside
+  `result.data`, so `result.data instanceof AccessKeyStrategy` is now `false` (it
+  was `true` on `main`, when the factory returned the instance directly). Gate on
+  `result.failure` and use `result.data` rather than `instanceof`.
+
 ## 0.40.0
 
 ### New Features
@@ -11,8 +66,11 @@
 
   ```ts
   OidcFederationStrategy.createWithStore(
-    workspaceCrn, getJwt, loadToken, saveToken,
-    "http://localhost:4000", // baseUrl — federate against a mock / self-hosted CTS
+    workspaceCrn,
+    getJwt,
+    loadToken,
+    saveToken,
+    "http://localhost:4000" // baseUrl — federate against a mock / self-hosted CTS
   );
   ```
 
@@ -35,7 +93,7 @@
   ```ts
   const strategy = OidcFederationStrategy.create(
     "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
-    getJwt, // () => Promise<string> — your current third-party OIDC JWT
+    getJwt // () => Promise<string> — your current third-party OIDC JWT
   );
   const { token } = await strategy.getToken();
   ```
@@ -49,7 +107,10 @@
 
   ```ts
   OidcFederationStrategy.createWithStore(
-    workspaceCrn, getJwt, loadToken, saveToken,
+    workspaceCrn,
+    getJwt,
+    loadToken,
+    saveToken
   );
   ```
 
@@ -62,12 +123,15 @@
 
   ```ts
   // Before (0.38.x)
-  const strategy = AccessKeyStrategy.create("ap-southeast-2.aws", "CSAKid.secret");
+  const strategy = AccessKeyStrategy.create(
+    "ap-southeast-2.aws",
+    "CSAKid.secret"
+  );
 
   // After (0.39.0)
   const strategy = AccessKeyStrategy.create(
     "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
-    "CSAKid.secret",
+    "CSAKid.secret"
   );
   ```
 
@@ -83,8 +147,8 @@
 ### Deprecations
 
 - **`OAuthStrategy` is renamed to `DeviceSessionStrategy`** to make its purpose
-  — *renewing an existing CTS device session* via a refresh token — distinct
-  from *federating a third-party JWT* (`OidcFederationStrategy`). `OAuthStrategy`
+  — _renewing an existing CTS device session_ via a refresh token — distinct
+  from _federating a third-party JWT_ (`OidcFederationStrategy`). `OAuthStrategy`
   is still exported as a `@deprecated` alias of `DeviceSessionStrategy`, so
   existing code keeps working; it will be removed in a future major.
 
@@ -114,12 +178,18 @@ malformed CRN argument is rejected with the existing `INVALID_CRN` code.
 - **AutoStrategy** — auto-detect credentials from environment variables and the local profile store.
   Use `AutoStrategy.detect()` for zero-config auth, or pass explicit values:
   ```ts
-  const strategy = AutoStrategy.detect({ accessKey: "CSAK...", workspaceCrn: "crn:..." });
+  const strategy = AutoStrategy.detect({
+    accessKey: "CSAK...",
+    workspaceCrn: "crn:...",
+  });
   const { token, issuer, services } = await strategy.getToken();
   ```
 - **AccessKeyStrategy** — authenticate with a static access key (service-to-service, CI/CD):
   ```ts
-  const strategy = AccessKeyStrategy.create("ap-southeast-2.aws", "CSAKid.secret");
+  const strategy = AccessKeyStrategy.create(
+    "ap-southeast-2.aws",
+    "CSAKid.secret"
+  );
   const { token } = await strategy.getToken();
   ```
 - **OAuthStrategy** — authenticate using OAuth refresh tokens persisted to disk:
