@@ -52,3 +52,24 @@ export function cloneMatchOpts(opts: BuiltMatchIndexOpts): BuiltMatchIndexOpts {
     token_filters: opts.token_filters.map((f) => ({ ...f })),
   }
 }
+
+/**
+ * Resolve user-supplied `freeTextSearch(opts)` input into a fully-built match
+ * block: each provided key replaces its default, omitted keys keep the default
+ * (`opts?.x ?? default.x`). The single source of truth for that five-field merge
+ * shared by the v2 `freeTextSearch()` builder and the v3 domain builders.
+ *
+ * The result is deep-cloned ({@link cloneMatchOpts}) so a caller mutating their
+ * own `opts` object (or its nested `tokenizer`/`token_filters`) after this call
+ * can never leak into the stored builder state or emitted config.
+ */
+export function resolveMatchOpts(opts?: MatchIndexOpts): BuiltMatchIndexOpts {
+  const defaults = defaultMatchOpts()
+  return cloneMatchOpts({
+    tokenizer: opts?.tokenizer ?? defaults.tokenizer,
+    token_filters: opts?.token_filters ?? defaults.token_filters,
+    k: opts?.k ?? defaults.k,
+    m: opts?.m ?? defaults.m,
+    include_original: opts?.include_original ?? defaults.include_original,
+  })
+}
