@@ -9,7 +9,7 @@ import type {
   V3EncryptedModel,
   V3ModelInput,
 } from '@/eql/v3'
-import type { EncryptionError } from '@/errors'
+import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
@@ -164,8 +164,34 @@ function rowReconstructor(
  */
 export function typedClient<const S extends readonly AnyV3Table[]>(
   client: EncryptionClient,
-  ..._schemas: S
+  ...schemas: S
 ): TypedEncryptionClient<S> {
+  // Precompute one row reconstructor per schema table at construction. This runs
+  // each table's `build()` — which throws on duplicate DB column names — ONCE,
+  // here, off the Result-returning decrypt path. `decryptModel`/
+  // `bulkDecryptModels` therefore never call `build()` (whose throw would surface
+  // as a promise rejection and break their `Promise<Result<…>>` contract) and no
+  // longer rebuild the row-invariant config on every call.
+  const reconstructors = new Map<
+    AnyV3Table,
+    (row: Record<string, unknown>) => Record<string, unknown>
+  >()
+  for (const table of schemas) {
+    reconstructors.set(table, rowReconstructor(table))
+  }
+
+  // A table not among the schemas this client was initialized with (only
+  // reachable by bypassing the `Table extends S[number]` type constraint) has no
+  // precomputed reconstructor. Return a Result failure rather than building one
+  // inline, which could throw and reject the Result-shaped decrypt promise.
+  const unknownTableFailure: { failure: EncryptionError } = {
+    failure: {
+      type: EncryptionErrorTypes.DecryptionError,
+      message:
+        '[eql/v3]: decryptModel received a table this client was not initialized with — pass the same table object(s) given to EncryptionV3/typedClient',
+    },
+  }
+
   return {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
@@ -177,16 +203,19 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
     decryptModel: async (input, table, lockContext) => {
+      const reconstruct = reconstructors.get(table)
+      if (!reconstruct) return unknownTableFailure as never
       const op = client.decryptModel(input as never)
       const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
-      return { data: rowReconstructor(table)(result.data) } as never
+      return { data: reconstruct(result.data) } as never
     },
     bulkDecryptModels: async (input, table, lockContext) => {
+      const reconstruct = reconstructors.get(table)
+      if (!reconstruct) return unknownTableFailure as never
       const op = client.bulkDecryptModels(input as never)
       const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
-      const reconstruct = rowReconstructor(table)
       return {
         data: result.data.map((row) =>
           reconstruct(row as Record<string, unknown>),

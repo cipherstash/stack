@@ -3,6 +3,7 @@ import {
   type BuiltMatchIndexOpts,
   cloneMatchOpts,
   defaultMatchOpts,
+  resolveMatchOpts,
 } from '@/schema/match-defaults'
 
 /**
@@ -422,33 +423,29 @@ export class EncryptedTextSearchColumn extends EncryptedV3Column<
    * on for this type. Merge semantics mirror v2's `opts?.x ?? default`.
    */
   freeTextSearch(opts?: MatchIndexOpts): this {
-    // A fresh defaults object per call supplies the `?? ` fallbacks, so no
-    // nested default object is ever shared into `this.matchOpts` by reference.
-    const defaults = defaultMatchOpts()
-    // Clone-on-write: deep-copy the nested tokenizer / token_filters when
-    // storing them so a caller mutating their own opts object between
-    // freeTextSearch(opts) and build() cannot leak into the emitted config.
-    this.matchOpts = cloneMatchOpts({
-      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
-      token_filters: opts?.token_filters ?? defaults.token_filters,
-      k: opts?.k ?? defaults.k,
-      m: opts?.m ?? defaults.m,
-      include_original: opts?.include_original ?? defaults.include_original,
-    })
+    // Shared merge+clone (schema/match-defaults) — one source of truth with the
+    // v2 `freeTextSearch()` builder. `resolveMatchOpts` merges each key over the
+    // per-call defaults and deep-clones, so a caller mutating their own opts
+    // object between `freeTextSearch(opts)` and `build()` cannot leak into the
+    // emitted config (clone-on-write).
+    this.matchOpts = resolveMatchOpts(opts)
     return this
   }
 
   /** Emit the encrypt-config column. Byte-identical to a v2 equality+order+match column. */
   override build(): ColumnSchema {
-    // Deep-clone the match block so the returned config NEVER aliases this
-    // builder's internal `matchOpts` (or any caller-supplied opts merged into
-    // it). A caller mutating the returned object cannot corrupt this builder's
-    // state or another column's defaults.
+    // Derive `cast_as` + the `unique`/`ore` blocks from the shared
+    // capability→index mapping (this domain's TEXT_SEARCH capabilities produce
+    // exactly `{ unique, ore, match }`), then override ONLY `match` with this
+    // builder's tuned opts. Hand-writing the unique/ore shape here would let it
+    // silently drift from `indexesForCapabilities` — the exact divergence class
+    // behind the text_ord `hm`-index bug. Deep-clone the match block so the
+    // returned config never aliases this builder's internal `matchOpts`.
+    const base = super.build()
     return {
-      cast_as: 'string',
+      ...base,
       indexes: {
-        unique: { token_filters: [] },
-        ore: {},
+        ...base.indexes,
         match: cloneMatchOpts(this.matchOpts),
       },
     }

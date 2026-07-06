@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { BuildableTable, Encrypted } from '@/types'
-import { defaultMatchOpts } from './match-defaults'
+import { resolveMatchOpts } from './match-defaults'
 
 // ------------------------
 // Zod schemas
@@ -352,16 +352,11 @@ export class EncryptedColumn {
    * ```
    */
   freeTextSearch(opts?: MatchIndexOpts) {
-    // Shared defaults (schema/match-defaults) — one source of truth with the
-    // EQL v3 domain builders. The factory returns fresh nested objects.
-    const defaults = defaultMatchOpts()
-    this.indexesValue.match = {
-      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
-      token_filters: opts?.token_filters ?? defaults.token_filters,
-      k: opts?.k ?? defaults.k,
-      m: opts?.m ?? defaults.m,
-      include_original: opts?.include_original ?? defaults.include_original,
-    }
+    // Shared merge+clone (schema/match-defaults) — one source of truth with the
+    // EQL v3 domain builders. `resolveMatchOpts` deep-clones, so a caller
+    // mutating their own `opts` (or its nested tokenizer/token_filters) after
+    // this call cannot leak into the stored schema.
+    this.indexesValue.match = resolveMatchOpts(opts)
     return this
   }
 
