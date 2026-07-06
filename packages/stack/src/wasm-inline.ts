@@ -445,8 +445,11 @@ export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   // runtime so a conflicting config fails loudly instead of silently
   // preferring one.
   if (authStrategy && cfg.accessKey) {
+    // Name the field the caller actually set — `strategy` when only the
+    // deprecated alias was used — so the message isn't misleading.
+    const field = cfg.authStrategy ? 'authStrategy' : 'strategy'
     throw new Error(
-      '[encryption]: `config.authStrategy` and `config.accessKey` are mutually exclusive — pass exactly one.',
+      `[encryption]: \`config.${field}\` and \`config.accessKey\` are mutually exclusive — pass exactly one.`,
     )
   }
   if (authStrategy) return authStrategy

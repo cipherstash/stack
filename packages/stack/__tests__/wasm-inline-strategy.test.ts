@@ -130,12 +130,14 @@ describe('wasm-inline resolveStrategy', () => {
     expect(() =>
       // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — JS callers bypass the compile-time union
       resolveStrategy(both as any),
-    ).toThrowError(/mutually exclusive/)
+    ).toThrowError(
+      /`config\.authStrategy` and `config\.accessKey` are mutually exclusive/,
+    )
     // The guard must short-circuit *before* building a strategy.
     expect(vi.mocked(AccessKeyStrategy.create)).not.toHaveBeenCalled()
   })
 
-  it('throws when the deprecated strategy and accessKey are both supplied', () => {
+  it('throws when the deprecated strategy and accessKey are both supplied, naming `strategy`', () => {
     const both = {
       workspaceCrn: CRN,
       accessKey: 'CSAK.test',
@@ -144,7 +146,10 @@ describe('wasm-inline resolveStrategy', () => {
     expect(() =>
       // biome-ignore lint/suspicious/noExplicitAny: deliberately invalid — JS callers bypass the compile-time union
       resolveStrategy(both as any),
-    ).toThrowError(/mutually exclusive/)
+    ).toThrowError(
+      // Names the field the caller actually set, not the resolved `authStrategy`.
+      /`config\.strategy` and `config\.accessKey` are mutually exclusive/,
+    )
     expect(vi.mocked(AccessKeyStrategy.create)).not.toHaveBeenCalled()
   })
 })
