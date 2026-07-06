@@ -4,8 +4,9 @@ import type {
   EncryptedTextSearchColumn,
   InferEncrypted,
   InferPlaintext,
+  QueryTypesForColumn,
 } from '@/eql/v3'
-import { encryptedTable, types } from '@/eql/v3'
+import { encrypted, encryptedTable, types } from '@/eql/v3'
 // v2 column builders — used to prove the v3 table type rejects a v2 column and
 // to assert v2 backward-compat against the widened client types.
 import {
@@ -82,6 +83,45 @@ describe('eql_v3 schema type inference', () => {
     // @ts-expect-error - storage-only bool is not assignable to storage-only date
     const invalid: typeof date = bool
     void invalid
+  })
+
+  it('encrypted fluent namespace preserves plaintext and query inference', () => {
+    const users = encryptedTable('users', {
+      email: encrypted.text('email').equality().freeTextSearch(),
+      age: encrypted.integer('age').equality(),
+      createdAt: encrypted.timestamp('created_at').orderAndRange(),
+      active: encrypted.boolean('active'),
+    })
+
+    expectTypeOf<InferPlaintext<typeof users>>().toEqualTypeOf<{
+      email: string
+      age: number
+      createdAt: Date
+      active: boolean
+    }>()
+    expectTypeOf<QueryTypesForColumn<typeof users.email>>().toEqualTypeOf<
+      'equality' | 'orderAndRange' | 'freeTextSearch'
+    >()
+    expectTypeOf<
+      QueryTypesForColumn<typeof users.age>
+    >().toEqualTypeOf<'equality'>()
+    expectTypeOf<QueryTypesForColumn<typeof users.createdAt>>().toEqualTypeOf<
+      'equality' | 'orderAndRange'
+    >()
+    expectTypeOf<
+      QueryTypesForColumn<typeof users.active>
+    >().toEqualTypeOf<never>()
+  })
+
+  it('encrypted fluent namespace rejects unsupported capability chains', () => {
+    // @ts-expect-error - integer columns do not support free-text search
+    encrypted.integer('age').freeTextSearch()
+
+    // @ts-expect-error - date columns do not support free-text search
+    encrypted.date('created_on').freeTextSearch()
+
+    // @ts-expect-error - boolean has no query-capability fluent methods
+    encrypted.boolean('active').equality()
   })
 })
 

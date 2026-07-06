@@ -4,6 +4,7 @@ import {
   buildEncryptConfig,
   EncryptedTable,
   EncryptedTextSearchColumn,
+  encrypted,
   encryptedTable,
   types,
 } from '@/eql/v3'
@@ -153,6 +154,49 @@ describe('eql_v3 text_match column', () => {
     const c = types.TextMatch('c').build()
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+  })
+})
+
+describe('eql_v3 fluent encrypted namespace', () => {
+  it('builds the example schema through SQL-aligned fluent aliases', () => {
+    const users = encryptedTable('users', {
+      email: encrypted.text('email').equality().freeTextSearch(),
+      age: encrypted.integer('age').equality(),
+      createdAt: encrypted.timestamp('created_at').orderAndRange(),
+    })
+
+    expect(users.email.getEqlType()).toBe('eql_v3.text_search')
+    expect(users.age.getEqlType()).toBe('eql_v3.int4_eq')
+    expect(users.createdAt.getEqlType()).toBe('eql_v3.timestamptz_ord')
+  })
+
+  it('delegates fluent chains to the existing concrete factories', () => {
+    expect(
+      encrypted.text('email').equality().freeTextSearch().build(),
+    ).toStrictEqual(types.TextSearch('email').build())
+    expect(encrypted.integer('age').equality().build()).toStrictEqual(
+      types.Int4Eq('age').build(),
+    )
+    expect(
+      encrypted.timestamp('created_at').orderAndRange().build(),
+    ).toStrictEqual(types.TimestamptzOrd('created_at').build())
+  })
+
+  it('supports literal SQL-family aliases for the current v3 catalog', () => {
+    expect(encrypted.smallint('x').equality().getEqlType()).toBe(
+      'eql_v3.int2_eq',
+    )
+    expect(encrypted.numeric('x').orderAndRange().getEqlType()).toBe(
+      'eql_v3.numeric_ord',
+    )
+    expect(encrypted.real('x').equality().getEqlType()).toBe('eql_v3.float4_eq')
+    expect(encrypted.doublePrecision('x').orderAndRange().getEqlType()).toBe(
+      'eql_v3.float8_ord',
+    )
+    expect(encrypted.boolean('x').getEqlType()).toBe('eql_v3.bool')
+    expect(encrypted.timestamptz('x').orderAndRange().getEqlType()).toBe(
+      'eql_v3.timestamptz_ord',
+    )
   })
 })
 

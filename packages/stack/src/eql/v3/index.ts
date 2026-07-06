@@ -55,6 +55,7 @@ export {
   EncryptedTimestamptzOrdOreColumn,
   TEXT_SEARCH_EQL_TYPE,
 } from './columns'
+export { encrypted } from './encrypted'
 export type {
   AnyV3Table,
   ColumnsOf,
@@ -65,6 +66,5 @@ export type {
   V3EncryptedModel,
   V3ModelInput,
 } from './table'
-
 export { buildEncryptConfig, EncryptedTable, encryptedTable } from './table'
 export { types } from './types'

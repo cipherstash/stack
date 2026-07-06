@@ -206,9 +206,11 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
  *
  * @example
  * ```typescript
- * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
+ * import { EncryptionV3, encrypted, encryptedTable } from "@cipherstash/stack/v3"
  *
- * const users = encryptedTable("users", { email: types.TextSearch("email") })
+ * const users = encryptedTable("users", {
+ *   email: encrypted.text("email").equality().freeTextSearch(),
+ * })
  * const client = await EncryptionV3({ schemas: [users] })
  *
  * await client.encrypt("a@b.com", { table: users, column: users.email })
