@@ -55,7 +55,9 @@ beforeEach(() => {
   free.mockReset();
   create.mockReset();
   // Default fake strategy: writes the token to the store (so cookie wiring is
-  // exercised) and returns a TokenResult.
+  // exercised) and returns a Result-wrapped TokenResult. Both `create()` and
+  // `getToken()` return `@byteslice/result` Results (`{ data }` on success),
+  // matching the real wasm surface the adapter unwraps.
   create.mockImplementation(
     (
       _crn: string,
@@ -69,9 +71,9 @@ beforeEach(() => {
             expires_at: Math.floor(Date.now() / 1000) + 3600,
           }),
         );
-        return tokenResult();
+        return { data: tokenResult() };
       });
-      return { getToken, free };
+      return { data: { getToken, free } };
     },
   );
 });
@@ -134,12 +136,18 @@ describe("csFederate", () => {
     );
   });
 
-  it("frees the wasm strategy even when getToken rejects (finally path)", async () => {
-    // Override the default fake with one whose getToken throws, so the
-    // try/finally's error branch — the reason the finally exists — is exercised.
+  it("throws the failure's error and still frees the strategy (finally path)", async () => {
+    // Override the default fake so getToken resolves to a `{ failure }` Result —
+    // the new-API failure mode. csFederate must unwrap it, throw the live
+    // `failure.error`, and still run the try/finally's `free()`.
     create.mockImplementation(() => {
-      getToken.mockRejectedValue(new Error("federation failed"));
-      return { getToken, free };
+      getToken.mockResolvedValue({
+        failure: {
+          type: "SERVER_ERROR",
+          error: new Error("federation failed"),
+        },
+      });
+      return { data: { getToken, free } };
     });
 
     await expect(
@@ -152,6 +160,25 @@ describe("csFederate", () => {
     ).rejects.toThrow("federation failed");
     // free() still ran despite the throw.
     expect(free).toHaveBeenCalledOnce();
+  });
+
+  it("throws the failure's error when strategy creation fails (no free)", async () => {
+    // `create()` itself can fail (e.g. INVALID_CRN) — it returns `{ failure }`
+    // before any strategy is allocated, so csFederate throws without calling
+    // free() (there's nothing to release).
+    create.mockImplementation(() => ({
+      failure: { type: "INVALID_CRN", error: new Error("bad crn") },
+    }));
+
+    await expect(
+      csFederate({
+        request: requestWith(),
+        responseHeaders: new Headers(),
+        workspaceCrn: WORKSPACE_CRN,
+        getJwt: () => "jwt",
+      }),
+    ).rejects.toThrow("bad crn");
+    expect(free).not.toHaveBeenCalled();
   });
 });
 
@@ -193,7 +220,9 @@ describe("csAuthHeader", () => {
     const strategy = csAuthHeader(headers);
     expect(strategy).not.toBeNull();
     expect(strategy?.requiresFederation).toBe(false);
-    expect((await strategy?.getToken())?.workspaceId).toBe(WORKSPACE_ID);
+    // Warmed strategy mirrors a real strategy: getToken() resolves a `{ data }`
+    // Result, not a bare TokenResult.
+    expect((await strategy?.getToken())?.data?.workspaceId).toBe(WORKSPACE_ID);
   });
 
   it("reads eagerly at construction (later header mutation is ignored)", async () => {
@@ -205,7 +234,7 @@ describe("csAuthHeader", () => {
       CS_TOKEN_HEADER,
       encodeTokenHeader(tokenResult({ token: "second" })),
     );
-    expect((await strategy?.getToken())?.token).toBe("first");
+    expect((await strategy?.getToken())?.data?.token).toBe("first");
   });
 
   it("returns null when no warmed token is present (cold fallback)", () => {

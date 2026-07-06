@@ -8,6 +8,7 @@
  */
 
 import type { TokenResult } from "./wasm-types.d.ts";
+import type { GetTokenResult } from "./wasm-inline.d.ts";
 
 export type { TokenResult } from "./wasm-types.d.ts";
 
@@ -77,11 +78,13 @@ export interface CsAuthHeaderOptions {
 /**
  * An `AuthStrategy` backed by a token a middleware already warmed — it requires
  * no federation, so consumers (incl. protect-ffi) can drive `getToken()` from
- * any context.
+ * any context. `getToken()` returns the same `Result` shape as a real strategy
+ * (always a `{ data }` success here, since the warmed token is pre-validated),
+ * so this stays a drop-in wherever an `OidcFederationStrategy` is consumed.
  */
 export interface WarmedAuthStrategy {
   readonly requiresFederation: false;
-  getToken(): Promise<TokenResult>;
+  getToken(): Promise<GetTokenResult>;
   free(): void;
 }
 

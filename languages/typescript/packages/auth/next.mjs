@@ -71,12 +71,21 @@ export async function csFederate(options) {
     secure,
     sameSite,
   });
-  const strategy = OidcFederationStrategy.create(workspaceCrn, getJwt, {
+  // `create()` and `getToken()` return a `@byteslice/result` Result
+  // (`{ data }` on success, `{ failure }` on error) rather than throwing. Unwrap
+  // both and throw the live `failure.error`, keeping this helper's documented
+  // bare-`TokenResult`/throw-on-failure contract. `create()` runs outside the
+  // `try` so `free()` only fires once a strategy was actually allocated.
+  const created = OidcFederationStrategy.create(workspaceCrn, getJwt, {
     store,
     baseUrl,
   });
+  if (created.failure) throw created.failure.error;
+  const strategy = created.data;
   try {
-    return await strategy.getToken();
+    const result = await strategy.getToken();
+    if (result.failure) throw result.failure.error;
+    return result.data;
   } finally {
     strategy.free();
   }
@@ -119,7 +128,7 @@ export async function csFederationMiddleware(options) {
 /**
  * @typedef {object} WarmedAuthStrategy
  * @property {false} requiresFederation
- * @property {() => Promise<import("./wasm-types.d.ts").TokenResult>} getToken
+ * @property {() => Promise<import("./wasm-inline.d.ts").GetTokenResult>} getToken
  * @property {() => void} free
  */
 
@@ -161,9 +170,13 @@ export function csAuthHeader(headers, options) {
   // malformed/spoofed payload must be rejected here rather than surfacing as
   // undefined `subject`/`workspaceId`/`issuer`/`services` fields downstream.
   if (!isTokenResult(warmed)) return null;
+  // Mirror a real strategy's Result-returning `getToken()` so this warmed
+  // strategy stays a drop-in wherever an `OidcFederationStrategy` /
+  // `AccessKeyStrategy` is consumed (e.g. protect-ffi). The warmed token is
+  // already validated, so it's always a `{ data }` success.
   return {
     requiresFederation: false,
-    getToken: async () => warmed,
+    getToken: async () => ({ data: warmed }),
     free() {},
   };
 }
