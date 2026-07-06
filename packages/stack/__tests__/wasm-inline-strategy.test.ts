@@ -87,6 +87,19 @@ describe('wasm-inline resolveStrategy', () => {
     )
   })
 
+  it('warns at most once per process across repeated resolveStrategy calls', () => {
+    // No reset between the two calls (the latch is only reset in beforeEach),
+    // so they share one process-level latch — a regression that dropped the
+    // `if (warnedStrategyDeprecated) return` guard would warn twice here.
+    const explicit = { getToken: vi.fn() }
+    // biome-ignore lint/suspicious/noExplicitAny: exercise the deprecated strategy arm directly
+    resolveStrategy({ strategy: explicit } as any)
+    // biome-ignore lint/suspicious/noExplicitAny: exercise the deprecated strategy arm directly
+    resolveStrategy({ strategy: explicit } as any)
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('prefers authStrategy over the deprecated strategy when both are set, and still warns', () => {
     const authStrategy = { getToken: vi.fn() }
     const strategy = { getToken: vi.fn() }

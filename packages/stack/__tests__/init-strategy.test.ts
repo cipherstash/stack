@@ -165,6 +165,20 @@ describe('Encryption config.strategy (deprecated alias)', () => {
 
     expect(warnSpy).not.toHaveBeenCalled()
   })
+
+  it('warns at most once per process across repeated Encryption calls', async () => {
+    // No reset between the two calls (the latch is only reset in beforeEach),
+    // so they share one process-level latch — a regression that dropped the
+    // `if (warnedStrategyDeprecated) return` guard would warn twice here.
+    const strategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'service-token' })),
+    }
+
+    await Encryption({ schemas: [users], config: { strategy } })
+    await Encryption({ schemas: [users], config: { strategy } })
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 // A minimal structural EQL v3 table: what marks a table as v3 for wire-format
