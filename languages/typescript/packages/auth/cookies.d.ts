@@ -57,11 +57,19 @@ export interface CookieStoreOptions {
  *
  * Deno.serve(async (req) => {
  *   const responseHeaders = new Headers();
- *   const strategy = AccessKeyStrategy.create(workspaceCrn, accessKey, {
+ *   const created = AccessKeyStrategy.create(workspaceCrn, accessKey, {
  *     store: cookieStore({ request: req, responseHeaders }),
  *   });
- *   const result = await strategy.getToken();
- *   return new Response(JSON.stringify(result), { headers: responseHeaders });
+ *   if (created.failure) {
+ *     return new Response(created.failure.type, { status: 500, headers: responseHeaders });
+ *   }
+ *   // Recommended: hand `created.data` to a CipherStash SDK (see the README).
+ *   // Reading the token directly, as below, is a lower-level escape hatch.
+ *   const result = await created.data.getToken();
+ *   if (result.failure) {
+ *     return new Response(result.failure.type, { status: 500, headers: responseHeaders });
+ *   }
+ *   return new Response(JSON.stringify(result.data), { headers: responseHeaders });
  * });
  * ```
  */
