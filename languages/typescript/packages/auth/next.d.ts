@@ -42,7 +42,26 @@ export interface CsFederateOptions {
 
 /**
  * Federate-or-reuse a CTS service token, persisting it to the cookie. Use in any
- * writable, in-scope context (middleware, route handler, server action).
+ * writable, in-scope context (middleware, route handler, server action). Returns
+ * a {@link TokenResult}; throws on failure. When you also need to warm the
+ * same-request render, prefer {@link csFederationMiddleware}.
+ *
+ * @example
+ * ```ts
+ * // app/api/data/route.ts — federate-or-reuse directly in a Route Handler.
+ * import { csFederate } from "@cipherstash/auth/next";
+ *
+ * export async function GET(request: Request) {
+ *   const responseHeaders = new Headers(); // the refreshed cookie is appended here
+ *   const token = await csFederate({
+ *     request,
+ *     responseHeaders,
+ *     workspaceCrn: process.env.CS_WORKSPACE_CRN!, // "crn:<region>:<workspace-id>"
+ *     getJwt: () => getSessionJwt(),               // your provider's *current* JWT
+ *   });
+ *   return Response.json({ workspaceId: token.workspaceId }, { headers: responseHeaders });
+ * }
+ * ```
  */
 export declare function csFederate(options: CsFederateOptions): Promise<TokenResult>;
 
@@ -62,9 +81,37 @@ export interface CsFederationMiddlewareResult {
 
 /**
  * Federate-or-reuse in middleware, returning the request header that delivers
- * the warmed token to the same-request render. Forward it via
+ * the warmed token to the same-request render (a `Set-Cookie` written now is not
+ * readable in the same request). Forward it via
  * `NextResponse.next({ request: { headers } })`; copy `responseHeaders`
- * (carrying `Set-Cookie`) onto the response.
+ * (carrying `Set-Cookie`) onto the response. Read it back with
+ * {@link csAuthHeader}.
+ *
+ * @example
+ * ```ts
+ * // middleware.ts — federate once per request, warm the render, refresh the cookie.
+ * import { NextResponse } from "next/server";
+ * import { csFederationMiddleware } from "@cipherstash/auth/next";
+ *
+ * export async function middleware(request: Request) {
+ *   const responseHeaders = new Headers();
+ *   const { headerName, headerValue } = await csFederationMiddleware({
+ *     request,
+ *     responseHeaders,
+ *     workspaceCrn: process.env.CS_WORKSPACE_CRN!,
+ *     getJwt: () => getSessionJwt(), // your provider's *current* JWT (Clerk, Supabase, …)
+ *   });
+ *
+ *   // Deliver the warmed token to this request's render...
+ *   const headers = new Headers(request.headers);
+ *   headers.set(headerName, headerValue);
+ *   const response = NextResponse.next({ request: { headers } });
+ *
+ *   // ...and copy the refreshed `Set-Cookie` onto the response.
+ *   responseHeaders.forEach((value, key) => response.headers.append(key, value));
+ *   return response;
+ * }
+ * ```
  */
 export declare function csFederationMiddleware(
   options: CsFederationMiddlewareOptions,
@@ -95,6 +142,28 @@ export interface WarmedAuthStrategy {
  * `get(name)` method (WHATWG `Headers` or Next's `headers()`). Returns `null`
  * when no warmed token is present, so the caller can fall back to a cold
  * federation.
+ *
+ * SECURITY: the header payload is opaque base64url(JSON), NOT authenticated —
+ * only trust it where the inbound client-supplied header is stripped on ingress
+ * (a middleware that always overwrites {@link CS_TOKEN_HEADER}, as the
+ * {@link csFederationMiddleware} flow does), or a client could forge it.
+ *
+ * @example
+ * ```ts
+ * // A Server Component / Route Handler reading the token the middleware warmed.
+ * import { headers } from "next/headers";
+ * import { csAuthHeader } from "@cipherstash/auth/next";
+ * import { Encryption } from "@cipherstash/stack";
+ *
+ * export async function loadSecret() {
+ *   const strategy = csAuthHeader(await headers());
+ *   if (!strategy) throw new Error("no warmed token — signed out, or middleware didn't run");
+ *
+ *   // Hand the strategy to a CipherStash SDK — it owns getToken() + refresh.
+ *   const encryption = new Encryption({ authStrategy: strategy });
+ *   // ... encrypt / decrypt with `encryption` ...
+ * }
+ * ```
  */
 export declare function csAuthHeader(
   headers: { get(name: string): string | null },

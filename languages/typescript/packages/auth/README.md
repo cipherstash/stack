@@ -302,6 +302,129 @@ const { token, workspaceId, services } = result.data;
 `services` is a plain object (e.g. `{ zerokms: "https://..." }`). See
 [Error handling](#error-handling) for the failure arm.
 
+## Next.js App Router adapter — `@cipherstash/auth/next`
+
+The `@cipherstash/auth/next` entry adapts `OidcFederationStrategy` to
+request/response server frameworks. It's built for the Next.js App Router but is
+framework-agnostic by construction — every function takes a WHATWG `Request` /
+`Headers` and returns plain data, so it works anywhere you can read a request and
+write response headers.
+
+**The model.** Federate a third-party OIDC JWT into a CTS service token where the
+request is both *in scope* and *able to write cookies* (middleware, route
+handlers, server actions), then:
+
+- **persist** the token to a per-workspace, `HttpOnly` cookie (`cs_token_<workspace-id>`) — the cross-request cache, so later requests reuse it instead of re-federating;
+- **warm** the current request's render by handing the freshly minted token forward on a request header — a `Set-Cookie` written *now* isn't readable in the *same* request, so the render can't see the cookie you just set.
+
+### Middleware — federate, warm, refresh
+
+```ts
+// middleware.ts
+import { NextResponse } from "next/server";
+import { csFederationMiddleware } from "@cipherstash/auth/next";
+
+export async function middleware(request: Request) {
+  const responseHeaders = new Headers(); // the refreshed cookie is appended here
+
+  const { headerName, headerValue } = await csFederationMiddleware({
+    request,
+    responseHeaders,
+    workspaceCrn: process.env.CS_WORKSPACE_CRN!, // "crn:<region>:<workspace-id>"
+    getJwt: () => getSessionJwt(),               // your provider's *current* JWT (Clerk, Supabase, …)
+  });
+
+  // Deliver the warmed token to this request's render...
+  const headers = new Headers(request.headers);
+  headers.set(headerName, headerValue);
+  const response = NextResponse.next({ request: { headers } });
+
+  // ...and copy the refreshed `Set-Cookie` onto the response.
+  responseHeaders.forEach((value, key) => response.headers.append(key, value));
+  return response;
+}
+```
+
+### Reading the warmed token — Server Components, Route Handlers, protect-ffi
+
+`csAuthHeader(headers)` reads the token the middleware warmed into an
+`AuthStrategy`. The header is read *eagerly* and closed over, so the returned
+strategy is safe to drive from a detached callback (e.g. protect-ffi). It returns
+`null` when there's no warmed token, so you can fall back to a cold federation or
+render a signed-out state.
+
+```ts
+import { headers } from "next/headers";
+import { csAuthHeader } from "@cipherstash/auth/next";
+import { Encryption } from "@cipherstash/stack";
+
+export async function loadSecret() {
+  const strategy = csAuthHeader(await headers());
+  if (!strategy) throw new Error("no warmed token — signed out, or middleware didn't run");
+
+  // Hand the strategy to a CipherStash SDK — it owns getToken() + refresh.
+  const encryption = new Encryption({ authStrategy: strategy });
+  // ... encrypt / decrypt with `encryption` ...
+}
+```
+
+### Without the warmed-header handoff — `csFederate`
+
+If you only need a token inside a single writable, in-scope context — a route
+handler that both authenticates *and* does the work — skip the middleware handoff
+and call `csFederate` directly. It returns a `TokenResult` and throws on failure:
+
+```ts
+// app/api/data/route.ts
+import { csFederate } from "@cipherstash/auth/next";
+
+export async function GET(request: Request) {
+  const responseHeaders = new Headers();
+  const token = await csFederate({
+    request,
+    responseHeaders,
+    workspaceCrn: process.env.CS_WORKSPACE_CRN!,
+    getJwt: () => getSessionJwt(),
+  });
+  return Response.json({ workspaceId: token.workspaceId }, { headers: responseHeaders });
+}
+```
+
+### Security — the warmed-token header is not authenticated
+
+`csAuthHeader` reads an opaque base64url(JSON) payload from a request header; it
+validates the *shape* of the `TokenResult`, but the payload is **not**
+cryptographically authenticated. Only trust it in a context where the inbound,
+client-supplied header is stripped before the request reaches your code — i.e. a
+middleware that always overwrites (or deletes) `x-cs-cts-token` on ingress, as the
+`csFederationMiddleware` flow above does. Without that guarantee a client could
+forge the header.
+
+### API
+
+| Export | Description |
+|---|---|
+| `csFederationMiddleware(options)` | Federate-or-reuse in middleware. Returns `{ result, headerName, headerValue }` to forward, and appends the refreshed cookie to `responseHeaders`. |
+| `csFederate(options)` | Federate-or-reuse in any writable, in-scope context. Returns a `TokenResult`; throws on failure. |
+| `csAuthHeader(headers, options?)` | Read the warmed token into a no-federation `AuthStrategy`, or `null` if absent. |
+| `csTokenCookieName(workspaceId)` | The per-workspace cookie name, `cs_token_<workspaceId>`. |
+| `CS_TOKEN_HEADER` | The default warmed-token request header, `x-cs-cts-token`. |
+| `encodeTokenHeader` / `decodeTokenHeader` | The opaque base64url(JSON) header codec (used internally; exported for advanced wiring). |
+
+`options` (shared by `csFederate` and `csFederationMiddleware`):
+
+| Option | Default | Notes |
+|---|---|---|
+| `request` | — required — | Incoming `Request` (reads the token cookie) |
+| `responseHeaders` | — required — | Outgoing `Headers` (the refreshed cookie is appended as `Set-Cookie`) |
+| `workspaceCrn` | — required — | `crn:<region>:<workspace-id>` |
+| `getJwt` | — required — | Returns the *current* third-party OIDC JWT (re-invoked on every re-federation) |
+| `baseUrl` | region discovery | Pin federation to a specific CTS host / mock |
+| `cookieName` | `cs_token_<workspace-id>` | Override the per-workspace cookie name |
+| `secure` | `true` | Cookie `Secure` flag — set `false` only for localhost HTTP dev |
+| `sameSite` | `"Lax"` | Cookie `SameSite` |
+| `headerName` | `x-cs-cts-token` | (`csFederationMiddleware` only) request header to carry the warmed token |
+
 ## License
 
 Distributed under the [PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0). A full copy is bundled with this package as [`LICENSE`](./LICENSE).
