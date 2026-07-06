@@ -227,7 +227,7 @@ export class EncryptedField {
    * a different type so the encryption layer knows how to encode the plaintext
    * before encrypting.
    *
-   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'text'`, `'bigint'`, or `'json'`.
+   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedField` instance for method chaining.
    *
    * @example
@@ -276,7 +276,7 @@ export class EncryptedColumn {
    * a different type so the encryption layer knows how to encode the plaintext
    * before encrypting.
    *
-   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'bigint'`, or `'json'`.
+   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedColumn` instance for method chaining.
    *
    * @example

@@ -9,6 +9,7 @@ import type {
   V3EncryptedModel,
   V3ModelInput,
 } from '@/eql/v3'
+import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
@@ -141,7 +142,9 @@ function rowReconstructor(
   const dateProperties = Object.entries(propToDb)
     .filter(([, dbName]) => {
       const castAs = columns[dbName]?.cast_as
-      return castAs === 'date' || castAs === 'timestamp'
+      // Date-like casts share one source of truth with the type-level
+      // reconstruction (`PlaintextFromKind`) — see `DATE_LIKE_CASTS`.
+      return (DATE_LIKE_CASTS as readonly string[]).includes(castAs as string)
     })
     .map(([property]) => property)
 
