@@ -576,6 +576,65 @@ mod tests {
     use mocktail::prelude::*;
     use tempfile::TempDir;
 
+    /// `index.d.ts` is hand-written and re-exports the generated `native.d.ts`,
+    /// plus the `AuthErrorCode` union NAPI-RS can't emit. That union must list
+    /// exactly the codes `AuthError::error_code()` can return, plus
+    /// `UNKNOWN_ERROR` (the `index.js` fallback).
+    ///
+    /// The expected set is the exported [`AuthError::ERROR_CODES`] constant — a
+    /// real symbol the compiler resolves, not a scrape of the core crate's
+    /// source text. A core-crate test pins that constant against `error_code`'s
+    /// exhaustive match, so adding an `AuthError` variant forces a new code
+    /// there, which this test then requires the TS union to include; forget to
+    /// update `index.d.ts` and this fails.
+    #[test]
+    fn ts_auth_error_code_union_matches_error_codes() {
+        use std::collections::BTreeSet;
+
+        // The codes `AuthError::error_code` can return, plus the `UNKNOWN_ERROR`
+        // fallback the JS layer adds (never returned by `error_code`).
+        let mut expected: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
+        expected.insert("UNKNOWN_ERROR");
+
+        // The hand-written `index.d.ts` union — lines of the form `  | 'CODE'`.
+        let dts = include_str!("../index.d.ts");
+        let union: BTreeSet<&str> = dts
+            .lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("| '")
+                    .and_then(|rest| rest.strip_suffix('\''))
+            })
+            .collect();
+
+        assert_eq!(
+            union, expected,
+            "AuthErrorCode union in index.d.ts drifted from AuthError::ERROR_CODES",
+        );
+    }
+
+    #[test]
+    fn index_dts_retains_hand_written_reexports() {
+        // The union test above only guards `AuthErrorCode`. The other three
+        // hand-written pieces of `index.d.ts` are equally load-bearing but
+        // NAPI-RS cannot emit them, so a regen or careless edit that drops any
+        // of them compiles green: the node tests import `AuthError` as an
+        // `import type` (erased at runtime) and vitest never runs `tsc`. Pin
+        // them by string presence so a deletion fails here.
+        let dts = include_str!("../index.d.ts");
+        for needle in [
+            // The native re-export the whole generated surface flows through.
+            "export * from \"./native\"",
+            "export interface AuthError extends Error",
+            "export declare const OAuthStrategy",
+        ] {
+            assert!(
+                dts.contains(needle),
+                "index.d.ts lost hand-written {needle:?}",
+            );
+        }
+    }
+
     // --- Shared helpers ---
 
     fn device_code_json() -> serde_json::Value {
@@ -920,6 +979,48 @@ mod tests {
                     let err = result.poll_for_token().await.unwrap_err();
 
                     assertions::has_error_code(&err, "EXPIRED_TOKEN");
+                }
+            }
+
+            mod given_invalid_grant {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_invalid_grant_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.bad_request().json(error_json("invalid_grant"));
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assertions::has_error_code(&err, "INVALID_GRANT");
+                }
+            }
+
+            mod given_invalid_client {
+                use super::*;
+
+                #[tokio::test(start_paused = true)]
+                async fn returns_invalid_client_error() {
+                    let dir = TempDir::new().unwrap();
+                    let mut mocks = MockSet::new();
+                    mock_code_endpoint(&mut mocks);
+                    mocks.mock(|when, then| {
+                        when.post().path("/oauth/device/token");
+                        then.bad_request().json(error_json("invalid_client"));
+                    });
+                    let server = start_server(mocks).await;
+
+                    let result = begin_result(&server, &dir).await;
+                    let err = result.poll_for_token().await.unwrap_err();
+
+                    assertions::has_error_code(&err, "INVALID_CLIENT");
                 }
             }
 

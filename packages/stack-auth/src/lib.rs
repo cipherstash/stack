@@ -318,14 +318,21 @@ pub enum AuthError {
     InvalidUrl(#[from] url::ParseError),
     /// The requested region is not supported.
     #[error("Unsupported region: {0}")]
+    #[diagnostic(help("Use a supported region, e.g. `ap-southeast-2.aws`."))]
     Region(#[from] cts_common::RegionError),
     /// The workspace CRN could not be parsed.
     #[error("Invalid workspace CRN: {0}")]
+    #[diagnostic(help(
+        "A workspace CRN looks like `crn:<region>:<workspace-id>`, e.g. `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY`."
+    ))]
     InvalidCrn(cts_common::InvalidCrn),
     /// The token issued by the auth server is for a different workspace than
     /// the one configured on the strategy. Surfaces when the access key was
     /// minted for a different workspace, or when the wrong CRN was passed.
     #[error("Workspace mismatch: token issued for {token_workspace}, but strategy is configured for {expected_workspace}")]
+    #[diagnostic(help(
+        "The access key or workspace CRN is scoped to a different workspace than the one requested — check which workspace the credential belongs to."
+    ))]
     WorkspaceMismatch {
         /// The workspace the strategy was configured for (from the CRN).
         expected_workspace: cts_common::WorkspaceId,
@@ -340,15 +347,22 @@ pub enum AuthError {
     /// Set the `CS_WORKSPACE_CRN` environment variable or call
     /// [`AutoStrategyBuilder::with_workspace_crn`](crate::AutoStrategyBuilder::with_workspace_crn).
     #[error("Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn")]
+    #[diagnostic(help(
+        "Most strategies need a workspace CRN — set the `CS_WORKSPACE_CRN` environment variable, or pass it explicitly, e.g. `AutoStrategyBuilder::with_workspace_crn`."
+    ))]
     MissingWorkspaceCrn,
     /// No credentials are available (e.g. not logged in, no access key configured).
     #[error("Not authenticated")]
+    #[diagnostic(help(
+        "Log in with `stash login`, or set `CS_CLIENT_ACCESS_KEY` for service-to-service auth."
+    ))]
     NotAuthenticated,
     /// A token (access token or device code) has expired.
     #[error("Token expired")]
     TokenExpired,
     /// The access key string is malformed (e.g. missing `CSAK` prefix or `.` separator).
     #[error("Invalid access key: {0}")]
+    #[diagnostic(help("Access keys have the form `CSAK<key-id>.<secret>`."))]
     InvalidAccessKey(#[from] access_key::InvalidAccessKey),
     /// The JWT could not be decoded or its claims are malformed.
     #[error("Invalid token: {0}")]
@@ -363,10 +377,39 @@ pub enum AuthError {
 }
 
 impl AuthError {
+    /// The complete set of codes [`AuthError::error_code`] can return — the
+    /// stable, machine-readable contract surfaced across FFI (JS `Error.code`,
+    /// Node-API codes, the `index.d.ts` / wasm typing unions). Kept next to
+    /// `error_code` so the two move together. The binding crates derive their
+    /// expected union from this constant rather than re-scraping this source,
+    /// and `auth_error_code_is_stable_for_every_variant` pins that it stays in
+    /// lockstep with what `error_code` actually returns.
+    pub const ERROR_CODES: &'static [&'static str] = &[
+        "REQUEST_ERROR",
+        "ACCESS_DENIED",
+        "EXPIRED_TOKEN",
+        "INVALID_GRANT",
+        "INVALID_CLIENT",
+        "INVALID_URL",
+        "INVALID_REGION",
+        "INVALID_TOKEN",
+        "SERVER_ERROR",
+        "NOT_AUTHENTICATED",
+        "MISSING_WORKSPACE_CRN",
+        "INVALID_ACCESS_KEY",
+        "INVALID_CRN",
+        "WORKSPACE_MISMATCH",
+        "INVALID_WORKSPACE_ID",
+        // `Store` (and its code) only exists off-wasm — see `error_code` below.
+        #[cfg(not(target_arch = "wasm32"))]
+        "STORE_ERROR",
+    ];
+
     /// Stable machine-readable identifier for surfacing across FFI boundaries
     /// (e.g. JS `Error.code`, Node-API error codes). Named `error_code` rather
     /// than `code` to avoid colliding with `miette::Diagnostic::code`, which
-    /// is inherited via `#[derive(Diagnostic)]`.
+    /// is inherited via `#[derive(Diagnostic)]`. Every value it can return is
+    /// listed in [`AuthError::ERROR_CODES`].
     pub fn error_code(&self) -> &'static str {
         match self {
             Self::Request(_) => "REQUEST_ERROR",
@@ -482,9 +525,17 @@ mod tests {
     /// all variants except `Request`, whose inner `reqwest::Error` has no public
     /// constructor; if a new variant is added without a code, `error_code`'s
     /// exhaustive match fails to compile, so the contract can't silently drift.
+    ///
+    /// Also pins [`AuthError::ERROR_CODES`] against what `error_code` actually
+    /// returns: every constructed variant's code must be declared there, and
+    /// `ERROR_CODES` must hold exactly those codes plus `REQUEST_ERROR` (the one
+    /// variant with no public constructor). So the list can't grow stale entries
+    /// or omit a real one — which is what the binding crates' union tests trust.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn auth_error_code_is_stable_for_every_variant() {
+        use std::collections::BTreeSet;
+
         let workspace = "ZVATKW3VHMFG27DY"
             .parse::<cts_common::WorkspaceId>()
             .unwrap();
@@ -534,8 +585,86 @@ mod tests {
             ),
         ];
 
+        let declared: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
+
+        let mut from_variants: BTreeSet<&str> = BTreeSet::new();
         for (err, expected) in cases {
             assert_eq!(err.error_code(), expected, "error_code for {err:?}");
+            assert!(
+                declared.contains(expected),
+                "{expected} is returned by error_code() but missing from AuthError::ERROR_CODES",
+            );
+            from_variants.insert(expected);
+        }
+
+        // `Request` has no public constructor, so it can't appear above; add its
+        // code explicitly so the set-equality below stays exact.
+        from_variants.insert("REQUEST_ERROR");
+
+        assert_eq!(
+            declared, from_variants,
+            "AuthError::ERROR_CODES drifted from the codes error_code() returns",
+        );
+    }
+
+    /// Every variant annotated with `#[diagnostic(help(..))]` must surface that
+    /// help through `miette::Diagnostic` — it's what the CLI renders below the
+    /// error message. Unlike `error_code`'s exhaustive match, `help` is optional
+    /// and silently compiles if dropped, so pin all six (and a couple of
+    /// un-annotated variants that must stay `None`) explicitly.
+    #[test]
+    fn annotated_variants_expose_diagnostic_help() {
+        use miette::Diagnostic;
+
+        let workspace = "ZVATKW3VHMFG27DY"
+            .parse::<cts_common::WorkspaceId>()
+            .unwrap();
+
+        // (variant, substring its help must contain) — one row per annotation.
+        let with_help: Vec<(AuthError, &str)> = vec![
+            (
+                AuthError::Region("not-a-region".parse::<cts_common::Region>().unwrap_err()),
+                "supported region",
+            ),
+            (
+                AuthError::InvalidCrn("not-a-crn".parse::<cts_common::Crn>().unwrap_err()),
+                "crn:<region>:<workspace-id>",
+            ),
+            (
+                AuthError::WorkspaceMismatch {
+                    expected_workspace: workspace,
+                    token_workspace: workspace,
+                },
+                "different workspace",
+            ),
+            (AuthError::MissingWorkspaceCrn, "CS_WORKSPACE_CRN"),
+            (AuthError::NotAuthenticated, "stash login"),
+            (
+                AuthError::InvalidAccessKey(
+                    "".parse::<crate::access_key::AccessKey>().unwrap_err(),
+                ),
+                "CSAK<key-id>.<secret>",
+            ),
+        ];
+
+        for (err, substring) in with_help {
+            let help = err.help().map(|h| h.to_string());
+            assert!(
+                help.as_deref().is_some_and(|h| h.contains(substring)),
+                "{err:?} should carry help containing {substring:?}, got: {help:?}",
+            );
+        }
+
+        // Un-annotated variants must report no help — keeps the contract
+        // symmetric so a stray annotation doesn't slip in unnoticed.
+        for err in [
+            AuthError::TokenExpired,
+            AuthError::InvalidToken("malformed".to_string()),
+        ] {
+            assert!(
+                err.help().is_none(),
+                "{err:?} has no #[diagnostic(help)] and should report None",
+            );
         }
     }
 }
