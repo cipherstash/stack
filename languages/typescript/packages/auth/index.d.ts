@@ -13,7 +13,7 @@
  *     with a machine-readable `.code` at runtime by `index.js`.
  *   - `OAuthStrategy` — a deprecated alias exported at runtime by `index.js`.
  *
- * `AuthErrorCode` mirrors `AuthError::error_code()` in
+ * `AuthErrorCode` mirrors `AuthError::ERROR_CODES` in
  * `packages/stack-auth/src/lib.rs` (plus `UNKNOWN_ERROR`, the `index.js`
  * fallback). The `stack-auth-node` test `ts_auth_error_code_union_matches_error_codes`
  * guards this union against drift.

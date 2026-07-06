@@ -581,53 +581,20 @@ mod tests {
     /// exactly the codes `AuthError::error_code()` can return, plus
     /// `UNKNOWN_ERROR` (the `index.js` fallback).
     ///
-    /// The expected set is *derived* from `error_code()`'s match arms in the
-    /// core crate's source — not a hand-kept mirror — so there's no parallel
-    /// list to drift. `error_code`'s match is exhaustive, so adding an
-    /// `AuthError` variant forces a new `=> "CODE"` arm there, which this test
-    /// then requires the TS union to include; forget to update `index.d.ts` and
-    /// this fails.
+    /// The expected set is the exported [`AuthError::ERROR_CODES`] constant — a
+    /// real symbol the compiler resolves, not a scrape of the core crate's
+    /// source text. A core-crate test pins that constant against `error_code`'s
+    /// exhaustive match, so adding an `AuthError` variant forces a new code
+    /// there, which this test then requires the TS union to include; forget to
+    /// update `index.d.ts` and this fails.
     #[test]
     fn ts_auth_error_code_union_matches_error_codes() {
         use std::collections::BTreeSet;
 
-        // Parse the codes `AuthError::error_code` can return straight from its
-        // source. The node crate depends on stack-auth, so this resolves to the
-        // core crate's `lib.rs`.
-        const CORE_SRC: &str = include_str!("../../src/lib.rs");
-
-        let fn_start = CORE_SRC
-            .find("pub fn error_code(")
-            .expect("AuthError::error_code source not found");
-        // The method is indented 4 spaces, so its closing brace is the first
-        // `\n    }` after the signature (the inner `match` closes at 8 spaces,
-        // and every arm is deeper still — none collide with this).
-        let fn_body = {
-            let rest = &CORE_SRC[fn_start..];
-            let end = rest.find("\n    }").expect("error_code fn close not found");
-            &rest[..end]
-        };
-
-        // Every arm is `=> "CODE",`; pull the string literals. `UNKNOWN_ERROR`
-        // is added by the JS layer, never by `error_code`, so add it explicitly.
-        let mut expected: BTreeSet<&str> = fn_body
-            .match_indices("=> \"")
-            .map(|(i, _)| {
-                let after = &fn_body[i + "=> \"".len()..];
-                let close = after
-                    .find('"')
-                    .expect("error_code arm missing closing quote");
-                &after[..close]
-            })
-            .collect();
+        // The codes `AuthError::error_code` can return, plus the `UNKNOWN_ERROR`
+        // fallback the JS layer adds (never returned by `error_code`).
+        let mut expected: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
         expected.insert("UNKNOWN_ERROR");
-
-        // A mis-scoped parse (empty/garbage) should fail loudly here, not pass.
-        assert!(
-            expected.len() >= 10,
-            "parsed only {} error codes from error_code() — the source parse likely broke",
-            expected.len(),
-        );
 
         // The hand-written `index.d.ts` union — lines of the form `  | 'CODE'`.
         let dts = include_str!("../index.d.ts");
@@ -642,7 +609,7 @@ mod tests {
 
         assert_eq!(
             union, expected,
-            "AuthErrorCode union in index.d.ts drifted from AuthError::error_code()",
+            "AuthErrorCode union in index.d.ts drifted from AuthError::ERROR_CODES",
         );
     }
 

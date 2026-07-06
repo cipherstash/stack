@@ -377,10 +377,39 @@ pub enum AuthError {
 }
 
 impl AuthError {
+    /// The complete set of codes [`AuthError::error_code`] can return — the
+    /// stable, machine-readable contract surfaced across FFI (JS `Error.code`,
+    /// Node-API codes, the `index.d.ts` / wasm typing unions). Kept next to
+    /// `error_code` so the two move together. The binding crates derive their
+    /// expected union from this constant rather than re-scraping this source,
+    /// and `auth_error_code_is_stable_for_every_variant` pins that it stays in
+    /// lockstep with what `error_code` actually returns.
+    pub const ERROR_CODES: &'static [&'static str] = &[
+        "REQUEST_ERROR",
+        "ACCESS_DENIED",
+        "EXPIRED_TOKEN",
+        "INVALID_GRANT",
+        "INVALID_CLIENT",
+        "INVALID_URL",
+        "INVALID_REGION",
+        "INVALID_TOKEN",
+        "SERVER_ERROR",
+        "NOT_AUTHENTICATED",
+        "MISSING_WORKSPACE_CRN",
+        "INVALID_ACCESS_KEY",
+        "INVALID_CRN",
+        "WORKSPACE_MISMATCH",
+        "INVALID_WORKSPACE_ID",
+        // `Store` (and its code) only exists off-wasm — see `error_code` below.
+        #[cfg(not(target_arch = "wasm32"))]
+        "STORE_ERROR",
+    ];
+
     /// Stable machine-readable identifier for surfacing across FFI boundaries
     /// (e.g. JS `Error.code`, Node-API error codes). Named `error_code` rather
     /// than `code` to avoid colliding with `miette::Diagnostic::code`, which
-    /// is inherited via `#[derive(Diagnostic)]`.
+    /// is inherited via `#[derive(Diagnostic)]`. Every value it can return is
+    /// listed in [`AuthError::ERROR_CODES`].
     pub fn error_code(&self) -> &'static str {
         match self {
             Self::Request(_) => "REQUEST_ERROR",
@@ -496,9 +525,17 @@ mod tests {
     /// all variants except `Request`, whose inner `reqwest::Error` has no public
     /// constructor; if a new variant is added without a code, `error_code`'s
     /// exhaustive match fails to compile, so the contract can't silently drift.
+    ///
+    /// Also pins [`AuthError::ERROR_CODES`] against what `error_code` actually
+    /// returns: every constructed variant's code must be declared there, and
+    /// `ERROR_CODES` must hold exactly those codes plus `REQUEST_ERROR` (the one
+    /// variant with no public constructor). So the list can't grow stale entries
+    /// or omit a real one — which is what the binding crates' union tests trust.
     #[test]
     #[allow(clippy::unwrap_used)]
     fn auth_error_code_is_stable_for_every_variant() {
+        use std::collections::BTreeSet;
+
         let workspace = "ZVATKW3VHMFG27DY"
             .parse::<cts_common::WorkspaceId>()
             .unwrap();
@@ -548,9 +585,26 @@ mod tests {
             ),
         ];
 
+        let declared: BTreeSet<&str> = AuthError::ERROR_CODES.iter().copied().collect();
+
+        let mut from_variants: BTreeSet<&str> = BTreeSet::new();
         for (err, expected) in cases {
             assert_eq!(err.error_code(), expected, "error_code for {err:?}");
+            assert!(
+                declared.contains(expected),
+                "{expected} is returned by error_code() but missing from AuthError::ERROR_CODES",
+            );
+            from_variants.insert(expected);
         }
+
+        // `Request` has no public constructor, so it can't appear above; add its
+        // code explicitly so the set-equality below stays exact.
+        from_variants.insert("REQUEST_ERROR");
+
+        assert_eq!(
+            declared, from_variants,
+            "AuthError::ERROR_CODES drifted from the codes error_code() returns",
+        );
     }
 
     /// Every variant annotated with `#[diagnostic(help(..))]` must surface that
