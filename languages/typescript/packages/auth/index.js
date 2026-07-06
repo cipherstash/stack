@@ -23,13 +23,20 @@ function toFailure(err) {
   if (!(err instanceof Error) || !err.message.startsWith(FAILURE_SENTINEL)) {
     throw err;
   }
-  const { type, message, help, url, ...payload } = JSON.parse(
-    err.message.slice(FAILURE_SENTINEL.length),
-  );
+  let envelope;
+  try {
+    envelope = JSON.parse(err.message.slice(FAILURE_SENTINEL.length));
+  } catch {
+    // Sentinel present but the tail isn't valid JSON. Can't happen with the
+    // current Rust producer (always emits valid JSON), but if it ever did,
+    // don't mask the real failure as an opaque SyntaxError — re-throw it.
+    throw err;
+  }
+  const { type, message, help, url, ...payload } = envelope;
   err.message = message;
   err.code = type;
-  // Spread payload first so the fixed `type`/`error` keys always win, even if a
-  // future payload field collides with one of them.
+  // Spread payload first so the fixed `type`/`error` keys — and the `help`/`url`
+  // re-asserted below — always win over a colliding payload key.
   const failure = { ...payload, type, error: err };
   if (help !== undefined) {
     err.help = help;

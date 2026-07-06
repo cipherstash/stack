@@ -435,6 +435,13 @@ impl serde::Serialize for AuthError {
 
         let kind = self.kind();
         let mut map = serializer.serialize_map(None)?;
+        // Emit the per-variant payload first, then the fixed diagnostic fields —
+        // so if a future `payload()` key ever collided with `type`/`message`/
+        // `help`/`url`, the diagnostic field (written last) wins rather than being
+        // clobbered. Mirrors the JS side's `{ ...payload, type, error }`.
+        for (key, value) in kind.payload() {
+            map.serialize_entry(&key, &value)?;
+        }
         map.serialize_entry("type", kind.error_code())?;
         map.serialize_entry("message", &self.to_string())?;
         if let Some(help) = self.help() {
@@ -442,9 +449,6 @@ impl serde::Serialize for AuthError {
         }
         if let Some(url) = self.url() {
             map.serialize_entry("url", &url.to_string())?;
-        }
-        for (key, value) in kind.payload() {
-            map.serialize_entry(&key, &value)?;
         }
         map.end()
     }
