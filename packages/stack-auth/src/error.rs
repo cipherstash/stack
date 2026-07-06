@@ -31,6 +31,34 @@ pub trait AuthErrorKind: std::error::Error + miette::Diagnostic {
     }
 }
 
+/// The stable machine-readable error codes surfaced across FFI (JS `Error.code`,
+/// the `AuthFailure` TS unions). Defined once here so each
+/// [`AuthErrorKind::error_code`] impl and the [`AuthError::ERROR_CODES`] list
+/// reference the same constant rather than repeating a magic string; a code
+/// only ever changes in one place. `auth_error_code_is_stable_for_every_variant`
+/// pins that every variant maps to one of these and that the list is exhaustive.
+pub(crate) mod codes {
+    pub(crate) const REQUEST_ERROR: &str = "REQUEST_ERROR";
+    pub(crate) const ACCESS_DENIED: &str = "ACCESS_DENIED";
+    pub(crate) const INVALID_GRANT: &str = "INVALID_GRANT";
+    pub(crate) const INVALID_CLIENT: &str = "INVALID_CLIENT";
+    pub(crate) const INVALID_URL: &str = "INVALID_URL";
+    pub(crate) const INVALID_REGION: &str = "INVALID_REGION";
+    pub(crate) const INVALID_CRN: &str = "INVALID_CRN";
+    pub(crate) const WORKSPACE_MISMATCH: &str = "WORKSPACE_MISMATCH";
+    pub(crate) const INVALID_WORKSPACE_ID: &str = "INVALID_WORKSPACE_ID";
+    pub(crate) const MISSING_WORKSPACE_CRN: &str = "MISSING_WORKSPACE_CRN";
+    pub(crate) const NOT_AUTHENTICATED: &str = "NOT_AUTHENTICATED";
+    pub(crate) const EXPIRED_TOKEN: &str = "EXPIRED_TOKEN";
+    pub(crate) const INVALID_ACCESS_KEY: &str = "INVALID_ACCESS_KEY";
+    pub(crate) const INVALID_TOKEN: &str = "INVALID_TOKEN";
+    pub(crate) const SERVER_ERROR: &str = "SERVER_ERROR";
+    pub(crate) const ALREADY_CONSUMED: &str = "ALREADY_CONSUMED";
+    pub(crate) const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) const STORE_ERROR: &str = "STORE_ERROR";
+}
+
 // ---------------------------------------------------------------------------
 // Per-error structs
 // ---------------------------------------------------------------------------
@@ -41,7 +69,7 @@ pub trait AuthErrorKind: std::error::Error + miette::Diagnostic {
 pub struct RequestError(pub reqwest::Error);
 impl AuthErrorKind for RequestError {
     fn error_code(&self) -> &'static str {
-        "REQUEST_ERROR"
+        codes::REQUEST_ERROR
     }
 }
 
@@ -51,7 +79,7 @@ impl AuthErrorKind for RequestError {
 pub struct AccessDenied;
 impl AuthErrorKind for AccessDenied {
     fn error_code(&self) -> &'static str {
-        "ACCESS_DENIED"
+        codes::ACCESS_DENIED
     }
 }
 
@@ -61,7 +89,7 @@ impl AuthErrorKind for AccessDenied {
 pub struct InvalidGrant;
 impl AuthErrorKind for InvalidGrant {
     fn error_code(&self) -> &'static str {
-        "INVALID_GRANT"
+        codes::INVALID_GRANT
     }
 }
 
@@ -71,7 +99,7 @@ impl AuthErrorKind for InvalidGrant {
 pub struct InvalidClient;
 impl AuthErrorKind for InvalidClient {
     fn error_code(&self) -> &'static str {
-        "INVALID_CLIENT"
+        codes::INVALID_CLIENT
     }
 }
 
@@ -81,7 +109,7 @@ impl AuthErrorKind for InvalidClient {
 pub struct InvalidUrl(pub url::ParseError);
 impl AuthErrorKind for InvalidUrl {
     fn error_code(&self) -> &'static str {
-        "INVALID_URL"
+        codes::INVALID_URL
     }
 }
 
@@ -92,7 +120,7 @@ impl AuthErrorKind for InvalidUrl {
 pub struct UnsupportedRegion(pub cts_common::RegionError);
 impl AuthErrorKind for UnsupportedRegion {
     fn error_code(&self) -> &'static str {
-        "INVALID_REGION"
+        codes::INVALID_REGION
     }
 }
 
@@ -105,7 +133,7 @@ impl AuthErrorKind for UnsupportedRegion {
 pub struct InvalidCrn(pub cts_common::InvalidCrn);
 impl AuthErrorKind for InvalidCrn {
     fn error_code(&self) -> &'static str {
-        "INVALID_CRN"
+        codes::INVALID_CRN
     }
 }
 
@@ -125,7 +153,7 @@ pub struct WorkspaceMismatch {
 }
 impl AuthErrorKind for WorkspaceMismatch {
     fn error_code(&self) -> &'static str {
-        "WORKSPACE_MISMATCH"
+        codes::WORKSPACE_MISMATCH
     }
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         match serde_json::json!({
@@ -144,7 +172,7 @@ impl AuthErrorKind for WorkspaceMismatch {
 pub struct InvalidWorkspaceId(pub cts_common::InvalidWorkspaceId);
 impl AuthErrorKind for InvalidWorkspaceId {
     fn error_code(&self) -> &'static str {
-        "INVALID_WORKSPACE_ID"
+        codes::INVALID_WORKSPACE_ID
     }
 }
 
@@ -159,7 +187,7 @@ impl AuthErrorKind for InvalidWorkspaceId {
 pub struct MissingWorkspaceCrn;
 impl AuthErrorKind for MissingWorkspaceCrn {
     fn error_code(&self) -> &'static str {
-        "MISSING_WORKSPACE_CRN"
+        codes::MISSING_WORKSPACE_CRN
     }
 }
 
@@ -172,7 +200,7 @@ impl AuthErrorKind for MissingWorkspaceCrn {
 pub struct NotAuthenticated;
 impl AuthErrorKind for NotAuthenticated {
     fn error_code(&self) -> &'static str {
-        "NOT_AUTHENTICATED"
+        codes::NOT_AUTHENTICATED
     }
 }
 
@@ -182,7 +210,7 @@ impl AuthErrorKind for NotAuthenticated {
 pub struct TokenExpired;
 impl AuthErrorKind for TokenExpired {
     fn error_code(&self) -> &'static str {
-        "EXPIRED_TOKEN"
+        codes::EXPIRED_TOKEN
     }
 }
 
@@ -193,7 +221,7 @@ impl AuthErrorKind for TokenExpired {
 pub struct InvalidAccessKeyError(pub access_key::InvalidAccessKey);
 impl AuthErrorKind for InvalidAccessKeyError {
     fn error_code(&self) -> &'static str {
-        "INVALID_ACCESS_KEY"
+        codes::INVALID_ACCESS_KEY
     }
 }
 
@@ -203,7 +231,7 @@ impl AuthErrorKind for InvalidAccessKeyError {
 pub struct InvalidToken(pub String);
 impl AuthErrorKind for InvalidToken {
     fn error_code(&self) -> &'static str {
-        "INVALID_TOKEN"
+        codes::INVALID_TOKEN
     }
 }
 
@@ -213,7 +241,7 @@ impl AuthErrorKind for InvalidToken {
 pub struct ServerError(pub String);
 impl AuthErrorKind for ServerError {
     fn error_code(&self) -> &'static str {
-        "SERVER_ERROR"
+        codes::SERVER_ERROR
     }
 }
 
@@ -226,7 +254,7 @@ impl AuthErrorKind for ServerError {
 pub struct AlreadyConsumed;
 impl AuthErrorKind for AlreadyConsumed {
     fn error_code(&self) -> &'static str {
-        "ALREADY_CONSUMED"
+        codes::ALREADY_CONSUMED
     }
 }
 
@@ -238,7 +266,7 @@ impl AuthErrorKind for AlreadyConsumed {
 pub struct InternalError(pub String);
 impl AuthErrorKind for InternalError {
     fn error_code(&self) -> &'static str {
-        "INTERNAL_ERROR"
+        codes::INTERNAL_ERROR
     }
 }
 
@@ -250,7 +278,7 @@ pub struct StoreError(pub stack_profile::ProfileError);
 #[cfg(not(target_arch = "wasm32"))]
 impl AuthErrorKind for StoreError {
     fn error_code(&self) -> &'static str {
-        "STORE_ERROR"
+        codes::STORE_ERROR
     }
 }
 
@@ -328,26 +356,26 @@ impl AuthError {
     /// and `auth_error_code_is_stable_for_every_variant` pins that it stays in
     /// lockstep with what `error_code` actually returns.
     pub const ERROR_CODES: &'static [&'static str] = &[
-        "REQUEST_ERROR",
-        "ACCESS_DENIED",
-        "INVALID_GRANT",
-        "INVALID_CLIENT",
-        "INVALID_URL",
-        "INVALID_REGION",
-        "INVALID_CRN",
-        "WORKSPACE_MISMATCH",
-        "INVALID_WORKSPACE_ID",
-        "MISSING_WORKSPACE_CRN",
-        "NOT_AUTHENTICATED",
-        "EXPIRED_TOKEN",
-        "INVALID_ACCESS_KEY",
-        "INVALID_TOKEN",
-        "SERVER_ERROR",
-        "ALREADY_CONSUMED",
-        "INTERNAL_ERROR",
+        codes::REQUEST_ERROR,
+        codes::ACCESS_DENIED,
+        codes::INVALID_GRANT,
+        codes::INVALID_CLIENT,
+        codes::INVALID_URL,
+        codes::INVALID_REGION,
+        codes::INVALID_CRN,
+        codes::WORKSPACE_MISMATCH,
+        codes::INVALID_WORKSPACE_ID,
+        codes::MISSING_WORKSPACE_CRN,
+        codes::NOT_AUTHENTICATED,
+        codes::EXPIRED_TOKEN,
+        codes::INVALID_ACCESS_KEY,
+        codes::INVALID_TOKEN,
+        codes::SERVER_ERROR,
+        codes::ALREADY_CONSUMED,
+        codes::INTERNAL_ERROR,
         // `Store` (and its code) only exists off-wasm — see the enum above.
         #[cfg(not(target_arch = "wasm32"))]
-        "STORE_ERROR",
+        codes::STORE_ERROR,
     ];
 
     /// Dispatch to the wrapped concrete error as a trait object.
