@@ -1,13 +1,16 @@
 /**
- * Tests for the optional `config.strategy` auth strategy.
+ * Tests for the optional `config.authStrategy` auth strategy (and its
+ * deprecated `config.strategy` alias).
  *
  * protect-ffi (0.25+) lets `newClient` take an `AuthStrategy` (any
  * `{ getToken(): Promise<{ token }> }` object — the shape every
  * `@cipherstash/auth` strategy satisfies, including
  * `OidcFederationStrategy` for per-user identity-bound encryption).
- * `Encryption` exposes it via `config.strategy`; when provided it must
- * reach `newClient` as `opts.strategy`, and when omitted the option must
- * be absent so the default credentials-derived strategy is used.
+ * `Encryption` exposes it via `config.authStrategy`; when provided it must
+ * reach `newClient` as `opts.strategy` (the FFI's option name), and when
+ * omitted the option must be absent so the default `auto` strategy is used.
+ * The legacy `config.strategy` field is still honoured (with a runtime
+ * deprecation warning) until it is removed.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,28 +33,28 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('Encryption config.strategy', () => {
-  it('forwards a supplied strategy to newClient', async () => {
-    const strategy: AuthStrategy = {
+describe('Encryption config.authStrategy', () => {
+  it('forwards a supplied authStrategy to newClient', async () => {
+    const authStrategy: AuthStrategy = {
       getToken: vi.fn(async () => ({ token: 'service-token' })),
     }
 
-    await Encryption({ schemas: [users], config: { strategy } })
+    await Encryption({ schemas: [users], config: { authStrategy } })
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(strategy)
+    expect(opts.strategy).toBe(authStrategy)
   })
 
-  it('passes the strategy alongside the credential clientOpts', async () => {
-    const strategy: AuthStrategy = {
+  it('passes the authStrategy alongside the credential clientOpts', async () => {
+    const authStrategy: AuthStrategy = {
       getToken: vi.fn(async () => ({ token: 'service-token' })),
     }
 
     await Encryption({
       schemas: [users],
       config: {
-        strategy,
+        authStrategy,
         workspaceCrn: 'crn:ap-southeast-2.aws:test-workspace',
         clientId: 'client-id',
         clientKey: 'client-key',
@@ -60,8 +63,8 @@ describe('Encryption config.strategy', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(strategy)
-    // clientKey is still required even when a strategy is supplied.
+    expect(opts.strategy).toBe(authStrategy)
+    // clientKey is still required even when an authStrategy is supplied.
     expect(opts.clientOpts.clientKey).toBe('client-key')
     expect(opts.clientOpts.workspaceCrn).toBe(
       'crn:ap-southeast-2.aws:test-workspace',
@@ -83,7 +86,10 @@ describe('Encryption config.strategy', () => {
       })),
     }
 
-    await Encryption({ schemas: [users], config: { strategy: oidcStrategy } })
+    await Encryption({
+      schemas: [users],
+      config: { authStrategy: oidcStrategy },
+    })
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
@@ -96,6 +102,48 @@ describe('Encryption config.strategy', () => {
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
     expect(opts.strategy).toBeUndefined()
+  })
+})
+
+describe('Encryption config.strategy (deprecated alias)', () => {
+  it('still forwards a deprecated strategy to newClient and warns once', async () => {
+    // The rename warning is deduped per process, so this must be the first
+    // test in the file that passes `config.strategy`; the other suites use
+    // `authStrategy` and never trip the flag.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const strategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'service-token' })),
+    }
+
+    await Encryption({ schemas: [users], config: { strategy } })
+
+    // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
+    const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
+    expect(opts.strategy).toBe(strategy)
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('`config.strategy` is deprecated'),
+    )
+
+    warn.mockRestore()
+  })
+
+  it('prefers authStrategy over the deprecated strategy when both are set', async () => {
+    const strategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'legacy-token' })),
+    }
+    const authStrategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'new-token' })),
+    }
+
+    await Encryption({
+      schemas: [users],
+      config: { strategy, authStrategy },
+    })
+
+    // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
+    const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
+    expect(opts.strategy).toBe(authStrategy)
   })
 })
 

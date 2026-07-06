@@ -23,11 +23,11 @@ import type {
  * with a `getToken(): Promise<{ token: string }>` method satisfies it —
  * notably the strategies from `@cipherstash/auth`: `OidcFederationStrategy`
  * (per-user, identity-bound encryption) and `AccessKeyStrategy`
- * (service-to-service / CI). When supplied to {@link ClientConfig.strategy},
+ * (service-to-service / CI). When supplied to {@link ClientConfig.authStrategy},
  * `getToken()` is invoked on every ZeroKMS request, taking precedence over
- * the credentials-derived default.
+ * the default `auto` strategy.
  *
- * @see ClientConfig.strategy
+ * @see ClientConfig.authStrategy
  */
 export type { AuthStrategy }
 
@@ -132,7 +132,12 @@ export type ClientConfig = {
    * An optional keyset identifier for multi-tenant encryption.
    * Each keyset provides cryptographic isolation, giving each tenant its own keyspace.
    * Specify by name (`{ name: "tenant-a" }`) or UUID (`{ id: "..." }`).
-   * Keysets are created and managed in the CipherStash dashboard.
+   * Keysets are created and managed in the
+   * [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets); omit to
+   * use the workspace's default keyset. A client is bound to one keyset for its
+   * lifetime, so use one client per tenant.
+   *
+   * @see {@link Encryption} for the full keysets walkthrough.
    */
   keyset?: KeysetIdentifier
 
@@ -140,8 +145,8 @@ export type ClientConfig = {
    * An optional authentication strategy for ZeroKMS requests, from
    * `@cipherstash/auth` (re-exported by `@cipherstash/stack`). When provided,
    * its `getToken()` is invoked on every ZeroKMS request and takes precedence
-   * over the credentials-derived default strategy (the `clientKey` is still
-   * required for encryption). Use:
+   * over the default `auto` strategy (the `clientKey` is still required for
+   * encryption). Use:
    *
    * - `OidcFederationStrategy` for per-user, identity-bound encryption —
    *   federates an end user's OIDC JWT into a CTS service token, so requests
@@ -151,11 +156,19 @@ export type ClientConfig = {
    * - `AccessKeyStrategy` for service-to-service / CI, or any custom
    *   `{ getToken() }` object for bespoke token acquisition / caching.
    *
-   * Leave unset to let the client build its default strategy from
-   * `workspaceCrn` / `accessKey` / `clientId` / `clientKey` (or the
-   * corresponding `CS_*` environment variables).
+   * Leave unset to use the default `auto` strategy, which reads credentials
+   * from the `CS_*` environment variables and falls back to the local dev
+   * profile created by `npx stash auth login`.
    *
    * @see {@link AuthStrategy}
+   * @see {@link Encryption} for a full walkthrough of the authentication options.
+   */
+  authStrategy?: AuthStrategy
+
+  /**
+   * @deprecated Renamed to {@link ClientConfig.authStrategy}. Still honoured for
+   * backwards compatibility — passing it logs a deprecation warning at runtime —
+   * but it will be removed in a future release. Set `authStrategy` instead.
    */
   strategy?: AuthStrategy
 

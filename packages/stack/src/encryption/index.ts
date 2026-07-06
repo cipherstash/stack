@@ -127,7 +127,7 @@ export class EncryptionClient {
     clientId?: string
     clientKey?: string
     keyset?: KeysetIdentifier
-    strategy?: AuthStrategy
+    authStrategy?: AuthStrategy
     eqlVersion?: 2 | 3
   }): Promise<Result<EncryptionClient, EncryptionError>> {
     return await withResult(
@@ -145,7 +145,7 @@ export class EncryptionClient {
 
         // newClient handles env var fallback internally via withEnvCredentials,
         // so we pass config values through without manual fallback here.
-        // When `strategy` is supplied, protect-ffi invokes its getToken()
+        // When `authStrategy` is supplied, protect-ffi invokes its getToken()
         // on every ZeroKMS request instead of building an AutoStrategy
         // from the credentials in clientOpts (the clientKey is still used
         // for encryption). Passing `strategy: undefined` is equivalent to
@@ -163,7 +163,7 @@ export class EncryptionClient {
             clientKey: config.clientKey,
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
-          strategy: config.strategy,
+          strategy: config.authStrategy,
           eqlVersion: config.eqlVersion,
         })
 
@@ -673,40 +673,87 @@ export class EncryptionClient {
   }
 }
 
+// Emit the `config.strategy` → `config.authStrategy` rename warning at most
+// once per process so repeated `Encryption()` calls don't spam the console.
+let warnedStrategyDeprecated = false
+function warnStrategyDeprecated(): void {
+  if (warnedStrategyDeprecated) return
+  warnedStrategyDeprecated = true
+  console.warn(
+    '[encryption]: `config.strategy` is deprecated and will be removed in a future release — use `config.authStrategy` instead.',
+  )
+}
+
 /**
  * Creates and initializes an Encryption client for encrypting and decrypting data with CipherStash.
  *
  * Provide at least one schema (from {@link encryptedTable}) so the client knows which tables and
- * columns to use. Credentials are read from the optional `config` or from the environment
- * (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`).
+ * columns to use:
  *
- * Pass a `config.strategy` to control how ZeroKMS requests are authenticated; its `getToken()`
- * is then used for every request in place of the credentials-derived default. Use
- * `OidcFederationStrategy` for per-user, identity-bound encryption (federates an end user's OIDC
- * JWT into a CTS service token) or `AccessKeyStrategy` for service-to-service / CI. Both are
- * re-exported from `@cipherstash/stack`. See {@link ClientConfig.strategy}.
- *
- * @param config - Initialization options. Must include `schemas`; optionally include `config` for
- *   workspace/keys. Logging is configured via the `STASH_STACK_LOG` environment variable
- *   (`debug | info | error`, default: `error`).
- * @returns A Promise that resolves to an initialized {@link EncryptionClient} ready for
- *   {@link EncryptionClient.encrypt}, {@link EncryptionClient.decrypt}, and related operations.
- *
- * @throws Throws if `schemas` is empty, or if a keyset `id` is supplied but is not a valid UUID.
- *   Also throws if the client fails to initialize (e.g. invalid credentials or config).
- *
- * @example
  * ```typescript
  * import { Encryption, encryptedTable, encryptedColumn } from "@cipherstash/stack"
  *
- * const users = encryptedTable("users", {
- *   email: encryptedColumn("email"),
- * })
+ * const users = encryptedTable("users", { email: encryptedColumn("email") })
  * const client = await Encryption({ schemas: [users] })
  * const result = await client.encrypt("alice@example.com", { column: users.email, table: users })
  * ```
  *
- * @example Per-user, identity-bound encryption
+ * ## Authentication
+ *
+ * By default the client uses the `auto` auth strategy. `auto` first looks for the `CS_*`
+ * environment variables (see below) and, if they are not set, falls back to the local **dev
+ * profile** on your machine. The dev profile also supplies the client key, so during local
+ * development you generally don't need to set any environment variables at all.
+ *
+ * ### Local development — create a dev profile
+ *
+ * Log in once to create the dev profile that `auto` picks up automatically:
+ *
+ * ```bash
+ * npx stash auth login
+ * ```
+ *
+ * ### Production / CI — environment variables
+ *
+ * In production and CI you typically authenticate with the four `CS_*` environment variables
+ * instead of a dev profile. Developers can obtain these values from the
+ * [CipherStash dashboard](https://dashboard.cipherstash.com):
+ *
+ * | Environment variable   | Description                                                                    |
+ * | ---------------------- | ------------------------------------------------------------------------------ |
+ * | `CS_WORKSPACE_CRN`     | The workspace Cloud Resource Name (CRN) that identifies your workspace.         |
+ * | `CS_CLIENT_ID`         | The client identifier issued when you create an access key.                    |
+ * | `CS_CLIENT_KEY`        | The client key material combined with ZeroKMS to perform encryption.           |
+ * | `CS_CLIENT_ACCESS_KEY` | The API access key used to authenticate requests to CipherStash.               |
+ *
+ * When these are set, `auto` uses them in preference to the local dev profile.
+ *
+ * ### Custom auth strategies — `config.authStrategy`
+ *
+ * For finer control, pass an explicit strategy via `config.authStrategy` (from `@cipherstash/auth`,
+ * re-exported by `@cipherstash/stack`). See the `@cipherstash/auth` package for the full list. Two
+ * common choices:
+ *
+ * `AccessKeyStrategy` — like `auto`, but only ever uses an access key; it never falls back to the
+ * local dev profile. Ideal for services and CI:
+ *
+ * ```typescript
+ * import { Encryption, AccessKeyStrategy } from "@cipherstash/stack"
+ *
+ * const client = await Encryption({
+ *   schemas: [users],
+ *   config: {
+ *     authStrategy: AccessKeyStrategy.create(workspaceCrn, accessKey),
+ *   },
+ * })
+ * ```
+ *
+ * `OidcFederationStrategy` — authenticate end users through your own identity provider (Supabase,
+ * Clerk, Auth0 or Okta) by federating their OIDC JWT into a CipherStash token. Add the provider to
+ * your workspace first at
+ * [dashboard.cipherstash.com/workspaces/_/oidc-providers](https://dashboard.cipherstash.com/workspaces/_/oidc-providers)
+ * (the `_` in the URL resolves to whichever workspace you select):
+ *
  * ```typescript
  * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
  *
@@ -714,17 +761,63 @@ export class EncryptionClient {
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
+ *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
  *   },
  * })
+ * ```
  *
+ * ### Lock context (identity-bound encryption)
+ *
+ * Lock context is an **additional** capability layered on top of `OidcFederationStrategy`: it
+ * requires that strategy, but `OidcFederationStrategy` does not require lock context. It binds a
+ * value to a claim from the user's JWT (typically `sub`) so that only the user who encrypted a
+ * value can decrypt it:
+ *
+ * ```typescript
  * // Bind the data key to the user's `sub` claim.
  * const result = await client
  *   .encrypt("alice@example.com", { column: users.email, table: users })
  *   .withLockContext({ identityClaim: ["sub"] })
  * ```
  *
+ * Because the lock is tied to a specific end user's identity, `AccessKeyStrategy` (which
+ * authenticates a service, not a user) is not valid for lock context — there is no user `sub`
+ * claim to bind to.
+ *
+ * ## Keysets (multi-tenant isolation)
+ *
+ * Pass `config.keyset` to encrypt under a specific **keyset** — a named or UUID-identified keyspace
+ * that gives each tenant its own cryptographic isolation, so data encrypted under one keyset cannot
+ * be decrypted under another. Create and manage keysets in the
+ * [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets) (the `_` in the URL resolves
+ * to whichever workspace you select); omit `config.keyset` to use the workspace's default keyset.
+ *
+ * ```typescript
+ * const client = await Encryption({
+ *   schemas: [users],
+ *   config: {
+ *     keyset: { name: "tenant-a" }, // or { id: "<uuid>" }
+ *   },
+ * })
+ * ```
+ *
+ * A client is bound to a single keyset for its lifetime, so multi-tenant applications use **one
+ * `Encryption()` client per tenant**. Keysets are orthogonal to `authStrategy` and lock context —
+ * they isolate a whole tenant's *keyspace* (coarse, fixed per client), whereas lock context binds
+ * an individual value to a user's identity claim (fine-grained, per operation) — and can be
+ * combined with both.
+ *
+ * @param config - Initialization options. Must include `schemas`; optionally include `config` for
+ *   credentials and authentication. Logging is configured via the `STASH_STACK_LOG` environment
+ *   variable (`debug | info | error`, default: `error`).
+ * @returns A Promise that resolves to an initialized {@link EncryptionClient} ready for
+ *   {@link EncryptionClient.encrypt}, {@link EncryptionClient.decrypt}, and related operations.
+ *
+ * @throws Throws if `schemas` is empty, or if a keyset `id` is supplied but is not a valid UUID.
+ *   Also throws if the client fails to initialize (e.g. invalid credentials or config).
+ *
  * @see {@link EncryptionClientConfig} for full config options.
+ * @see {@link ClientConfig.authStrategy} for the auth strategy field.
  * @see {@link EncryptionClient} for available methods after initialization.
  */
 export const Encryption = async (
@@ -748,6 +841,13 @@ export const Encryption = async (
     )
   }
 
+  // Resolve the auth strategy, honouring the deprecated `strategy` alias.
+  // `authStrategy` wins when both are set.
+  if (clientConfig?.strategy && !clientConfig.authStrategy) {
+    warnStrategyDeprecated()
+  }
+  const authStrategy = clientConfig?.authStrategy ?? clientConfig?.strategy
+
   const client = new EncryptionClient()
   const encryptConfig = buildEncryptConfig(...schemas)
 
@@ -760,6 +860,7 @@ export const Encryption = async (
   const result = await client.init({
     encryptConfig,
     ...clientConfig,
+    authStrategy,
     eqlVersion,
   })
 
