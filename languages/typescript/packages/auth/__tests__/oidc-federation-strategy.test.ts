@@ -91,6 +91,29 @@ describe("OidcFederationStrategy (TypeScript / vitest)", () => {
     expect(jwt.calls()).toBe(1);
   });
 
+  it("surfaces WORKSPACE_MISMATCH with the expected/actual payload", async () => {
+    // The federated token carries a different workspace than the strategy's CRN,
+    // so workspace verification fails. This is the flagship structured-payload
+    // failure — it exercises the `...payload` spread end to end (the named
+    // help/url destructure doesn't), so it guards `failure.expected`/`.actual`
+    // against a serde key rename or a spread regression at the JS boundary.
+    const MISMATCHED_WORKSPACE = "AAAAAAAAAAAAAAAA";
+    server.mockAuthorizeEndpointWithWorkspace(MISMATCHED_WORKSPACE);
+    const strategy = mustCreate(WORKSPACE_CRN, countingJwt().getJwt);
+
+    const r = await strategy.getToken();
+    if (!r.failure) {
+      expect.unreachable("expected a WORKSPACE_MISMATCH failure");
+    }
+    const { failure } = r;
+    if (failure.type !== "WORKSPACE_MISMATCH") {
+      expect.unreachable(`expected WORKSPACE_MISMATCH, got ${failure.type}`);
+    }
+    expect(failure.expected).toBe(WORKSPACE_ID);
+    expect(failure.actual).toBe(MISMATCHED_WORKSPACE);
+    expect(failure.error).toBeInstanceOf(Error);
+  });
+
   it("re-federates after the cached token expires", async () => {
     // expiry 0 → the federated token is immediately expired, so the second
     // getToken() must re-federate rather than serve a cached token.

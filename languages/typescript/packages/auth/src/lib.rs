@@ -606,6 +606,18 @@ mod tests {
                 union, expected,
                 "AuthFailure union in {name} drifted from AuthError::ERROR_CODES",
             );
+
+            // The tag scrape above only checks `type` literals. `WORKSPACE_MISMATCH`
+            // is the one variant carrying a structured payload (`WorkspaceMismatch::payload`
+            // in error.rs emits `expected`/`actual`), so pin those field names in the
+            // union too — a serde key rename or a dropped `.d.ts` field would otherwise
+            // leave the declared shape silently lying. A JS runtime test
+            // (`oidc-federation-strategy.test.ts`) drives it end-to-end through the
+            // `...payload` spread.
+            assert!(
+                dts.contains("type: \"WORKSPACE_MISMATCH\"; expected: string; actual: string"),
+                "{name}: WORKSPACE_MISMATCH union member must declare `expected: string; actual: string`",
+            );
         }
     }
 

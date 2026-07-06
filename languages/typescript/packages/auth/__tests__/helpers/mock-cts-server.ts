@@ -138,6 +138,25 @@ export class MockCtsServer {
     });
   }
 
+  /**
+   * Like {@link mockAuthorizeEndpoint}, but mints the federated token with a
+   * `workspace` claim of `workspace` — pass one that differs from the strategy's
+   * CRN to make `getToken()` fail workspace verification with
+   * `WORKSPACE_MISMATCH`.
+   */
+  mockAuthorizeEndpointWithWorkspace(workspace: string, expiry = 3600): void {
+    this.#on("POST", "/api/authorise", () => {
+      const exp = Math.floor(Date.now() / 1000) + expiry;
+      return {
+        status: 200,
+        json: {
+          accessToken: mintJwt({ exp, workspace }),
+          expiry: exp,
+        },
+      };
+    });
+  }
+
   mockAuthorizeEndpointError(): void {
     this.#on("POST", "/api/authorise", () => ({
       status: 500,
