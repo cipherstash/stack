@@ -177,4 +177,18 @@ describe("publish contract (npm pack)", () => {
       expect.arrayContaining(["index.d.ts", "native.d.ts"]),
     );
   });
+
+  it("bundles the LICENSE (README links to it; repo URL is private)", () => {
+    // The README's license link points at the private repo, unreachable from
+    // npmjs.org — so a copy must ride in the tarball. Guard the `files` entry.
+    const out = execFileSync("npm", ["pack", "--json", "--dry-run"], {
+      cwd: packageDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const packed = (
+      JSON.parse(out) as Array<{ files: Array<{ path: string }> }>
+    )[0].files.map((f) => f.path);
+    expect(packed).toContain("LICENSE");
+  });
 });

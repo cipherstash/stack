@@ -302,4 +302,4 @@ const { token, workspaceId, services } = result.data;
 
 ## License
 
-See [LICENSE](https://github.com/cipherstash/cipherstash-suite/blob/main/packages/stack-auth/LICENSE).
+Distributed under the [PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0). A full copy is bundled with this package as [`LICENSE`](./LICENSE).

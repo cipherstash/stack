@@ -1,6 +1,7 @@
 {
   "name": "@cipherstash/auth",
   "version": "0.41.0",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "index.js",
   "types": "index.d.ts",
   "browser": false,
@@ -47,6 +48,7 @@
     "index.d.ts",
     "native.d.ts",
     "README.md",
+    "LICENSE",
     "stack-auth-node.js",
     "wasm-types.d.ts",
     "wasm-inline.mjs",
