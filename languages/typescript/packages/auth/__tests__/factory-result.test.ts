@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -27,6 +27,7 @@ const SAVED_ENV_KEYS = [
   "CS_CONFIG_PATH",
 ] as const;
 let savedEnv: Partial<Record<(typeof SAVED_ENV_KEYS)[number], string>>;
+let configDir: string;
 
 beforeEach(() => {
   savedEnv = {};
@@ -36,10 +37,12 @@ beforeEach(() => {
   }
   // Point the profile store at an empty temp dir so ambient ~/.cipherstash
   // state can't leak into detection.
-  process.env.CS_CONFIG_PATH = mkdtempSync(join(tmpdir(), "cs-auth-test-"));
+  configDir = mkdtempSync(join(tmpdir(), "cs-auth-test-"));
+  process.env.CS_CONFIG_PATH = configDir;
 });
 
 afterEach(() => {
+  rmSync(configDir, { recursive: true, force: true });
   for (const key of SAVED_ENV_KEYS) {
     if (savedEnv[key] === undefined) {
       delete process.env[key];

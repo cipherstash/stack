@@ -654,6 +654,22 @@ mod tests {
         }
     }
 
+    /// The `__CS_FAIL__` sentinel is declared in both Rust (`FAILURE_SENTINEL`)
+    /// and JS (`index.js`), and every napi domain error depends on the two
+    /// agreeing: `toFailure` only recognizes a failure whose message starts with
+    /// it, re-throwing anything else as a panic. If the two drift, every failure
+    /// silently becomes a thrown error and no other test catches it. Pin that
+    /// `index.js` declares exactly the Rust value.
+    #[test]
+    fn failure_sentinel_matches_index_js() {
+        let js = include_str!("../index.js");
+        let expected = format!("const FAILURE_SENTINEL = \"{FAILURE_SENTINEL}\";");
+        assert!(
+            js.contains(&expected),
+            "index.js must declare `{expected}` — the __CS_FAIL__ sentinel drifted from src/lib.rs",
+        );
+    }
+
     // --- Shared helpers ---
 
     fn device_code_json() -> serde_json::Value {
