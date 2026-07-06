@@ -56,11 +56,71 @@ structural equality).
    must lower to raw SQL. This also means the integration must **guard**
    against users passing encrypted columns to plain `where` (silent zero-row
    results are the worst failure mode).
-3. Both raw lowering styles work; prefer the **extracted-term dialect**
-   (shared with Drizzle v3) so the two integrations emit identical SQL and
-   the CIP-3402 term-envelope swap lands in one place.
+3. Both raw lowering styles work on main's bundle. Use the **two-arg
+   function forms** (`eql_v3.eq(col, $::jsonb)` etc.) with full-envelope
+   operands; emitting Drizzle-v3-identical SQL is not achievable today
+   because #565 targets a different bundle generation (see §2b).
 4. Prisma 7's driver-adapter requirement shapes the docs/example app but not
    the integration design ($extends and $queryRaw are unchanged).
+
+## 2b. Insights from the Drizzle v3 implementation (PR #565, reviewed 2026-07-06)
+
+#565 landed a full implementation of the sibling integration. What transfers,
+what doesn't, and what it changes here:
+
+**Bundle-generation split — the biggest caution.** #565 is built on the
+**protect-ffi 0.26** line: pre-rename domain names (`eql_v3.int4_ord`), and a
+bundle that exposes **public** term constructors
+(`eql_v3.hmac_256/ore_block_256/bloom_filter`) accepting term-only jsonb; on
+that line `client.encryptQuery` produces v3 scalar terms. Main — this
+module's base — is the **protect-ffi 0.27** line: SQL-standard domain names
+(`eql_v3.integer_ord`), constructors in **`eql_v3_internal`** only, public
+two-arg wrappers (`eql_v3.eq(col, $::jsonb)`) that **coerce the operand into
+the domain** (so it must be a full envelope passing the CHECK), and scalar
+`encryptQuery` throwing `EQL_V3_QUERY_UNSUPPORTED`. Consequences:
+
+- #565's exact SQL (`eql_v3.hmac_256(…)`) and its term-operand path **do not
+  work against main's bundle**. This module keeps the full-envelope operand
+  (spike-verified via both the native domain operator and the
+  `eq_term(col) = eq_term($::jsonb::domain)` form, which the two-arg
+  `eql_v3.eq(col, $::jsonb)` wrapper is equivalent to).
+- Code-sharing #565's `sql-dialect.ts` is off the table for now — it is
+  drizzle-`SQL`-typed and pinned to the other bundle generation. Share the
+  **shape** (the dialect table below), not the module; extracting a
+  driver-neutral dialect is a follow-up once both integrations sit on one
+  bundle generation.
+- Sequencing flips: #565 must reconcile with main's 0.27/SQL-standard-name
+  line before anything can be shared. This module should **not block on it**.
+
+**What does transfer (adopt directly):**
+
+1. **The dialect shape.** A small object keyed off `builder.build().indexes`
+   (`unique`/`ore`/`match` — the authoritative index set, which #565 uses for
+   gating instead of `getQueryCapabilities()`; align on that here too), with:
+   equality (`unique` → hmac path), **equality-via-ORE fallback** for
+   ord-only columns (`ord_term = ore-constructor`, `queryType:
+   'orderAndRange'`), comparison, `between`/`notBetween`, match, and
+   `orderBy`.
+2. **Encrypted `ORDER BY` is in scope** for raw-SQL integrations: `ORDER BY
+   eql_v3.ord_term(col)` (requires `ore`). #565 ships `asc`/`desc`; this
+   module ships an `orderByEncrypted` fragment builder. (Supersedes the
+   earlier out-of-scope entry.)
+3. **`inArray`/`notInArray`** as OR-of-equality / AND-of-inequality terms,
+   encrypting operands with **bounded concurrency** (#565 caps at 4) — adopt
+   for `whereIn`/`whereNotIn` builders.
+4. **No-silent-fallback errors.** v3 operators throw a named error
+   (`EncryptionOperatorError`) carrying `{ columnName, tableName, operator }`
+   when a column lacks the required index or isn't a v3 column at all — no
+   fall-through to plain operators (v2 behaviour), because wrong-operator SQL
+   fails the domain CHECK at runtime anyway. Matches and strengthens this
+   design's typed-`where` guard; adopt the same error-context convention.
+5. **Null codec confirmation.** #565's `toDriver` maps `null`/`undefined` →
+   SQL NULL for exactly the domain-CHECK reason spike finding 3 hit. Here
+   only `null → Prisma.DbNull` transfers: Prisma's `undefined` means "field
+   not provided" and must be left untouched (coercing it would null out
+   columns on update — a Drizzle-codec detail that does not carry over).
+6. **Per-table schema cache** (WeakMap keyed by the ORM table object) for
+   resolving a column's owning `encryptedTable` — mirror in `model-map.ts`.
 
 ## 3. Architecture
 
@@ -69,8 +129,8 @@ packages/stack/src/eql/v3/prisma/
   index.ts             // barrel: encryptedPrisma, whereEncrypted helpers, errors
   extension.ts         // $extends factory: encrypt-on-write / decrypt-on-read
   model-map.ts         // Prisma model name ↔ v3 encryptedTable registration
-  where.ts             // capability-checked Prisma.sql fragment builders
-  sql-dialect.ts       // extracted-term SQL emission (share/extract from drizzle v3 when #565 lands)
+  where.ts             // capability-checked Prisma.sql fragment builders (incl. whereIn, orderByEncrypted)
+  sql-dialect.ts       // Prisma.sql emission; mirrors #565's dialect SHAPE (code-sharing blocked by the bundle split, §2b)
   null-handling.ts     // null → Prisma.DbNull normalization for encrypted fields
 ```
 
@@ -89,7 +149,9 @@ Prisma model names to v3 `encryptedTable` schemas.
 - **Writes** (`create`, `update`, `upsert`, `createMany`, `createManyAndReturn`,
   `updateMany`): plaintext values on registered encrypted fields are encrypted
   via `encryptModel` / `bulkEncryptModels`; `null` becomes `Prisma.DbNull`
-  (finding 3).
+  (finding 3; #565's codec confirms the domain-CHECK rationale, §2b).
+  `undefined` is left untouched — in Prisma it means "field not provided",
+  and coercing it to `DbNull` would null out columns on update.
 - **Reads** (`findMany`, `findFirst`, `findUnique`, and the `*OrThrow`
   variants, plus the rows returned by mutating calls): envelopes on registered
   fields are decrypted via `bulkDecryptModels`, with `Date` reconstruction
@@ -115,19 +177,27 @@ const rows = await eprisma.$queryRawEncrypted(
 )
 ```
 
-- Each builder is **capability-checked** against
-  `column.getQueryCapabilities()` (storage-only columns and
-  operator/capability mismatches throw — runtime guard now, type-level
-  narrowing like `V3FilterableKeys` where feasible).
+- Each builder is **capability-checked** against `builder.build().indexes`
+  (`unique`/`ore`/`match` — the authoritative index set, per #565; see §2b).
+  Storage-only columns and operator/capability mismatches throw a named error
+  with `{ columnName, tableName, operator }` context — runtime guard now,
+  type-level narrowing like `V3FilterableKeys` where feasible. Equality on an
+  ord-only column falls back to ORE (`queryType: 'orderAndRange'`), mirroring
+  #565.
 - Operand encryption reuses the **interim full-envelope encoding** with the
   same single-swap-point discipline as the Supabase builder
-  (`query-builder-v3.ts#encryptCollectedTerms`, CIP-3402) — or `encryptQuery`
-  terms if #565's encrypt-query path lands first; align with whichever ships.
-- SQL emission is the extracted-term dialect (finding 9), using the two-arg
-  function forms (`eql_v3.eq(col, $::jsonb)`) to avoid the double-cast
-  wrinkle.
-- Free-text: bloom containment (`match_term @> bloom_filter`), documented as
-  token match, not SQL `LIKE` (same caveat as Drizzle/Supabase).
+  (`query-builder-v3.ts#encryptCollectedTerms`, CIP-3402). #565's
+  `encryptQuery` term path does NOT transfer to main's protect-ffi 0.27 line
+  (§2b) — revisit only when the term-only envelope ships, and note the
+  lowering must switch away from the domain-coercing forms at the same time
+  (a term-only operand fails the domain CHECK).
+- SQL emission uses the two-arg function forms (`eql_v3.eq(col, $::jsonb)`,
+  finding 9 equivalent) to avoid the double-cast wrinkle. `whereIn` = OR of
+  equality fragments with bounded operand-encryption concurrency;
+  `orderByEncrypted` = `eql_v3.ord_term(col)` (requires `ore`).
+- Free-text: bloom containment via the two-arg `eql_v3.contains(col,
+  $::jsonb)` (equivalently the native `@>` operator Supabase's `cs` uses),
+  documented as token match, not SQL `LIKE` (same caveat as Drizzle/Supabase).
 - `$queryRawEncrypted(table, sql)` wraps `$queryRaw` and decrypts the result
   rows against the table schema.
 
@@ -156,7 +226,8 @@ patches migrations automatically is a follow-up, not v1.
 
 ### Out of scope
 - JSON / `ste_vec` columns (no v3 JSON builder exists yet).
-- Encrypted `ORDER BY` through the typed API (raw-SQL fragment at most).
+- Encrypted `ORDER BY` through the **typed** API (`orderBy: {…}`) — but the
+  raw-SQL `orderByEncrypted` fragment builder IS in scope (§2b insight 2).
 - Automatic migration patching (documented manual edit in v1).
 - Prisma < 7 compatibility testing (the `::jsonb` column cast predates v7, so
   the typed-where conclusion holds for v6; the extension targets the
@@ -165,9 +236,14 @@ patches migrations automatically is a follow-up, not v1.
 
 ## 5. Sequencing
 
-1. **#565 (Drizzle v3)** first if possible — shares the encrypt-query path
-   and the term-function SQL dialect this module wants to extract/reuse.
+1. **Do not block on #565.** It is built on the protect-ffi 0.26 /
+   pre-rename-domain line and must reconcile with main's 0.27 /
+   SQL-standard-name line before its dialect or encrypt-query path can be
+   shared (§2b). This module proceeds against main directly.
 2. This module's core (extension + where builders) against the interim
-   full-envelope operand.
+   full-envelope operand, mirroring #565's dialect *shape* only.
 3. CIP-3402 lands the term-only envelope → swap inside the one operand-
-   encryption method.
+   encryption method AND switch the lowering off the domain-coercing forms
+   in the same change (term-only operands fail the domain CHECK).
+4. Follow-up once both integrations share a bundle generation: extract a
+   driver-neutral term-SQL dialect.
