@@ -51,7 +51,7 @@ jobs:
         run: npm ci --no-workspaces --ignore-scripts
 
       - name: Create Version Packages PR
-        uses: changesets/action@v1
+        uses: changesets/action@v1.8.0
         with:
           # `version-packages` (root package.json) runs `changeset version` to
           # regenerate package.json + CHANGELOG from .changeset/*.md, then
@@ -62,6 +62,13 @@ jobs:
           # No `publish:` on purpose — publishing is the matrix workflows' job
           # (see header comment).
           version: npm run version-packages
+          # Create the Version Packages commit through the GitHub API instead of
+          # a local `git commit`. API-created commits are signed by GitHub, so
+          # they satisfy the "Commits must have verified signatures" branch
+          # protection on `main` (a local commit from the action is unsigned and
+          # blocks the merge). This is how release-plz's release commits pass,
+          # and matches cipherstash/stack's release.yml.
+          commitMode: github-api
           title: "Release: version @cipherstash npm packages"
           commit: "chore(release): version @cipherstash npm packages"
         env:
