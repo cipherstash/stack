@@ -21,4 +21,4 @@ const client = await Encryption({
 
 The `Encryption()` TypeDoc now documents the default `auto` strategy (env vars → local dev profile via `npx stash auth login`), the four `CS_*` production/CI variables, custom strategies (`AccessKeyStrategy`, `OidcFederationStrategy`), lock context, and keysets for multi-tenant isolation.
 
-Note: the `@cipherstash/stack/wasm-inline` entry still uses `config.strategy`; aligning that entry point to `authStrategy` is tracked as a follow-up.
+The `@cipherstash/stack/wasm-inline` entry (Deno / Edge / Workers / Bun) gets the same rename so the Node and WASM interfaces stay in sync: `WasmClientConfig.authStrategy` is the documented field, `strategy` is a deprecated alias that still works and warns at runtime.
