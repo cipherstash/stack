@@ -560,4 +560,40 @@ mod tests {
         assert!(json.get("expected").is_none());
         assert!(json.get("actual").is_none());
     }
+
+    /// Every constructable `DeviceClientError` variant maps to its canonical
+    /// `AuthError` code so `bind_client_device` failures share the one envelope
+    /// path. (`Request` wraps a `reqwest::Error`, which has no public
+    /// constructor, so it can't be built here — the same gap the exhaustive
+    /// `error_code` test documents.)
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn device_client_error_maps_to_canonical_auth_error() {
+        use crate::DeviceClientError as E;
+
+        // `Auth` unwraps to the inner error unchanged.
+        assert_eq!(
+            AuthError::from(E::Auth(AuthError::AccessDenied(AccessDenied))).error_code(),
+            codes::ACCESS_DENIED,
+        );
+        // Non-`Auth` variants route to their canonical `AuthError` equivalent.
+        assert_eq!(
+            AuthError::from(E::Profile(stack_profile::ProfileError::HomeDirNotFound)).error_code(),
+            codes::STORE_ERROR,
+        );
+        assert_eq!(
+            AuthError::from(E::InvalidUrl("not a url".parse::<url::Url>().unwrap_err()))
+                .error_code(),
+            codes::INVALID_URL,
+        );
+        let server = AuthError::from(E::Server {
+            status: 500,
+            body: "boom".to_string(),
+        });
+        assert_eq!(server.error_code(), codes::SERVER_ERROR);
+        assert!(
+            server.to_string().contains("ZeroKMS returned 500: boom"),
+            "server error should preserve the status/body detail: {server}"
+        );
+    }
 }
