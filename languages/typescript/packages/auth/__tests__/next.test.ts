@@ -162,6 +162,27 @@ describe("csFederate", () => {
     expect(free).toHaveBeenCalledOnce();
   });
 
+  it("propagates a getToken rejection and still frees the strategy (wasm panic path)", async () => {
+    // Distinct from the `{ failure }` domain-error path above: a genuine wasm
+    // panic (unbranded error, or calling getToken after free) rejects the
+    // promise rather than resolving to `{ failure }` — `settleGetToken` re-throws
+    // it. The `await` must propagate the rejection while the finally still frees.
+    create.mockImplementation(() => {
+      getToken.mockRejectedValue(new Error("null pointer passed to rust"));
+      return { data: { getToken, free } };
+    });
+
+    await expect(
+      csFederate({
+        request: requestWith(),
+        responseHeaders: new Headers(),
+        workspaceCrn: WORKSPACE_CRN,
+        getJwt: () => "jwt",
+      }),
+    ).rejects.toThrow("null pointer passed to rust");
+    expect(free).toHaveBeenCalledOnce();
+  });
+
   it("throws the failure's error when strategy creation fails (no free)", async () => {
     // `create()` itself can fail (e.g. INVALID_CRN) — it returns `{ failure }`
     // before any strategy is allocated, so csFederate throws without calling
