@@ -7,25 +7,13 @@
  */
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
-import {
-  EncryptionV3,
-  encryptedInt4OrdColumn,
-  encryptedTable,
-  encryptedTextEqColumn,
-} from '@/encryption/v3'
+import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
-
-const LIVE_CIPHERSTASH_ENABLED = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
+import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const people = encryptedTable('v3_bulk_people', {
-  nickname: encryptedTextEqColumn('nickname'),
-  age: encryptedInt4OrdColumn('age'),
+  nickname: types.TextEq('nickname'),
+  age: types.Int4Ord('age'),
 })
 
 describeLive('v3 typed client bulk-at-scale (live)', () => {

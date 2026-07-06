@@ -9,13 +9,9 @@
  */
 import { describe, expectTypeOf, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import {
-  encryptedTable,
-  encryptedTextEqColumn,
-  typedClient,
-} from '@/encryption/v3'
+import { encryptedTable, typedClient, types } from '@/encryption/v3'
 
-const users = encryptedTable('u', { email: encryptedTextEqColumn('email') })
+const users = encryptedTable('u', { email: types.TextEq('email') })
 declare const client: EncryptionClient
 const typed = typedClient(client, users)
 

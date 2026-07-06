@@ -1,6 +1,4 @@
 import type { Result } from '@byteslice/result'
-import type { EncryptionError } from '@/errors'
-import type { LockContextInput } from '@/identity'
 import type {
   AnyV3Table,
   ColumnsOf,
@@ -10,7 +8,9 @@ import type {
   V3DecryptedModel,
   V3EncryptedModel,
   V3ModelInput,
-} from '@/schema/v3'
+} from '@/eql/v3'
+import type { EncryptionError } from '@/errors'
+import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
@@ -117,32 +117,40 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
 }
 
 /**
- * Reconstruct `Date` values on a decrypted row from the table's encrypt-config
- * `cast_as`. The FFI returns `JsPlaintext` (string/number/boolean/…) with no
- * `Date`, so those columns arrive as their serialized form and are rebuilt here.
- * Safe (idempotent) if the FFI ever returns `Date` directly: `new Date(date)` is
- * a no-op.
+ * Build a per-row reconstructor of `Date` values from the table's
+ * encrypt-config `cast_as`. The FFI returns `JsPlaintext`
+ * (string/number/boolean/…) with no `Date`, so those columns arrive as their
+ * serialized form and are rebuilt here. Safe (idempotent) if the FFI ever
+ * returns `Date` directly: `new Date(date)` is a no-op.
+ *
+ * A factory rather than a `(row, table)` function so the table config —
+ * row-invariant, but non-trivial to build — is derived once per call site,
+ * not once per row on the bulk path.
  *
  * NOTE: `bigint` (int8) reconstruction is intentionally absent — int8 domains are
  * omitted from the v3 SDK until the native FFI supports lossless bigint I/O.
  */
-function reconstructRow(
-  row: Record<string, unknown>,
+function rowReconstructor(
   table: AnyV3Table,
-): Record<string, unknown> {
+): (row: Record<string, unknown>) => Record<string, unknown> {
   // The decrypted row is keyed by JS property name, but `cast_as` lives on the
   // config keyed by DB name — bridge the two via the table's property→DB map.
   const { columns } = table.build()
   const propToDb = table.buildColumnKeyMap()
-  const out: Record<string, unknown> = { ...row }
-  for (const [property, dbName] of Object.entries(propToDb)) {
-    const value = out[property]
-    if (value == null) continue
-    if (columns[dbName]?.cast_as === 'date') {
+  // Only date columns need per-row work; resolve them up front.
+  const dateProperties = Object.entries(propToDb)
+    .filter(([, dbName]) => columns[dbName]?.cast_as === 'date')
+    .map(([property]) => property)
+
+  return (row) => {
+    const out: Record<string, unknown> = { ...row }
+    for (const property of dateProperties) {
+      const value = out[property]
+      if (value == null) continue
       out[property] = new Date(value as string | number | Date)
     }
+    return out
   }
-  return out
 }
 
 /**
@@ -172,15 +180,16 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
       const op = client.decryptModel(input as never)
       const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
-      return { data: reconstructRow(result.data, table) } as never
+      return { data: rowReconstructor(table)(result.data) } as never
     },
     bulkDecryptModels: async (input, table, lockContext) => {
       const op = client.bulkDecryptModels(input as never)
       const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
+      const reconstruct = rowReconstructor(table)
       return {
         data: result.data.map((row) =>
-          reconstructRow(row as Record<string, unknown>, table),
+          reconstruct(row as Record<string, unknown>),
         ),
       } as never
     },
@@ -197,9 +206,9 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
  *
  * @example
  * ```typescript
- * import { EncryptionV3, encryptedTable, encryptedTextSearchColumn } from "@cipherstash/stack/v3"
+ * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
  *
- * const users = encryptedTable("users", { email: encryptedTextSearchColumn("email") })
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
  * const client = await EncryptionV3({ schemas: [users] })
  *
  * await client.encrypt("a@b.com", { table: users, column: users.email })
@@ -220,6 +229,7 @@ export async function EncryptionV3<
   return typedClient(client, ...config.schemas)
 }
 
-// Single import surface: re-export the v3 builders + type helpers so
-// `@cipherstash/stack/v3` provides everything needed to author and use a schema.
-export * from '@/schema/v3'
+// Single import surface: re-export the v3 `types` namespace + table API + type
+// helpers so `@cipherstash/stack/v3` provides everything needed to author and
+// use a schema.
+export * from '@/eql/v3'

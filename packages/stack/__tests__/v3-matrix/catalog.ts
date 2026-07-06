@@ -16,12 +16,12 @@
  * instanceof check, `castAs` + `indexes` by the `build()` `toStrictEqual`, and
  * `capabilities` by `getQueryCapabilities()`/`isQueryable()`.
  */
-import type { ColumnSchema } from '@/schema'
+
 import type {
   AnyEncryptedV3Column,
   EqlTypeForColumn,
   QueryCapabilities,
-} from '@/schema/v3'
+} from '@/eql/v3'
 import {
   EncryptedBoolColumn,
   EncryptedDateColumn,
@@ -58,42 +58,9 @@ import {
   EncryptedTimestamptzEqColumn,
   EncryptedTimestamptzOrdColumn,
   EncryptedTimestamptzOrdOreColumn,
-  encryptedBoolColumn,
-  encryptedDateColumn,
-  encryptedDateEqColumn,
-  encryptedDateOrdColumn,
-  encryptedDateOrdOreColumn,
-  encryptedFloat4Column,
-  encryptedFloat4EqColumn,
-  encryptedFloat4OrdColumn,
-  encryptedFloat4OrdOreColumn,
-  encryptedFloat8Column,
-  encryptedFloat8EqColumn,
-  encryptedFloat8OrdColumn,
-  encryptedFloat8OrdOreColumn,
-  encryptedInt2Column,
-  encryptedInt2EqColumn,
-  encryptedInt2OrdColumn,
-  encryptedInt2OrdOreColumn,
-  encryptedInt4Column,
-  encryptedInt4EqColumn,
-  encryptedInt4OrdColumn,
-  encryptedInt4OrdOreColumn,
-  encryptedNumericColumn,
-  encryptedNumericEqColumn,
-  encryptedNumericOrdColumn,
-  encryptedNumericOrdOreColumn,
-  encryptedTextColumn,
-  encryptedTextEqColumn,
-  encryptedTextMatchColumn,
-  encryptedTextOrdColumn,
-  encryptedTextOrdOreColumn,
-  encryptedTextSearchColumn,
-  encryptedTimestamptzColumn,
-  encryptedTimestamptzEqColumn,
-  encryptedTimestamptzOrdColumn,
-  encryptedTimestamptzOrdOreColumn,
-} from '@/schema/v3'
+  types,
+} from '@/eql/v3'
+import type { ColumnSchema } from '@/schema'
 
 /**
  * The canonical union of every v3 domain name — derived STRAIGHT from the real
@@ -185,6 +152,10 @@ type Indexes = ColumnSchema['indexes']
 const NONE: Indexes = {}
 const UNIQUE_IDX: Indexes = { unique: { token_filters: [] } }
 const ORE_IDX: Indexes = { ore: {} }
+// Text order domains (`text_ord`, `text_ord_ore`) carry BOTH `hm` (unique) and
+// `ob` (ore): their eql_v3 SQL domains require `hm` because text equality is
+// HMAC-based, unlike numeric/date order domains which answer equality via `ob`.
+const TEXT_ORD_IDX: Indexes = { unique: { token_filters: [] }, ore: {} }
 const MATCH_BLOCK: NonNullable<Indexes>['match'] = {
   tokenizer: { kind: 'ngram', token_length: 3 },
   token_filters: [{ kind: 'downcase' }],
@@ -208,6 +179,14 @@ const FLOAT4_S = [0, 77.5, -117.25, 0.5] as const
 const FLOAT8_S = [0, -117.123456, 1e15, -1e15] as const
 const NUMERIC_S = [0, 12345.678, -42, -0.5] as const
 const TEXT_S = ['', 'ada@example.com', 'Ada Lovelace'] as const
+// Text domains with an ORE (`ob`) term require non-empty positive samples to
+// satisfy the real Postgres domain checks. Empty-string rejection is covered in
+// matrix-live-pg.
+const TEXT_ORE_S = [
+  'ada@example.com',
+  'grace@example.com',
+  'zora@example.org',
+] as const
 const BOOL_S = [true, false] as const
 const DATE_S = [
   new Date('2026-07-01T00:00:00.000Z'),
@@ -223,47 +202,47 @@ const NUM_ERR = [
 // biome-ignore format: one row per domain reads as a table; keep it dense.
 export const V3_MATRIX = {
   // int4
-  'eql_v3.int4': { builder: encryptedInt4Column, ColumnClass: EncryptedInt4Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: INT4_S, errorSamples: NUM_ERR },
-  'eql_v3.int4_eq': { builder: encryptedInt4EqColumn, ColumnClass: EncryptedInt4EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: INT4_S, errorSamples: NUM_ERR },
-  'eql_v3.int4_ord_ore': { builder: encryptedInt4OrdOreColumn, ColumnClass: EncryptedInt4OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT4_S, errorSamples: NUM_ERR },
-  'eql_v3.int4_ord': { builder: encryptedInt4OrdColumn, ColumnClass: EncryptedInt4OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT4_S, errorSamples: NUM_ERR },
+  'eql_v3.int4': { builder: types.Int4, ColumnClass: EncryptedInt4Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: INT4_S, errorSamples: NUM_ERR },
+  'eql_v3.int4_eq': { builder: types.Int4Eq, ColumnClass: EncryptedInt4EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: INT4_S, errorSamples: NUM_ERR },
+  'eql_v3.int4_ord_ore': { builder: types.Int4OrdOre, ColumnClass: EncryptedInt4OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT4_S, errorSamples: NUM_ERR },
+  'eql_v3.int4_ord': { builder: types.Int4Ord, ColumnClass: EncryptedInt4OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT4_S, errorSamples: NUM_ERR },
   // int2
-  'eql_v3.int2': { builder: encryptedInt2Column, ColumnClass: EncryptedInt2Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: INT2_S, errorSamples: NUM_ERR },
-  'eql_v3.int2_eq': { builder: encryptedInt2EqColumn, ColumnClass: EncryptedInt2EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: INT2_S, errorSamples: NUM_ERR },
-  'eql_v3.int2_ord_ore': { builder: encryptedInt2OrdOreColumn, ColumnClass: EncryptedInt2OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT2_S, errorSamples: NUM_ERR },
-  'eql_v3.int2_ord': { builder: encryptedInt2OrdColumn, ColumnClass: EncryptedInt2OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT2_S, errorSamples: NUM_ERR },
+  'eql_v3.int2': { builder: types.Int2, ColumnClass: EncryptedInt2Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: INT2_S, errorSamples: NUM_ERR },
+  'eql_v3.int2_eq': { builder: types.Int2Eq, ColumnClass: EncryptedInt2EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: INT2_S, errorSamples: NUM_ERR },
+  'eql_v3.int2_ord_ore': { builder: types.Int2OrdOre, ColumnClass: EncryptedInt2OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT2_S, errorSamples: NUM_ERR },
+  'eql_v3.int2_ord': { builder: types.Int2Ord, ColumnClass: EncryptedInt2OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: INT2_S, errorSamples: NUM_ERR },
   // date
-  'eql_v3.date': { builder: encryptedDateColumn, ColumnClass: EncryptedDateColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
-  'eql_v3.date_eq': { builder: encryptedDateEqColumn, ColumnClass: EncryptedDateEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
-  'eql_v3.date_ord_ore': { builder: encryptedDateOrdOreColumn, ColumnClass: EncryptedDateOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  'eql_v3.date_ord': { builder: encryptedDateOrdColumn, ColumnClass: EncryptedDateOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.date': { builder: types.Date, ColumnClass: EncryptedDateColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
+  'eql_v3.date_eq': { builder: types.DateEq, ColumnClass: EncryptedDateEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
+  'eql_v3.date_ord_ore': { builder: types.DateOrdOre, ColumnClass: EncryptedDateOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.date_ord': { builder: types.DateOrd, ColumnClass: EncryptedDateOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   // timestamptz
-  'eql_v3.timestamptz': { builder: encryptedTimestamptzColumn, ColumnClass: EncryptedTimestamptzColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
-  'eql_v3.timestamptz_eq': { builder: encryptedTimestamptzEqColumn, ColumnClass: EncryptedTimestamptzEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
-  'eql_v3.timestamptz_ord_ore': { builder: encryptedTimestamptzOrdOreColumn, ColumnClass: EncryptedTimestamptzOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  'eql_v3.timestamptz_ord': { builder: encryptedTimestamptzOrdColumn, ColumnClass: EncryptedTimestamptzOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.timestamptz': { builder: types.Timestamptz, ColumnClass: EncryptedTimestamptzColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
+  'eql_v3.timestamptz_eq': { builder: types.TimestamptzEq, ColumnClass: EncryptedTimestamptzEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
+  'eql_v3.timestamptz_ord_ore': { builder: types.TimestamptzOrdOre, ColumnClass: EncryptedTimestamptzOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  'eql_v3.timestamptz_ord': { builder: types.TimestamptzOrd, ColumnClass: EncryptedTimestamptzOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   // numeric
-  'eql_v3.numeric': { builder: encryptedNumericColumn, ColumnClass: EncryptedNumericColumn, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: NUMERIC_S, errorSamples: NUM_ERR },
-  'eql_v3.numeric_eq': { builder: encryptedNumericEqColumn, ColumnClass: EncryptedNumericEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },
-  'eql_v3.numeric_ord_ore': { builder: encryptedNumericOrdOreColumn, ColumnClass: EncryptedNumericOrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },
-  'eql_v3.numeric_ord': { builder: encryptedNumericOrdColumn, ColumnClass: EncryptedNumericOrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },
+  'eql_v3.numeric': { builder: types.Numeric, ColumnClass: EncryptedNumericColumn, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: NUMERIC_S, errorSamples: NUM_ERR },
+  'eql_v3.numeric_eq': { builder: types.NumericEq, ColumnClass: EncryptedNumericEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },
+  'eql_v3.numeric_ord_ore': { builder: types.NumericOrdOre, ColumnClass: EncryptedNumericOrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },
+  'eql_v3.numeric_ord': { builder: types.NumericOrd, ColumnClass: EncryptedNumericOrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },
   // text
-  'eql_v3.text': { builder: encryptedTextColumn, ColumnClass: EncryptedTextColumn, castAs: 'string', capabilities: STORAGE, indexes: NONE, samples: TEXT_S },
-  'eql_v3.text_eq': { builder: encryptedTextEqColumn, ColumnClass: EncryptedTextEqColumn, castAs: 'string', capabilities: EQ, indexes: UNIQUE_IDX, samples: TEXT_S },
-  'eql_v3.text_match': { builder: encryptedTextMatchColumn, ColumnClass: EncryptedTextMatchColumn, castAs: 'string', capabilities: MATCH_ONLY, indexes: MATCH_IDX, samples: TEXT_S },
-  'eql_v3.text_ord_ore': { builder: encryptedTextOrdOreColumn, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: ORE_IDX, samples: TEXT_S },
-  'eql_v3.text_ord': { builder: encryptedTextOrdColumn, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: ORE_IDX, samples: TEXT_S },
-  'eql_v3.text_search': { builder: encryptedTextSearchColumn, ColumnClass: EncryptedTextSearchColumn, castAs: 'string', capabilities: FULL, indexes: TEXT_SEARCH_IDX, samples: TEXT_S },
+  'eql_v3.text': { builder: types.Text, ColumnClass: EncryptedTextColumn, castAs: 'string', capabilities: STORAGE, indexes: NONE, samples: TEXT_S },
+  'eql_v3.text_eq': { builder: types.TextEq, ColumnClass: EncryptedTextEqColumn, castAs: 'string', capabilities: EQ, indexes: UNIQUE_IDX, samples: TEXT_S },
+  'eql_v3.text_match': { builder: types.TextMatch, ColumnClass: EncryptedTextMatchColumn, castAs: 'string', capabilities: MATCH_ONLY, indexes: MATCH_IDX, samples: TEXT_S },
+  'eql_v3.text_ord_ore': { builder: types.TextOrdOre, ColumnClass: EncryptedTextOrdOreColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_ORE_S },
+  'eql_v3.text_ord': { builder: types.TextOrd, ColumnClass: EncryptedTextOrdColumn, castAs: 'string', capabilities: ORD, indexes: TEXT_ORD_IDX, samples: TEXT_ORE_S },
+  'eql_v3.text_search': { builder: types.TextSearch, ColumnClass: EncryptedTextSearchColumn, castAs: 'string', capabilities: FULL, indexes: TEXT_SEARCH_IDX, samples: TEXT_ORE_S },
   // bool
-  'eql_v3.bool': { builder: encryptedBoolColumn, ColumnClass: EncryptedBoolColumn, castAs: 'boolean', capabilities: STORAGE, indexes: NONE, samples: BOOL_S },
+  'eql_v3.bool': { builder: types.Bool, ColumnClass: EncryptedBoolColumn, castAs: 'boolean', capabilities: STORAGE, indexes: NONE, samples: BOOL_S },
   // float4
-  'eql_v3.float4': { builder: encryptedFloat4Column, ColumnClass: EncryptedFloat4Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: FLOAT4_S, errorSamples: NUM_ERR },
-  'eql_v3.float4_eq': { builder: encryptedFloat4EqColumn, ColumnClass: EncryptedFloat4EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: FLOAT4_S, errorSamples: NUM_ERR },
-  'eql_v3.float4_ord_ore': { builder: encryptedFloat4OrdOreColumn, ColumnClass: EncryptedFloat4OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT4_S, errorSamples: NUM_ERR },
-  'eql_v3.float4_ord': { builder: encryptedFloat4OrdColumn, ColumnClass: EncryptedFloat4OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT4_S, errorSamples: NUM_ERR },
+  'eql_v3.float4': { builder: types.Float4, ColumnClass: EncryptedFloat4Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: FLOAT4_S, errorSamples: NUM_ERR },
+  'eql_v3.float4_eq': { builder: types.Float4Eq, ColumnClass: EncryptedFloat4EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: FLOAT4_S, errorSamples: NUM_ERR },
+  'eql_v3.float4_ord_ore': { builder: types.Float4OrdOre, ColumnClass: EncryptedFloat4OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT4_S, errorSamples: NUM_ERR },
+  'eql_v3.float4_ord': { builder: types.Float4Ord, ColumnClass: EncryptedFloat4OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT4_S, errorSamples: NUM_ERR },
   // float8
-  'eql_v3.float8': { builder: encryptedFloat8Column, ColumnClass: EncryptedFloat8Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: FLOAT8_S, errorSamples: NUM_ERR },
-  'eql_v3.float8_eq': { builder: encryptedFloat8EqColumn, ColumnClass: EncryptedFloat8EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: FLOAT8_S, errorSamples: NUM_ERR },
-  'eql_v3.float8_ord_ore': { builder: encryptedFloat8OrdOreColumn, ColumnClass: EncryptedFloat8OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT8_S, errorSamples: NUM_ERR },
-  'eql_v3.float8_ord': { builder: encryptedFloat8OrdColumn, ColumnClass: EncryptedFloat8OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT8_S, errorSamples: NUM_ERR },
+  'eql_v3.float8': { builder: types.Float8, ColumnClass: EncryptedFloat8Column, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: FLOAT8_S, errorSamples: NUM_ERR },
+  'eql_v3.float8_eq': { builder: types.Float8Eq, ColumnClass: EncryptedFloat8EqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: FLOAT8_S, errorSamples: NUM_ERR },
+  'eql_v3.float8_ord_ore': { builder: types.Float8OrdOre, ColumnClass: EncryptedFloat8OrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT8_S, errorSamples: NUM_ERR },
+  'eql_v3.float8_ord': { builder: types.Float8Ord, ColumnClass: EncryptedFloat8OrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: FLOAT8_S, errorSamples: NUM_ERR },
 } as const satisfies Record<EqlV3TypeName, DomainSpec>

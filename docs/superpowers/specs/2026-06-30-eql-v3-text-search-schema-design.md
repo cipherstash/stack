@@ -1,5 +1,11 @@
 # EQL v3 Schema DSL — `text_search` (Increment 1)
 
+> **Superseded (2026-07-03):** the authoring surface described below has moved.
+> The subpath is now `@cipherstash/stack/eql/v3` (not `schema/v3`) and columns
+> are authored via the `types` namespace — `types.TextSearch('email')` replaces
+> `encryptedTextSearchColumn('email')`. This document is retained as the original
+> design record for the increment; the code examples show the historical API.
+
 **Date:** 2026-06-30
 **Status:** Approved (design)
 **Package:** `@cipherstash/stack`

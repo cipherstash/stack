@@ -2,42 +2,24 @@ import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { typedClient } from '@/encryption/v3'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import {
-  encryptedBoolColumn,
-  encryptedDateColumn,
-  encryptedInt4OrdColumn,
-  encryptedTable,
-  encryptedTextColumn,
-  encryptedTextEqColumn,
-  encryptedTextMatchColumn,
-  encryptedTextSearchColumn,
-  encryptedTimestamptzColumn,
-} from '@/schema/v3'
 import { unwrapResult } from './fixtures'
+import { describeLive, LIVE_CIPHERSTASH_ENABLED } from './helpers/live-gate'
 
 const users = encryptedTable('schema_v3_client_users', {
-  email: encryptedTextSearchColumn('email'),
-  age: encryptedInt4OrdColumn('age'),
-  nickname: encryptedTextEqColumn('nickname'),
-  body: encryptedTextMatchColumn('body'),
-  notes: encryptedTextColumn('notes'),
-  active: encryptedBoolColumn('active'),
+  email: types.TextSearch('email'),
+  age: types.Int4Ord('age'),
+  nickname: types.TextEq('nickname'),
+  body: types.TextMatch('body'),
+  notes: types.Text('notes'),
+  active: types.Bool('active'),
   // camelCase JS property → snake_case DB name on purpose: the model path must
   // match models by JS property (`createdOn`) yet address the FFI/config by DB
   // name (`created_on`). The round-trip tests below exercise that mapping.
-  createdOn: encryptedDateColumn('created_on'),
-  occurredAt: encryptedTimestamptzColumn('occurred_at'),
+  createdOn: types.Date('created_on'),
+  occurredAt: types.Timestamptz('occurred_at'),
 })
-
-const LIVE_CIPHERSTASH_ENABLED = Boolean(
-  process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-
-const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 describeLive('eql_v3 client integration', () => {
   let protectClient: EncryptionClient

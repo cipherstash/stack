@@ -36,6 +36,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
 import { installEqlV3IfNeeded } from '../helpers/eql-v3'
+import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
@@ -43,26 +44,14 @@ import {
   V3_MATRIX,
 } from './catalog'
 
-const LIVE_EQL_V3_PG_ENABLED = Boolean(
-  process.env.DATABASE_URL &&
-    process.env.CS_WORKSPACE_CRN &&
-    process.env.CS_CLIENT_ID &&
-    process.env.CS_CLIENT_KEY &&
-    process.env.CS_CLIENT_ACCESS_KEY,
-)
-// SKIPPED (CI run 28569708268, PR #540): `beforeAll` crashes with
-// `PostgresError: invalid input syntax for type json` on the dynamic 35-column
-// INSERT, before any of the 35 per-domain cases run. Root cause not yet
-// pinned — the CI log's stack trace bottoms out inside postgres.js's
-// connection handler with no frame back to this file or the offending
-// parameter/domain, and the identical ciphertext values round-trip fine via
-// FFI-only in the sibling `matrix-live.test.ts`, so the break is specific to
-// how this file hands them to Postgres. Needs live query/parameter logging or
-// a local repro against a real `eql_v3` install to isolate before fixing.
-// Force-skipped (not just gated on credentials) until then — swap back to
-// `LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip` once fixed.
-void LIVE_EQL_V3_PG_ENABLED
-const describeLivePg = describe.skip
+// Previously force-skipped (CI run 28569708268, PR #540): `beforeAll` crashed
+// with `PostgresError: invalid input syntax for type json` on the dynamic
+// 35-column INSERT. Root cause was a postgres.js serialization gap — a bare
+// ciphertext object stringified to `"[object Object]"` — now fixed by wrapping
+// every INSERT param in `sql.json(...)` (see `beforeAll`; the fix landed right
+// after the skip and the skip was simply left stale). Re-enabled here as an
+// ordinary credential-gated suite: it runs in CI (which supplies DATABASE_URL +
+// CS_* creds) and self-skips locally when they are absent.
 
 const databaseUrl = process.env.DATABASE_URL
 const sql = LIVE_EQL_V3_PG_ENABLED
@@ -74,6 +63,19 @@ const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).s
 
 /** `eql_v3.int4_ord` -> `int4_ord`: a valid, unique Postgres column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
+
+const expectDecryptedStorageValue = (
+  decrypted: unknown,
+  expected: unknown,
+): void => {
+  if (expected instanceof Date) {
+    expect(typeof decrypted).toBe('string')
+    expect(new Date(decrypted)).toEqual(expected)
+    return
+  }
+
+  expect(decrypted).toBe(expected)
+}
 
 const domains = typedEntries(V3_MATRIX)
 
@@ -111,6 +113,12 @@ const ordDomains = domains.filter(
 )
 const storageDomains = domains.filter(
   ([, spec]) => proofKindFor(spec.indexes) === 'storage',
+)
+const textOreDomains = domains.filter(
+  ([t]) =>
+    t === 'eql_v3.text_ord_ore' ||
+    t === 'eql_v3.text_ord' ||
+    t === 'eql_v3.text_search',
 )
 
 type Row = { id: number }
@@ -207,9 +215,9 @@ beforeAll(async () => {
       ),
     )
   }
-  // text_match/text_search: query a substring of row B's sample. Row A's
-  // shared `TEXT_S[0]` is `''` — a degenerate containment target — so the
-  // match proof targets row B instead of the usual row A.
+  // text_match/text_search: query a substring of whichever seeded sample
+  // contains "ada". `text_match` still uses the shared TEXT_S with an empty row
+  // A, while `text_search` uses non-empty TEXT_ORE_S to satisfy its `ob` check.
   for (const [t] of matchDomains) {
     matchTerms[slug(t)] = unwrapResult(
       await client.encryptQuery(
@@ -260,16 +268,34 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
   })
 
   it.each(
-    matchDomains,
-  )('%s: match_term/bloom_filter selects row B (containing "ada"), not row A', async (eqlType) => {
+    textOreDomains,
+  )('%s: encrypted empty string is rejected by the Postgres domain', async (eqlType) => {
     const col = slug(eqlType)
+    const column = (table as unknown as Record<string, unknown>)[col] as never
+    const encrypted = unwrapResult(
+      await client.encrypt('', {
+        table: table as never,
+        column,
+      }),
+    )
+
+    await expect(
+      sql.unsafe(`SELECT $1::${eqlType}`, [sql.json(encrypted as never)]),
+    ).rejects.toThrow(/violates check constraint/)
+  })
+
+  it.each(
+    matchDomains,
+  )('%s: match_term/bloom_filter selects the row containing "ada"', async (eqlType, spec) => {
+    const col = slug(eqlType)
+    const expectedId = String(spec.samples[0]).includes('ada') ? idA : idB
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
            AND eql_v3.match_term("${col}") @> eql_v3.bloom_filter($2::jsonb)`,
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
-    expect(rows.map((r) => r.id)).toEqual([idB])
+    expect(rows.map((r) => r.id)).toEqual([expectedId])
   })
 
   it.each(
@@ -282,10 +308,6 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     )
     const decrypted = unwrapResult(await client.decrypt(row.value as never))
     const expected = spec.samples[0]
-    if (expected instanceof Date) {
-      expect(decrypted).toEqual(expected)
-    } else {
-      expect(decrypted).toBe(expected)
-    }
+    expectDecryptedStorageValue(decrypted, expected)
   })
 })
