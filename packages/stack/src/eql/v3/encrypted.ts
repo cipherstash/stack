@@ -51,7 +51,7 @@ type TextEqFluent = EncryptedTextEqColumn & {
 
 type TextFluent = EncryptedTextColumn & {
   equality(): TextEqFluent
-  freeTextSearch(): TextMatchFluent
+  freeTextSearch(opts?: MatchIndexOpts): TextMatchFluent
   orderAndRange(): TextOrdFluent
 }
 
@@ -94,17 +94,18 @@ function textEq(name: string): TextEqFluent {
   }) as TextEqFluent
 }
 
-function textMatch(name: string): TextMatchFluent {
-  return Object.assign(types.TextMatch(name), {
-    equality: () => textSearch(name),
-    orderAndRange: () => textSearch(name),
+function textMatch(name: string, opts?: MatchIndexOpts): TextMatchFluent {
+  const column = types.TextMatch(name).freeTextSearch(opts)
+  return Object.assign(column, {
+    equality: () => textSearch(name, opts),
+    orderAndRange: () => textSearch(name, opts),
   }) as TextMatchFluent
 }
 
 function text(name: string): TextFluent {
   return Object.assign(types.Text(name), {
     equality: () => textEq(name),
-    freeTextSearch: () => textMatch(name),
+    freeTextSearch: (opts?: MatchIndexOpts) => textMatch(name, opts),
     orderAndRange: () => textOrd(name),
   }) as TextFluent
 }

@@ -88,6 +88,7 @@ describe('eql_v3 schema type inference', () => {
   it('encrypted fluent namespace preserves plaintext and query inference', () => {
     const users = encryptedTable('users', {
       email: encrypted.text('email').equality().freeTextSearch(),
+      bio: encrypted.text('bio').freeTextSearch({ k: 8 }),
       age: encrypted.integer('age').equality(),
       createdAt: encrypted.timestamp('created_at').orderAndRange(),
       active: encrypted.boolean('active'),
@@ -95,6 +96,7 @@ describe('eql_v3 schema type inference', () => {
 
     expectTypeOf<InferPlaintext<typeof users>>().toEqualTypeOf<{
       email: string
+      bio: string
       age: number
       createdAt: Date
       active: boolean

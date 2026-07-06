@@ -182,6 +182,57 @@ describe('eql_v3 fluent encrypted namespace', () => {
     ).toStrictEqual(types.TimestamptzOrd('created_at').build())
   })
 
+  it('preserves match options for direct fluent freeTextSearch', () => {
+    const opts = {
+      tokenizer: { kind: 'ngram' as const, token_length: 4 },
+      token_filters: [],
+      k: 8,
+      m: 4096,
+      include_original: false,
+    }
+    const built = encrypted.text('body').freeTextSearch(opts).build()
+
+    expect(built).toStrictEqual(
+      encryptedColumn('body').freeTextSearch(opts).build(),
+    )
+    expect(built.indexes.match).toEqual({
+      tokenizer: { kind: 'ngram', token_length: 4 },
+      token_filters: [],
+      k: 8,
+      m: 4096,
+      include_original: false,
+    })
+  })
+
+  it('preserves match options when upgrading a match-first text fluent', () => {
+    const opts = {
+      tokenizer: { kind: 'ngram' as const, token_length: 4 },
+      token_filters: [],
+      k: 8,
+      m: 4096,
+      include_original: false,
+    }
+
+    expect(
+      encrypted.text('body').freeTextSearch(opts).equality().build(),
+    ).toStrictEqual(
+      encryptedColumn('body')
+        .freeTextSearch(opts)
+        .equality()
+        .orderAndRange()
+        .build(),
+    )
+    expect(
+      encrypted.text('body').freeTextSearch(opts).orderAndRange().build(),
+    ).toStrictEqual(
+      encryptedColumn('body')
+        .freeTextSearch(opts)
+        .equality()
+        .orderAndRange()
+        .build(),
+    )
+  })
+
   it('supports literal SQL-family aliases for the current v3 catalog', () => {
     expect(encrypted.smallint('x').equality().getEqlType()).toBe(
       'eql_v3.int2_eq',

@@ -61,7 +61,6 @@ import {
   NUMERIC_ORD_ORE,
   TEXT,
   TEXT_EQ,
-  TEXT_MATCH,
   TEXT_ORD,
   TEXT_ORD_ORE,
   TIMESTAMPTZ,
@@ -139,7 +138,7 @@ export const types = {
   // text
   Text: (name: string) => new EncryptedTextColumn(name, TEXT),
   TextEq: (name: string) => new EncryptedTextEqColumn(name, TEXT_EQ),
-  TextMatch: (name: string) => new EncryptedTextMatchColumn(name, TEXT_MATCH),
+  TextMatch: (name: string) => new EncryptedTextMatchColumn(name),
   TextOrdOre: (name: string) =>
     new EncryptedTextOrdOreColumn(name, TEXT_ORD_ORE),
   TextOrd: (name: string) => new EncryptedTextOrdColumn(name, TEXT_ORD),
