@@ -15,7 +15,7 @@ import {
 /** @typedef {{ load(): Promise<string | null | undefined>; save(json: string): Promise<void> }} TokenStore */
 /** @typedef {{ store?: TokenStore }} AccessKeyStrategyOptions */
 /** @typedef {() => string | Promise<string>} OidcProvider */
-/** @typedef {{ store?: TokenStore }} OidcFederationStrategyOptions */
+/** @typedef {{ store?: TokenStore; baseUrl?: string }} OidcFederationStrategyOptions */
 
 // Convert a thrown/rejected wasm error into a `Result` `failure`. The wasm
 // binding attaches the serialized `AuthError` as an `__authFailure` object on
@@ -55,7 +55,7 @@ export class AccessKeyStrategy {
    * @param {string} workspaceCrn
    * @param {string} accessKey
    * @param {AccessKeyStrategyOptions} [options]
-   * @returns {AccessKeyStrategy}
+   * @returns {import("@byteslice/result").Result<AccessKeyStrategy, import("./wasm-inline.d.ts").AuthFailure>}
    */
   static create(workspaceCrn, accessKey, options) {
     try {
@@ -111,7 +111,7 @@ export class OidcFederationStrategy {
    * @param {string} workspaceCrn
    * @param {OidcProvider} getJwt
    * @param {OidcFederationStrategyOptions} [options]
-   * @returns {OidcFederationStrategy}
+   * @returns {import("@byteslice/result").Result<OidcFederationStrategy, import("./wasm-inline.d.ts").AuthFailure>}
    */
   static create(workspaceCrn, getJwt, options) {
     try {
