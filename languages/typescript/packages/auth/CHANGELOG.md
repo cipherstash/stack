@@ -1,56 +1,5 @@
 # Changelog
 
-## 0.41.0
-
-### Breaking Changes
-
-- **Errors are now returned, not thrown.** Every fallible operation returns a
-  [`@byteslice/result`](https://www.npmjs.com/package/@byteslice/result)
-  `Result` — `{ data }` on success, `{ failure }` on a domain error — instead of
-  throwing. This applies to `getToken()`, the strategy factories
-  (`AccessKeyStrategy.create`, `AutoStrategy.detect`,
-  `DeviceSessionStrategy.fromProfile`, `OidcFederationStrategy.create` /
-  `.createWithStore`), `beginDeviceCodeFlow`, `DeviceCodeResult.pollForToken` /
-  `openInBrowser`, and `bindClientDevice`. The same applies to the
-  `@cipherstash/auth/wasm-inline` entry.
-
-  `failure` is a discriminated union (`AuthFailure`) tagged by `type` (the codes
-  formerly on `err.code`), carrying the live `error: Error`, optional
-  `help`/`url`, and per-variant payload (e.g. `WORKSPACE_MISMATCH`'s `expected`
-  / `actual`). Only a genuine internal panic still throws.
-
-  Migration:
-
-  ```ts
-  // before
-  try {
-    const { token } = await strategy.getToken();
-  } catch (err) {
-    if (err.code === "EXPIRED_TOKEN") { /* … */ }
-  }
-
-  // after
-  const result = await strategy.getToken();
-  if (result.failure) {
-    if (result.failure.type === "EXPIRED_TOKEN") { /* … */ }
-  } else {
-    const { token } = result.data;
-  }
-  ```
-
-  Two new failure `type`s surface caller/runtime states that previously threw
-  as bare errors: `ALREADY_CONSUMED` (reusing a consumed `DeviceCodeResult`
-  handle) and `INTERNAL_ERROR`.
-
-- Adds a runtime dependency on `@byteslice/result` (zero-dependency, MIT).
-
-- **`instanceof` on the strategy classes now returns `false`.** The exported
-  `AutoStrategy` / `AccessKeyStrategy` / `DeviceSessionStrategy` are thin facades
-  over the native classes, and the factories hand back the strategy inside
-  `result.data`, so `result.data instanceof AccessKeyStrategy` is now `false` (it
-  was `true` on `main`, when the factory returned the instance directly). Gate on
-  `result.failure` and use `result.data` rather than `instanceof`.
-
 ## 0.40.0
 
 ### New Features
