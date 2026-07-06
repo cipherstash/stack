@@ -16,8 +16,8 @@ const REQUEST_TIMEOUT_SECS: u64 = 10;
 pub struct ConnectionInitError(#[from] reqwest::Error);
 
 #[derive(Debug, Error)]
-#[error("token does not grant access to ZeroKMS (missing `services` claim)")]
-struct Unauthorized;
+#[error("ZeroKMS base URL was not resolved from the token's `services` claim")]
+struct BaseUrlUnresolved;
 
 pub struct HttpConnectionOpts {
     base_url: Option<Url>,
@@ -242,10 +242,14 @@ impl ZeroKMSConnection for HttpConnection {
             .map_err(|e| ViturRequestError::prepare("Failed to serialize request", e))?;
 
         let base_url = self.base_url.get().ok_or_else(|| {
-            ViturRequestError::new(
-                ViturRequestErrorKind::Unauthorized,
+            // A missing base URL is a client-side configuration problem (the
+            // token carried no ZeroKMS `services` claim and none was set
+            // explicitly), not an authentication failure — classify it as a
+            // request-preparation error so callers don't mistake it for a 401
+            // and trigger a token refresh/reauth loop.
+            ViturRequestError::prepare(
                 "ZeroKMS base URL was not resolved from the token's services claim",
-                Unauthorized,
+                BaseUrlUnresolved,
             )
         })?;
 
@@ -256,7 +260,7 @@ impl ZeroKMSConnection for HttpConnection {
         let response = self
             .client
             .post(url.as_str())
-            .body(body.clone())
+            .body(body)
             .header("content-type", "application/json")
             .bearer_auth(access_token)
             .send()

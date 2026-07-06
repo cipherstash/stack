@@ -20,6 +20,11 @@ pub enum StackKmsBuilderError {
     /// Key provider failed to load a client key.
     #[error("Key provider error: {0}")]
     KeyProvider(#[from] KeyProviderError),
+
+    /// A builder option was set to an invalid value (e.g. a zero concurrency
+    /// or keys-per-request limit).
+    #[error("Invalid builder configuration: {0}")]
+    InvalidConfig(&'static str),
 }
 
 /// A builder for creating [`StackKms`] clients.
@@ -104,45 +109,6 @@ where
         }
     }
 
-    /// Set the **total request timeout** in seconds. Defaults to 10 seconds.
-    pub fn with_request_timeout(mut self, timeout_secs: u64) -> Self {
-        self.request_timeout = Some(timeout_secs);
-        self
-    }
-
-    /// Set the **connect timeout** in seconds (TCP connect + TLS handshake only).
-    pub fn with_connect_timeout(mut self, timeout_secs: u64) -> Self {
-        self.connect_timeout = Some(timeout_secs);
-        self
-    }
-
-    /// Set the **pool idle timeout** in seconds.
-    pub fn with_pool_idle_timeout(mut self, timeout_secs: u64) -> Self {
-        self.pool_idle_timeout = Some(timeout_secs);
-        self
-    }
-
-    /// Set the maximum number of keys per request. Defaults to 500.
-    pub fn with_max_keys_per_req(mut self, max_keys: usize) -> Self {
-        self.max_keys_per_req = max_keys;
-        self
-    }
-
-    /// Set the maximum number of concurrent requests. Defaults to 5.
-    pub fn with_max_concurrent_reqs(mut self, max_concurrent: usize) -> Self {
-        self.max_concurrent_reqs = max_concurrent;
-        self
-    }
-
-    /// Override the base URL for the ZeroKMS service.
-    ///
-    /// This bypasses resolving the URL from the token's `services` claim and connects
-    /// directly to the specified URL.
-    pub fn with_base_url(mut self, base_url: Url) -> Self {
-        self.base_url_override = Some(base_url);
-        self
-    }
-
     /// Add a [`KeyProvider`] to load a client key asynchronously at build time.
     ///
     /// This transforms the builder into one that builds via an async
@@ -178,8 +144,66 @@ where
     }
 }
 
+// Configuration setters live on the state-agnostic impl so they can be called
+// in any order relative to `with_client_key`/`with_key_provider` — chaining a
+// setter *after* the key would otherwise fail to compile.
 impl<C, S> StackKmsBuilder<C, S> {
-    fn build_opts(self) -> (ClientOpts<HttpConnectionOpts>, C, S) {
+    /// Set the **total request timeout** in seconds. Defaults to 10 seconds.
+    pub fn with_request_timeout(mut self, timeout_secs: u64) -> Self {
+        self.request_timeout = Some(timeout_secs);
+        self
+    }
+
+    /// Set the **connect timeout** in seconds (TCP connect + TLS handshake only).
+    pub fn with_connect_timeout(mut self, timeout_secs: u64) -> Self {
+        self.connect_timeout = Some(timeout_secs);
+        self
+    }
+
+    /// Set the **pool idle timeout** in seconds.
+    pub fn with_pool_idle_timeout(mut self, timeout_secs: u64) -> Self {
+        self.pool_idle_timeout = Some(timeout_secs);
+        self
+    }
+
+    /// Set the maximum number of keys per request. Defaults to 500. Must be at
+    /// least 1 (validated at [`build`](Self::build) time).
+    pub fn with_max_keys_per_req(mut self, max_keys: usize) -> Self {
+        self.max_keys_per_req = max_keys;
+        self
+    }
+
+    /// Set the maximum number of concurrent requests. Defaults to 5. Must be at
+    /// least 1 (validated at [`build`](Self::build) time).
+    pub fn with_max_concurrent_reqs(mut self, max_concurrent: usize) -> Self {
+        self.max_concurrent_reqs = max_concurrent;
+        self
+    }
+
+    /// Override the base URL for the ZeroKMS service.
+    ///
+    /// This bypasses resolving the URL from the token's `services` claim and connects
+    /// directly to the specified URL.
+    pub fn with_base_url(mut self, base_url: Url) -> Self {
+        self.base_url_override = Some(base_url);
+        self
+    }
+
+    fn build_opts(self) -> Result<(ClientOpts<HttpConnectionOpts>, C, S), StackKmsBuilderError> {
+        // Reject degenerate concurrency/chunking config here rather than letting
+        // it reach `map_async_chunked` (0 keys-per-req panics `slice::chunks`;
+        // 0 concurrent-reqs silently yields no keys).
+        if self.max_keys_per_req == 0 {
+            return Err(StackKmsBuilderError::InvalidConfig(
+                "max_keys_per_req must be at least 1",
+            ));
+        }
+        if self.max_concurrent_reqs == 0 {
+            return Err(StackKmsBuilderError::InvalidConfig(
+                "max_concurrent_reqs must be at least 1",
+            ));
+        }
+
         let base_url = self.base_url_override.or_else(Self::base_url_from_env);
         let mut connection_opts = HttpConnectionOpts::new(base_url);
         if let Some(timeout) = self.request_timeout {
@@ -198,7 +222,7 @@ impl<C, S> StackKmsBuilder<C, S> {
             connection_opts,
         };
 
-        (opts, self.credentials, self.client_key)
+        Ok((opts, self.credentials, self.client_key))
     }
 
     /// Resolve the ZeroKMS base URL from the `CS_ZEROKMS_HOST` environment
@@ -233,7 +257,7 @@ where
 {
     /// Build a [`StackKms`] client.
     pub fn build(self) -> Result<StackKms<C>, StackKmsBuilderError> {
-        let (opts, credentials, client_key) = self.build_opts();
+        let (opts, credentials, client_key) = self.build_opts()?;
         Ok(StackKms::connect(opts, credentials, client_key)?)
     }
 }
@@ -254,7 +278,7 @@ where
     ///
     /// This is an async method because the key provider may need to perform I/O.
     pub async fn build(self) -> Result<StackKms<C>, StackKmsBuilderError> {
-        let (opts, credentials, provider) = self.build_opts();
+        let (opts, credentials, provider) = self.build_opts()?;
         let client_key = provider.0.client_key().await?;
         Ok(StackKms::connect(opts, credentials, client_key)?)
     }

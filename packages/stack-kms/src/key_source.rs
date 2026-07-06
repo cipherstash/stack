@@ -74,16 +74,22 @@ mod fake {
     use super::*;
     use crate::key::DataKey;
     use recipher::key::{Iv, Key};
+    use sha2::{Digest, Sha256};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     /// A deterministic, in-process [`DataKeySource`] for tests.
     ///
     /// `generate_keys` hands out a unique IV + tag per payload (driven by an
-    /// internal counter) and derives the key material purely from the tag.
-    /// `retrieve_keys` re-derives the same key from the stored tag, so a
-    /// generate-then-retrieve round-trip reproduces the key, while a mismatched
-    /// tag yields different material — exactly the binding property real ZeroKMS
-    /// provides, without credentials or network.
+    /// internal counter). The key material is derived from the tag **together
+    /// with** the `keyset_id`, per-payload `descriptor` and `context` — the same
+    /// inputs real ZeroKMS binds a data key to. `retrieve_keys` re-derives the
+    /// key from those same inputs, so a generate-then-retrieve round-trip
+    /// reproduces the key only when the `keyset_id` / `descriptor` / `context`
+    /// match (as with real ZeroKMS), without credentials or network.
+    ///
+    /// The derivation is a plain SHA-256: deterministic and binding, but **not**
+    /// a stand-in for ZeroKMS's real key derivation. Use it for encrypt/decrypt
+    /// round-trip and wrong-context tests, not for cryptographic assertions.
     #[derive(Debug, Default)]
     pub struct FakeDataKeySource {
         counter: AtomicU64,
@@ -95,35 +101,52 @@ mod fake {
         }
     }
 
-    /// Derive 32 bytes of key material from a tag. Pure function of the tag, so
-    /// generate and retrieve agree; non-degenerate for the empty tag.
-    fn key_from_tag(tag: &[u8]) -> Key {
-        let mut k = [0u8; 32];
-        for (i, b) in tag.iter().enumerate() {
-            k[i % 32] = k[i % 32]
-                .wrapping_add(*b)
-                .wrapping_add(i as u8)
-                .wrapping_add(1);
+    /// Deterministically derive 32 bytes of key material, binding it to the same
+    /// inputs real ZeroKMS does: keyset, descriptor, context and tag. Every field
+    /// is length-prefixed so distinct inputs can't collide via ambiguous
+    /// concatenation.
+    fn derive_key(
+        keyset_id: Option<Uuid>,
+        descriptor: &str,
+        context_json: &[u8],
+        tag: &[u8],
+    ) -> Key {
+        fn update_field(hasher: &mut Sha256, field: &[u8]) {
+            hasher.update((field.len() as u64).to_le_bytes());
+            hasher.update(field);
         }
-        k[0] = k[0].wrapping_add(tag.len() as u8).wrapping_add(0x5a);
-        k
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"stack-kms::FakeDataKeySource::v1");
+        match keyset_id {
+            Some(id) => {
+                hasher.update([1u8]);
+                update_field(&mut hasher, id.as_bytes());
+            }
+            None => hasher.update([0u8]),
+        }
+        update_field(&mut hasher, descriptor.as_bytes());
+        update_field(&mut hasher, context_json);
+        update_field(&mut hasher, tag);
+        hasher.finalize().into()
     }
 
     impl DataKeySource for FakeDataKeySource {
         async fn generate_keys(
             &self,
             payloads: Vec<GenerateKeyPayload<'_>>,
-            _keyset_id: Option<Uuid>,
+            keyset_id: Option<Uuid>,
             _unverified_context: Option<Cow<'_, UnverifiedContext>>,
         ) -> Result<Vec<DataKeyWithTag>, Error> {
             Ok(payloads
                 .iter()
-                .map(|_| {
+                .map(|payload| {
                     let n = self.counter.fetch_add(1, Ordering::Relaxed);
                     let mut iv: Iv = [0u8; 16];
                     iv[..8].copy_from_slice(&n.to_le_bytes());
                     let tag = format!("fake-kms-tag-{n}").into_bytes();
-                    let key = key_from_tag(&tag);
+                    let context_json = serde_json::to_vec(&payload.context).unwrap_or_default();
+                    let key = derive_key(keyset_id, payload.descriptor, &context_json, &tag);
                     DataKeyWithTag {
                         key: DataKey { iv, key },
                         tag,
@@ -136,16 +159,17 @@ mod fake {
         async fn retrieve_keys(
             &self,
             payloads: Vec<RetrieveKeyPayload<'_>>,
-            _keyset_id: Option<Uuid>,
+            keyset_id: Option<Uuid>,
             _unverified_context: Option<&UnverifiedContext>,
         ) -> Result<Vec<DataKey>, Error> {
             Ok(payloads
                 .iter()
                 .map(|p| {
                     let iv: Iv = *p.iv.as_ref();
+                    let context_json = serde_json::to_vec(&p.context).unwrap_or_default();
                     DataKey {
                         iv,
-                        key: key_from_tag(p.tag),
+                        key: derive_key(keyset_id, p.descriptor, &context_json, p.tag),
                     }
                 })
                 .collect())
@@ -155,3 +179,49 @@ mod fake {
 
 #[cfg(feature = "test-support")]
 pub use fake::FakeDataKeySource;
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use super::*;
+    use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
+    use std::borrow::Cow;
+
+    #[tokio::test]
+    async fn round_trips_and_binds_the_key_to_the_descriptor() {
+        let src = FakeDataKeySource::new();
+
+        let generated = src
+            .generate_keys(
+                vec![GenerateKeyPayload::new("users/email", Cow::Owned(vec![]))],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let dk = &generated[0];
+
+        // Same descriptor + tag reproduces the exact key material.
+        let retrieved = src
+            .retrieve_keys(
+                vec![RetrieveKeyPayload::new(dk.key.iv, "users/email", &dk.tag)],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dk.key.key(), retrieved[0].key());
+
+        // Retrieving the same tag under a *different* descriptor yields different
+        // material — the fake now binds like real ZeroKMS rather than keying on
+        // the tag alone.
+        let wrong = src
+            .retrieve_keys(
+                vec![RetrieveKeyPayload::new(dk.key.iv, "users/name", &dk.tag)],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_ne!(dk.key.key(), wrong[0].key());
+    }
+}

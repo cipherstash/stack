@@ -6,8 +6,9 @@ use zerokms_protocol::{
     RetrieveKeyRequestFallible, RetrieveKeySpec, RetrievedKey, UnverifiedContext,
 };
 
-use recipher::key::{GenRandom, Iv};
+use recipher::key::Iv;
 use stack_auth::{AuthStrategy, AuthStrategyBounds};
+use vitaminc::random::{Generatable, SafeRand};
 
 use crate::connection::{HttpConnection, HttpConnectionOpts, ZeroKMSConnection};
 use crate::errors::{Error, GenerateKeyError, RetrieveKeyError};
@@ -236,7 +237,9 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
         unverified_context: Option<Cow<'a, UnverifiedContext>>,
     ) -> Result<Vec<DataKeyWithTag>, GenerateKeyError> {
         let keys = {
-            let mut rng = rand::thread_rng();
+            // Security: use vitaminc's `SafeRand` (CSPRNG) for IV generation
+            // rather than `rand::thread_rng()`.
+            let mut rng = SafeRand::from_entropy().map_err(GenerateKeyError::GenerateIv)?;
 
             keys.into_iter()
                 .map(
@@ -245,22 +248,17 @@ impl<C: ZeroKMSConnection + Send + Sync> Client<C> {
                          context,
                          decryption_policy,
                      }| {
-                        GenRandom::gen_random(&mut rng)
-                            .map(|iv: Iv| {
-                                if let Some(policy) = decryption_policy {
-                                    GenerateKeySpec::new_with_policy(iv, descriptor, policy)
-                                } else {
-                                    GenerateKeySpec::new_with_context(
-                                        iv,
-                                        descriptor,
-                                        context.clone(),
-                                    )
-                                }
-                            })
-                            .map_err(GenerateKeyError::GenerateIv)
+                        let iv: Iv =
+                            Generatable::random(&mut rng).map_err(GenerateKeyError::GenerateIv)?;
+                        Ok(if let Some(policy) = decryption_policy {
+                            GenerateKeySpec::new_with_policy(iv, descriptor, policy)
+                        } else {
+                            // `context` is owned by this closure and used once — move it.
+                            GenerateKeySpec::new_with_context(iv, descriptor, context)
+                        })
                     },
                 )
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, GenerateKeyError>>()?
         };
 
         trace!(target: "stack_kms::generate_keys", "generated {} key payloads", keys.len());

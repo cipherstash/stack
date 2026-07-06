@@ -40,6 +40,24 @@
 //! # }
 //! ```
 
+// Security lints — see `.claude/skills/rust-security`. This crate handles
+// ZeroKMS key material, so `mem::forget` (which would bypass `ZeroizeOnDrop`)
+// and any accidental console output are denied/warned against.
+#![deny(unsafe_code)]
+#![warn(clippy::unwrap_used)]
+#![warn(clippy::expect_used)]
+#![warn(clippy::panic)]
+#![warn(clippy::mem_forget)]
+#![warn(clippy::print_stdout)]
+#![warn(clippy::print_stderr)]
+#![warn(clippy::dbg_macro)]
+#![warn(clippy::todo)]
+#![warn(clippy::unimplemented)]
+// Relax in tests
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#![cfg_attr(test, allow(clippy::expect_used))]
+#![cfg_attr(test, allow(clippy::panic))]
+
 mod builder;
 mod client;
 mod connection;

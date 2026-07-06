@@ -8,6 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use uuid::Uuid;
+use vitaminc::protected::TimingSafeEq;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use zerokms_protocol::{DecryptionPolicy, ViturKeyMaterial};
 
@@ -50,7 +51,9 @@ impl ClientKey {
 }
 
 // FIXME: This shouldn't be Clone but it is needed right now for the JSONB indexer.
-#[derive(PartialEq, Eq, Zeroize, ZeroizeOnDrop, Clone)]
+// `key` is secret DEK material, so comparison is constant-time via `TimingSafeEq`
+// (`.timing_safe_eq()`) rather than a variable-time `derive(PartialEq)`.
+#[derive(TimingSafeEq, Zeroize, ZeroizeOnDrop, Clone)]
 #[cfg_attr(test, derive(Default))]
 pub struct DataKey {
     pub iv: Iv,
@@ -81,7 +84,9 @@ impl DataKey {
 
 // FIXME: Making this Cloneable for now so that we can use the same key many times for the JSONB indexer.
 // We should modifier the indexer so each value has a separate key.
-#[derive(PartialEq, Eq, Clone)]
+// No `PartialEq`/`Eq`: the wrapped `DataKey` is secret — compare via
+// `deref().timing_safe_eq(..)` if key equality is ever needed.
+#[derive(Clone)]
 #[cfg_attr(test, derive(Default))]
 pub struct DataKeyWithTag {
     pub key: DataKey,
@@ -151,8 +156,12 @@ impl Serialize for V1KeySet {
     where
         S: Serializer,
     {
-        let bytes = self.0.to_bytes().map_err(serde::ser::Error::custom)?;
-        serdect::slice::serialize_hex_lower_or_bin(&bytes, serializer)
+        let mut bytes = self.0.to_bytes().map_err(serde::ser::Error::custom)?;
+        // Zeroize the intermediate plaintext keyset buffer, matching `to_hex`,
+        // `from_hex` and `deserialize`. Serdect encoding is constant-time.
+        let result = serdect::slice::serialize_hex_lower_or_bin(&bytes, serializer);
+        bytes.zeroize();
+        result
     }
 }
 

@@ -21,7 +21,10 @@ recipher = { workspace = true }
 stack-auth = { workspace = true }
 zerokms-protocol = { workspace = true }
 
-vitaminc = { workspace = true, features = ["protected"] }
+vitaminc = { workspace = true, features = ["protected", "random"] }
+# Direct dep required because the `TimingSafeEq` derive macro expands to a
+# `::vitaminc_protected` path.
+vitaminc-protected = { workspace = true }
 
 lazy_static = { workspace = true }
 log = { workspace = true }

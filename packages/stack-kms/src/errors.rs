@@ -1,6 +1,6 @@
 use miette::Diagnostic;
-use recipher::errors::RecipherError;
 use thiserror::Error;
+use vitaminc::random::RandomError;
 use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 
 #[derive(Diagnostic, Error, Debug)]
@@ -23,7 +23,7 @@ pub enum GenerateKeyError {
     #[error("Request forbidden due to insufficient permissions")]
     Forbidden,
     #[error("Failed to generate IV: {0}")]
-    GenerateIv(RecipherError),
+    GenerateIv(RandomError),
     #[error("Received an invalid number of keys from request. Expected {expected} but received {received}")]
     InvalidNumberOfKeys { expected: usize, received: usize },
     // Catch-all for any `ViturRequestError` not classified as Forbidden /

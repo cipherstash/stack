@@ -87,14 +87,26 @@ impl SecretKey {
         client_id: String,
         mut client_key_encoded: String,
     ) -> Result<Self, KeyProviderError> {
-        let uuid = Uuid::parse_str(&client_id)
-            .map_err(|e| KeyProviderError::InvalidKey(format!("invalid client_id: {e}")))?;
-
+        // Decode and zeroize the encoded key material *first*, so no later
+        // fallible step (e.g. the UUID parse below) can early-return and leave
+        // the secret sitting un-zeroized in the owned `String`.
         let result = decode_client_key_material(&client_key_encoded);
         client_key_encoded.zeroize();
 
-        let bytes =
+        let mut bytes =
             result.map_err(|e| KeyProviderError::InvalidKey(format!("invalid client_key: {e}")))?;
+
+        let uuid = match Uuid::parse_str(&client_id) {
+            Ok(uuid) => uuid,
+            Err(e) => {
+                // The decoded key material is now the live copy of the secret —
+                // zeroize it before returning rather than dropping the plain `Vec`.
+                bytes.zeroize();
+                return Err(KeyProviderError::InvalidKey(format!(
+                    "invalid client_id: {e}"
+                )));
+            }
+        };
 
         Ok(Self::new(uuid, ViturKeyMaterial::from(bytes)))
     }
