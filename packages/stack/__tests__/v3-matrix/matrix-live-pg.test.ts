@@ -20,12 +20,14 @@
  * and not the other. Dispatch mirrors the priority `resolveIndexType` itself
  * uses (match > unique > ore > none):
  *   - match   (text_match, text_search):    `eql_v3.match_term` + `bloom_filter`
- *   - eq      (*_eq domains):               `eql_v3.eq_term`    + `hmac_256`
- *   - ord     (*_ord / *_ord_ore domains):  `eql_v3.ord_term`   + `ore_block_256`,
- *     queried with `queryType:'equality'` — the exact path Part A fixed. Most
- *     ord-tier domains (all but text) have no `eq_term` at all in the real
- *     `eql_v3` SQL (verified against the fixture), so this is not a stylistic
- *     choice: it is the only equality path that exists for them.
+ *   - eq      (any `unique`/`hm` domain):   `eql_v3.eq_term`    + `hmac_256`
+ *   - ord     (any `ore`/`ob` domain):      `eql_v3.ord_term`   + `ore_block_256`.
+ *     Pure-ORE domains (numeric/date `*_ord`/`*_ord_ore`) are queried with
+ *     `queryType:'equality'` — the equality-via-ORE path Part A fixed — because
+ *     `ob` is their only index and they have no `eq_term` at all in the real
+ *     `eql_v3` SQL (verified against the fixture). Text order domains carry BOTH
+ *     `hm` and `ob`, so they run the eq proof AND the ord proof; their `ob` term
+ *     is built with `queryType:'orderAndRange'` (equality would resolve to `hm`).
  *   - storage (no index): no query is possible; proves the ciphertext, cast to
  *     THIS SPECIFIC Postgres domain type, survives a real INSERT/SELECT and
  *     still decrypts — the one thing the FFI-only round-trip can't show.
@@ -85,34 +87,45 @@ const columns = Object.fromEntries(
 const table = encryptedTable(TABLE_NAME, columns as never)
 
 /**
- * The one proof each domain's configured indexes call for — mirrors the
- * priority `resolveIndexType`/`inferIndexType` themselves use: match wins over
- * unique wins over ore. `text_search` carries all three but gets the match
- * proof (its distinguishing, richest capability); the plain `*_eq` domains get
- * the eq proof; every `*_ord`/`*_ord_ore` domain (including the text ones,
- * which also have an `eq_term` but are queried the same way as their
- * non-text siblings for consistency) gets the equality-via-ORE proof.
+ * Which proofs a domain's configured indexes call for. Unlike a single-kind
+ * classifier these lists are NOT mutually exclusive — a domain runs EVERY proof
+ * its indexes support:
+ *
+ * - eq  (`hm`): every domain carrying a `unique` index → `eq_term`/`hmac_256`.
+ * - ord (`ob`): every domain carrying an `ore` index   → `ord_term`/`ore_block_256`.
+ * - match (`bf`): every domain carrying a `match` index → `match_term`/`bloom_filter`.
+ * - storage: a domain with NO index — only the ciphertext round-trip proof.
+ *
+ * Text order domains (`text_ord`/`text_ord_ore`) carry BOTH `unique` and `ore`,
+ * so they appear in `eqDomains` AND `ordDomains` and run both proofs — a
+ * wrong-valued `ob` would otherwise slip through an eq-only check (text equality
+ * is HMAC-based, so `queryType:'equality'` on them resolves to `hm`, never `ob`;
+ * their ord term is built with `queryType:'orderAndRange'` below). `text_search`
+ * also carries all three indexes but is deliberately exercised by the match
+ * proof ALONE — its distinguishing, richest capability and the one canonical
+ * example per tier — so it is excluded from the eq/ord lists via `!match`.
  */
-type ProofKind = 'match' | 'eq' | 'ord' | 'storage'
-function proofKindFor(indexes: DomainSpec['indexes']): ProofKind {
-  const idx = indexes ?? {}
-  if (idx.match) return 'match'
-  if (idx.unique) return 'eq'
-  if (idx.ore) return 'ord'
-  return 'storage'
-}
+const hasIndex = (
+  indexes: DomainSpec['indexes'],
+  key: 'unique' | 'ore' | 'match',
+): boolean => Boolean((indexes ?? {})[key])
 
-const matchDomains = domains.filter(
-  ([, spec]) => proofKindFor(spec.indexes) === 'match',
+const matchDomains = domains.filter(([, spec]) =>
+  hasIndex(spec.indexes, 'match'),
 )
 const eqDomains = domains.filter(
-  ([, spec]) => proofKindFor(spec.indexes) === 'eq',
+  ([, spec]) =>
+    hasIndex(spec.indexes, 'unique') && !hasIndex(spec.indexes, 'match'),
 )
 const ordDomains = domains.filter(
-  ([, spec]) => proofKindFor(spec.indexes) === 'ord',
+  ([, spec]) =>
+    hasIndex(spec.indexes, 'ore') && !hasIndex(spec.indexes, 'match'),
 )
 const storageDomains = domains.filter(
-  ([, spec]) => proofKindFor(spec.indexes) === 'storage',
+  ([, spec]) =>
+    !hasIndex(spec.indexes, 'unique') &&
+    !hasIndex(spec.indexes, 'ore') &&
+    !hasIndex(spec.indexes, 'match'),
 )
 const textOreDomains = domains.filter(
   ([t]) =>
@@ -204,13 +217,22 @@ beforeAll(async () => {
     )
   }
   for (const [t, spec] of ordDomains) {
+    // Pure-ORE domains (numeric/date) answer equality via ORE, so
+    // `queryType:'equality'` resolves to the `ob` term — the exact
+    // equality-via-ORE path Part A fixed. Text order domains ALSO carry `hm`,
+    // where `equality` resolves to HMAC by the shared `unique > … > ore`
+    // priority; force `orderAndRange` there so the term still carries the `ob`
+    // this proof extracts with `ore_block_256`.
+    const queryType = hasIndex(spec.indexes, 'unique')
+      ? 'orderAndRange'
+      : 'equality'
     ordTerms[slug(t)] = unwrapResult(
       await client.encryptQuery(
         spec.samples[0] as never,
         {
           table,
           column: columnRef(t),
-          queryType: 'equality',
+          queryType,
         } as never,
       ),
     )

@@ -61,7 +61,8 @@ export function cloneMatchOpts(opts: BuiltMatchIndexOpts): BuiltMatchIndexOpts {
  *
  * The result is deep-cloned ({@link cloneMatchOpts}) so a caller mutating their
  * own `opts` object (or its nested `tokenizer`/`token_filters`) after this call
- * can never leak into the stored builder state or emitted config.
+ * can never leak into the stored builder state or the emitted config — clone-on-
+ * write for both builders, not just v3.
  */
 export function resolveMatchOpts(opts?: MatchIndexOpts): BuiltMatchIndexOpts {
   const defaults = defaultMatchOpts()
