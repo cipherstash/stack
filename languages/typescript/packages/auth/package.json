@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth",
-  "version": "1.0.0",
+  "version": "0.41.0",
   "main": "index.js",
   "types": "index.d.ts",
   "browser": false,
@@ -64,12 +64,12 @@
     "format:check": "npx --yes @biomejs/biome@2.3.4 ci ."
   },
   "peerDependencies": {
-    "@cipherstash/auth-darwin-x64": "1.0.0",
-    "@cipherstash/auth-darwin-arm64": "1.0.0",
-    "@cipherstash/auth-linux-x64-gnu": "1.0.0",
-    "@cipherstash/auth-linux-arm64-gnu": "1.0.0",
-    "@cipherstash/auth-linux-x64-musl": "1.0.0",
-    "@cipherstash/auth-win32-x64-msvc": "1.0.0"
+    "@cipherstash/auth-darwin-x64": "0.41.0",
+    "@cipherstash/auth-darwin-arm64": "0.41.0",
+    "@cipherstash/auth-linux-x64-gnu": "0.41.0",
+    "@cipherstash/auth-linux-arm64-gnu": "0.41.0",
+    "@cipherstash/auth-linux-x64-musl": "0.41.0",
+    "@cipherstash/auth-win32-x64-msvc": "0.41.0"
   },
   "peerDependenciesMeta": {
     "@cipherstash/auth-darwin-x64": {
