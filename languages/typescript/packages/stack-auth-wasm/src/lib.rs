@@ -42,9 +42,25 @@ fn to_js_error(err: AuthError) -> JsValue {
     let js_err: JsValue = js_sys::Error::new(&err.to_string()).into();
 
     let serializer = Serializer::new().serialize_maps_as_objects(true);
-    if let Ok(details) = err.serialize(&serializer) {
-        let _ = js_sys::Reflect::set(&js_err, &JsValue::from_str("__authFailure"), &details);
-    }
+    // Always attach the `__authFailure` brand. If full serialization ever fails,
+    // fall back to a minimal `{ type, message }` object so the shim still sees a
+    // domain failure and returns `{ failure }` rather than re-throwing it as a
+    // panic — mirrors the napi seam's `unwrap_or_else` fallback in node/src/lib.rs.
+    let details = err.serialize(&serializer).unwrap_or_else(|_| {
+        let fallback = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(
+            &fallback,
+            &JsValue::from_str("type"),
+            &JsValue::from_str(err.error_code()),
+        );
+        let _ = js_sys::Reflect::set(
+            &fallback,
+            &JsValue::from_str("message"),
+            &JsValue::from_str(&err.to_string()),
+        );
+        fallback.into()
+    });
+    let _ = js_sys::Reflect::set(&js_err, &JsValue::from_str("__authFailure"), &details);
     let _ = js_sys::Reflect::set(
         &js_err,
         &JsValue::from_str("code"),
