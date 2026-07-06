@@ -27,9 +27,19 @@ function toFailure(err) {
   const { type, help, url, ...payload } = details;
   // `payload` still carries `message`; drop it from the spread fields.
   delete payload.message;
-  const failure = { type, error: err, ...payload };
-  if (help !== undefined) failure.help = help;
-  if (url !== undefined) failure.url = url;
+  // Spread payload first so the fixed `type`/`error` keys always win, even if a
+  // future payload field collides with one of them.
+  const failure = { ...payload, type, error: err };
+  // Mirror help/url onto both the failure and the live Error, matching the napi
+  // seam (index.js) — loggers that only see `failure.error` still get the hint.
+  if (help !== undefined) {
+    err.help = help;
+    failure.help = help;
+  }
+  if (url !== undefined) {
+    err.url = url;
+    failure.url = url;
+  }
   return { failure };
 }
 

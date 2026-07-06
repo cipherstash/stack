@@ -28,7 +28,9 @@ function toFailure(err) {
   );
   err.message = message;
   err.code = type;
-  const failure = { type, error: err, ...payload };
+  // Spread payload first so the fixed `type`/`error` keys always win, even if a
+  // future payload field collides with one of them.
+  const failure = { ...payload, type, error: err };
   if (help !== undefined) {
     err.help = help;
     failure.help = help;
