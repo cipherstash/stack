@@ -87,7 +87,12 @@ jobs:
 
       - name: Build native module
         working-directory: ${{ env.WORKING_DIR }}
-        run: npx napi build --platform --release --target ${{ matrix.target }} --strip
+        # `--dts native.d.ts` matches package.json's `build` script: napi writes
+        # its generated typings to `native.d.ts`, leaving the hand-written
+        # `index.d.ts` re-exporter untouched. Without it, napi clobbers
+        # `index.d.ts` in this job's tree. Harmless today (only `*.node` is
+        # uploaded), but a footgun if this job ever packs or uploads dts files.
+        run: npx napi build --platform --release --target ${{ matrix.target }} --strip --dts native.d.ts
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
