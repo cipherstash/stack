@@ -13,7 +13,8 @@
  * deprecation warning) until it is removed.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetStrategyDeprecationWarningForTests } from '@/encryption'
 import { EncryptionV3 } from '@/encryption/v3'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
@@ -29,8 +30,19 @@ const users = encryptedTable('users', {
   email: encryptedColumn('email'),
 })
 
+// Silence + capture the deprecation warning, and reset its once-per-process
+// latch, so each test asserts warning behaviour deterministically regardless
+// of order. `afterEach` restores the spy even if an assertion throws mid-test.
+let warnSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetStrategyDeprecationWarningForTests()
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  warnSpy.mockRestore()
 })
 
 describe('Encryption config.authStrategy', () => {
@@ -106,12 +118,7 @@ describe('Encryption config.authStrategy', () => {
 })
 
 describe('Encryption config.strategy (deprecated alias)', () => {
-  it('still forwards a deprecated strategy to newClient and warns once', async () => {
-    // The rename warning is deduped per process, so this must be the first
-    // test in the file that passes `config.strategy`; the other suites use
-    // `authStrategy` and never trip the flag.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
+  it('still forwards a deprecated strategy to newClient and warns', async () => {
     const strategy: AuthStrategy = {
       getToken: vi.fn(async () => ({ token: 'service-token' })),
     }
@@ -121,14 +128,12 @@ describe('Encryption config.strategy (deprecated alias)', () => {
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
     expect(opts.strategy).toBe(strategy)
-    expect(warn).toHaveBeenCalledWith(
+    expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('`config.strategy` is deprecated'),
     )
-
-    warn.mockRestore()
   })
 
-  it('prefers authStrategy over the deprecated strategy when both are set', async () => {
+  it('prefers authStrategy over the deprecated strategy when both are set, and still warns', async () => {
     const strategy: AuthStrategy = {
       getToken: vi.fn(async () => ({ token: 'legacy-token' })),
     }
@@ -144,6 +149,21 @@ describe('Encryption config.strategy (deprecated alias)', () => {
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
     expect(opts.strategy).toBe(authStrategy)
+    // The deprecated field is still present, so the nudge to remove it fires
+    // even though `authStrategy` takes precedence.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('`config.strategy` is deprecated'),
+    )
+  })
+
+  it('does not warn when only authStrategy is supplied', async () => {
+    const authStrategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'new-token' })),
+    }
+
+    await Encryption({ schemas: [users], config: { authStrategy } })
+
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })
 

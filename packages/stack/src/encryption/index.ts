@@ -685,6 +685,17 @@ function warnStrategyDeprecated(): void {
 }
 
 /**
+ * Reset the once-per-process deprecation-warning latch. Test-only hook so
+ * suites can assert the warning fires deterministically, independent of test
+ * ordering. Not re-exported from the package entry, so it stays off the public
+ * API surface.
+ * @internal
+ */
+export function __resetStrategyDeprecationWarningForTests(): void {
+  warnedStrategyDeprecated = false
+}
+
+/**
  * Creates and initializes an Encryption client for encrypting and decrypting data with CipherStash.
  *
  * Provide at least one schema (from {@link encryptedTable}) so the client knows which tables and
@@ -699,6 +710,10 @@ function warnStrategyDeprecated(): void {
  * ```
  *
  * ## Authentication
+ *
+ * The snippets in this section reuse the `users` schema from the example above, and
+ * `workspaceCrn` / `accessKey` stand in for your own workspace credentials (from the
+ * [dashboard](https://dashboard.cipherstash.com) or the `CS_*` variables below).
  *
  * By default the client uses the `auto` auth strategy. `auto` first looks for the `CS_*`
  * environment variables (see below) and, if they are not set, falls back to the local **dev
@@ -793,6 +808,7 @@ function warnStrategyDeprecated(): void {
  * to whichever workspace you select); omit `config.keyset` to use the workspace's default keyset.
  *
  * ```typescript
+ * // `users` is the schema from the first example above.
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
@@ -842,8 +858,10 @@ export const Encryption = async (
   }
 
   // Resolve the auth strategy, honouring the deprecated `strategy` alias.
-  // `authStrategy` wins when both are set.
-  if (clientConfig?.strategy && !clientConfig.authStrategy) {
+  // Warn whenever the deprecated field is present at all — even alongside
+  // `authStrategy` — so the leftover field gets cleaned up. `authStrategy`
+  // still wins when both are set.
+  if (clientConfig?.strategy) {
     warnStrategyDeprecated()
   }
   const authStrategy = clientConfig?.authStrategy ?? clientConfig?.strategy
