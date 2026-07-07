@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::ops::Deref;
 use uuid::Uuid;
 use vitaminc::protected::TimingSafeEq;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 use zerokms_protocol::{DecryptionPolicy, ViturKeyMaterial};
 
 /// NOTE: Debug is safe to implement because [KeySet] is opaque.
@@ -66,10 +66,15 @@ impl DataKey {
     /// (IV) and key material obtained from ZeroKMS.
     pub fn from_key_material(key: &ClientKey, iv: Iv, key_material: &ViturKeyMaterial) -> Self {
         let cipher = ProxyCipher::new(key.keyset.keyset());
-        let rect = cipher.reencrypt::<16>(&iv, key_material);
+        // `rect` is reencrypted key material — the derived data key is a hash of
+        // it — so wipe the intermediate on drop rather than leave it on the
+        // heap. (The Sha256 block buffer keeps the final <=64-byte block; sha2
+        // 0.10 doesn't implement Zeroize and changing the hash would alter the
+        // derived key, so that residue is accepted.)
+        let rect = Zeroizing::new(cipher.reencrypt::<16>(&iv, key_material));
 
         let mut hasher = Sha256::new();
-        hasher.update(&rect);
+        hasher.update(rect.as_slice());
 
         DataKey {
             iv,
