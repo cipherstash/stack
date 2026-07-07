@@ -492,9 +492,8 @@ impl AuthError {
 fn workspace_mismatch_from_payload(
     payload: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<AuthError> {
-    let parse = |key: &str| -> Option<cts_common::WorkspaceId> {
-        payload.get(key)?.as_str()?.parse().ok()
-    };
+    let parse =
+        |key: &str| -> Option<cts_common::WorkspaceId> { payload.get(key)?.as_str()?.parse().ok() };
     Some(
         WorkspaceMismatch {
             expected_workspace: parse("expected")?,
