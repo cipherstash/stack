@@ -1,6 +1,6 @@
 import { messages } from '../../messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
-import { bindDevice, login, selectRegion } from './login.js'
+import { bindDevice, login, resolveRegion } from './login.js'
 
 const STASH_AUTH = runnerCommand(detectPackageManager(), 'stash auth')
 
@@ -11,12 +11,21 @@ Commands:
   login     Authenticate with CipherStash
 
 Options:
-  --supabase    Track Supabase as the referrer
-  --drizzle     Track Drizzle as the referrer
+  --region <slug>   Region to authenticate against (e.g. us-east-1). Skips the
+                    interactive picker. Also settable via STASH_REGION.
+  --json            Emit newline-delimited JSON events instead of prose. The
+                    first event (authorization_required) carries the device
+                    verification URL for a human to open; implies no prompt.
+  --no-open         Don't auto-open the verification URL in a browser.
+  --supabase        Track Supabase as the referrer
+  --drizzle         Track Drizzle as the referrer
 
 Examples:
   ${STASH_AUTH} login
+  ${STASH_AUTH} login --region us-east-1
   ${STASH_AUTH} login --supabase
+  # Agent triggers auth; a human completes it in the browser:
+  ${STASH_AUTH} login --region us-east-1 --json
 `.trim()
 
 function referrerFromFlags(flags: Record<string, boolean>): string | undefined {
@@ -29,6 +38,7 @@ function referrerFromFlags(flags: Record<string, boolean>): string | undefined {
 export async function authCommand(
   args: string[],
   flags: Record<string, boolean>,
+  values: Record<string, string> = {},
 ) {
   const subcommand = args[0]
 
@@ -38,13 +48,14 @@ export async function authCommand(
   }
 
   const referrer = referrerFromFlags(flags)
+  const json = flags.json ?? false
 
   switch (subcommand) {
     case 'login':
       {
-        const region = await selectRegion()
-        await login(region, referrer)
-        await bindDevice()
+        const region = await resolveRegion({ regionFlag: values.region, json })
+        await login(region, referrer, { json, open: !flags['no-open'] })
+        await bindDevice({ json })
       }
       break
     default:
