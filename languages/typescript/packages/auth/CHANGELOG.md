@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.42.0
+
+### Minor Changes
+
+- bc1d158: Add a `CUSTOM` member to the `AuthFailure` union (`type: "CUSTOM"`). This mirrors a new `AuthError::Custom` variant on the Rust side — the serde-style catch-all for an auth error outside the standard set, which a custom auth strategy can surface for its own failures and which an FFI adaptor reconstructs a failure into when its `type` code doesn't map to a specific typed variant. It serializes as `{ type: "CUSTOM", ... }`, so consumers switching on `failure.type` should handle it.
+
 ## 0.41.0
 
 ### Minor Changes
