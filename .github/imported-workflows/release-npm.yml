@@ -47,8 +47,19 @@ jobs:
       # Installs only the root manifest's devDependency (@changesets/cli).
       # `--ignore-scripts` and no workspace build keep this off the napi
       # toolchain entirely — versioning only reads/writes package.json + md.
+      #
+      # TEMPORARY: `npm install`, not `npm ci`. `@cipherstash/profile` (the
+      # `packages/stack-profile/node` workspace) declares its per-platform
+      # native bindings (`@cipherstash/profile-*`) as optionalDependencies, and
+      # those aren't published to npm yet. `npm ci` validates the whole lockfile
+      # against every workspace manifest (even with `--no-workspaces`) and hard-
+      # fails with "Missing: @cipherstash/profile-<platform> from lock file",
+      # because an unpublished optional dep can't be recorded in the lock file.
+      # `npm install` skips unresolvable optional deps with a warning instead.
+      # Revert to `npm ci` once the `@cipherstash/profile-*` bindings are
+      # published (tracked with the profile publishing work).
       - name: Install changesets
-        run: npm ci --no-workspaces --ignore-scripts
+        run: npm install --no-workspaces --ignore-scripts --no-audit --no-fund
 
       - name: Create Version Packages PR
         uses: changesets/action@v1.8.0
