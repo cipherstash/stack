@@ -55,6 +55,7 @@ pub(crate) mod codes {
     pub(crate) const SERVER_ERROR: &str = "SERVER_ERROR";
     pub(crate) const ALREADY_CONSUMED: &str = "ALREADY_CONSUMED";
     pub(crate) const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
+    pub(crate) const CUSTOM: &str = "CUSTOM";
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const STORE_ERROR: &str = "STORE_ERROR";
 }
@@ -275,6 +276,23 @@ impl AuthErrorKind for InternalError {
     }
 }
 
+/// An auth failure that doesn't correspond to a specific [`AuthError`] variant.
+///
+/// The catch-all an FFI adaptor reaches for when it reconstructs a failure
+/// whose `type` code it can't rebuild into a typed variant — the variants that
+/// wrap a foreign error, or a code it doesn't recognise. Mirrors serde's
+/// `Error::custom`: it carries the already-rendered message verbatim (its
+/// `Display` is that message, with no added prefix), so a reconstructed error
+/// reads exactly as it did on the far side of the boundary.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("{0}")]
+pub struct CustomError(pub String);
+impl AuthErrorKind for CustomError {
+    fn error_code(&self) -> &'static str {
+        codes::CUSTOM
+    }
+}
+
 /// A token store operation failed.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -346,6 +364,9 @@ pub enum AuthError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Internal(#[from] InternalError),
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Custom(#[from] CustomError),
     #[cfg(not(target_arch = "wasm32"))]
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -378,6 +399,7 @@ impl AuthError {
         codes::SERVER_ERROR,
         codes::ALREADY_CONSUMED,
         codes::INTERNAL_ERROR,
+        codes::CUSTOM,
         // `Store` (and its code) only exists off-wasm — see the enum above.
         #[cfg(not(target_arch = "wasm32"))]
         codes::STORE_ERROR,
@@ -403,6 +425,7 @@ impl AuthError {
             Self::Server(e) => e,
             Self::AlreadyConsumed(e) => e,
             Self::Internal(e) => e,
+            Self::Custom(e) => e,
             #[cfg(not(target_arch = "wasm32"))]
             Self::Store(e) => e,
         }
@@ -414,6 +437,37 @@ impl AuthError {
     /// listed in [`AuthError::ERROR_CODES`].
     pub fn error_code(&self) -> &'static str {
         self.kind().error_code()
+    }
+
+    /// Reconstruct an `AuthError` from its stable FFI wire form — the `type`
+    /// code and rendered `message` a serialized [`AuthError`] carries across the
+    /// boundary (e.g. the `{ failure }` a JS-supplied auth strategy returns).
+    ///
+    /// This is the inverse an adaptor needs so that failures cross back into
+    /// Rust as real `AuthError`s rather than being flattened to a single opaque
+    /// variant. Codes whose variant reconstructs cleanly — the ones with a fixed
+    /// message and no payload — map back to it. Every other code maps to
+    /// [`AuthError::Custom`] (mirrors serde's `Error::custom`), because:
+    ///
+    /// - the variants that wrap a foreign error (`RequestError`, `InvalidUrl`,
+    ///   `UnsupportedRegion`, …) have no constructor from a plain string; and
+    /// - `message` is the rendered `Display` (e.g. `"Server error: …"`), so
+    ///   re-wrapping it in a prefixing variant would double the prefix.
+    ///
+    /// `Custom` stores the message verbatim, so a reconstructed error still
+    /// reads exactly as it did on the far side. `error_code()` round-trips
+    /// exactly for the mapped variants and is `CUSTOM` otherwise.
+    pub fn from_error_code(code: &str, message: impl Into<String>) -> Self {
+        match code {
+            codes::NOT_AUTHENTICATED => NotAuthenticated.into(),
+            codes::EXPIRED_TOKEN => TokenExpired.into(),
+            codes::ACCESS_DENIED => AccessDenied.into(),
+            codes::INVALID_GRANT => InvalidGrant.into(),
+            codes::INVALID_CLIENT => InvalidClient.into(),
+            codes::MISSING_WORKSPACE_CRN => MissingWorkspaceCrn.into(),
+            codes::ALREADY_CONSUMED => AlreadyConsumed.into(),
+            _ => CustomError(message.into()).into(),
+        }
     }
 }
 

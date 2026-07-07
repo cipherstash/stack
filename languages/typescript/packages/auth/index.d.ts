@@ -57,6 +57,7 @@ export type AuthFailure =
   | (FailureBase & { type: "INVALID_WORKSPACE_ID" })
   | (FailureBase & { type: "ALREADY_CONSUMED" })
   | (FailureBase & { type: "INTERNAL_ERROR" })
+  | (FailureBase & { type: "CUSTOM" })
   | (FailureBase & { type: "STORE_ERROR" });
 
 /** The machine-readable discriminant carried by every {@link AuthFailure}. */

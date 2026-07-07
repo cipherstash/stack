@@ -455,6 +455,10 @@ mod tests {
                 "INVALID_TOKEN",
             ),
             (
+                AuthError::Custom(crate::error::CustomError("boom".into())),
+                "CUSTOM",
+            ),
+            (
                 AuthError::from("not a url".parse::<url::Url>().unwrap_err()),
                 "INVALID_URL",
             ),
@@ -508,6 +512,47 @@ mod tests {
             declared, from_variants,
             "AuthError::ERROR_CODES drifted from the codes error_code() returns",
         );
+    }
+
+    /// `from_error_code` reconstructs the fixed-message unit variants to their
+    /// own code, and everything else — message-carrying, foreign-wrapping, or
+    /// unrecognised codes — to `Custom`, preserving the message verbatim.
+    #[test]
+    fn from_error_code_maps_units_and_falls_back_to_custom() {
+        for code in [
+            "NOT_AUTHENTICATED",
+            "EXPIRED_TOKEN",
+            "ACCESS_DENIED",
+            "INVALID_GRANT",
+            "INVALID_CLIENT",
+            "MISSING_WORKSPACE_CRN",
+            "ALREADY_CONSUMED",
+        ] {
+            let err = AuthError::from_error_code(code, "unused for unit variants");
+            assert_eq!(err.error_code(), code, "unit code should round-trip");
+            assert!(
+                !matches!(err, AuthError::Custom(_)),
+                "{code} should map to its typed variant, not Custom",
+            );
+        }
+
+        // A message-carrying variant, a foreign-wrapping one, a structured one,
+        // and an unrecognised code all collapse to Custom with the message kept
+        // as-is (no double-applied `Display` prefix).
+        for code in [
+            "SERVER_ERROR",
+            "REQUEST_ERROR",
+            "WORKSPACE_MISMATCH",
+            "SOME_UNRECOGNISED_CODE",
+        ] {
+            let err = AuthError::from_error_code(code, "Server error: boom");
+            assert_eq!(err.error_code(), "CUSTOM", "{code} should map to Custom");
+            assert_eq!(
+                err.to_string(),
+                "Server error: boom",
+                "Custom preserves the wire message verbatim",
+            );
+        }
     }
 
     /// Every variant annotated with `#[diagnostic(help(..))]` must surface that
