@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth",
-  "version": "0.41.0",
+  "version": "0.42.0",
   "license": "SEE LICENSE IN LICENSE",
   "main": "index.js",
   "types": "index.d.ts",
