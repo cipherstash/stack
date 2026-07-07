@@ -29,8 +29,28 @@ export async function fetchIntegrationPrompt(
   const { ctx, cliVersion, runner } = options
   const mode: WizardMode = options.mode ?? 'implement'
 
-  const strategy = AutoStrategy.detect()
-  const { token } = await strategy.getToken()
+  // As of `@cipherstash/auth` `0.41`, `detect()` and `getToken()` return a
+  // `Result<T, AuthFailure>` instead of throwing — unwrap both, surfacing an
+  // auth failure as a formatted wizard error.
+  const detected = AutoStrategy.detect()
+  if (detected.failure) {
+    throw new Error(
+      formatWizardError(
+        'Could not authenticate with CipherStash.',
+        detected.failure.error.message,
+      ),
+    )
+  }
+  const tokenResult = await detected.data.getToken()
+  if (tokenResult.failure) {
+    throw new Error(
+      formatWizardError(
+        'Could not authenticate with CipherStash.',
+        tokenResult.failure.error.message,
+      ),
+    )
+  }
+  const { token } = tokenResult.data
 
   let res: Response
   try {
