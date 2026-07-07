@@ -1,5 +1,18 @@
 
 
+### Features
+
+- add AuthError::Custom + from_error_code reconstruction
+
+### Fixes
+
+- export CustomError; reconstruct WORKSPACE_MISMATCH from payload
+
+### Style
+
+- rustfmt reflow in workspace_mismatch_from_payload
+
+
 ### Documentation
 
 - document the typed-error / diagnostic-help contract
