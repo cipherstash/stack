@@ -34,6 +34,21 @@ export const messages = {
     unknownSubcommand: 'Unknown auth command',
     selectRegion: 'Select a region',
     cancelled: 'Cancelled.',
+    /**
+     * Shown when `--region` / `STASH_REGION` names a region that isn't in
+     * the known list. `Unknown region` is the stable leader tests assert on;
+     * the offending value and the valid slugs are appended for the human.
+     */
+    regionInvalid: (value: string, validSlugs: readonly string[]) =>
+      `Unknown region: ${value}. Valid regions: ${validSlugs.join(', ')}.`,
+    /**
+     * Shown when no region can be resolved and we're not in an interactive
+     * TTY (agent / CI / piped stdin, or `--json`). Naming both the flag and
+     * the env var lets automation discover the escape hatch instead of
+     * hanging on the picker.
+     */
+    regionMissingNonInteractive:
+      'Cannot resolve a region without a prompt. Pass --region <slug> or set STASH_REGION (e.g. STASH_REGION=us-east-1).',
   },
   eql: {
     unknownSubcommand: 'Unknown eql subcommand',

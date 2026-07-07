@@ -72,13 +72,14 @@ Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db push`
 Set up CipherStash end-to-end: authenticate, introspect your database, install dependencies, install EQL, and hand off the rest to your local coding agent.
 
 ```bash
-npx stash init [--supabase] [--drizzle]
+npx stash init [--supabase] [--drizzle] [--region <slug>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--supabase` | Use the Supabase-specific setup flow |
 | `--drizzle` | Use the Drizzle-specific setup flow |
+| `--region <slug>` | Region to authenticate against (e.g. `us-east-1`). Skips the interactive region picker. Also settable via `STASH_REGION`. |
 
 What `init` does, in order:
 
@@ -93,6 +94,12 @@ The full pipeline state — integration, columns, env-key names, paths, versions
 
 `CIPHERSTASH_WIZARD_URL` overrides the gateway endpoint for the rulebook fetch. Useful for local-dev against a wizard gateway running on `localhost`.
 
+**Running `init` non-interactively** (CI, agents, pipes): every prompt has an escape hatch, so `init` never blocks waiting on a TTY. Provide the region up front (`--region` / `STASH_REGION`) if you aren't already logged in, the database URL (`--database-url` / `DATABASE_URL`), the proxy choice (`--proxy` / `--no-proxy`), and — for the closing agent handoff — nothing is required (init exits at a clean checkpoint and points you at `stash plan --target …`). When a required value is missing in a non-TTY context the command exits non-zero with an actionable message rather than hanging.
+
+```bash
+STASH_REGION=us-east-1 DATABASE_URL=postgres://… npx stash init --no-proxy
+```
+
 ---
 
 ### `npx stash auth login`
@@ -100,10 +107,35 @@ The full pipeline state — integration, columns, env-key names, paths, versions
 Authenticate with CipherStash using a browser-based device code flow.
 
 ```bash
-npx stash auth login
+npx stash auth login [--region <slug>] [--json] [--no-open]
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--region <slug>` | Region to authenticate against (e.g. `us-east-1`). Skips the interactive region picker. Also settable via `STASH_REGION`. |
+| `--json` | Emit newline-delimited JSON events instead of prose (see below). Implies non-interactive — never renders the region picker. |
+| `--no-open` | Don't auto-open the verification URL in a browser. |
+| `--supabase` / `--drizzle` | Track the integration as the referrer. |
+
 Saves the token to `~/.cipherstash/auth.json`. Database-touching commands check for this file before running.
+
+#### Triggering auth from an agent (device-code flow)
+
+The device-code flow is designed so an **agent can trigger** authentication but only a **human completes** it in the browser. Run `auth login --json` in the background and read the first line — `authorization_required` carries the verification URL to hand to the user:
+
+```bash
+npx stash auth login --region us-east-1 --json --no-open
+```
+
+```jsonc
+// stdout is newline-delimited JSON, one event per line:
+{"status":"authorization_required","userCode":"ABCD-1234","verificationUri":"https://…/activate","verificationUriComplete":"https://…/activate?user_code=ABCD-1234","expiresIn":899}
+// … the process then blocks polling until the human authorizes in the browser …
+{"status":"authorized","expiresAt":1751990400,"expiresAtIso":"2025-07-08T12:00:00.000Z"}
+{"status":"device_bound"}
+```
+
+Errors are emitted as `{"status":"error","code":"…","message":"…"}` and exit non-zero. In a non-TTY context without `--region`/`STASH_REGION` the command exits immediately with `code: "region_required"` instead of hanging on the picker.
 
 ---
 

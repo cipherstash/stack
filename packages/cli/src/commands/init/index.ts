@@ -66,13 +66,23 @@ function resolveProvider(flags: Record<string, boolean>): InitProvider {
   return provider
 }
 
-export async function initCommand(flags: Record<string, boolean>) {
+export async function initCommand(
+  flags: Record<string, boolean>,
+  values: Record<string, string> = {},
+) {
   const provider = resolveProvider(flags)
 
   p.intro('CipherStash Stack Setup')
   p.log.info(provider.introMessage)
 
   let state: InitState = {}
+
+  // Thread `--region <slug>` through to the authenticate step so init can run
+  // non-interactively (STASH_REGION works even without this, via the env
+  // fallback in resolveRegion).
+  if (values.region) {
+    state.regionFlag = values.region
+  }
 
   // Parse --proxy and --no-proxy flags; --proxy wins if both are set
   if (flags.proxy) {

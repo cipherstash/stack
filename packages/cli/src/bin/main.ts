@@ -120,6 +120,20 @@ Init Flags:
   --prisma-next        Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply)
   --proxy              Query encrypted data via CipherStash Proxy
   --no-proxy           Query encrypted data directly via the SDK (default)
+  --region <slug>      Region to authenticate against (e.g. us-east-1). Skips the
+                       interactive region picker. Also settable via STASH_REGION.
+                       Required for non-interactive init when not already logged in.
+
+Auth Flags:
+  --region <slug>      Region to authenticate against (e.g. us-east-1). Skips the
+                       interactive region picker. Also settable via STASH_REGION.
+  --json               Emit newline-delimited JSON events instead of prose. The
+                       first event (authorization_required) carries the device
+                       verification URL for a human to open. Implies no prompt —
+                       an agent can trigger auth non-interactively; only a human
+                       can complete it in the browser. Run it in the background,
+                       read the URL from the first line, then hand it to the user.
+  --no-open            Don't auto-open the verification URL in a browser.
 
 Plan Flags:
   --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)
@@ -165,12 +179,14 @@ Examples:
   ${STASH} init
   ${STASH} init --supabase
   ${STASH} init --prisma-next
+  ${STASH} init --region us-east-1        # non-interactive: skip the region picker
   ${STASH} plan
   ${STASH} impl
   ${STASH} impl --continue-without-plan
   ${STASH} impl --target claude-code
   ${STASH} status
   ${STASH} auth login
+  ${STASH} auth login --region us-east-1 --json   # agent triggers; human finishes in browser
   ${STASH} wizard
   ${STASH} eql install
   ${STASH} db push
@@ -465,7 +481,7 @@ export async function run() {
 
   switch (command) {
     case 'init':
-      await initCommand(flags)
+      await initCommand(flags, values)
       break
     case 'plan':
       await planCommand(flags, values)
@@ -482,7 +498,7 @@ export async function run() {
       break
     case 'auth': {
       const authArgs = subcommand ? [subcommand, ...commandArgs] : commandArgs
-      await authCommand(authArgs, flags)
+      await authCommand(authArgs, flags, values)
       break
     }
     case 'eql':
