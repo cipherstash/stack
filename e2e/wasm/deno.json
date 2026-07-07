@@ -2,20 +2,11 @@
   "//1": "Deno smoke test for @cipherstash/stack/wasm-inline. Run `pnpm exec turbo run build --filter @cipherstash/stack` first so dist/ is fresh.",
   "//2": "stack is imported via a file URL because the wasm-inline subpath isn't on a published version yet — once stack ships with /wasm-inline this can switch to a plain npm: specifier. protect-ffi and auth resolve via npm: against the workspace's installed versions (Deno's nodeModulesDir: auto lets it use what pnpm fetched).",
   "//3": "No --allow-ffi grant. If protect-ffi ever silently fell back to a native binding under Deno, the test would fail on missing FFI permission — this is the WASM guarantee.",
-  "//4": "Deno 2.9+ applies a 24h npm freshness cooldown (`install.minimumDependencyAge`) by default. That blocks freshly-published first-party versions — @cipherstash/auth, @cipherstash/protect-ffi — which we bump in lockstep with stack and want tested immediately, not 24h later. Mirror `pnpm-workspace.yaml`'s `minimumReleaseAge` (7d) + `minimumReleaseAgeExclude` here: keep the cooldown for third-party deps, exempt first-party. See skills/stash-supply-chain-security/.",
-  "install": {
-    "minimumDependencyAge": {
-      "age": "P7D",
-      "exclude": [
-        "npm:@cipherstash/auth",
-        "npm:@cipherstash/protect-ffi"
-      ]
-    }
-  },
+  "//4": "Deno 2.9+ applies a 24h npm freshness cooldown to `deno test`'s npm resolution by default (error: \"newer than the specified minimum dependency date\"). The only npm deps here are the first-party @cipherstash packages below, which we bump in lockstep with stack and need tested immediately — not 24h later, which in the 1.0 lead-up (multiple bumps/day) would keep this job red almost continuously. The declarative `install.minimumDependencyAge` `exclude` form does NOT apply to `deno test`, so disable the cooldown for this run with `--minimum-dependency-age=0`. This is safe here: no third-party npm is resolved, and pnpm's own 7d cooldown (pnpm-workspace.yaml `minimumReleaseAge` + `minimumReleaseAgeExclude`) still governs every real install. See skills/stash-supply-chain-security/.",
   "nodeModulesDir": "auto",
   "tasks": {
     "//task": "--no-check because TypeScript can't infer the column-on-table intersection types when stack is loaded via file URL (the dist .d.ts strips brand info). This test exists to verify RUNTIME WASM round-trips — type narrowing is covered by the package's own vitest suite.",
-    "test": "deno test --no-check --allow-env --allow-net --allow-read --allow-sys --no-prompt"
+    "test": "deno test --minimum-dependency-age=0 --no-check --allow-env --allow-net --allow-read --allow-sys --no-prompt"
   },
   "imports": {
     "@cipherstash/stack/wasm-inline": "../../packages/stack/dist/wasm-inline.js",
