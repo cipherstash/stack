@@ -21,7 +21,7 @@ const sql = postgres(process.env.DATABASE_URL, { prepare: false })
 
 try {
   await installEqlV3IfNeeded(sql)
-  console.log('eql_v3.text_search is installed')
+  console.log('eql_v3 (current bundle) is installed')
 } finally {
   await sql.end()
 }

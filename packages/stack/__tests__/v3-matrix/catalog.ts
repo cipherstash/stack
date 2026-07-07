@@ -54,10 +54,10 @@ import {
   EncryptedTextOrdColumn,
   EncryptedTextOrdOreColumn,
   EncryptedTextSearchColumn,
-  EncryptedTimestamptzColumn,
-  EncryptedTimestamptzEqColumn,
-  EncryptedTimestamptzOrdColumn,
-  EncryptedTimestamptzOrdOreColumn,
+  EncryptedTimestampColumn,
+  EncryptedTimestampEqColumn,
+  EncryptedTimestampOrdColumn,
+  EncryptedTimestampOrdOreColumn,
   types,
 } from '@/eql/v3'
 import type { ColumnSchema } from '@/schema'
@@ -192,6 +192,15 @@ const DATE_S = [
   new Date('2026-07-01T00:00:00.000Z'),
   new Date('1970-01-01T00:00:00.000Z'),
 ] as const
+// Timestamp domains (`cast_as: 'timestamp'`) preserve the full instant, unlike
+// `date` which truncates to midnight. These samples deliberately carry a
+// NON-ZERO time-of-day so the live round-trip actually detects a regression
+// that truncates to the day boundary — reusing the midnight-only `DATE_S` here
+// would let such a regression pass silently (see matrix.test.ts).
+const TS_S = [
+  new Date('2026-07-01T12:34:56.000Z'),
+  new Date('1970-01-01T23:59:59.000Z'),
+] as const
 // Every number domain rejects these via the global encrypt guard.
 const NUM_ERR = [
   Number.NaN,
@@ -216,11 +225,11 @@ export const V3_MATRIX = {
   'eql_v3.date_eq': { builder: types.DateEq, ColumnClass: EncryptedDateEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
   'eql_v3.date_ord_ore': { builder: types.DateOrdOre, ColumnClass: EncryptedDateOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
   'eql_v3.date_ord': { builder: types.DateOrd, ColumnClass: EncryptedDateOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  // timestamptz
-  'eql_v3.timestamptz': { builder: types.Timestamptz, ColumnClass: EncryptedTimestamptzColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
-  'eql_v3.timestamptz_eq': { builder: types.TimestamptzEq, ColumnClass: EncryptedTimestamptzEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
-  'eql_v3.timestamptz_ord_ore': { builder: types.TimestamptzOrdOre, ColumnClass: EncryptedTimestamptzOrdOreColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
-  'eql_v3.timestamptz_ord': { builder: types.TimestamptzOrd, ColumnClass: EncryptedTimestamptzOrdColumn, castAs: 'date', capabilities: ORD, indexes: ORE_IDX, samples: DATE_S },
+  // timestamp
+  'eql_v3.timestamp': { builder: types.Timestamp, ColumnClass: EncryptedTimestampColumn, castAs: 'timestamp', capabilities: STORAGE, indexes: NONE, samples: TS_S },
+  'eql_v3.timestamp_eq': { builder: types.TimestampEq, ColumnClass: EncryptedTimestampEqColumn, castAs: 'timestamp', capabilities: EQ, indexes: UNIQUE_IDX, samples: TS_S },
+  'eql_v3.timestamp_ord_ore': { builder: types.TimestampOrdOre, ColumnClass: EncryptedTimestampOrdOreColumn, castAs: 'timestamp', capabilities: ORD, indexes: ORE_IDX, samples: TS_S },
+  'eql_v3.timestamp_ord': { builder: types.TimestampOrd, ColumnClass: EncryptedTimestampOrdColumn, castAs: 'timestamp', capabilities: ORD, indexes: ORE_IDX, samples: TS_S },
   // numeric
   'eql_v3.numeric': { builder: types.Numeric, ColumnClass: EncryptedNumericColumn, castAs: 'number', capabilities: STORAGE, indexes: NONE, samples: NUMERIC_S, errorSamples: NUM_ERR },
   'eql_v3.numeric_eq': { builder: types.NumericEq, ColumnClass: EncryptedNumericEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: NUMERIC_S, errorSamples: NUM_ERR },

@@ -58,7 +58,7 @@ describe('eql_v3 schema type inference', () => {
       name: types.Text('name'),
       age: types.Int4('age'),
       active: types.Bool('active'),
-      createdAt: types.Timestamptz('created_at'),
+      createdAt: types.Timestamp('created_at'),
       score: types.Float8('score'),
     })
 
@@ -166,7 +166,7 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
       emailEq: types.TextEq('email_eq'),
       emailMatch: types.TextMatch('email_match'),
       emailSearch: types.TextSearch('email_search'),
-      createdAt: types.TimestamptzOrd('created_at'),
+      createdAt: types.TimestampOrd('created_at'),
     })
     const client = {} as EncryptionClient
 
@@ -297,7 +297,7 @@ describe('eql_v3 model encryption inference', () => {
     // ('occurredAt'). Model inference keys off the PROPERTY name, so `occurredAt`
     // must become `Encrypted` while unrelated fields are preserved verbatim.
     const events = encryptedTable('events', {
-      occurredAt: types.Timestamptz('created_at'),
+      occurredAt: types.Timestamp('created_at'),
     })
     const client = {} as EncryptionClient
 

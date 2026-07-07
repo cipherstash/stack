@@ -16,7 +16,7 @@ const users = encryptedTable('users', {
   email: types.TextEq('email'), // equality only
   bio: types.TextSearch('bio'), // equality + order + free-text
   note: types.Text('note'), // storage only (not queryable)
-  createdAt: types.TimestamptzOrd('created_at'), // equality + order
+  createdAt: types.TimestampOrd('created_at'), // equality + order
 })
 
 // A second registered table whose `weight` domain (int4_ord) is NOT present in
@@ -78,7 +78,7 @@ describe('typed v3 client — encryptQuery constrains queryType to capabilities'
     client.encryptQuery(new Date(), {
       table: users,
       column: users.createdAt, // equality + order, no free-text
-      // @ts-expect-error - timestamptz_ord column does not support 'freeTextSearch'
+      // @ts-expect-error - timestamp_ord column does not support 'freeTextSearch'
       queryType: 'freeTextSearch',
     })
   })
@@ -127,7 +127,7 @@ describe('typed v3 client — model encrypt validates schema fields', () => {
 describe('typed v3 client — model decrypt yields precise plaintext', () => {
   it('reconstructs schema columns to their plaintext type regardless of the input field type', () => {
     // Input is the encrypted row; output pins each schema column to its plaintext
-    // type (Date for timestamptz, string for text).
+    // type (Date for timestamp, string for text).
     expectTypeOf<
       V3DecryptedModel<
         typeof users,

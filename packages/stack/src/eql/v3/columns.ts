@@ -22,9 +22,25 @@ export type QueryCapabilities = Readonly<{
   freeTextSearch: boolean
 }>
 
+/**
+ * The `cast_as` kinds whose decrypted plaintext reconstructs to a JS `Date`.
+ *
+ * SINGLE SOURCE OF TRUTH for the date-like set. Both the type-level
+ * {@link PlaintextFromKind} and the runtime `rowReconstructor` (encryption/v3.ts)
+ * derive their "reconstructs to `Date`" decision from this array, so the next
+ * `Date`-backed cast is added in exactly one place — never hand-synced across a
+ * type and a runtime guard that could silently drift.
+ *
+ * (`timestamp` reconstructs to `Date` just like `date`, but its `cast_as` tells
+ * the FFI not to truncate the time-of-day.)
+ */
+export const DATE_LIKE_CASTS = ['date', 'timestamp'] as const
+/** A `cast_as` kind that reconstructs to `Date` — see {@link DATE_LIKE_CASTS}. */
+export type DateLikeCast = (typeof DATE_LIKE_CASTS)[number]
+
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'boolean' | 'date'
+type PlaintextKind = 'string' | 'number' | 'boolean' | DateLikeCast
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -164,24 +180,24 @@ export const DATE_ORD = {
   capabilities: ORDER_AND_RANGE,
 } as const
 
-export const TIMESTAMPTZ = {
-  eqlType: 'eql_v3.timestamptz',
-  castAs: 'date',
+export const TIMESTAMP = {
+  eqlType: 'eql_v3.timestamp',
+  castAs: 'timestamp',
   capabilities: STORAGE_ONLY,
 } as const
-export const TIMESTAMPTZ_EQ = {
-  eqlType: 'eql_v3.timestamptz_eq',
-  castAs: 'date',
+export const TIMESTAMP_EQ = {
+  eqlType: 'eql_v3.timestamp_eq',
+  castAs: 'timestamp',
   capabilities: EQUALITY_ONLY,
 } as const
-export const TIMESTAMPTZ_ORD_ORE = {
-  eqlType: 'eql_v3.timestamptz_ord_ore',
-  castAs: 'date',
+export const TIMESTAMP_ORD_ORE = {
+  eqlType: 'eql_v3.timestamp_ord_ore',
+  castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
-export const TIMESTAMPTZ_ORD = {
-  eqlType: 'eql_v3.timestamptz_ord',
-  castAs: 'date',
+export const TIMESTAMP_ORD = {
+  eqlType: 'eql_v3.timestamp_ord',
+  castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 
@@ -496,18 +512,18 @@ export class EncryptedDateOrdColumn extends EncryptedV3Column<
   typeof DATE_ORD
 > {}
 
-// timestamptz
-export class EncryptedTimestamptzColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ
+// timestamp
+export class EncryptedTimestampColumn extends EncryptedV3Column<
+  typeof TIMESTAMP
 > {}
-export class EncryptedTimestamptzEqColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ_EQ
+export class EncryptedTimestampEqColumn extends EncryptedV3Column<
+  typeof TIMESTAMP_EQ
 > {}
-export class EncryptedTimestamptzOrdOreColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ_ORD_ORE
+export class EncryptedTimestampOrdOreColumn extends EncryptedV3Column<
+  typeof TIMESTAMP_ORD_ORE
 > {}
-export class EncryptedTimestamptzOrdColumn extends EncryptedV3Column<
-  typeof TIMESTAMPTZ_ORD
+export class EncryptedTimestampOrdColumn extends EncryptedV3Column<
+  typeof TIMESTAMP_ORD
 > {}
 
 // numeric
@@ -579,10 +595,10 @@ export type AnyEncryptedV3Column =
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
   | EncryptedDateOrdColumn
-  | EncryptedTimestamptzColumn
-  | EncryptedTimestamptzEqColumn
-  | EncryptedTimestamptzOrdOreColumn
-  | EncryptedTimestamptzOrdColumn
+  | EncryptedTimestampColumn
+  | EncryptedTimestampEqColumn
+  | EncryptedTimestampOrdOreColumn
+  | EncryptedTimestampOrdColumn
   | EncryptedNumericColumn
   | EncryptedNumericEqColumn
   | EncryptedNumericOrdOreColumn
@@ -618,7 +634,7 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
     ? number
     : K extends 'boolean'
       ? boolean
-      : K extends 'date'
+      : K extends DateLikeCast
         ? Date
         : never
 

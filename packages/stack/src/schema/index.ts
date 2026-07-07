@@ -38,15 +38,29 @@ export const eqlCastAsEnum = z
     'double',
     'boolean',
     'date',
+    'timestamp',
     'jsonb',
   ])
   .default('text')
 
 /**
  * SDK-facing data types — developer-friendly aliases accepted by `dataType()`.
+ *
+ * `timestamp` is distinct from `date`: `date` is calendar-date only (time-of-day
+ * truncated to midnight), while `timestamp` preserves the full date+time. v3
+ * `timestamp` domains set `cast_as: 'timestamp'` so the FFI keeps the instant.
  */
 export const castAsEnum = z
-  .enum(['bigint', 'boolean', 'date', 'number', 'string', 'json', 'text'])
+  .enum([
+    'bigint',
+    'boolean',
+    'date',
+    'timestamp',
+    'number',
+    'string',
+    'json',
+    'text',
+  ])
   .default('text')
 
 /**
@@ -69,6 +83,8 @@ export function toEqlCastAs(value: CastAs): EqlCastAs {
       return 'boolean'
     case 'date':
       return 'date'
+    case 'timestamp':
+      return 'timestamp'
     case 'json':
       return 'jsonb'
   }
@@ -211,7 +227,7 @@ export class EncryptedField {
    * a different type so the encryption layer knows how to encode the plaintext
    * before encrypting.
    *
-   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'text'`, `'bigint'`, or `'json'`.
+   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedField` instance for method chaining.
    *
    * @example
@@ -260,7 +276,7 @@ export class EncryptedColumn {
    * a different type so the encryption layer knows how to encode the plaintext
    * before encrypting.
    *
-   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'bigint'`, or `'json'`.
+   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedColumn` instance for method chaining.
    *
    * @example

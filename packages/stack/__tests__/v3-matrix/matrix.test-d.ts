@@ -25,7 +25,7 @@ const records = encryptedTable('records', {
   count: V3_MATRIX['eql_v3.int4'].builder('count'), // number, storage-only
   score: V3_MATRIX['eql_v3.int4_eq'].builder('score'), // number, equality
   rank: V3_MATRIX['eql_v3.int4_ord'].builder('rank'), // number, order + range
-  createdAt: V3_MATRIX['eql_v3.timestamptz_ord'].builder('created_at'), // date
+  createdAt: V3_MATRIX['eql_v3.timestamp_ord'].builder('created_at'), // date
   email: V3_MATRIX['eql_v3.text_search'].builder('email'), // string, full-text
   active: V3_MATRIX['eql_v3.bool'].builder('active'), // boolean, storage-only
 })

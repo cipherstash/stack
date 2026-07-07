@@ -9,6 +9,7 @@ import type {
   V3EncryptedModel,
   V3ModelInput,
 } from '@/eql/v3'
+import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
@@ -37,7 +38,7 @@ import {
  * Every method derives its types from the concrete `table` / `column` builder
  * arguments (which carry their branded types at the call site), so:
  * - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
- *   (`text → string`, `timestamptz → Date`, …);
+ *   (`text → string`, `timestamp → Date`, …);
  * - `encryptQuery` additionally constrains `queryType` to the column's
  *   capabilities and rejects storage-only columns outright;
  * - `encryptModel` / `bulkEncryptModels` validate schema-column fields against
@@ -137,9 +138,14 @@ function rowReconstructor(
   // config keyed by DB name — bridge the two via the table's property→DB map.
   const { columns } = table.build()
   const propToDb = table.buildColumnKeyMap()
-  // Only date columns need per-row work; resolve them up front.
+  // Only date-like columns need per-row work; resolve them up front.
   const dateProperties = Object.entries(propToDb)
-    .filter(([, dbName]) => columns[dbName]?.cast_as === 'date')
+    .filter(([, dbName]) => {
+      const castAs = columns[dbName]?.cast_as
+      // Date-like casts share one source of truth with the type-level
+      // reconstruction (`PlaintextFromKind`) — see `DATE_LIKE_CASTS`.
+      return (DATE_LIKE_CASTS as readonly string[]).includes(castAs as string)
+    })
     .map(([property]) => property)
 
   return (row) => {
