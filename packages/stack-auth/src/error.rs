@@ -278,12 +278,15 @@ impl AuthErrorKind for InternalError {
 
 /// An auth failure that doesn't correspond to a specific [`AuthError`] variant.
 ///
-/// The catch-all an FFI adaptor reaches for when it reconstructs a failure
-/// whose `type` code it can't rebuild into a typed variant — the variants that
-/// wrap a foreign error, or a code it doesn't recognise. Mirrors serde's
-/// `Error::custom`: it carries the already-rendered message verbatim (its
-/// `Display` is that message, with no added prefix), so a reconstructed error
-/// reads exactly as it did on the far side of the boundary.
+/// The catch-all for an error outside the standard set — a custom
+/// [`AuthStrategy`](crate::AuthStrategy) surfacing its own failure, or an FFI
+/// adaptor reconstructing a failure whose `type` code it can't rebuild into a
+/// typed variant (a variant that wraps a foreign error, or an unrecognised
+/// code). Mirrors serde's `Error::custom`: it carries the already-rendered
+/// message verbatim (its `Display` is that message, with no added prefix), so
+/// a reconstructed error reads exactly as it did on the far side of the
+/// boundary. It serializes as `{ type: "CUSTOM", ... }`, so consumers switching
+/// on the failure code must handle it.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{0}")]
 pub struct CustomError(pub String);
@@ -440,24 +443,33 @@ impl AuthError {
     }
 
     /// Reconstruct an `AuthError` from its stable FFI wire form — the `type`
-    /// code and rendered `message` a serialized [`AuthError`] carries across the
-    /// boundary (e.g. the `{ failure }` a JS-supplied auth strategy returns).
+    /// code, rendered `message`, and structured `payload` a serialized
+    /// [`AuthError`] carries across the boundary (e.g. the `{ failure }` a
+    /// JS-supplied auth strategy returns; `payload` is the extra fields
+    /// [`AuthErrorKind::payload`] emits alongside `type`/`message`).
     ///
     /// This is the inverse an adaptor needs so that failures cross back into
     /// Rust as real `AuthError`s rather than being flattened to a single opaque
-    /// variant. Codes whose variant reconstructs cleanly — the ones with a fixed
-    /// message and no payload — map back to it. Every other code maps to
-    /// [`AuthError::Custom`] (mirrors serde's `Error::custom`), because:
+    /// variant:
     ///
-    /// - the variants that wrap a foreign error (`RequestError`, `InvalidUrl`,
-    ///   `UnsupportedRegion`, …) have no constructor from a plain string; and
-    /// - `message` is the rendered `Display` (e.g. `"Server error: …"`), so
-    ///   re-wrapping it in a prefixing variant would double the prefix.
+    /// - the fixed-message unit codes map straight back to their variant;
+    /// - `WORKSPACE_MISMATCH` rebuilds from its `expected`/`actual` payload;
+    /// - every other code maps to [`AuthError::Custom`] (mirrors serde's
+    ///   `Error::custom`), because the variants that wrap a foreign error
+    ///   (`RequestError`, `InvalidUrl`, `UnsupportedRegion`, …) have no
+    ///   constructor from a string, and `message` is the rendered `Display`
+    ///   (e.g. `"Server error: …"`) — re-wrapping it in a prefixing variant
+    ///   would double the prefix.
     ///
     /// `Custom` stores the message verbatim, so a reconstructed error still
     /// reads exactly as it did on the far side. `error_code()` round-trips
-    /// exactly for the mapped variants and is `CUSTOM` otherwise.
-    pub fn from_error_code(code: &str, message: impl Into<String>) -> Self {
+    /// exactly for the mapped codes and is `CUSTOM` otherwise. Pass an empty map
+    /// for `payload` when there are no structured fields.
+    pub fn from_error_code(
+        code: &str,
+        message: impl Into<String>,
+        payload: &serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
         match code {
             codes::NOT_AUTHENTICATED => NotAuthenticated.into(),
             codes::EXPIRED_TOKEN => TokenExpired.into(),
@@ -466,9 +478,30 @@ impl AuthError {
             codes::INVALID_CLIENT => InvalidClient.into(),
             codes::MISSING_WORKSPACE_CRN => MissingWorkspaceCrn.into(),
             codes::ALREADY_CONSUMED => AlreadyConsumed.into(),
+            codes::WORKSPACE_MISMATCH => workspace_mismatch_from_payload(payload)
+                .unwrap_or_else(|| CustomError(message.into()).into()),
             _ => CustomError(message.into()).into(),
         }
     }
+}
+
+/// Rebuild a [`WorkspaceMismatch`] from the `expected`/`actual` fields
+/// [`WorkspaceMismatch::payload`] emits. Returns `None` if either field is
+/// absent or not a parseable workspace ID, so the caller can fall back to
+/// [`AuthError::Custom`].
+fn workspace_mismatch_from_payload(
+    payload: &serde_json::Map<String, serde_json::Value>,
+) -> Option<AuthError> {
+    let parse = |key: &str| -> Option<cts_common::WorkspaceId> {
+        payload.get(key)?.as_str()?.parse().ok()
+    };
+    Some(
+        WorkspaceMismatch {
+            expected_workspace: parse("expected")?,
+            token_workspace: parse("actual")?,
+        }
+        .into(),
+    )
 }
 
 /// Serialize an `AuthError` into the flat, FFI-facing shape consumed by the

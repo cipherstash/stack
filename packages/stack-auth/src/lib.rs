@@ -50,10 +50,10 @@ mod token_store;
 #[cfg(not(target_arch = "wasm32"))]
 pub use error::StoreError;
 pub use error::{
-    AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, InternalError, InvalidAccessKeyError,
-    InvalidClient, InvalidCrn, InvalidGrant, InvalidToken, InvalidUrl, InvalidWorkspaceId,
-    MissingWorkspaceCrn, NotAuthenticated, RequestError, ServerError, TokenExpired,
-    UnsupportedRegion, WorkspaceMismatch,
+    AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, CustomError, InternalError,
+    InvalidAccessKeyError, InvalidClient, InvalidCrn, InvalidGrant, InvalidToken, InvalidUrl,
+    InvalidWorkspaceId, MissingWorkspaceCrn, NotAuthenticated, RequestError, ServerError,
+    TokenExpired, UnsupportedRegion, WorkspaceMismatch,
 };
 
 // Filesystem-backed device identity and the interactive device-code flow are
@@ -514,11 +514,16 @@ mod tests {
         );
     }
 
-    /// `from_error_code` reconstructs the fixed-message unit variants to their
-    /// own code, and everything else — message-carrying, foreign-wrapping, or
-    /// unrecognised codes — to `Custom`, preserving the message verbatim.
+    /// `from_error_code` reconstructs the fixed-message unit variants and
+    /// `WORKSPACE_MISMATCH` (from its payload) to their own code, and everything
+    /// else — message-carrying, foreign-wrapping, or unrecognised codes — to
+    /// `Custom`, preserving the message verbatim.
     #[test]
-    fn from_error_code_maps_units_and_falls_back_to_custom() {
+    fn from_error_code_maps_known_codes_and_falls_back_to_custom() {
+        use crate::AuthErrorKind;
+
+        let empty = serde_json::Map::new();
+
         for code in [
             "NOT_AUTHENTICATED",
             "EXPIRED_TOKEN",
@@ -528,7 +533,7 @@ mod tests {
             "MISSING_WORKSPACE_CRN",
             "ALREADY_CONSUMED",
         ] {
-            let err = AuthError::from_error_code(code, "unused for unit variants");
+            let err = AuthError::from_error_code(code, "unused for unit variants", &empty);
             assert_eq!(err.error_code(), code, "unit code should round-trip");
             assert!(
                 !matches!(err, AuthError::Custom(_)),
@@ -536,16 +541,30 @@ mod tests {
             );
         }
 
-        // A message-carrying variant, a foreign-wrapping one, a structured one,
-        // and an unrecognised code all collapse to Custom with the message kept
-        // as-is (no double-applied `Display` prefix).
+        // WORKSPACE_MISMATCH rebuilds from the exact `payload()` it serialized
+        // with — round-tripping the code (message is re-derived from the fields).
+        let workspace = "ZVATKW3VHMFG27DY"
+            .parse::<cts_common::WorkspaceId>()
+            .unwrap();
+        let payload = crate::error::WorkspaceMismatch {
+            expected_workspace: workspace,
+            token_workspace: workspace,
+        }
+        .payload();
+        let err = AuthError::from_error_code("WORKSPACE_MISMATCH", "unused", &payload);
+        assert_eq!(err.error_code(), "WORKSPACE_MISMATCH");
+        assert!(!matches!(err, AuthError::Custom(_)));
+
+        // A message-carrying variant, a foreign-wrapping one, WORKSPACE_MISMATCH
+        // with no usable payload, and an unrecognised code all collapse to Custom
+        // with the message kept as-is (no double-applied `Display` prefix).
         for code in [
             "SERVER_ERROR",
             "REQUEST_ERROR",
             "WORKSPACE_MISMATCH",
             "SOME_UNRECOGNISED_CODE",
         ] {
-            let err = AuthError::from_error_code(code, "Server error: boom");
+            let err = AuthError::from_error_code(code, "Server error: boom", &empty);
             assert_eq!(err.error_code(), "CUSTOM", "{code} should map to Custom");
             assert_eq!(
                 err.to_string(),
