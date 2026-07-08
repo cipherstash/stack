@@ -63,7 +63,7 @@ async function insertRow(label: string, email: string): Promise<number> {
 
   const [inserted] = await sql<{ id: number }[]>`
     INSERT INTO protect_ci_v3_text_search (email, label, test_run_id)
-    VALUES (${sql.json(encrypted)}::eql_v3.text_search, ${label}, ${TEST_RUN_ID})
+    VALUES (${sql.json(encrypted)}::public.text_search, ${label}, ${TEST_RUN_ID})
     RETURNING id
   `
 
@@ -98,7 +98,7 @@ beforeAll(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_text_search (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      email eql_v3.text_search NOT NULL,
+      email public.text_search NOT NULL,
       label TEXT NOT NULL,
       test_run_id TEXT NOT NULL
     )
@@ -107,9 +107,9 @@ beforeAll(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_typed_domains (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      age eql_v3.integer_ord NOT NULL,
-      nickname eql_v3.text_eq NOT NULL,
-      active eql_v3.bool NOT NULL,
+      age public.integer_ord NOT NULL,
+      nickname public.text_eq NOT NULL,
+      active public.boolean NOT NULL,
       test_run_id TEXT NOT NULL
     )
   `
@@ -143,7 +143,7 @@ afterAll(async () => {
 }, 30000)
 
 describeLivePg('eql_v3 text_search postgres integration', () => {
-  it('round-trips an encrypted value through an eql_v3.text_search column', async () => {
+  it('round-trips an encrypted value through an public.text_search column', async () => {
     const id = await insertRow('roundtrip', 'roundtrip@example.com')
 
     const [row] = await sql<InsertedRow[]>`
@@ -156,7 +156,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(row)).resolves.toBe('roundtrip@example.com')
   }, 30000)
 
-  it('queries equality terms with eql_v3.eq_term and eql_v3.hmac_256', async () => {
+  it('queries equality terms with eql_v3.eq_term and eql_v3_internal.hmac_256', async () => {
     const ids = await seedRows()
     const equalityTerm = await encryptQueryTerm('grace@example.com', 'equality')
 
@@ -164,7 +164,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.eq_term(email) = eql_v3.hmac_256(${sql.json(equalityTerm)}::jsonb)
+        AND eql_v3.eq_term(email) = eql_v3_internal.hmac_256(${sql.json(equalityTerm)}::jsonb)
       ORDER BY id
     `
 
@@ -172,7 +172,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(rows[0])).resolves.toBe('grace@example.com')
   }, 30000)
 
-  it('queries free-text terms with eql_v3.match_term and eql_v3.bloom_filter', async () => {
+  it('queries free-text terms with eql_v3.match_term and eql_v3_internal.bloom_filter', async () => {
     await seedRows()
     const matchTerm = await encryptQueryTerm('example.com', 'freeTextSearch')
 
@@ -180,14 +180,14 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.match_term(email) @> eql_v3.bloom_filter(${sql.json(matchTerm)}::jsonb)
+        AND eql_v3.match_term(email) @> eql_v3_internal.bloom_filter(${sql.json(matchTerm)}::jsonb)
       ORDER BY label
     `
 
     expect(rows.map((row) => row.label)).toEqual(['ada', 'grace'])
   }, 30000)
 
-  it('queries range terms with eql_v3.ord_term and eql_v3.ore_block_256', async () => {
+  it('queries range terms with eql_v3.ord_term and eql_v3_internal.ore_block_256', async () => {
     await seedRows()
     const lower = await encryptQueryTerm('grace@example.com', 'orderAndRange')
     const upper = await encryptQueryTerm('zora@example.org', 'orderAndRange')
@@ -196,8 +196,8 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(email) >= eql_v3.ore_block_256(${sql.json(lower)}::jsonb)
-        AND eql_v3.ord_term(email) <= eql_v3.ore_block_256(${sql.json(upper)}::jsonb)
+        AND eql_v3.ord_term(email) >= eql_v3_internal.ore_block_256(${sql.json(lower)}::jsonb)
+        AND eql_v3.ord_term(email) <= eql_v3_internal.ore_block_256(${sql.json(upper)}::jsonb)
       ORDER BY eql_v3.ord_term(email)
     `
 
@@ -242,14 +242,14 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     )
   }, 30000)
 
-  it('rejects query-only payloads cast as eql_v3.text_search values', async () => {
+  it('rejects query-only payloads cast as public.text_search values', async () => {
     const equalityTerm = await encryptQueryTerm('ada@example.com', 'equality')
 
     await expect(
       sql`
         INSERT INTO protect_ci_v3_text_search (email, label, test_run_id)
         VALUES (
-          ${sql.json(equalityTerm)}::eql_v3.text_search,
+          ${sql.json(equalityTerm)}::public.text_search,
           'query-only',
           ${TEST_RUN_ID}
         )
@@ -280,9 +280,9 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     const [inserted] = await sql<{ id: number }[]>`
       INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
       VALUES (
-        ${sql.json(age as postgres.JSONValue)}::eql_v3.integer_ord,
-        ${sql.json(nickname as postgres.JSONValue)}::eql_v3.text_eq,
-        ${sql.json(active as postgres.JSONValue)}::eql_v3.bool,
+        ${sql.json(age as postgres.JSONValue)}::public.integer_ord,
+        ${sql.json(nickname as postgres.JSONValue)}::public.text_eq,
+        ${sql.json(active as postgres.JSONValue)}::public.boolean,
         ${TEST_RUN_ID}
       )
       RETURNING id
@@ -300,7 +300,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) >= eql_v3.ore_block_256(${sql.json(ageTerm)}::jsonb)
+        AND eql_v3.ord_term(age) >= eql_v3_internal.ore_block_256(${sql.json(ageTerm)}::jsonb)
     `
 
     expect(rows.map((row) => row.id)).toContain(inserted.id)
@@ -333,9 +333,9 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       const [row] = await sql<{ id: number }[]>`
         INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
         VALUES (
-          ${sql.json(ageCt)}::eql_v3.integer_ord,
-          ${sql.json(nick)}::eql_v3.text_eq,
-          ${sql.json(act)}::eql_v3.bool,
+          ${sql.json(ageCt)}::public.integer_ord,
+          ${sql.json(nick)}::public.text_eq,
+          ${sql.json(act)}::public.boolean,
           ${TEST_RUN_ID}
         )
         RETURNING id
@@ -363,7 +363,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) = eql_v3.ore_block_256(${sql.json(equalityTerm)}::jsonb)
+        AND eql_v3.ord_term(age) = eql_v3_internal.ore_block_256(${sql.json(equalityTerm)}::jsonb)
       ORDER BY id
     `
     // Exactly the age=37 row — not the 30 or 42 rows.
@@ -383,7 +383,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) = eql_v3.ore_block_256(${sql.json(missTerm)}::jsonb)
+        AND eql_v3.ord_term(age) = eql_v3_internal.ore_block_256(${sql.json(missTerm)}::jsonb)
     `
     expect(none).toHaveLength(0)
   }, 30000)

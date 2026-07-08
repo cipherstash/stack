@@ -63,7 +63,7 @@ const sql = LIVE_EQL_V3_PG_ENABLED
 const TABLE_NAME = 'v3_matrix_live_pg'
 const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-/** `eql_v3.integer_ord` -> `integer_ord`: a valid, unique Postgres column name. */
+/** `public.integer_ord` -> `integer_ord`: a valid, unique Postgres column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
 const expectDecryptedStorageValue = (
@@ -129,9 +129,9 @@ const storageDomains = domains.filter(
 )
 const textOreDomains = domains.filter(
   ([t]) =>
-    t === 'eql_v3.text_ord_ore' ||
-    t === 'eql_v3.text_ord' ||
-    t === 'eql_v3.text_search',
+    t === 'public.text_ord_ore' ||
+    t === 'public.text_ord' ||
+    t === 'public.text_search',
 )
 
 type Row = { id: number }
@@ -270,7 +270,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.eq_term("${col}") = eql_v3.hmac_256($2::jsonb)`,
+           AND eql_v3.eq_term("${col}") = eql_v3_internal.hmac_256($2::jsonb)`,
       [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
@@ -283,7 +283,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.ord_term("${col}") = eql_v3.ore_block_256($2::jsonb)`,
+           AND eql_v3.ord_term("${col}") = eql_v3_internal.ore_block_256($2::jsonb)`,
       [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
@@ -314,7 +314,7 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.match_term("${col}") @> eql_v3.bloom_filter($2::jsonb)`,
+           AND eql_v3.match_term("${col}") @> eql_v3_internal.bloom_filter($2::jsonb)`,
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([expectedId])

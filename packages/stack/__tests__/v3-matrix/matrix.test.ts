@@ -35,9 +35,9 @@ describe('eql_v3 type-driven domain matrix (runtime)', () => {
   })
 
   it.each([
-    'eql_v3.text_ord_ore',
-    'eql_v3.text_ord',
-    'eql_v3.text_search',
+    'public.text_ord_ore',
+    'public.text_ord',
+    'public.text_search',
   ] as const)('%s uses non-empty positive samples for live Postgres inserts', (eqlType) => {
     expect(V3_MATRIX[eqlType].samples[0]).not.toBe('')
   })
@@ -50,10 +50,10 @@ describe('eql_v3 type-driven domain matrix (runtime)', () => {
   // the live suite's truncation-detection power at build time — flip the
   // timestamp rows back to `DATE_S` and this fails.
   it.each([
-    'eql_v3.timestamp',
-    'eql_v3.timestamp_eq',
-    'eql_v3.timestamp_ord_ore',
-    'eql_v3.timestamp_ord',
+    'public.timestamp',
+    'public.timestamp_eq',
+    'public.timestamp_ord_ore',
+    'public.timestamp_ord',
   ] as const)('%s carries a sample with a non-zero time-of-day', (eqlType) => {
     const samples = V3_MATRIX[eqlType].samples as readonly Date[]
     const hasTimeOfDay = (d: Date) =>
