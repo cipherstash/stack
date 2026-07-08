@@ -32,6 +32,25 @@ export function regionSlugs(): string[] {
   return regions.map((r) => r.value.replace(/\.aws$/, ''))
 }
 
+export interface RegionInfo {
+  /** The value passed to `--region` / `STASH_REGION` (e.g. `us-east-1`). */
+  slug: string
+  /** Human-friendly label, including the location (e.g. `us-east-1 (Virginia, USA)`). */
+  label: string
+}
+
+/**
+ * The full region list as structured data. Backs `stash auth regions` — a
+ * first-contact affordance so an agent (or human) can discover valid
+ * `--region` values instead of learning them reactively from an error.
+ */
+export function regionList(): RegionInfo[] {
+  return regions.map((r) => ({
+    slug: r.value.replace(/\.aws$/, ''),
+    label: r.label,
+  }))
+}
+
 /**
  * Normalize a user-supplied region to the canonical `<slug>.aws` value the
  * auth server expects, or return `null` when it isn't a known region.

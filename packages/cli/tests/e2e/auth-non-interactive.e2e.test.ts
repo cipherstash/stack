@@ -75,6 +75,39 @@ describe('stash auth login — non-interactive region resolution', () => {
   })
 })
 
+describe('stash auth regions — list available regions', () => {
+  it('prints the region labels and exits 0', async () => {
+    const r = await runPiped(['auth', 'regions'])
+    expect(r.exitCode).toBe(0)
+    // A couple of known regions should appear in the human output.
+    expect(r.stdout).toContain('us-east-1')
+    expect(r.stdout).toContain('ap-southeast-2')
+  })
+
+  it('--json emits an array of { slug, label } objects', async () => {
+    const r = await runPiped(['auth', 'regions', '--json'])
+    expect(r.exitCode).toBe(0)
+    const parsed = JSON.parse(r.stdout.trim()) as Array<{
+      slug: string
+      label: string
+    }>
+    expect(Array.isArray(parsed)).toBe(true)
+    expect(parsed.length).toBeGreaterThan(0)
+    for (const entry of parsed) {
+      expect(typeof entry.slug).toBe('string')
+      expect(typeof entry.label).toBe('string')
+      expect(entry.slug).not.toMatch(/\.aws$/)
+    }
+    expect(parsed.map((e) => e.slug)).toContain('us-east-1')
+  })
+
+  it('is listed in `auth --help`', async () => {
+    const r = await runPiped(['auth', '--help'])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain('regions')
+  })
+})
+
 describe('stash CLI help — non-interactive auth flags are documented', () => {
   it('top-level --help lists --region and --json', async () => {
     const r = await runPiped(['--help'])

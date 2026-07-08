@@ -10,6 +10,7 @@ const { beginDeviceCodeFlow, bindClientDevice } = auth
 export {
   normalizeRegion,
   REGION_ENV_VAR,
+  regionList,
   regionSlugs,
   regions,
   resolveRegion,
