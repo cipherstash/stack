@@ -18,10 +18,10 @@
  * client-side before any network — and so stay cheap even one at a time.
  */
 import 'dotenv/config'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { beforeAll, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
-import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
+import { describeLive } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
@@ -29,7 +29,7 @@ import {
   V3_MATRIX,
 } from './catalog'
 
-/** `eql_v3.integer_ord` → `integer_ord`: a valid, per-domain-unique column name. */
+/** `eql_v3.int4_ord` -> `int4_ord`: a valid, per-domain-unique column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
 // `as const satisfies Record<...>` gives `V3_MATRIX` a narrower type than

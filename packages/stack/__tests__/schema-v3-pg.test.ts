@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import postgres from 'postgres'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
@@ -107,9 +107,9 @@ beforeAll(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_typed_domains (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      age eql_v3.integer_ord NOT NULL,
+      age eql_v3.int4_ord NOT NULL,
       nickname eql_v3.text_eq NOT NULL,
-      active eql_v3.boolean NOT NULL,
+      active eql_v3.bool NOT NULL,
       test_run_id TEXT NOT NULL
     )
   `
@@ -280,9 +280,9 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     const [inserted] = await sql<{ id: number }[]>`
       INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
       VALUES (
-        ${sql.json(age as postgres.JSONValue)}::eql_v3.integer_ord,
+        ${sql.json(age as postgres.JSONValue)}::eql_v3.int4_ord,
         ${sql.json(nickname as postgres.JSONValue)}::eql_v3.text_eq,
-        ${sql.json(active as postgres.JSONValue)}::eql_v3.boolean,
+        ${sql.json(active as postgres.JSONValue)}::eql_v3.bool,
         ${TEST_RUN_ID}
       )
       RETURNING id
@@ -333,9 +333,9 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       const [row] = await sql<{ id: number }[]>`
         INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
         VALUES (
-          ${sql.json(ageCt)}::eql_v3.integer_ord,
+          ${sql.json(ageCt)}::eql_v3.int4_ord,
           ${sql.json(nick)}::eql_v3.text_eq,
-          ${sql.json(act)}::eql_v3.boolean,
+          ${sql.json(act)}::eql_v3.bool,
           ${TEST_RUN_ID}
         )
         RETURNING id

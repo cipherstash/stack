@@ -157,33 +157,26 @@ describe('eql_v3 text_match column', () => {
 })
 
 describe('eql_v3 concrete type names', () => {
-  it('exposes the renamed concrete type factories and emits the new EQL v3 domain names', () => {
-    expect(types.Integer('n').getEqlType()).toBe('eql_v3.integer')
-    expect(types.IntegerEq('n').getEqlType()).toBe('eql_v3.integer_eq')
-    expect(types.IntegerOrdOre('n').getEqlType()).toBe('eql_v3.integer_ord_ore')
-    expect(types.IntegerOrd('n').getEqlType()).toBe('eql_v3.integer_ord')
+  it('preserves public factory names while exposing concrete Postgres domain names', () => {
+    expect(types.Integer('n').getEqlType()).toBe('eql_v3.int4')
+    expect(types.IntegerEq('n').getEqlType()).toBe('eql_v3.int4_eq')
+    expect(types.IntegerOrdOre('n').getEqlType()).toBe('eql_v3.int4_ord_ore')
+    expect(types.IntegerOrd('n').getEqlType()).toBe('eql_v3.int4_ord')
 
-    expect(types.Smallint('n').getEqlType()).toBe('eql_v3.smallint')
-    expect(types.SmallintEq('n').getEqlType()).toBe('eql_v3.smallint_eq')
-    expect(types.SmallintOrdOre('n').getEqlType()).toBe(
-      'eql_v3.smallint_ord_ore',
-    )
-    expect(types.SmallintOrd('n').getEqlType()).toBe('eql_v3.smallint_ord')
+    expect(types.Smallint('n').getEqlType()).toBe('eql_v3.int2')
+    expect(types.SmallintEq('n').getEqlType()).toBe('eql_v3.int2_eq')
+    expect(types.SmallintOrdOre('n').getEqlType()).toBe('eql_v3.int2_ord_ore')
+    expect(types.SmallintOrd('n').getEqlType()).toBe('eql_v3.int2_ord')
 
-    expect(types.Bigint('n').getEqlType()).toBe('eql_v3.bigint')
-    expect(types.BigintEq('n').getEqlType()).toBe('eql_v3.bigint_eq')
-    expect(types.BigintOrdOre('n').getEqlType()).toBe('eql_v3.bigint_ord_ore')
-    expect(types.BigintOrd('n').getEqlType()).toBe('eql_v3.bigint_ord')
-
-    expect(types.Boolean('b').getEqlType()).toBe('eql_v3.boolean')
-    expect(types.Real('n').getEqlType()).toBe('eql_v3.real')
-    expect(types.RealEq('n').getEqlType()).toBe('eql_v3.real_eq')
-    expect(types.RealOrdOre('n').getEqlType()).toBe('eql_v3.real_ord_ore')
-    expect(types.RealOrd('n').getEqlType()).toBe('eql_v3.real_ord')
-    expect(types.Double('n').getEqlType()).toBe('eql_v3.double')
-    expect(types.DoubleEq('n').getEqlType()).toBe('eql_v3.double_eq')
-    expect(types.DoubleOrdOre('n').getEqlType()).toBe('eql_v3.double_ord_ore')
-    expect(types.DoubleOrd('n').getEqlType()).toBe('eql_v3.double_ord')
+    expect(types.Boolean('b').getEqlType()).toBe('eql_v3.bool')
+    expect(types.Real('n').getEqlType()).toBe('eql_v3.float4')
+    expect(types.RealEq('n').getEqlType()).toBe('eql_v3.float4_eq')
+    expect(types.RealOrdOre('n').getEqlType()).toBe('eql_v3.float4_ord_ore')
+    expect(types.RealOrd('n').getEqlType()).toBe('eql_v3.float4_ord')
+    expect(types.Double('n').getEqlType()).toBe('eql_v3.float8')
+    expect(types.DoubleEq('n').getEqlType()).toBe('eql_v3.float8_eq')
+    expect(types.DoubleOrdOre('n').getEqlType()).toBe('eql_v3.float8_ord_ore')
+    expect(types.DoubleOrd('n').getEqlType()).toBe('eql_v3.float8_ord')
   })
 })
 

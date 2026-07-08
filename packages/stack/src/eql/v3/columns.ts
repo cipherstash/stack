@@ -40,7 +40,7 @@ export type DateLikeCast = (typeof DATE_LIKE_CASTS)[number]
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'bigint' | 'boolean' | DateLikeCast
+type PlaintextKind = 'string' | 'number' | 'boolean' | DateLikeCast
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -111,68 +111,44 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
 // Exported for the `types` namespace factory (see ./types); they are internal
 // building blocks and are intentionally NOT re-exported from the public barrel.
 export const INTEGER = {
-  eqlType: 'eql_v3.integer',
+  eqlType: 'eql_v3.int4',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const INTEGER_EQ = {
-  eqlType: 'eql_v3.integer_eq',
+  eqlType: 'eql_v3.int4_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const INTEGER_ORD_ORE = {
-  eqlType: 'eql_v3.integer_ord_ore',
+  eqlType: 'eql_v3.int4_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const INTEGER_ORD = {
-  eqlType: 'eql_v3.integer_ord',
+  eqlType: 'eql_v3.int4_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const SMALLINT = {
-  eqlType: 'eql_v3.smallint',
+  eqlType: 'eql_v3.int2',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const SMALLINT_EQ = {
-  eqlType: 'eql_v3.smallint_eq',
+  eqlType: 'eql_v3.int2_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const SMALLINT_ORD_ORE = {
-  eqlType: 'eql_v3.smallint_ord_ore',
+  eqlType: 'eql_v3.int2_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const SMALLINT_ORD = {
-  eqlType: 'eql_v3.smallint_ord',
+  eqlType: 'eql_v3.int2_ord',
   castAs: 'number',
-  capabilities: ORDER_AND_RANGE,
-} as const
-
-// bigint (int8) domains. Plaintext is a JS `bigint` (always decrypts to
-// `bigint`); bounds are the full i64 range, enforced at the protect-ffi
-// boundary.
-export const BIGINT = {
-  eqlType: 'eql_v3.bigint',
-  castAs: 'bigint',
-  capabilities: STORAGE_ONLY,
-} as const
-export const BIGINT_EQ = {
-  eqlType: 'eql_v3.bigint_eq',
-  castAs: 'bigint',
-  capabilities: EQUALITY_ONLY,
-} as const
-export const BIGINT_ORD_ORE = {
-  eqlType: 'eql_v3.bigint_ord_ore',
-  castAs: 'bigint',
-  capabilities: ORDER_AND_RANGE,
-} as const
-export const BIGINT_ORD = {
-  eqlType: 'eql_v3.bigint_ord',
-  castAs: 'bigint',
   capabilities: ORDER_AND_RANGE,
 } as const
 
@@ -266,49 +242,49 @@ export const TEXT_ORD = {
 } as const
 
 export const BOOLEAN = {
-  eqlType: 'eql_v3.boolean',
+  eqlType: 'eql_v3.bool',
   castAs: 'boolean',
   capabilities: STORAGE_ONLY,
 } as const
 
 export const REAL = {
-  eqlType: 'eql_v3.real',
+  eqlType: 'eql_v3.float4',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const REAL_EQ = {
-  eqlType: 'eql_v3.real_eq',
+  eqlType: 'eql_v3.float4_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const REAL_ORD_ORE = {
-  eqlType: 'eql_v3.real_ord_ore',
+  eqlType: 'eql_v3.float4_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const REAL_ORD = {
-  eqlType: 'eql_v3.real_ord',
+  eqlType: 'eql_v3.float4_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const DOUBLE = {
-  eqlType: 'eql_v3.double',
+  eqlType: 'eql_v3.float8',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const DOUBLE_EQ = {
-  eqlType: 'eql_v3.double_eq',
+  eqlType: 'eql_v3.float8_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DOUBLE_ORD_ORE = {
-  eqlType: 'eql_v3.double_ord_ore',
+  eqlType: 'eql_v3.float8_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DOUBLE_ORD = {
-  eqlType: 'eql_v3.double_ord',
+  eqlType: 'eql_v3.float8_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
@@ -521,18 +497,6 @@ export class EncryptedSmallintOrdColumn extends EncryptedV3Column<
   typeof SMALLINT_ORD
 > {}
 
-// bigint
-export class EncryptedBigintColumn extends EncryptedV3Column<typeof BIGINT> {}
-export class EncryptedBigintEqColumn extends EncryptedV3Column<
-  typeof BIGINT_EQ
-> {}
-export class EncryptedBigintOrdOreColumn extends EncryptedV3Column<
-  typeof BIGINT_ORD_ORE
-> {}
-export class EncryptedBigintOrdColumn extends EncryptedV3Column<
-  typeof BIGINT_ORD
-> {}
-
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
 export class EncryptedDateEqColumn extends EncryptedV3Column<typeof DATE_EQ> {}
@@ -620,10 +584,6 @@ export type AnyEncryptedV3Column =
   | EncryptedSmallintEqColumn
   | EncryptedSmallintOrdOreColumn
   | EncryptedSmallintOrdColumn
-  | EncryptedBigintColumn
-  | EncryptedBigintEqColumn
-  | EncryptedBigintOrdOreColumn
-  | EncryptedBigintOrdColumn
   | EncryptedDateColumn
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
@@ -665,13 +625,11 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
   : K extends 'number'
     ? number
-    : K extends 'bigint'
-      ? bigint
-      : K extends 'boolean'
-        ? boolean
-        : K extends DateLikeCast
-          ? Date
-          : never
+    : K extends 'boolean'
+      ? boolean
+      : K extends DateLikeCast
+        ? Date
+        : never
 
 /**
  * The plaintext type for a single v3 column, read from the literal domain

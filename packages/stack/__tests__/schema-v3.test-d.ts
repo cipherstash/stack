@@ -21,6 +21,11 @@ describe('eql_v3 schema type inference', () => {
     expectTypeOf(col).toEqualTypeOf<EncryptedTextSearchColumn>()
   })
 
+  it('does not expose bigint factories until native bigint round-tripping lands', () => {
+    // @ts-expect-error - bigint v3 domains are intentionally not public yet
+    types.Bigint('large')
+  })
+
   it('encryptedTable exposes column builders as typed properties', () => {
     const users = encryptedTable('users', {
       email: types.TextSearch('email'),
@@ -100,6 +105,28 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
       table: v3users,
       column: v3users.email,
     })
+  })
+
+  it('encrypt and encryptQuery reject bigint plaintext until native round-tripping lands', () => {
+    const client = {} as EncryptionClient
+
+    client.encrypt(
+      // @ts-expect-error - bigint is not accepted by protect-ffi yet
+      1n,
+      {
+        table: v3users,
+        column: v3users.email,
+      },
+    )
+
+    client.encryptQuery(
+      // @ts-expect-error - bigint is not accepted by protect-ffi yet
+      1n,
+      {
+        table: v3users,
+        column: v3users.email,
+      },
+    )
   })
 
   it('encryptQuery accepts a v3 table + column', () => {

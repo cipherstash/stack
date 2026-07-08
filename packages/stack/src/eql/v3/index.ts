@@ -18,10 +18,6 @@ export type {
 } from './columns'
 
 export {
-  EncryptedBigintColumn,
-  EncryptedBigintEqColumn,
-  EncryptedBigintOrdColumn,
-  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,

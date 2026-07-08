@@ -1,8 +1,4 @@
 import {
-  BIGINT,
-  BIGINT_EQ,
-  BIGINT_ORD,
-  BIGINT_ORD_ORE,
   BOOLEAN,
   DATE,
   DATE_EQ,
@@ -12,10 +8,6 @@ import {
   DOUBLE_EQ,
   DOUBLE_ORD,
   DOUBLE_ORD_ORE,
-  EncryptedBigintColumn,
-  EncryptedBigintEqColumn,
-  EncryptedBigintOrdColumn,
-  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
@@ -79,11 +71,11 @@ import {
 } from './columns'
 
 /**
- * The v3 column-type namespace. Each member is a factory that builds a concrete
- * EQL v3 column; the member name mirrors the underlying `eql_v3.<name>` domain
- * (strip the `eql_v3.` prefix, PascalCase each `_`-separated segment). So
- * `types.TextEq('actor')` builds an `eql_v3.text_eq` column, `types.IntegerOrd`
- * an `eql_v3.integer_ord`, `types.Timestamp` an `eql_v3.timestamp`, and so on.
+ * The v3 column-type namespace. Each member is a public, semantic factory name
+ * for a concrete EQL v3 column. Most members mirror the underlying domain name;
+ * JS-friendly scalar names map to Postgres concrete domains, e.g.
+ * `types.IntegerOrd` builds an `eql_v3.int4_ord` column and `types.Boolean`
+ * builds an `eql_v3.bool` column.
  *
  * Each factory returns the CONCRETE column class instance (never the widened
  * `AnyEncryptedV3Column`) so per-column plaintext / query-capability inference
@@ -101,7 +93,7 @@ import {
  *
  * `types.TextSearch` keeps the chainable `.freeTextSearch(opts)` tuner (the
  * only capability-bearing chain — every other domain is fully described by its
- * type). Bigint domains take and return JS `bigint` values.
+ * type).
  */
 export const types = {
   // integer
@@ -120,13 +112,6 @@ export const types = {
     new EncryptedSmallintOrdOreColumn(name, SMALLINT_ORD_ORE),
   SmallintOrd: (name: string) =>
     new EncryptedSmallintOrdColumn(name, SMALLINT_ORD),
-
-  // bigint
-  Bigint: (name: string) => new EncryptedBigintColumn(name, BIGINT),
-  BigintEq: (name: string) => new EncryptedBigintEqColumn(name, BIGINT_EQ),
-  BigintOrdOre: (name: string) =>
-    new EncryptedBigintOrdOreColumn(name, BIGINT_ORD_ORE),
-  BigintOrd: (name: string) => new EncryptedBigintOrdColumn(name, BIGINT_ORD),
 
   // date
   Date: (name: string) => new EncryptedDateColumn(name, DATE),
