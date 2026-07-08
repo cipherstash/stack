@@ -9,17 +9,15 @@ import {
 import * as p from '@clack/prompts'
 import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
+import { resolveDatabaseUrl } from '@/config/database-url.js'
+import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import {
   downloadEqlSql,
   EQLInstaller,
   loadBundledEqlSql,
 } from '@/installer/index.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
-import {
-  ensureConfigDependencies,
-  ensureStashConfig,
-} from './config-scaffold.js'
+import { offerStashConfig } from './config-scaffold.js'
 import {
   detectDrizzle,
   detectSupabase,
@@ -79,6 +77,40 @@ export interface InstallOptions {
 /** Resolved install mode for the Supabase non-Drizzle branch. */
 export type SupabaseInstallMode = 'migration' | 'direct'
 
+/**
+ * Resolve the database URL + encryption-client path for the install.
+ *
+ * A pre-existing `stash.config.ts` is authoritative — later workflow commands
+ * (db push / schema build / encrypt) load the client through it — so we load
+ * it. Without one, `eql install` doesn't need a config: resolve the URL
+ * directly (flag → env → supabase → prompt), then offer to scaffold a config
+ * for the rest of the workflow. Decoupling install from the config is what lets
+ * `npx stash eql install --database-url ...` run in a bare project without the
+ * `stash` / `@cipherstash/stack` dependencies the config would otherwise import
+ * (#579).
+ */
+async function resolveInstallContext(
+  options: InstallOptions,
+  s: ReturnType<typeof p.spinner>,
+): Promise<{ databaseUrl: string; clientPath: string }> {
+  if (findConfigFile(process.cwd())) {
+    s.start('Loading stash.config.ts...')
+    const config = await loadStashConfig({
+      databaseUrlFlag: options.databaseUrl,
+      supabase: options.supabase,
+    })
+    s.stop('Configuration loaded.')
+    return { databaseUrl: config.databaseUrl, clientPath: config.client }
+  }
+
+  const databaseUrl = await resolveDatabaseUrl({
+    databaseUrlFlag: options.databaseUrl,
+    supabase: options.supabase,
+  })
+  const clientPath = await offerStashConfig()
+  return { databaseUrl, clientPath }
+}
+
 export async function installCommand(options: InstallOptions) {
   p.intro(runnerCommand(detectPackageManager(), 'stash eql install'))
 
@@ -93,41 +125,24 @@ export async function installCommand(options: InstallOptions) {
     process.exit(1)
   }
 
-  // Scaffold stash.config.ts if missing. `eql install` is the single command
-  // that gets a project from zero to installed EQL — no separate setup step
-  // (CIP-2986).
-  const configReady = await ensureStashConfig()
-  if (!configReady) {
-    process.exit(0)
-  }
-
-  // The config (and the client it points at) `import` `stash` /
-  // `@cipherstash/stack`; make sure they're installed before jiti loads the
-  // config, so a standalone `npx stash eql install` gives actionable guidance
-  // instead of a raw `Cannot find module 'stash'` (#579).
-  const depsReady = await ensureConfigDependencies()
-  if (!depsReady) {
-    p.outro('Installation aborted.')
-    process.exit(1)
-  }
-
   const s = p.spinner()
 
-  s.start('Loading stash.config.ts...')
-  const config = await loadStashConfig({
-    databaseUrlFlag: options.databaseUrl,
-    supabase: options.supabase,
-  })
-  s.stop('Configuration loaded.')
+  // `eql install` only needs a database URL to install EQL. It does NOT require
+  // a stash.config.ts: an existing config is authoritative (later workflow
+  // commands rely on it), but without one we resolve the URL directly — so a
+  // standalone `npx stash eql install --database-url ...` works with zero
+  // project dependencies — and offer to scaffold a config for the rest of the
+  // workflow (CIP-2986 / #579).
+  const { databaseUrl, clientPath } = await resolveInstallContext(options, s)
 
   // Safety net: if the user ran `eql install` without first running `init`,
-  // scaffold the encryption client file so config.client points somewhere
-  // real. No-op when the file already exists.
-  ensureEncryptionClient(config.client, process.cwd(), config.databaseUrl)
+  // scaffold the encryption client file so clientPath points somewhere real.
+  // No-op when the file already exists.
+  ensureEncryptionClient(clientPath, process.cwd(), databaseUrl)
 
   // Auto-detect provider hints when the user didn't explicitly pass flags.
   // CIP-2985.
-  const resolved = resolveProviderOptions(options, config.databaseUrl)
+  const resolved = resolveProviderOptions(options, databaseUrl)
 
   const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
 
@@ -196,7 +211,7 @@ export async function installCommand(options: InstallOptions) {
   }
 
   const installer = new EQLInstaller({
-    databaseUrl: config.databaseUrl,
+    databaseUrl,
   })
 
   s.start('Checking database permissions...')
@@ -262,7 +277,7 @@ export async function installCommand(options: InstallOptions) {
   }
 
   s.start('Installing cs_migrations tracking schema...')
-  const migrationsDb = new pg.Client({ connectionString: config.databaseUrl })
+  const migrationsDb = new pg.Client({ connectionString: databaseUrl })
   try {
     await migrationsDb.connect()
     await installMigrationsSchema(migrationsDb)

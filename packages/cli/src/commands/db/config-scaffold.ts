@@ -1,25 +1,12 @@
-import { execSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
-import {
-  combinedInstallCommands,
-  detectPackageManager,
-  isPackageInstalled,
-  runnerCommand,
-} from '../init/utils.js'
+import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 export const CONFIG_FILENAME = 'stash.config.ts'
 
-/**
- * The packages a scaffolded `stash.config.ts` depends on. `stash` (dev) exports
- * the `defineConfig`/`resolveDatabaseUrl` the config imports; `@cipherstash/stack`
- * (prod) is imported by the encryption client the config points at. Both must
- * resolve from the project's node_modules or `loadStashConfig` fails to load the
- * config with `Cannot find module 'stash'`.
- */
-const CLI_PACKAGE = 'stash'
-const STACK_PACKAGE = '@cipherstash/stack'
+/** Default encryption-client path used when the project has none yet. */
+export const DEFAULT_CLIENT_PATH = './src/encryption/index.ts'
 
 /**
  * Common locations where an encryption client file might live. Checked in
@@ -100,109 +87,51 @@ export default defineConfig({
 }
 
 /**
- * Create a `stash.config.ts` at the project root if one doesn't already exist.
- * Returns `true` if a config is present (either pre-existing or freshly
- * written), `false` if the user cancelled the prompt.
+ * Offer to create a `stash.config.ts` for the rest of the workflow.
  *
- * Invoked by `eql install` when no `stash.config.ts` exists, so users don't
- * need to run a separate `setup` step before installing EQL.
+ * `eql install` itself doesn't need a config — it resolves the database URL
+ * directly — but `db push` / `schema build` / `encrypt *` load the encryption
+ * client through it, so we create it now as a convenience. Declining (or a
+ * non-interactive context) never blocks the EQL install.
+ *
+ * Returns the encryption-client path the config points at, falling back to
+ * {@link DEFAULT_CLIENT_PATH} when no config is written — so the caller can
+ * still scaffold the client file at a sensible location.
+ *
+ * Should be called only when no config exists yet (the caller loads an existing
+ * one instead); it never overwrites a present `stash.config.ts`.
  */
-export async function ensureStashConfig(
+export async function offerStashConfig(
   cwd: string = process.cwd(),
-): Promise<boolean> {
+): Promise<string> {
   const configPath = resolve(cwd, CONFIG_FILENAME)
-  if (existsSync(configPath)) return true
-
-  p.log.info(`No ${CONFIG_FILENAME} found — let's create one.`)
-
-  const clientPath = await resolveClientPath(cwd)
-  if (!clientPath) {
-    p.cancel('Setup cancelled.')
-    return false
-  }
-
-  writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
-  p.log.success(`Created ${CONFIG_FILENAME}`)
-  return true
-}
-
-/**
- * Which config dependencies the project is missing, split by install kind.
- * Pure (only the filesystem probe in `isPackageInstalled`), so the decision is
- * unit-testable without spawning a package manager.
- */
-export function missingConfigDependencies(cwd: string = process.cwd()): {
-  prod: string[]
-  dev: string[]
-} {
-  return {
-    prod: isPackageInstalled(STACK_PACKAGE, cwd) ? [] : [STACK_PACKAGE],
-    dev: isPackageInstalled(CLI_PACKAGE, cwd) ? [] : [CLI_PACKAGE],
-  }
-}
-
-/**
- * Ensure the packages a `stash.config.ts` imports are installed before the CLI
- * tries to load it. Offers to install any missing ones interactively; in
- * non-interactive contexts (or on cancel / install failure) it prints the exact
- * install commands and returns `false` so the caller can stop cleanly.
- *
- * Without this, a standalone `npx stash eql install` scaffolds a config and then
- * crashes with a raw `Cannot find module 'stash'` because the CLI packages were
- * never added as project dependencies (only `stash init` does that) — #579.
- * Returns `true` when nothing is missing or the install succeeded.
- */
-export async function ensureConfigDependencies(
-  cwd: string = process.cwd(),
-): Promise<boolean> {
-  const { prod, dev } = missingConfigDependencies(cwd)
-  if (prod.length === 0 && dev.length === 0) return true
-
-  const pm = detectPackageManager()
-  const commands = combinedInstallCommands(pm, prod, dev)
-  const missing = [...prod, ...dev]
-  const missingList = missing.join(', ')
-  const verb = missing.length === 1 ? 'is' : 'are'
+  if (existsSync(configPath)) return DEFAULT_CLIENT_PATH
 
   const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
   if (!isTTY) {
-    p.log.warn(
-      `${CONFIG_FILENAME} imports \`${CLI_PACKAGE}\`, but ${missingList} ${verb} not installed in this project.`,
-    )
-    p.note(
-      `Install, then re-run:\n  ${commands.join('\n  ')}\n\nOr run \`${runnerCommand(pm, 'stash init')}\` to set everything up.`,
-      'Missing dependencies',
-    )
-    return false
+    // Non-interactive (CI / agents / pipes): create with a detected or default
+    // client path rather than prompting, which would hang.
+    const clientPath = detectClientPath(cwd) ?? DEFAULT_CLIENT_PATH
+    writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
+    p.log.success(`Created ${CONFIG_FILENAME}`)
+    return clientPath
   }
 
-  const proceed = await p.confirm({
-    message: `Install ${missingList}? (${commands.join(' && ')})`,
+  const create = await p.confirm({
+    message: `Create a ${CONFIG_FILENAME}? (needed later for db push / schema build / encrypt)`,
+    initialValue: true,
   })
-  if (p.isCancel(proceed) || !proceed) {
-    p.note(
-      `Install manually, then re-run:\n  ${commands.join('\n  ')}`,
-      'Missing dependencies',
+  if (p.isCancel(create) || !create) {
+    p.log.info(
+      `Skipped ${CONFIG_FILENAME}. Create it later with \`${runnerCommand(detectPackageManager(), 'stash init')}\`.`,
     )
-    return false
+    return DEFAULT_CLIENT_PATH
   }
 
-  for (const cmd of commands) {
-    p.log.step(`Running: ${cmd}`)
-    try {
-      execSync(cmd, { cwd, stdio: 'inherit' })
-    } catch {
-      p.log.error(`Install failed: ${cmd}`)
-      return false
-    }
-  }
+  const clientPath = await resolveClientPath(cwd)
+  if (!clientPath) return DEFAULT_CLIENT_PATH
 
-  // Re-check from disk — a package manager can exit 0 without the package
-  // actually resolving (registry hiccup, workspace mismatch).
-  const still = missingConfigDependencies(cwd)
-  if (still.prod.length > 0 || still.dev.length > 0) {
-    p.log.warn(`Still missing: ${[...still.prod, ...still.dev].join(', ')}.`)
-    return false
-  }
-  return true
+  writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
+  p.log.success(`Created ${CONFIG_FILENAME}`)
+  return clientPath
 }

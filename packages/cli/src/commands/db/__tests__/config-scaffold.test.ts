@@ -3,18 +3,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  ensureConfigDependencies,
-  missingConfigDependencies,
+  CONFIG_FILENAME,
+  DEFAULT_CLIENT_PATH,
+  offerStashConfig,
 } from '../config-scaffold.js'
 
-/** Create a fake installed package under `<cwd>/node_modules/<name>`. */
-function fakeInstall(cwd: string, name: string): void {
-  const dir = path.join(cwd, 'node_modules', name)
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name }))
-}
-
-describe('config-scaffold dependency guard', () => {
+describe('offerStashConfig (optional config scaffold)', () => {
   let tmpDir: string
 
   beforeEach(() => {
@@ -28,50 +22,38 @@ describe('config-scaffold dependency guard', () => {
     }
   })
 
-  describe('missingConfigDependencies', () => {
-    it('reports both packages missing in a bare project', () => {
-      expect(missingConfigDependencies(tmpDir)).toEqual({
-        prod: ['@cipherstash/stack'],
-        dev: ['stash'],
-      })
-    })
+  it('non-interactively creates a config with the default client path', async () => {
+    // Under vitest process.stdin.isTTY is undefined → the non-interactive branch
+    // writes a config instead of prompting (which would hang in CI / agents).
+    const clientPath = await offerStashConfig(tmpDir)
 
-    it('reports nothing missing when both are installed', () => {
-      fakeInstall(tmpDir, 'stash')
-      fakeInstall(tmpDir, '@cipherstash/stack')
-      expect(missingConfigDependencies(tmpDir)).toEqual({ prod: [], dev: [] })
-    })
-
-    it('reports only the package that is actually missing', () => {
-      fakeInstall(tmpDir, '@cipherstash/stack')
-      expect(missingConfigDependencies(tmpDir)).toEqual({
-        prod: [],
-        dev: ['stash'],
-      })
-    })
+    expect(clientPath).toBe(DEFAULT_CLIENT_PATH)
+    const written = fs.readFileSync(path.join(tmpDir, CONFIG_FILENAME), 'utf-8')
+    expect(written).toContain("from 'stash'")
+    expect(written).toContain(`client: '${DEFAULT_CLIENT_PATH}'`)
   })
 
-  describe('ensureConfigDependencies', () => {
-    it('returns true (no prompt) when both packages are present', async () => {
-      fakeInstall(tmpDir, 'stash')
-      fakeInstall(tmpDir, '@cipherstash/stack')
-      await expect(ensureConfigDependencies(tmpDir)).resolves.toBe(true)
-    })
+  it('points the config at a detected client file when one exists', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'src'))
+    fs.writeFileSync(path.join(tmpDir, 'src', 'encryption.ts'), '// client')
 
-    it('warns and returns false in non-interactive contexts when deps are missing (#579)', async () => {
-      // Under vitest, process.stdin.isTTY is undefined → the guard takes the
-      // non-interactive branch: it must print guidance and stop cleanly rather
-      // than spawn a package manager or hang on a prompt. Capture stdout (where
-      // clack writes) to assert the guidance surfaced.
-      let out = ''
-      vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-        out += String(chunk)
-        return true
-      })
+    const clientPath = await offerStashConfig(tmpDir)
 
-      await expect(ensureConfigDependencies(tmpDir)).resolves.toBe(false)
-      expect(out).toContain('not installed')
-      expect(out).toContain('stash init')
-    })
+    expect(clientPath).toBe('./src/encryption.ts')
+    expect(
+      fs.readFileSync(path.join(tmpDir, CONFIG_FILENAME), 'utf-8'),
+    ).toContain(`client: './src/encryption.ts'`)
+  })
+
+  it('never overwrites an existing config', async () => {
+    const configPath = path.join(tmpDir, CONFIG_FILENAME)
+    fs.writeFileSync(configPath, '// hand-written, do not touch')
+
+    const clientPath = await offerStashConfig(tmpDir)
+
+    expect(clientPath).toBe(DEFAULT_CLIENT_PATH)
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe(
+      '// hand-written, do not touch',
+    )
   })
 })

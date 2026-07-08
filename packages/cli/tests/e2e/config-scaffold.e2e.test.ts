@@ -28,32 +28,32 @@ describe('config-scaffold DX (missing config / missing deps)', () => {
   })
 
   it('a read command with no config points at `init` / `eql install` (#578)', async () => {
+    // `eql status` loads the encryption client, so it genuinely needs a config.
     const r = await run(['eql', 'status'], { cwd: tmpDir })
     expect(r.output).toContain('Could not find stash.config.ts')
     expect(r.output).toContain('stash init')
     expect(r.output).toContain('stash eql install')
   })
 
-  it('`eql install` with a config but missing deps guides instead of crashing (#579)', async () => {
-    fs.writeFileSync(
-      path.join(tmpDir, 'stash.config.ts'),
-      "import { defineConfig, resolveDatabaseUrl } from 'stash'\n" +
-        'export default defineConfig({ databaseUrl: await resolveDatabaseUrl() })\n',
-    )
-
+  it('`eql install` does not require a config — it resolves the URL directly (#579)', async () => {
+    // With no config and no database URL, install must NOT scaffold a config and
+    // then crash on `Cannot find module 'stash'`. It resolves the URL first and
+    // fails cleanly asking for one; no stash.config.ts is written.
     const r = await run(['eql', 'install'], { cwd: tmpDir })
-    // Actionable guidance, not a raw module-resolution stack trace.
-    expect(r.output).toContain('not installed')
-    expect(r.output).toContain('stash init')
-    expect(r.output).not.toContain('MODULE_NOT_FOUND')
+
+    expect(r.output).toContain('Cannot resolve DATABASE_URL')
+    expect(r.output).toContain('--database-url')
     expect(r.output).not.toContain('Cannot find module')
+    expect(r.output).not.toContain('MODULE_NOT_FOUND')
+    expect(fs.existsSync(path.join(tmpDir, 'stash.config.ts'))).toBe(false)
     expect(r.exitCode).toBe(1)
   })
 
   // The `loadStashConfig` catch that translates a missing-module error into
-  // guidance (the read-command path for #579) is covered by unit tests in
-  // src/__tests__/config.test.ts with a mocked jiti rejection. It can't be
-  // reproduced end-to-end here: inside the monorepo jiti resolves `stash` via
-  // the workspace self-reference even from a temp dir, so the import never
-  // fails — which is exactly why the original bug escaped the test suite.
+  // guidance (the path for a project that HAS a config but lacks the CLI
+  // packages) is covered by unit tests in src/__tests__/config.test.ts with a
+  // mocked jiti rejection. It can't be reproduced end-to-end here: inside the
+  // monorepo jiti resolves `stash` via the workspace self-reference even from a
+  // temp dir, so the import never fails — which is exactly why the original bug
+  // escaped the test suite.
 })

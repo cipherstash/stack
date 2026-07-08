@@ -91,9 +91,11 @@ const stashConfigSchema = z.object({
  * Search for `stash.config.ts` starting from `startDir` and walking up
  * parent directories until the filesystem root is reached.
  *
- * Returns the absolute path if found, or `undefined` if not.
+ * Returns the absolute path if found, or `undefined` if not. Exported so
+ * commands can branch on whether a config is present without loading it (e.g.
+ * `eql install` resolves the database URL directly when there's no config).
  */
-function findConfigFile(startDir: string): string | undefined {
+export function findConfigFile(startDir: string): string | undefined {
   let dir = path.resolve(startDir)
 
   while (true) {
