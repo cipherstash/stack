@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import semver from 'semver'
 import { describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
@@ -15,6 +16,27 @@ const REPO_ROOT = resolve(__dirname, '../..')
 const read = (p: string) => readFileSync(join(REPO_ROOT, p), 'utf8')
 const readJson = (p: string) => JSON.parse(read(p))
 const readYaml = (p: string) => parseYaml(read(p))
+
+// Map every package in the lockfile's `packages:` section to its resolved
+// versions. Keys there are bare `name@version` (peer suffixes live under
+// `snapshots:`), and scoped names keep their leading `@`, so split on the
+// LAST `@`; strip any stray peer suffix defensively.
+const resolvedVersionsByName = (): Map<string, string[]> => {
+  const lock = readYaml('pnpm-lock.yaml') as {
+    packages?: Record<string, unknown>
+  }
+  const byName = new Map<string, string[]>()
+  for (const key of Object.keys(lock.packages ?? {})) {
+    const at = key.lastIndexOf('@')
+    if (at <= 0) continue // no scope-only or malformed keys
+    const name = key.slice(0, at)
+    const version = key.slice(at + 1).split('(')[0]
+    const list = byName.get(name)
+    if (list) list.push(version)
+    else byName.set(name, [version])
+  }
+  return byName
+}
 
 describe('supply chain — pnpm configuration', () => {
   it('packageManager is pnpm ≥ 10.26 (needed for blockExoticSubdeps)', () => {
@@ -45,6 +67,44 @@ describe('supply chain — pnpm configuration', () => {
       []) as string[]
     expect(Array.isArray(allow)).toBe(true)
     expect(allow.length).toBeLessThanOrEqual(3)
+  })
+
+  it('minimumReleaseAgeExclude contains only first-party packages', () => {
+    // The cooldown exclusion list exists for first-party packages that ship
+    // on their own release cadence. Third-party security fixes must use the
+    // one-off bypass (`pnpm install --config.minimum-release-age=0` with an
+    // exact pin) instead — a name-scoped exclusion exempts every future
+    // release of the package. See SKILL.md "Bypass the install cooldown".
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      minimumReleaseAgeExclude?: string[]
+    }
+    const FIRST_PARTY = [/^@prisma-next\//, /^@cipherstash\//]
+    for (const entry of ws.minimumReleaseAgeExclude ?? []) {
+      expect(
+        FIRST_PARTY.some((re) => re.test(entry)),
+        `"${entry}" is not a first-party cooldown exclusion`,
+      ).toBe(true)
+    }
+  })
+
+  it('security overrides stay range-scoped and remain a small allowlist (≤12 entries)', () => {
+    // Every override must be scoped to the advisory's vulnerable range
+    // (`pkg@<range>`), never a blanket `pkg` pin — a blanket pin silently
+    // rewrites versions outside the vulnerable range forever. The count cap
+    // mirrors onlyBuiltDependencies: growth forces a conscious review.
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      overrides?: Record<string, string>
+    }
+    const selectors = Object.keys(ws.overrides ?? {})
+    expect(selectors.length).toBeLessThanOrEqual(12)
+    for (const selector of selectors) {
+      // A version-scoped selector has an `@` after the package name
+      // (position > 0 handles `@scope/pkg@range`).
+      expect(
+        selector.lastIndexOf('@') > 0,
+        `override "${selector}" is not scoped to a version range`,
+      ).toBe(true)
+    }
   })
 })
 
@@ -89,6 +149,69 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+
+  it('every security override actually took effect (nothing left in a vulnerable range)', () => {
+    // The shape test ("security overrides stay range-scoped") proves the
+    // selectors are well-formed; this proves they *worked*. For each override
+    // `selector -> target`, no package may resolve to a version that still
+    // matches the vulnerable `selector` yet fails the `target` — that pair is
+    // exactly a silent regression (e.g. a re-resolve demoting fast-uri below
+    // its pin, un-fixing the advisory). Note `target` can sit inside its own
+    // selector range (js-yaml@>=4.0.0 <5 -> 4.2.0 normalises all 4.x to the
+    // patched release), so the check is "matched but not raised", not the
+    // stricter "no version matches the selector".
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      overrides?: Record<string, string>
+    }
+    const overrides = Object.entries(ws.overrides ?? {})
+    // Guard the vacuous case: an empty/removed block would pass every loop
+    // below with zero iterations.
+    expect(overrides.length).toBeGreaterThan(0)
+
+    const byName = resolvedVersionsByName()
+    const offenders: string[] = []
+    for (const [selector, target] of overrides) {
+      const at = selector.lastIndexOf('@')
+      const name = selector.slice(0, at)
+      const vulnerableRange = selector.slice(at + 1)
+      for (const version of byName.get(name) ?? []) {
+        if (
+          semver.satisfies(version, vulnerableRange) &&
+          !semver.satisfies(version, target)
+        ) {
+          offenders.push(
+            `${name}@${version} still matches vulnerable "${vulnerableRange}" (override target "${target}" not applied)`,
+          )
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('package.json has no top-level `overrides` (pnpm only reads pnpm-workspace.yaml)', () => {
+    // pnpm silently ignores a top-level npm-format `overrides` block; the
+    // security pins must live in pnpm-workspace.yaml `overrides`. Guards
+    // against the block being moved back here, where it would look applied
+    // but do nothing.
+    const pkg = readJson('package.json') as { overrides?: unknown }
+    expect(pkg.overrides).toBeUndefined()
+  })
+
+  it('@anthropic-ai/sdk resolves to the peer-pinned patched version (≥ 0.106.0)', () => {
+    // Not an override but a peer-resolution pin: packages/wizard depends on
+    // @anthropic-ai/sdk@^0.106.0 to force the auto-installed peer of
+    // @anthropic-ai/claude-agent-sdk past the advisory-vulnerable 0.81.0
+    // (GHSA-p7fg-763f-g4gf). The override-effect test cannot cover a peer
+    // pin, so assert the resolved version directly.
+    const versions = resolvedVersionsByName().get('@anthropic-ai/sdk') ?? []
+    expect(versions.length).toBeGreaterThan(0)
+    for (const version of versions) {
+      expect(
+        semver.gte(version, '0.106.0'),
+        `@anthropic-ai/sdk@${version} is below the patched 0.106.0`,
+      ).toBe(true)
+    }
   })
 })
 

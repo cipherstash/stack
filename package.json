@@ -19,26 +19,6 @@
     "url": "git+https://github.com/cipherstash/stack.git"
   },
   "license": "MIT",
-  "workspaces": {
-    "packages": [
-      "packages/*",
-      "examples/*"
-    ],
-    "catalogs": {
-      "repo": {
-        "@cipherstash/auth": "0.40.0",
-        "tsup": "8.4.0",
-        "tsx": "4.19.3",
-        "typescript": "5.6.3",
-        "vitest": "3.1.3"
-      },
-      "security": {
-        "@clerk/nextjs": "6.39.2",
-        "next": "15.5.10",
-        "vite": "6.4.1"
-      }
-    }
-  },
   "scripts": {
     "build": "turbo build --filter './packages/*'",
     "build:js": "turbo build --filter './packages/protect' --filter './packages/nextjs'",
@@ -59,7 +39,7 @@
     "@biomejs/biome": "^2.4.15",
     "@changesets/cli": "^2.31.0",
     "@types/node": "^22.19.19",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.2.0",
     "rimraf": "^6.1.3",
     "turbo": "2.9.14",
     "vitest": "catalog:repo"
@@ -83,58 +63,5 @@
     "onlyBuiltDependencies": [
       "node-pty"
     ]
-  },
-  "overrides": {
-    "@babel/runtime": "7.26.10",
-    "brace-expansion@^5": ">=5.0.5",
-    "body-parser": "2.2.1",
-    "vite": "catalog:security",
-    "pg": "^8.16.3",
-    "postgres": "^3.4.7",
-    "js-yaml": "4.1.1",
-    "test-exclude": "^7.0.1",
-    "glob": ">=11.1.0",
-    "qs": ">=6.14.1",
-    "lodash": ">=4.18.0",
-    "minimatch": ">=10.2.3",
-    "@isaacs/brace-expansion": ">=5.0.1",
-    "fast-xml-parser": ">=5.3.4",
-    "next": ">=15.5.15",
-    "ajv": ">=8.18.0",
-    "esbuild@<=0.24.2": ">=0.25.0",
-    "picomatch@^4": ">=4.0.4",
-    "picomatch@^2": ">=2.3.2",
-    "rollup@>=4.0.0 <4.59.0": ">=4.59.0",
-    "drizzle-orm": ">=0.45.2",
-    "postcss": ">=8.5.10",
-    "hono": ">=4.12.14",
-    "@hono/node-server": ">=1.19.13",
-    "@prisma-next/adapter-postgres": "0.6.0-dev.8",
-    "@prisma-next/cli": "0.6.0-dev.8",
-    "@prisma-next/config": "0.6.0-dev.8",
-    "@prisma-next/contract": "0.6.0-dev.8",
-    "@prisma-next/contract-authoring": "0.6.0-dev.8",
-    "@prisma-next/driver-postgres": "0.6.0-dev.8",
-    "@prisma-next/emitter": "0.6.0-dev.8",
-    "@prisma-next/errors": "0.6.0-dev.8",
-    "@prisma-next/family-sql": "0.6.0-dev.8",
-    "@prisma-next/framework-components": "0.6.0-dev.8",
-    "@prisma-next/ids": "0.6.0-dev.8",
-    "@prisma-next/migration-tools": "0.6.0-dev.8",
-    "@prisma-next/operations": "0.6.0-dev.8",
-    "@prisma-next/psl-parser": "0.6.0-dev.8",
-    "@prisma-next/psl-printer": "0.6.0-dev.8",
-    "@prisma-next/sql-contract": "0.6.0-dev.8",
-    "@prisma-next/sql-contract-emitter": "0.6.0-dev.8",
-    "@prisma-next/sql-contract-psl": "0.6.0-dev.8",
-    "@prisma-next/sql-contract-ts": "0.6.0-dev.8",
-    "@prisma-next/sql-errors": "0.6.0-dev.8",
-    "@prisma-next/sql-operations": "0.6.0-dev.8",
-    "@prisma-next/sql-relational-core": "0.6.0-dev.8",
-    "@prisma-next/sql-runtime": "0.6.0-dev.8",
-    "@prisma-next/sql-schema-ir": "0.6.0-dev.8",
-    "@prisma-next/target-postgres": "0.6.0-dev.8",
-    "@prisma-next/ts-render": "0.6.0-dev.8",
-    "@prisma-next/utils": "0.6.0-dev.8"
   }
 }

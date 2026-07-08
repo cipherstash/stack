@@ -135,10 +135,23 @@ Both require the npm org admin to register each `@cipherstash/*` package as a Tr
 
 When CVE response needs a patch faster than 7 days:
 
+1. Pin the exact patched version (a pnpm override scoped to the vulnerable
+   range for transitive deps, or the manifest for direct deps) so the bypass
+   run can only admit that one release.
+2. Run a one-off install with the cooldown disabled for that single run
+   (pnpm ≥ 10 has no dedicated flag; the CLI config override is the one-off
+   equivalent and does not persist — kebab-case is the canonical form,
+   though pnpm 10.x accepts the camelCase spelling too):
+
 ```bash
-# pnpm flag for a one-off install:
-pnpm install <pkg>@<version> --ignore-workspace-min-release-age
+pnpm install --config.minimum-release-age=0
 ```
+
+Once the patched version is in `pnpm-lock.yaml`, normal and
+`--frozen-lockfile` installs succeed without any bypass — locked versions are
+not re-age-checked. Do NOT add third-party packages to
+`minimumReleaseAgeExclude`: that list is for first-party packages only and a
+name-scoped entry exempts every future release of the package until removed.
 
 Document the bypass in the PR description (CVE ID, why the cooldown was the bottleneck) so the next reviewer can follow the reasoning.
 

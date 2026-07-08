@@ -27,6 +27,53 @@ catalogs:
     next: 15.5.18
     vite: 8.0.13
 
+# Security overrides for Dependabot alerts on transitive deps that Dependabot
+# cannot PR against (it only PRs direct dependencies). Each selector is scoped
+# to the advisory's vulnerable range, and each entry names its alert + advisory
+# so it can be retired once the parent dependency moves past the range.
+# NOTE: pnpm only reads overrides from here (or package.json `pnpm.overrides`);
+# a top-level npm-format `overrides` block is silently ignored.
+#
+# Related, but NOT fixable as an override: @anthropic-ai/sdk (alert #128,
+# GHSA-p7fg-763f-g4gf) is an auto-installed *peer* of claude-agent-sdk, and
+# pnpm overrides rewrite peer ranges, not peer resolutions. It is fixed by an
+# explicit dependency in packages/wizard — that dep is a peer-resolution pin
+# (wizard never imports the sdk directly); do not remove it as "unused".
+overrides:
+  # #96, #115-#127 — Next.js middleware bypass / SSRF / DoS / XSS batch
+  # (GHSA-267c-6grr-h53f, GHSA-26hh-7cqf-hhc6, GHSA-36qx-fr4f-26g5, et al.)
+  'next@<15.5.18': '~15.5.18'
+  # #87 GHSA-f23m-r3pf-42rh, #88 GHSA-r5fr-rjxr-66jc — lodash _.unset / _.template
+  'lodash@<4.18.0': '^4.18.0'
+  # #133 GHSA-qjx8-664m-686j — js-cookie attribute injection
+  'js-cookie@<3.0.7': '^3.0.7'
+  # #102 GHSA-qx2v-qp2m-jg93 — postcss XSS via unescaped </style>
+  'postcss@<8.5.10': '^8.5.10'
+  # #145 GHSA-fx2h-pf6j-xcff, #146 GHSA-v6wh-96g9-6wx3 — vite dev server (Windows)
+  'vite@>=7.0.0 <7.3.5': '~7.3.5'
+  # #142 GHSA-g7r4-m6w7-qqqr — esbuild dev server. 0.28.1 is the FIRST patched
+  # release and sits outside tsup@8.5.1's declared ^0.27.0 (esbuild 0.x minors
+  # are breaking). Exercised builds pass; retire by bumping tsup once a release
+  # declares ^0.28.
+  'esbuild@>=0.27.3 <0.28.1': '^0.28.1'
+  # #153 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 3.x line.
+  # Exact pin: 3.15.0 is the only patched 3.x release. Installed with the
+  # one-off `--config.minimum-release-age=0` bypass (published 2026-06-26,
+  # matures 2026-07-04) per SKILL.md, instead of a minimumReleaseAgeExclude
+  # entry.
+  'js-yaml@<3.15.0': '3.15.0'
+  # #152 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 4.x line.
+  # Exact-pinned to the MATURED 4.2.0 (4.3.0 is still inside the cooldown), and
+  # kept exact because a past js-yaml upgrade broke changesets — bump this
+  # deliberately and re-verify `changeset status`/`version` when you do.
+  'js-yaml@>=4.0.0 <5': '4.2.0'
+  # Not a Dependabot alert — cooldown-regression guard. Re-resolving the
+  # lockfile let minimumReleaseAge demote ajv's fast-uri to 3.1.2, un-fixing
+  # GHSA-4c8g-83qw-93j6 / CVE-2026-13676 (host confusion via failed IDN
+  # canonicalization). Pin the patched release (published 2026-06-29, matures
+  # 2026-07-06); safe to relax to ^3.1.3 after that date.
+  'fast-uri@<3.1.3': '3.1.3'
+
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
 # updates have the same community-discovery window.
