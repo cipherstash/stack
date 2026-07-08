@@ -29,8 +29,11 @@ import {
   V3_MATRIX,
 } from './catalog'
 
-/** `public.integer_ord` -> `integer_ord`: a valid, per-domain-unique column name. */
-const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
+/** `public.integer_ord` -> `integer_ord`: a valid, per-domain-unique column name.
+ * The domains were renamed `eql_v3.* -> public.*`, so strip the `public.`
+ * prefix — a leftover dot in the column name (`public.integer_ord`) makes the
+ * FFI's identifier resolution fail every encrypt. */
+const slug = (t: EqlV3TypeName): string => t.replace(/^public\./, '')
 
 // `as const satisfies Record<...>` gives `V3_MATRIX` a narrower type than
 // `Record<EqlV3TypeName, DomainSpec>` (rows that omit the optional

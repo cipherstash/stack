@@ -87,6 +87,7 @@ export class EncryptionClient {
     clientKey?: string
     keyset?: KeysetIdentifier
     strategy?: AuthStrategy
+    eqlVersion?: 2 | 3
   }): Promise<Result<EncryptionClient, EncryptionError>> {
     return await withResult(
       async () => {
@@ -118,6 +119,10 @@ export class EncryptionClient {
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
           strategy: config.strategy,
+          // Selects the EQL wire format. Omitted (undefined) → protect-ffi
+          // defaults to v2. v3 concrete-type schemas require 3; EncryptionV3
+          // sets it, and without it every v3 encrypt fails inside the FFI.
+          eqlVersion: config.eqlVersion,
         })
 
         this.encryptConfig = validated

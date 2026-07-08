@@ -147,6 +147,17 @@ export type ClientConfig = {
    * @see {@link AuthStrategy}
    */
   strategy?: AuthStrategy
+
+  /**
+   * The EQL wire-format version the client encrypts to. Defaults to `2`
+   * (protect-ffi's own default when omitted). v3 concrete-type schemas MUST
+   * use `3` — the {@link EncryptionV3} factory sets this automatically, so you
+   * normally never set it by hand. A mismatch (a `3` client with v2 schemas,
+   * or a `2` client with v3 concrete-type columns) makes the FFI's per-column
+   * domain resolution fail every encrypt with "Cannot convert undefined or
+   * null to object".
+   */
+  eqlVersion?: 2 | 3
 }
 
 type AtLeastOneCsTable<T> = [T, ...T[]]

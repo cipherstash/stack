@@ -45,16 +45,18 @@ async function encryptValue(value: string): Promise<EncryptionPayload> {
   ) as EncryptionPayload
 }
 
-async function encryptQueryTerm(
-  value: string,
-  queryType?: 'equality' | 'freeTextSearch' | 'orderAndRange',
+// A query operand under EQL v3 is a FULL encrypted payload — the same thing
+// `client.encrypt` produces for storage — NOT an `encryptQuery` term (protect-ffi
+// 0.28 has no v3 scalar query wire shape; `encryptQuery` throws
+// EQL_V3_QUERY_UNSUPPORTED). Compare it to a column with the public two-arg
+// `eql_v3.*(col, operand::jsonb)` functions; the operand carries every index
+// term, so which SQL function you call selects which term is compared.
+async function encryptOperand(
+  value: unknown,
+  opts: Parameters<EncryptionClient['encrypt']>[1],
 ): Promise<EncryptionPayload> {
   return unwrapResult(
-    await protectClient.encryptQuery(value, {
-      table,
-      column: table.email,
-      queryType,
-    }),
+    await protectClient.encrypt(value as never, opts),
   ) as EncryptionPayload
 }
 
@@ -93,7 +95,21 @@ beforeAll(async () => {
   if (!LIVE_EQL_V3_PG_ENABLED) return
 
   await installEqlV3IfNeeded(sql)
-  protectClient = await Encryption({ schemas: [table, typedTable] })
+  // `eqlVersion: 3` is required for v3 concrete-type schemas: protect-ffi's
+  // newClient defaults to v2, and a v2-mode client cannot encrypt these columns
+  // (it throws "Cannot convert undefined or null to object"). EncryptionV3 sets
+  // this automatically; the base `Encryption` factory does not, so pass it here.
+  protectClient = await Encryption({
+    schemas: [table, typedTable],
+    config: { eqlVersion: 3 },
+  })
+
+  // DROP first: these tables are created with IF NOT EXISTS and cleaned up by
+  // row DELETE only, so one left by an earlier local run keeps its OLD column
+  // domain types across the `eql_v3.* -> public.*` rename — silently testing a
+  // stale schema. Harmless in CI (fresh Postgres); reliable local reruns.
+  await sql`DROP TABLE IF EXISTS protect_ci_v3_text_search`
+  await sql`DROP TABLE IF EXISTS protect_ci_v3_typed_domains`
 
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_text_search (
@@ -156,15 +172,18 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(row)).resolves.toBe('roundtrip@example.com')
   }, 30000)
 
-  it('queries equality terms with eql_v3.eq_term and eql_v3_internal.hmac_256', async () => {
+  it('queries equality with eql_v3.eq and a full operand', async () => {
     const ids = await seedRows()
-    const equalityTerm = await encryptQueryTerm('grace@example.com', 'equality')
+    const operand = await encryptOperand('grace@example.com', {
+      table,
+      column: table.email,
+    })
 
     const rows = await sql<InsertedRow[]>`
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.eq_term(email) = eql_v3_internal.hmac_256(${sql.json(equalityTerm)}::jsonb)
+        AND eql_v3.eq(email, ${sql.json(operand)}::jsonb)
       ORDER BY id
     `
 
@@ -172,35 +191,50 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(rows[0])).resolves.toBe('grace@example.com')
   }, 30000)
 
-  it('queries free-text terms with eql_v3.match_term and eql_v3_internal.bloom_filter', async () => {
+  it('queries free-text with eql_v3.contains and a full operand', async () => {
     await seedRows()
-    const matchTerm = await encryptQueryTerm('example.com', 'freeTextSearch')
+    const operand = await encryptOperand('example.com', {
+      table,
+      column: table.email,
+    })
 
     const rows = await sql<InsertedRow[]>`
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.match_term(email) @> eql_v3_internal.bloom_filter(${sql.json(matchTerm)}::jsonb)
+        AND eql_v3.contains(email, ${sql.json(operand)}::jsonb)
       ORDER BY label
     `
 
     expect(rows.map((row) => row.label)).toEqual(['ada', 'grace'])
   }, 30000)
 
-  it('queries range terms with eql_v3.ord_term and eql_v3_internal.ore_block_256', async () => {
+  it('queries range with eql_v3.gte/lte and full operands', async () => {
     await seedRows()
-    const lower = await encryptQueryTerm('grace@example.com', 'orderAndRange')
-    const upper = await encryptQueryTerm('zora@example.org', 'orderAndRange')
+    const lower = await encryptOperand('grace@example.com', {
+      table,
+      column: table.email,
+    })
+    const upper = await encryptOperand('zora@example.org', {
+      table,
+      column: table.email,
+    })
 
     const rows = await sql<InsertedRow[]>`
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(email) >= eql_v3_internal.ore_block_256(${sql.json(lower)}::jsonb)
-        AND eql_v3.ord_term(email) <= eql_v3_internal.ore_block_256(${sql.json(upper)}::jsonb)
-      ORDER BY eql_v3.ord_term(email)
+        AND eql_v3.gte(email, ${sql.json(lower)}::jsonb)
+        AND eql_v3.lte(email, ${sql.json(upper)}::jsonb)
+      ORDER BY label
     `
 
+    // Assert range MEMBERSHIP deterministically by ordering on the plaintext
+    // `label`. The range predicate above (eql_v3.gte/lte) already proves the ORE
+    // comparison is lexically correct: it selects grace+zora and excludes
+    // ada/alan. NB: `ORDER BY eql_v3.ord_term(email)` sorts by the raw term
+    // rather than ORE order for text_search, so it is NOT used as the assertion
+    // key here.
     expect(rows.map((row) => row.label)).toEqual(['grace', 'zora'])
   }, 30000)
 
@@ -242,14 +276,21 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     )
   }, 30000)
 
-  it('rejects query-only payloads cast as public.text_search values', async () => {
-    const equalityTerm = await encryptQueryTerm('ada@example.com', 'equality')
+  it('rejects a ciphertext-less payload cast as a public.text_search value', async () => {
+    // A full operand with its ciphertext (`c`) removed mimics a query-only
+    // payload: index terms present, no stored value. The domain CHECK must
+    // reject it, so it can never masquerade as a stored ciphertext.
+    const full = (await encryptOperand('ada@example.com', {
+      table,
+      column: table.email,
+    })) as Record<string, unknown>
+    const { c: _ciphertext, ...ciphertextLess } = full
 
     await expect(
       sql`
         INSERT INTO protect_ci_v3_text_search (email, label, test_run_id)
         VALUES (
-          ${sql.json(equalityTerm)}::public.text_search,
+          ${sql.json(ciphertextLess as EncryptionPayload)}::public.text_search,
           'query-only',
           ${TEST_RUN_ID}
         )
@@ -288,29 +329,27 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       RETURNING id
     `
 
-    const ageTerm = unwrapResult(
-      await protectClient.encryptQuery(30, {
-        table: typedTable,
-        column: typedTable.age,
-        queryType: 'orderAndRange',
-      }),
-    ) as postgres.JSONValue
+    const ageTerm = await encryptOperand(30, {
+      table: typedTable,
+      column: typedTable.age,
+    })
 
     const rows = await sql<{ id: number }[]>`
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) >= eql_v3_internal.ore_block_256(${sql.json(ageTerm)}::jsonb)
+        AND eql_v3.gte(age, ${sql.json(ageTerm)}::jsonb)
     `
 
     expect(rows.map((row) => row.id)).toContain(inserted.id)
   }, 30000)
 
-  // Correctness proof for the equality-via-ORE fix (Part A). The deterministic
-  // regression proves `resolveIndexType` resolves equality to `ore` instead of
-  // throwing; this proves the resulting term actually SELECTS the right rows
-  // against real Postgres, using the SQL `=` operator on the ORE term.
-  it('selects the exact row for an equality term via ORE on an integer_ord column', async () => {
+  // Correctness proof for equality-via-ORE on an `integer_ord` column. The
+  // `integer_ord` domain carries only an `ore` (`ob`) index and no `hm`, so
+  // `eql_v3.eq(integer_ord, operand)` internally compares `ord_term` — i.e.
+  // equality answered through ORE. This proves that resolves the exact row
+  // against real Postgres with a full operand (no `encryptQuery` term).
+  it('selects the exact row for equality-via-ORE on an integer_ord column', async () => {
     async function insertAge(age: number): Promise<number> {
       const ageCt = unwrapResult(
         await protectClient.encrypt(age, {
@@ -349,21 +388,18 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       fortyTwo: await insertAge(42),
     }
 
-    // Equality term encrypted with queryType:'equality' — post-fix this resolves
-    // to the ore (`ob`) term; the SQL `=` operator makes it an equality match.
-    const equalityTerm = unwrapResult(
-      await protectClient.encryptQuery(37, {
-        table: typedTable,
-        column: typedTable.age,
-        queryType: 'equality',
-      }),
-    ) as postgres.JSONValue
+    // Full operand for 37; `eql_v3.eq(integer_ord, operand)` compares `ord_term`,
+    // so this is equality answered via ORE.
+    const equalityTerm = await encryptOperand(37, {
+      table: typedTable,
+      column: typedTable.age,
+    })
 
     const matched = await sql<{ id: number }[]>`
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) = eql_v3_internal.ore_block_256(${sql.json(equalityTerm)}::jsonb)
+        AND eql_v3.eq(age, ${sql.json(equalityTerm)}::jsonb)
       ORDER BY id
     `
     // Exactly the age=37 row — not the 30 or 42 rows.
@@ -372,18 +408,15 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     expect(matched.map((row) => row.id)).not.toContain(ids.fortyTwo)
 
     // A non-matching value selects nothing.
-    const missTerm = unwrapResult(
-      await protectClient.encryptQuery(99, {
-        table: typedTable,
-        column: typedTable.age,
-        queryType: 'equality',
-      }),
-    ) as postgres.JSONValue
+    const missTerm = await encryptOperand(99, {
+      table: typedTable,
+      column: typedTable.age,
+    })
     const none = await sql<{ id: number }[]>`
       SELECT id
       FROM protect_ci_v3_typed_domains
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.ord_term(age) = eql_v3_internal.ore_block_256(${sql.json(missTerm)}::jsonb)
+        AND eql_v3.eq(age, ${sql.json(missTerm)}::jsonb)
     `
     expect(none).toHaveLength(0)
   }, 30000)
