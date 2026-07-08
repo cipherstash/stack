@@ -1,22 +1,27 @@
 import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedV3Query as CipherStashEncryptedV3Query,
   KeysetIdentifier as KeysetIdentifierFfi,
 } from '@cipherstash/protect-ffi'
 import type { Encrypted, EncryptedQueryResult, KeysetIdentifier } from '@/types'
 
 /**
  * The shape `encryptQuery` / `encryptQueryBulk` can return: a full storage
- * payload (returned for `ste_vec_term` containment queries) or a query-only
+ * payload (returned for v2 `ste_vec_term` containment queries), a query-only
  * payload with no ciphertext (scalar `unique`/`match`/`ore` lookups and
- * `ste_vec_selector` path queries).
+ * `ste_vec_selector` path queries), or — under `eqlVersion: 3` — the
+ * `eql_v3.jsonb_query` containment needle.
  *
  * TODO: duplicated in `@cipherstash/protect` — see
  * `packages/protect/src/helpers/index.ts`. Both copies should be removed once
  * `@cipherstash/protect-ffi` exports a named alias for the `encryptQuery`
  * return type (https://github.com/cipherstash/stack/pull/473).
  */
-type EncryptedQueryTerm = CipherStashEncrypted | CipherStashEncryptedQuery
+type EncryptedQueryTerm =
+  | CipherStashEncrypted
+  | CipherStashEncryptedQuery
+  | CipherStashEncryptedV3Query
 
 export type EncryptedPgComposite = {
   data: Encrypted
