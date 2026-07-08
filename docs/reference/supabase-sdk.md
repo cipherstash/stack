@@ -111,12 +111,10 @@ PostgreSQL `bigint`/i64 range (`-2^63 … 2^63 - 1`), enforced at the
 protect-ffi boundary: an out-of-range value surfaces as an encryption error
 from the FFI, not a silent truncation.
 
-> **GATED — pending protect-ffi release.** The bigint domains are fully typed
-> and schema-complete in the SDK, but LIVE encrypt/decrypt requires the next
-> `@cipherstash/protect-ffi` release: the current 0.27.0 `JsPlaintext` cannot
-> marshal a JS `bigint` across the native boundary, so encrypting a `bigint`
-> throws at runtime today. Once the release ships and the pin is bumped, the
-> live paths work without further SDK changes.
+> **Live since `@cipherstash/protect-ffi` 0.28.** The runtime marshals a JS
+> `bigint` across the native boundary (i64-bounds-checked, with a `RangeError`
+> for out-of-range values), so the bigint domains encrypt and decrypt
+> end-to-end with no further SDK changes.
 
 ### Install EQL
 

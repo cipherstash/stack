@@ -143,10 +143,9 @@ export const SMALLINT_ORD = {
 
 // bigint (int8) domains. Plaintext is a JS `bigint` (always decrypts to
 // `bigint`); bounds are the full i64 range, enforced at the protect-ffi
-// boundary. GATED — live encrypt/decrypt requires the next protect-ffi
-// release: the installed 0.27.0 `JsPlaintext` cannot marshal a JS `bigint`
-// across the Neon boundary, so live paths throw at runtime until the pin is
-// bumped (`*_ord_ope` variants are out of scope — CIP-3403).
+// boundary (a `bigint` outside i64 surfaces as a `RangeError` from the FFI).
+// Live encrypt/decrypt since protect-ffi 0.28 marshals JS `bigint` across the
+// Neon boundary (`*_ord_ope` variants are out of scope — CIP-3403).
 export const BIGINT = {
   eqlType: 'eql_v3.bigint',
   castAs: 'bigint',
@@ -520,8 +519,8 @@ export class EncryptedSmallintOrdColumn extends EncryptedV3Column<
   typeof SMALLINT_ORD
 > {}
 
-// bigint (int8) — live round-trips are gated on the next protect-ffi release;
-// see the note by the BIGINT domain definitions above.
+// bigint (int8) — live round-trips since protect-ffi 0.28; see the note by the
+// BIGINT domain definitions above.
 export class EncryptedBigintColumn extends EncryptedV3Column<typeof BIGINT> {}
 export class EncryptedBigintEqColumn extends EncryptedV3Column<
   typeof BIGINT_EQ

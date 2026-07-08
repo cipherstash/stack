@@ -102,8 +102,7 @@ import {
  * `types.TextSearch` keeps the chainable `.freeTextSearch(opts)` tuner (the
  * only capability-bearing chain — every other domain is fully described by its
  * type). The bigint domains take/return a JS `bigint` (i64-bounded at the
- * protect-ffi boundary); their LIVE encrypt/decrypt paths are gated on the
- * next protect-ffi release (see ./columns).
+ * protect-ffi boundary; live since protect-ffi 0.28 — see ./columns).
  */
 export const types = {
   // integer
@@ -123,8 +122,8 @@ export const types = {
   SmallintOrd: (name: string) =>
     new EncryptedSmallintOrdColumn(name, SMALLINT_ORD),
 
-  // bigint (int8) — plaintext is a JS `bigint`; live paths gated on the next
-  // protect-ffi release (see ./columns)
+  // bigint (int8) — plaintext is a JS `bigint`; live since protect-ffi 0.28
+  // (see ./columns)
   Bigint: (name: string) => new EncryptedBigintColumn(name, BIGINT),
   BigintEq: (name: string) => new EncryptedBigintEqColumn(name, BIGINT_EQ),
   BigintOrdOre: (name: string) =>

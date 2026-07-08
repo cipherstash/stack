@@ -456,11 +456,9 @@ are translated automatically, and `date`/`timestamp` columns decrypt to real
 `bigint`, and the column always decrypts back to a `bigint` (never a
 precision-lossy `number`). Bounds are the full PostgreSQL `bigint`/i64 range
 (`-2^63 … 2^63 - 1`), enforced at the protect-ffi boundary — out-of-range
-values surface as encryption errors, not silent truncation. **GATED:** live
-encrypt/decrypt requires the next `@cipherstash/protect-ffi` release (0.27.0
-cannot marshal a JS `bigint` across the native boundary and throws at
-runtime); the SDK types and schema surface are complete now and need no
-further changes once the pin is bumped.
+values surface as a `RangeError` from the FFI, not silent truncation. Live
+encrypt/decrypt since `@cipherstash/protect-ffi` 0.28, which marshals a JS
+`bigint` across the native boundary.
 
 ### Database schema (per-domain columns)
 

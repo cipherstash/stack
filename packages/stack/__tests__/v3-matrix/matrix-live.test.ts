@@ -3,11 +3,9 @@
  *
  * The structural `matrix.test.ts` proves builder/eqlType/capabilities/`build()`
  * wiring for all 39 domains WITHOUT ever touching real FFI ciphertext. This file
- * completes the picture: every non-live-gated domain × every catalog `sample`
- * is encrypted and decrypted through a live CipherStash client, so those
- * domains gain live behavioral proof (the Rust harness's whole premise).
- * Domains with a catalog `liveGate` (currently the bigint family, pending the
- * next protect-ffi release) are excluded and reported as explicit skips.
+ * completes the picture: every domain × every catalog `sample` is encrypted and
+ * decrypted through a live CipherStash client, so those domains gain live
+ * behavioral proof (the Rust harness's whole premise).
  *
  * Round-trips go through the MODEL path (`encryptModel`/`decryptModel`) so
  * `reconstructRow` rebuilds `Date` values uniformly for every plaintext axis; a
@@ -43,15 +41,7 @@ const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 // resolve on members that omit the key (`tsc` catches this; `vitest run`
 // alone would not, since it only transpiles `.test.ts` files, never
 // typechecks them).
-const allDomains = typedEntries<EqlV3TypeName, DomainSpec>(V3_MATRIX)
-
-// Live-gated domains (currently the bigint family) are excluded from the mega
-// table entirely — encrypting their samples through the installed protect-ffi
-// throws at RUNTIME, which would fail the shared `beforeAll` and take every
-// other domain's proof down with it. Each gets an explicit skip naming the
-// gate instead (see `DomainSpec.liveGate`).
-const domains = allDomains.filter(([, spec]) => !spec.liveGate)
-const gatedDomains = allDomains.filter(([, spec]) => spec.liveGate)
+const domains = typedEntries<EqlV3TypeName, DomainSpec>(V3_MATRIX)
 
 // One mega table: one column per catalog domain. Column names (the slugs) are
 // unique and never collide with `EncryptedTable` reserved property names.
@@ -125,13 +115,4 @@ describeLive('v3 matrix live round-trip (all domains × samples)', () => {
     })
     expect(result.failure).toBeDefined()
   })
-
-  // Live-gated domains: an explicit, reason-bearing skip per domain so the
-  // vitest report shows exactly what is deferred and why, instead of the
-  // domains silently vanishing from live coverage.
-  if (gatedDomains.length > 0) {
-    it.skip.each(
-      gatedDomains,
-    )('%s live round-trip (see skip reason in catalog liveGate)', () => {})
-  }
 })

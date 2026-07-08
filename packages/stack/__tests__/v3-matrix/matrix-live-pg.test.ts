@@ -1,9 +1,7 @@
 /**
  * Live Postgres coverage for the v3 domains — one query-correctness proof
  * per domain, dispatched by capability tier, against a real installed eql_v3
- * extension. Domains with a catalog `liveGate` (currently the bigint family,
- * pending the next protect-ffi release) are excluded and reported as
- * explicit skips.
+ * extension.
  *
  * `matrix-live.test.ts` proves every domain round-trips through live FFI
  * ciphertext, but never touches SQL. `schema-v3-pg.test.ts` proves real SQL
@@ -67,16 +65,7 @@ const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).s
 /** `eql_v3.integer_ord` -> `integer_ord`: a valid, unique Postgres column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
-// Live-gated domains (currently the bigint family) are excluded from the mega
-// table, the seed INSERT, and the term encryption: their samples cannot pass
-// through the installed protect-ffi (0.27.0 has no JS BigInt support — the
-// v2-wire term client and the v3 seed path would BOTH throw at runtime in
-// `beforeAll`, taking every other domain's proof down with them). Each gated
-// domain gets an explicit skip naming the gate instead (see
-// `DomainSpec.liveGate` in the catalog).
-const allDomains = typedEntries<EqlV3TypeName, DomainSpec>(V3_MATRIX)
-const domains = allDomains.filter(([, spec]) => !spec.liveGate)
-const gatedDomains = allDomains.filter(([, spec]) => spec.liveGate)
+const domains = typedEntries<EqlV3TypeName, DomainSpec>(V3_MATRIX)
 
 const columns = Object.fromEntries(
   domains.map(([t, spec]) => [slug(t), spec.builder(slug(t))]),
@@ -290,14 +279,6 @@ describeLivePg(
       )
       expect(rows.map((r) => r.id)).toEqual([idB])
     })
-
-    // Live-gated domains: explicit, reason-bearing skips so deferred coverage
-    // is visible in the vitest report rather than silently absent.
-    if (gatedDomains.length > 0) {
-      it.skip.each(
-        gatedDomains,
-      )('%s live Postgres proof (see skip reason in catalog liveGate)', () => {})
-    }
 
     it.each(
       storageDomains,

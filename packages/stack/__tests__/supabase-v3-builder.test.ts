@@ -334,8 +334,8 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   // bigint (eql_v3.bigint_ord) — the adapter is value-generic: the bigint
   // travels to encrypt() unchanged, and only the POST-encryption envelope
   // (which never contains a raw bigint) is JSON-encoded on the filter wire.
-  // MOCK-based: live bigint encryption is gated on the next protect-ffi
-  // release (0.27.0's JsPlaintext has no JS BigInt support).
+  // MOCK-based: this asserts the adapter's value-passing contract; live bigint
+  // encryption (protect-ffi 0.28+) is proven in the v3 matrix suites.
   it('passes a bigint insert value to encrypt unchanged (i64::MAX)', async () => {
     const { from, supabase } = v3Instance()
 

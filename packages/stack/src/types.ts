@@ -83,12 +83,10 @@ export type EncryptedQuery =
  * so it is accepted on the way in.
  *
  * `bigint` is the plaintext for the v3 int8/bigint domains (see `eql/v3`),
- * which always decrypt to a JS `bigint`. GATED — live paths require the next
- * `@cipherstash/protect-ffi` release: the installed 0.27.0 `JsPlaintext`
- * cannot marshal a JS `bigint` across the Neon boundary, so encrypting a
- * `bigint` through it throws at runtime today. i64 bounds
+ * which always decrypt to a JS `bigint` (`@cipherstash/protect-ffi` 0.28+
+ * marshals JS `bigint` across the Neon boundary). i64 bounds
  * (`-2^63 … 2^63 - 1`) are enforced at the protect-ffi boundary, not here —
- * out-of-range values surface as encryption errors from the FFI.
+ * out-of-range values surface as `RangeError` encryption errors from the FFI.
  *
  * When the upstream FFI `JsPlaintext` includes `Date` and `bigint`, both
  * extra arms can collapse back into `JsPlaintext`.

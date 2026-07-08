@@ -109,17 +109,6 @@ export type DomainSpec = Readonly<{
    * via a global guard; other domains omit this.
    */
   errorSamples?: ReadonlyArray<number>
-  /**
-   * When set, the domain's LIVE coverage is gated: the live suites
-   * (`matrix-live.test.ts`, `matrix-live-pg.test.ts`) exclude it from their
-   * mega tables and emit a skip naming this reason instead. The deterministic
-   * suites still cover the domain in full. Used by the bigint domains, whose
-   * live round-trips require the next protect-ffi release (0.27.0's
-   * `JsPlaintext` cannot marshal a JS `bigint` across the Neon boundary — a
-   * live encrypt would throw at RUNTIME, failing the shared `beforeAll`).
-   * Remove the flag when the protect-ffi pin is bumped.
-   */
-  liveGate?: string
 }>
 
 /**
@@ -192,8 +181,6 @@ const SMALLINT_S = [0, -1, 32767, -32768] as const
 const INTEGER_S = [0, -42, 2147483647, -2147483648] as const
 // Full i64 bounds (enforced at the protect-ffi boundary): i64::MAX, i64::MIN,
 // zero, and a mid value beyond Number.MAX_SAFE_INTEGER to prove losslessness.
-// Consumed by the live suites only AFTER the bigint live gate lifts (see
-// `DomainSpec.liveGate`).
 const BIGINT_S = [
   4611686018427387904n,
   -42n,
@@ -201,9 +188,6 @@ const BIGINT_S = [
   -9223372036854775808n,
   0n,
 ] as const
-/** Skip reason for the bigint domains' live gating — names the exact gate. */
-export const BIGINT_LIVE_GATE =
-  'gated on the next @cipherstash/protect-ffi release: 0.27.0 JsPlaintext has no JS BigInt support (encrypting a bigint throws at runtime); bump the pin and remove liveGate to enable'
 const REAL_S = [0, 77.5, -117.25, 0.5] as const
 const DOUBLE_S = [0, -117.123456, 1e15, -1e15] as const
 const NUMERIC_S = [0, 12345.678, -42, -0.5] as const
@@ -247,11 +231,11 @@ export const V3_MATRIX = {
   'eql_v3.smallint_eq': { builder: types.SmallintEq, ColumnClass: EncryptedSmallintEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: SMALLINT_S, errorSamples: NUM_ERR },
   'eql_v3.smallint_ord_ore': { builder: types.SmallintOrdOre, ColumnClass: EncryptedSmallintOrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: SMALLINT_S, errorSamples: NUM_ERR },
   'eql_v3.smallint_ord': { builder: types.SmallintOrd, ColumnClass: EncryptedSmallintOrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: SMALLINT_S, errorSamples: NUM_ERR },
-  // bigint (live coverage gated on the next protect-ffi release — see liveGate)
-  'eql_v3.bigint': { builder: types.Bigint, ColumnClass: EncryptedBigintColumn, castAs: 'bigint', capabilities: STORAGE, indexes: NONE, samples: BIGINT_S, liveGate: BIGINT_LIVE_GATE },
-  'eql_v3.bigint_eq': { builder: types.BigintEq, ColumnClass: EncryptedBigintEqColumn, castAs: 'bigint', capabilities: EQ, indexes: UNIQUE_IDX, samples: BIGINT_S, liveGate: BIGINT_LIVE_GATE },
-  'eql_v3.bigint_ord_ore': { builder: types.BigintOrdOre, ColumnClass: EncryptedBigintOrdOreColumn, castAs: 'bigint', capabilities: ORD, indexes: ORE_IDX, samples: BIGINT_S, liveGate: BIGINT_LIVE_GATE },
-  'eql_v3.bigint_ord': { builder: types.BigintOrd, ColumnClass: EncryptedBigintOrdColumn, castAs: 'bigint', capabilities: ORD, indexes: ORE_IDX, samples: BIGINT_S, liveGate: BIGINT_LIVE_GATE },
+  // bigint (i64-bounded; JS bigint plaintext, live since protect-ffi 0.28)
+  'eql_v3.bigint': { builder: types.Bigint, ColumnClass: EncryptedBigintColumn, castAs: 'bigint', capabilities: STORAGE, indexes: NONE, samples: BIGINT_S },
+  'eql_v3.bigint_eq': { builder: types.BigintEq, ColumnClass: EncryptedBigintEqColumn, castAs: 'bigint', capabilities: EQ, indexes: UNIQUE_IDX, samples: BIGINT_S },
+  'eql_v3.bigint_ord_ore': { builder: types.BigintOrdOre, ColumnClass: EncryptedBigintOrdOreColumn, castAs: 'bigint', capabilities: ORD, indexes: ORE_IDX, samples: BIGINT_S },
+  'eql_v3.bigint_ord': { builder: types.BigintOrd, ColumnClass: EncryptedBigintOrdColumn, castAs: 'bigint', capabilities: ORD, indexes: ORE_IDX, samples: BIGINT_S },
   // date
   'eql_v3.date': { builder: types.Date, ColumnClass: EncryptedDateColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
   'eql_v3.date_eq': { builder: types.DateEq, ColumnClass: EncryptedDateEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },
