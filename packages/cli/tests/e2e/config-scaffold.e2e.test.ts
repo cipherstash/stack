@@ -77,6 +77,35 @@ describe('config-scaffold DX (missing config / missing deps)', () => {
     expect(r.output).not.toContain('Cannot find module')
   })
 
+  it('`eql install --database-url` leaves an existing config untouched — no client scaffolded', async () => {
+    // One-shot install with an EXISTING stash.config.ts pointing at a
+    // not-yet-created client. The config branch must be bypassed entirely: no
+    // client file is written, and the `stash` import in the config never runs
+    // (so no `Cannot find module` in this bare project). The bogus URL fails
+    // fast at connect, past the config/scaffold stage.
+    fs.writeFileSync(
+      path.join(tmpDir, 'stash.config.ts'),
+      "import { defineConfig, resolveDatabaseUrl } from 'stash'\n" +
+        "export default defineConfig({ databaseUrl: await resolveDatabaseUrl(), client: './src/encryption/index.ts' })\n",
+    )
+
+    const r = await run(
+      [
+        'eql',
+        'install',
+        '--database-url',
+        'postgres://u:p@127.0.0.1:1/db?connect_timeout=2',
+      ],
+      { cwd: tmpDir },
+    )
+
+    expect(
+      fs.existsSync(path.join(tmpDir, 'src', 'encryption', 'index.ts')),
+    ).toBe(false)
+    expect(r.output).not.toContain('Created stash.config.ts')
+    expect(r.output).not.toContain('Cannot find module')
+  })
+
   it('non-interactive `eql install` (URL from env) writes no config or client (#2, #4)', async () => {
     // No --database-url flag but DATABASE_URL in the env: offer mode, but a
     // non-TTY run can't prompt. It must NOT silently scaffold a config (which

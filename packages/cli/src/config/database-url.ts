@@ -27,7 +27,7 @@ import * as p from '@clack/prompts'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
 import { messages } from '../messages.js'
-import { isCiEnv } from './tty.js'
+import { isCiEnv, isInteractive } from './tty.js'
 
 export interface ResolveDatabaseUrlOptions {
   /** Value of `--database-url` if the user passed one. */
@@ -151,14 +151,6 @@ async function promptForUrl(cwd: string): Promise<string | undefined> {
 }
 
 /**
- * Walk the resolution chain and return a usable DATABASE_URL. Reads
- * options from the surrounding `withResolverContext` scope (set by the
- * CLI before evaluating the config file); any explicit `opts` passed
- * here override the scoped values.
- *
- * Exits 1 when no source resolves a URL.
- */
-/**
  * Resolve the database connection URL from the first available source, in
  * strict priority order (first hit wins):
  *
@@ -216,12 +208,12 @@ export async function resolveDatabaseUrl(
     }
   }
 
-  // 4. Interactive prompt — skipped in CI / non-TTY. `isCiEnv` accepts the
-  // common CI-truthy spellings (`true`, `1`, case-insensitive) since not every
-  // CI provider sets `CI=true` exactly; shared with the region resolver.
+  // 4. Interactive prompt — skipped in CI / non-TTY. `isInteractive` (shared
+  // with the config scaffolder and region resolver) accepts the common
+  // CI-truthy spellings (`true`, `1`, case-insensitive) since not every CI
+  // provider sets `CI=true` exactly.
   const isCi = isCiEnv()
-  const isInteractive = Boolean(process.stdin.isTTY) && !isCi
-  if (isInteractive) {
+  if (isInteractive()) {
     const fromPrompt = await promptForUrl(cwd)
     if (fromPrompt) {
       p.log.info(messages.db.urlResolvedFromPrompt)

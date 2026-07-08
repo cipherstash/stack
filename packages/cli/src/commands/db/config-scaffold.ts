@@ -2,7 +2,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { DEFAULT_CLIENT_PATH } from '../../config/index.js'
-import { isCiEnv } from '../../config/tty.js'
+import { isInteractive } from '../../config/tty.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 export const CONFIG_FILENAME = 'stash.config.ts'
@@ -133,8 +133,7 @@ export async function offerStashConfig(
   // 'offer' mode. A non-interactive run can't prompt; don't write into the
   // project unasked (that could drop files importing uninstalled packages) —
   // the missing-config guidance points the user at `stash init` later.
-  const isTTY = Boolean(process.stdin.isTTY) && !isCiEnv()
-  if (!isTTY) return null
+  if (!isInteractive()) return null
 
   const create = await p.confirm({
     message: `Create a ${CONFIG_FILENAME}? (needed later for db push / schema build / encrypt)`,

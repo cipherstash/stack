@@ -11,6 +11,7 @@ import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
+import { isInteractive } from '@/config/tty.js'
 import {
   downloadEqlSql,
   EQLInstaller,
@@ -103,12 +104,24 @@ export type SupabaseInstallMode = 'migration' | 'direct'
  * a one-shot `--database-url` run wants the project left untouched. When no
  * config is created, `clientPath` comes back `null` so the caller skips the
  * client scaffold too.
+ *
+ * A one-shot run (`mode === 'skip'`, set when `--database-url` is passed alone)
+ * bypasses config loading entirely: it must leave the project untouched, so it
+ * neither honours nor scaffolds a config or client. This also means the flag
+ * always wins — loading a config here could pick up a parent-directory config
+ * with a hand-edited literal `databaseUrl` that silently overrides the flag and
+ * installs EQL against the wrong database.
  */
 async function resolveInstallContext(
   options: InstallOptions,
   s: ReturnType<typeof p.spinner>,
 ): Promise<{ databaseUrl: string; clientPath: string | null }> {
-  const configPath = findConfigFile(process.cwd())
+  const mode = options.scaffoldConfig ?? 'offer'
+
+  // A one-shot `--database-url` install leaves the project untouched: don't load
+  // an existing config (see doc comment re: parent-dir literal override) and
+  // don't scaffold. Resolve the URL directly and return a null clientPath.
+  const configPath = mode === 'skip' ? null : findConfigFile(process.cwd())
   if (configPath) {
     s.start('Loading stash.config.ts...')
     // Pass the path we already located so loadStashConfig doesn't re-walk the
@@ -121,6 +134,19 @@ async function resolveInstallContext(
       configPath,
     )
     s.stop('Configuration loaded.')
+
+    // A config with a hand-edited literal `databaseUrl` bypasses the resolver,
+    // so a `--database-url` flag would be silently ignored. Surface it rather
+    // than installing against a different database than the user asked for —
+    // especially since `findConfigFile` walks up into parent directories.
+    if (
+      options.databaseUrl !== undefined &&
+      config.databaseUrl !== options.databaseUrl.trim()
+    ) {
+      p.log.warn(
+        `Ignoring --database-url: ${configPath} sets an explicit databaseUrl that takes precedence. Installing against the config's database.`,
+      )
+    }
     return { databaseUrl: config.databaseUrl, clientPath: config.client }
   }
 
@@ -131,7 +157,6 @@ async function resolveInstallContext(
 
   // A dry run must not write scaffold files, so it never enters the scaffold
   // path (nor does an explicit `skip`).
-  const mode = options.scaffoldConfig ?? 'offer'
   if (mode === 'skip' || options.dryRun) {
     return { databaseUrl, clientPath: null }
   }
@@ -680,12 +705,12 @@ async function resolveSupabaseInstallMode(
   options: InstallOptions,
   projectInfo: SupabaseProjectInfo,
 ): Promise<SupabaseInstallMode> {
-  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
-  const decided = chooseSupabaseInstallMode(options, projectInfo, isTTY)
+  const interactive = isInteractive()
+  const decided = chooseSupabaseInstallMode(options, projectInfo, interactive)
 
   if (decided !== null) {
     if (
-      !isTTY &&
+      !interactive &&
       options.migration === undefined &&
       options.direct === undefined
     ) {
