@@ -54,7 +54,7 @@ const DATABASE_URL_FLAG: Flag = {
   name: '--database-url',
   value: '<url>',
   description:
-    'Override DATABASE_URL for this run only — never written to disk.',
+    'Database URL for this run only — never written to disk. Highest precedence in the resolution order: --database-url flag → DATABASE_URL env → supabase status → interactive prompt. A stash.config.ts is not a separate tier (its default databaseUrl re-runs this same chain).',
   env: 'DATABASE_URL',
 }
 
