@@ -36,6 +36,10 @@ export type OidcFederationStrategy = InstanceType<
   typeof auth.OidcFederationStrategy
 >
 
-export type { AuthError, AuthErrorCode, TokenResult } from '@cipherstash/auth'
+export type {
+  AuthErrorCode,
+  AuthFailure,
+  TokenResult,
+} from '@cipherstash/auth'
 // Re-export types for convenience
 export type { Encrypted } from '@/types'

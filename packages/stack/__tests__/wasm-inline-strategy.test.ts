@@ -17,7 +17,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@cipherstash/auth/wasm-inline', () => ({
   AccessKeyStrategy: {
-    create: vi.fn(() => ({ __mock: 'access-key-strategy' })),
+    // `@cipherstash/auth` `0.41` `create` returns a `Result<Strategy, AuthFailure>`
+    // (`{ data }` on success) — `resolveStrategy` unwraps `.data`.
+    create: vi.fn(() => ({ data: { __mock: 'access-key-strategy' } })),
   },
   OidcFederationStrategy: class {},
 }))
@@ -65,6 +67,35 @@ describe('wasm-inline resolveStrategy', () => {
     expect(warnSpy).not.toHaveBeenCalled()
   })
 
+  it('throws when AccessKeyStrategy.create returns a failure Result', () => {
+    // `@cipherstash/auth` `0.41` `create` returns `{ failure }` instead of
+    // throwing — `resolveStrategy` must surface that as a loud construction
+    // error naming the failure type and the underlying message, not forward
+    // an unusable strategy.
+    vi.mocked(AccessKeyStrategy.create).mockReturnValueOnce(
+      // biome-ignore lint/suspicious/noExplicitAny: mock the 0.41 Result failure arm
+      {
+        failure: {
+          type: 'InvalidWorkspaceCrn',
+          error: new Error('unparseable CRN'),
+        },
+      } as any,
+    )
+
+    expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: exercise the access-key arm directly
+      resolveStrategy({ workspaceCrn: CRN, accessKey: 'CSAK.test' } as any),
+    ).toThrowError(
+      /failed to construct.*\(InvalidWorkspaceCrn\): unparseable CRN/,
+    )
+    // The guards passed and it reached the builder before failing.
+    expect(vi.mocked(AccessKeyStrategy.create)).toHaveBeenCalledWith(
+      CRN,
+      'CSAK.test',
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
   it('uses an explicit config.authStrategy verbatim and never builds an access key', () => {
     const explicit = { getToken: vi.fn() }
     // biome-ignore lint/suspicious/noExplicitAny: exercise the authStrategy arm of the discriminated union directly
@@ -85,6 +116,19 @@ describe('wasm-inline resolveStrategy', () => {
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('`config.strategy` is deprecated'),
     )
+  })
+
+  it('warns at most once per process across repeated resolveStrategy calls', () => {
+    // No reset between the two calls (the latch is only reset in beforeEach),
+    // so they share one process-level latch — a regression that dropped the
+    // `if (warnedStrategyDeprecated) return` guard would warn twice here.
+    const explicit = { getToken: vi.fn() }
+    // biome-ignore lint/suspicious/noExplicitAny: exercise the deprecated strategy arm directly
+    resolveStrategy({ strategy: explicit } as any)
+    // biome-ignore lint/suspicious/noExplicitAny: exercise the deprecated strategy arm directly
+    resolveStrategy({ strategy: explicit } as any)
+
+    expect(warnSpy).toHaveBeenCalledTimes(1)
   })
 
   it('prefers authStrategy over the deprecated strategy when both are set, and still warns', () => {

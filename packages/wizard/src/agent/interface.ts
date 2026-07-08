@@ -204,9 +204,14 @@ export function wizardCanUseTool(
  */
 async function getAccessToken(): Promise<string | undefined> {
   try {
-    const strategy = AutoStrategy.detect()
-    const result = await strategy.getToken()
-    return result.token
+    // As of `@cipherstash/auth` `0.41`, `detect()` and `getToken()` return a
+    // `Result<T, AuthFailure>` instead of throwing — a failure at either step
+    // means no usable token, so fall through to `undefined`.
+    const detected = AutoStrategy.detect()
+    if (detected.failure) return undefined
+    const result = await detected.data.getToken()
+    if (result.failure) return undefined
+    return result.data.token
   } catch {
     return undefined
   }

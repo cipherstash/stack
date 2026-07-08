@@ -16,13 +16,20 @@ interface ExistingAuth {
  */
 async function checkExistingAuth(): Promise<ExistingAuth | undefined> {
   try {
-    const strategy = AutoStrategy.detect()
-    const result = await strategy.getToken()
+    // As of `@cipherstash/auth` `0.41`, `detect()` and `getToken()` return a
+    // `Result<T, AuthFailure>` instead of throwing — a failure at either step
+    // just means "not authenticated yet", so fall through to `undefined`.
+    const detected = AutoStrategy.detect()
+    if (detected.failure) return undefined
 
-    const regionEntry = regions.find((r) => result.issuer.includes(r.value))
+    const result = await detected.data.getToken()
+    if (result.failure) return undefined
+
+    const { issuer, workspaceId } = result.data
+    const regionEntry = regions.find((r) => issuer.includes(r.value))
     const regionLabel = regionEntry?.label ?? 'unknown'
 
-    return { workspace: result.workspaceId, regionLabel }
+    return { workspace: workspaceId, regionLabel }
   } catch {
     return undefined
   }

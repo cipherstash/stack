@@ -210,8 +210,11 @@ export type WasmClientConfig = {
 
 /**
  * Any auth strategy accepted on the WASM path. Both expose
- * `getToken(): Promise<{ token }>`, which is all protect-ffi's WASM
- * `newClient` requires:
+ * `getToken(): Promise<Result<TokenResult, AuthFailure>>` — as of
+ * `@cipherstash/auth` 0.41 the token is wrapped in a `@byteslice/result`
+ * envelope. `@cipherstash/protect-ffi` 0.28+ unwraps that envelope (reading
+ * `.data.token`, surfacing `.failure`) inside its WASM `newClient`; 0.27 read
+ * `.token` off the envelope and saw `undefined`, so keep the ffi floor at 0.28.
  *
  * - {@link AccessKeyStrategy} — static M2M / CI access key.
  * - {@link OidcFederationStrategy} — federates an end-user OIDC JWT into a
@@ -465,6 +468,14 @@ export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
   }
   // `AccessKeyStrategy.create` takes the full workspace CRN — the region is
   // derived from it inside `@cipherstash/auth`, so the CRN stays the single
-  // source of truth with no manual region split.
-  return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey)
+  // source of truth with no manual region split. As of `@cipherstash/auth`
+  // `0.41` `create` returns a `Result<AccessKeyStrategy, AuthFailure>` rather
+  // than throwing — unwrap it and surface a construction failure loudly.
+  const result = AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey)
+  if (result.failure) {
+    throw new Error(
+      `[encryption]: failed to construct \`AccessKeyStrategy\` from \`config.workspaceCrn\` / \`config.accessKey\` (${result.failure.type}): ${result.failure.error.message}`,
+    )
+  }
+  return result.data
 }

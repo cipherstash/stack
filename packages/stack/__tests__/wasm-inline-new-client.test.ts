@@ -18,7 +18,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@cipherstash/auth/wasm-inline', () => ({
   AccessKeyStrategy: {
-    create: vi.fn(() => ({ __mock: 'access-key-strategy' })),
+    // `@cipherstash/auth` `0.41` `create` returns a `Result<Strategy, AuthFailure>`
+    // (`{ data }` on success) — `resolveStrategy` unwraps `.data`.
+    create: vi.fn(() => ({ data: { __mock: 'access-key-strategy' } })),
   },
   OidcFederationStrategy: class {},
 }))
