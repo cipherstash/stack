@@ -49,6 +49,13 @@ export const messages = {
      */
     regionMissingNonInteractive:
       'Cannot resolve a region without a prompt. Pass --region <slug> or set STASH_REGION (e.g. STASH_REGION=us-east-1).',
+    /**
+     * Shown when `--region` is passed with no value (arg parsing turns a
+     * valueless flag into a boolean). Distinguishes "you forgot the value"
+     * from "no region anywhere" so the fix is obvious.
+     */
+    regionFlagNeedsValue:
+      'The --region flag needs a value, e.g. --region us-east-1. Run `stash auth regions` to list valid slugs.',
   },
   eql: {
     unknownSubcommand: 'Unknown eql subcommand',

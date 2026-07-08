@@ -146,6 +146,28 @@ describe('resolveRegion — explicit region', () => {
     )
   })
 
+  it('treats an empty / whitespace flag as absent and falls back to STASH_REGION', async () => {
+    process.env[REGION_ENV_VAR] = 'eu-west-1'
+    // `--region ""` / `--region "   "` must not shadow the env var — matches
+    // the `if (values.region)` guard init uses, so both entry points agree.
+    await expect(resolveRegion({ regionFlag: '   ' })).resolves.toBe(
+      'eu-west-1.aws',
+    )
+    expect(clack.select).not.toHaveBeenCalled()
+  })
+
+  it('empty flag with no env in a non-TTY context exits 1 (region_required)', async () => {
+    setTty(undefined)
+    const exitSpy = spyExit()
+    await expect(resolveRegion({ regionFlag: '' })).rejects.toThrow(
+      'process.exit',
+    )
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      messages.auth.regionMissingNonInteractive,
+    )
+  })
+
   it('exits 1 with an actionable error on an unknown explicit region', async () => {
     const exitSpy = spyExit()
     await expect(resolveRegion({ regionFlag: 'moon-base-1' })).rejects.toThrow(
