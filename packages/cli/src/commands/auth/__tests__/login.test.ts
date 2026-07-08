@@ -3,13 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // login.ts imports the native `@cipherstash/auth` binary. Replacing the module
 // before load keeps it out of the fast unit suite (mirrors how region.test.ts
 // mocks `@clack/prompts`) so the pure json-mode logic is testable in isolation.
+//
+// As of `@cipherstash/auth` 0.41 the device-code flow returns
+// `Result<T, AuthFailure>` (`{ data }` on success, `{ failure: { type, error } }`
+// on error) instead of throwing — the mocks below mirror that shape.
 const authMock = vi.hoisted(() => ({
   beginDeviceCodeFlow: vi.fn(),
   bindClientDevice: vi.fn(),
 }))
 vi.mock('@cipherstash/auth', () => ({ default: authMock }))
 
-// Hoisted so the interactive (non-json) path — spinner + `p.log.warn` — is
+// Hoisted so the interactive (non-json) path — spinner + `p.log.*` — is
 // observable; a single spinner instance is returned from every `p.spinner()`.
 const clack = vi.hoisted(() => {
   const spinnerInstance = { start: vi.fn(), stop: vi.fn() }
@@ -26,17 +30,23 @@ vi.mock('@clack/prompts', () => ({
 
 const { login, bindDevice } = await import('../login.js')
 
-/** A device-code `pending` handle with overridable fields. */
-function makePending(over: Record<string, unknown> = {}) {
+/** A device-code `flow` handle (the `.data` of a successful `beginDeviceCodeFlow`). */
+function makeFlow(over: Record<string, unknown> = {}) {
   return {
     userCode: 'ABCD-1234',
     verificationUri: 'https://cs.test/device',
     verificationUriComplete: 'https://cs.test/device?code=ABCD-1234',
     expiresIn: 900,
-    openInBrowser: vi.fn(() => true),
-    pollForToken: vi.fn(async () => ({ expiresAt: 1_700_000_000 })),
+    // 0.41: these return Results too.
+    openInBrowser: vi.fn(() => ({ data: true })),
+    pollForToken: vi.fn(async () => ({ data: { expiresAt: 1_700_000_000 } })),
     ...over,
   }
+}
+
+/** An AuthFailure Result envelope for the failure arm. */
+function failure(type: string | undefined, message: string) {
+  return { failure: { type, error: new Error(message) } }
 }
 
 /** Capture NDJSON lines written to stdout as parsed objects. */
@@ -62,8 +72,8 @@ afterEach(() => {
 
 describe('login — json mode', () => {
   it('emits authorization_required then authorized', async () => {
-    const pending = makePending()
-    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+    const flow = makeFlow()
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({ data: flow })
     const out = captureJsonLines()
 
     await login('us-east-1.aws', undefined, { json: true, open: false })
@@ -84,20 +94,20 @@ describe('login — json mode', () => {
   })
 
   it('does not auto-open a browser in json mode by default', async () => {
-    const pending = makePending()
-    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+    const flow = makeFlow()
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({ data: flow })
     captureJsonLines()
 
     // No `open` passed — json mode must default to not opening (the human,
     // not the agent host, opens the URL).
     await login('us-east-1.aws', undefined, { json: true })
 
-    expect(pending.openInBrowser).not.toHaveBeenCalled()
+    expect(flow.openInBrowser).not.toHaveBeenCalled()
   })
 
-  it('maps a begin failure to a JSON error event (code from AuthError) and exits 1', async () => {
-    authMock.beginDeviceCodeFlow.mockRejectedValueOnce(
-      Object.assign(new Error('bad client'), { code: 'INVALID_CLIENT' }),
+  it('maps a begin failure to a JSON error event (code from AuthFailure.type) and exits 1', async () => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(
+      failure('INVALID_CLIENT', 'bad client'),
     )
     const exit = spyExit()
     const out = captureJsonLines()
@@ -114,9 +124,9 @@ describe('login — json mode', () => {
     })
   })
 
-  it('falls back to begin_failed when the error has no code', async () => {
-    authMock.beginDeviceCodeFlow.mockRejectedValueOnce(
-      new Error('network down'),
+  it('falls back to begin_failed when the failure carries no type', async () => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(
+      failure(undefined, 'network down'),
     )
     spyExit()
     const out = captureJsonLines()
@@ -132,14 +142,12 @@ describe('login — json mode', () => {
     })
   })
 
-  it('maps a poll failure to a poll_failed JSON error and exits 1', async () => {
-    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(
-      makePending({
-        pollForToken: vi.fn(async () => {
-          throw new Error('timed out')
-        }),
+  it('maps a poll failure to a JSON error (failure type) and exits 1', async () => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({
+      data: makeFlow({
+        pollForToken: vi.fn(async () => failure('EXPIRED_TOKEN', 'timed out')),
       }),
-    )
+    })
     const exit = spyExit()
     const out = captureJsonLines()
 
@@ -151,13 +159,13 @@ describe('login — json mode', () => {
     // First line is the trigger event; the error follows on the next line.
     const lines = out.lines()
     expect(lines[0]).toMatchObject({ status: 'authorization_required' })
-    expect(lines[1]).toMatchObject({ status: 'error', code: 'poll_failed' })
+    expect(lines[1]).toMatchObject({ status: 'error', code: 'EXPIRED_TOKEN' })
   })
 })
 
 describe('bindDevice — json mode', () => {
   it('emits device_bound on success', async () => {
-    authMock.bindClientDevice.mockResolvedValueOnce(undefined)
+    authMock.bindClientDevice.mockResolvedValueOnce({ data: undefined })
     const out = captureJsonLines()
 
     await bindDevice({ json: true })
@@ -165,9 +173,9 @@ describe('bindDevice — json mode', () => {
     expect(out.lines()[0]).toEqual({ status: 'device_bound' })
   })
 
-  it('emits a bind_failed error and exits 1 on failure', async () => {
-    authMock.bindClientDevice.mockRejectedValueOnce(
-      new Error('keyset unreachable'),
+  it('emits a bind_failed error and exits 1 when the failure carries no type', async () => {
+    authMock.bindClientDevice.mockResolvedValueOnce(
+      failure(undefined, 'keyset unreachable'),
     )
     const exit = spyExit()
     const out = captureJsonLines()
@@ -182,11 +190,9 @@ describe('bindDevice — json mode', () => {
     })
   })
 
-  it('carries the AuthError .code when the bind failure has one', async () => {
-    // The code-present branch of `authErrorCode(error) ?? 'bind_failed'` — the
-    // fallback above covers code-absent; this pins the pass-through.
-    authMock.bindClientDevice.mockRejectedValueOnce(
-      Object.assign(new Error('keyset locked'), { code: 'KEYSET_LOCKED' }),
+  it('carries the AuthFailure type when the bind failure has one', async () => {
+    authMock.bindClientDevice.mockResolvedValueOnce(
+      failure('KEYSET_LOCKED', 'keyset locked'),
     )
     const exit = spyExit()
     const out = captureJsonLines()
@@ -204,64 +210,67 @@ describe('bindDevice — json mode', () => {
 
 describe('login — interactive (non-json) browser open', () => {
   it('opens the browser exactly once on the interactive path', async () => {
-    const pending = makePending()
-    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+    const flow = makeFlow()
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({ data: flow })
 
     // No `open` passed: interactive mode (json:false) defaults to opening.
     await login('us-east-1.aws', undefined, { json: false })
 
-    expect(pending.openInBrowser).toHaveBeenCalledTimes(1)
+    expect(flow.openInBrowser).toHaveBeenCalledTimes(1)
     expect(clack.log.warn).not.toHaveBeenCalled()
   })
 
   it('does not open the browser when open: false on the interactive path', async () => {
-    const pending = makePending()
-    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+    const flow = makeFlow()
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({ data: flow })
 
     await login('us-east-1.aws', undefined, { json: false, open: false })
 
-    expect(pending.openInBrowser).not.toHaveBeenCalled()
+    expect(flow.openInBrowser).not.toHaveBeenCalled()
   })
 
   it('warns (interactive only) when the browser could not be opened', async () => {
-    const pending = makePending({ openInBrowser: vi.fn(() => false) })
-    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+    // openInBrowser resolves `{ data: false }` — the "couldn't open" Result.
+    const flow = makeFlow({ openInBrowser: vi.fn(() => ({ data: false })) })
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({ data: flow })
 
     await login('us-east-1.aws', undefined, { json: false })
 
-    expect(pending.openInBrowser).toHaveBeenCalledTimes(1)
+    expect(flow.openInBrowser).toHaveBeenCalledTimes(1)
     expect(clack.log.warn).toHaveBeenCalledWith(
       expect.stringContaining('Could not open browser'),
     )
   })
 })
 
-describe('login — interactive (non-json) error propagation', () => {
-  it('rethrows a begin failure and does NOT call process.exit', async () => {
-    authMock.beginDeviceCodeFlow.mockRejectedValueOnce(new Error('begin boom'))
-    const exit = spyExit()
-
-    // Asserting the original message (not 'process.exit') proves the
-    // interactive path propagated the error instead of exiting.
-    await expect(
-      login('us-east-1.aws', undefined, { json: false }),
-    ).rejects.toThrow('begin boom')
-    expect(exit).not.toHaveBeenCalled()
-  })
-
-  it('rethrows a poll failure and does NOT call process.exit', async () => {
+describe('login — interactive (non-json) failure handling', () => {
+  it('surfaces a begin failure via p.log.error and exits 1 (no throw-through)', async () => {
     authMock.beginDeviceCodeFlow.mockResolvedValueOnce(
-      makePending({
-        pollForToken: vi.fn(async () => {
-          throw new Error('poll boom')
-        }),
-      }),
+      failure('INVALID_CLIENT', 'begin boom'),
     )
     const exit = spyExit()
 
     await expect(
+      login('us-east-1.aws', undefined, { json: false }),
+    ).rejects.toThrow('process.exit')
+
+    expect(exit).toHaveBeenCalledWith(1)
+    expect(clack.log.error).toHaveBeenCalledWith('begin boom')
+  })
+
+  it('surfaces a poll failure via p.log.error and exits 1', async () => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce({
+      data: makeFlow({
+        pollForToken: vi.fn(async () => failure('EXPIRED_TOKEN', 'poll boom')),
+      }),
+    })
+    const exit = spyExit()
+
+    await expect(
       login('us-east-1.aws', undefined, { json: false, open: false }),
-    ).rejects.toThrow('poll boom')
-    expect(exit).not.toHaveBeenCalled()
+    ).rejects.toThrow('process.exit')
+
+    expect(exit).toHaveBeenCalledWith(1)
+    expect(clack.log.error).toHaveBeenCalledWith('poll boom')
   })
 })
