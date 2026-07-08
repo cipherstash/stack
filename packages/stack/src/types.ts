@@ -60,7 +60,7 @@ export type Encrypted = CipherStashEncryptedPayload
 /** Structural type representing an encrypted query term (search needle)
  * returned by `encryptQuery` / `encryptQueryBulk` for scalar
  * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
- * queries, plus — under `eqlVersion: 3` — the `eql_v3.jsonb_query`
+ * queries, plus — under `eqlVersion: 3` — the `public.jsonb_query`
  * containment needle. Carries no ciphertext — matched against stored values,
  * never decrypted. v2 JSON containment queries (`ste_vec_term`) return a
  * storage-shaped {@link Encrypted} payload instead. */

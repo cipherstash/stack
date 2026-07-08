@@ -159,7 +159,7 @@ afterAll(async () => {
 }, 30000)
 
 describeLivePg('eql_v3 text_search postgres integration', () => {
-  it('round-trips an encrypted value through an public.text_search column', async () => {
+  it('round-trips an encrypted value through a public.text_search column', async () => {
     const id = await insertRow('roundtrip', 'roundtrip@example.com')
 
     const [row] = await sql<InsertedRow[]>`
