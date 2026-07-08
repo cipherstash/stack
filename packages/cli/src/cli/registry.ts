@@ -1,13 +1,15 @@
 /**
  * The command-descriptor registry — one descriptor per `stash` command, grouped
- * for display. It backs the `stash manifest --json` surface and is *intended* to
- * become the single source of truth for command metadata.
+ * for display. It is the single source of truth for command metadata: it backs
+ * both `stash manifest --json` (via `cli/manifest.ts`) and per-command
+ * `stash <command> --help` (via `cli/help.ts`). A flag/summary/example edit here
+ * flows into both automatically.
  *
- * ⚠️ Phase 1 (this file) is additive: `bin/main.ts` still hand-maintains the
- * `HELP` string that renders `--help`, so until a later phase renders `--help`
- * from these descriptors, the two are maintained separately and MUST be kept in
- * sync — a command/flag/summary edit belongs in both places or `--help` and
- * `stash manifest` will diverge. See `docs/plans/cli-help-and-manifest.md`.
+ * ⚠️ The one remaining hand-maintained surface is the global `HELP` banner in
+ * `bin/main.ts` (bare `stash` / `stash --help`) — it duplicates only the
+ * command *list* (names + summaries), not their flags. A new command, or a
+ * summary edit, still belongs in both places or the banner and `stash manifest`
+ * will diverge. See `docs/plans/cli-help-and-manifest.md`.
  */
 
 /** A single flag/option on a command. */
