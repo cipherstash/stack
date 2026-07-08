@@ -1,5 +1,178 @@
 # @cipherstash/stack
 
+## 0.19.0
+
+### Minor Changes
+
+- cc62407: Add EQL v3 Supabase support, baselined on the `eql-3.0.0-alpha.2` release.
+
+  `@cipherstash/stack/supabase` gains `encryptedSupabaseV3` — the EQL v3
+  counterpart of `encryptedSupabase` for schemas authored with
+  `@cipherstash/stack/eql/v3`. The public surface and call shape are identical
+  to v2 (same filter methods, `withLockContext`, `audit`); only the schema type
+  and wire encoding differ.
+
+  **The v3 surface** is the `eql-3.0.0-alpha.2` release artifact: domains use
+  SQL-standard type names (`eql_v3.integer_ord`, `eql_v3.timestamp_ord`,
+  `eql_v3.boolean`, … mirrored by `types.IntegerOrd`, `types.TimestampOrd`,
+  `types.Boolean`, …), SEM internals live in a separate `eql_v3_internal`
+  schema (grant it roles, never expose it — only `eql_v3` goes in Supabase's
+  Exposed schemas), and envelopes are versioned `v: 3`. Envelope production
+  rides on `@cipherstash/protect-ffi` 0.27, which takes an `eqlVersion` so the
+  same client emits v2 or v3 payloads per schema.
+
+  **Adapter behaviour:**
+
+  - columns are stored in their native `eql_v3.*` domains (raw jsonb payloads,
+    no composite wrap), with JS property → DB column name resolution and `Date`
+    reconstruction from `cast_as` on decrypted rows;
+  - **INTERIM:** filter operands are full storage envelopes — every `eql_v3.*`
+    domain CHECK requires the storage keys, and the SQL operators coerce their
+    operand into the domain, so a term-only operand is rejected today. This is
+    a tracked workaround (Linear CIP-3402), not the design: a full-envelope
+    operand carries a real decryptable ciphertext plus all of the column's
+    index terms, and PostgREST filters travel in GET query strings, so operands
+    can land in URL logs, proxies, and Supabase request logs (query terms are
+    index-terms-only by design). The fix is an EQL-side term-only scalar query
+    envelope (the scalar analog of `eql_v3.jsonb_query`);
+  - `like`/`ilike` on encrypted columns are emitted as PostgREST `cs`
+    (bloom-filter `@>`) — the v3 domains define no LIKE operator. Substring
+    search currently also requires `include_original: false` on the match
+    index; that requirement is a symptom of the same interim full-envelope
+    operand and goes away with CIP-3402;
+  - filters on storage-only columns (e.g. `types.Boolean`) and null filter
+    values are rejected at the type level and at runtime.
+
+  The v3 builder's default row type is exactly the table's inferred plaintext
+  shape (no index-signature widening — widening would disable the storage-only
+  filter guard). Filtering or inserting plaintext passthrough columns requires
+  an explicit row type: `es.from<typeof users, UserRow>('users', users)`.
+
+  The CLI gains an EQL v3 path: `stash eql install --eql-version 3` installs the
+  vendored `eql-3.0.0-alpha.2` bundle (`--supabase` selects the opclass-stripped
+  variant and applies the role grants for both `eql_v3` and `eql_v3_internal`);
+  `stash db upgrade` also accepts `--eql-version`, and `stash db status` reports
+  v2 and v3 installs independently. The v2 `SUPABASE_PERMISSIONS_SQL` block is
+  now generated from a shared `supabasePermissionsSql(schemaName)` helper, with
+  `SUPABASE_PERMISSIONS_SQL_V3` covering the v3 schemas.
+
+- 5e4f354: Add the EQL v3 `text_search` authoring DSL on a new `@cipherstash/stack/eql/v3`
+  subpath (`types.TextSearch`, v3 `encryptedTable` / `buildEncryptConfig`). The v3
+  builders emit the existing `EncryptConfig` shape, so encryption, payloads, and
+  query paths are unchanged at runtime.
+
+  Also widens the public client types (`EncryptionClientConfig.schemas`,
+  `EncryptOptions`, `SearchTerm`/`EncryptQueryOptions`) to a structural contract so
+  both v2 and v3 builders are accepted by `Encryption` / `encrypt` / `decrypt` /
+  `encryptQuery`. This is a backward-compatible widening — existing v2 usage is
+  unaffected. The structural contracts themselves (`BuildableColumn`,
+  `BuildableQueryColumn`, `BuildableV3QueryableColumn`, `BuildableTable`,
+  `BuildableTableColumns`) and the `encryptModel` return-type mapper
+  (`EncryptedFromBuildableTable`) are exported from `@cipherstash/stack/types` so
+  consumers can name them.
+
+- 4ceefed: Add a strongly-typed EQL v3 client surface on a new `@cipherstash/stack/v3`
+  subpath (`EncryptionV3`, `typedClient`, `TypedEncryptionClient`). It re-exports
+  the v3 `types` namespace and table API (from `@cipherstash/stack/eql/v3`), so a
+  single import provides everything needed to author and use a v3 schema.
+
+  Every method derives its types from the concrete `table` / `column` builder
+  arguments:
+
+  - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
+    (`text → string`, `int8 → bigint`, `timestamptz → Date`, …).
+  - `encryptQuery` constrains `queryType` to the column's capabilities and rejects
+    storage-only columns at compile time.
+  - `encryptModel` / `bulkEncryptModels` validate schema-column fields against their
+    inferred plaintext type (passthrough fields are untouched) and return a precise
+    encrypted model.
+  - `decryptModel` / `bulkDecryptModels` return the precise plaintext model,
+    reconstructing `Date` / `bigint` values from the encrypt-config `cast_as`.
+
+  Because the typed methods bind to the concrete branded v3 classes, a hand-rolled
+  structural table/column is rejected — closing the soundness gap where a non-branded
+  table could be encrypted at runtime while typed as plaintext.
+
+  Runtime behaviour is unchanged: the encrypt/query paths return the same operations
+  as the base client; only the model-decrypt paths add a per-column `Date` / `bigint`
+  reconstruction step. The v2 client surface (`Encryption`) is untouched.
+
+- cb34d71: Add EQL v3 schema builders for all generated SQL domains under `@cipherstash/stack/eql/v3`, exposed as the `types` namespace (one member per EQL v3 domain, e.g. `types.TextEq` / `types.Int4Ord` / `types.Timestamptz`), including explicit query capability metadata (`getQueryCapabilities()` / `isQueryable()`) and v3 table support in model encryption helpers (`encryptModel` / `bulkEncryptModels`).
+
+  Also widen the accepted plaintext input type for `encrypt` / `encryptQuery` to include `Date` and `bigint` (via the new `Plaintext` type), so v3 `date` / `timestamptz` / `int8` domains can be encrypted and queried with their natural JavaScript values.
+
+- 90d19fb: Rename the encryption client's auth strategy config field from `config.strategy` to **`config.authStrategy`** to make its purpose clear, and expand the `Encryption()` TypeDoc with a full authentication and keysets walkthrough.
+
+  **`config.authStrategy`** is the new, documented field for supplying an auth strategy (`OidcFederationStrategy`, `AccessKeyStrategy`, or any `{ getToken() }` object). **`config.strategy` is retained as a deprecated alias** — passing it still works and forwards to the client, but logs a one-time runtime deprecation warning. When both are set, `authStrategy` wins (and the deprecation warning still fires so the leftover field gets cleaned up).
+
+  ```ts
+  import { Encryption, OidcFederationStrategy } from "@cipherstash/stack";
+
+  const client = await Encryption({
+    schemas: [users],
+    config: {
+      authStrategy: OidcFederationStrategy.create(workspaceCrn, () =>
+        getUserJwt()
+      ),
+    },
+  });
+  ```
+
+  **Migration:** rename `config.strategy` → `config.authStrategy`. No behavioural change beyond the deprecation warning; the field is forwarded to protect-ffi's `strategy` option exactly as before.
+
+  The `Encryption()` TypeDoc now documents the default `auto` strategy (env vars → local dev profile via `npx stash auth login`), the four `CS_*` production/CI variables, custom strategies (`AccessKeyStrategy`, `OidcFederationStrategy`), lock context, and keysets for multi-tenant isolation.
+
+  The `@cipherstash/stack/wasm-inline` entry (Deno / Edge / Workers / Bun) gets the same rename so the Node and WASM interfaces stay in sync: `WasmClientConfig.authStrategy` is the documented field, `strategy` is a deprecated alias that still works and warns at runtime.
+
+- a5f5422: Bump `@cipherstash/auth` (and its per-platform native bindings) from `0.40.0` to `0.41.0`, and migrate to its new `Result`-returning API.
+
+  **What changed in `@cipherstash/auth` `0.41`.** Every fallible auth operation now returns a `@byteslice/result` `Result<T, AuthFailure>` (`{ data }` on success, `{ failure }` on error) instead of throwing. This covers strategy construction (`AccessKeyStrategy.create`, `OidcFederationStrategy.create`, `AutoStrategy.detect`, `DeviceSessionStrategy.fromProfile`), `getToken()`, and the device-code flow (`beginDeviceCodeFlow`, `pollForToken`, `openInBrowser`, `bindClientDevice`). Consumers now write `if (result.failure) …` and read `result.data` rather than `try/catch`. The `AuthError` type was renamed to **`AuthFailure`** — a discriminated union keyed by `type` (`"NOT_AUTHENTICATED"`, `"WORKSPACE_MISMATCH"`, …), replacing the old `error.code` string.
+
+  **`@cipherstash/stack` (breaking type surface).**
+
+  - **`AuthError` is renamed to `AuthFailure`** in the public re-exports from `@cipherstash/stack`. `AuthErrorCode` and `TokenResult` are unchanged. Anyone importing `AuthError` from `@cipherstash/stack` must switch to `AuthFailure`.
+  - The WASM-inline access-key path (`resolveStrategy`, used by `@cipherstash/stack/wasm-inline`'s `Encryption()`) now unwraps the `Result` from `AccessKeyStrategy.create`. A construction failure (e.g. an invalid CRN or access key) throws a descriptive `[encryption]` error naming the `AuthFailure.type` instead of surfacing the raw auth error.
+  - Bump `@cipherstash/protect-ffi` from `0.27.0` to `0.28.0`. auth `0.41`'s `getToken()` returns the token inside a `Result` envelope; protect-ffi `0.28` unwraps it (`.data.token`) inside its WASM `newClient`, whereas `0.27` read `.token` off the envelope and got `undefined` — which failed the WASM encrypt/decrypt round-trip with `token field is not a string`. `0.28` is the floor for the WASM path under auth `0.41`.
+
+  **`stash` (CLI) and `@cipherstash/wizard`.** Internal auth call sites (`stash auth login`, device binding, `init` auth check, and the wizard's token acquisition / prerequisite check) were updated to unwrap `Result` and branch on `failure.type`. Behaviour is preserved — auth failures still surface the same way to end users; no CLI/wizard API changed.
+
+- 35b9ed6: Bump `@cipherstash/protect-ffi` to `0.26.0` and `@cipherstash/auth` to `0.40.0`, and replace the lock-context token ceremony with a strategy-based approach for identity-bound encryption.
+
+  **protect-ffi `0.26.0`** supersedes `0.25.0`. The public API is unchanged from `0.25` (internal fixes only). As in `0.25`, `serviceToken` is gone from the encrypt / decrypt / query option types; auth flows through the client's strategy / credentials, and lock contexts travel as `lockContext.identityClaim`. The WASM-inline path takes a single options object with the auth strategy nested under `strategy`, and `Encryption()` config uses **`workspaceCrn`** (`CS_WORKSPACE_CRN`) as the single source of truth — `CS_REGION` is no longer consulted. On that path `workspaceCrn` is required only alongside an `accessKey` (it derives the region); with a pre-built `strategy` it is **optional**, since the strategy already carries the CRN.
+
+  **Strategy-based, identity-bound encryption.** `OidcFederationStrategy` federates an end user's third-party OIDC JWT (Clerk, Supabase, Auth0, …) into a CTS service token. As of `@cipherstash/auth` `0.40` it takes a `workspaceCrn` (region derived from the CRN), matching `AccessKeyStrategy`. Pass it as `config.strategy` so every ZeroKMS request authenticates _as that user_, then bind the data key to a claim with `.withLockContext({ identityClaim })`:
+
+  ```ts
+  import { Encryption, OidcFederationStrategy } from "@cipherstash/stack";
+
+  const client = await Encryption({
+    schemas: [users],
+    config: {
+      strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
+    },
+  });
+
+  await client
+    .encrypt("alice@example.com", { column: users.email, table: users })
+    .withLockContext({ identityClaim: ["sub"] });
+  ```
+
+  This replaces the old ceremony (`new LockContext()` → `await lc.identify(jwt)` → `.withLockContext(lc)`), which relied on a per-operation CTS token that protect-ffi removed in `0.25`.
+
+  - **`.withLockContext()`** now accepts a plain `{ identityClaim }` object (as well as a `LockContext`) and no longer requires a CTS token or an `identify()` call — it carries the identity claim only.
+  - **`LockContext.identify()` / `getLockContext()`** are **deprecated** (kept for backwards compatibility); the strategy handles token acquisition.
+  - **Strategies are re-exported** from `@cipherstash/stack` (`OidcFederationStrategy`, `AccessKeyStrategy`, `AutoStrategy`, `DeviceSessionStrategy`) and from `@cipherstash/stack/wasm-inline` (`OidcFederationStrategy`, `AccessKeyStrategy`) so integrators don't need a separate `@cipherstash/auth` install. `AuthStrategy` remains re-exported for the structural type.
+
+  **Migrating `region` → `workspaceCrn` (WASM-inline).** If you previously passed `region` (or relied on `CS_REGION`) to the WASM-inline `Encryption()` path, replace it with your workspace CRN: set `workspaceCrn` in config (or `CS_WORKSPACE_CRN` in the environment) to the value shown in the CipherStash dashboard (`crn:<region>.aws:<workspace-id>` — it embeds the region, which is now derived from it). `region` is ignored if passed.
+
+  **Lock-context enforcement is now server-side only.** Because the client no longer resolves a per-user CTS token at `withLockContext` time, it also cannot fail fast there: a wrong or missing identity claim surfaces as a ZeroKMS **decryption failure** (the data key simply doesn't unlock), not as a client-side error before the request. The cryptographic guarantee is unchanged — enforcement happens in ZeroKMS — but anyone relying on the old client-side throw for early feedback should assert on the operation's `failure` result instead.
+
+  Existing credential / env behaviour is preserved when `config.strategy` is omitted.
+
+### Patch Changes
+
+- aa9c4b1: Documentation: refresh package READMEs after the protectjs → stack repository rename. Fixed repository and license links, replaced dead in-repo docs links with cipherstash.com/docs URLs, rewrote the incorrect @cipherstash/nextjs README, and added guidance pointing new projects to @cipherstash/stack.
+
 ## 0.18.0
 
 ### Minor Changes

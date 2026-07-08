@@ -1,5 +1,11 @@
 # @cipherstash/nextjs
 
+## 4.1.1
+
+### Patch Changes
+
+- aa9c4b1: Documentation: refresh package READMEs after the protectjs → stack repository rename. Fixed repository and license links, replaced dead in-repo docs links with cipherstash.com/docs URLs, rewrote the incorrect @cipherstash/nextjs README, and added guidance pointing new projects to @cipherstash/stack.
+
 ## 4.1.0
 
 ### Minor Changes
