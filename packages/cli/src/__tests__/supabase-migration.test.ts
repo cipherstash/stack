@@ -12,7 +12,11 @@ import {
   SUPABASE_EQL_MIGRATION_FILENAME,
   writeSupabaseEqlMigration,
 } from '../commands/db/supabase-migration.js'
-import { SUPABASE_PERMISSIONS_SQL } from '../installer/index.js'
+import {
+  DEFAULT_EQL_VERSION,
+  resolveEqlVersion,
+  SUPABASE_PERMISSIONS_SQL,
+} from '../installer/index.js'
 
 /**
  * Generate the migration header for testing purposes.
@@ -200,6 +204,18 @@ describe('writeSupabaseEqlMigration', () => {
     ]
     const sorted = [...filenames].sort()
     expect(sorted[0]).toBe(SUPABASE_EQL_MIGRATION_FILENAME)
+  })
+})
+
+describe('resolveEqlVersion', () => {
+  it('defaults a missing version to DEFAULT_EQL_VERSION (v3)', () => {
+    expect(DEFAULT_EQL_VERSION).toBe(3)
+    expect(resolveEqlVersion(undefined)).toBe(3)
+  })
+
+  it('resolves explicit strings to their generation', () => {
+    expect(resolveEqlVersion('2')).toBe(2)
+    expect(resolveEqlVersion('3')).toBe(3)
   })
 })
 

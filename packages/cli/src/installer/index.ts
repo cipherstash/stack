@@ -26,6 +26,18 @@ export type EqlVersion = 2 | 3
  */
 export const DEFAULT_EQL_VERSION: EqlVersion = 3
 
+/**
+ * Resolve the `--eql-version` CLI string (`'2'` / `'3'` / `undefined`) to a
+ * concrete {@link EqlVersion}, applying {@link DEFAULT_EQL_VERSION} for anything
+ * that isn't an explicit `'2'`. The single authority for "which generation does
+ * a bare invocation target", shared by `eql install` / `eql upgrade` so the
+ * default lives in one place rather than being re-inlined as `=== '2' ? 2 : 3`.
+ * Assumes the value has already been validated (see `validateInstallFlags`).
+ */
+export function resolveEqlVersion(eqlVersion?: string): EqlVersion {
+  return eqlVersion === '2' ? 2 : DEFAULT_EQL_VERSION
+}
+
 function schemaNameFor(eqlVersion: EqlVersion): string {
   return eqlVersion === 3 ? EQL_V3_SCHEMA_NAME : EQL_SCHEMA_NAME
 }

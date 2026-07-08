@@ -16,6 +16,7 @@ import {
   downloadEqlSql,
   EQLInstaller,
   loadBundledEqlSql,
+  resolveEqlVersion,
 } from '@/installer/index.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
 import { offerStashConfig } from './config-scaffold.js'
@@ -205,7 +206,7 @@ export async function installCommand(options: InstallOptions) {
   // CIP-2985.
   const resolved = resolveProviderOptions(options, databaseUrl)
 
-  const eqlVersion: 2 | 3 = options.eqlVersion === '2' ? 2 : 3
+  const eqlVersion: 2 | 3 = resolveEqlVersion(options.eqlVersion)
 
   // v3 supports the direct install path only. Explicit --drizzle/--migration
   // are rejected up-front by validateInstallFlags; auto-DETECTED drizzle or
@@ -663,7 +664,7 @@ export function validateInstallFlags(options: InstallOptions): string | null {
   // explicit `--eql-version 2` — otherwise they'd silently resolve to a v3
   // direct install that ignores what the user asked for. `--migrations-dir`
   // only feeds the Supabase v2 migration-file path, so it's in the same bucket.
-  const resolvedVersion: 2 | 3 = options.eqlVersion === '2' ? 2 : 3
+  const resolvedVersion = resolveEqlVersion(options.eqlVersion)
   if (resolvedVersion === 3) {
     const v2OnlyFlag = options.drizzle
       ? '--drizzle'

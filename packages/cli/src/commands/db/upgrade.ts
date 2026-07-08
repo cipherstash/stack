@@ -1,7 +1,7 @@
 import * as p from '@clack/prompts'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
-import { EQLInstaller } from '@/installer/index.js'
+import { EQLInstaller, resolveEqlVersion } from '@/installer/index.js'
 
 export async function upgradeCommand(options: {
   dryRun?: boolean
@@ -26,7 +26,7 @@ export async function upgradeCommand(options: {
     p.outro('Upgrade aborted.')
     process.exit(1)
   }
-  const eqlVersion: 2 | 3 = options.eqlVersion === '2' ? 2 : 3
+  const eqlVersion: 2 | 3 = resolveEqlVersion(options.eqlVersion)
 
   if (eqlVersion === 3 && options.latest) {
     // `--latest` is v2-only (no public v3 release artifacts exist yet). Since

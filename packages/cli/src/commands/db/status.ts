@@ -29,9 +29,11 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   let versionV3: string | null
 
   try {
-    installedV2 = await installer.isInstalled()
+    installedV2 = await installer.isInstalled({ eqlVersion: 2 })
     installedV3 = await installer.isInstalled({ eqlVersion: 3 })
-    versionV2 = installedV2 ? await installer.getInstalledVersion() : null
+    versionV2 = installedV2
+      ? await installer.getInstalledVersion({ eqlVersion: 2 })
+      : null
     versionV3 = installedV3
       ? await installer.getInstalledVersion({ eqlVersion: 3 })
       : null
