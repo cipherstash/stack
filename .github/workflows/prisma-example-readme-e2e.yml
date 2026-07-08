@@ -65,6 +65,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # A missing / rotated / fork-PR-absent secret makes the walkthrough skip
+      # its live steps silently, hiding regressions behind a green job. Fail loud.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
+          client-id: ${{ secrets.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # Build via turbo so `^build` on `@cipherstash/prisma-next` and
       # its `@cipherstash/stack` peer is honoured. The test's
       # `pnpm install` subprocess inside `examples/prisma/` is a no-op

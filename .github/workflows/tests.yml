@@ -59,6 +59,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Fail loudly if any live-test credential is missing, so the v3 live
+      # matrix (and every other `describeLive` suite) can't silently skip.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
+          client-id: ${{ secrets.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       - name: Type tests (stack)
         run: pnpm --filter @cipherstash/stack run test:types
 
@@ -152,6 +162,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Auth-dependent `e2e/` suites skip themselves without these vars — a
+      # silent skip would hide regressions behind a green job. Fail loudly.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
+          client-id: ${{ secrets.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
       # E2E (`packages/cli/tests/e2e/**`) is covered by the `run-tests`
@@ -219,19 +239,17 @@ jobs:
       - name: Build stack
         run: pnpm exec turbo run build --filter @cipherstash/stack
 
-      # roundtrip.test.ts skips itself (Deno.test.ignore) when any of
-      # the four CS_* env vars is missing — that's the right behaviour
-      # for local runs, but in CI a silent skip would mean a rotated /
-      # cleared secret hides a real WASM regression behind a green job.
-      # Fail loudly instead.
-      - name: Assert CS_* secrets are present
-        run: |
-          for v in CS_WORKSPACE_CRN CS_CLIENT_ID CS_CLIENT_KEY CS_CLIENT_ACCESS_KEY; do
-            if [ -z "${!v}" ]; then
-              echo "::error::Required secret $v is not set on this runner — the WASM smoke test would silently skip."
-              exit 1
-            fi
-          done
+      # roundtrip.test.ts skips itself (Deno.test.ignore) when any of the four
+      # CS_* env vars is missing — fine locally, but in CI a silent skip would
+      # let a rotated / cleared secret hide a real WASM regression behind a
+      # green job. Fail loudly instead.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
+          client-id: ${{ secrets.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm

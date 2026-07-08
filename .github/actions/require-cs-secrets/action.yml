@@ -1,0 +1,43 @@
+name: Require CipherStash secrets
+description: >-
+  Fail the job when any CS_* credential is missing. The live test suites gate
+  themselves on these vars (vitest `describe.skip`, Deno `test.ignore`), so a
+  rotated / cleared / fork-PR-absent secret would make them silently skip and
+  let CI go green with ZERO live coverage. This turns that silent skip into a
+  loud failure. Requires the repo to be checked out first (local action path).
+
+inputs:
+  workspace-crn:
+    description: secrets.CS_WORKSPACE_CRN
+    required: true
+  client-id:
+    description: secrets.CS_CLIENT_ID
+    required: true
+  client-key:
+    description: secrets.CS_CLIENT_KEY
+    required: true
+  client-access-key:
+    description: secrets.CS_CLIENT_ACCESS_KEY
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Assert CS_* secrets are present
+      shell: bash
+      env:
+        CS_WORKSPACE_CRN: ${{ inputs.workspace-crn }}
+        CS_CLIENT_ID: ${{ inputs.client-id }}
+        CS_CLIENT_KEY: ${{ inputs.client-key }}
+        CS_CLIENT_ACCESS_KEY: ${{ inputs.client-access-key }}
+      run: |
+        missing=0
+        for v in CS_WORKSPACE_CRN CS_CLIENT_ID CS_CLIENT_KEY CS_CLIENT_ACCESS_KEY; do
+          if [ -z "${!v}" ]; then
+            echo "::error::Required secret $v is not set on this runner — live test suites would silently skip."
+            missing=1
+          fi
+        done
+        if [ "$missing" -ne 0 ]; then
+          exit 1
+        fi

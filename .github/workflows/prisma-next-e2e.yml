@@ -67,6 +67,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The global-setup hook hard-errors without CS_WORKSPACE_CRN, but a
+      # missing sibling secret could still degrade coverage silently — assert
+      # all four up front so a rotated / fork-PR-absent secret fails loudly.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
+          client-id: ${{ secrets.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # Write the CS_* credentials and the harness DATABASE_URL into the
       # example app's .env so the runtime + the `prisma-next migration
       # apply` invocation in global-setup both pick them up. The harness
