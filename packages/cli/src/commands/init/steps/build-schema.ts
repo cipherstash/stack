@@ -20,7 +20,7 @@ import { generatePlaceholderClient } from '../utils.js'
 const DEFAULT_CLIENT_PATH = './src/encryption/index.ts'
 
 /**
- * Pick the integration template by reading the same signals `db install`
+ * Pick the integration template by reading the same signals `eql install`
  * uses — Drizzle config / dependency for `drizzle`, Supabase host in
  * `DATABASE_URL` for `supabase`, otherwise raw Postgres. Silent: never
  * prompts the user.

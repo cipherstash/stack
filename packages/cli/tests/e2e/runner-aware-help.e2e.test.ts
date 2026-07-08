@@ -37,7 +37,7 @@ describe('--help — runner-aware Usage + Examples', () => {
     expect(r.output).toContain(`Usage: ${label} stash`)
     // At least one of the Examples lines must surface the same runner.
     expect(r.output).toContain(`${label} stash init`)
-    expect(r.output).toContain(`${label} stash db install`)
+    expect(r.output).toContain(`${label} stash eql install`)
   })
 })
 

@@ -8,7 +8,7 @@ export function createSupabaseProvider(): InitProvider {
     getNextSteps(state: InitState, pm: PackageManager): string[] {
       const cli = runnerCommand(pm, 'stash')
       const steps = [
-        `Install EQL: ${cli} db install --supabase (prompts for migration vs direct)`,
+        `Install EQL: ${cli} eql install --supabase (prompts for migration vs direct)`,
         'Apply it: supabase db reset (local) or supabase migration up (remote)',
       ]
 

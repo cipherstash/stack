@@ -17,7 +17,7 @@ const PRISMA_NEXT_PACKAGE = '@cipherstash/prisma-next'
  *
  * - `@cipherstash/stack` (prod) — the encryption client and per-integration
  *   helpers (drizzle, supabase, schema).
- * - `stash` (dev) — the CLI itself, so the user can run `stash db install`,
+ * - `stash` (dev) — the CLI itself, so the user can run `stash eql install`,
  *   `stash wizard`, etc. as a project script without the global install.
  *
  * Skips silently when both are already present. Prompts before running the

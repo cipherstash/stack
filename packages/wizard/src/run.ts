@@ -240,7 +240,7 @@ export async function run(options: RunOptions) {
         })
         changelog.phase(
           'Post-agent steps complete',
-          'Package install, `db install`, `db push`, and migrations finished.',
+          'Package install, `eql install`, `db push`, and migrations finished.',
         )
 
         const scanResult = await scanPromise

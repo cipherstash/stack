@@ -27,7 +27,7 @@ export const SUPABASE_EQL_MIGRATION_FILENAME =
  * package manager.
  */
 function migrationHeader(runner: string): string {
-  return `-- CipherStash EQL — installed by \`${runner} stash db install --supabase --migration\`.
+  return `-- CipherStash EQL — installed by \`${runner} stash eql install --supabase --migration\`.
 --
 -- This migration installs the CipherStash Encrypt Query Language (EQL) types,
 -- functions, and operators into the \`eql_v2\` schema, then grants Supabase's

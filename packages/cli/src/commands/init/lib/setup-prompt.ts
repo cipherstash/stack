@@ -129,7 +129,7 @@ const SKILL_PURPOSES: Record<string, string> = {
   'stash-dynamodb':
     'DynamoDB encryption: per-item encrypt/decrypt, HMAC attribute keys, audit logging',
   'stash-cli':
-    '`stash` command reference — `status`, `plan`, `impl`, `db install`, `encrypt {backfill,cutover,drop}`, etc.',
+    '`stash` command reference — `status`, `plan`, `impl`, `eql install`, `encrypt {backfill,cutover,drop}`, etc.',
   'stash-secrets':
     'storing and retrieving encrypted secrets (separate concern from column encryption)',
   'stash-supply-chain-security':

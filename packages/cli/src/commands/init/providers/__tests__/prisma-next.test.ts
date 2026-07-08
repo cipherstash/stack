@@ -4,12 +4,12 @@ import { createPrismaNextProvider } from '../prisma-next.js'
 describe('createPrismaNextProvider getNextSteps', () => {
   const provider = createPrismaNextProvider()
 
-  it('points at prisma-next migration plan + apply rather than stash db install', () => {
+  it('points at prisma-next migration plan + apply rather than stash eql install', () => {
     const steps = provider.getNextSteps({}, 'pnpm')
     // The whole story hinges on this: Prisma Next users never run
-    // `stash db install` — the framework handles the EQL bundle.
+    // `stash eql install` — the framework handles the EQL bundle.
     for (const step of steps) {
-      expect(step).not.toMatch(/stash db install/)
+      expect(step).not.toMatch(/stash eql install/)
     }
     const planApply = steps.find((s) => s.includes('migration plan'))
     expect(planApply).toBeDefined()

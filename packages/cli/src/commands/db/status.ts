@@ -44,7 +44,7 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
   } else {
     s.stop('EQL is not installed.')
     p.log.warn(
-      `EQL is not installed. Run \`${runnerCommand(pm, 'stash db install')}\` to install it.`,
+      `EQL is not installed. Run \`${runnerCommand(pm, 'stash eql install')}\` to install it.`,
     )
     p.outro('Status check complete.')
     return

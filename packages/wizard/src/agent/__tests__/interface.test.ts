@@ -21,10 +21,10 @@ describe('wizardCanUseTool — DLX command allowlist', () => {
       }
     })
 
-    it('allows stash db with npx, bunx, pnpm dlx, yarn dlx', () => {
+    it('allows stash eql with npx, bunx, pnpm dlx, yarn dlx', () => {
       for (const runner of ['npx', 'bunx', 'pnpm dlx', 'yarn dlx']) {
         const result = wizardCanUseTool('Bash', {
-          command: `${runner} stash db install`,
+          command: `${runner} stash eql install`,
         })
         expect(result).toBe(true)
       }
@@ -75,8 +75,14 @@ describe('wizardCanUseTool — DLX command allowlist', () => {
     })
   })
 
-  describe('allows stash db commands', () => {
-    it('allows stash db install', () => {
+  describe('allows stash db / eql commands', () => {
+    it('allows stash eql install', () => {
+      expect(wizardCanUseTool('Bash', { command: 'stash eql install' })).toBe(
+        true,
+      )
+    })
+
+    it('allows the deprecated stash db install alias', () => {
       expect(wizardCanUseTool('Bash', { command: 'stash db install' })).toBe(
         true,
       )

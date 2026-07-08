@@ -7,7 +7,7 @@ This document is the **durable rule book** for any agent working on this codebas
 ## What you are working with
 
 - **Encryption client** — a per-project module that defines which tables and columns are encrypted, what data type each column holds, and which search operations are enabled. The path is in `.cipherstash/context.json` under `encryptionClientPath`.
-- **EQL extension** — a Postgres extension installed via `stash db install` that provides server-side functions for searchable encryption (`eql_v2.*`). Required before any migration that creates encrypted columns.
+- **EQL extension** — a Postgres extension installed via `stash eql install` that provides server-side functions for searchable encryption (`eql_v2.*`). Required before any migration that creates encrypted columns.
 - **Project context** — `.cipherstash/context.json` records what `stash init` discovered: integration, package manager, env key names (never values), schemas, install command, CLI version. Treat it as authoritative.
 - **Action plan** — `.cipherstash/setup-prompt.md` is the project-specific to-do list for the current setup run. Read it first.
 
