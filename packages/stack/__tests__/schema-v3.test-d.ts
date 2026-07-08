@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import { Encryption, type EncryptionClient } from '@/encryption'
 import type {
+  EncryptedBigintColumn,
   EncryptedTextSearchColumn,
   InferEncrypted,
   InferPlaintext,
@@ -21,9 +22,9 @@ describe('eql_v3 schema type inference', () => {
     expectTypeOf(col).toEqualTypeOf<EncryptedTextSearchColumn>()
   })
 
-  it('does not expose bigint factories until native bigint round-tripping lands', () => {
-    // @ts-expect-error - bigint v3 domains are intentionally not public yet
-    types.Bigint('large')
+  it('types.Bigint returns an EncryptedBigintColumn (native bigint round-trip on protect-ffi 0.28)', () => {
+    const col = types.Bigint('large')
+    expectTypeOf(col).toEqualTypeOf<EncryptedBigintColumn>()
   })
 
   it('encryptedTable exposes column builders as typed properties', () => {
@@ -65,6 +66,7 @@ describe('eql_v3 schema type inference', () => {
       active: types.Boolean('active'),
       createdAt: types.Timestamp('created_at'),
       score: types.Double('score'),
+      balance: types.BigintOrd('balance'),
     })
 
     type Plaintext = InferPlaintext<typeof metrics>
@@ -75,6 +77,7 @@ describe('eql_v3 schema type inference', () => {
       active: boolean
       createdAt: Date
       score: number
+      balance: bigint
     }>()
   })
 

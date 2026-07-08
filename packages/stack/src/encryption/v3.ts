@@ -128,8 +128,10 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
  * row-invariant, but non-trivial to build — is derived once per call site,
  * not once per row on the bulk path.
  *
- * NOTE: `bigint` (int8) reconstruction is intentionally absent — int8 domains are
- * omitted from the v3 SDK until the native FFI supports lossless bigint I/O.
+ * NOTE: only date-like casts need per-row reconstruction. `bigint` (int8)
+ * needs none — protect-ffi 0.28 returns a native JS `bigint` on decrypt
+ * (and bounds-checks/encodes it on encrypt), so those columns pass through
+ * unchanged, exactly like `string`/`number`/`boolean`.
  */
 function rowReconstructor(
   table: AnyV3Table,

@@ -40,7 +40,7 @@ export type DateLikeCast = (typeof DATE_LIKE_CASTS)[number]
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'boolean' | DateLikeCast
+type PlaintextKind = 'string' | 'number' | 'bigint' | 'boolean' | DateLikeCast
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -149,6 +149,31 @@ export const SMALLINT_ORD_ORE = {
 export const SMALLINT_ORD = {
   eqlType: 'public.smallint_ord',
   castAs: 'number',
+  capabilities: ORDER_AND_RANGE,
+} as const
+
+// bigint (int8) domains. Plaintext is a JS `bigint` (always decrypts to
+// `bigint`); bounds are the full i64 range, enforced at the protect-ffi
+// boundary, which round-trips a native bigint losslessly. (`*_ord_ope`
+// variants are out of scope — CIP-3403.)
+export const BIGINT = {
+  eqlType: 'public.bigint',
+  castAs: 'bigint',
+  capabilities: STORAGE_ONLY,
+} as const
+export const BIGINT_EQ = {
+  eqlType: 'public.bigint_eq',
+  castAs: 'bigint',
+  capabilities: EQUALITY_ONLY,
+} as const
+export const BIGINT_ORD_ORE = {
+  eqlType: 'public.bigint_ord_ore',
+  castAs: 'bigint',
+  capabilities: ORDER_AND_RANGE,
+} as const
+export const BIGINT_ORD = {
+  eqlType: 'public.bigint_ord',
+  castAs: 'bigint',
   capabilities: ORDER_AND_RANGE,
 } as const
 
@@ -497,6 +522,19 @@ export class EncryptedSmallintOrdColumn extends EncryptedV3Column<
   typeof SMALLINT_ORD
 > {}
 
+// bigint (int8) — plaintext is a JS `bigint`, round-tripped losslessly by the
+// native protect-ffi boundary (see the BIGINT domain definitions above).
+export class EncryptedBigintColumn extends EncryptedV3Column<typeof BIGINT> {}
+export class EncryptedBigintEqColumn extends EncryptedV3Column<
+  typeof BIGINT_EQ
+> {}
+export class EncryptedBigintOrdOreColumn extends EncryptedV3Column<
+  typeof BIGINT_ORD_ORE
+> {}
+export class EncryptedBigintOrdColumn extends EncryptedV3Column<
+  typeof BIGINT_ORD
+> {}
+
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
 export class EncryptedDateEqColumn extends EncryptedV3Column<typeof DATE_EQ> {}
@@ -584,6 +622,10 @@ export type AnyEncryptedV3Column =
   | EncryptedSmallintEqColumn
   | EncryptedSmallintOrdOreColumn
   | EncryptedSmallintOrdColumn
+  | EncryptedBigintColumn
+  | EncryptedBigintEqColumn
+  | EncryptedBigintOrdOreColumn
+  | EncryptedBigintOrdColumn
   | EncryptedDateColumn
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
@@ -625,11 +667,13 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
   : K extends 'number'
     ? number
-    : K extends 'boolean'
-      ? boolean
-      : K extends DateLikeCast
-        ? Date
-        : never
+    : K extends 'bigint'
+      ? bigint
+      : K extends 'boolean'
+        ? boolean
+        : K extends DateLikeCast
+          ? Date
+          : never
 
 /**
  * The plaintext type for a single v3 column, read from the literal domain

@@ -170,6 +170,11 @@ describe('eql_v3 concrete type names', () => {
     )
     expect(types.SmallintOrd('n').getEqlType()).toBe('public.smallint_ord')
 
+    expect(types.Bigint('n').getEqlType()).toBe('public.bigint')
+    expect(types.BigintEq('n').getEqlType()).toBe('public.bigint_eq')
+    expect(types.BigintOrdOre('n').getEqlType()).toBe('public.bigint_ord_ore')
+    expect(types.BigintOrd('n').getEqlType()).toBe('public.bigint_ord')
+
     expect(types.Boolean('b').getEqlType()).toBe('public.boolean')
     expect(types.Real('n').getEqlType()).toBe('public.real')
     expect(types.RealEq('n').getEqlType()).toBe('public.real_eq')
