@@ -9,11 +9,11 @@ import { describeLive, LIVE_CIPHERSTASH_ENABLED } from './helpers/live-gate'
 
 const users = encryptedTable('schema_v3_client_users', {
   email: types.TextSearch('email'),
-  age: types.Int4Ord('age'),
+  age: types.IntegerOrd('age'),
   nickname: types.TextEq('nickname'),
   body: types.TextMatch('body'),
   notes: types.Text('notes'),
-  active: types.Bool('active'),
+  active: types.Boolean('active'),
   // camelCase JS property → snake_case DB name on purpose: the model path must
   // match models by JS property (`createdOn`) yet address the FFI/config by DB
   // name (`created_on`). The round-trip tests below exercise that mapping.

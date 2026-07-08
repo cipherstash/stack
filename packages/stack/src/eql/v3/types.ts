@@ -1,34 +1,46 @@
 import {
-  BOOL,
+  BIGINT,
+  BIGINT_EQ,
+  BIGINT_ORD,
+  BIGINT_ORD_ORE,
+  BOOLEAN,
   DATE,
   DATE_EQ,
   DATE_ORD,
   DATE_ORD_ORE,
-  EncryptedBoolColumn,
+  DOUBLE,
+  DOUBLE_EQ,
+  DOUBLE_ORD,
+  DOUBLE_ORD_ORE,
+  EncryptedBigintColumn,
+  EncryptedBigintEqColumn,
+  EncryptedBigintOrdColumn,
+  EncryptedBigintOrdOreColumn,
+  EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
   EncryptedDateOrdColumn,
   EncryptedDateOrdOreColumn,
-  EncryptedFloat4Column,
-  EncryptedFloat4EqColumn,
-  EncryptedFloat4OrdColumn,
-  EncryptedFloat4OrdOreColumn,
-  EncryptedFloat8Column,
-  EncryptedFloat8EqColumn,
-  EncryptedFloat8OrdColumn,
-  EncryptedFloat8OrdOreColumn,
-  EncryptedInt2Column,
-  EncryptedInt2EqColumn,
-  EncryptedInt2OrdColumn,
-  EncryptedInt2OrdOreColumn,
-  EncryptedInt4Column,
-  EncryptedInt4EqColumn,
-  EncryptedInt4OrdColumn,
-  EncryptedInt4OrdOreColumn,
+  EncryptedDoubleColumn,
+  EncryptedDoubleEqColumn,
+  EncryptedDoubleOrdColumn,
+  EncryptedDoubleOrdOreColumn,
+  EncryptedIntegerColumn,
+  EncryptedIntegerEqColumn,
+  EncryptedIntegerOrdColumn,
+  EncryptedIntegerOrdOreColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
   EncryptedNumericOrdOreColumn,
+  EncryptedRealColumn,
+  EncryptedRealEqColumn,
+  EncryptedRealOrdColumn,
+  EncryptedRealOrdOreColumn,
+  EncryptedSmallintColumn,
+  EncryptedSmallintEqColumn,
+  EncryptedSmallintOrdColumn,
+  EncryptedSmallintOrdOreColumn,
   EncryptedTextColumn,
   EncryptedTextEqColumn,
   EncryptedTextMatchColumn,
@@ -39,26 +51,22 @@ import {
   EncryptedTimestampEqColumn,
   EncryptedTimestampOrdColumn,
   EncryptedTimestampOrdOreColumn,
-  FLOAT4,
-  FLOAT4_EQ,
-  FLOAT4_ORD,
-  FLOAT4_ORD_ORE,
-  FLOAT8,
-  FLOAT8_EQ,
-  FLOAT8_ORD,
-  FLOAT8_ORD_ORE,
-  INT2,
-  INT2_EQ,
-  INT2_ORD,
-  INT2_ORD_ORE,
-  INT4,
-  INT4_EQ,
-  INT4_ORD,
-  INT4_ORD_ORE,
+  INTEGER,
+  INTEGER_EQ,
+  INTEGER_ORD,
+  INTEGER_ORD_ORE,
   NUMERIC,
   NUMERIC_EQ,
   NUMERIC_ORD,
   NUMERIC_ORD_ORE,
+  REAL,
+  REAL_EQ,
+  REAL_ORD,
+  REAL_ORD_ORE,
+  SMALLINT,
+  SMALLINT_EQ,
+  SMALLINT_ORD,
+  SMALLINT_ORD_ORE,
   TEXT,
   TEXT_EQ,
   TEXT_MATCH,
@@ -74,8 +82,8 @@ import {
  * The v3 column-type namespace. Each member is a factory that builds a concrete
  * EQL v3 column; the member name mirrors the underlying `eql_v3.<name>` domain
  * (strip the `eql_v3.` prefix, PascalCase each `_`-separated segment). So
- * `types.TextEq('actor')` builds an `eql_v3.text_eq` column, `types.Int4Ord`
- * an `eql_v3.int4_ord`, `types.Timestamp` an `eql_v3.timestamp`, and so on.
+ * `types.TextEq('actor')` builds an `eql_v3.text_eq` column, `types.IntegerOrd`
+ * an `eql_v3.integer_ord`, `types.Timestamp` an `eql_v3.timestamp`, and so on.
  *
  * Each factory returns the CONCRETE column class instance (never the widened
  * `AnyEncryptedV3Column`) so per-column plaintext / query-capability inference
@@ -86,30 +94,39 @@ import {
  *
  * const events = encryptedTable('events', {
  *   actor:     types.TextEq('actor'),           // equality
- *   weight:    types.Int4Ord('weight'),         // order + range
+ *   weight:    types.IntegerOrd('weight'),         // order + range
  *   createdAt: types.Timestamp('created_at'), // storage only
  * })
  * ```
  *
  * `types.TextSearch` keeps the chainable `.freeTextSearch(opts)` tuner (the
  * only capability-bearing chain — every other domain is fully described by its
- * type). int8/bigint domains are intentionally absent pending lossless FFI
- * round-tripping (see ./columns).
+ * type). Bigint domains take and return JS `bigint` values.
  */
 export const types = {
-  // int4
-  Int4: (name: string) => new EncryptedInt4Column(name, INT4),
-  Int4Eq: (name: string) => new EncryptedInt4EqColumn(name, INT4_EQ),
-  Int4OrdOre: (name: string) =>
-    new EncryptedInt4OrdOreColumn(name, INT4_ORD_ORE),
-  Int4Ord: (name: string) => new EncryptedInt4OrdColumn(name, INT4_ORD),
+  // integer
+  Integer: (name: string) => new EncryptedIntegerColumn(name, INTEGER),
+  IntegerEq: (name: string) => new EncryptedIntegerEqColumn(name, INTEGER_EQ),
+  IntegerOrdOre: (name: string) =>
+    new EncryptedIntegerOrdOreColumn(name, INTEGER_ORD_ORE),
+  IntegerOrd: (name: string) =>
+    new EncryptedIntegerOrdColumn(name, INTEGER_ORD),
 
-  // int2
-  Int2: (name: string) => new EncryptedInt2Column(name, INT2),
-  Int2Eq: (name: string) => new EncryptedInt2EqColumn(name, INT2_EQ),
-  Int2OrdOre: (name: string) =>
-    new EncryptedInt2OrdOreColumn(name, INT2_ORD_ORE),
-  Int2Ord: (name: string) => new EncryptedInt2OrdColumn(name, INT2_ORD),
+  // smallint
+  Smallint: (name: string) => new EncryptedSmallintColumn(name, SMALLINT),
+  SmallintEq: (name: string) =>
+    new EncryptedSmallintEqColumn(name, SMALLINT_EQ),
+  SmallintOrdOre: (name: string) =>
+    new EncryptedSmallintOrdOreColumn(name, SMALLINT_ORD_ORE),
+  SmallintOrd: (name: string) =>
+    new EncryptedSmallintOrdColumn(name, SMALLINT_ORD),
+
+  // bigint
+  Bigint: (name: string) => new EncryptedBigintColumn(name, BIGINT),
+  BigintEq: (name: string) => new EncryptedBigintEqColumn(name, BIGINT_EQ),
+  BigintOrdOre: (name: string) =>
+    new EncryptedBigintOrdOreColumn(name, BIGINT_ORD_ORE),
+  BigintOrd: (name: string) => new EncryptedBigintOrdColumn(name, BIGINT_ORD),
 
   // date
   Date: (name: string) => new EncryptedDateColumn(name, DATE),
@@ -144,20 +161,20 @@ export const types = {
   TextOrd: (name: string) => new EncryptedTextOrdColumn(name, TEXT_ORD),
   TextSearch: (name: string) => new EncryptedTextSearchColumn(name),
 
-  // bool
-  Bool: (name: string) => new EncryptedBoolColumn(name, BOOL),
+  // boolean
+  Boolean: (name: string) => new EncryptedBooleanColumn(name, BOOLEAN),
 
-  // float4
-  Float4: (name: string) => new EncryptedFloat4Column(name, FLOAT4),
-  Float4Eq: (name: string) => new EncryptedFloat4EqColumn(name, FLOAT4_EQ),
-  Float4OrdOre: (name: string) =>
-    new EncryptedFloat4OrdOreColumn(name, FLOAT4_ORD_ORE),
-  Float4Ord: (name: string) => new EncryptedFloat4OrdColumn(name, FLOAT4_ORD),
+  // real
+  Real: (name: string) => new EncryptedRealColumn(name, REAL),
+  RealEq: (name: string) => new EncryptedRealEqColumn(name, REAL_EQ),
+  RealOrdOre: (name: string) =>
+    new EncryptedRealOrdOreColumn(name, REAL_ORD_ORE),
+  RealOrd: (name: string) => new EncryptedRealOrdColumn(name, REAL_ORD),
 
-  // float8
-  Float8: (name: string) => new EncryptedFloat8Column(name, FLOAT8),
-  Float8Eq: (name: string) => new EncryptedFloat8EqColumn(name, FLOAT8_EQ),
-  Float8OrdOre: (name: string) =>
-    new EncryptedFloat8OrdOreColumn(name, FLOAT8_ORD_ORE),
-  Float8Ord: (name: string) => new EncryptedFloat8OrdColumn(name, FLOAT8_ORD),
+  // double
+  Double: (name: string) => new EncryptedDoubleColumn(name, DOUBLE),
+  DoubleEq: (name: string) => new EncryptedDoubleEqColumn(name, DOUBLE_EQ),
+  DoubleOrdOre: (name: string) =>
+    new EncryptedDoubleOrdOreColumn(name, DOUBLE_ORD_ORE),
+  DoubleOrd: (name: string) => new EncryptedDoubleOrdColumn(name, DOUBLE_ORD),
 } as const

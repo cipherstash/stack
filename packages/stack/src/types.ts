@@ -1,7 +1,9 @@
 import type {
   AuthStrategy,
   Encrypted as CipherStashEncrypted,
+  EncryptedPayload as CipherStashEncryptedPayload,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedV3Query as CipherStashEncryptedV3Query,
   JsPlaintext,
   newClient,
   QueryOpName,
@@ -49,38 +51,40 @@ export type Client = Awaited<ReturnType<typeof newClient>> | undefined
 export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 
 /** Structural type representing encrypted data stored in the database. Always
- * carries a ciphertext. See also `EncryptedValue` for branded nominal typing,
+ * carries a ciphertext. Covers both wire formats: the EQL v2.3 payloads and
+ * the EQL v3 payloads. See also `EncryptedValue` for branded nominal typing,
  * and {@link EncryptedQuery} for the search-term shape returned by
  * `encryptQuery`. */
-export type Encrypted = CipherStashEncrypted
+export type Encrypted = CipherStashEncryptedPayload
 
 /** Structural type representing an encrypted query term (search needle)
  * returned by `encryptQuery` / `encryptQueryBulk` for scalar
  * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
- * queries. Carries no ciphertext — matched against stored values, never
- * decrypted. JSON containment queries (`ste_vec_term`) return a
+ * queries, plus — under `eqlVersion: 3` — the `eql_v3.jsonb_query`
+ * containment needle. Carries no ciphertext — matched against stored values,
+ * never decrypted. v2 JSON containment queries (`ste_vec_term`) return a
  * storage-shaped {@link Encrypted} payload instead. */
-export type EncryptedQuery = CipherStashEncryptedQuery
+export type EncryptedQuery =
+  | CipherStashEncryptedQuery
+  | CipherStashEncryptedV3Query
 
 /**
  * Plaintext values the SDK accepts for encryption.
  *
  * Widens the FFI's `JsPlaintext` (`string | number | boolean |
- * Record<string, unknown> | JsPlaintext[]`) with `Date`. `Date` is a supported
- * cast target that is omitted from the FFI's `JsPlaintext` INPUT union, but it
- * serializes at the boundary via `toJSON` (ISO string), so it is accepted on the
- * way in.
+ * Record<string, unknown> | JsPlaintext[]`) with `Date` and `bigint`. `Date`
+ * is a supported cast target that is omitted from the FFI's `JsPlaintext`
+ * INPUT union, but it serializes at the boundary via `toJSON` (ISO string), so
+ * it is accepted on the way in.
  *
- * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
- * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
- * BigInt") and rejects a `string` for a `big_int` column. The v3 int8 domains
- * are therefore omitted from the SDK entirely (see `eql/v3`) until the FFI
- * supports lossless bigint I/O; `bigint` returns here alongside them.
+ * `bigint` is the plaintext for the v3 int8/bigint domains (see `eql/v3`),
+ * which always decrypt to a JS `bigint`. i64 bounds are enforced at the
+ * protect-ffi boundary.
  *
- * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
- * arm can collapse back into `JsPlaintext`.
+ * When the upstream FFI `JsPlaintext` includes `Date` and `bigint`, both extra
+ * arms can collapse back into `JsPlaintext`.
  */
-export type Plaintext = JsPlaintext | Date
+export type Plaintext = JsPlaintext | Date | bigint
 
 // ---------------------------------------------------------------------------
 // Client configuration

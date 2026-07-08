@@ -93,7 +93,7 @@ describe('CJS consumers can require the built bundles', () => {
       `if (typeof v3.encryptedTable !== 'function') { throw new Error('missing v3 CJS export: encryptedTable') }`,
       `if (typeof v3.buildEncryptConfig !== 'function') { throw new Error('missing v3 CJS export: buildEncryptConfig') }`,
       `if (typeof v3.types !== 'object' || v3.types === null) { throw new Error('missing v3 CJS export: types namespace') }`,
-      `const requiredTypes = ['TextSearch', 'TextEq', 'Int4Ord', 'Bool', 'Timestamp']`,
+      `const requiredTypes = ['TextSearch', 'TextEq', 'IntegerOrd', 'Boolean', 'Timestamp', 'Bigint']`,
       `const missing = requiredTypes.filter((k) => typeof v3.types[k] !== 'function')`,
       `if (missing.length > 0) { throw new Error('missing v3 types.* CJS members: ' + missing.join(', ')) }`,
     ].join('\n')

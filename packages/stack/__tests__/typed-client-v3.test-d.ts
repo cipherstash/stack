@@ -19,10 +19,10 @@ const users = encryptedTable('users', {
   createdAt: types.TimestampOrd('created_at'), // equality + order
 })
 
-// A second registered table whose `weight` domain (int4_ord) is NOT present in
+// A second registered table whose `weight` domain (integer_ord) is NOT present in
 // `users`, so borrowing it is a genuine cross-table type error.
 const other = encryptedTable('other', {
-  weight: types.Int4Ord('weight'),
+  weight: types.IntegerOrd('weight'),
 })
 
 const client = typedClient({} as EncryptionClient, users, other)
@@ -166,7 +166,7 @@ describe('typed v3 client — soundness', () => {
     // error is the column itself failing the `ColumnsOf<typeof users>` constraint.
     client.encrypt('x', {
       table: users,
-      // @ts-expect-error - int4_ord column from `other` is not in ColumnsOf<typeof users>
+      // @ts-expect-error - integer_ord column from `other` is not in ColumnsOf<typeof users>
       column: other.weight,
     })
   })

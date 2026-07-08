@@ -56,10 +56,10 @@ describe('eql_v3 schema type inference', () => {
   it('InferPlaintext maps v3 concrete domains to plaintext TypeScript types', () => {
     const metrics = encryptedTable('metrics', {
       name: types.Text('name'),
-      age: types.Int4('age'),
-      active: types.Bool('active'),
+      age: types.Integer('age'),
+      active: types.Boolean('active'),
       createdAt: types.Timestamp('created_at'),
-      score: types.Float8('score'),
+      score: types.Double('score'),
     })
 
     type Plaintext = InferPlaintext<typeof metrics>
@@ -75,12 +75,12 @@ describe('eql_v3 schema type inference', () => {
 
   it('v3 domain classes remain nominal by literal domain definition', () => {
     const date = types.Date('created_on')
-    const bool = types.Bool('active')
+    const boolean = types.Boolean('active')
 
-    expectTypeOf(date).not.toEqualTypeOf<typeof bool>()
+    expectTypeOf(date).not.toEqualTypeOf<typeof boolean>()
 
-    // @ts-expect-error - storage-only bool is not assignable to storage-only date
-    const invalid: typeof date = bool
+    // @ts-expect-error - storage-only boolean is not assignable to storage-only date
+    const invalid: typeof date = boolean
     void invalid
   })
 })
@@ -194,7 +194,7 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
   it('encryptQuery rejects storage-only v3 columns at compile time', () => {
     const users = encryptedTable('users', {
       email: types.Text('email'),
-      active: types.Bool('active'),
+      active: types.Boolean('active'),
     })
     const client = {} as EncryptionClient
 
@@ -206,7 +206,7 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
 
     client.encryptQuery(true, {
       table: users,
-      // @ts-expect-error - storage-only v3 bool column is not queryable
+      // @ts-expect-error - storage-only v3 boolean column is not queryable
       column: users.active,
     })
   })
@@ -216,7 +216,7 @@ describe('eql_v3 model encryption inference', () => {
   it('encryptModel and bulkEncryptModels infer encrypted fields from v3 tables', () => {
     const users = encryptedTable('users', {
       email: types.TextSearch('email'),
-      active: types.Bool('active'),
+      active: types.Boolean('active'),
     })
     const client = {} as EncryptionClient
 
