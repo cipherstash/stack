@@ -8,9 +8,20 @@ const authMock = vi.hoisted(() => ({
   bindClientDevice: vi.fn(),
 }))
 vi.mock('@cipherstash/auth', () => ({ default: authMock }))
+
+// Hoisted so the interactive (non-json) path — spinner + `p.log.warn` — is
+// observable; a single spinner instance is returned from every `p.spinner()`.
+const clack = vi.hoisted(() => {
+  const spinnerInstance = { start: vi.fn(), stop: vi.fn() }
+  return {
+    spinnerInstance,
+    spinner: vi.fn(() => spinnerInstance),
+    log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
+  }
+})
 vi.mock('@clack/prompts', () => ({
-  spinner: () => ({ start: vi.fn(), stop: vi.fn() }),
-  log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn() },
+  spinner: clack.spinner,
+  log: clack.log,
 }))
 
 const { login, bindDevice } = await import('../login.js')
@@ -169,5 +180,88 @@ describe('bindDevice — json mode', () => {
       code: 'bind_failed',
       message: 'keyset unreachable',
     })
+  })
+
+  it('carries the AuthError .code when the bind failure has one', async () => {
+    // The code-present branch of `authErrorCode(error) ?? 'bind_failed'` — the
+    // fallback above covers code-absent; this pins the pass-through.
+    authMock.bindClientDevice.mockRejectedValueOnce(
+      Object.assign(new Error('keyset locked'), { code: 'KEYSET_LOCKED' }),
+    )
+    const exit = spyExit()
+    const out = captureJsonLines()
+
+    await expect(bindDevice({ json: true })).rejects.toThrow('process.exit')
+
+    expect(exit).toHaveBeenCalledWith(1)
+    expect(out.lines()[0]).toMatchObject({
+      status: 'error',
+      code: 'KEYSET_LOCKED',
+      message: 'keyset locked',
+    })
+  })
+})
+
+describe('login — interactive (non-json) browser open', () => {
+  it('opens the browser exactly once on the interactive path', async () => {
+    const pending = makePending()
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+
+    // No `open` passed: interactive mode (json:false) defaults to opening.
+    await login('us-east-1.aws', undefined, { json: false })
+
+    expect(pending.openInBrowser).toHaveBeenCalledTimes(1)
+    expect(clack.log.warn).not.toHaveBeenCalled()
+  })
+
+  it('does not open the browser when open: false on the interactive path', async () => {
+    const pending = makePending()
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+
+    await login('us-east-1.aws', undefined, { json: false, open: false })
+
+    expect(pending.openInBrowser).not.toHaveBeenCalled()
+  })
+
+  it('warns (interactive only) when the browser could not be opened', async () => {
+    const pending = makePending({ openInBrowser: vi.fn(() => false) })
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(pending)
+
+    await login('us-east-1.aws', undefined, { json: false })
+
+    expect(pending.openInBrowser).toHaveBeenCalledTimes(1)
+    expect(clack.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Could not open browser'),
+    )
+  })
+})
+
+describe('login — interactive (non-json) error propagation', () => {
+  it('rethrows a begin failure and does NOT call process.exit', async () => {
+    authMock.beginDeviceCodeFlow.mockRejectedValueOnce(new Error('begin boom'))
+    const exit = spyExit()
+
+    // Asserting the original message (not 'process.exit') proves the
+    // interactive path propagated the error instead of exiting.
+    await expect(
+      login('us-east-1.aws', undefined, { json: false }),
+    ).rejects.toThrow('begin boom')
+    expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('rethrows a poll failure and does NOT call process.exit', async () => {
+    authMock.beginDeviceCodeFlow.mockResolvedValueOnce(
+      makePending({
+        pollForToken: vi.fn(async () => {
+          throw new Error('poll boom')
+        }),
+      }),
+    )
+    const exit = spyExit()
+
+    await expect(
+      login('us-east-1.aws', undefined, { json: false, open: false }),
+    ).rejects.toThrow('poll boom')
+    expect(exit).not.toHaveBeenCalled()
   })
 })
