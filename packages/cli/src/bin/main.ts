@@ -27,6 +27,7 @@ import {
   implCommand,
   initCommand,
   installCommand,
+  manifestCommand,
   planCommand,
   statusCommand,
   testConnectionCommand,
@@ -89,6 +90,7 @@ Commands:
   auth <subcommand>    Authenticate with CipherStash
   wizard               AI-guided encryption setup (reads your codebase)
   doctor               Diagnose install problems (native binaries, runtime)
+  manifest             Print the structured, versioned command surface (--json for docs/agents)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
   eql upgrade          Upgrade EQL extensions to the latest version
@@ -120,6 +122,22 @@ Init Flags:
   --prisma-next        Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply)
   --proxy              Query encrypted data via CipherStash Proxy
   --no-proxy           Query encrypted data directly via the SDK (default)
+  --region <slug>      Region to authenticate against (e.g. us-east-1). Skips the
+                       interactive region picker. Also settable via STASH_REGION.
+                       Required for non-interactive init when not already logged in.
+
+Auth Flags:
+  --region <slug>      Region to authenticate against (e.g. us-east-1). Skips the
+                       interactive region picker. Also settable via STASH_REGION.
+  --json               Emit newline-delimited JSON events instead of prose. The
+                       first event (authorization_required) carries the device
+                       verification URL for a human to open. Implies no prompt
+                       and no browser auto-open — an agent can trigger auth
+                       non-interactively; only a human can complete it in the
+                       browser. Run it in the background, read the URL from the
+                       first line, then hand it to the user.
+  --no-open            Don't auto-open the verification URL in a browser
+                       (already implied by --json).
 
 Plan Flags:
   --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)
@@ -165,17 +183,21 @@ Examples:
   ${STASH} init
   ${STASH} init --supabase
   ${STASH} init --prisma-next
+  ${STASH} init --region us-east-1        # non-interactive: skip the region picker
   ${STASH} plan
   ${STASH} impl
   ${STASH} impl --continue-without-plan
   ${STASH} impl --target claude-code
   ${STASH} status
   ${STASH} auth login
+  ${STASH} auth regions                           # list regions valid for --region
+  ${STASH} auth login --region us-east-1 --json   # agent triggers; human finishes in browser
   ${STASH} wizard
   ${STASH} eql install
   ${STASH} db push
   ${STASH} schema build
   ${STASH} doctor
+  ${STASH} manifest --json                        # structured command surface for docs / agents
 `.trim()
 
 interface ParsedArgs {
@@ -465,7 +487,7 @@ export async function run() {
 
   switch (command) {
     case 'init':
-      await initCommand(flags)
+      await initCommand(flags, values)
       break
     case 'plan':
       await planCommand(flags, values)
@@ -482,7 +504,7 @@ export async function run() {
       break
     case 'auth': {
       const authArgs = subcommand ? [subcommand, ...commandArgs] : commandArgs
-      await authCommand(authArgs, flags)
+      await authCommand(authArgs, flags, values)
       break
     }
     case 'eql':
@@ -499,6 +521,11 @@ export async function run() {
       break
     case 'env':
       await envCommand({ write: flags.write })
+      break
+    case 'manifest':
+      // Pure metadata (no native code) — safe to run anywhere, including when
+      // the native binary is missing.
+      manifestCommand({ json: flags.json, version: pkg.version })
       break
     case 'wizard': {
       // Forward everything after `stash wizard` verbatim. The wizard package

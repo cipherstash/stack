@@ -31,6 +31,9 @@ export type InitMode = 'plan' | 'implement'
 
 export interface InitState {
   authenticated?: boolean
+  /** Region passed via `--region` / `STASH_REGION`. Consumed by the
+   *  authenticate step to skip the interactive region picker. */
+  regionFlag?: string
   /** Resolved DATABASE_URL. Set by resolve-database; threaded into every
    *  downstream step that needs DB access. Never logged or echoed. */
   databaseUrl?: string

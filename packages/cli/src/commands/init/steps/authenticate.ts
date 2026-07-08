@@ -1,6 +1,7 @@
 import auth from '@cipherstash/auth'
 import * as p from '@clack/prompts'
-import { bindDevice, login, regions, selectRegion } from '../../auth/login.js'
+import { bindDevice, login } from '../../auth/login.js'
+import { regions, resolveRegion } from '../../auth/region.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 
 const { AutoStrategy } = auth
@@ -52,7 +53,10 @@ export const authenticateStep: InitStep = {
       return { ...state, authenticated: true }
     }
 
-    const region = await selectRegion()
+    // Honour `--region` / `STASH_REGION` so `stash init` can run
+    // non-interactively; falls back to the interactive picker in a TTY, or a
+    // clean error (no hang) in an agent / CI context without a region set.
+    const region = await resolveRegion({ regionFlag: state.regionFlag })
     await login(region, provider.name)
     await bindDevice()
     return { ...state, authenticated: true }
