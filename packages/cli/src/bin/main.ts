@@ -186,6 +186,7 @@ Examples:
   ${STASH} impl --target claude-code
   ${STASH} status
   ${STASH} auth login
+  ${STASH} auth regions                           # list regions valid for --region
   ${STASH} auth login --region us-east-1 --json   # agent triggers; human finishes in browser
   ${STASH} wizard
   ${STASH} eql install

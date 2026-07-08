@@ -18,8 +18,13 @@ vi.mock('@clack/prompts', () => ({
   log: clack.log,
 }))
 
-const { normalizeRegion, regionSlugs, resolveRegion, REGION_ENV_VAR } =
-  await import('../region.js')
+const {
+  normalizeRegion,
+  regionList,
+  regionSlugs,
+  resolveRegion,
+  REGION_ENV_VAR,
+} = await import('../region.js')
 
 let originalRegionEnv: string | undefined
 let originalCi: string | undefined
@@ -96,6 +101,27 @@ describe('regionSlugs', () => {
     expect(slugs).toContain('us-east-1')
     expect(slugs).toContain('ap-southeast-2')
     expect(slugs.every((s) => !s.endsWith('.aws'))).toBe(true)
+  })
+})
+
+describe('regionList', () => {
+  it('returns { slug, label } pairs for every region', () => {
+    const list = regionList()
+    expect(list.length).toBe(regionSlugs().length)
+    for (const entry of list) {
+      expect(entry.slug).not.toMatch(/\.aws$/)
+      // Each slug must normalize back to a real region.
+      expect(normalizeRegion(entry.slug)).toBe(`${entry.slug}.aws`)
+      // Label is human copy that leads with the slug.
+      expect(entry.label.startsWith(entry.slug)).toBe(true)
+    }
+  })
+
+  it('includes a known region', () => {
+    expect(regionList()).toContainEqual({
+      slug: 'us-east-1',
+      label: 'us-east-1 (Virginia, USA)',
+    })
   })
 })
 

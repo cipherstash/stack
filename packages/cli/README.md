@@ -139,6 +139,24 @@ Errors are emitted as `{"status":"error","code":"…","message":"…"}` and exit
 
 ---
 
+### `npx stash auth regions`
+
+List the regions you can authenticate against — a first-contact affordance so you (or an agent) can discover valid `--region` / `STASH_REGION` values up front instead of learning them from an error.
+
+```bash
+npx stash auth regions          # human-readable list
+npx stash auth regions --json   # machine-readable [{ "slug": "…", "label": "…" }]
+```
+
+```jsonc
+// --json output:
+[{"slug":"us-east-1","label":"us-east-1 (Virginia, USA)"}, {"slug":"us-east-2","label":"us-east-2 (Ohio, USA)"}, …]
+```
+
+> The region list is currently maintained in the CLI. The intended long-term source of truth is the CipherStash region API (tracked by a `TODO` in `src/commands/auth/region.ts`); when that lands, this command and the runtime SDK should both read from it.
+
+---
+
 ### `npx stash wizard`
 
 Launch the CipherStash AI wizard. Thin wrapper around [`@cipherstash/wizard`](https://www.npmjs.com/package/@cipherstash/wizard) — the wizard ships as a separate npm package so the agent SDK stays out of the `stash` bundle, but you don't need to remember a second tool name.
