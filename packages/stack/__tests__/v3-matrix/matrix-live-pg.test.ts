@@ -35,6 +35,18 @@
  *   - storage (no index): no query is possible; proves the ciphertext, cast to
  *     THIS SPECIFIC Postgres domain type, survives a real INSERT/SELECT and
  *     still decrypts — the one thing the FFI-only round-trip can't show.
+ *
+ * In addition, EVERY ORE ordering domain (every `ore`-indexed domain: all
+ * `_ord`/`_ord_ore` numeric/date/timestamp domains plus `text_ord`,
+ * `text_ord_ore` and `text_search`) gets a STRICT total-order proof. Its
+ * distinct sample values are each seeded as their own row (under a separate
+ * `ORDER_RUN_ID`, so the two-row proofs above are unaffected) and the boolean
+ * `eql_v3.lt` comparison is used — via a self cross-join ranking — to prove the
+ * ORE order reproduces the full plaintext order (a<b<c<d where the domain has
+ * that many distinct samples). This strengthens the `ord` proof above, which
+ * only shows equality-via-ORE / a single degenerate range. The comparison
+ * operator (NOT `ORDER BY eql_v3.ord_term(col)`) is used deliberately: it is
+ * ORE-correct on both superuser (CI) and non-superuser (local) Postgres.
  */
 import 'dotenv/config'
 import postgres from 'postgres'
@@ -141,11 +153,50 @@ const textOreDomains = domains.filter(
     t === 'public.text_search',
 )
 
+// EVERY ORE ordering domain: all `_ord`/`_ord_ore` numeric/date/timestamp
+// domains PLUS the three text order domains (`text_ord`, `text_ord_ore`,
+// `text_search`) — i.e. every domain carrying an `ore` index. `text_search`
+// is intentionally INCLUDED here (unlike `ordDomains`, which excludes it so
+// its canonical proof stays the match one): strict ORE ordering is a real
+// capability of that domain and gets its own proof below.
+const orderingDomains = domains.filter(([, spec]) =>
+  hasIndex(spec.indexes, 'ore'),
+)
+
+// The number of separate ordering rows to seed: the widest ordering domain's
+// distinct sample count (numeric domains carry 4; text carries 3; date/
+// timestamp carry 2). Narrower domains reuse their last sample in the extra
+// rows (harmless — each per-domain proof only reads its own first N rows).
+const MAX_ORDER_ROWS = Math.max(
+  ...orderingDomains.map(([, spec]) => spec.samples.length),
+)
+
+/** Plaintext ordering used to derive the EXPECTED ORE order per domain.
+ * Dates compare by instant, numbers numerically, strings by code point (ORE
+ * text order is byte order, which matches JS `<` for the ASCII samples here). */
+const comparePlaintext = (a: unknown, b: unknown): number => {
+  if (a instanceof Date && b instanceof Date) return a.getTime() - b.getTime()
+  if (typeof a === 'number' && typeof b === 'number') return a - b
+  const sa = String(a)
+  const sb = String(b)
+  return sa < sb ? -1 : sa > sb ? 1 : 0
+}
+
 type Row = { id: number }
 
 let client: Awaited<ReturnType<typeof EncryptionV3>>
 let idA: number
 let idB: number
+// Separate run id for the multi-row ordering rows. Kept DISTINCT from
+// TEST_RUN_ID so the existing eq/match/storage/ord proofs (which filter on
+// TEST_RUN_ID and expect exactly the two idA/idB rows) never see these extra
+// rows — e.g. the `text_match` "contains ada" proof would otherwise also match
+// a downcased 'Ada Lovelace' row.
+const ORDER_RUN_ID = `${TEST_RUN_ID}-order`
+// Row ids of the seeded ordering rows, in sample-index order: orderIds[i]
+// holds `samples[min(i, L-1)]` for every domain, so orderIds[0..L-1] map 1:1
+// to a domain's distinct samples[0..L-1].
+let orderIds: number[] = []
 // Query terms, pre-encrypted once in `beforeAll` (not per `it.each` case).
 const eqTerms: Record<string, unknown> = {}
 const ordTerms: Record<string, unknown> = {}
@@ -175,21 +226,31 @@ beforeAll(async () => {
     )
   `)
 
-  // Two model rows: row A carries samples[0], row B carries samples[1], for
-  // every domain — every catalog `samples` array has at least two entries.
-  const rowA: Record<string, unknown> = {}
-  const rowB: Record<string, unknown> = {}
-  for (const [t, spec] of domains) {
-    rowA[slug(t)] = spec.samples[0]
-    rowB[slug(t)] = spec.samples[1]
-  }
+  // Model rows for the ordering proofs: row i carries `samples[min(i, L-1)]`
+  // for every domain (`L` = that domain's sample count). Rows 0/1 double as the
+  // classic two-row seed (samples[0]/samples[1]) reused by the existing proofs;
+  // rows 2..MAX_ORDER_ROWS-1 give the extra distinct values numeric/text
+  // ordering domains need for a full a<b<c(<d). Encrypted in ONE
+  // bulkEncryptModels batch, then the same ciphertexts are inserted twice: rows
+  // 0/1 under TEST_RUN_ID (idA/idB) for the existing proofs, and all rows under
+  // ORDER_RUN_ID for the ordering proofs.
+  const models = Array.from({ length: MAX_ORDER_ROWS }, (_, i) => {
+    const row: Record<string, unknown> = {}
+    for (const [t, spec] of domains) {
+      row[slug(t)] = spec.samples[Math.min(i, spec.samples.length - 1)]
+    }
+    return row
+  })
 
-  const [encA, encB] = unwrapResult(
-    await client.bulkEncryptModels([rowA, rowB] as never, table as never),
+  const encModels = unwrapResult(
+    await client.bulkEncryptModels(models as never, table as never),
   ) as Array<Record<string, unknown>>
 
   const colNames = domains.map(([t]) => `"${slug(t)}"`)
-  const insertRow = async (enc: Record<string, unknown>): Promise<number> => {
+  const insertRow = async (
+    enc: Record<string, unknown>,
+    runId: string,
+  ): Promise<number> => {
     const casts = domains.map(([t], i) => `$${i + 2}::${t}`)
     // `sql.json(...)` (not the bare ciphertext object): postgres.js only infers
     // an explicit wire type for `Parameter`/`Date`/`Uint8Array`/boolean/bigint —
@@ -201,12 +262,16 @@ beforeAll(async () => {
       `INSERT INTO ${TABLE_NAME} (test_run_id, ${colNames.join(', ')})
        VALUES ($1, ${casts.join(', ')})
        RETURNING id`,
-      [TEST_RUN_ID, ...values],
+      [runId, ...values],
     )
     return row.id
   }
-  idA = await insertRow(encA)
-  idB = await insertRow(encB)
+  idA = await insertRow(encModels[0], TEST_RUN_ID)
+  idB = await insertRow(encModels[1], TEST_RUN_ID)
+  orderIds = []
+  for (const enc of encModels) {
+    orderIds.push(await insertRow(enc, ORDER_RUN_ID))
+  }
 
   const columnRef = (t: EqlV3TypeName) =>
     (table as unknown as Record<string, unknown>)[slug(t)] as never
@@ -242,8 +307,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!LIVE_EQL_V3_PG_ENABLED) return
-  await sql.unsafe(`DELETE FROM ${TABLE_NAME} WHERE test_run_id = $1`, [
-    TEST_RUN_ID,
+  await sql.unsafe(`DELETE FROM ${TABLE_NAME} WHERE test_run_id = ANY($1)`, [
+    [TEST_RUN_ID, ORDER_RUN_ID],
   ])
   await sql.end()
 }, 30000)
@@ -313,6 +378,64 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([expectedId])
+  })
+
+  it.each(
+    orderingDomains,
+  )('%s: ORE pairwise-lt reproduces plaintext order across all distinct samples', async (eqlType, spec) => {
+    // STRICT ordering proof: seed each of a domain's distinct sample values as
+    // its OWN row (orderIds[0..L-1] ↔ samples[0..L-1]) and prove the ORE
+    // comparison reproduces the FULL plaintext order (a<b<c<d where available),
+    // not just equality-via-ORE or a single 2-row range.
+    //
+    // The order is reconstructed with the boolean `eql_v3.lt` comparison
+    // operator (a self cross-join counting, per row, how many rows it is
+    // strictly-less-than → its ascending rank). This is ENVIRONMENT-INDEPENDENT:
+    // it is ORE-correct on both a superuser Postgres (CI) and a non-superuser
+    // one (typical local dev), unlike `ORDER BY eql_v3.ord_term(col)`, whose
+    // ORE-aware btree opclass is superuser-gated and silently falls back to
+    // raw-byte record order on managed installs. See
+    // docs/eql-v3-ord-term-ordering-defect.md.
+    const col = slug(eqlType)
+    const L = spec.samples.length
+    const ids = orderIds.slice(0, L)
+
+    // Expected ascending order: sort the distinct samples by plaintext, mapping
+    // each to the id of the row that carries it (samples[i] -> orderIds[i]).
+    const expectedAscending = spec.samples
+      .map((value, i) => ({ value, id: ids[i] }))
+      .sort((x, y) => comparePlaintext(x.value, y.value))
+      .map((entry) => entry.id)
+
+    const pairs = await sql.unsafe<Array<{ a: number; b: number; lt: boolean }>>(
+      `SELECT x.id AS a, y.id AS b, eql_v3.lt(x."${col}", y."${col}") AS lt
+         FROM ${TABLE_NAME} x
+         CROSS JOIN ${TABLE_NAME} y
+        WHERE x.test_run_id = $1
+          AND y.test_run_id = $1
+          AND x.id = ANY($2)
+          AND y.id = ANY($2)
+          AND x.id <> y.id`,
+      [ORDER_RUN_ID, ids],
+    )
+
+    const lessThanCount = new Map<number, number>(ids.map((id) => [id, 0]))
+    for (const pair of pairs) {
+      if (pair.lt) {
+        lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
+      }
+    }
+
+    // Ascending rank = strictly-less-than count, descending (the smallest value
+    // is < every other row, so it has the highest count and sorts first).
+    const derivedAscending = [...ids].sort(
+      (a, b) => (lessThanCount.get(b) ?? 0) - (lessThanCount.get(a) ?? 0),
+    )
+
+    // Sanity: distinct samples must yield distinct ranks 0..L-1 (a strict total
+    // order), otherwise the ORE comparison collapsed two values together.
+    expect(new Set(lessThanCount.values()).size).toBe(L)
+    expect(derivedAscending).toEqual(expectedAscending)
   })
 
   it.each(
