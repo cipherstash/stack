@@ -129,8 +129,10 @@ async function resolveInstallContext(
     supabase: options.supabase,
   })
 
+  // A dry run must not write scaffold files, so it never enters the scaffold
+  // path (nor does an explicit `skip`).
   const mode = options.scaffoldConfig ?? 'offer'
-  if (mode === 'skip') {
+  if (mode === 'skip' || options.dryRun) {
     return { databaseUrl, clientPath: null }
   }
 
@@ -166,8 +168,10 @@ export async function installCommand(options: InstallOptions) {
   // Safety net: if the user ran `eql install` without first running `init`,
   // scaffold the encryption client file so clientPath points somewhere real.
   // No-op when the file already exists. Skipped for a one-shot `--database-url`
-  // install (clientPath === null), which leaves the project untouched.
-  if (clientPath) {
+  // install (clientPath === null) or a dry run, which leave the project
+  // untouched — an existing config still yields a clientPath, so guard on dryRun
+  // too.
+  if (clientPath && !options.dryRun) {
     ensureEncryptionClient(clientPath, process.cwd(), databaseUrl)
   }
 

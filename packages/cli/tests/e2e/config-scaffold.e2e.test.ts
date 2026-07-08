@@ -39,7 +39,12 @@ describe('config-scaffold DX (missing config / missing deps)', () => {
     // With no config and no database URL, install must NOT scaffold a config and
     // then crash on `Cannot find module 'stash'`. It resolves the URL first and
     // fails cleanly asking for one; no stash.config.ts is written.
-    const r = await run(['eql', 'install'], { cwd: tmpDir })
+    // Clear DATABASE_URL explicitly so a value in the parent env can't leak in
+    // and resolve past the guidance we're asserting on.
+    const r = await run(['eql', 'install'], {
+      cwd: tmpDir,
+      env: { DATABASE_URL: '' },
+    })
 
     expect(r.output).toContain('Cannot resolve DATABASE_URL')
     expect(r.output).toContain('--database-url')
@@ -89,6 +94,34 @@ describe('config-scaffold DX (missing config / missing deps)', () => {
     ).toBe(false)
     expect(r.output).not.toContain('Created stash.config.ts')
     expect(r.output).not.toContain('Cannot find module')
+  })
+
+  it('`eql install --dry-run` writes no files, even with an existing config', async () => {
+    // Dry run must not mutate the project. With an existing config pointing at a
+    // not-yet-created client, the client scaffold used to run before the dry-run
+    // guard — so assert the client file is NOT written.
+    fs.writeFileSync(
+      path.join(tmpDir, 'stash.config.ts'),
+      "import { defineConfig, resolveDatabaseUrl } from 'stash'\n" +
+        "export default defineConfig({ databaseUrl: await resolveDatabaseUrl(), client: './src/encryption/index.ts' })\n",
+    )
+
+    const r = await run(
+      [
+        'eql',
+        'install',
+        '--dry-run',
+        '--database-url',
+        'postgres://u:p@127.0.0.1:1/db?connect_timeout=2',
+      ],
+      { cwd: tmpDir },
+    )
+
+    expect(r.output).toContain('Dry run')
+    expect(
+      fs.existsSync(path.join(tmpDir, 'src', 'encryption', 'index.ts')),
+    ).toBe(false)
+    expect(r.exitCode).toBe(0)
   })
 
   // The `loadStashConfig` catch that translates a missing-module error into
