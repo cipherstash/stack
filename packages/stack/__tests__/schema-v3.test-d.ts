@@ -107,26 +107,18 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
     })
   })
 
-  it('encrypt and encryptQuery reject bigint plaintext until native round-tripping lands', () => {
+  it('encrypt and encryptQuery accept bigint plaintext (native round-tripping landed in protect-ffi 0.28)', () => {
     const client = {} as EncryptionClient
 
-    client.encrypt(
-      // @ts-expect-error - bigint is not accepted by protect-ffi yet
-      1n,
-      {
-        table: v3users,
-        column: v3users.email,
-      },
-    )
+    expectTypeOf(client.encrypt).toBeCallableWith(1n, {
+      table: v3users,
+      column: v3users.email,
+    })
 
-    client.encryptQuery(
-      // @ts-expect-error - bigint is not accepted by protect-ffi yet
-      1n,
-      {
-        table: v3users,
-        column: v3users.email,
-      },
-    )
+    expectTypeOf(client.encryptQuery).toBeCallableWith(1n, {
+      table: v3users,
+      column: v3users.email,
+    })
   })
 
   it('encryptQuery accepts a v3 table + column', () => {
