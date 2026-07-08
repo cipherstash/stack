@@ -11,7 +11,8 @@ of scraping `--help`.
   comes from the CLI's own `package.json`, so a page generated from the manifest
   is always stamped with the version it describes.
 - `stash manifest` (no flag) prints a grouped, human-readable command list.
-- The registry (`src/cli/registry.ts`) is the single source of truth for command
-  metadata. This is phase 1 of `docs/plans/cli-help-and-manifest.md`; rendering
-  the top-level and per-command `--help` from the same registry is the
-  documented follow-on.
+- The registry (`src/cli/registry.ts`) is intended to become the single source of
+  truth for command metadata. This is phase 1 of
+  `docs/plans/cli-help-and-manifest.md`; it is additive — `bin/main.ts` still
+  hand-maintains the `HELP` string that renders `--help`, so until the documented
+  follow-on renders `--help` from the registry the two are kept in sync by hand.

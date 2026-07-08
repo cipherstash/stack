@@ -1,12 +1,13 @@
 /**
  * The command-descriptor registry — one descriptor per `stash` command, grouped
- * for display. This is the single source of truth for command metadata that the
- * `stash manifest --json` surface (and, in later phases, `--help` rendering) is
- * generated from, so help/docs can't drift from the real command set.
+ * for display. It backs the `stash manifest --json` surface and is *intended* to
+ * become the single source of truth for command metadata.
  *
- * See `docs/plans/cli-help-and-manifest.md`. Phase 1 (this file) is metadata
- * only — dispatch in `bin/main.ts` is unchanged; a later phase renders the
- * top-level and per-command help from these descriptors and wires `run`.
+ * ⚠️ Phase 1 (this file) is additive: `bin/main.ts` still hand-maintains the
+ * `HELP` string that renders `--help`, so until a later phase renders `--help`
+ * from these descriptors, the two are maintained separately and MUST be kept in
+ * sync — a command/flag/summary edit belongs in both places or `--help` and
+ * `stash manifest` will diverge. See `docs/plans/cli-help-and-manifest.md`.
  */
 
 /** A single flag/option on a command. */
@@ -61,6 +62,32 @@ const REGION_FLAG: Flag = {
   description:
     'Region to authenticate against (e.g. us-east-1). Skips the interactive region picker.',
   env: 'STASH_REGION',
+}
+
+// Flags shared verbatim across several commands — declared once so a description
+// edit lands in one place and can't drift. (`--supabase` only shares the
+// "compatible mode" spelling; `init`/`auth` use different wording, kept inline.)
+const DRY_RUN_FLAG: Flag = {
+  name: '--dry-run',
+  description: 'Show what would happen without making changes.',
+}
+const EXCLUDE_OPERATOR_FAMILY_FLAG: Flag = {
+  name: '--exclude-operator-family',
+  description: 'Skip operator family creation.',
+}
+const SUPABASE_COMPAT_FLAG: Flag = {
+  name: '--supabase',
+  description: 'Use Supabase-compatible mode.',
+}
+const TABLE_FLAG: Flag = {
+  name: '--table',
+  value: '<name>',
+  description: 'Target table.',
+}
+const COLUMN_FLAG: Flag = {
+  name: '--column',
+  value: '<name>',
+  description: 'Target column.',
 }
 
 /**
@@ -269,10 +296,7 @@ export const registry: CommandGroup[] = [
             name: '--force',
             description: 'Reinstall / overwrite even if already installed.',
           },
-          {
-            name: '--dry-run',
-            description: 'Show what would happen without making changes.',
-          },
+          DRY_RUN_FLAG,
           {
             name: '--supabase',
             description:
@@ -300,10 +324,7 @@ export const registry: CommandGroup[] = [
               'Override the Supabase migrations directory (requires --supabase).',
             default: 'supabase/migrations',
           },
-          {
-            name: '--exclude-operator-family',
-            description: 'Skip operator family creation.',
-          },
+          EXCLUDE_OPERATOR_FAMILY_FLAG,
           {
             name: '--eql-version',
             value: '<2|3>',
@@ -315,6 +336,18 @@ export const registry: CommandGroup[] = [
             name: '--latest',
             description: 'Fetch the latest EQL from GitHub (v2 only).',
           },
+          {
+            name: '--name',
+            value: '<name>',
+            description:
+              'With --drizzle: name for the generated migration (defaults to a scaffold name).',
+          },
+          {
+            name: '--out',
+            value: '<path>',
+            description:
+              'With --drizzle: directory to write the generated migration into.',
+          },
           DATABASE_URL_FLAG,
         ],
       },
@@ -322,18 +355,9 @@ export const registry: CommandGroup[] = [
         name: 'eql upgrade',
         summary: 'Upgrade EQL extensions to the latest version',
         flags: [
-          {
-            name: '--dry-run',
-            description: 'Show what would happen without making changes.',
-          },
-          {
-            name: '--supabase',
-            description: 'Use Supabase-compatible mode.',
-          },
-          {
-            name: '--exclude-operator-family',
-            description: 'Skip operator family creation.',
-          },
+          DRY_RUN_FLAG,
+          SUPABASE_COMPAT_FLAG,
+          EXCLUDE_OPERATOR_FAMILY_FLAG,
           {
             name: '--eql-version',
             value: '<2|3>',
@@ -361,13 +385,7 @@ export const registry: CommandGroup[] = [
         name: 'db push',
         summary:
           'Push encryption schema (writes pending if active config already exists)',
-        flags: [
-          {
-            name: '--dry-run',
-            description: 'Show what would happen without making changes.',
-          },
-          DATABASE_URL_FLAG,
-        ],
+        flags: [DRY_RUN_FLAG, DATABASE_URL_FLAG],
       },
       {
         name: 'db activate',
@@ -379,21 +397,17 @@ export const registry: CommandGroup[] = [
         name: 'db validate',
         summary: 'Validate encryption schema',
         flags: [
-          {
-            name: '--supabase',
-            description: 'Use Supabase-compatible mode.',
-          },
-          {
-            name: '--exclude-operator-family',
-            description: 'Skip operator family creation.',
-          },
+          SUPABASE_COMPAT_FLAG,
+          EXCLUDE_OPERATOR_FAMILY_FLAG,
           DATABASE_URL_FLAG,
         ],
       },
       {
+        // Dispatch currently only prints a "not yet implemented" warning and
+        // reads no flags — describe that rather than advertising a working
+        // command with a --database-url override it never consumes.
         name: 'db migrate',
-        summary: 'Run pending encrypt config migrations',
-        flags: [DATABASE_URL_FLAG],
+        summary: 'Run pending encrypt config migrations (not yet implemented)',
       },
       {
         name: 'db test-connection',
@@ -408,13 +422,7 @@ export const registry: CommandGroup[] = [
       {
         name: 'schema build',
         summary: 'Build an encryption schema from your database',
-        flags: [
-          {
-            name: '--supabase',
-            description: 'Use Supabase-compatible mode.',
-          },
-          DATABASE_URL_FLAG,
-        ],
+        flags: [SUPABASE_COMPAT_FLAG, DATABASE_URL_FLAG],
       },
     ],
   },
@@ -422,27 +430,22 @@ export const registry: CommandGroup[] = [
     title: 'Encrypt',
     commands: [
       {
+        // `encrypt status` / `encrypt plan` dispatch to zero-arg commands
+        // (main.ts calls statusCommand()/planCommand() with no values), so they
+        // take no flags — don't advertise --table/--column the CLI ignores.
         name: 'encrypt status',
         summary: 'Show per-column migration status (phase, progress, drift)',
-        flags: [
-          { name: '--table', value: '<name>', description: 'Target table.' },
-          { name: '--column', value: '<name>', description: 'Target column.' },
-        ],
       },
       {
         name: 'encrypt plan',
         summary: 'Diff intent (.cipherstash/migrations.json) vs observed state',
-        flags: [
-          { name: '--table', value: '<name>', description: 'Target table.' },
-          { name: '--column', value: '<name>', description: 'Target column.' },
-        ],
       },
       {
         name: 'encrypt backfill',
         summary: 'Resumably encrypt plaintext into the encrypted column',
         flags: [
-          { name: '--table', value: '<name>', description: 'Target table.' },
-          { name: '--column', value: '<name>', description: 'Target column.' },
+          TABLE_FLAG,
+          COLUMN_FLAG,
           {
             name: '--pk-column',
             value: '<name>',
@@ -478,8 +481,8 @@ export const registry: CommandGroup[] = [
         name: 'encrypt cutover',
         summary: 'Rename swap encrypted → primary column',
         flags: [
-          { name: '--table', value: '<name>', description: 'Target table.' },
-          { name: '--column', value: '<name>', description: 'Target column.' },
+          TABLE_FLAG,
+          COLUMN_FLAG,
           {
             name: '--proxy-url',
             value: '<url>',
@@ -496,8 +499,8 @@ export const registry: CommandGroup[] = [
         name: 'encrypt drop',
         summary: 'Generate a migration to drop the plaintext column',
         flags: [
-          { name: '--table', value: '<name>', description: 'Target table.' },
-          { name: '--column', value: '<name>', description: 'Target column.' },
+          TABLE_FLAG,
+          COLUMN_FLAG,
           {
             name: '--migrations-dir',
             value: '<path>',
