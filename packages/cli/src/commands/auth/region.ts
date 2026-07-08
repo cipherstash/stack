@@ -5,12 +5,13 @@
  * This module deliberately imports **no** native code (`@cipherstash/auth`).
  * The pure helpers (`normalizeRegion`, `regionSlugs`) and the resolution
  * policy (`resolveRegion`) can therefore be unit-tested under the fast
- * `vitest.config.ts` suite without loading a platform binary. `login.ts`
- * re-exports everything here so existing `import … from '../auth/login.js'`
- * call sites keep working unchanged.
+ * `vitest.config.ts` suite without loading a platform binary. Auth call sites
+ * (`auth/index.ts`, the init authenticate step) import directly from here.
  */
 import * as p from '@clack/prompts'
+import { isCiEnv } from '../../config/tty.js'
 import { messages } from '../../messages.js'
+import { emitJsonError } from './events.js'
 
 /** Env var an agent / CI job can set to skip the interactive region picker. */
 export const REGION_ENV_VAR = 'STASH_REGION'
@@ -29,7 +30,7 @@ export const regions = [
 
 /** The short slugs (`us-east-1`, …) — what a human types and what we echo. */
 export function regionSlugs(): string[] {
-  return regions.map((r) => r.value.replace(/\.aws$/, ''))
+  return regionList().map((r) => r.slug)
 }
 
 export interface RegionInfo {
@@ -66,12 +67,6 @@ export function normalizeRegion(input: string): string | null {
   return regions.some((r) => r.value === candidate) ? candidate : null
 }
 
-/** True when `CI` is set to a truthy spelling. Mirrors the DATABASE_URL resolver. */
-function isCiEnv(): boolean {
-  const ciVar = process.env.CI?.trim()
-  return ciVar !== undefined && /^(1|true)$/i.test(ciVar)
-}
-
 /**
  * The interactive region picker. Unchanged behaviour — kept as its own
  * export because the E2E cancel test targets this prompt (it runs before
@@ -102,13 +97,18 @@ export interface ResolveRegionOptions {
   json?: boolean
 }
 
-/** Report a region resolution failure as JSON or human copy, then the caller exits. */
-function reportRegionError(json: boolean, code: string, message: string): void {
+/** Report a region resolution failure as JSON or human copy, then exit non-zero. */
+export function failRegion(
+  json: boolean,
+  code: string,
+  message: string,
+): never {
   if (json) {
-    console.log(JSON.stringify({ status: 'error', code, message }))
+    emitJsonError(code, message)
   } else {
     p.log.error(message)
   }
+  process.exit(1)
 }
 
 /**
@@ -127,26 +127,24 @@ export async function resolveRegion(
   opts: ResolveRegionOptions = {},
 ): Promise<string> {
   const json = opts.json ?? false
-  const explicit = (opts.regionFlag ?? process.env[REGION_ENV_VAR])?.trim()
+  // Treat an empty / whitespace `--region` as "not provided" so the
+  // STASH_REGION fallback still applies — matches the `if (values.region)`
+  // guard `init` uses, so both entry points agree.
+  const flag = opts.regionFlag?.trim()
+  const explicit = flag || process.env[REGION_ENV_VAR]?.trim()
 
   if (explicit) {
     const normalized = normalizeRegion(explicit)
     if (normalized) return normalized
-    reportRegionError(
+    failRegion(
       json,
       'region_invalid',
       messages.auth.regionInvalid(explicit, regionSlugs()),
     )
-    process.exit(1)
   }
 
   const isInteractive = !json && Boolean(process.stdin.isTTY) && !isCiEnv()
   if (isInteractive) return selectRegion()
 
-  reportRegionError(
-    json,
-    'region_required',
-    messages.auth.regionMissingNonInteractive,
-  )
-  process.exit(1)
+  failRegion(json, 'region_required', messages.auth.regionMissingNonInteractive)
 }

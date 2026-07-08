@@ -1,6 +1,7 @@
 import { messages } from '../../messages.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
-import { bindDevice, login, regionList, resolveRegion } from './login.js'
+import { bindDevice, login } from './login.js'
+import { failRegion, regionList, resolveRegion } from './region.js'
 
 const STASH_AUTH = runnerCommand(detectPackageManager(), 'stash auth')
 
@@ -16,7 +17,8 @@ Options:
                     interactive picker. Also settable via STASH_REGION.
   --json            Emit newline-delimited JSON events instead of prose. The
                     first event (authorization_required) carries the device
-                    verification URL for a human to open; implies no prompt.
+                    verification URL for a human to open; implies no prompt and
+                    no browser auto-open.
   --no-open         Don't auto-open the verification URL in a browser.
   --supabase        Track Supabase as the referrer
   --drizzle         Track Drizzle as the referrer
@@ -73,8 +75,17 @@ export async function authCommand(
   switch (subcommand) {
     case 'login':
       {
+        // `--region` with no value: parseArgs booleanises a valueless flag, so
+        // it lands in `flags`, not `values`. Fail with a precise message rather
+        // than silently falling through to the generic "region required".
+        if (flags.region) {
+          failRegion(json, 'region_invalid', messages.auth.regionFlagNeedsValue)
+        }
         const region = await resolveRegion({ regionFlag: values.region, json })
-        await login(region, referrer, { json, open: !flags['no-open'] })
+        await login(region, referrer, {
+          json,
+          open: !json && !flags['no-open'],
+        })
         await bindDevice({ json })
       }
       break

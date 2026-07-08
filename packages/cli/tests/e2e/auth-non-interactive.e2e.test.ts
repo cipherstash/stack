@@ -73,6 +73,25 @@ describe('stash auth login — non-interactive region resolution', () => {
     expect(r.stdout + r.stderr).toContain('Unknown region')
     expect(r.stdout + r.stderr).toContain('us-east-9')
   })
+
+  it('a valueless --region exits 1 with a "needs a value" message (not a hang)', async () => {
+    // `--region` with nothing after it is booleanised by the arg parser; the
+    // command must call it out rather than silently treating it as "no region".
+    const r = await runPiped(['auth', 'login', '--region'], { timeoutMs: 8000 })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(1)
+    expect(r.stdout + r.stderr).toContain(messages.auth.regionFlagNeedsValue)
+  })
+
+  it('--json with a valueless --region emits a JSON region_invalid error and exits 1', async () => {
+    const r = await runPiped(['auth', 'login', '--region', '--json'], {
+      timeoutMs: 8000,
+    })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(1)
+    const payload = firstJsonLine(r.stdout)
+    expect(payload).toMatchObject({ status: 'error', code: 'region_invalid' })
+  })
 })
 
 describe('stash auth regions — list available regions', () => {

@@ -1,21 +1,8 @@
 import auth from '@cipherstash/auth'
 import * as p from '@clack/prompts'
+import { emitJsonError, emitJsonEvent } from './events.js'
 
 const { beginDeviceCodeFlow, bindClientDevice } = auth
-
-// Region selection lives in a native-free module so its pure helpers and
-// resolution policy stay unit-testable. Re-exported here so existing
-// `import { regions, selectRegion, … } from '../auth/login.js'` call sites
-// (e.g. the init authenticate step) keep resolving without a change.
-export {
-  normalizeRegion,
-  REGION_ENV_VAR,
-  regionList,
-  regionSlugs,
-  regions,
-  resolveRegion,
-  selectRegion,
-} from './region.js'
 
 export interface LoginOptions {
   /**
@@ -29,16 +16,13 @@ export interface LoginOptions {
    */
   json?: boolean
   /**
-   * Whether to auto-open the verification URL in the user's browser.
-   * Defaults to true (unchanged). `--no-open` sets this false for headless /
-   * agent contexts where the human will click the printed URL instead.
+   * Whether to auto-open the verification URL in the user's browser. Defaults
+   * to true in interactive mode, but false when `json` is set: a `--json` run
+   * is the agent-trigger path, where the human — not the agent host — opens the
+   * URL, so auto-opening a browser on the agent's machine is wrong. `--no-open`
+   * forces it false in interactive mode too.
    */
   open?: boolean
-}
-
-/** Emit one NDJSON auth event to stdout. */
-function emitAuthEvent(event: Record<string, unknown>): void {
-  console.log(JSON.stringify(event))
 }
 
 /** Best-effort `.code` from an `@cipherstash/auth` AuthError, else undefined. */
@@ -54,7 +38,9 @@ export async function login(
   opts: LoginOptions = {},
 ) {
   const json = opts.json ?? false
-  const openBrowser = opts.open ?? true
+  // Default: open in interactive mode, never in json/agent mode. `--no-open`
+  // (open === false) overrides in either mode.
+  const openBrowser = opts.open ?? !json
 
   // Spinner and pretty logs would corrupt the JSON stream — suppress in json mode.
   const s = json ? null : p.spinner()
@@ -66,11 +52,10 @@ export async function login(
     pending = await beginDeviceCodeFlow(region, 'cli')
   } catch (err) {
     if (json) {
-      emitAuthEvent({
-        status: 'error',
-        code: authErrorCode(err) ?? 'begin_failed',
-        message: err instanceof Error ? err.message : 'Unknown error',
-      })
+      emitJsonError(
+        authErrorCode(err) ?? 'begin_failed',
+        err instanceof Error ? err.message : 'Unknown error',
+      )
       process.exit(1)
     }
     throw err
@@ -79,7 +64,7 @@ export async function login(
   if (json) {
     // The "trigger" event — an agent surfaces verificationUriComplete to the
     // human, who completes authorization in their browser.
-    emitAuthEvent({
+    emitJsonEvent({
       status: 'authorization_required',
       userCode: pending.userCode,
       verificationUri: pending.verificationUri,
@@ -108,11 +93,10 @@ export async function login(
   } catch (err) {
     s?.stop('Authorization failed.')
     if (json) {
-      emitAuthEvent({
-        status: 'error',
-        code: authErrorCode(err) ?? 'poll_failed',
-        message: err instanceof Error ? err.message : 'Unknown error',
-      })
+      emitJsonError(
+        authErrorCode(err) ?? 'poll_failed',
+        err instanceof Error ? err.message : 'Unknown error',
+      )
       process.exit(1)
     }
     throw err
@@ -121,7 +105,7 @@ export async function login(
 
   const expiresAtIso = new Date(authResult.expiresAt * 1000).toISOString()
   if (json) {
-    emitAuthEvent({
+    emitJsonEvent({
       status: 'authorized',
       expiresAt: authResult.expiresAt,
       expiresAtIso,
@@ -144,17 +128,16 @@ export async function bindDevice(opts: BindDeviceOptions = {}) {
   try {
     await bindClientDevice()
     if (json) {
-      emitAuthEvent({ status: 'device_bound' })
+      emitJsonEvent({ status: 'device_bound' })
     } else {
       s?.stop('Your device has been bound to the default Keyset!')
     }
   } catch (error) {
     if (json) {
-      emitAuthEvent({
-        status: 'error',
-        code: authErrorCode(error) ?? 'bind_failed',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      })
+      emitJsonError(
+        authErrorCode(error) ?? 'bind_failed',
+        error instanceof Error ? error.message : 'Unknown error',
+      )
     } else {
       s?.stop('Failed to bind your device to the default Keyset!')
       p.log.error(error instanceof Error ? error.message : 'Unknown error')

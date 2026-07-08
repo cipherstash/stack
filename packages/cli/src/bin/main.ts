@@ -129,11 +129,13 @@ Auth Flags:
                        interactive region picker. Also settable via STASH_REGION.
   --json               Emit newline-delimited JSON events instead of prose. The
                        first event (authorization_required) carries the device
-                       verification URL for a human to open. Implies no prompt —
-                       an agent can trigger auth non-interactively; only a human
-                       can complete it in the browser. Run it in the background,
-                       read the URL from the first line, then hand it to the user.
-  --no-open            Don't auto-open the verification URL in a browser.
+                       verification URL for a human to open. Implies no prompt
+                       and no browser auto-open — an agent can trigger auth
+                       non-interactively; only a human can complete it in the
+                       browser. Run it in the background, read the URL from the
+                       first line, then hand it to the user.
+  --no-open            Don't auto-open the verification URL in a browser
+                       (already implied by --json).
 
 Plan Flags:
   --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)

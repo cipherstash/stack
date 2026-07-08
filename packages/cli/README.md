@@ -113,8 +113,8 @@ npx stash auth login [--region <slug>] [--json] [--no-open]
 | Flag | Description |
 |------|-------------|
 | `--region <slug>` | Region to authenticate against (e.g. `us-east-1`). Skips the interactive region picker. Also settable via `STASH_REGION`. |
-| `--json` | Emit newline-delimited JSON events instead of prose (see below). Implies non-interactive — never renders the region picker. |
-| `--no-open` | Don't auto-open the verification URL in a browser. |
+| `--json` | Emit newline-delimited JSON events instead of prose (see below). Implies non-interactive — never renders the region picker, and never auto-opens a browser (the human opens the URL you hand them). |
+| `--no-open` | Don't auto-open the verification URL in a browser (already implied by `--json`). |
 | `--supabase` / `--drizzle` | Track the integration as the referrer. |
 
 Saves the token to `~/.cipherstash/auth.json`. Database-touching commands check for this file before running.
@@ -124,7 +124,7 @@ Saves the token to `~/.cipherstash/auth.json`. Database-touching commands check 
 The device-code flow is designed so an **agent can trigger** authentication but only a **human completes** it in the browser. Run `auth login --json` in the background and read the first line — `authorization_required` carries the verification URL to hand to the user:
 
 ```bash
-npx stash auth login --region us-east-1 --json --no-open
+npx stash auth login --region us-east-1 --json
 ```
 
 ```jsonc
