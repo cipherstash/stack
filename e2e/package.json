@@ -15,6 +15,8 @@
     "@cipherstash/wizard": "workspace:*"
   },
   "devDependencies": {
+    "@types/semver": "7.5.8",
+    "semver": "^7.8.0",
     "vitest": "catalog:repo",
     "yaml": "^2.9.0"
   }
