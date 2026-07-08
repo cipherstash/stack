@@ -8,7 +8,7 @@ import type { AuditConfig } from '@/encryption/operations/base-operation'
 import type { LockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import { EncryptedColumn } from '@/schema'
-import type { ScalarQueryTerm } from '@/types'
+import type { BuildableQueryColumn, ScalarQueryTerm } from '@/types'
 import { logger } from '@/utils/logger'
 import {
   addJsonbCasts,
@@ -46,30 +46,30 @@ import type {
 export class EncryptedQueryBuilderImpl<
   T extends Record<string, unknown> = Record<string, unknown>,
 > {
-  private tableName: string
-  private schema: EncryptedTable<EncryptedTableColumn>
-  private encryptionClient: EncryptionClient
-  private supabaseClient: SupabaseClientLike
-  private encryptedColumnNames: string[]
+  protected tableName: string
+  protected schema: EncryptedTable<EncryptedTableColumn>
+  protected encryptionClient: EncryptionClient
+  protected supabaseClient: SupabaseClientLike
+  protected encryptedColumnNames: string[]
 
   // Recorded operations
-  private mutation: MutationOp | null = null
-  private selectColumns: string | null = null
-  private selectOptions:
+  protected mutation: MutationOp | null = null
+  protected selectColumns: string | null = null
+  protected selectOptions:
     | { head?: boolean; count?: 'exact' | 'planned' | 'estimated' }
     | undefined = undefined
-  private filters: PendingFilter[] = []
-  private orFilters: PendingOrFilter[] = []
-  private matchFilters: PendingMatchFilter[] = []
-  private notFilters: PendingNotFilter[] = []
-  private rawFilters: PendingRawFilter[] = []
-  private transforms: TransformOp[] = []
-  private resultMode: ResultMode = 'array'
-  private shouldThrowOnError = false
+  protected filters: PendingFilter[] = []
+  protected orFilters: PendingOrFilter[] = []
+  protected matchFilters: PendingMatchFilter[] = []
+  protected notFilters: PendingNotFilter[] = []
+  protected rawFilters: PendingRawFilter[] = []
+  protected transforms: TransformOp[] = []
+  protected resultMode: ResultMode = 'array'
+  protected shouldThrowOnError = false
 
   // Encryption-specific state
-  private lockContext: LockContext | null = null
-  private auditConfig: AuditConfig | null = null
+  protected lockContext: LockContext | null = null
+  protected auditConfig: AuditConfig | null = null
 
   constructor(
     tableName: string,
@@ -340,7 +340,7 @@ export class EncryptedQueryBuilderImpl<
   // Core execution
   // ---------------------------------------------------------------------------
 
-  private async execute(): Promise<EncryptedSupabaseResponse<T[]>> {
+  protected async execute(): Promise<EncryptedSupabaseResponse<T[]>> {
     try {
       logger.debug(`Supabase encrypted query on table "${this.tableName}".`)
 
@@ -391,7 +391,7 @@ export class EncryptedQueryBuilderImpl<
   // Step 1: Encrypt mutation data
   // ---------------------------------------------------------------------------
 
-  private async encryptMutationData(): Promise<
+  protected async encryptMutationData(): Promise<
     Record<string, unknown> | Record<string, unknown>[] | null
   > {
     if (!this.mutation) return null
@@ -420,7 +420,7 @@ export class EncryptedQueryBuilderImpl<
         )
       }
 
-      return bulkModelsToEncryptedPgComposites(result.data)
+      return this.transformEncryptedMutationModels(result.data)
     }
 
     // Single model
@@ -442,14 +442,33 @@ export class EncryptedQueryBuilderImpl<
       )
     }
 
-    return modelToEncryptedPgComposites(result.data)
+    return this.transformEncryptedMutationModel(result.data)
+  }
+
+  /**
+   * Encode an encrypted model for the Supabase request body. v2 wraps each
+   * encrypted value in the `{ data: ... }` object expected by the
+   * `eql_v2_encrypted` composite type. The v3 dialect overrides this — native
+   * `eql_v3.*` domains are plain jsonb, so the raw payload is sent instead
+   * (keyed by DB column name).
+   */
+  protected transformEncryptedMutationModel(
+    model: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return modelToEncryptedPgComposites(model)
+  }
+
+  protected transformEncryptedMutationModels(
+    models: Record<string, unknown>[],
+  ): Record<string, unknown>[] {
+    return bulkModelsToEncryptedPgComposites(models)
   }
 
   // ---------------------------------------------------------------------------
   // Step 2: Build select string with casts
   // ---------------------------------------------------------------------------
 
-  private buildSelectString(): string | null {
+  protected buildSelectString(): string | null {
     if (this.selectColumns === null) return null
     return addJsonbCasts(this.selectColumns, this.encryptedColumnNames)
   }
@@ -458,7 +477,7 @@ export class EncryptedQueryBuilderImpl<
   // Step 3: Encrypt filter values
   // ---------------------------------------------------------------------------
 
-  private async encryptFilterValues(): Promise<EncryptedFilterState> {
+  protected async encryptFilterValues(): Promise<EncryptedFilterState> {
     // Collect all terms that need encryption
     const terms: ScalarQueryTerm[] = []
     const termMap: TermMapping[] = []
@@ -600,6 +619,20 @@ export class EncryptedQueryBuilderImpl<
       return { encryptedValues: [], termMap: [] }
     }
 
+    const encryptedValues = await this.encryptCollectedTerms(terms)
+    return { encryptedValues, termMap }
+  }
+
+  /**
+   * Encrypt the collected filter terms, returning one encoded value per term
+   * (in order). v2 batch-encrypts via `encryptQuery` with the
+   * `composite-literal` return type — the `("json")` string the
+   * `eql_v2_encrypted` composite operators compare. The v3 dialect overrides
+   * this to produce full-envelope jsonb operands instead.
+   */
+  protected async encryptCollectedTerms(
+    terms: ScalarQueryTerm[],
+  ): Promise<unknown[]> {
     // Batch encrypt all terms in one call
     const baseOp = this.encryptionClient.encryptQuery(terms)
     const op = this.lockContext
@@ -619,14 +652,14 @@ export class EncryptedQueryBuilderImpl<
       )
     }
 
-    return { encryptedValues: result.data, termMap }
+    return result.data
   }
 
   // ---------------------------------------------------------------------------
   // Step 4: Build and execute real Supabase query
   // ---------------------------------------------------------------------------
 
-  private async buildAndExecuteQuery(
+  protected async buildAndExecuteQuery(
     encryptedMutation:
       | Record<string, unknown>
       | Record<string, unknown>[]
@@ -703,7 +736,7 @@ export class EncryptedQueryBuilderImpl<
   // Apply filters with encrypted values substituted
   // ---------------------------------------------------------------------------
 
-  private applyFilters(
+  protected applyFilters(
     query: SupabaseQueryBuilder,
     encryptedFilters: EncryptedFilterState,
   ): SupabaseQueryBuilder {
@@ -772,36 +805,37 @@ export class EncryptedQueryBuilderImpl<
         })
       }
 
+      const column = this.filterColumnName(f.column)
+      const wasEncrypted = filterValueMap.has(i)
+
       switch (f.op) {
         case 'eq':
-          q = q.eq(f.column, value)
+          q = q.eq(column, value)
           break
         case 'neq':
-          q = q.neq(f.column, value)
+          q = q.neq(column, value)
           break
         case 'gt':
-          q = q.gt(f.column, value)
+          q = q.gt(column, value)
           break
         case 'gte':
-          q = q.gte(f.column, value)
+          q = q.gte(column, value)
           break
         case 'lt':
-          q = q.lt(f.column, value)
+          q = q.lt(column, value)
           break
         case 'lte':
-          q = q.lte(f.column, value)
+          q = q.lte(column, value)
           break
         case 'like':
-          q = q.like(f.column, value as string)
-          break
         case 'ilike':
-          q = q.ilike(f.column, value as string)
+          q = this.applyPatternFilter(q, column, f.op, value, wasEncrypted)
           break
         case 'is':
-          q = q.is(f.column, value)
+          q = q.is(column, value)
           break
         case 'in':
-          q = q.in(f.column, value as unknown[])
+          q = q.in(column, value as unknown[])
           break
       }
     }
@@ -813,7 +847,7 @@ export class EncryptedQueryBuilderImpl<
 
       for (const [colName, originalValue] of Object.entries(mf.query)) {
         const key = `${i}:${colName}`
-        resolvedQuery[colName] = matchValueMap.has(key)
+        resolvedQuery[this.filterColumnName(colName)] = matchValueMap.has(key)
           ? matchValueMap.get(key)
           : originalValue
       }
@@ -824,8 +858,13 @@ export class EncryptedQueryBuilderImpl<
     // Apply not filters
     for (let i = 0; i < this.notFilters.length; i++) {
       const nf = this.notFilters[i]
-      const value = notValueMap.has(i) ? notValueMap.get(i) : nf.value
-      q = q.not(nf.column, nf.op, value)
+      const wasEncrypted = notValueMap.has(i)
+      const value = wasEncrypted ? notValueMap.get(i) : nf.value
+      q = q.not(
+        this.filterColumnName(nf.column),
+        this.notFilterOperator(nf.op, wasEncrypted),
+        value,
+      )
     }
 
     // Apply or filters
@@ -834,34 +873,45 @@ export class EncryptedQueryBuilderImpl<
 
       if (of_.kind === 'string') {
         const parsed = parseOrString(of_.value)
-        let hasEncrypted = false
+        const encryptedIndexes = new Set<number>()
 
         for (let j = 0; j < parsed.length; j++) {
           const key = `${i}:${j}`
           if (orStringConditionMap.has(key)) {
             parsed[j] = { ...parsed[j], value: orStringConditionMap.get(key) }
-            hasEncrypted = true
+            encryptedIndexes.add(j)
           }
         }
 
-        if (hasEncrypted) {
-          q = q.or(rebuildOrString(parsed), {
-            referencedTable: of_.referencedTable,
-          })
+        if (encryptedIndexes.size > 0) {
+          q = q.or(
+            rebuildOrString(
+              this.transformOrConditions(parsed, encryptedIndexes),
+            ),
+            {
+              referencedTable: of_.referencedTable,
+            },
+          )
         } else {
           q = q.or(of_.value, { referencedTable: of_.referencedTable })
         }
       } else {
         // Structured: convert to string
+        const encryptedIndexes = new Set<number>()
         const conditions = of_.conditions.map((cond, j) => {
           const key = `${i}:${j}`
           if (orStructuredConditionMap.has(key)) {
+            encryptedIndexes.add(j)
             return { ...cond, value: orStructuredConditionMap.get(key) }
           }
           return cond
         })
 
-        q = q.or(rebuildOrString(conditions))
+        q = q.or(
+          rebuildOrString(
+            this.transformOrConditions(conditions, encryptedIndexes),
+          ),
+        )
       }
     }
 
@@ -869,17 +919,80 @@ export class EncryptedQueryBuilderImpl<
     for (let i = 0; i < this.rawFilters.length; i++) {
       const rf = this.rawFilters[i]
       const value = rawValueMap.has(i) ? rawValueMap.get(i) : rf.value
-      q = q.filter(rf.column, rf.operator, value)
+      q = q.filter(this.filterColumnName(rf.column), rf.operator, value)
     }
 
     return q
   }
 
   // ---------------------------------------------------------------------------
+  // Dialect seams — every default preserves the v2 behaviour byte-for-byte.
+  // The v3 builder (see ./query-builder-v3) overrides these for native
+  // `eql_v3.*` domain columns.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Map a filter's column name to the DB column name PostgREST must see.
+   * v2 schemas key columns by their DB name already, so this is the identity;
+   * the v3 dialect resolves a JS property name to its DB name.
+   */
+  protected filterColumnName(column: string): string {
+    return column
+  }
+
+  /**
+   * Apply a `like`/`ilike` filter. v2 relies on the `~~` operator defined on
+   * `eql_v2_encrypted`; the v3 dialect overrides this for encrypted columns
+   * because the `eql_v3.*` domains expose free-text match via `@>`
+   * (PostgREST `cs`) rather than a LIKE operator.
+   */
+  protected applyPatternFilter(
+    q: SupabaseQueryBuilder,
+    column: string,
+    op: 'like' | 'ilike',
+    value: unknown,
+    _wasEncrypted: boolean,
+  ): SupabaseQueryBuilder {
+    return op === 'like'
+      ? q.like(column, value as string)
+      : q.ilike(column, value as string)
+  }
+
+  /**
+   * The PostgREST operator to use for a `.not()` filter. The v3 dialect maps
+   * `like`/`ilike` on encrypted columns to `cs` (see applyPatternFilter).
+   */
+  protected notFilterOperator(op: FilterOp, _wasEncrypted: boolean): string {
+    return op
+  }
+
+  /**
+   * Transform `.or()` conditions before the or-string is rebuilt. The v3
+   * dialect maps property names to DB names and `like`/`ilike` on encrypted
+   * conditions to `cs`.
+   */
+  protected transformOrConditions(
+    conditions: PendingOrCondition[],
+    _encryptedIndexes: Set<number>,
+  ): PendingOrCondition[] {
+    return conditions
+  }
+
+  /**
+   * Post-process a decrypted result row. The v3 dialect reconstructs `Date`
+   * values from the encrypt-config `cast_as`; v2 returns rows unchanged.
+   */
+  protected postprocessDecryptedRow(
+    row: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return row
+  }
+
+  // ---------------------------------------------------------------------------
   // Step 5: Decrypt results
   // ---------------------------------------------------------------------------
 
-  private async decryptResults(
+  protected async decryptResults(
     result: RawSupabaseResult,
   ): Promise<EncryptedSupabaseResponse<T[]>> {
     // If there's an error from Supabase, pass it through
@@ -958,7 +1071,9 @@ export class EncryptedQueryBuilderImpl<
       }
 
       return {
-        data: decrypted.data as unknown as T[],
+        data: this.postprocessDecryptedRow(
+          decrypted.data as Record<string, unknown>,
+        ) as unknown as T[],
         error: null,
         count: result.count ?? null,
         status: result.status,
@@ -997,7 +1112,9 @@ export class EncryptedQueryBuilderImpl<
     }
 
     return {
-      data: decrypted.data as unknown as T[],
+      data: decrypted.data.map((row) =>
+        this.postprocessDecryptedRow(row as Record<string, unknown>),
+      ) as unknown as T[],
       error: null,
       count: result.count ?? null,
       status: result.status,
@@ -1009,8 +1126,8 @@ export class EncryptedQueryBuilderImpl<
   // Helpers
   // ---------------------------------------------------------------------------
 
-  private getColumnMap(): Record<string, EncryptedColumn> {
-    const map: Record<string, EncryptedColumn> = {}
+  protected getColumnMap(): Record<string, BuildableQueryColumn> {
+    const map: Record<string, BuildableQueryColumn> = {}
     const schema = this.schema as unknown as Record<string, unknown>
 
     for (const colName of this.encryptedColumnNames) {
@@ -1054,7 +1171,7 @@ type RawSupabaseResult = {
   statusText: string
 }
 
-class EncryptionFailedError extends Error {
+export class EncryptionFailedError extends Error {
   public encryptionError: unknown
 
   constructor(message: string, encryptionError: unknown) {
