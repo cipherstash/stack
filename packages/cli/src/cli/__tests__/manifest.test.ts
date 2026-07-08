@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildManifest } from '../manifest.js'
-import { registry } from '../registry.js'
+import { type CommandGroup, registry } from '../registry.js'
 
 describe('buildManifest', () => {
   it('stamps the name and the passed-in version', () => {
@@ -19,16 +19,46 @@ describe('buildManifest', () => {
     expect(m.groups.length).toBe(registry.length)
   })
 
-  it('excludes hidden commands', () => {
-    // No hidden command should ever surface in the manifest.
-    const hidden = registry
-      .flatMap((g) => g.commands)
-      .filter((c) => c.hidden)
-      .map((c) => c.name)
-    const names = buildManifest('0.0.0')
+  it('drops commands marked hidden', () => {
+    // Drive the hidden filter with a stub so coverage doesn't depend on the
+    // live registry happening to contain a hidden command (it currently
+    // contains none — a real-registry assertion would be vacuously green).
+    const groups: CommandGroup[] = [
+      {
+        title: 'T',
+        commands: [
+          { name: 'shown', summary: 's' },
+          { name: 'gone', summary: 'g', hidden: true },
+        ],
+      },
+    ]
+    const names = buildManifest('0.0.0', groups)
       .groups.flatMap((g) => g.commands)
       .map((c) => c.name)
-    for (const h of hidden) expect(names).not.toContain(h)
+    expect(names).toEqual(['shown'])
+  })
+
+  it('carries examples through into the manifest', () => {
+    // The one optional-field passthrough not covered by the auth-login (long +
+    // flags) or wizard (all-undefined) cases.
+    const init = buildManifest('0.0.0')
+      .groups.flatMap((g) => g.commands)
+      .find((c) => c.name === 'init')
+    expect(init?.examples).toContain('init --supabase')
+  })
+
+  it('defensively copies flags so a consumer cannot corrupt the registry', () => {
+    const dbUrlOf = (m: ReturnType<typeof buildManifest>) =>
+      m.groups
+        .flatMap((g) => g.commands)
+        .flatMap((c) => c.flags ?? [])
+        .find((f) => f.name === '--database-url')
+
+    const first = dbUrlOf(buildManifest('0.0.0'))
+    expect(first).toBeDefined()
+    // Mutate a manifest flag; the shared registry singleton must be untouched.
+    ;(first as { description: string }).description = 'MUTATED'
+    expect(dbUrlOf(buildManifest('0.0.0'))?.description).not.toBe('MUTATED')
   })
 
   it('gives every command a non-empty name and summary', () => {
