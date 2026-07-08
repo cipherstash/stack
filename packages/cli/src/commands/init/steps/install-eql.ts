@@ -82,6 +82,11 @@ export const installEqlStep: InitStep = {
         supabase: supabase || undefined,
         drizzle: drizzle || undefined,
         databaseUrl: state.databaseUrl,
+        // EQL v3 is the default, but the Drizzle migration path is v2-only, so
+        // pin v2 when we're driving the Drizzle flow — otherwise the install
+        // would reject `--drizzle` under the v3 default. Supabase and plain
+        // Postgres projects take the v3 default (direct install).
+        eqlVersion: drizzle ? '2' : undefined,
         // init passes a resolved URL to avoid re-prompting, but still wants a
         // config scaffolded — this is NOT a one-shot `--database-url` run.
         scaffoldConfig: 'ensure',

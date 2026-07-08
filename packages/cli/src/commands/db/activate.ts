@@ -45,7 +45,7 @@ export async function activateCommand(
     )
     if (pending.rows[0]?.exists !== true) {
       p.log.error(
-        'No pending EQL configuration to activate. Run `stash db push` first to register a change.',
+        'No pending EQL configuration to activate. This applies to the EQL v2 + CipherStash Proxy config lifecycle — register a pending change before activating.',
       )
       exitCode = 1
       return

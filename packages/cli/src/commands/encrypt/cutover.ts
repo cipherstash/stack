@@ -81,7 +81,7 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     )
     if (pending.rows[0]?.exists !== true) {
       p.log.error(
-        'No pending EQL configuration. Update your schema to point at the encrypted column (drop the `_encrypted` suffix), then run `stash db push` to register the pending change before cutting over.',
+        'No pending EQL configuration to cut over. Cutover operates on the EQL v2 + CipherStash Proxy config lifecycle — update your schema to point at the encrypted column (drop the `_encrypted` suffix) and register the pending change before cutting over.',
       )
       exitCode = 1
       return

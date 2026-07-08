@@ -17,7 +17,7 @@ describe('renderCommandHelp', () => {
     expect(out).toContain('--force')
     // Value-taking flag renders its placeholder + default annotation.
     expect(out).toContain('--eql-version <2|3>')
-    expect(out).toContain('(default: 2)')
+    expect(out).toContain('(default: 3)')
   })
 
   it('surfaces a flag env var alongside its description', () => {

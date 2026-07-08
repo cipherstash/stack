@@ -77,9 +77,10 @@ export interface InstallOptions {
    */
   scaffoldConfig?: 'ensure' | 'offer' | 'skip'
   /**
-   * EQL generation to install: `'2'` (default, composite `eql_v2_encrypted`)
-   * or `'3'` (native `eql_v3.*` domain schema). v3 currently supports the
-   * direct install path only — not `--drizzle`, `--migration`, or `--latest`.
+   * EQL generation to install: `'3'` (default, native `eql_v3.*` domain
+   * schema) or `'2'` (composite `eql_v2_encrypted`). v3 currently supports the
+   * direct install path only — `--drizzle`, `--migration`, `--migrations-dir`,
+   * and `--latest` require an explicit `'2'`.
    */
   eqlVersion?: string
 }
@@ -204,7 +205,7 @@ export async function installCommand(options: InstallOptions) {
   // CIP-2985.
   const resolved = resolveProviderOptions(options, databaseUrl)
 
-  const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
+  const eqlVersion: 2 | 3 = options.eqlVersion === '2' ? 2 : 3
 
   // v3 supports the direct install path only. Explicit --drizzle/--migration
   // are rejected up-front by validateInstallFlags; auto-DETECTED drizzle or
@@ -640,23 +641,10 @@ export function validateInstallFlags(options: InstallOptions): string | null {
     return `Unknown \`--eql-version ${options.eqlVersion}\`. Supported values: 2, 3.`
   }
 
-  if (options.eqlVersion === '3') {
-    const incompatible = options.drizzle
-      ? '--drizzle'
-      : options.migration
-        ? '--migration'
-        : options.latest
-          ? '--latest'
-          : // --migrations-dir only feeds the Supabase v2 migration-file path;
-            // the v3 direct install would silently ignore it — reject instead.
-            options.migrationsDir !== undefined
-            ? '--migrations-dir'
-            : null
-    if (incompatible) {
-      return `\`--eql-version 3\` does not support \`${incompatible}\` yet — v3 currently installs via the direct path only.`
-    }
-  }
-
+  // `--migration` / `--direct` / `--migrations-dir` require `--supabase`. Check
+  // this before the version gate below so a bare `--migration` still points at
+  // the missing `--supabase` (its more fundamental prerequisite) rather than
+  // the version.
   const subFlag =
     options.migration === true
       ? '--migration'
@@ -668,6 +656,29 @@ export function validateInstallFlags(options: InstallOptions): string | null {
 
   if (subFlag !== null && options.supabase !== true) {
     return `\`${subFlag}\` requires \`--supabase\`. Re-run with \`eql install --supabase ${subFlag}\`.`
+  }
+
+  // v3 is the default and installs via the direct path only. The Drizzle /
+  // Supabase-migration / `--latest` paths are v2-only, so they require an
+  // explicit `--eql-version 2` — otherwise they'd silently resolve to a v3
+  // direct install that ignores what the user asked for. `--migrations-dir`
+  // only feeds the Supabase v2 migration-file path, so it's in the same bucket.
+  const resolvedVersion: 2 | 3 = options.eqlVersion === '2' ? 2 : 3
+  if (resolvedVersion === 3) {
+    const v2OnlyFlag = options.drizzle
+      ? '--drizzle'
+      : options.migration
+        ? '--migration'
+        : options.latest
+          ? '--latest'
+          : options.migrationsDir !== undefined
+            ? '--migrations-dir'
+            : null
+    if (v2OnlyFlag) {
+      return options.eqlVersion === '3'
+        ? `\`--eql-version 3\` does not support \`${v2OnlyFlag}\` yet — v3 currently installs via the direct path only.`
+        : `\`${v2OnlyFlag}\` requires EQL v2. Re-run with \`--eql-version 2 ${v2OnlyFlag}\` (v3 is the default and installs via the direct path only).`
+    }
   }
 
   return null

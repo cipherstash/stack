@@ -208,8 +208,16 @@ describe('validateInstallFlags', () => {
     expect(validateInstallFlags({})).toBeNull()
   })
 
-  it('returns null when --supabase is paired with --migration', () => {
-    expect(validateInstallFlags({ supabase: true, migration: true })).toBeNull()
+  it('returns null when --supabase + --migration is pinned to --eql-version 2', () => {
+    // --migration is a v2-only path, so under the v3 default it needs an
+    // explicit `--eql-version 2` alongside --supabase.
+    expect(
+      validateInstallFlags({
+        supabase: true,
+        migration: true,
+        eqlVersion: '2',
+      }),
+    ).toBeNull()
   })
 
   it('returns null when --supabase is paired with --direct', () => {
@@ -278,6 +286,36 @@ describe('validateInstallFlags', () => {
         migrationsDir: 'db/migrations',
       }),
     ).toMatch(/--migrations-dir/)
+  })
+
+  it('defaults to v3: a plain install with no version is valid', () => {
+    expect(validateInstallFlags({})).toBeNull()
+    expect(validateInstallFlags({ supabase: true })).toBeNull()
+  })
+
+  it('v2-only flags without an explicit --eql-version 2 are rejected under the v3 default', () => {
+    // No eqlVersion passed → resolves to the v3 default, which can't do these.
+    for (const opts of [
+      { drizzle: true },
+      { latest: true },
+      { supabase: true, migration: true },
+      { supabase: true, migrationsDir: 'db/migrations' },
+    ]) {
+      const err = validateInstallFlags(opts)
+      expect(err).toMatch(/--eql-version 2/)
+    }
+  })
+
+  it('accepts the v2-only paths when --eql-version 2 is explicit', () => {
+    expect(validateInstallFlags({ eqlVersion: '2', drizzle: true })).toBeNull()
+    expect(validateInstallFlags({ eqlVersion: '2', latest: true })).toBeNull()
+    expect(
+      validateInstallFlags({
+        eqlVersion: '2',
+        supabase: true,
+        migration: true,
+      }),
+    ).toBeNull()
   })
 })
 

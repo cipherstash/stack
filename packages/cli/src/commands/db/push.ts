@@ -5,6 +5,7 @@ import * as p from '@clack/prompts'
 import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadEncryptConfig, loadStashConfig } from '@/config/index.js'
+import { EQLInstaller } from '@/installer/index.js'
 import { validateEncryptConfig } from './validate.js'
 
 /**
@@ -42,6 +43,25 @@ export async function pushCommand(options: {
   s.start('Loading stash.config.ts...')
   const config = await loadStashConfig({ databaseUrlFlag: options.databaseUrl })
   s.stop('Configuration loaded.')
+
+  // `db push` writes the encrypt config into `public.eql_v2_configuration` —
+  // a v2 + CipherStash Proxy artifact. EQL v3 has no configuration table
+  // (config lives in each column's `eql_v3.*` domain type) and nothing reads
+  // it, so on a v3-only database push has nothing to do and the table doesn't
+  // even exist. Detect that and exit cleanly instead of failing with a raw
+  // `relation "public.eql_v2_configuration" does not exist`.
+  const installer = new EQLInstaller({ databaseUrl: config.databaseUrl })
+  const [v2Installed, v3Installed] = await Promise.all([
+    installer.isInstalled({ eqlVersion: 2 }).catch(() => false),
+    installer.isInstalled({ eqlVersion: 3 }).catch(() => false),
+  ])
+  if (v3Installed && !v2Installed) {
+    p.log.info(
+      "`stash db push` isn't needed under EQL v3 — encryption config lives in each column's `eql_v3.*` type, not a central config table. This command only applies to EQL v2 with CipherStash Proxy.",
+    )
+    p.outro('Nothing to do.')
+    return
+  }
 
   s.start(`Loading encrypt client from ${config.client}...`)
   const encryptConfig = await loadEncryptConfig(config.client)

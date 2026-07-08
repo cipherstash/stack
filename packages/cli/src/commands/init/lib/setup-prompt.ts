@@ -32,8 +32,6 @@ export interface SetupPromptContext {
    *  to `'rollout'` when plan mode is invoked without explicit state — that
    *  matches a fresh project where there are no recorded events yet. */
   planStep?: PlanStep
-  /** Whether the user runs CipherStash Proxy. False = SDK-only (no `stash db push` in default flows). True = prompts include push steps. Captured in stash init; persisted to .cipherstash/context.json. */
-  usesProxy: boolean
 }
 
 interface MigrationCommands {
@@ -251,17 +249,8 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     "2. Edit the user's real schema file (`src/db/schema.ts` or wherever they keep it) to declare the new encrypted column. Use the patterns in the integration skill — `encryptedType` for Drizzle, `encryptedColumn` for Supabase. Encrypted columns must be **nullable `jsonb`** at creation time. Never `.notNull()`.",
     `3. Generate the schema migration${migration ? ` — \`${migration.generate}\` (${migration.tool})` : " using the project's existing migration tooling"}.`,
     `4. Show the user the generated SQL before applying${migration ? ` — \`${migration.apply}\`` : ''}.`,
-    ...(ctx.usesProxy
-      ? [
-          `5. Register the encryption config — \`${cli} db push\`. If the project has no active EQL config yet (first encrypted column ever), this writes directly to active and you can skip step 6. If an active config already exists, push writes \`pending\` and prints a next-step note.`,
-          `6. **If db push wrote pending**, promote it to active — \`${cli} db activate\`. (Use \`${cli} db activate\` here because no rename is needed; \`${cli} encrypt cutover\` is reserved for the migrate-existing-column flow.)`,
-          '7. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, query paths use the right operator (`protectOps.eq`, etc. — see the integration skill).',
-          '8. Verify with a round-trip: insert a record, select it back, confirm the value decrypts and the search ops work.',
-        ]
-      : [
-          '5. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, query paths use the right operator (`protectOps.eq`, etc. — see the integration skill).',
-          '6. Verify with a round-trip: insert a record, select it back, confirm the value decrypts and the search ops work.',
-        ]),
+    '5. Wire the column through the application code: insert paths encrypt before write, select paths decrypt after read, query paths use the right operator (`protectOps.eq`, etc. — see the integration skill).',
+    '6. Verify with a round-trip: insert a record, select it back, confirm the value decrypts and the search ops work.',
     '',
     '### Migrate an existing column to encrypted',
     '',
@@ -272,14 +261,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '#### Encryption rollout — what lands before the deploy',
     '',
     `1. **Schema-add.** Add a \`<col>_encrypted\` twin column (nullable \`jsonb\`) alongside the existing plaintext column in the user's real schema file. Generate and apply the schema migration. **If this is the first encrypted column in the project, configure the bundler exclusion now** — see the snippets in the previous section. Without it, importing the encryption client at backfill time will crash.`,
-    ...(ctx.usesProxy
-      ? [
-          `2. **Register pending config** — \`${cli} db push\`. With an existing active config, this writes the new column-set as \`pending\`. Cutover (later) will promote it. (If this is the very first push for the project, db push writes active directly — fine, the rest of the flow still works.)`,
-          `3. **Dual-write.** Edit the application code so **every persistence path that mutates this row writes both \`<col>\` (plaintext, unchanged) and \`<col>_encrypted\` (ciphertext via the encryption client) — in the same transaction, on every code branch, with no exceptions.** A single missed branch causes silent migration drift later. Reads still come from the plaintext column.`,
-        ]
-      : [
-          `2. **Dual-write.** Edit the application code so **every persistence path that mutates this row writes both \`<col>\` (plaintext, unchanged) and \`<col>_encrypted\` (ciphertext via the encryption client) — in the same transaction, on every code branch, with no exceptions.** A single missed branch causes silent migration drift later. Reads still come from the plaintext column.`,
-        ]),
+    `2. **Dual-write.** Edit the application code so **every persistence path that mutates this row writes both \`<col>\` (plaintext, unchanged) and \`<col>_encrypted\` (ciphertext via the encryption client) — in the same transaction, on every code branch, with no exceptions.** A single missed branch causes silent migration drift later. Reads still come from the plaintext column.`,
     '',
     `⛔ **Deploy gate.** Stop here. The application must be running this code in production — the deployed environment that owns the database — before backfill is safe to run. "Live on the user's laptop" or "live in CI" does not count. After the user deploys, tell them to run`,
     '',
@@ -289,21 +271,11 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '',
     '#### Encryption cutover — after dual-writes are live',
     '',
-    ...(ctx.usesProxy
-      ? [
-          `4. **Backfill.** Run \`${cli} encrypt backfill --table <T> --column <c>\`. The CLI prompts the user (or accepts \`--confirm-dual-writes-deployed\` non-interactively) to confirm dual-writes are live, then chunks through the existing rows. Resumable; checkpoints to \`cs_migrations\` after every chunk. SIGINT-safe.`,
-          `5. **Switch the schema and re-push, then cutover.** Update the schema file to declare the encrypted column under its final name (drop \`_encrypted\` suffix, switch \`<col>\` to \`encryptedType\`). Run \`${cli} db push\` again — pending now reflects the renamed shape. Then \`${cli} encrypt cutover --table <T> --column <c>\` runs the rename in one transaction (\`<col>\` → \`<col>_plaintext\`, \`<col>_encrypted\` → \`<col>\`) and promotes pending → active.`,
-          '6. **Wire the read path through the encryption client.** Post-cutover, `<col>` holds ciphertext. Read code paths must decrypt before returning the value to callers — `decryptModel(row, table)` for Drizzle, the `encryptedSupabase` wrapper for Supabase, or the equivalent `decrypt`/`bulkDecryptModels` calls. Without this step, your read paths return raw `eql_v2_encrypted` payloads to end users. The integration skill has the exact API.',
-          '7. **Remove the dual-write code.** The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic from the persistence layer.',
-          `8. **Drop.** Run \`${cli} encrypt drop --table <T> --column <c>\`. Generates a migration that removes the now-unused \`<col>_plaintext\`. Apply with the project's normal migration tooling.`,
-        ]
-      : [
-          `3. **Backfill.** Run \`${cli} encrypt backfill --table <T> --column <c>\`. The CLI prompts the user (or accepts \`--confirm-dual-writes-deployed\` non-interactively) to confirm dual-writes are live, then chunks through the existing rows. Resumable; checkpoints to \`cs_migrations\` after every chunk. SIGINT-safe.`,
-          `4. **Switch the schema, then cutover.** Update the schema file to declare the encrypted column under its final name (drop \`_encrypted\` suffix, switch \`<col>\` to \`encryptedType\`). Then \`${cli} encrypt cutover --table <T> --column <c>\` runs the rename in one transaction (\`<col>\` → \`<col>_plaintext\`, \`<col>_encrypted\` → \`<col>\`) and promotes pending → active. *Known gap: cutover currently needs a pending EQL config. If it fails with "No pending EQL configuration", run \`${cli} db push\` once before cutover to register the pending change — this applies even on SDK-only setups that otherwise never need \`db push\`.*`,
-          '5. **Wire the read path through the encryption client.** Post-cutover, `<col>` holds ciphertext. Read code paths must decrypt before returning the value to callers — `decryptModel(row, table)` for Drizzle, the `encryptedSupabase` wrapper for Supabase, or the equivalent `decrypt`/`bulkDecryptModels` calls. Without this step, your read paths return raw `eql_v2_encrypted` payloads to end users. The integration skill has the exact API.',
-          '6. **Remove the dual-write code.** The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic from the persistence layer.',
-          `7. **Drop.** Run \`${cli} encrypt drop --table <T> --column <c>\`. Generates a migration that removes the now-unused \`<col>_plaintext\`. Apply with the project's normal migration tooling.`,
-        ]),
+    `3. **Backfill.** Run \`${cli} encrypt backfill --table <T> --column <c>\`. The CLI prompts the user (or accepts \`--confirm-dual-writes-deployed\` non-interactively) to confirm dual-writes are live, then chunks through the existing rows. Resumable; checkpoints to \`cs_migrations\` after every chunk. SIGINT-safe.`,
+    `4. **Switch the schema, then cutover.** Update the schema file to declare the encrypted column under its final name (drop \`_encrypted\` suffix, switch \`<col>\` to \`encryptedType\`). Then \`${cli} encrypt cutover --table <T> --column <c>\` runs the rename in one transaction (\`<col>\` → \`<col>_plaintext\`, \`<col>_encrypted\` → \`<col>\`).`,
+    '5. **Wire the read path through the encryption client.** Post-cutover, `<col>` holds ciphertext. Read code paths must decrypt before returning the value to callers — `decryptModel(row, table)` for Drizzle, the `encryptedSupabase` wrapper for Supabase, or the equivalent `decrypt`/`bulkDecryptModels` calls. Without this step, your read paths return raw encrypted payloads to end users. The integration skill has the exact API.',
+    '6. **Remove the dual-write code.** The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic from the persistence layer.',
+    `7. **Drop.** Run \`${cli} encrypt drop --table <T> --column <c>\`. Generates a migration that removes the now-unused \`<col>_plaintext\`. Apply with the project's normal migration tooling.`,
     '',
     'Recovery: if the user reports that backfill ran *before* the dual-write code was actually live, drift is expected (rows written during the backfill window land in plaintext only). Re-run with `--force` to encrypt every plaintext row regardless of current state.',
     '',
@@ -341,13 +313,13 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
  * Render the planning action prompt.
  *
  * Plan-mode tells the agent its task is to produce a reviewable plan file
- * at `.cipherstash/plan.md` — no schema edits, no migrations, no `db push`,
- * no `encrypt *` mutations during this phase. Read-only inspection
+ * at `.cipherstash/plan.md` — no schema edits, no migrations, no
+ * `encrypt *` mutations during this phase. Read-only inspection
  * (`stash status`, `stash eql status`, schema grep, file reads) is fine.
  *
  * Dispatches by `ctx.planStep`:
  *
- *   `'rollout'` (default) — schema-add + dual-write code + db push.
+ *   `'rollout'` (default) — schema-add + dual-write code.
  *                            Plan stops at the deploy gate.
  *   `'cutover'`           — backfill + cutover + drop. Pre-condition:
  *                            `dual_writing` recorded for the targeted
@@ -409,7 +381,7 @@ function planSharedNotDoBlock(ctx: SetupPromptContext): string[] {
       'Edit schema files, application code, or migration files. The plan describes future changes — it does not perform them.',
     ),
     bullet(
-      `Run \`${cli} db push\`, \`${cli} encrypt backfill\`, \`${cli} encrypt cutover\`, \`${cli} encrypt drop\`, \`${cli} db activate\`, or any other state-mutating command.`,
+      `Run \`${cli} encrypt backfill\`, \`${cli} encrypt cutover\`, \`${cli} encrypt drop\`, or any other state-mutating command.`,
     ),
     bullet(
       'Run schema migrations (`drizzle-kit migrate`, `supabase migration up`, `prisma migrate`, etc.).',
@@ -480,9 +452,7 @@ function renderRolloutPlanPrompt(ctx: SetupPromptContext): string {
       '**Add a new encrypted column** — single deploy, no rollout/cutover split. Declared encrypted from the start.',
     ),
     bullet(
-      ctx.usesProxy
-        ? '**Encryption rollout for an existing column** — the encrypted twin column, the application-side dual-write code, and `stash db push` (writes pending). All of this lands in one PR; the user deploys it; `cs_migrations` records `dual_writing` the next time backfill is invoked.'
-        : '**Encryption rollout for an existing column** — the encrypted twin column and the application-side dual-write code (plus `stash db push` for Proxy users only). All of this lands in one PR; the user deploys it; `cs_migrations` records `dual_writing` the next time backfill is invoked.',
+      '**Encryption rollout for an existing column** — the encrypted twin column and the application-side dual-write code. All of this lands in one PR; the user deploys it; `cs_migrations` records `dual_writing` the next time backfill is invoked.',
     ),
     '',
     'Converting a populated column in place is **not** supported — any "just swap the type" approach corrupts data. If the user asks for that, the plan must explain why and route them to the encryption-rollout flow.',
@@ -508,9 +478,7 @@ function renderRolloutPlanPrompt(ctx: SetupPromptContext): string {
       'Which path applies per column (additive new column or encryption-rollout for an existing one). Justify briefly.',
     ),
     bullet(
-      ctx.usesProxy
-        ? 'For migrate columns: what the rollout PR contains — schema-add, `db push` (pending), and the exact dual-write code change. The dual-write definition matters: every persistence path that mutates the row writes both columns, in the same transaction, on every code branch.'
-        : 'For migrate columns: what the rollout PR contains — schema-add and the exact dual-write code change. The dual-write definition matters: every persistence path that mutates the row writes both columns, in the same transaction, on every code branch.',
+      'For migrate columns: what the rollout PR contains — schema-add and the exact dual-write code change. The dual-write definition matters: every persistence path that mutates the row writes both columns, in the same transaction, on every code branch.',
     ),
     bullet(
       `Project-specific risks. Common ones: bundler exclusion not yet configured (Next.js / webpack / Vite), top-level-await in the placeholder encryption client breaks non-Next contexts, existing partial CipherStash state (run \`${cli} eql status\` and note any pre-existing encrypted columns or pending configs).`,
@@ -552,7 +520,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
     ),
     `\`${cli} plan\` detected that dual-writes are recorded as live in \`cs_migrations\` for at least one column. Your job is to produce a reviewable plan at \`${PLAN_REL_PATH}\` covering the **encryption cutover** — backfilling historical rows, switching reads through the encryption client, and dropping the old plaintext column. **Do not** make code or schema changes here; do not run mutating CLI commands. Read-only inspection is encouraged.`,
     '',
-    'The encryption rollout (schema-add + dual-write code + `db push`) is assumed already deployed to production. If the prose ends up describing dual-write code edits, you are off-scope — re-anchor on what cutover-step work remains.',
+    'The encryption rollout (schema-add + dual-write code) is assumed already deployed to production. If the prose ends up describing dual-write code edits, you are off-scope — re-anchor on what cutover-step work remains.',
     '',
     ...planSharedSetupBlock(ctx),
     '## What this plan covers',
@@ -563,19 +531,10 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
       '**Backfill.** Encrypt the historical rows that pre-date the rollout deploy. Resumable; chunked; SIGINT-safe.',
     ),
     bullet(
-      ctx.usesProxy
-        ? '**Schema rename and re-push.** Update the schema declaration to put the encrypted form under its final column name; `stash db push` registers the renamed pending config.'
-        : '**Schema rename.** Update the schema declaration so the original column points at the encrypted type.',
+      '**Schema rename.** Update the schema declaration so the original column points at the encrypted type.',
     ),
-    ...(ctx.usesProxy
-      ? []
-      : [
-          bullet(
-            '*Proxy users only*: after the schema rename, also run `stash db push` to register the renamed pending config.',
-          ),
-        ]),
     bullet(
-      '**Cutover.** A single transaction renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes the pending EQL config to active.',
+      '**Cutover.** A single transaction renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`.',
     ),
     bullet(
       '**Read path.** Application reads of `<col>` now return ciphertext until the read path decrypts via the encryption client. The plan must specify what changes per read site.',
@@ -607,9 +566,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
         ' encrypt backfill` invocation with concrete `--table` / `--column` values.',
     ),
     bullet(
-      ctx.usesProxy
-        ? 'The schema-edit + `db push` step, with the exact rename pattern (drop `_encrypted` suffix on the encrypted column, switch the original column declaration off `text`/`varchar` and onto the encrypted type).'
-        : 'The schema-edit step, with the exact rename pattern (drop `_encrypted` suffix on the encrypted column, switch the original column declaration off `text`/`varchar` and onto the encrypted type).',
+      'The schema-edit step, with the exact rename pattern (drop `_encrypted` suffix on the encrypted column, switch the original column declaration off `text`/`varchar` and onto the encrypted type).',
     ),
     bullet(
       'The cutover invocation per column: `' +
@@ -671,9 +628,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
       '**Add new encrypted columns** — declared encrypted from the start; single-deploy.',
     ),
     bullet(
-      ctx.usesProxy
-        ? '**Migrate existing columns** — schema-add → dual-write code → `db push` → backfill → schema rename → `db push` → cutover → read-path switch → remove dual-write code → drop plaintext. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.'
-        : '**Migrate existing columns** — schema-add → dual-write code → backfill → schema rename → cutover → read-path switch → remove dual-write code → drop plaintext. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.',
+      '**Migrate existing columns** — schema-add → dual-write code → backfill → schema rename → cutover → read-path switch → remove dual-write code → drop plaintext. No deploy gate between rollout and cutover steps because there is no deployed application to gate on.',
     ),
     '',
     '## Your task: produce the complete-rollout plan file',

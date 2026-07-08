@@ -9,7 +9,7 @@ export async function upgradeCommand(options: {
   excludeOperatorFamily?: boolean
   latest?: boolean
   databaseUrl?: string
-  /** EQL generation to upgrade: `'2'` (default) or `'3'`. */
+  /** EQL generation to upgrade: `'3'` (default) or `'2'`. */
   eqlVersion?: string
 }) {
   const pm = detectPackageManager()
@@ -26,11 +26,15 @@ export async function upgradeCommand(options: {
     p.outro('Upgrade aborted.')
     process.exit(1)
   }
-  const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
+  const eqlVersion: 2 | 3 = options.eqlVersion === '2' ? 2 : 3
 
   if (eqlVersion === 3 && options.latest) {
+    // `--latest` is v2-only (no public v3 release artifacts exist yet). Since
+    // v3 is the default, tell the user how to reach the v2 latest upgrade.
     p.log.error(
-      '`--eql-version 3` does not support `--latest` — no public v3 release artifacts exist yet. Use the bundled upgrade.',
+      options.eqlVersion === '3'
+        ? '`--eql-version 3` does not support `--latest` — no public v3 release artifacts exist yet. Use the bundled upgrade.'
+        : '`--latest` requires EQL v2 — no public v3 release artifacts exist yet. Re-run with `--eql-version 2 --latest`, or drop `--latest` for the bundled v3 upgrade.',
     )
     p.outro('Upgrade aborted.')
     process.exit(1)

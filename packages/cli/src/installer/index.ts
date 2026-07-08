@@ -17,6 +17,15 @@ const EQL_V3_INTERNAL_SCHEMA_NAME = 'eql_v3_internal'
  */
 export type EqlVersion = 2 | 3
 
+/**
+ * The generation `stash eql install` / `eql upgrade` target when the user
+ * doesn't pass `--eql-version`. v3 (native `eql_v3.*` domain types) is the
+ * current default; v2 is opt-in via `--eql-version 2` and is required for the
+ * Drizzle / Supabase-migration / `--latest` paths, which v3 doesn't support
+ * yet.
+ */
+export const DEFAULT_EQL_VERSION: EqlVersion = 3
+
 function schemaNameFor(eqlVersion: EqlVersion): string {
   return eqlVersion === 3 ? EQL_V3_SCHEMA_NAME : EQL_SCHEMA_NAME
 }
@@ -200,11 +209,11 @@ export class EQLInstaller {
 
   /**
    * Check whether the EQL extension is installed by looking for its schema
-   * (`eql_v2` by default, `eql_v3` when `eqlVersion: 3`).
+   * (`eql_v3` by default, `eql_v2` when `eqlVersion: 2`).
    */
   async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
     const client = new pg.Client({ connectionString: this.databaseUrl })
-    const eqlVersion = options?.eqlVersion ?? 2
+    const eqlVersion = options?.eqlVersion ?? DEFAULT_EQL_VERSION
 
     try {
       await client.connect()
@@ -244,7 +253,7 @@ export class EQLInstaller {
   async getInstalledVersion(options?: {
     eqlVersion?: EqlVersion
   }): Promise<string | null> {
-    const schemaName = schemaNameFor(options?.eqlVersion ?? 2)
+    const schemaName = schemaNameFor(options?.eqlVersion ?? DEFAULT_EQL_VERSION)
     const client = new pg.Client({ connectionString: this.databaseUrl })
 
     try {
@@ -300,7 +309,11 @@ export class EQLInstaller {
     latest?: boolean
     eqlVersion?: EqlVersion
   }): Promise<void> {
-    const { supabase = false, latest = false, eqlVersion = 2 } = options ?? {}
+    const {
+      supabase = false,
+      latest = false,
+      eqlVersion = DEFAULT_EQL_VERSION,
+    } = options ?? {}
     const excludeOperatorFamily = options?.excludeOperatorFamily || supabase
 
     if (latest && eqlVersion === 3) {
@@ -441,7 +454,7 @@ function resolveBundledFilename(options: {
   supabase: boolean
   eqlVersion?: EqlVersion
 }): string {
-  if ((options.eqlVersion ?? 2) === 3) {
+  if ((options.eqlVersion ?? DEFAULT_EQL_VERSION) === 3) {
     if (options.supabase || options.excludeOperatorFamily)
       return 'cipherstash-encrypt-v3-supabase.sql'
     return 'cipherstash-encrypt-v3.sql'
@@ -465,7 +478,7 @@ export function loadBundledEqlSql(
   const filename = resolveBundledFilename({
     excludeOperatorFamily: options.excludeOperatorFamily ?? false,
     supabase: options.supabase ?? false,
-    eqlVersion: options.eqlVersion ?? 2,
+    eqlVersion: options.eqlVersion ?? DEFAULT_EQL_VERSION,
   })
 
   try {

@@ -91,7 +91,22 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     )
   }
 
-  // 3. Check for active encrypt config (proxy mode)
+  // 3. Encrypt configuration.
+  //
+  // `public.eql_v2_configuration` is a v2 + CipherStash Proxy artifact: the v2
+  // install creates it and Proxy reads it. EQL v3 has no configuration table —
+  // encryption config lives in each column's `eql_v3.*` domain type — so on a
+  // v3-only install there's nothing to probe. Gate the check on v2 being
+  // installed; this also removes the old dead-end that told v3-only users to
+  // run `db push` (which neither creates that table nor applies to v3).
+  if (!installedV2) {
+    p.log.info(
+      "Encrypt config: carried in each column's `eql_v3.*` type (EQL v3 has no Proxy config table).",
+    )
+    p.outro('Status check complete.')
+    return
+  }
+
   s.start('Checking encrypt configuration...')
 
   const client = new pg.Client({ connectionString: config.databaseUrl })
@@ -110,22 +125,12 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
         `Active encrypt config: yes (${result.rowCount} active ${result.rowCount === 1 ? 'row' : 'rows'})`,
       )
     } else {
-      p.log.info(
-        'Active encrypt config: none (only needed for CipherStash Proxy)',
-      )
+      p.log.info('Active encrypt config: none (only used by CipherStash Proxy)')
     }
   } catch (error) {
     s.stop('Configuration check failed.')
-
-    // The table may not exist if push has never been run — that's fine
     const message = error instanceof Error ? error.message : String(error)
-    if (message.includes('does not exist')) {
-      p.log.info(
-        `Active encrypt config: table not found (run \`${runnerCommand(pm, 'stash db push')}\` to create it)`,
-      )
-    } else {
-      p.log.error(`Failed to check encrypt configuration: ${message}`)
-    }
+    p.log.error(`Failed to check encrypt configuration: ${message}`)
   } finally {
     await client.end()
   }
