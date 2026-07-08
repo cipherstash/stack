@@ -72,6 +72,25 @@ describe('config-scaffold DX (missing config / missing deps)', () => {
     expect(r.output).not.toContain('Cannot find module')
   })
 
+  it('non-interactive `eql install` (URL from env) writes no config or client (#2, #4)', async () => {
+    // No --database-url flag but DATABASE_URL in the env: offer mode, but a
+    // non-TTY run can't prompt. It must NOT silently scaffold a config (which
+    // imports `stash`) or a client (which imports `@cipherstash/stack`) into a
+    // bare project. offerStashConfig returns null and the client scaffold is
+    // skipped; the bogus URL then fails fast at connect.
+    const r = await run(['eql', 'install'], {
+      cwd: tmpDir,
+      env: { DATABASE_URL: 'postgres://u:p@127.0.0.1:1/db?connect_timeout=2' },
+    })
+
+    expect(fs.existsSync(path.join(tmpDir, 'stash.config.ts'))).toBe(false)
+    expect(
+      fs.existsSync(path.join(tmpDir, 'src', 'encryption', 'index.ts')),
+    ).toBe(false)
+    expect(r.output).not.toContain('Created stash.config.ts')
+    expect(r.output).not.toContain('Cannot find module')
+  })
+
   // The `loadStashConfig` catch that translates a missing-module error into
   // guidance (the path for a project that HAS a config but lacks the CLI
   // packages) is covered by unit tests in src/__tests__/config.test.ts with a

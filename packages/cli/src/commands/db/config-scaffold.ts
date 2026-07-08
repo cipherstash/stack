@@ -1,6 +1,7 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
+import { isCiEnv } from '../../config/tty.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 export const CONFIG_FILENAME = 'stash.config.ts'
@@ -101,33 +102,38 @@ function writeStashConfig(configPath: string, clientPath: string): string {
  *
  * - `opts.ensure` (used by `stash init`, where the user has already committed
  *   to setup) creates the config without a yes/no prompt.
- * - Otherwise, an interactive run offers to create it; a non-interactive run
- *   creates it with a detected/default client path rather than hanging.
+ * - Otherwise it *offers* to create it interactively. A non-interactive run
+ *   (CI / agents / pipes) can't prompt, so it does nothing rather than silently
+ *   writing files that reference packages a bare project may not have installed.
  *
- * Returns the encryption-client path the config points at, falling back to
- * {@link DEFAULT_CLIENT_PATH} when no config is written — so the caller can
- * still scaffold the client file at a sensible location.
+ * Returns the encryption-client path the config points at when a config was
+ * written, or `null` when nothing was created (declined, non-interactive, or an
+ * existing config) — so the caller skips the client scaffold too.
  *
  * Should be called only when no config exists yet (the caller loads an existing
  * one instead); it never overwrites a present `stash.config.ts`.
  */
 export async function offerStashConfig(
   opts: { ensure?: boolean; cwd?: string } = {},
-): Promise<string> {
+): Promise<string | null> {
   const cwd = opts.cwd ?? process.cwd()
   const configPath = resolve(cwd, CONFIG_FILENAME)
-  if (existsSync(configPath)) return DEFAULT_CLIENT_PATH
+  if (existsSync(configPath)) return null
 
-  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
-
-  // `ensure` (init) and non-interactive contexts create without a yes/no
-  // prompt: init already committed to setup, and a non-TTY run can't prompt.
-  if (opts.ensure || !isTTY) {
+  // `ensure` (init) creates the config without asking — the user already
+  // committed to setup by running `stash init`.
+  if (opts.ensure) {
     return writeStashConfig(
       configPath,
       detectClientPath(cwd) ?? DEFAULT_CLIENT_PATH,
     )
   }
+
+  // 'offer' mode. A non-interactive run can't prompt; don't write into the
+  // project unasked (that could drop files importing uninstalled packages) —
+  // the missing-config guidance points the user at `stash init` later.
+  const isTTY = Boolean(process.stdin.isTTY) && !isCiEnv()
+  if (!isTTY) return null
 
   const create = await p.confirm({
     message: `Create a ${CONFIG_FILENAME}? (needed later for db push / schema build / encrypt)`,
@@ -137,11 +143,11 @@ export async function offerStashConfig(
     p.log.info(
       `Skipped ${CONFIG_FILENAME}. Create it later with \`${runnerCommand(detectPackageManager(), 'stash init')}\`.`,
     )
-    return DEFAULT_CLIENT_PATH
+    return null
   }
 
   const clientPath = await resolveClientPath(cwd)
-  if (!clientPath) return DEFAULT_CLIENT_PATH
+  if (!clientPath) return null
 
   return writeStashConfig(configPath, clientPath)
 }
