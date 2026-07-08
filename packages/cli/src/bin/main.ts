@@ -27,6 +27,7 @@ import {
   implCommand,
   initCommand,
   installCommand,
+  manifestCommand,
   planCommand,
   statusCommand,
   testConnectionCommand,
@@ -89,6 +90,7 @@ Commands:
   auth <subcommand>    Authenticate with CipherStash
   wizard               AI-guided encryption setup (reads your codebase)
   doctor               Diagnose install problems (native binaries, runtime)
+  manifest             Print the structured, versioned command surface (--json for docs/agents)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
   eql upgrade          Upgrade EQL extensions to the latest version
@@ -195,6 +197,7 @@ Examples:
   ${STASH} db push
   ${STASH} schema build
   ${STASH} doctor
+  ${STASH} manifest --json                        # structured command surface for docs / agents
 `.trim()
 
 interface ParsedArgs {
@@ -518,6 +521,11 @@ export async function run() {
       break
     case 'env':
       await envCommand({ write: flags.write })
+      break
+    case 'manifest':
+      // Pure metadata (no native code) — safe to run anywhere, including when
+      // the native binary is missing.
+      manifestCommand({ json: flags.json, version: pkg.version })
       break
     case 'wizard': {
       // Forward everything after `stash wizard` verbatim. The wizard package
