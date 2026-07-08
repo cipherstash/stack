@@ -108,12 +108,18 @@ async function resolveInstallContext(
   options: InstallOptions,
   s: ReturnType<typeof p.spinner>,
 ): Promise<{ databaseUrl: string; clientPath: string | null }> {
-  if (findConfigFile(process.cwd())) {
+  const configPath = findConfigFile(process.cwd())
+  if (configPath) {
     s.start('Loading stash.config.ts...')
-    const config = await loadStashConfig({
-      databaseUrlFlag: options.databaseUrl,
-      supabase: options.supabase,
-    })
+    // Pass the path we already located so loadStashConfig doesn't re-walk the
+    // filesystem to find it.
+    const config = await loadStashConfig(
+      {
+        databaseUrlFlag: options.databaseUrl,
+        supabase: options.supabase,
+      },
+      configPath,
+    )
     s.stop('Configuration loaded.')
     return { databaseUrl: config.databaseUrl, clientPath: config.client }
   }

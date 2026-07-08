@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import * as p from '@clack/prompts'
+import { DEFAULT_CLIENT_PATH } from '../../../config/index.js'
 import {
   detectDrizzle,
   detectPrismaNext,
@@ -16,8 +17,6 @@ import type {
 } from '../types.js'
 import { CancelledError } from '../types.js'
 import { generatePlaceholderClient } from '../utils.js'
-
-const DEFAULT_CLIENT_PATH = './src/encryption/index.ts'
 
 /**
  * Pick the integration template by reading the same signals `eql install`

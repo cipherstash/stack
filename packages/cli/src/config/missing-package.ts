@@ -10,6 +10,7 @@ import {
   detectPackageManager,
   runnerCommand,
 } from '../commands/init/utils.js'
+import { messages } from '../messages.js'
 import { isModuleNotFound, moduleNotFoundSpecifier } from '../module-error.js'
 
 const CLI_PACKAGE = 'stash'
@@ -45,13 +46,7 @@ export function reportMissingCipherStashPackage(pkg: string): never {
   const stash = runnerCommand(pm, 'stash')
   const install = combinedInstallCommands(pm, [STACK_PACKAGE], [CLI_PACKAGE])
   console.error(
-    `Error: \`${pkg}\` is not installed in this project.
-
-Install the CipherStash packages, then re-run:
-  ${install.join('\n  ')}
-
-Or run \`${stash} init\` to set everything up.
-`,
+    `Error: ${messages.db.missingCipherStashPackage(pkg, install.join('\n  '), stash)}\n`,
   )
   process.exit(1)
 }

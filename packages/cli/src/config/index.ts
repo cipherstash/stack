@@ -44,13 +44,18 @@ export function defineConfig(config: StashConfig): StashConfig {
 
 const CONFIG_FILENAME = 'stash.config.ts'
 
-const DEFAULT_ENCRYPT_CLIENT_PATH = './src/encryption/index.ts'
+/**
+ * Default encryption-client path — the single source of truth for the location
+ * a scaffolded config points at and the Zod default when `client` is omitted.
+ * Imported by the scaffolder and the init schema builder so they can't drift.
+ */
+export const DEFAULT_CLIENT_PATH = './src/encryption/index.ts'
 
 const stashConfigSchema = z.object({
   databaseUrl: z
     .string({ required_error: 'databaseUrl is required' })
     .min(1, 'databaseUrl must not be empty'),
-  client: z.string().default(DEFAULT_ENCRYPT_CLIENT_PATH),
+  client: z.string().default(DEFAULT_CLIENT_PATH),
 })
 
 /**
@@ -95,12 +100,16 @@ export function findConfigFile(startDir: string): string | undefined {
  * command. This is how the CLI passes flag context into config
  * evaluation without mutating `process.env` or relying on globals.
  *
+ * `knownConfigPath` lets a caller that already located the config (via
+ * {@link findConfigFile}) skip a second cwd→root filesystem walk.
+ *
  * Exits with code 1 if the config file is not found or fails validation.
  */
 export async function loadStashConfig(
   resolverOptions: ResolveDatabaseUrlOptions = {},
+  knownConfigPath?: string,
 ): Promise<ResolvedStashConfig> {
-  const configPath = findConfigFile(process.cwd())
+  const configPath = knownConfigPath ?? findConfigFile(process.cwd())
 
   if (!configPath) {
     const stash = runnerCommand(detectPackageManager(), 'stash')

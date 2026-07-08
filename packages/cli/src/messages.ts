@@ -96,5 +96,17 @@ export const messages = {
     /** Nudge shown after a prompt-sourced run completes. */
     urlHint: (file: string) =>
       `Set DATABASE_URL in ${file} to skip this prompt next time.`,
+    /**
+     * Shown when a `stash.config.ts` (or the encryption client it points at)
+     * can't load because a CipherStash package isn't installed. `installCommands`
+     * is the newline-joined install invocation and `stash` the runner-aware
+     * `stash` prefix (e.g. `npx stash`).
+     */
+    missingCipherStashPackage: (
+      pkg: string,
+      installCommands: string,
+      stash: string,
+    ) =>
+      `\`${pkg}\` is not installed in this project.\n\nInstall the CipherStash packages, then re-run:\n  ${installCommands}\n\nOr run \`${stash} init\` to set everything up.`,
   },
 } as const

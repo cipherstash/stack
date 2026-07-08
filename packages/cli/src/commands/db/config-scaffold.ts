@@ -1,20 +1,21 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
+import { DEFAULT_CLIENT_PATH } from '../../config/index.js'
 import { isCiEnv } from '../../config/tty.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 export const CONFIG_FILENAME = 'stash.config.ts'
 
-/** Default encryption-client path used when the project has none yet. */
-export const DEFAULT_CLIENT_PATH = './src/encryption/index.ts'
+// Re-exported so scaffold consumers (and their tests) have a single import site.
+export { DEFAULT_CLIENT_PATH }
 
 /**
  * Common locations where an encryption client file might live. Checked in
- * order of priority during auto-detection.
+ * order of priority during auto-detection — the default path leads.
  */
 const COMMON_CLIENT_PATHS = [
-  './src/encryption/index.ts',
+  DEFAULT_CLIENT_PATH,
   './src/encryption.ts',
   './encryption/index.ts',
   './encryption.ts',
@@ -56,9 +57,9 @@ export async function resolveClientPath(
 
   const clientPath = await p.text({
     message: 'Where is your encryption client file?',
-    placeholder: './src/encryption/index.ts',
-    defaultValue: './src/encryption/index.ts',
-    initialValue: detected ?? './src/encryption/index.ts',
+    placeholder: DEFAULT_CLIENT_PATH,
+    defaultValue: DEFAULT_CLIENT_PATH,
+    initialValue: detected ?? DEFAULT_CLIENT_PATH,
     validate(value) {
       if (!value || value.trim().length === 0) {
         return 'Client file path is required.'
