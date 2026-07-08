@@ -9,14 +9,16 @@ import {
 import * as p from '@clack/prompts'
 import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
-import { loadStashConfig } from '@/config/index.js'
+import { resolveDatabaseUrl } from '@/config/database-url.js'
+import { findConfigFile, loadStashConfig } from '@/config/index.js'
+import { isInteractive } from '@/config/tty.js'
 import {
   downloadEqlSql,
   EQLInstaller,
   loadBundledEqlSql,
 } from '@/installer/index.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
-import { ensureStashConfig } from './config-scaffold.js'
+import { offerStashConfig } from './config-scaffold.js'
 import {
   detectDrizzle,
   detectSupabase,
@@ -66,6 +68,15 @@ export interface InstallOptions {
    */
   databaseUrl?: string
   /**
+   * How to handle a missing `stash.config.ts` — the caller owns this intent
+   * rather than it being inferred from whether a URL was supplied:
+   *  - `'ensure'` — create it without asking (`stash init`, where the user has
+   *    already committed to setting the project up).
+   *  - `'offer'`  — offer to create it (plain `stash eql install`). Default.
+   *  - `'skip'`   — never scaffold (a one-shot `eql install --database-url ...`).
+   */
+  scaffoldConfig?: 'ensure' | 'offer' | 'skip'
+  /**
    * EQL generation to install: `'2'` (default, composite `eql_v2_encrypted`)
    * or `'3'` (native `eql_v3.*` domain schema). v3 currently supports the
    * direct install path only — not `--drizzle`, `--migration`, or `--latest`.
@@ -75,6 +86,84 @@ export interface InstallOptions {
 
 /** Resolved install mode for the Supabase non-Drizzle branch. */
 export type SupabaseInstallMode = 'migration' | 'direct'
+
+/**
+ * Resolve the database URL + encryption-client path for the install.
+ *
+ * A pre-existing `stash.config.ts` is authoritative — later workflow commands
+ * (db push / schema build / encrypt) load the client through it — so we load
+ * it. Without one, `eql install` doesn't need a config: resolve the URL
+ * directly (flag → env → supabase → prompt). Decoupling install from the config
+ * is what lets `npx stash eql install --database-url ...` run in a bare project
+ * without the `stash` / `@cipherstash/stack` dependencies the config would
+ * otherwise import (#579).
+ *
+ * Whether a missing config gets scaffolded is the caller's explicit intent
+ * ({@link InstallOptions.scaffoldConfig}), not inferred from whether a URL was
+ * supplied — `stash init` passes a resolved URL but still wants a config, while
+ * a one-shot `--database-url` run wants the project left untouched. When no
+ * config is created, `clientPath` comes back `null` so the caller skips the
+ * client scaffold too.
+ *
+ * A one-shot run (`mode === 'skip'`, set when `--database-url` is passed alone)
+ * bypasses config loading entirely: it must leave the project untouched, so it
+ * neither honours nor scaffolds a config or client. This also means the flag
+ * always wins — loading a config here could pick up a parent-directory config
+ * with a hand-edited literal `databaseUrl` that silently overrides the flag and
+ * installs EQL against the wrong database.
+ */
+async function resolveInstallContext(
+  options: InstallOptions,
+  s: ReturnType<typeof p.spinner>,
+): Promise<{ databaseUrl: string; clientPath: string | null }> {
+  const mode = options.scaffoldConfig ?? 'offer'
+
+  // A one-shot `--database-url` install leaves the project untouched: don't load
+  // an existing config (see doc comment re: parent-dir literal override) and
+  // don't scaffold. Resolve the URL directly and return a null clientPath.
+  const configPath = mode === 'skip' ? null : findConfigFile(process.cwd())
+  if (configPath) {
+    s.start('Loading stash.config.ts...')
+    // Pass the path we already located so loadStashConfig doesn't re-walk the
+    // filesystem to find it.
+    const config = await loadStashConfig(
+      {
+        databaseUrlFlag: options.databaseUrl,
+        supabase: options.supabase,
+      },
+      configPath,
+    )
+    s.stop('Configuration loaded.')
+
+    // A config with a hand-edited literal `databaseUrl` bypasses the resolver,
+    // so a `--database-url` flag would be silently ignored. Surface it rather
+    // than installing against a different database than the user asked for —
+    // especially since `findConfigFile` walks up into parent directories.
+    if (
+      options.databaseUrl !== undefined &&
+      config.databaseUrl !== options.databaseUrl.trim()
+    ) {
+      p.log.warn(
+        `Ignoring --database-url: ${configPath} sets an explicit databaseUrl that takes precedence. Installing against the config's database.`,
+      )
+    }
+    return { databaseUrl: config.databaseUrl, clientPath: config.client }
+  }
+
+  const databaseUrl = await resolveDatabaseUrl({
+    databaseUrlFlag: options.databaseUrl,
+    supabase: options.supabase,
+  })
+
+  // A dry run must not write scaffold files, so it never enters the scaffold
+  // path (nor does an explicit `skip`).
+  if (mode === 'skip' || options.dryRun) {
+    return { databaseUrl, clientPath: null }
+  }
+
+  const clientPath = await offerStashConfig({ ensure: mode === 'ensure' })
+  return { databaseUrl, clientPath }
+}
 
 export async function installCommand(options: InstallOptions) {
   p.intro(runnerCommand(detectPackageManager(), 'stash eql install'))
@@ -90,31 +179,30 @@ export async function installCommand(options: InstallOptions) {
     process.exit(1)
   }
 
-  // Scaffold stash.config.ts if missing. `eql install` is the single command
-  // that gets a project from zero to installed EQL — no separate setup step
-  // (CIP-2986).
-  const configReady = await ensureStashConfig()
-  if (!configReady) {
-    process.exit(0)
-  }
-
   const s = p.spinner()
 
-  s.start('Loading stash.config.ts...')
-  const config = await loadStashConfig({
-    databaseUrlFlag: options.databaseUrl,
-    supabase: options.supabase,
-  })
-  s.stop('Configuration loaded.')
+  // `eql install` only needs a database URL to install EQL. It does NOT require
+  // a stash.config.ts: an existing config is authoritative (later workflow
+  // commands rely on it), but without one we resolve the URL directly — so a
+  // standalone `npx stash eql install --database-url ...` works with zero
+  // project dependencies. A one-shot `--database-url` run leaves the project
+  // untouched; otherwise we offer to scaffold a config for the rest of the
+  // workflow (CIP-2986 / #579).
+  const { databaseUrl, clientPath } = await resolveInstallContext(options, s)
 
   // Safety net: if the user ran `eql install` without first running `init`,
-  // scaffold the encryption client file so config.client points somewhere
-  // real. No-op when the file already exists.
-  ensureEncryptionClient(config.client, process.cwd(), config.databaseUrl)
+  // scaffold the encryption client file so clientPath points somewhere real.
+  // No-op when the file already exists. Skipped for a one-shot `--database-url`
+  // install (clientPath === null) or a dry run, which leave the project
+  // untouched — an existing config still yields a clientPath, so guard on dryRun
+  // too.
+  if (clientPath && !options.dryRun) {
+    ensureEncryptionClient(clientPath, process.cwd(), databaseUrl)
+  }
 
   // Auto-detect provider hints when the user didn't explicitly pass flags.
   // CIP-2985.
-  const resolved = resolveProviderOptions(options, config.databaseUrl)
+  const resolved = resolveProviderOptions(options, databaseUrl)
 
   const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
 
@@ -183,7 +271,7 @@ export async function installCommand(options: InstallOptions) {
   }
 
   const installer = new EQLInstaller({
-    databaseUrl: config.databaseUrl,
+    databaseUrl,
   })
 
   s.start('Checking database permissions...')
@@ -249,7 +337,7 @@ export async function installCommand(options: InstallOptions) {
   }
 
   s.start('Installing cs_migrations tracking schema...')
-  const migrationsDb = new pg.Client({ connectionString: config.databaseUrl })
+  const migrationsDb = new pg.Client({ connectionString: databaseUrl })
   try {
     await migrationsDb.connect()
     await installMigrationsSchema(migrationsDb)
@@ -617,12 +705,12 @@ async function resolveSupabaseInstallMode(
   options: InstallOptions,
   projectInfo: SupabaseProjectInfo,
 ): Promise<SupabaseInstallMode> {
-  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
-  const decided = chooseSupabaseInstallMode(options, projectInfo, isTTY)
+  const interactive = isInteractive()
+  const decided = chooseSupabaseInstallMode(options, projectInfo, interactive)
 
   if (decided !== null) {
     if (
-      !isTTY &&
+      !interactive &&
       options.migration === undefined &&
       options.direct === undefined
     ) {

@@ -1,6 +1,7 @@
 /**
- * Layered DATABASE_URL resolution. Called from inside the user's
- * `stash.config.ts` via:
+ * Layered DATABASE_URL resolution. Called both directly by CLI commands (e.g.
+ * `eql install` when there's no config) and from inside the user's
+ * `stash.config.ts`:
  *
  *   import { defineConfig, resolveDatabaseUrl } from 'stash'
  *   export default defineConfig({
@@ -8,29 +9,14 @@
  *   })
  *
  * The CLI's `loadStashConfig` wraps the jiti-import in
- * `withResolverContext({ databaseUrlFlag, supabase })` (an
- * `AsyncLocalStorage` scope) before evaluating the config file. Any
- * `resolveDatabaseUrl()` call inside the file then sees those options
- * via `als.getStore()` and walks:
+ * `withResolverContext({ databaseUrlFlag, supabase })` (an `AsyncLocalStorage`
+ * scope) before evaluating the config file, so a `resolveDatabaseUrl()` call
+ * inside the config picks up the CLI's flags via `als.getStore()`. See the
+ * {@link resolveDatabaseUrl} doc comment for the authoritative priority order.
  *
- *   1. `--database-url <url>` flag (explicit override).
- *   2. `process.env.DATABASE_URL` (shell, mise, direnv, dotenv files
- *      loaded by `bin/stash.ts`).
- *   3. `supabase status --output env` → `DB_URL`, when `--supabase` is
- *      set OR a `supabase/config.toml` is detected.
- *   4. Interactive `p.text` prompt (skipped under `CI=true` or non-TTY
- *      stdin).
- *   5. Hard-fail with a source-naming error.
- *
- * Returns the resolved URL string. The CLI never mutates
- * `process.env.DATABASE_URL` — the URL is only carried in the value
- * `defineConfig` returns. The connection string is never persisted to
- * disk; `stash.config.ts` references this function, not a literal.
- *
- * Concurrency: the ALS context is per-async-flow, so multiple
- * concurrent `loadStashConfig` calls (e.g. parallel test cases or a
- * programmatic batch invocation) each get isolated options without
- * stepping on each other.
+ * Concurrency: the ALS context is per-async-flow, so multiple concurrent
+ * `loadStashConfig` calls (e.g. parallel test cases or a programmatic batch
+ * invocation) each get isolated options without stepping on each other.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -41,7 +27,7 @@ import * as p from '@clack/prompts'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
 import { messages } from '../messages.js'
-import { isCiEnv } from './tty.js'
+import { isCiEnv, isInteractive } from './tty.js'
 
 export interface ResolveDatabaseUrlOptions {
   /** Value of `--database-url` if the user passed one. */
@@ -165,12 +151,29 @@ async function promptForUrl(cwd: string): Promise<string | undefined> {
 }
 
 /**
- * Walk the resolution chain and return a usable DATABASE_URL. Reads
- * options from the surrounding `withResolverContext` scope (set by the
- * CLI before evaluating the config file); any explicit `opts` passed
- * here override the scoped values.
+ * Resolve the database connection URL from the first available source, in
+ * strict priority order (first hit wins):
  *
- * Exits 1 when no source resolves a URL.
+ *   1. `--database-url <url>` flag (or `databaseUrlFlag` in the resolver
+ *      context) — explicit, highest precedence.
+ *   2. `process.env.DATABASE_URL` — shell, mise/direnv, or a `.env*` file
+ *      loaded at startup by `bin/stash.ts`.
+ *   3. `supabase status --output env` → `DB_URL` — only when `--supabase` is
+ *      set OR a `supabase/config.toml` is detected.
+ *   4. Interactive prompt — skipped under CI / non-TTY stdin.
+ *   5. Hard-fail with a source-naming error.
+ *
+ * `stash.config.ts` is NOT a separate tier. The scaffolded config's field is
+ * `databaseUrl: await resolveDatabaseUrl()`, so loading a config just re-runs
+ * this same chain — and because `loadStashConfig` threads `--database-url` in
+ * via `withResolverContext`, the flag still wins even when a config is present.
+ * The one exception is a hand-edited config that assigns a literal
+ * `databaseUrl` string: that bypasses this resolver entirely, so the literal
+ * takes precedence over the flag and env.
+ *
+ * The resolved URL is returned only — never written to `process.env` or
+ * persisted to disk. `opts` override the ALS context
+ * (`{ ...als.getStore(), ...opts }`).
  */
 export async function resolveDatabaseUrl(
   opts: ResolveDatabaseUrlOptions = {},
@@ -205,12 +208,12 @@ export async function resolveDatabaseUrl(
     }
   }
 
-  // 4. Interactive prompt — skipped in CI / non-TTY. `isCiEnv` accepts the
-  // common CI-truthy spellings (`true`, `1`, case-insensitive) since not every
-  // CI provider sets `CI=true` exactly; shared with the region resolver.
+  // 4. Interactive prompt — skipped in CI / non-TTY. `isInteractive` (shared
+  // with the config scaffolder and region resolver) accepts the common
+  // CI-truthy spellings (`true`, `1`, case-insensitive) since not every CI
+  // provider sets `CI=true` exactly.
   const isCi = isCiEnv()
-  const isInteractive = Boolean(process.stdin.isTTY) && !isCi
-  if (isInteractive) {
+  if (isInteractive()) {
     const fromPrompt = await promptForUrl(cwd)
     if (fromPrompt) {
       p.log.info(messages.db.urlResolvedFromPrompt)
