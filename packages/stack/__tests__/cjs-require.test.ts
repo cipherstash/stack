@@ -83,6 +83,27 @@ describe('CJS consumers can require the built bundles', () => {
   it('discovers at least the public entry points', () => {
     expect(cjsEntries).toContain('dist/index.cjs')
     expect(cjsEntries).toContain('dist/encryption/index.cjs')
+    expect(cjsEntries).toContain('dist/eql/v3/index.cjs')
+  })
+
+  it('exposes the v3 `types` namespace + table API from the CJS bundle', () => {
+    const v3Bundle = path.join(distDir, 'eql', 'v3', 'index.cjs')
+    const script = [
+      `const v3 = require(${JSON.stringify(v3Bundle)})`,
+      `if (typeof v3.encryptedTable !== 'function') { throw new Error('missing v3 CJS export: encryptedTable') }`,
+      `if (typeof v3.buildEncryptConfig !== 'function') { throw new Error('missing v3 CJS export: buildEncryptConfig') }`,
+      `if (typeof v3.types !== 'object' || v3.types === null) { throw new Error('missing v3 CJS export: types namespace') }`,
+      `const requiredTypes = ['TextSearch', 'TextEq', 'IntegerOrd', 'Boolean', 'Timestamp']`,
+      `const missing = requiredTypes.filter((k) => typeof v3.types[k] !== 'function')`,
+      `if (missing.length > 0) { throw new Error('missing v3 types.* CJS members: ' + missing.join(', ')) }`,
+    ].join('\n')
+
+    expect(() =>
+      execFileSync(process.execPath, ['-e', script], {
+        cwd: packageRoot,
+        stdio: 'pipe',
+      }),
+    ).not.toThrow()
   })
 
   it.each(

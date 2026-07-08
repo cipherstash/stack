@@ -8,12 +8,8 @@ import {
   resolveLockContext,
 } from '@/identity'
 import type {
-  EncryptedColumn,
-  EncryptedField,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@/schema'
-import type {
+  BuildableColumn,
+  BuildableTable,
   BulkEncryptedData,
   BulkEncryptPayload,
   Client,
@@ -29,8 +25,8 @@ import { EncryptionOperation } from './base-operation'
 // re-inserted as null in `mapEncryptedDataToResult`.
 const createEncryptPayloads = (
   plaintexts: BulkEncryptPayload,
-  column: EncryptedColumn | EncryptedField,
-  table: EncryptedTable<EncryptedTableColumn>,
+  column: BuildableColumn,
+  table: BuildableTable,
   lockContext?: Context,
 ) => {
   return plaintexts
@@ -67,8 +63,8 @@ const mapEncryptedDataToResult = (
 export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData> {
   private client: Client
   private plaintexts: BulkEncryptPayload
-  private column: EncryptedColumn | EncryptedField
-  private table: EncryptedTable<EncryptedTableColumn>
+  private column: BuildableColumn
+  private table: BuildableTable
 
   constructor(
     client: Client,
@@ -142,8 +138,8 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
   public getOperation(): {
     client: Client
     plaintexts: BulkEncryptPayload
-    column: EncryptedColumn | EncryptedField
-    table: EncryptedTable<EncryptedTableColumn>
+    column: BuildableColumn
+    table: BuildableTable
   } {
     return {
       client: this.client,

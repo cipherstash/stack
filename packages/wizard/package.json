@@ -8,7 +8,7 @@
 		"directory": "packages/wizard"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"files": [
 		"dist",
 		"dist/skills",

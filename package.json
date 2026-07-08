@@ -1,7 +1,8 @@
 {
-  "name": "@cipherstash/protectjs",
-  "description": "CipherStash Protect for JavaScript/TypeScript",
-  "author": "CipherStash <hello@cipherstash.com>",
+  "name": "@cipherstash/stack-monorepo",
+  "description": "CipherStash Stack for JavaScript/TypeScript",
+  "private": true,
+  "author": "CipherStash <humans@cipherstash.com>",
   "keywords": [
     "encrypted",
     "query",
@@ -11,11 +12,11 @@
     "eql"
   ],
   "bugs": {
-    "url": "https://github.com/cipherstash/protectjs/issues"
+    "url": "https://github.com/cipherstash/stack/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cipherstash/protectjs.git"
+    "url": "git+https://github.com/cipherstash/stack.git"
   },
   "license": "MIT",
   "scripts": {

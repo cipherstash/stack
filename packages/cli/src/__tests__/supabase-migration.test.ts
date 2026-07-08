@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { detectSupabaseProject } from '../commands/db/detect.js'
 import {
   chooseSupabaseInstallMode,
+  routeInstallPathForEqlVersion,
   validateInstallFlags,
 } from '../commands/db/install.js'
 import {
@@ -18,7 +19,7 @@ import { SUPABASE_PERMISSIONS_SQL } from '../installer/index.js'
  * Mirrors the production function but imported for testing.
  */
 function migrationHeader(runner: string): string {
-  return `-- CipherStash EQL — installed by \`${runner} stash db install --supabase --migration\`.
+  return `-- CipherStash EQL — installed by \`${runner} stash eql install --supabase --migration\`.
 --
 -- This migration installs the CipherStash Encrypt Query Language (EQL) types,
 -- functions, and operators into the \`eql_v2\` schema, then grants Supabase's
@@ -136,7 +137,7 @@ describe('writeSupabaseEqlMigration', () => {
     const contents = fs.readFileSync(result.path, 'utf-8')
     // Header comment block includes the detected runner instruction
     expect(contents).toMatch(
-      /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash db install --supabase --migration`/,
+      /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash eql install --supabase --migration`/,
     )
     expect(contents).toContain('CipherStash')
     // EQL SQL body — the bundled supabase variant defines eql_v2.
@@ -242,6 +243,74 @@ describe('validateInstallFlags', () => {
     expect(err).toMatch(/mutually exclusive/i)
   })
 
+  it('accepts --eql-version 2 and 3', () => {
+    expect(validateInstallFlags({ eqlVersion: '2' })).toBeNull()
+    expect(validateInstallFlags({ eqlVersion: '3' })).toBeNull()
+    expect(
+      validateInstallFlags({ eqlVersion: '3', supabase: true, direct: true }),
+    ).toBeNull()
+  })
+
+  it('rejects an unknown --eql-version value', () => {
+    expect(validateInstallFlags({ eqlVersion: '4' })).toMatch(/--eql-version/)
+  })
+
+  it('rejects --eql-version 3 with --drizzle, --migration, or --latest', () => {
+    expect(validateInstallFlags({ eqlVersion: '3', drizzle: true })).toMatch(
+      /--drizzle/,
+    )
+    expect(
+      validateInstallFlags({
+        eqlVersion: '3',
+        supabase: true,
+        migration: true,
+      }),
+    ).toMatch(/--migration/)
+    expect(validateInstallFlags({ eqlVersion: '3', latest: true })).toMatch(
+      /--latest/,
+    )
+    // --migrations-dir only feeds the v2 Supabase migration-file path; the v3
+    // direct install would silently ignore it (flagged in review of #547).
+    expect(
+      validateInstallFlags({
+        eqlVersion: '3',
+        supabase: true,
+        migrationsDir: 'db/migrations',
+      }),
+    ).toMatch(/--migrations-dir/)
+  })
+})
+
+describe('routeInstallPathForEqlVersion', () => {
+  it('passes v2 routing through untouched', () => {
+    expect(
+      routeInstallPathForEqlVersion(2, { supabase: false, drizzle: true }),
+    ).toEqual({ drizzle: true, useSupabaseInstallModeSelection: false })
+    expect(
+      routeInstallPathForEqlVersion(2, { supabase: true, drizzle: false }),
+    ).toEqual({ drizzle: false, useSupabaseInstallModeSelection: true })
+  })
+
+  it('falls back from auto-detected drizzle to direct for v3, with a notice', () => {
+    const routing = routeInstallPathForEqlVersion(3, {
+      supabase: false,
+      drizzle: true,
+    })
+    expect(routing.drizzle).toBe(false)
+    expect(routing.useSupabaseInstallModeSelection).toBe(false)
+    expect(routing.notice).toMatch(/Drizzle/)
+  })
+
+  it('skips the supabase migration-vs-direct mode selection for v3', () => {
+    const routing = routeInstallPathForEqlVersion(3, {
+      supabase: true,
+      drizzle: false,
+    })
+    expect(routing.drizzle).toBe(false)
+    expect(routing.useSupabaseInstallModeSelection).toBe(false)
+    expect(routing.notice).toBeUndefined()
+  })
+
   it('does NOT auto-imply --supabase from --migration', () => {
     // Even with --supabase: false explicitly, --migration must error.
     const err = validateInstallFlags({ supabase: false, migration: true })
@@ -253,18 +322,18 @@ describe('migrationHeader', () => {
   it('renders the header with the provided runner for npx', () => {
     const header = migrationHeader('npx')
     expect(header).toContain(
-      '-- CipherStash EQL — installed by `npx stash db install --supabase --migration`.',
+      '-- CipherStash EQL — installed by `npx stash eql install --supabase --migration`.',
     )
   })
 
   it('renders the header with the provided runner for bunx', () => {
     const header = migrationHeader('bunx')
-    expect(header).toContain('bunx stash db install')
+    expect(header).toContain('bunx stash eql install')
   })
 
   it('renders the header with the provided runner for pnpm dlx', () => {
     const header = migrationHeader('pnpm dlx')
-    expect(header).toContain('pnpm dlx stash db install')
+    expect(header).toContain('pnpm dlx stash eql install')
   })
 
   it('includes all expected documentation lines', () => {

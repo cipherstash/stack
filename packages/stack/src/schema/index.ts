@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import type { Encrypted } from '@/types'
+import type { BuildableTable, Encrypted } from '@/types'
+import { defaultMatchOpts } from './match-defaults'
 
 // ------------------------
 // Zod schemas
@@ -12,6 +13,7 @@ import type { Encrypted } from '@/types'
  * - `"bigint"`
  * - `"boolean"`
  * - `"date"`
+ * - `"timestamp"`
  * - `"number"`
  * - `"string"`
  * - `"json"`
@@ -37,6 +39,7 @@ export const eqlCastAsEnum = z
     'double',
     'boolean',
     'date',
+    'timestamp',
     'jsonb',
   ])
   .default('text')
@@ -45,7 +48,16 @@ export const eqlCastAsEnum = z
  * SDK-facing data types — developer-friendly aliases accepted by `dataType()`.
  */
 export const castAsEnum = z
-  .enum(['bigint', 'boolean', 'date', 'number', 'string', 'json', 'text'])
+  .enum([
+    'bigint',
+    'boolean',
+    'date',
+    'timestamp',
+    'number',
+    'string',
+    'json',
+    'text',
+  ])
   .default('text')
 
 /**
@@ -68,6 +80,8 @@ export function toEqlCastAs(value: CastAs): EqlCastAs {
       return 'boolean'
     case 'date':
       return 'date'
+    case 'timestamp':
+      return 'timestamp'
     case 'json':
       return 'jsonb'
   }
@@ -351,17 +365,15 @@ export class EncryptedColumn {
    * ```
    */
   freeTextSearch(opts?: MatchIndexOpts) {
-    // Provide defaults
+    // Shared defaults (schema/match-defaults) — one source of truth with the
+    // EQL v3 domain builders. The factory returns fresh nested objects.
+    const defaults = defaultMatchOpts()
     this.indexesValue.match = {
-      tokenizer: opts?.tokenizer ?? { kind: 'ngram', token_length: 3 },
-      token_filters: opts?.token_filters ?? [
-        {
-          kind: 'downcase',
-        },
-      ],
-      k: opts?.k ?? 6,
-      m: opts?.m ?? 2048,
-      include_original: opts?.include_original ?? true,
+      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
+      token_filters: opts?.token_filters ?? defaults.token_filters,
+      k: opts?.k ?? defaults.k,
+      m: opts?.m ?? defaults.m,
+      include_original: opts?.include_original ?? defaults.include_original,
     }
     return this
   }
@@ -678,7 +690,7 @@ export function encryptedField(valueName: string) {
  * ```
  */
 export function buildEncryptConfig(
-  ...protectTables: Array<EncryptedTable<EncryptedTableColumn>>
+  ...protectTables: Array<BuildableTable>
 ): EncryptConfig {
   const config: EncryptConfig = {
     v: 1,

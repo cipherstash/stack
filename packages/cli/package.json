@@ -8,7 +8,7 @@
 		"directory": "packages/cli"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"files": [
 		"dist",
 		"README.md",
@@ -42,6 +42,7 @@
 		"dev": "tsup --watch",
 		"test": "vitest run",
 		"test:e2e": "vitest run --config vitest.integration.config.ts",
+		"gen:eql-v3-sql": "node scripts/build-eql-v3-sql.mjs",
 		"lint": "biome check ."
 	},
 	"dependencies": {

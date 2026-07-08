@@ -3,7 +3,7 @@
 The all-in-one TypeScript SDK for the CipherStash data security stack.
 
 [![npm version](https://img.shields.io/npm/v/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/@cipherstash/stack)
-[![License: MIT](https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/protectjs/blob/main/LICENSE.md)
+[![License: MIT](https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue?style=for-the-badge&labelColor=000000)](https://www.typescriptlang.org/)
 
 --
@@ -687,4 +687,4 @@ All method signatures on the encryption client (`encrypt`, `decrypt`, `encryptMo
 
 ## License
 
-MIT - see [LICENSE.md](https://github.com/cipherstash/protectjs/blob/main/LICENSE.md).
+MIT - see [LICENSE.md](https://github.com/cipherstash/stack/blob/main/LICENSE.md).

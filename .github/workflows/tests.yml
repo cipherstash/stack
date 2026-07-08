@@ -59,11 +59,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Type tests (stack)
+        run: pnpm --filter @cipherstash/stack run test:types
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
+
+      # The EQL v3 bundles in packages/cli/src/sql are vendored (derived from
+      # the stack fixture monolith by gen:eql-v3-sql). Regenerate and fail on
+      # any diff so the fixture and the shipped bundles cannot drift silently.
+      - name: Check — vendored EQL v3 SQL bundles are in sync
+        run: |
+          pnpm --filter stash run gen:eql-v3-sql
+          git diff --exit-code -- packages/cli/src/sql/cipherstash-encrypt-v3.sql packages/cli/src/sql/cipherstash-encrypt-v3-supabase.sql
 
       - name: Create .env file in ./packages/protect/
         run: |
@@ -157,7 +168,7 @@ jobs:
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
 
   # Verifies @cipherstash/stack/wasm-inline works under Deno — i.e. the
-  # WASM build of protect-ffi 0.25+ and auth 0.38+ can round-trip an
+  # WASM build of protect-ffi 0.26+ and auth 0.40+ can round-trip an
   # encryption against ZeroKMS / CTS in a runtime with no native
   # bindings available. The deno.json deliberately omits --allow-ffi so
   # a silent fallback to the NAPI module is impossible.

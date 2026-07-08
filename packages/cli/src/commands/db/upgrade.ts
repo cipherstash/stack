@@ -9,9 +9,32 @@ export async function upgradeCommand(options: {
   excludeOperatorFamily?: boolean
   latest?: boolean
   databaseUrl?: string
+  /** EQL generation to upgrade: `'2'` (default) or `'3'`. */
+  eqlVersion?: string
 }) {
   const pm = detectPackageManager()
-  p.intro(runnerCommand(pm, 'stash db upgrade'))
+  p.intro(runnerCommand(pm, 'stash eql upgrade'))
+
+  if (
+    options.eqlVersion !== undefined &&
+    options.eqlVersion !== '2' &&
+    options.eqlVersion !== '3'
+  ) {
+    p.log.error(
+      `Unknown \`--eql-version ${options.eqlVersion}\`. Supported values: 2, 3.`,
+    )
+    p.outro('Upgrade aborted.')
+    process.exit(1)
+  }
+  const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
+
+  if (eqlVersion === 3 && options.latest) {
+    p.log.error(
+      '`--eql-version 3` does not support `--latest` — no public v3 release artifacts exist yet. Use the bundled upgrade.',
+    )
+    p.outro('Upgrade aborted.')
+    process.exit(1)
+  }
 
   const s = p.spinner()
 
@@ -27,18 +50,30 @@ export async function upgradeCommand(options: {
   })
 
   s.start('Checking current EQL installation...')
-  const installed = await installer.isInstalled()
+  const installed = await installer.isInstalled({ eqlVersion })
 
   if (!installed) {
-    s.stop('EQL is not installed.')
-    p.log.warn(
-      `EQL is not currently installed. Run "${runnerCommand(pm, 'stash db install')}" first.`,
-    )
+    s.stop(`EQL v${eqlVersion} is not installed.`)
+    // A version mismatch is the likely cause — point at the generation that
+    // IS installed rather than a bare "run install".
+    const otherVersion: 2 | 3 = eqlVersion === 3 ? 2 : 3
+    const otherInstalled = await installer
+      .isInstalled({ eqlVersion: otherVersion })
+      .catch(() => false)
+    if (otherInstalled) {
+      p.log.warn(
+        `EQL v${eqlVersion} is not installed, but EQL v${otherVersion} is. Re-run with \`--eql-version ${otherVersion}\`, or install v${eqlVersion} with "${runnerCommand(pm, `stash eql install --eql-version ${eqlVersion}`)}".`,
+      )
+    } else {
+      p.log.warn(
+        `EQL is not currently installed. Run "${runnerCommand(pm, 'stash eql install')}" first.`,
+      )
+    }
     p.outro('Upgrade aborted.')
     process.exit(1)
   }
 
-  const previousVersion = await installer.getInstalledVersion()
+  const previousVersion = await installer.getInstalledVersion({ eqlVersion })
   s.stop(`Current version: ${previousVersion ?? 'unknown'}`)
 
   if (options.dryRun) {
@@ -55,11 +90,14 @@ export async function upgradeCommand(options: {
   }
 
   const source = options.latest ? 'from GitHub (latest)' : 'bundled'
-  s.start(`Upgrading EQL extensions (${source})...`)
+  s.start(
+    `Upgrading EQL ${eqlVersion === 3 ? 'v3 ' : ''}extensions (${source})...`,
+  )
   await installer.install({
     excludeOperatorFamily: options.excludeOperatorFamily,
     supabase: options.supabase,
     latest: options.latest,
+    eqlVersion,
   })
   s.stop('EQL extensions upgraded.')
 
@@ -68,7 +106,7 @@ export async function upgradeCommand(options: {
   }
 
   s.start('Verifying new version...')
-  const newVersion = await installer.getInstalledVersion()
+  const newVersion = await installer.getInstalledVersion({ eqlVersion })
   s.stop(`New version: ${newVersion ?? 'unknown'}`)
 
   if (previousVersion && newVersion && previousVersion === newVersion) {

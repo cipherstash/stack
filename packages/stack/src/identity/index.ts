@@ -39,7 +39,12 @@ export type LockContextInput = LockContext | Context
  * that protect-ffi expects. Synchronous — no token round-trip.
  */
 export function resolveLockContext(input: LockContextInput): Context {
-  return input instanceof LockContext ? input.identityContext : input
+  // Use a structural check as well as `instanceof` so a `LockContext`
+  // constructed in another realm (or from a duplicate module instance) is still
+  // resolved rather than slipping through as a raw `Context`.
+  return input instanceof LockContext || 'identityContext' in input
+    ? (input as LockContext).identityContext
+    : input
 }
 
 /**
@@ -63,7 +68,7 @@ export function resolveLockContext(input: LockContextInput): Context {
  * const client = await Encryption({
  *   schemas,
  *   config: {
- *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
+ *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
  *   },
  * })
  *
@@ -113,7 +118,7 @@ export class LockContext {
    *
    * @deprecated Per-operation CTS tokens were removed in protect-ffi 0.25.
    * Authenticate the client as the user with an `OidcFederationStrategy`
-   * (`config.strategy`) instead, and pass the claim to `.withLockContext()`.
+   * (`config.authStrategy`) instead, and pass the claim to `.withLockContext()`.
    * The token fetched here is no longer used by encryption operations. This
    * method is kept for backwards compatibility and will be removed in a
    * future major release.
@@ -188,7 +193,10 @@ export class LockContext {
     return withResult(
       () => ({
         context: this.context,
-        ctsToken: this.ctsToken,
+        // Only include `ctsToken` when one was actually set, so the
+        // returned shape matches the optional `ctsToken?` type rather
+        // than carrying an explicit `undefined`.
+        ...(this.ctsToken ? { ctsToken: this.ctsToken } : {}),
       }),
       (error) => ({
         type: EncryptionErrorTypes.CtsTokenError,

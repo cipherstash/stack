@@ -5,7 +5,7 @@ import { CancelledError } from '../types.js'
 import { isPackageInstalled } from '../utils.js'
 
 /**
- * Run `stash db install` programmatically after a y/N confirm.
+ * Run `stash eql install` programmatically after a y/N confirm.
  *
  * EQL is the Postgres extension every CipherStash query relies on. Without
  * it, the encryption client can't read or write to encrypted columns.
@@ -31,12 +31,12 @@ export const installEqlStep: InitStep = {
     // Prisma Next ships the EQL bundle as a baseline migration inside
     // `@cipherstash/prisma-next`. `prisma-next migration apply` runs
     // it in the same control-plane sweep as the user's application
-    // migrations — running `stash db install` here would be a
+    // migrations — running `stash eql install` here would be a
     // duplicate install and would race with the framework's
     // migration journal. Skip with guidance instead.
     if (integration === 'prisma-next' || provider.name === 'prisma-next') {
       p.log.success(
-        'Skipping `stash db install` — Prisma Next installs the EQL bundle via `prisma-next migration apply` (runs alongside your app migrations).',
+        'Skipping `stash eql install` — Prisma Next installs the EQL bundle via `prisma-next migration apply` (runs alongside your app migrations).',
       )
       return { ...state, eqlInstalled: false }
     }
@@ -55,7 +55,7 @@ export const installEqlStep: InitStep = {
     if (!proceed) {
       p.log.info('Skipping EQL installation.')
       p.note(
-        'Run `stash db install` before applying any migration that references encrypted columns.',
+        'Run `stash eql install` before applying any migration that references encrypted columns.',
         'EQL not installed',
       )
       return { ...state, eqlInstalled: false }
@@ -91,7 +91,7 @@ export const installEqlStep: InitStep = {
       p.log.error(
         'EQL install failed — check your database connection and try again.',
       )
-      p.note('Re-run with: stash db install', 'You can retry manually')
+      p.note('Re-run with: stash eql install', 'You can retry manually')
       return { ...state, eqlInstalled: false }
     }
 

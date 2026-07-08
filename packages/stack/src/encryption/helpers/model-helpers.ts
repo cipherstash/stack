@@ -6,8 +6,7 @@ import {
 import { isEncryptedPayload } from '@/encryption/helpers'
 import type { AuditData } from '@/encryption/operations/base-operation'
 import type { Context } from '@/identity'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
-import type { Client, Decrypted, Encrypted } from '@/types'
+import type { BuildableTable, Client, Decrypted, Encrypted } from '@/types'
 
 /**
  * Sets a value at a nested path in an object, creating intermediate objects as needed.
@@ -205,9 +204,35 @@ function prepareFieldsForDecryption<T extends Record<string, unknown>>(
 /**
  * Helper function to prepare fields for encryption
  */
+/**
+ * Resolve how a table's model fields map onto encrypt-config columns.
+ *
+ * `columnPaths` are the keys used to MATCH a user model's fields (the JS
+ * property names); `toColumnName` maps a matched field to the name the FFI /
+ * encrypt config is keyed by (the DB name).
+ *
+ * When a table exposes `buildColumnKeyMap()` (v3), those two can differ, so we
+ * match by property but address by DB name. Otherwise (v2) `build()` already
+ * keys columns by the property name, so both are that same key (identity map).
+ */
+export function resolveEncryptColumnMap(table: BuildableTable): {
+  columnPaths: string[]
+  toColumnName: (path: string) => string
+} {
+  const keyMap = table.buildColumnKeyMap?.()
+  if (keyMap) {
+    return {
+      columnPaths: Object.keys(keyMap),
+      toColumnName: (path) => keyMap[path] ?? path,
+    }
+  }
+  const columnPaths = Object.keys(table.build().columns)
+  return { columnPaths, toColumnName: (path) => path }
+}
+
 function prepareFieldsForEncryption<T extends Record<string, unknown>>(
   model: T,
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
 ): {
   otherFields: Record<string, unknown>
   operationFields: Record<string, unknown>
@@ -264,8 +289,8 @@ function prepareFieldsForEncryption<T extends Record<string, unknown>>(
     }
   }
 
-  // Get all column paths from the table schema
-  const columnPaths = Object.keys(table.build().columns)
+  // Get all column paths from the table schema (matched by JS property name).
+  const { columnPaths } = resolveEncryptColumnMap(table)
   processNestedFields(model, '', columnPaths)
 
   return { otherFields, operationFields, keyMap, nullFields }
@@ -326,7 +351,7 @@ export async function decryptModelFields<T extends Record<string, unknown>>(
  */
 export async function encryptModelFields(
   model: Record<string, unknown>,
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   auditData?: AuditData,
 ): Promise<Record<string, unknown>> {
@@ -337,12 +362,13 @@ export async function encryptModelFields(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareFieldsForEncryption(model, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = Object.entries(operationFields).map(
     ([key, value]) => ({
       id: key,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
     }),
   )
 
@@ -437,7 +463,7 @@ export async function decryptModelFieldsWithLockContext<
  */
 export async function encryptModelFieldsWithLockContext(
   model: Record<string, unknown>,
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   lockContext: Context,
   auditData?: AuditData,
@@ -453,12 +479,13 @@ export async function encryptModelFieldsWithLockContext(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareFieldsForEncryption(model, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = Object.entries(operationFields).map(
     ([key, value]) => ({
       id: key,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
       lockContext,
     }),
   )
@@ -496,7 +523,7 @@ export async function encryptModelFieldsWithLockContext(
  */
 function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
   models: T[],
-  table?: EncryptedTable<EncryptedTableColumn>,
+  table?: BuildableTable,
 ): {
   otherFields: Record<string, unknown>[]
   operationFields: Record<string, unknown>[]
@@ -560,8 +587,8 @@ function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
     }
 
     if (table) {
-      // Get all column paths from the table schema
-      const columnPaths = Object.keys(table.build().columns)
+      // Get all column paths from the table schema (matched by JS property name).
+      const { columnPaths } = resolveEncryptColumnMap(table)
       processNestedFields(model, '', columnPaths)
     } else {
       // For decryption, process all encrypted fields
@@ -618,11 +645,32 @@ function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
 }
 
 /**
+ * Collect the per-model fields out of a bulk-operation result map keyed by
+ * `${modelIndex}-${fieldKey}` ids, splitting each id at the FIRST hyphen
+ * only. Field keys may themselves contain hyphens (a `some-field` column, or
+ * a nested `profile.some-field` path), so a naive `split('-')` would truncate
+ * the field key at its first hyphen and silently drop the value during model
+ * reconstruction.
+ */
+function fieldsForModelIndex(
+  fields: Record<string, unknown>,
+  modelIndex: number,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [id, value] of Object.entries(fields)) {
+    const sep = id.indexOf('-')
+    if (Number.parseInt(id.slice(0, sep), 10) !== modelIndex) continue
+    result[id.slice(sep + 1)] = value
+  }
+  return result
+}
+
+/**
  * Helper function to convert multiple decrypted models to models with encrypted fields
  */
 export async function bulkEncryptModels(
   models: Record<string, unknown>[],
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   auditData?: AuditData,
 ): Promise<Record<string, unknown>[]> {
@@ -637,12 +685,13 @@ export async function bulkEncryptModels(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareBulkModelsForOperation(models, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = operationFields.flatMap((fields, modelIndex) =>
     Object.entries(fields).map(([key, value]) => ({
       id: `${modelIndex}-${key}`,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
     })),
   )
 
@@ -666,17 +715,7 @@ export async function bulkEncryptModels(
     }
 
     // Then, reconstruct the encrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(encryptedData)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(encryptedData, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
@@ -733,17 +772,7 @@ export async function bulkDecryptModels<T extends Record<string, unknown>>(
     }
 
     // Then, reconstruct the decrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(decryptedFields)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(decryptedFields, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
@@ -805,17 +834,7 @@ export async function bulkDecryptModelsWithLockContext<
     }
 
     // Then, reconstruct the decrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(decryptedFields)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(decryptedFields, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')
@@ -831,7 +850,7 @@ export async function bulkDecryptModelsWithLockContext<
  */
 export async function bulkEncryptModelsWithLockContext(
   models: Record<string, unknown>[],
-  table: EncryptedTable<EncryptedTableColumn>,
+  table: BuildableTable,
   client: Client,
   lockContext: Context,
   auditData?: AuditData,
@@ -847,12 +866,13 @@ export async function bulkEncryptModelsWithLockContext(
   const { otherFields, operationFields, keyMap, nullFields } =
     prepareBulkModelsForOperation(models, table)
 
+  const { toColumnName } = resolveEncryptColumnMap(table)
   const bulkEncryptPayload = operationFields.flatMap((fields, modelIndex) =>
     Object.entries(fields).map(([key, value]) => ({
       id: `${modelIndex}-${key}`,
       plaintext: value as string,
       table: table.tableName,
-      column: key,
+      column: toColumnName(key),
       lockContext,
     })),
   )
@@ -878,17 +898,7 @@ export async function bulkEncryptModelsWithLockContext(
     }
 
     // Then, reconstruct the encrypted fields
-    const modelData = Object.fromEntries(
-      Object.entries(encryptedData)
-        .filter(([key]) => {
-          const [idx] = key.split('-')
-          return Number.parseInt(idx) === modelIndex
-        })
-        .map(([key, value]) => {
-          const [_, fieldKey] = key.split('-')
-          return [fieldKey, value]
-        }),
-    )
+    const modelData = fieldsForModelIndex(encryptedData, modelIndex)
 
     for (const [key, value] of Object.entries(modelData)) {
       const parts = key.split('.')

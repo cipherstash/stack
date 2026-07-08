@@ -19,7 +19,7 @@
 		"directory": "packages/protect"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"type": "module",
 	"bin": {
 		"stash": "./dist/bin/stash.js"

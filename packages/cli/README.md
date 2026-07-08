@@ -1,7 +1,7 @@
 # stash
 
 [![npm version](https://img.shields.io/npm/v/stash.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/stash)
-[![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/protectjs/blob/main/LICENSE.md)
+[![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 
 The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), schema building, and encrypted secrets management. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
 
@@ -61,7 +61,7 @@ export default defineConfig({
 
 The CLI loads `.env` files automatically before reading the config, so `process.env` references work without extra setup. The config file is resolved by walking up from the current working directory.
 
-Commands that consume `stash.config.ts`: `db install`, `db upgrade`, `db push`, `db validate`, `db status`, `db test-connection`, `schema build`. `db install` will scaffold `stash.config.ts` for you if it's missing.
+Commands that consume `stash.config.ts`: `eql install`, `eql upgrade`, `db push`, `db validate`, `eql status`, `db test-connection`, `schema build`. `eql install` will scaffold `stash.config.ts` for you if it's missing.
 
 ---
 
@@ -83,10 +83,10 @@ npx stash init [--supabase] [--drizzle]
 What `init` does, in order:
 
 1. **Authenticate** — re-uses an existing token if found, otherwise opens the browser device-code flow.
-2. **Resolve `DATABASE_URL`** — flag → env → `supabase status` → interactive prompt → hard-fail. The same resolver `db install` uses.
+2. **Resolve `DATABASE_URL`** — flag → env → `supabase status` → interactive prompt → hard-fail. The same resolver `eql install` uses.
 3. **Generate the encryption client** — connects to your database, lists tables, and prompts you to multi-select which columns to encrypt. Writes `./src/encryption/index.ts` with the right shape for the detected ORM (Drizzle / Supabase / plain Postgres). Falls back to a placeholder if the database has no tables yet.
 4. **Install dependencies** — `@cipherstash/stack` (runtime) and `stash` (dev), with a confirmation prompt.
-5. **Install EQL** — runs `stash db install` against the resolved URL after a y/N confirm.
+5. **Install EQL** — runs `stash eql install` against the resolved URL after a y/N confirm.
 6. **Hand off** — four-option menu (Claude Code / Codex / CipherStash Agent / write `AGENTS.md`). See the Quickstart section above for what each option writes and spawns.
 
 The full pipeline state — integration, columns, env-key names, paths, versions — is captured in `.cipherstash/context.json`. The action plan at `.cipherstash/setup-prompt.md` tells whichever agent picks up next what's already done and what's left.
@@ -156,14 +156,14 @@ npx stash secrets delete -n DATABASE_URL -e production -y
 
 ---
 
-### `npx stash db install`
+### `npx stash eql install`
 
-Configure your database and install CipherStash EQL extensions in a single command. Run this after `npx stash init`.
+Configure your database and install CipherStash EQL extensions in a single command. Run this after `npx stash init`. (`npx stash db install` is a deprecated alias — it still works but prints a warning.)
 
 When `stash.config.ts` is missing, the command auto-detects your encryption client file (or asks for the path) and writes the config before installing. Supabase and Drizzle are detected from your `DATABASE_URL` and project files, so the matching flags default on. Install uses bundled SQL for offline, deterministic runs.
 
 ```bash
-npx stash db install [options]
+npx stash eql install [options]
 ```
 
 | Flag | Description |
@@ -183,12 +183,12 @@ The `--supabase` flag uses a Supabase-specific SQL variant and grants `USAGE`, t
 
 ---
 
-### `npx stash db upgrade`
+### `npx stash eql upgrade`
 
 Upgrade an existing EQL installation to the version bundled with the package (or the latest from GitHub).
 
 ```bash
-npx stash db upgrade [options]
+npx stash eql upgrade [options]
 ```
 
 | Flag | Description |
@@ -198,7 +198,7 @@ npx stash db upgrade [options]
 | `--exclude-operator-family` | Skip operator family creation |
 | `--latest` | Fetch the latest EQL from GitHub |
 
-The install SQL is idempotent and safe to re-run. If EQL is not installed, the command suggests running `npx stash db install` instead.
+The install SQL is idempotent and safe to re-run. If EQL is not installed, the command suggests running `npx stash eql install` instead.
 
 ---
 
@@ -260,12 +260,12 @@ npx stash db migrate
 
 ---
 
-### `npx stash db status`
+### `npx stash eql status`
 
 Show the current state of EQL in your database.
 
 ```bash
-npx stash db status
+npx stash eql status
 ```
 
 Reports EQL installation status and version, database permission status, and whether an active encrypt config exists in `eql_v2_configuration` (relevant only for CipherStash Proxy).
@@ -300,10 +300,10 @@ Reads `databaseUrl` from `stash.config.ts`.
 
 ## Drizzle migration mode
 
-Use `--drizzle` with `npx stash db install` to add EQL installation to your Drizzle migration history instead of applying it directly. `--drizzle` is auto-detected when your project has `drizzle-orm`, `drizzle-kit`, or a `drizzle.config.*` file, so you usually don't need to pass it explicitly.
+Use `--drizzle` with `npx stash eql install` to add EQL installation to your Drizzle migration history instead of applying it directly. `--drizzle` is auto-detected when your project has `drizzle-orm`, `drizzle-kit`, or a `drizzle.config.*` file, so you usually don't need to pass it explicitly.
 
 ```bash
-npx stash db install --drizzle
+npx stash eql install --drizzle
 npx drizzle-kit migrate
 ```
 
@@ -315,7 +315,7 @@ How it works:
 With a custom name or output directory:
 
 ```bash
-npx stash db install --drizzle --name setup-eql --out ./migrations
+npx stash eql install --drizzle --name setup-eql --out ./migrations
 npx drizzle-kit migrate
 ```
 

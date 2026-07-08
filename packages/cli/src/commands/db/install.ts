@@ -65,13 +65,19 @@ export interface InstallOptions {
    * never persisted. See `src/config/database-url.ts`.
    */
   databaseUrl?: string
+  /**
+   * EQL generation to install: `'2'` (default, composite `eql_v2_encrypted`)
+   * or `'3'` (native `eql_v3.*` domain schema). v3 currently supports the
+   * direct install path only — not `--drizzle`, `--migration`, or `--latest`.
+   */
+  eqlVersion?: string
 }
 
 /** Resolved install mode for the Supabase non-Drizzle branch. */
 export type SupabaseInstallMode = 'migration' | 'direct'
 
 export async function installCommand(options: InstallOptions) {
-  p.intro(runnerCommand(detectPackageManager(), 'stash db install'))
+  p.intro(runnerCommand(detectPackageManager(), 'stash eql install'))
 
   // Validate mutually-exclusive / supabase-required flags BEFORE doing any
   // I/O. `--migration` and `--direct` only make sense in the Supabase flow;
@@ -84,7 +90,7 @@ export async function installCommand(options: InstallOptions) {
     process.exit(1)
   }
 
-  // Scaffold stash.config.ts if missing. `db install` is the single command
+  // Scaffold stash.config.ts if missing. `eql install` is the single command
   // that gets a project from zero to installed EQL — no separate setup step
   // (CIP-2986).
   const configReady = await ensureStashConfig()
@@ -101,7 +107,7 @@ export async function installCommand(options: InstallOptions) {
   })
   s.stop('Configuration loaded.')
 
-  // Safety net: if the user ran `db install` without first running `init`,
+  // Safety net: if the user ran `eql install` without first running `init`,
   // scaffold the encryption client file so config.client points somewhere
   // real. No-op when the file already exists.
   ensureEncryptionClient(config.client, process.cwd(), config.databaseUrl)
@@ -110,7 +116,17 @@ export async function installCommand(options: InstallOptions) {
   // CIP-2985.
   const resolved = resolveProviderOptions(options, config.databaseUrl)
 
-  if (resolved.drizzle) {
+  const eqlVersion: 2 | 3 = options.eqlVersion === '3' ? 3 : 2
+
+  // v3 supports the direct install path only. Explicit --drizzle/--migration
+  // are rejected up-front by validateInstallFlags; auto-DETECTED drizzle or
+  // migration modes fall back to direct here rather than erroring.
+  const routing = routeInstallPathForEqlVersion(eqlVersion, resolved)
+  if (routing.notice) {
+    p.log.info(routing.notice)
+  }
+
+  if (routing.drizzle) {
     await generateDrizzleMigration(s, {
       name: options.name,
       out: options.out,
@@ -126,7 +142,8 @@ export async function installCommand(options: InstallOptions) {
   // running SQL directly. Detection of `supabase/migrations/` only seeds the
   // prompt default — it never enables `--supabase`. Direct install is the
   // historical default and remains the fallback when nothing else applies.
-  if (resolved.supabase) {
+  // v3 skips the mode selection entirely: direct install only for now.
+  if (routing.useSupabaseInstallModeSelection) {
     const projectInfo = detectSupabaseProject(
       process.cwd(),
       options.migrationsDir,
@@ -139,7 +156,7 @@ export async function installCommand(options: InstallOptions) {
       // moving part we'd rather defer until someone needs it.
       if (options.latest) {
         p.log.error(
-          '`db install --supabase --migration --latest` is not yet supported. Please open an issue at https://github.com/cipherstash/stack/issues if you need this.',
+          '`eql install --supabase --migration --latest` is not yet supported. Please open an issue at https://github.com/cipherstash/stack/issues if you need this.',
         )
         p.outro('Installation aborted.')
         process.exit(1)
@@ -159,7 +176,7 @@ export async function installCommand(options: InstallOptions) {
     p.log.info('Dry run — no changes will be made.')
     const source = options.latest
       ? 'Would download EQL install script from GitHub'
-      : 'Would use bundled EQL install script'
+      : `Would use bundled EQL${eqlVersion === 3 ? ' v3' : ''} install script`
     p.note(`${source}\nWould execute the SQL against the database`, 'Dry Run')
     p.outro('Dry run complete.')
     return
@@ -205,7 +222,7 @@ export async function installCommand(options: InstallOptions) {
 
   if (!options.force) {
     s.start('Checking if EQL is already installed...')
-    const installed = await installer.isInstalled()
+    const installed = await installer.isInstalled({ eqlVersion })
     s.stop(installed ? 'EQL is already installed.' : 'EQL is not installed.')
 
     if (installed) {
@@ -216,11 +233,14 @@ export async function installCommand(options: InstallOptions) {
   }
 
   const source = options.latest ? 'from GitHub (latest)' : 'bundled'
-  s.start(`Installing EQL extensions (${source})...`)
+  s.start(
+    `Installing EQL ${eqlVersion === 3 ? 'v3 ' : ''}extensions (${source})...`,
+  )
   await installer.install({
     excludeOperatorFamily,
     supabase: resolved.supabase,
     latest: options.latest,
+    eqlVersion,
   })
   s.stop('EQL extensions installed.')
 
@@ -430,7 +450,7 @@ async function generateDrizzleMigration(
   // Step 4: Write the EQL SQL (and cs_migrations tracking schema) into
   // the migration file. Bundling both means `drizzle-kit migrate` rolls
   // everything needed for `stash encrypt ...` out to each environment
-  // in one go, rather than requiring an out-of-band `stash db install`.
+  // in one go, rather than requiring an out-of-band `stash eql install`.
   s.start('Writing EQL SQL into migration file...')
 
   const migrationContents = `${eqlSql}\n\n-- CipherStash encryption-migration tracking schema.\n-- Tracks per-column phase + backfill progress for \`stash encrypt\`.\n${MIGRATIONS_SCHEMA_SQL.trim()}\n`
@@ -486,9 +506,67 @@ async function generateDrizzleMigration(
  *
  * Returns a user-facing error message, or `null` when the flags are valid.
  */
+/**
+ * Route the install between the drizzle / supabase-migration / direct paths
+ * for the requested EQL generation. Pure — no I/O, no prompts — so the v3
+ * fallback behaviour is unit-testable.
+ *
+ * v3 supports the direct path only: auto-detected drizzle falls back to
+ * direct with a user-facing notice (explicit `--drizzle`/`--migration` are
+ * already rejected by {@link validateInstallFlags}), and the Supabase
+ * migration-vs-direct mode selection is skipped entirely.
+ */
+export function routeInstallPathForEqlVersion(
+  eqlVersion: 2 | 3,
+  resolved: { supabase: boolean; drizzle: boolean },
+): {
+  drizzle: boolean
+  useSupabaseInstallModeSelection: boolean
+  notice?: string
+} {
+  if (eqlVersion === 3) {
+    return {
+      drizzle: false,
+      useSupabaseInstallModeSelection: false,
+      notice: resolved.drizzle
+        ? 'EQL v3 does not support the Drizzle migration path yet — installing directly.'
+        : undefined,
+    }
+  }
+  return {
+    drizzle: resolved.drizzle,
+    useSupabaseInstallModeSelection: resolved.supabase,
+  }
+}
+
 export function validateInstallFlags(options: InstallOptions): string | null {
   if (options.migration && options.direct) {
     return '`--migration` and `--direct` are mutually exclusive. Pick one.'
+  }
+
+  if (
+    options.eqlVersion !== undefined &&
+    options.eqlVersion !== '2' &&
+    options.eqlVersion !== '3'
+  ) {
+    return `Unknown \`--eql-version ${options.eqlVersion}\`. Supported values: 2, 3.`
+  }
+
+  if (options.eqlVersion === '3') {
+    const incompatible = options.drizzle
+      ? '--drizzle'
+      : options.migration
+        ? '--migration'
+        : options.latest
+          ? '--latest'
+          : // --migrations-dir only feeds the Supabase v2 migration-file path;
+            // the v3 direct install would silently ignore it — reject instead.
+            options.migrationsDir !== undefined
+            ? '--migrations-dir'
+            : null
+    if (incompatible) {
+      return `\`--eql-version 3\` does not support \`${incompatible}\` yet — v3 currently installs via the direct path only.`
+    }
   }
 
   const subFlag =
@@ -501,7 +579,7 @@ export function validateInstallFlags(options: InstallOptions): string | null {
           : null
 
   if (subFlag !== null && options.supabase !== true) {
-    return `\`${subFlag}\` requires \`--supabase\`. Re-run with \`db install --supabase ${subFlag}\`.`
+    return `\`${subFlag}\` requires \`--supabase\`. Re-run with \`eql install --supabase ${subFlag}\`.`
   }
 
   return null

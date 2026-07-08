@@ -17,7 +17,7 @@
 		"directory": "packages/nextjs"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"type": "module",
 	"exports": {
 		".": {

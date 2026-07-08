@@ -1,5 +1,5 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type JsPlaintext, newClient } from '@cipherstash/protect-ffi'
+import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
@@ -8,8 +8,6 @@ import type { LockContext } from '@/identity'
 import {
   buildEncryptConfig,
   type EncryptConfig,
-  type EncryptedTable,
-  type EncryptedTableColumn,
   encryptConfigSchema,
   // Imported type-only for the TSDoc {@link} references in the comments below.
   type encryptedColumn,
@@ -18,15 +16,17 @@ import {
 } from '@/schema'
 import type {
   AuthStrategy,
+  BuildableTable,
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
   Encrypted,
-  EncryptedFromSchema,
+  EncryptedFromBuildableTable,
   EncryptionClientConfig,
   EncryptOptions,
   EncryptQueryOptions,
   KeysetIdentifier,
+  Plaintext,
   ScalarQueryTerm,
 } from '@/types'
 import { logger } from '@/utils/logger'
@@ -64,6 +64,47 @@ export const noClientError = () =>
     'The Encryption client has not been initialized. Please call init() before using the client.',
   )
 
+/**
+ * Resolve the EQL wire version for a client from its schema set.
+ *
+ * One FFI client emits exactly one wire format, so the whole schema set must
+ * agree. EQL v3 tables (from `@cipherstash/stack/v3`) are detected by their
+ * `buildColumnKeyMap()` marker — v2 tables don't have one:
+ *
+ * - every schema is v3 → `3`;
+ * - no schema is v3 → `undefined`, leaving the FFI's v2 default (and its
+ *   byte-identical v2 output) untouched;
+ * - a mix of the two → throws: the v2 tables target `eql_v2_encrypted`
+ *   columns and the v3 tables target `eql_v3` domains, so no single wire
+ *   format serves both. Split them across two clients.
+ *
+ * An explicit `config.eqlVersion` bypasses detection (the wire format is
+ * then unambiguous — e.g. writing v2-wire from a v3 schema set during a
+ * migration), but a mixed schema set still throws.
+ *
+ * @internal exported for unit-test coverage of the detection matrix.
+ */
+export function resolveEqlVersion(
+  schemas: readonly BuildableTable[],
+  explicit?: 2 | 3,
+): 2 | 3 | undefined {
+  const v3Count = schemas.filter(
+    (schema) => typeof schema.buildColumnKeyMap === 'function',
+  ).length
+
+  if (v3Count > 0 && v3Count < schemas.length) {
+    throw new Error(
+      '[encryption]: cannot mix EQL v2 and EQL v3 tables in one client — one client emits exactly one wire format. Create separate clients for the v2 and v3 schemas.',
+    )
+  }
+
+  if (explicit !== undefined) {
+    return explicit
+  }
+
+  return v3Count === 0 ? undefined : 3
+}
+
 /** The EncryptionClient is the main entry point for interacting with the CipherStash Encryption library.
  * It provides methods for encrypting and decrypting individual values, as well as models (objects) and bulk operations.
  *
@@ -86,7 +127,8 @@ export class EncryptionClient {
     clientId?: string
     clientKey?: string
     keyset?: KeysetIdentifier
-    strategy?: AuthStrategy
+    authStrategy?: AuthStrategy
+    eqlVersion?: 2 | 3
   }): Promise<Result<EncryptionClient, EncryptionError>> {
     return await withResult(
       async () => {
@@ -103,11 +145,15 @@ export class EncryptionClient {
 
         // newClient handles env var fallback internally via withEnvCredentials,
         // so we pass config values through without manual fallback here.
-        // When `strategy` is supplied, protect-ffi invokes its getToken()
+        // When `authStrategy` is supplied, protect-ffi invokes its getToken()
         // on every ZeroKMS request instead of building an AutoStrategy
         // from the credentials in clientOpts (the clientKey is still used
         // for encryption). Passing `strategy: undefined` is equivalent to
         // omitting it, so the default credentials path is unaffected.
+        // `eqlVersion` selects the wire format `encrypt`/`encryptQuery`
+        // emit (protect-ffi 0.27+); `eqlVersion: undefined` is likewise
+        // equivalent to omitting it, leaving the FFI's v2 default — and
+        // its byte-identical v2 output — untouched.
         this.client = await newClient({
           encryptConfig: validated,
           clientOpts: {
@@ -117,7 +163,8 @@ export class EncryptionClient {
             clientKey: config.clientKey,
             keyset: toFfiKeysetIdentifier(config.keyset),
           },
-          strategy: config.strategy,
+          strategy: config.authStrategy,
+          eqlVersion: config.eqlVersion,
         })
 
         this.encryptConfig = validated
@@ -207,7 +254,7 @@ export class EncryptionClient {
    * @see {@link LockContext}
    * @see {@link EncryptOperation}
    */
-  encrypt(plaintext: JsPlaintext, opts: EncryptOptions): EncryptOperation {
+  encrypt(plaintext: Plaintext, opts: EncryptOptions): EncryptOperation {
     return new EncryptOperation(this.client, plaintext, opts)
   }
 
@@ -265,7 +312,7 @@ export class EncryptionClient {
    * - Object/Array plaintext → `steVecTerm` (containment queries like `{ role: 'admin' }`)
    */
   encryptQuery(
-    plaintext: JsPlaintext,
+    plaintext: Plaintext,
     opts: EncryptQueryOptions,
   ): EncryptQueryOperation
 
@@ -276,12 +323,14 @@ export class EncryptionClient {
   encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
 
   encryptQuery(
-    plaintextOrTerms: JsPlaintext | readonly ScalarQueryTerm[],
+    plaintextOrTerms: Plaintext | readonly ScalarQueryTerm[],
     opts?: EncryptQueryOptions,
   ): EncryptQueryOperation | BatchEncryptQueryOperation {
-    // Discriminate between ScalarQueryTerm[] and JsPlaintext (which can also be an array)
-    // using a type guard function
-    if (isScalarQueryTermArray(plaintextOrTerms)) {
+    // Discriminate between ScalarQueryTerm[] and Plaintext (which can also be an
+    // array) using a type guard function. Only route to batch mode when no opts
+    // are supplied — an explicit EncryptQueryOptions forces the single-plaintext
+    // path even if the plaintext value happens to be an array.
+    if (!opts && isScalarQueryTermArray(plaintextOrTerms)) {
       return new BatchEncryptQueryOperation(this.client, plaintextOrTerms)
     }
 
@@ -305,7 +354,7 @@ export class EncryptionClient {
 
     return new EncryptQueryOperation(
       this.client,
-      plaintextOrTerms as JsPlaintext,
+      plaintextOrTerms as Plaintext,
       opts,
     )
   }
@@ -399,13 +448,10 @@ export class EncryptionClient {
    * }
    * ```
    */
-  encryptModel<
-    T extends Record<string, unknown>,
-    S extends EncryptedTableColumn = EncryptedTableColumn,
-  >(
+  encryptModel<T extends Record<string, unknown>, Table extends BuildableTable>(
     input: T,
-    table: EncryptedTable<S>,
-  ): EncryptModelOperation<EncryptedFromSchema<T, S>> {
+    table: Table,
+  ): EncryptModelOperation<EncryptedFromBuildableTable<T, Table>> {
     return new EncryptModelOperation(
       this.client,
       input as Record<string, unknown>,
@@ -494,11 +540,11 @@ export class EncryptionClient {
    */
   bulkEncryptModels<
     T extends Record<string, unknown>,
-    S extends EncryptedTableColumn = EncryptedTableColumn,
+    Table extends BuildableTable,
   >(
     input: Array<T>,
-    table: EncryptedTable<S>,
-  ): BulkEncryptModelsOperation<EncryptedFromSchema<T, S>> {
+    table: Table,
+  ): BulkEncryptModelsOperation<EncryptedFromBuildableTable<T, Table>> {
     return new BulkEncryptModelsOperation(
       this.client,
       input as Array<Record<string, unknown>>,
@@ -627,40 +673,102 @@ export class EncryptionClient {
   }
 }
 
+// Emit the `config.strategy` → `config.authStrategy` rename warning at most
+// once per process so repeated `Encryption()` calls don't spam the console.
+let warnedStrategyDeprecated = false
+function warnStrategyDeprecated(): void {
+  if (warnedStrategyDeprecated) return
+  warnedStrategyDeprecated = true
+  console.warn(
+    '[encryption]: `config.strategy` is deprecated and will be removed in a future release — use `config.authStrategy` instead.',
+  )
+}
+
+/**
+ * Reset the once-per-process deprecation-warning latch. Test-only hook so
+ * suites can assert the warning fires deterministically, independent of test
+ * ordering. Not re-exported from the package entry, so it stays off the public
+ * API surface.
+ * @internal
+ */
+export function __resetStrategyDeprecationWarningForTests(): void {
+  warnedStrategyDeprecated = false
+}
+
 /**
  * Creates and initializes an Encryption client for encrypting and decrypting data with CipherStash.
  *
  * Provide at least one schema (from {@link encryptedTable}) so the client knows which tables and
- * columns to use. Credentials are read from the optional `config` or from the environment
- * (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`).
+ * columns to use:
  *
- * Pass a `config.strategy` to control how ZeroKMS requests are authenticated; its `getToken()`
- * is then used for every request in place of the credentials-derived default. Use
- * `OidcFederationStrategy` for per-user, identity-bound encryption (federates an end user's OIDC
- * JWT into a CTS service token) or `AccessKeyStrategy` for service-to-service / CI. Both are
- * re-exported from `@cipherstash/stack`. See {@link ClientConfig.strategy}.
- *
- * @param config - Initialization options. Must include `schemas`; optionally include `config` for
- *   workspace/keys. Logging is configured via the `STASH_STACK_LOG` environment variable
- *   (`debug | info | error`, default: `error`).
- * @returns A Promise that resolves to an initialized {@link EncryptionClient} ready for
- *   {@link EncryptionClient.encrypt}, {@link EncryptionClient.decrypt}, and related operations.
- *
- * @throws Throws if `schemas` is empty, or if a keyset `id` is supplied but is not a valid UUID.
- *   Also throws if the client fails to initialize (e.g. invalid credentials or config).
- *
- * @example
  * ```typescript
  * import { Encryption, encryptedTable, encryptedColumn } from "@cipherstash/stack"
  *
- * const users = encryptedTable("users", {
- *   email: encryptedColumn("email"),
- * })
+ * const users = encryptedTable("users", { email: encryptedColumn("email") })
  * const client = await Encryption({ schemas: [users] })
  * const result = await client.encrypt("alice@example.com", { column: users.email, table: users })
  * ```
  *
- * @example Per-user, identity-bound encryption
+ * ## Authentication
+ *
+ * The snippets in this section reuse the `users` schema from the example above, and
+ * `workspaceCrn` / `accessKey` stand in for your own workspace credentials (from the
+ * [dashboard](https://dashboard.cipherstash.com) or the `CS_*` variables below).
+ *
+ * By default the client uses the `auto` auth strategy. `auto` first looks for the `CS_*`
+ * environment variables (see below) and, if they are not set, falls back to the local **dev
+ * profile** on your machine. The dev profile also supplies the client key, so during local
+ * development you generally don't need to set any environment variables at all.
+ *
+ * ### Local development — create a dev profile
+ *
+ * Log in once to create the dev profile that `auto` picks up automatically:
+ *
+ * ```bash
+ * npx stash auth login
+ * ```
+ *
+ * ### Production / CI — environment variables
+ *
+ * In production and CI you typically authenticate with the four `CS_*` environment variables
+ * instead of a dev profile. Developers can obtain these values from the
+ * [CipherStash dashboard](https://dashboard.cipherstash.com):
+ *
+ * | Environment variable   | Description                                                                    |
+ * | ---------------------- | ------------------------------------------------------------------------------ |
+ * | `CS_WORKSPACE_CRN`     | The workspace Cloud Resource Name (CRN) that identifies your workspace.         |
+ * | `CS_CLIENT_ID`         | The client identifier issued when you create an access key.                    |
+ * | `CS_CLIENT_KEY`        | The client key material combined with ZeroKMS to perform encryption.           |
+ * | `CS_CLIENT_ACCESS_KEY` | The API access key used to authenticate requests to CipherStash.               |
+ *
+ * When these are set, `auto` uses them in preference to the local dev profile.
+ *
+ * ### Custom auth strategies — `config.authStrategy`
+ *
+ * For finer control, pass an explicit strategy via `config.authStrategy` (from `@cipherstash/auth`,
+ * re-exported by `@cipherstash/stack`). See the `@cipherstash/auth` package for the full list. Two
+ * common choices:
+ *
+ * `AccessKeyStrategy` — like `auto`, but only ever uses an access key; it never falls back to the
+ * local dev profile. Ideal for services and CI:
+ *
+ * ```typescript
+ * import { Encryption, AccessKeyStrategy } from "@cipherstash/stack"
+ *
+ * const client = await Encryption({
+ *   schemas: [users],
+ *   config: {
+ *     authStrategy: AccessKeyStrategy.create(workspaceCrn, accessKey),
+ *   },
+ * })
+ * ```
+ *
+ * `OidcFederationStrategy` — authenticate end users through your own identity provider (Supabase,
+ * Clerk, Auth0 or Okta) by federating their OIDC JWT into a CipherStash token. Add the provider to
+ * your workspace first at
+ * [dashboard.cipherstash.com/workspaces/_/oidc-providers](https://dashboard.cipherstash.com/workspaces/_/oidc-providers)
+ * (the `_` in the URL resolves to whichever workspace you select):
+ *
  * ```typescript
  * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
  *
@@ -668,17 +776,64 @@ export class EncryptionClient {
  * const client = await Encryption({
  *   schemas: [users],
  *   config: {
- *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
+ *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
  *   },
  * })
+ * ```
  *
+ * ### Lock context (identity-bound encryption)
+ *
+ * Lock context is an **additional** capability layered on top of `OidcFederationStrategy`: it
+ * requires that strategy, but `OidcFederationStrategy` does not require lock context. It binds a
+ * value to a claim from the user's JWT (typically `sub`) so that only the user who encrypted a
+ * value can decrypt it:
+ *
+ * ```typescript
  * // Bind the data key to the user's `sub` claim.
  * const result = await client
  *   .encrypt("alice@example.com", { column: users.email, table: users })
  *   .withLockContext({ identityClaim: ["sub"] })
  * ```
  *
+ * Because the lock is tied to a specific end user's identity, `AccessKeyStrategy` (which
+ * authenticates a service, not a user) is not valid for lock context — there is no user `sub`
+ * claim to bind to.
+ *
+ * ## Keysets (multi-tenant isolation)
+ *
+ * Pass `config.keyset` to encrypt under a specific **keyset** — a named or UUID-identified keyspace
+ * that gives each tenant its own cryptographic isolation, so data encrypted under one keyset cannot
+ * be decrypted under another. Create and manage keysets in the
+ * [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets) (the `_` in the URL resolves
+ * to whichever workspace you select); omit `config.keyset` to use the workspace's default keyset.
+ *
+ * ```typescript
+ * // `users` is the schema from the first example above.
+ * const client = await Encryption({
+ *   schemas: [users],
+ *   config: {
+ *     keyset: { name: "tenant-a" }, // or { id: "<uuid>" }
+ *   },
+ * })
+ * ```
+ *
+ * A client is bound to a single keyset for its lifetime, so multi-tenant applications use **one
+ * `Encryption()` client per tenant**. Keysets are orthogonal to `authStrategy` and lock context —
+ * they isolate a whole tenant's *keyspace* (coarse, fixed per client), whereas lock context binds
+ * an individual value to a user's identity claim (fine-grained, per operation) — and can be
+ * combined with both.
+ *
+ * @param config - Initialization options. Must include `schemas`; optionally include `config` for
+ *   credentials and authentication. Logging is configured via the `STASH_STACK_LOG` environment
+ *   variable (`debug | info | error`, default: `error`).
+ * @returns A Promise that resolves to an initialized {@link EncryptionClient} ready for
+ *   {@link EncryptionClient.encrypt}, {@link EncryptionClient.decrypt}, and related operations.
+ *
+ * @throws Throws if `schemas` is empty, or if a keyset `id` is supplied but is not a valid UUID.
+ *   Also throws if the client fails to initialize (e.g. invalid credentials or config).
+ *
  * @see {@link EncryptionClientConfig} for full config options.
+ * @see {@link ClientConfig.authStrategy} for the auth strategy field.
  * @see {@link EncryptionClient} for available methods after initialization.
  */
 export const Encryption = async (
@@ -702,12 +857,29 @@ export const Encryption = async (
     )
   }
 
+  // Resolve the auth strategy, honouring the deprecated `strategy` alias.
+  // Warn whenever the deprecated field is present at all — even alongside
+  // `authStrategy` — so the leftover field gets cleaned up. `authStrategy`
+  // still wins when both are set.
+  if (clientConfig?.strategy) {
+    warnStrategyDeprecated()
+  }
+  const authStrategy = clientConfig?.authStrategy ?? clientConfig?.strategy
+
   const client = new EncryptionClient()
   const encryptConfig = buildEncryptConfig(...schemas)
+
+  // Resolve the wire format for this client: an explicit
+  // `config.eqlVersion` wins; otherwise it is auto-detected from the
+  // schema set (v3 tables → 3, v2 tables → the FFI's v2 default). A mixed
+  // v2 + v3 schema set throws — one client emits exactly one wire format.
+  const eqlVersion = resolveEqlVersion(schemas, clientConfig?.eqlVersion)
 
   const result = await client.init({
     encryptConfig,
     ...clientConfig,
+    authStrategy,
+    eqlVersion,
   })
 
   if (result.failure) {

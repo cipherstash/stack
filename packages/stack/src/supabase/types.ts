@@ -1,5 +1,6 @@
 import type { EncryptionClient } from '@/encryption'
 import type { AuditConfig } from '@/encryption/operations/base-operation'
+import type { AnyV3Table, InferPlaintext, QueryTypesForColumn } from '@/eql/v3'
 import type { EncryptionError } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
@@ -18,6 +19,74 @@ export interface EncryptedSupabaseInstance {
     tableName: string,
     schema: EncryptedTable<EncryptedTableColumn>,
   ): EncryptedQueryBuilder<T>
+}
+
+// ---------------------------------------------------------------------------
+// EQL v3 config & instance
+// ---------------------------------------------------------------------------
+
+export type EncryptedSupabaseV3Config = {
+  encryptionClient: EncryptionClient
+  supabaseClient: SupabaseClientLike
+}
+
+/**
+ * The column builders declared on a v3 table, recovered from the table's
+ * type-level `_columnType` brand.
+ */
+type V3ColumnsOfTable<Table> = Table extends {
+  readonly _columnType: infer C
+}
+  ? C
+  : never
+
+/**
+ * JS property names of a v3 table's storage-only columns — those whose domain
+ * exposes no query capability (e.g. `types.Bool`, `types.Text`). Excluded from
+ * the filterable keys so a filter on one is a type error, matching the runtime
+ * guard in the v3 term encryption path.
+ */
+export type NonQueryableV3Keys<Table extends AnyV3Table> = {
+  [K in Extract<keyof V3ColumnsOfTable<Table>, string>]: [
+    QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>,
+  ] extends [never]
+    ? K
+    : never
+}[Extract<keyof V3ColumnsOfTable<Table>, string>]
+
+/**
+ * Row keys a v3 builder accepts in filter methods: every row key except the
+ * table's storage-only encrypted columns. Plaintext (non-schema) columns pass
+ * through untouched, exactly as in v2.
+ */
+export type V3FilterableKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = Exclude<Extract<keyof Row, string>, NonQueryableV3Keys<Table>>
+
+/**
+ * The v3 builder type: the shared {@link EncryptedQueryBuilder} surface with
+ * filter methods narrowed to {@link V3FilterableKeys}.
+ */
+export type EncryptedQueryBuilderV3<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = EncryptedQueryBuilder<Row, V3FilterableKeys<Table, Row> & StringKeyOf<Row>>
+
+export interface EncryptedSupabaseV3Instance {
+  /**
+   * `Row` defaults to exactly the table's inferred plaintext shape — NOT
+   * widened with an index signature. Widening would collapse
+   * {@link V3FilterableKeys} to `string` and silently disable the
+   * storage-only-column filter guard. The trade-off: with the default `Row`,
+   * plaintext passthrough columns (`id`, `created_at`, …) are not filterable
+   * or insertable at the type level — pass an explicit `Row` that includes
+   * them (`es.from<typeof users, UserRow>(…)`).
+   */
+  from<
+    Table extends AnyV3Table,
+    Row extends Record<string, unknown> = InferPlaintext<Table>,
+  >(tableName: string, table: Table): EncryptedQueryBuilderV3<Table, Row>
 }
 
 // ---------------------------------------------------------------------------
@@ -231,11 +300,12 @@ type StringKeyOf<T> = Extract<keyof T, string>
 
 export interface EncryptedQueryBuilder<
   T extends Record<string, unknown> = Record<string, unknown>,
+  FK extends StringKeyOf<T> = StringKeyOf<T>,
 > extends PromiseLike<EncryptedSupabaseResponse<T[]>> {
   select(
     columns: string,
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   insert(
     data: Partial<T> | Partial<T>[],
     options?: {
@@ -243,11 +313,11 @@ export interface EncryptedQueryBuilder<
       defaultToNull?: boolean
       onConflict?: string
     },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   update(
     data: Partial<T>,
     options?: { count?: 'exact' | 'planned' | 'estimated' },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   upsert(
     data: Partial<T> | Partial<T>[],
     options?: {
@@ -256,60 +326,42 @@ export interface EncryptedQueryBuilder<
       ignoreDuplicates?: boolean
       defaultToNull?: boolean
     },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   delete(options?: {
     count?: 'exact' | 'planned' | 'estimated'
-  }): EncryptedQueryBuilder<T>
-  eq<K extends StringKeyOf<T>>(column: K, value: T[K]): EncryptedQueryBuilder<T>
-  neq<K extends StringKeyOf<T>>(
-    column: K,
-    value: T[K],
-  ): EncryptedQueryBuilder<T>
-  gt<K extends StringKeyOf<T>>(column: K, value: T[K]): EncryptedQueryBuilder<T>
-  gte<K extends StringKeyOf<T>>(
-    column: K,
-    value: T[K],
-  ): EncryptedQueryBuilder<T>
-  lt<K extends StringKeyOf<T>>(column: K, value: T[K]): EncryptedQueryBuilder<T>
-  lte<K extends StringKeyOf<T>>(
-    column: K,
-    value: T[K],
-  ): EncryptedQueryBuilder<T>
-  like<K extends StringKeyOf<T>>(
-    column: K,
-    pattern: string,
-  ): EncryptedQueryBuilder<T>
-  ilike<K extends StringKeyOf<T>>(
-    column: K,
-    pattern: string,
-  ): EncryptedQueryBuilder<T>
-  is<K extends StringKeyOf<T>>(
+  }): EncryptedQueryBuilder<T, FK>
+  eq<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
+  neq<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
+  gt<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
+  gte<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
+  lt<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
+  lte<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
+  like<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
+  ilike<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
+  is<K extends FK>(
     column: K,
     value: null | boolean,
-  ): EncryptedQueryBuilder<T>
-  in<K extends StringKeyOf<T>>(
-    column: K,
-    values: T[K][],
-  ): EncryptedQueryBuilder<T>
-  filter<K extends StringKeyOf<T>>(
+  ): EncryptedQueryBuilder<T, FK>
+  in<K extends FK>(column: K, values: T[K][]): EncryptedQueryBuilder<T, FK>
+  filter<K extends FK>(
     column: K,
     operator: string,
     value: T[K],
-  ): EncryptedQueryBuilder<T>
-  not<K extends StringKeyOf<T>>(
+  ): EncryptedQueryBuilder<T, FK>
+  not<K extends FK>(
     column: K,
     operator: string,
     value: T[K],
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   or(
     filters: string,
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   or(
     conditions: PendingOrCondition[],
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T>
-  match(query: Partial<T>): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
+  match(query: Partial<Pick<T, FK>>): EncryptedQueryBuilder<T, FK>
   order<K extends StringKeyOf<T>>(
     column: K,
     options?: {
@@ -318,22 +370,22 @@ export interface EncryptedQueryBuilder<
       referencedTable?: string
       foreignTable?: string
     },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   limit(
     count: number,
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
   range(
     from: number,
     to: number,
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T>
-  single(): EncryptedQueryBuilder<T>
-  maybeSingle(): EncryptedQueryBuilder<T>
-  csv(): EncryptedQueryBuilder<T>
-  abortSignal(signal: AbortSignal): EncryptedQueryBuilder<T>
-  throwOnError(): EncryptedQueryBuilder<T>
+  ): EncryptedQueryBuilder<T, FK>
+  single(): EncryptedQueryBuilder<T, FK>
+  maybeSingle(): EncryptedQueryBuilder<T, FK>
+  csv(): EncryptedQueryBuilder<T, FK>
+  abortSignal(signal: AbortSignal): EncryptedQueryBuilder<T, FK>
+  throwOnError(): EncryptedQueryBuilder<T, FK>
   returns<U extends Record<string, unknown>>(): EncryptedQueryBuilder<U>
-  withLockContext(lockContext: LockContext): EncryptedQueryBuilder<T>
-  audit(config: AuditConfig): EncryptedQueryBuilder<T>
+  withLockContext(lockContext: LockContext): EncryptedQueryBuilder<T, FK>
+  audit(config: AuditConfig): EncryptedQueryBuilder<T, FK>
 }

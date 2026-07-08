@@ -38,17 +38,17 @@
  * For per-user, identity-bound encryption on the edge, build an
  * `OidcFederationStrategy` (federates an end user's OIDC JWT — Clerk,
  * Supabase, … — into a CTS service token) and pass it via
- * `config.strategy`:
+ * `config.authStrategy`:
  *
  * ```ts
  * import { OidcFederationStrategy } from "@cipherstash/stack/wasm-inline"
  * import { cookieStore } from "@cipherstash/auth/cookies"
  *
- * const strategy = OidcFederationStrategy.create(
+ * const authStrategy = OidcFederationStrategy.create(
  *   "crn:ap-southeast-2.aws:my-workspace-id", () => getClerkSessionToken(req),
  *   { store: cookieStore({ request: req, responseHeaders }) },
  * )
- * const client = await Encryption({ schemas, config: { strategy, clientId, clientKey } })
+ * const client = await Encryption({ schemas, config: { authStrategy, clientId, clientKey } })
  * ```
  *
  * For service-to-service / CI use with a custom token store, build an
@@ -71,8 +71,6 @@ import {
   buildEncryptConfig,
   type CastAs,
   type EncryptConfig,
-  EncryptedColumn,
-  EncryptedField,
   type EncryptedTable,
   type EncryptedTableColumn,
   encryptConfigSchema,
@@ -84,7 +82,7 @@ import type { Encrypted, EncryptOptions } from '@/types'
 // Schema + type re-exports
 // -----------------------------------------------------------------------
 
-// Auth strategies for `config.strategy` — `OidcFederationStrategy` for
+// Auth strategies for `config.authStrategy` — `OidcFederationStrategy` for
 // per-user identity-bound encryption, `AccessKeyStrategy` for M2M / CI.
 // Re-exported so edge consumers don't need a separate `@cipherstash/auth`
 // import (pair `OidcFederationStrategy` with `cookieStore` from
@@ -153,8 +151,11 @@ export type WasmPlaintext =
  * you. To plug in a custom token store (cookies on Supabase Edge, KV on
  * Cloudflare Workers, …) or to bind encryption to an end user, build the
  * strategy yourself — `AccessKeyStrategy` or `OidcFederationStrategy` —
- * and hand it to `config.strategy` instead. A pre-built strategy already
- * carries the CRN, so `workspaceCrn` is optional on that path.
+ * and hand it to `config.authStrategy` instead. A pre-built strategy
+ * already carries the CRN, so `workspaceCrn` is optional on that path.
+ *
+ * Mirrors the Node `ClientConfig`: `authStrategy` is the documented field,
+ * `strategy` is retained as a deprecated alias (see below).
  */
 export type WasmClientConfig = {
   /** Workspace client identifier — required by the WASM client. */
@@ -162,7 +163,7 @@ export type WasmClientConfig = {
   /** Workspace client key — required by the WASM client. */
   clientKey: string
   // Provide exactly one of `accessKey` (we build the strategy) or a
-  // pre-built `strategy` — never both, never neither.
+  // pre-built auth strategy — never both, never neither.
 } & (
   | {
       /**
@@ -173,17 +174,36 @@ export type WasmClientConfig = {
        */
       workspaceCrn: string
       accessKey: string
+      authStrategy?: never
       strategy?: never
     }
   | {
       /**
-       * Optional on the strategy path. A pre-built `strategy` (e.g.
+       * Optional on the strategy path. A pre-built `authStrategy` (e.g.
        * `OidcFederationStrategy.create(workspaceCrn, …)`) already
        * encapsulates the workspace CRN and region, so the SDK never reads
        * this — supply it if convenient, omit it otherwise.
        */
       workspaceCrn?: string
       accessKey?: never
+      /** A pre-built auth strategy for per-user or M2M authentication. */
+      authStrategy: WasmAuthStrategy
+      /**
+       * @deprecated Renamed to `authStrategy`. Still honoured for backwards
+       * compatibility (it logs a deprecation warning at runtime) but will be
+       * removed in a future release.
+       */
+      strategy?: WasmAuthStrategy
+    }
+  | {
+      workspaceCrn?: string
+      accessKey?: never
+      authStrategy?: never
+      /**
+       * @deprecated Renamed to `authStrategy`. Still honoured for backwards
+       * compatibility (it logs a deprecation warning at runtime) but will be
+       * removed in a future release.
+       */
       strategy: WasmAuthStrategy
     }
 )
@@ -355,44 +375,96 @@ export function normalizeCastAs(config: EncryptConfig): unknown {
   return { ...config, tables }
 }
 
-function getColumnName(col: EncryptOptions['column']): string {
-  if (col instanceof EncryptedColumn || col instanceof EncryptedField) {
+/**
+ * Resolve a column's name structurally. Accepts any column builder exposing
+ * `getName()` — v2 `EncryptedColumn` / `EncryptedField` AND v3 column builders
+ * (e.g. `EncryptedTextSearchColumn`) alike — matching the structural
+ * `BuildableColumn` contract that `EncryptOptions.column` was widened to.
+ *
+ * An `instanceof EncryptedColumn || EncryptedField` gate would type-check after
+ * the widening but throw at runtime for a v3 column, breaking the type promise;
+ * resolving the name structurally keeps the wasm-inline encrypt entry honest.
+ * The `typeof` check still fails loudly for plain JS callers passing a value
+ * that is not a column builder.
+ *
+ * @internal exported for unit-test coverage.
+ */
+export function getColumnName(col: EncryptOptions['column']): string {
+  if (typeof col?.getName === 'function') {
     return col.getName()
   }
   throw new Error(
-    '[encryption]: opts.column must be an EncryptedColumn or EncryptedField',
+    '[encryption]: opts.column must be a column builder exposing getName()',
+  )
+}
+
+// Emit the `config.strategy` → `config.authStrategy` rename warning at most
+// once per process so repeated `Encryption()` calls don't spam the console.
+// Mirrors the identical latch on the Node entry (`@/encryption`); the two are
+// kept separate so the wasm bundle never imports the Node-only module.
+let warnedStrategyDeprecated = false
+function warnStrategyDeprecated(): void {
+  if (warnedStrategyDeprecated) return
+  warnedStrategyDeprecated = true
+  console.warn(
+    '[encryption]: `config.strategy` is deprecated and will be removed in a future release — use `config.authStrategy` instead.',
   )
 }
 
 /**
+ * Reset the once-per-process deprecation-warning latch. Test-only hook so
+ * suites can assert the warning fires deterministically, independent of test
+ * ordering.
+ * @internal
+ */
+export function __resetStrategyDeprecationWarningForTests(): void {
+  warnedStrategyDeprecated = false
+}
+
+/**
  * Resolve the auth strategy for the WASM client from its config: an explicit
- * `config.strategy`, or — for the access-key path — an `AccessKeyStrategy`
- * built from the workspace CRN (region derived from it inside
- * `@cipherstash/auth`). `strategy` and `accessKey` are mutually exclusive.
+ * `config.authStrategy` (or the deprecated `config.strategy` alias), or — for
+ * the access-key path — an `AccessKeyStrategy` built from the workspace CRN
+ * (region derived from it inside `@cipherstash/auth`). An auth strategy and
+ * `accessKey` are mutually exclusive.
  *
  * @internal exported for offline unit coverage of the strategy wiring; the
  * gated Deno e2e (`e2e/wasm/roundtrip.test.ts`) is the only other exercise of
  * this path and it skips without real `CS_*` secrets.
  */
 export function resolveStrategy(cfg: WasmClientConfig): WasmAuthStrategy {
-  // The discriminated union rejects `accessKey` + `strategy` together at
+  // Honour the deprecated `strategy` alias; `authStrategy` wins when both are
+  // set. Warn whenever the deprecated field is present at all so the leftover
+  // field gets cleaned up (mirrors the Node entry).
+  if (cfg.strategy) {
+    warnStrategyDeprecated()
+  }
+  const authStrategy = cfg.authStrategy ?? cfg.strategy
+  // The discriminated union rejects an auth strategy + `accessKey` together at
   // compile time, but JS callers (Deno / plain JS) bypass that — guard at
   // runtime so a conflicting config fails loudly instead of silently
   // preferring one.
-  if (cfg.strategy && cfg.accessKey) {
+  if (authStrategy && cfg.accessKey) {
+    // Name the field the caller actually set — `strategy` when only the
+    // deprecated alias was used — so the message isn't misleading.
+    const field = cfg.authStrategy ? 'authStrategy' : 'strategy'
     throw new Error(
-      '[encryption]: `config.strategy` and `config.accessKey` are mutually exclusive — pass exactly one.',
+      `[encryption]: \`config.${field}\` and \`config.accessKey\` are mutually exclusive — pass exactly one.`,
     )
   }
-  if (cfg.strategy) return cfg.strategy
-  // No strategy → the access-key arm, where `workspaceCrn` and `accessKey`
+  if (authStrategy) return authStrategy
+  // No auth strategy → the access-key arm, where `workspaceCrn` and `accessKey`
   // are both required (and so present at runtime); the union widens their
-  // static types to `string | undefined`, hence the casts.
+  // static types to `string | undefined`, hence the casts. Guard at runtime
+  // so plain JS / Deno callers that bypass the compile-time union fail loudly
+  // instead of forwarding `undefined` into `AccessKeyStrategy.create`.
+  if (!cfg.workspaceCrn || !cfg.accessKey) {
+    throw new Error(
+      '[encryption]: `config.workspaceCrn` and `config.accessKey` are required when no auth strategy is provided.',
+    )
+  }
   // `AccessKeyStrategy.create` takes the full workspace CRN — the region is
   // derived from it inside `@cipherstash/auth`, so the CRN stays the single
   // source of truth with no manual region split.
-  return AccessKeyStrategy.create(
-    cfg.workspaceCrn as string,
-    cfg.accessKey as string,
-  )
+  return AccessKeyStrategy.create(cfg.workspaceCrn, cfg.accessKey)
 }

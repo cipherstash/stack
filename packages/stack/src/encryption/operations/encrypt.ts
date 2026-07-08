@@ -4,15 +4,17 @@ import {
   type JsPlaintext,
 } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
 import type {
-  EncryptedColumn,
-  EncryptedField,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@/schema'
-import type { Client, Encrypted, EncryptOptions } from '@/types'
+  BuildableColumn,
+  BuildableTable,
+  Client,
+  Encrypted,
+  EncryptOptions,
+  Plaintext,
+} from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
@@ -23,13 +25,13 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
   // short-circuit. The public `Encryption.encrypt()` signature still
   // rejects null at the type layer; this is defense in depth for callers
   // that reach this class through casts or dynamic field walking.
-  private plaintext: JsPlaintext | null
-  private column: EncryptedColumn | EncryptedField
-  private table: EncryptedTable<EncryptedTableColumn>
+  private plaintext: Plaintext | null
+  private column: BuildableColumn
+  private table: BuildableTable
 
   constructor(
     client: Client,
-    plaintext: JsPlaintext | null,
+    plaintext: Plaintext | null,
     opts: EncryptOptions,
   ) {
     super()
@@ -70,24 +72,15 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
           return null as unknown as Encrypted
         }
 
-        if (
-          typeof this.plaintext === 'number' &&
-          Number.isNaN(this.plaintext)
-        ) {
-          throw new Error('[encryption]: Cannot encrypt NaN value')
-        }
-
-        if (
-          typeof this.plaintext === 'number' &&
-          !Number.isFinite(this.plaintext)
-        ) {
-          throw new Error('[encryption]: Cannot encrypt Infinity value')
-        }
+        assertValidNumericValue(this.plaintext)
 
         const { metadata } = this.getAuditData()
 
         return await ffiEncrypt(this.client, {
-          plaintext: this.plaintext,
+          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
+          // `toJSON` at the boundary); cast until the upstream `JsPlaintext` input
+          // union is corrected to include it.
+          plaintext: this.plaintext as JsPlaintext,
           column: this.column.getName(),
           table: this.table.tableName,
           unverifiedContext: metadata,
@@ -108,9 +101,9 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   public getOperation(): {
     client: Client
-    plaintext: JsPlaintext | null
-    column: EncryptedColumn | EncryptedField
-    table: EncryptedTable<EncryptedTableColumn>
+    plaintext: Plaintext | null
+    column: BuildableColumn
+    table: BuildableTable
   } {
     return {
       client: this.client,
@@ -156,11 +149,13 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
           return null as unknown as Encrypted
         }
 
+        assertValidNumericValue(plaintext)
+
         const { metadata } = this.getAuditData()
         const lockContext = resolveLockContext(this.lockContext)
 
         return await ffiEncrypt(client, {
-          plaintext,
+          plaintext: plaintext as JsPlaintext,
           column: column.getName(),
           table: table.tableName,
           lockContext,

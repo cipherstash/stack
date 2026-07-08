@@ -87,7 +87,7 @@ export default defineConfig({
  * Returns `true` if a config is present (either pre-existing or freshly
  * written), `false` if the user cancelled the prompt.
  *
- * Invoked by `db install` when no `stash.config.ts` exists, so users don't
+ * Invoked by `eql install` when no `stash.config.ts` exists, so users don't
  * need to run a separate `setup` step before installing EQL.
  */
 export async function ensureStashConfig(
