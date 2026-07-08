@@ -232,10 +232,48 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     // Assert range MEMBERSHIP deterministically by ordering on the plaintext
     // `label`. The range predicate above (eql_v3.gte/lte) already proves the ORE
     // comparison is lexically correct: it selects grace+zora and excludes
-    // ada/alan. NB: `ORDER BY eql_v3.ord_term(email)` sorts by the raw term
-    // rather than ORE order for text_search, so it is NOT used as the assertion
-    // key here.
+    // ada/alan.
+    //
+    // NB: we deliberately do NOT order by `eql_v3.ord_term(email)` (nor by the
+    // `email` column, nor `email USING <`). None of those yield ORE order on a
+    // non-superuser Postgres: `ord_term` returns the composite
+    // `eql_v3_internal.ore_block_256`, whose ORE-aware btree opclass is
+    // superuser-gated and skipped on managed installs, so `ORDER BY ord_term`
+    // silently falls back to PostgreSQL's built-in record comparison (raw-byte
+    // order, not ORE). See docs/eql-v3-ord-term-ordering-defect.md.
     expect(rows.map((row) => row.label)).toEqual(['grace', 'zora'])
+  }, 30000)
+
+  it('proves ORE total order via pairwise eql_v3.lt (ord_term ORDER BY is NOT ORE order)', async () => {
+    // The ORE comparison operators are ORE-correct even where `ORDER BY
+    // ord_term(col)` is not (see docs/eql-v3-ord-term-ordering-defect.md).
+    // Reconstruct the total order purely from boolean `eql_v3.lt` predicates: a
+    // self cross-join gives, for each ordered pair, whether x < y under ORE; the
+    // count of rows a label is strictly-less-than is its ascending rank.
+    await seedRows()
+
+    const pairs = await sql<{ a: string; b: string; lt: boolean }[]>`
+      SELECT x.label AS a, y.label AS b, eql_v3.lt(x.email, y.email) AS lt
+      FROM protect_ci_v3_text_search x
+      CROSS JOIN protect_ci_v3_text_search y
+      WHERE x.test_run_id = ${TEST_RUN_ID}
+        AND y.test_run_id = ${TEST_RUN_ID}
+        AND x.label <> y.label
+    `
+
+    const labels = ['ada', 'grace', 'alan', 'zora']
+    const lessThanCount = new Map<string, number>(labels.map((l) => [l, 0]))
+    for (const pair of pairs) {
+      if (pair.lt) lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
+    }
+
+    const ascending = [...lessThanCount.entries()]
+      .sort(([, aRank], [, bRank]) => bRank - aRank)
+      .map(([label]) => label)
+
+    // Lexical/ORE order of the seeded emails:
+    //   ada@example.com < alan@example.net < grace@example.com < zora@example.org
+    expect(ascending).toEqual(['ada', 'alan', 'grace', 'zora'])
   }, 30000)
 
   it('creates functional indexes for equality, match, and order terms', async () => {
