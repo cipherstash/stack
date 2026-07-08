@@ -1,5 +1,121 @@
 # @cipherstash/cli
 
+## 0.17.0
+
+### Minor Changes
+
+- cc62407: Add EQL v3 Supabase support, baselined on the `eql-3.0.0-alpha.2` release.
+
+  `@cipherstash/stack/supabase` gains `encryptedSupabaseV3` — the EQL v3
+  counterpart of `encryptedSupabase` for schemas authored with
+  `@cipherstash/stack/eql/v3`. The public surface and call shape are identical
+  to v2 (same filter methods, `withLockContext`, `audit`); only the schema type
+  and wire encoding differ.
+
+  **The v3 surface** is the `eql-3.0.0-alpha.2` release artifact: domains use
+  SQL-standard type names (`eql_v3.integer_ord`, `eql_v3.timestamp_ord`,
+  `eql_v3.boolean`, … mirrored by `types.IntegerOrd`, `types.TimestampOrd`,
+  `types.Boolean`, …), SEM internals live in a separate `eql_v3_internal`
+  schema (grant it roles, never expose it — only `eql_v3` goes in Supabase's
+  Exposed schemas), and envelopes are versioned `v: 3`. Envelope production
+  rides on `@cipherstash/protect-ffi` 0.27, which takes an `eqlVersion` so the
+  same client emits v2 or v3 payloads per schema.
+
+  **Adapter behaviour:**
+
+  - columns are stored in their native `eql_v3.*` domains (raw jsonb payloads,
+    no composite wrap), with JS property → DB column name resolution and `Date`
+    reconstruction from `cast_as` on decrypted rows;
+  - **INTERIM:** filter operands are full storage envelopes — every `eql_v3.*`
+    domain CHECK requires the storage keys, and the SQL operators coerce their
+    operand into the domain, so a term-only operand is rejected today. This is
+    a tracked workaround (Linear CIP-3402), not the design: a full-envelope
+    operand carries a real decryptable ciphertext plus all of the column's
+    index terms, and PostgREST filters travel in GET query strings, so operands
+    can land in URL logs, proxies, and Supabase request logs (query terms are
+    index-terms-only by design). The fix is an EQL-side term-only scalar query
+    envelope (the scalar analog of `eql_v3.jsonb_query`);
+  - `like`/`ilike` on encrypted columns are emitted as PostgREST `cs`
+    (bloom-filter `@>`) — the v3 domains define no LIKE operator. Substring
+    search currently also requires `include_original: false` on the match
+    index; that requirement is a symptom of the same interim full-envelope
+    operand and goes away with CIP-3402;
+  - filters on storage-only columns (e.g. `types.Boolean`) and null filter
+    values are rejected at the type level and at runtime.
+
+  The v3 builder's default row type is exactly the table's inferred plaintext
+  shape (no index-signature widening — widening would disable the storage-only
+  filter guard). Filtering or inserting plaintext passthrough columns requires
+  an explicit row type: `es.from<typeof users, UserRow>('users', users)`.
+
+  The CLI gains an EQL v3 path: `stash eql install --eql-version 3` installs the
+  vendored `eql-3.0.0-alpha.2` bundle (`--supabase` selects the opclass-stripped
+  variant and applies the role grants for both `eql_v3` and `eql_v3_internal`);
+  `stash db upgrade` also accepts `--eql-version`, and `stash db status` reports
+  v2 and v3 installs independently. The v2 `SUPABASE_PERMISSIONS_SQL` block is
+  now generated from a shared `supabasePermissionsSql(schemaName)` helper, with
+  `SUPABASE_PERMISSIONS_SQL_V3` covering the v3 schemas.
+
+- eb94ac8: Add guards for missing native binaries. When npm skips the platform-specific
+  optional dependency (a known npm bug), stash now prints actionable fix
+  guidance instead of a raw `MODULE_NOT_FOUND` stack trace. Adds a new
+  `stash doctor` command that diagnoses the runtime and native modules and works
+  even when a binary is missing.
+- 64fdeb2: Rename `stash db install`, `stash db upgrade`, and `stash db status` to
+  `stash eql install`, `stash eql upgrade`, and `stash eql status`. These
+  commands manage the EQL extension itself, so they now live under a dedicated
+  `eql` command group. The old `db` spellings keep working as deprecated
+  aliases that print a warning pointing at the new names. All help text,
+  hints, generated migration headers, and wizard steps now reference the
+  `eql` commands.
+- 5e23384: Add a command-descriptor registry and `stash manifest --json` — a structured,
+  versioned command surface for the docs generator and agents to consume instead
+  of scraping `--help`.
+
+  - `stash manifest --json` emits `{ name, version, groups[] }`, where each command
+    carries its summary, optional long description, examples, and flags. `version`
+    comes from the CLI's own `package.json`, so a page generated from the manifest
+    is always stamped with the version it describes.
+  - `stash manifest` (no flag) prints a grouped, human-readable command list.
+  - The registry (`src/cli/registry.ts`) is intended to become the single source of
+    truth for command metadata. This is phase 1 of
+    `docs/plans/cli-help-and-manifest.md`; it is additive — `bin/main.ts` still
+    hand-maintains the `HELP` string that renders `--help`, so until the documented
+    follow-on renders `--help` from the registry the two are kept in sync by hand.
+
+- 72a3356: Add non-interactive / agent-friendly affordances so `stash init` and
+  `stash auth login` can run without a TTY (agents, CI, pipes). All changes are
+  additive — interactive behaviour in a real terminal is unchanged.
+
+  - `--region <slug>` / `STASH_REGION` on `stash auth login` and `stash init`
+    skip the interactive region picker. An unknown or missing region in a
+    non-TTY context now exits with an actionable message instead of hanging on
+    the picker (region resolution mirrors the `DATABASE_URL` resolver's
+    `TTY && !CI` gate).
+  - `stash auth login --json` emits newline-delimited device-code events. The
+    first event (`authorization_required`) carries the verification URL, so an
+    agent can trigger auth and hand the browser step to a human — only a human
+    completes it in the browser. `--no-open` suppresses the browser launch.
+  - `stash auth regions` lists the regions valid for `--region` / `STASH_REGION`;
+    `stash auth regions --json` emits `[{ slug, label }]` for programmatic use.
+
+### Patch Changes
+
+- aa9c4b1: Documentation: refresh package READMEs after the protectjs → stack repository rename. Fixed repository and license links, replaced dead in-repo docs links with cipherstash.com/docs URLs, rewrote the incorrect @cipherstash/nextjs README, and added guidance pointing new projects to @cipherstash/stack.
+- a5f5422: Bump `@cipherstash/auth` (and its per-platform native bindings) from `0.40.0` to `0.41.0`, and migrate to its new `Result`-returning API.
+
+  **What changed in `@cipherstash/auth` `0.41`.** Every fallible auth operation now returns a `@byteslice/result` `Result<T, AuthFailure>` (`{ data }` on success, `{ failure }` on error) instead of throwing. This covers strategy construction (`AccessKeyStrategy.create`, `OidcFederationStrategy.create`, `AutoStrategy.detect`, `DeviceSessionStrategy.fromProfile`), `getToken()`, and the device-code flow (`beginDeviceCodeFlow`, `pollForToken`, `openInBrowser`, `bindClientDevice`). Consumers now write `if (result.failure) …` and read `result.data` rather than `try/catch`. The `AuthError` type was renamed to **`AuthFailure`** — a discriminated union keyed by `type` (`"NOT_AUTHENTICATED"`, `"WORKSPACE_MISMATCH"`, …), replacing the old `error.code` string.
+
+  **`@cipherstash/stack` (breaking type surface).**
+
+  - **`AuthError` is renamed to `AuthFailure`** in the public re-exports from `@cipherstash/stack`. `AuthErrorCode` and `TokenResult` are unchanged. Anyone importing `AuthError` from `@cipherstash/stack` must switch to `AuthFailure`.
+  - The WASM-inline access-key path (`resolveStrategy`, used by `@cipherstash/stack/wasm-inline`'s `Encryption()`) now unwraps the `Result` from `AccessKeyStrategy.create`. A construction failure (e.g. an invalid CRN or access key) throws a descriptive `[encryption]` error naming the `AuthFailure.type` instead of surfacing the raw auth error.
+  - Bump `@cipherstash/protect-ffi` from `0.27.0` to `0.28.0`. auth `0.41`'s `getToken()` returns the token inside a `Result` envelope; protect-ffi `0.28` unwraps it (`.data.token`) inside its WASM `newClient`, whereas `0.27` read `.token` off the envelope and got `undefined` — which failed the WASM encrypt/decrypt round-trip with `token field is not a string`. `0.28` is the floor for the WASM path under auth `0.41`.
+
+  **`stash` (CLI) and `@cipherstash/wizard`.** Internal auth call sites (`stash auth login`, device binding, `init` auth check, and the wizard's token acquisition / prerequisite check) were updated to unwrap `Result` and branch on `failure.type`. Behaviour is preserved — auth failures still surface the same way to end users; no CLI/wizard API changed.
+
+  - @cipherstash/migrate@0.2.0
+
 ## 0.16.0
 
 ### Minor Changes
