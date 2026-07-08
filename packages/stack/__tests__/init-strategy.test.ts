@@ -1,16 +1,20 @@
 /**
- * Tests for the optional `config.strategy` auth strategy.
+ * Tests for the optional `config.authStrategy` auth strategy (and its
+ * deprecated `config.strategy` alias).
  *
  * protect-ffi (0.25+) lets `newClient` take an `AuthStrategy` (any
  * `{ getToken(): Promise<{ token }> }` object — the shape every
  * `@cipherstash/auth` strategy satisfies, including
  * `OidcFederationStrategy` for per-user identity-bound encryption).
- * `Encryption` exposes it via `config.strategy`; when provided it must
- * reach `newClient` as `opts.strategy`, and when omitted the option must
- * be absent so the default credentials-derived strategy is used.
+ * `Encryption` exposes it via `config.authStrategy`; when provided it must
+ * reach `newClient` as `opts.strategy` (the FFI's option name), and when
+ * omitted the option must be absent so the default `auto` strategy is used.
+ * The legacy `config.strategy` field is still honoured (with a runtime
+ * deprecation warning) until it is removed.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetStrategyDeprecationWarningForTests } from '@/encryption'
 import { EncryptionV3 } from '@/encryption/v3'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
@@ -26,32 +30,43 @@ const users = encryptedTable('users', {
   email: encryptedColumn('email'),
 })
 
+// Silence + capture the deprecation warning, and reset its once-per-process
+// latch, so each test asserts warning behaviour deterministically regardless
+// of order. `afterEach` restores the spy even if an assertion throws mid-test.
+let warnSpy: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
   vi.clearAllMocks()
+  __resetStrategyDeprecationWarningForTests()
+  warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 })
 
-describe('Encryption config.strategy', () => {
-  it('forwards a supplied strategy to newClient', async () => {
-    const strategy: AuthStrategy = {
+afterEach(() => {
+  warnSpy.mockRestore()
+})
+
+describe('Encryption config.authStrategy', () => {
+  it('forwards a supplied authStrategy to newClient', async () => {
+    const authStrategy: AuthStrategy = {
       getToken: vi.fn(async () => ({ token: 'service-token' })),
     }
 
-    await Encryption({ schemas: [users], config: { strategy } })
+    await Encryption({ schemas: [users], config: { authStrategy } })
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(strategy)
+    expect(opts.strategy).toBe(authStrategy)
   })
 
-  it('passes the strategy alongside the credential clientOpts', async () => {
-    const strategy: AuthStrategy = {
+  it('passes the authStrategy alongside the credential clientOpts', async () => {
+    const authStrategy: AuthStrategy = {
       getToken: vi.fn(async () => ({ token: 'service-token' })),
     }
 
     await Encryption({
       schemas: [users],
       config: {
-        strategy,
+        authStrategy,
         workspaceCrn: 'crn:ap-southeast-2.aws:test-workspace',
         clientId: 'client-id',
         clientKey: 'client-key',
@@ -60,8 +75,8 @@ describe('Encryption config.strategy', () => {
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
-    expect(opts.strategy).toBe(strategy)
-    // clientKey is still required even when a strategy is supplied.
+    expect(opts.strategy).toBe(authStrategy)
+    // clientKey is still required even when an authStrategy is supplied.
     expect(opts.clientOpts.clientKey).toBe('client-key')
     expect(opts.clientOpts.workspaceCrn).toBe(
       'crn:ap-southeast-2.aws:test-workspace',
@@ -83,7 +98,10 @@ describe('Encryption config.strategy', () => {
       })),
     }
 
-    await Encryption({ schemas: [users], config: { strategy: oidcStrategy } })
+    await Encryption({
+      schemas: [users],
+      config: { authStrategy: oidcStrategy },
+    })
 
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
@@ -96,6 +114,56 @@ describe('Encryption config.strategy', () => {
     // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
     const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
     expect(opts.strategy).toBeUndefined()
+  })
+})
+
+describe('Encryption config.strategy (deprecated alias)', () => {
+  it('still forwards a deprecated strategy to newClient and warns', async () => {
+    const strategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'service-token' })),
+    }
+
+    await Encryption({ schemas: [users], config: { strategy } })
+
+    // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
+    const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
+    expect(opts.strategy).toBe(strategy)
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('`config.strategy` is deprecated'),
+    )
+  })
+
+  it('prefers authStrategy over the deprecated strategy when both are set, and still warns', async () => {
+    const strategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'legacy-token' })),
+    }
+    const authStrategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'new-token' })),
+    }
+
+    await Encryption({
+      schemas: [users],
+      config: { strategy, authStrategy },
+    })
+
+    // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
+    const opts = vi.mocked(ffi.newClient).mock.calls.at(-1)![0] as any
+    expect(opts.strategy).toBe(authStrategy)
+    // The deprecated field is still present, so the nudge to remove it fires
+    // even though `authStrategy` takes precedence.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('`config.strategy` is deprecated'),
+    )
+  })
+
+  it('does not warn when only authStrategy is supplied', async () => {
+    const authStrategy: AuthStrategy = {
+      getToken: vi.fn(async () => ({ token: 'new-token' })),
+    }
+
+    await Encryption({ schemas: [users], config: { authStrategy } })
+
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 })
 
