@@ -83,16 +83,20 @@ export type SupabaseInstallMode = 'migration' | 'direct'
  * A pre-existing `stash.config.ts` is authoritative — later workflow commands
  * (db push / schema build / encrypt) load the client through it — so we load
  * it. Without one, `eql install` doesn't need a config: resolve the URL
- * directly (flag → env → supabase → prompt), then offer to scaffold a config
- * for the rest of the workflow. Decoupling install from the config is what lets
- * `npx stash eql install --database-url ...` run in a bare project without the
- * `stash` / `@cipherstash/stack` dependencies the config would otherwise import
- * (#579).
+ * directly (flag → env → supabase → prompt). Decoupling install from the config
+ * is what lets `npx stash eql install --database-url ...` run in a bare project
+ * without the `stash` / `@cipherstash/stack` dependencies the config would
+ * otherwise import (#579).
+ *
+ * An explicit `--database-url` signals a one-shot install against that database,
+ * so we do NOT scaffold project files (config or client) — `clientPath` comes
+ * back `null`. Without the flag we offer to scaffold a config (and return its
+ * client path) to set the project up for the rest of the workflow.
  */
 async function resolveInstallContext(
   options: InstallOptions,
   s: ReturnType<typeof p.spinner>,
-): Promise<{ databaseUrl: string; clientPath: string }> {
+): Promise<{ databaseUrl: string; clientPath: string | null }> {
   if (findConfigFile(process.cwd())) {
     s.start('Loading stash.config.ts...')
     const config = await loadStashConfig({
@@ -107,6 +111,12 @@ async function resolveInstallContext(
     databaseUrlFlag: options.databaseUrl,
     supabase: options.supabase,
   })
+
+  // One-shot install (explicit --database-url): don't touch the project.
+  if (options.databaseUrl) {
+    return { databaseUrl, clientPath: null }
+  }
+
   const clientPath = await offerStashConfig()
   return { databaseUrl, clientPath }
 }
@@ -131,14 +141,18 @@ export async function installCommand(options: InstallOptions) {
   // a stash.config.ts: an existing config is authoritative (later workflow
   // commands rely on it), but without one we resolve the URL directly — so a
   // standalone `npx stash eql install --database-url ...` works with zero
-  // project dependencies — and offer to scaffold a config for the rest of the
+  // project dependencies. A one-shot `--database-url` run leaves the project
+  // untouched; otherwise we offer to scaffold a config for the rest of the
   // workflow (CIP-2986 / #579).
   const { databaseUrl, clientPath } = await resolveInstallContext(options, s)
 
   // Safety net: if the user ran `eql install` without first running `init`,
   // scaffold the encryption client file so clientPath points somewhere real.
-  // No-op when the file already exists.
-  ensureEncryptionClient(clientPath, process.cwd(), databaseUrl)
+  // No-op when the file already exists. Skipped for a one-shot `--database-url`
+  // install (clientPath === null), which leaves the project untouched.
+  if (clientPath) {
+    ensureEncryptionClient(clientPath, process.cwd(), databaseUrl)
+  }
 
   // Auto-detect provider hints when the user didn't explicitly pass flags.
   // CIP-2985.

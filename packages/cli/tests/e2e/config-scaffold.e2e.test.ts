@@ -49,6 +49,29 @@ describe('config-scaffold DX (missing config / missing deps)', () => {
     expect(r.exitCode).toBe(1)
   })
 
+  it('`eql install --database-url` is one-shot — it never scaffolds project files', async () => {
+    // An explicit --database-url means "install EQL against this DB now"; it
+    // must not drop a stash.config.ts or an encryption client into the project.
+    // The bogus URL fails fast at connect (past the config stage), which is all
+    // we need to observe the no-scaffold behaviour.
+    const r = await run(
+      [
+        'eql',
+        'install',
+        '--database-url',
+        'postgres://u:p@127.0.0.1:1/db?connect_timeout=2',
+      ],
+      { cwd: tmpDir },
+    )
+
+    expect(fs.existsSync(path.join(tmpDir, 'stash.config.ts'))).toBe(false)
+    expect(
+      fs.existsSync(path.join(tmpDir, 'src', 'encryption', 'index.ts')),
+    ).toBe(false)
+    expect(r.output).not.toContain('Created stash.config.ts')
+    expect(r.output).not.toContain('Cannot find module')
+  })
+
   // The `loadStashConfig` catch that translates a missing-module error into
   // guidance (the path for a project that HAS a config but lacks the CLI
   // packages) is covered by unit tests in src/__tests__/config.test.ts with a

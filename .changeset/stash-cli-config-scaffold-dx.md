@@ -14,8 +14,10 @@ Fix two config-scaffold dead-ends in the CLI (#578, #579).
   That means a standalone `npx stash eql install --database-url ...` works in a
   bare project with **zero dependencies** — no more crash with a raw
   `Cannot find module 'stash'` from the config's `import`. An existing config is
-  still honoured (later workflow commands rely on it), and a fresh one is offered
-  as a convenience for the rest of the workflow rather than being a prerequisite.
+  still honoured (later workflow commands rely on it). An explicit
+  `--database-url` is treated as a one-shot install and leaves the project
+  untouched (no config or client scaffolded); without it, a config is offered as
+  a convenience for the rest of the workflow rather than being a prerequisite.
 - As a safety net, `loadStashConfig` translates a missing-module load failure
   (a project that *has* a config but lacks the CLI packages) into the same
   actionable guidance for every command, instead of a jiti/Node stack trace.
