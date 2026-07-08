@@ -144,8 +144,13 @@ describe('writeSupabaseEqlMigration', () => {
       /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash eql install --supabase --migration`/,
     )
     expect(contents).toContain('CipherStash')
-    // EQL SQL body — the bundled supabase variant defines eql_v2.
-    expect(contents).toContain('eql_v2')
+    // EQL SQL body — the bundled supabase variant defines eql_v2. The
+    // migration-file flow is v2-only, so the body must be the v2 generation:
+    // assert the v2 composite type is present and no v3 schema leaks in. (A
+    // bare `toContain('eql_v2')` isn't enough — the header + permissions
+    // mention eql_v2 even if the body were v3.)
+    expect(contents).toContain('eql_v2_encrypted')
+    expect(contents).not.toContain('eql_v3')
     // Permissions block (single source of truth).
     expect(contents).toContain(SUPABASE_PERMISSIONS_SQL.trim())
   })
