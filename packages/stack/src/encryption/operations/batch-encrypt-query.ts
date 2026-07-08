@@ -11,7 +11,11 @@ import {
 } from '@cipherstash/protect-ffi'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import {
   type Context,
   type LockContextInput,
@@ -162,11 +166,11 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.EncryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()
@@ -230,11 +234,11 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.EncryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()

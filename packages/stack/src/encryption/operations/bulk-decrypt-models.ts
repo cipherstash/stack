@@ -1,6 +1,10 @@
 import { type Result, withResult } from '@byteslice/result'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
 import type { Client, Decrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
@@ -49,11 +53,11 @@ export class BulkDecryptModelsOperation<
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.DecryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()
@@ -119,11 +123,11 @@ export class BulkDecryptModelsOperationWithLockContext<
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.DecryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()

@@ -5,7 +5,11 @@ import {
   decryptBulkFallible,
 } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import {
   type Context,
   type LockContextInput,
@@ -104,11 +108,11 @@ export class BulkDecryptOperation extends EncryptionOperation<BulkDecryptedData>
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.DecryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()
@@ -177,11 +181,11 @@ export class BulkDecryptOperationWithLockContext extends EncryptionOperation<Bul
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.DecryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()
