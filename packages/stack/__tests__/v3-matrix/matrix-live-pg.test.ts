@@ -63,7 +63,7 @@ const sql = LIVE_EQL_V3_PG_ENABLED
 const TABLE_NAME = 'v3_matrix_live_pg'
 const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-/** `eql_v3.int4_ord` -> `int4_ord`: a valid, unique Postgres column name. */
+/** `eql_v3.integer_ord` -> `integer_ord`: a valid, unique Postgres column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
 const expectDecryptedStorageValue = (

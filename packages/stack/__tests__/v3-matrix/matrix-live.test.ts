@@ -29,7 +29,7 @@ import {
   V3_MATRIX,
 } from './catalog'
 
-/** `eql_v3.int4_ord` -> `int4_ord`: a valid, per-domain-unique column name. */
+/** `eql_v3.integer_ord` -> `integer_ord`: a valid, per-domain-unique column name. */
 const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
 
 // `as const satisfies Record<...>` gives `V3_MATRIX` a narrower type than

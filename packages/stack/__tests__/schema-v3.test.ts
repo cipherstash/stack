@@ -158,25 +158,27 @@ describe('eql_v3 text_match column', () => {
 
 describe('eql_v3 concrete type names', () => {
   it('preserves public factory names while exposing concrete Postgres domain names', () => {
-    expect(types.Integer('n').getEqlType()).toBe('eql_v3.int4')
-    expect(types.IntegerEq('n').getEqlType()).toBe('eql_v3.int4_eq')
-    expect(types.IntegerOrdOre('n').getEqlType()).toBe('eql_v3.int4_ord_ore')
-    expect(types.IntegerOrd('n').getEqlType()).toBe('eql_v3.int4_ord')
+    expect(types.Integer('n').getEqlType()).toBe('eql_v3.integer')
+    expect(types.IntegerEq('n').getEqlType()).toBe('eql_v3.integer_eq')
+    expect(types.IntegerOrdOre('n').getEqlType()).toBe('eql_v3.integer_ord_ore')
+    expect(types.IntegerOrd('n').getEqlType()).toBe('eql_v3.integer_ord')
 
-    expect(types.Smallint('n').getEqlType()).toBe('eql_v3.int2')
-    expect(types.SmallintEq('n').getEqlType()).toBe('eql_v3.int2_eq')
-    expect(types.SmallintOrdOre('n').getEqlType()).toBe('eql_v3.int2_ord_ore')
-    expect(types.SmallintOrd('n').getEqlType()).toBe('eql_v3.int2_ord')
+    expect(types.Smallint('n').getEqlType()).toBe('eql_v3.smallint')
+    expect(types.SmallintEq('n').getEqlType()).toBe('eql_v3.smallint_eq')
+    expect(types.SmallintOrdOre('n').getEqlType()).toBe(
+      'eql_v3.smallint_ord_ore',
+    )
+    expect(types.SmallintOrd('n').getEqlType()).toBe('eql_v3.smallint_ord')
 
     expect(types.Boolean('b').getEqlType()).toBe('eql_v3.bool')
-    expect(types.Real('n').getEqlType()).toBe('eql_v3.float4')
-    expect(types.RealEq('n').getEqlType()).toBe('eql_v3.float4_eq')
-    expect(types.RealOrdOre('n').getEqlType()).toBe('eql_v3.float4_ord_ore')
-    expect(types.RealOrd('n').getEqlType()).toBe('eql_v3.float4_ord')
-    expect(types.Double('n').getEqlType()).toBe('eql_v3.float8')
-    expect(types.DoubleEq('n').getEqlType()).toBe('eql_v3.float8_eq')
-    expect(types.DoubleOrdOre('n').getEqlType()).toBe('eql_v3.float8_ord_ore')
-    expect(types.DoubleOrd('n').getEqlType()).toBe('eql_v3.float8_ord')
+    expect(types.Real('n').getEqlType()).toBe('eql_v3.real')
+    expect(types.RealEq('n').getEqlType()).toBe('eql_v3.real_eq')
+    expect(types.RealOrdOre('n').getEqlType()).toBe('eql_v3.real_ord_ore')
+    expect(types.RealOrd('n').getEqlType()).toBe('eql_v3.real_ord')
+    expect(types.Double('n').getEqlType()).toBe('eql_v3.double')
+    expect(types.DoubleEq('n').getEqlType()).toBe('eql_v3.double_eq')
+    expect(types.DoubleOrdOre('n').getEqlType()).toBe('eql_v3.double_ord_ore')
+    expect(types.DoubleOrd('n').getEqlType()).toBe('eql_v3.double_ord')
   })
 })
 
@@ -425,8 +427,10 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
   // operator) instead of throwing on the absent `unique` index. (Text order
   // domains DO carry `hm` and resolve equality to `unique` instead — see the
   // text-order regression below.)
+  // Keep these labels aligned with the checked-in EQL build; a mismatch here
+  // means the stack package is out of sync with the underlying domain surface.
   it.each([
-    ['int4_ord', types.IntegerOrd],
+    ['IntegerOrd', types.IntegerOrd],
     ['date_ord', types.DateOrd],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s resolves equality to the ore index', (_name, builder) => {
@@ -463,8 +467,8 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   })
 
   it.each([
-    ['int4_ord_ore', types.IntegerOrdOre],
-    ['int4_ord', types.IntegerOrd],
+    ['IntegerOrdOre', types.IntegerOrdOre],
+    ['IntegerOrd', types.IntegerOrd],
     ['date_ord_ore', types.DateOrdOre],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {

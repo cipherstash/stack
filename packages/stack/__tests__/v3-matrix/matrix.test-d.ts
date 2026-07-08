@@ -22,9 +22,9 @@ import { type EqlV3TypeName, V3_MATRIX } from './catalog'
 // One mixed-tier table spanning every capability tier + plaintext axis, built
 // from the catalog's own builders.
 const records = encryptedTable('records', {
-  count: V3_MATRIX['eql_v3.int4'].builder('count'), // number, storage-only
-  score: V3_MATRIX['eql_v3.int4_eq'].builder('score'), // number, equality
-  rank: V3_MATRIX['eql_v3.int4_ord'].builder('rank'), // number, order + range
+  count: V3_MATRIX['eql_v3.integer'].builder('count'), // number, storage-only
+  score: V3_MATRIX['eql_v3.integer_eq'].builder('score'), // number, equality
+  rank: V3_MATRIX['eql_v3.integer_ord'].builder('rank'), // number, order + range
   createdAt: V3_MATRIX['eql_v3.timestamp_ord'].builder('created_at'), // date
   email: V3_MATRIX['eql_v3.text_search'].builder('email'), // string, full-text
   active: V3_MATRIX['eql_v3.bool'].builder('active'), // boolean, storage-only
@@ -67,12 +67,13 @@ describe('eql_v3 type-driven matrix (types)', () => {
     type Queryable = QueryableColumnsOf<typeof records>
 
     // A queryable column is a member of the set...
-    const ok: Queryable = V3_MATRIX['eql_v3.int4_eq'].builder('score')
+    const ok: Queryable = V3_MATRIX['eql_v3.integer_eq'].builder('score')
     expectTypeOf(ok).toExtend<Queryable>()
 
     // ...but a storage-only column is not.
     // @ts-expect-error - storage-only integer column is excluded from QueryableColumnsOf
-    const _notQueryable: Queryable = V3_MATRIX['eql_v3.int4'].builder('count')
+    const _notQueryable: Queryable =
+      V3_MATRIX['eql_v3.integer'].builder('count')
 
     // @ts-expect-error - storage-only boolean column is excluded from QueryableColumnsOf
     const _boolNotQueryable: Queryable =

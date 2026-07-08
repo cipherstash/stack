@@ -111,43 +111,43 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
 // Exported for the `types` namespace factory (see ./types); they are internal
 // building blocks and are intentionally NOT re-exported from the public barrel.
 export const INTEGER = {
-  eqlType: 'eql_v3.int4',
+  eqlType: 'eql_v3.integer',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const INTEGER_EQ = {
-  eqlType: 'eql_v3.int4_eq',
+  eqlType: 'eql_v3.integer_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const INTEGER_ORD_ORE = {
-  eqlType: 'eql_v3.int4_ord_ore',
+  eqlType: 'eql_v3.integer_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const INTEGER_ORD = {
-  eqlType: 'eql_v3.int4_ord',
+  eqlType: 'eql_v3.integer_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const SMALLINT = {
-  eqlType: 'eql_v3.int2',
+  eqlType: 'eql_v3.smallint',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const SMALLINT_EQ = {
-  eqlType: 'eql_v3.int2_eq',
+  eqlType: 'eql_v3.smallint_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const SMALLINT_ORD_ORE = {
-  eqlType: 'eql_v3.int2_ord_ore',
+  eqlType: 'eql_v3.smallint_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const SMALLINT_ORD = {
-  eqlType: 'eql_v3.int2_ord',
+  eqlType: 'eql_v3.smallint_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
@@ -248,43 +248,43 @@ export const BOOLEAN = {
 } as const
 
 export const REAL = {
-  eqlType: 'eql_v3.float4',
+  eqlType: 'eql_v3.real',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const REAL_EQ = {
-  eqlType: 'eql_v3.float4_eq',
+  eqlType: 'eql_v3.real_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const REAL_ORD_ORE = {
-  eqlType: 'eql_v3.float4_ord_ore',
+  eqlType: 'eql_v3.real_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const REAL_ORD = {
-  eqlType: 'eql_v3.float4_ord',
+  eqlType: 'eql_v3.real_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const DOUBLE = {
-  eqlType: 'eql_v3.float8',
+  eqlType: 'eql_v3.double',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const DOUBLE_EQ = {
-  eqlType: 'eql_v3.float8_eq',
+  eqlType: 'eql_v3.double_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DOUBLE_ORD_ORE = {
-  eqlType: 'eql_v3.float8_ord_ore',
+  eqlType: 'eql_v3.double_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DOUBLE_ORD = {
-  eqlType: 'eql_v3.float8_ord',
+  eqlType: 'eql_v3.double_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
