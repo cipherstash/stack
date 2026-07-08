@@ -128,16 +128,28 @@ describe('stash auth regions — list available regions', () => {
 })
 
 describe('stash CLI help — non-interactive auth flags are documented', () => {
-  it('top-level --help lists --region and --json', async () => {
+  it('top-level --help points at per-command help for flags', async () => {
+    // The banner no longer inlines every command's flags; it lists the commands
+    // and directs users to `<command> --help` for the flag detail (which is
+    // asserted per-command below).
     const r = await runPiped(['--help'])
     expect(r.exitCode).toBe(0)
-    expect(r.stdout).toContain('--region')
-    expect(r.stdout).toContain('--json')
-    expect(r.stdout).toContain('STASH_REGION')
+    expect(r.stdout).toContain('auth login')
+    expect(r.stdout).toContain('--help')
   })
 
-  it('auth --help lists --region, --json and --no-open', async () => {
+  it('auth --help lists the auth subcommands', async () => {
+    // `auth` is a command group: its `--help` lists the subcommands and points
+    // at their per-command help, rather than dumping every subcommand's flags.
     const r = await runPiped(['auth', '--help'])
+    expect(r.exitCode).toBe(0)
+    expect(r.stdout).toContain('auth login')
+    expect(r.stdout).toContain('auth regions')
+    expect(r.stdout).toContain('--help')
+  })
+
+  it('auth login --help lists --region, --json and --no-open', async () => {
+    const r = await runPiped(['auth', 'login', '--help'])
     expect(r.exitCode).toBe(0)
     expect(r.stdout).toContain('--region')
     expect(r.stdout).toContain('--json')

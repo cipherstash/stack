@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
+import { renderCommandHelp } from '../cli/help.js'
 // Commands that depend on @cipherstash/stack are lazy-loaded in the switch below.
 import {
   authCommand,
@@ -116,88 +117,15 @@ Options:
   --help, -h           Show help
   --version, -v        Show version
 
-Init Flags:
-  --supabase           Use Supabase-specific setup flow
-  --drizzle            Use Drizzle-specific setup flow
-  --prisma-next        Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply)
-  --proxy              Query encrypted data via CipherStash Proxy
-  --no-proxy           Query encrypted data directly via the SDK (default)
-  --region <slug>      Region to authenticate against (e.g. us-east-1). Skips the
-                       interactive region picker. Also settable via STASH_REGION.
-                       Required for non-interactive init when not already logged in.
-
-Auth Flags:
-  --region <slug>      Region to authenticate against (e.g. us-east-1). Skips the
-                       interactive region picker. Also settable via STASH_REGION.
-  --json               Emit newline-delimited JSON events instead of prose. The
-                       first event (authorization_required) carries the device
-                       verification URL for a human to open. Implies no prompt
-                       and no browser auto-open — an agent can trigger auth
-                       non-interactively; only a human can complete it in the
-                       browser. Run it in the background, read the URL from the
-                       first line, then hand it to the user.
-  --no-open            Don't auto-open the verification URL in a browser
-                       (already implied by --json).
-
-Plan Flags:
-  --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)
-                           in one document. Skips the production-deploy gate that
-                           normally separates rollout from cutover. Only safe when this
-                           database is not backing a deployed application (local dev,
-                           sandbox, freshly seeded test environment).
-  --target <name>          Skip the agent-target picker and hand off directly to one of
-                           claude-code | codex | agents-md | wizard. Safe to call from
-                           non-TTY contexts (CI, pipes). Without --target in non-TTY,
-                           the command prints a hint and exits cleanly instead of hanging.
-
-Status Flags:
-  --quest                  Force the quest-log output (emoji + progress bars)
-                           even in non-TTY contexts. Default is auto: fancy
-                           in a terminal, plain in CI / pipes / agents.
-  --plain                  Force the plain-text output even in TTY contexts.
-  --json                   Emit a structured JSON document instead.
-
-Impl Flags:
-  --continue-without-plan  Skip planning and go straight to implementation
-                           (interactively confirms before proceeding)
-  --target <name>          Skip the agent-target picker and hand off directly to one of
-                           claude-code | codex | agents-md | wizard. Safe to call from
-                           non-TTY contexts (CI, pipes). Without --target in non-TTY,
-                           the command prints a hint and exits cleanly instead of hanging.
-
-DB / EQL Flags:
-  --force                    (eql install) Reinstall / overwrite even if already installed
-  --dry-run                  (eql install, eql upgrade, db push) Show what would happen without making changes
-  --supabase                 (eql install, eql upgrade, db validate) Use Supabase-compatible mode (auto-detected from DATABASE_URL)
-  --drizzle                  (eql install) Generate a Drizzle migration instead of direct install (auto-detected from project)
-  --migration                (eql install, requires --supabase) Write a Supabase migration file instead of running SQL directly
-  --direct                   (eql install, requires --supabase) Run the SQL directly against the database (mutually exclusive with --migration)
-  --migrations-dir <path>    (eql install, requires --supabase) Override the Supabase migrations directory (default: supabase/migrations)
-  --exclude-operator-family  (eql install, eql upgrade, db validate) Skip operator family creation
-  --eql-version <2|3>        (eql install, eql upgrade) EQL generation to target (default: 2). v3 is the
-                             native eql_v3.* domain schema; direct install only for now
-  --latest                   (eql install, eql upgrade) Fetch the latest EQL from GitHub (v2 only)
-  --database-url <url>       (all db / eql / schema commands) Override DATABASE_URL for this run only — never written to disk
+Run \`${STASH} <command> --help\` for a command's flags and examples
+(e.g. \`${STASH} eql install --help\`, \`${STASH} auth login --help\`).
 
 Examples:
-  ${STASH} init
-  ${STASH} init --supabase
-  ${STASH} init --prisma-next
-  ${STASH} init --region us-east-1        # non-interactive: skip the region picker
-  ${STASH} plan
-  ${STASH} impl
-  ${STASH} impl --continue-without-plan
-  ${STASH} impl --target claude-code
-  ${STASH} status
-  ${STASH} auth login
-  ${STASH} auth regions                           # list regions valid for --region
-  ${STASH} auth login --region us-east-1 --json   # agent triggers; human finishes in browser
-  ${STASH} wizard
-  ${STASH} eql install
-  ${STASH} db push
-  ${STASH} schema build
-  ${STASH} doctor
-  ${STASH} manifest --json                        # structured command surface for docs / agents
+  ${STASH} init                     # set up CipherStash in this project
+  ${STASH} auth login               # authenticate
+  ${STASH} eql install              # install EQL extensions
+  ${STASH} db push                  # push encryption schema
+  ${STASH} manifest --json          # structured command surface for docs / agents
 `.trim()
 
 interface ParsedArgs {
@@ -229,6 +157,13 @@ function parseArgs(argv: string[]): ParsedArgs {
       } else {
         flags[key] = true
       }
+    } else if (arg === '-h') {
+      // Short aliases for the two global boolean flags, normalized to their
+      // long-form keys so downstream `flags.help` / `flags.version` checks catch
+      // `stash <command> -h` too (not just a bare `stash -h`).
+      flags.help = true
+    } else if (arg === '-v') {
+      flags.version = true
     } else {
       commandArgs.push(arg)
     }
@@ -475,13 +410,22 @@ export async function run() {
     process.argv,
   )
 
-  if (!command || command === '--help' || command === '-h' || flags.help) {
+  if (!command || command === '--help' || command === '-h') {
     console.log(HELP)
     return
   }
 
   if (command === '--version' || command === '-v' || flags.version) {
     console.log(pkg.version)
+    return
+  }
+
+  // `stash <command> --help` / `-h`: render command-specific help from the
+  // descriptor registry (e.g. `stash eql --help`, `stash eql install --help`).
+  // Falls back to the global banner when the command path matches no descriptor.
+  if (flags.help) {
+    const path = subcommand ? `${command} ${subcommand}` : command
+    console.log(renderCommandHelp(path, STASH) ?? HELP)
     return
   }
 
