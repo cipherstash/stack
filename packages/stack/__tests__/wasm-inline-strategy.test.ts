@@ -67,6 +67,35 @@ describe('wasm-inline resolveStrategy', () => {
     expect(warnSpy).not.toHaveBeenCalled()
   })
 
+  it('throws when AccessKeyStrategy.create returns a failure Result', () => {
+    // `@cipherstash/auth` `0.41` `create` returns `{ failure }` instead of
+    // throwing — `resolveStrategy` must surface that as a loud construction
+    // error naming the failure type and the underlying message, not forward
+    // an unusable strategy.
+    vi.mocked(AccessKeyStrategy.create).mockReturnValueOnce(
+      // biome-ignore lint/suspicious/noExplicitAny: mock the 0.41 Result failure arm
+      {
+        failure: {
+          type: 'InvalidWorkspaceCrn',
+          error: new Error('unparseable CRN'),
+        },
+      } as any,
+    )
+
+    expect(() =>
+      // biome-ignore lint/suspicious/noExplicitAny: exercise the access-key arm directly
+      resolveStrategy({ workspaceCrn: CRN, accessKey: 'CSAK.test' } as any),
+    ).toThrowError(
+      /failed to construct.*\(InvalidWorkspaceCrn\): unparseable CRN/,
+    )
+    // The guards passed and it reached the builder before failing.
+    expect(vi.mocked(AccessKeyStrategy.create)).toHaveBeenCalledWith(
+      CRN,
+      'CSAK.test',
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
   it('uses an explicit config.authStrategy verbatim and never builds an access key', () => {
     const explicit = { getToken: vi.fn() }
     // biome-ignore lint/suspicious/noExplicitAny: exercise the authStrategy arm of the discriminated union directly
