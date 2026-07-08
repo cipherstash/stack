@@ -1,5 +1,46 @@
 # @cipherstash/cli
 
+## 0.17.1
+
+### Patch Changes
+
+- cb8fa1d: Fix two config-scaffold dead-ends in the CLI (#578, #579).
+
+  - **Missing config is now actionable.** When a command that needs a
+    `stash.config.ts` can't find one, the error recommends `stash init` /
+    `stash eql install` (runner-aware) instead of only telling you to hand-write
+    the file.
+  - **`stash eql install` no longer requires a `stash.config.ts`.** It only needs
+    a database URL, so it now resolves one directly (`--database-url` → env →
+    `supabase status` → prompt) instead of scaffolding a config and loading it.
+    That means a standalone `npx stash eql install --database-url ...` works in a
+    bare project with **zero dependencies** — no more crash with a raw
+    `Cannot find module 'stash'` from the config's `import`. A plain
+    `stash eql install` still honours an existing config (later workflow commands
+    rely on it) and offers to scaffold one otherwise. An explicit `--database-url`
+    is a one-shot install: it resolves that URL directly and leaves the project
+    untouched — no config or client is scaffolded, and an existing config is
+    bypassed so the flag can't be silently overridden by a hand-edited literal
+    `databaseUrl` (including one in a parent directory).
+  - As a safety net, `loadStashConfig` translates a missing-module load failure
+    (a project that _has_ a config but lacks the CLI packages) into the same
+    actionable guidance for every command, instead of a jiti/Node stack trace.
+
+- cbece82: Render per-command `--help` from the command-descriptor registry, and slim the
+  global banner. This is the documented follow-on to the manifest/registry work in
+  `docs/plans/cli-help-and-manifest.md`.
+
+  - `stash <command> --help` now prints command-specific help instead of the global
+    banner. A leaf command (`stash eql install --help`, `stash auth login --help`)
+    shows its usage, summary, long description, flags, and examples; a command
+    group (`stash eql --help`, `stash auth --help`) lists its subcommands and points
+    at their own `--help`. All of it renders from `src/cli/registry.ts`, so it can't
+    drift from `stash manifest`.
+  - `-h` is now honoured after a command too (`stash eql install -h`), not just as a
+    bare `stash -h`.
+  - The global `stash --help` banner no longer inlines every command's flags; it
+    lists the commands and directs users to `<command> --help` for the detail.
+
 ## 0.17.0
 
 ### Minor Changes
