@@ -210,8 +210,11 @@ export type WasmClientConfig = {
 
 /**
  * Any auth strategy accepted on the WASM path. Both expose
- * `getToken(): Promise<{ token }>`, which is all protect-ffi's WASM
- * `newClient` requires:
+ * `getToken(): Promise<Result<TokenResult, AuthFailure>>` — as of
+ * `@cipherstash/auth` 0.41 the token is wrapped in a `@byteslice/result`
+ * envelope. `@cipherstash/protect-ffi` 0.28+ unwraps that envelope (reading
+ * `.data.token`, surfacing `.failure`) inside its WASM `newClient`; 0.27 read
+ * `.token` off the envelope and saw `undefined`, so keep the ffi floor at 0.28.
  *
  * - {@link AccessKeyStrategy} — static M2M / CI access key.
  * - {@link OidcFederationStrategy} — federates an end-user OIDC JWT into a
