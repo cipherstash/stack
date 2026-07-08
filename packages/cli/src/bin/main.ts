@@ -190,6 +190,9 @@ async function runInstall(
     migrationsDir: values['migrations-dir'],
     eqlVersion: values['eql-version'],
     databaseUrl: values['database-url'],
+    // An explicit `--database-url` is a one-shot install against that DB — leave
+    // the project untouched. Otherwise offer to scaffold a config for later.
+    scaffoldConfig: values['database-url'] !== undefined ? 'skip' : 'offer',
   })
 }
 

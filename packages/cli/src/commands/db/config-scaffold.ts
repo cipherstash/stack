@@ -86,13 +86,23 @@ export default defineConfig({
 `
 }
 
+/** Write the config with the given client path and report it. */
+function writeStashConfig(configPath: string, clientPath: string): string {
+  writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
+  p.log.success(`Created ${CONFIG_FILENAME}`)
+  return clientPath
+}
+
 /**
- * Offer to create a `stash.config.ts` for the rest of the workflow.
+ * Create a `stash.config.ts` for the rest of the workflow (`db push` /
+ * `schema build` / `encrypt *` load the encryption client through it).
+ * `eql install` itself doesn't need one — it resolves the database URL
+ * directly — so this is a setup convenience, never a blocker.
  *
- * `eql install` itself doesn't need a config — it resolves the database URL
- * directly — but `db push` / `schema build` / `encrypt *` load the encryption
- * client through it, so we create it now as a convenience. Declining (or a
- * non-interactive context) never blocks the EQL install.
+ * - `opts.ensure` (used by `stash init`, where the user has already committed
+ *   to setup) creates the config without a yes/no prompt.
+ * - Otherwise, an interactive run offers to create it; a non-interactive run
+ *   creates it with a detected/default client path rather than hanging.
  *
  * Returns the encryption-client path the config points at, falling back to
  * {@link DEFAULT_CLIENT_PATH} when no config is written — so the caller can
@@ -102,19 +112,21 @@ export default defineConfig({
  * one instead); it never overwrites a present `stash.config.ts`.
  */
 export async function offerStashConfig(
-  cwd: string = process.cwd(),
+  opts: { ensure?: boolean; cwd?: string } = {},
 ): Promise<string> {
+  const cwd = opts.cwd ?? process.cwd()
   const configPath = resolve(cwd, CONFIG_FILENAME)
   if (existsSync(configPath)) return DEFAULT_CLIENT_PATH
 
   const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
-  if (!isTTY) {
-    // Non-interactive (CI / agents / pipes): create with a detected or default
-    // client path rather than prompting, which would hang.
-    const clientPath = detectClientPath(cwd) ?? DEFAULT_CLIENT_PATH
-    writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
-    p.log.success(`Created ${CONFIG_FILENAME}`)
-    return clientPath
+
+  // `ensure` (init) and non-interactive contexts create without a yes/no
+  // prompt: init already committed to setup, and a non-TTY run can't prompt.
+  if (opts.ensure || !isTTY) {
+    return writeStashConfig(
+      configPath,
+      detectClientPath(cwd) ?? DEFAULT_CLIENT_PATH,
+    )
   }
 
   const create = await p.confirm({
@@ -131,7 +143,5 @@ export async function offerStashConfig(
   const clientPath = await resolveClientPath(cwd)
   if (!clientPath) return DEFAULT_CLIENT_PATH
 
-  writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
-  p.log.success(`Created ${CONFIG_FILENAME}`)
-  return clientPath
+  return writeStashConfig(configPath, clientPath)
 }

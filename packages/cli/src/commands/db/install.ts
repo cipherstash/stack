@@ -67,6 +67,15 @@ export interface InstallOptions {
    */
   databaseUrl?: string
   /**
+   * How to handle a missing `stash.config.ts` — the caller owns this intent
+   * rather than it being inferred from whether a URL was supplied:
+   *  - `'ensure'` — create it without asking (`stash init`, where the user has
+   *    already committed to setting the project up).
+   *  - `'offer'`  — offer to create it (plain `stash eql install`). Default.
+   *  - `'skip'`   — never scaffold (a one-shot `eql install --database-url ...`).
+   */
+  scaffoldConfig?: 'ensure' | 'offer' | 'skip'
+  /**
    * EQL generation to install: `'2'` (default, composite `eql_v2_encrypted`)
    * or `'3'` (native `eql_v3.*` domain schema). v3 currently supports the
    * direct install path only — not `--drizzle`, `--migration`, or `--latest`.
@@ -88,10 +97,12 @@ export type SupabaseInstallMode = 'migration' | 'direct'
  * without the `stash` / `@cipherstash/stack` dependencies the config would
  * otherwise import (#579).
  *
- * An explicit `--database-url` signals a one-shot install against that database,
- * so we do NOT scaffold project files (config or client) — `clientPath` comes
- * back `null`. Without the flag we offer to scaffold a config (and return its
- * client path) to set the project up for the rest of the workflow.
+ * Whether a missing config gets scaffolded is the caller's explicit intent
+ * ({@link InstallOptions.scaffoldConfig}), not inferred from whether a URL was
+ * supplied — `stash init` passes a resolved URL but still wants a config, while
+ * a one-shot `--database-url` run wants the project left untouched. When no
+ * config is created, `clientPath` comes back `null` so the caller skips the
+ * client scaffold too.
  */
 async function resolveInstallContext(
   options: InstallOptions,
@@ -112,12 +123,12 @@ async function resolveInstallContext(
     supabase: options.supabase,
   })
 
-  // One-shot install (explicit --database-url): don't touch the project.
-  if (options.databaseUrl) {
+  const mode = options.scaffoldConfig ?? 'offer'
+  if (mode === 'skip') {
     return { databaseUrl, clientPath: null }
   }
 
-  const clientPath = await offerStashConfig()
+  const clientPath = await offerStashConfig({ ensure: mode === 'ensure' })
   return { databaseUrl, clientPath }
 }
 
