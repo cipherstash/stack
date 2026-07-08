@@ -16,7 +16,10 @@ import {
   loadBundledEqlSql,
 } from '@/installer/index.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
-import { ensureStashConfig } from './config-scaffold.js'
+import {
+  ensureConfigDependencies,
+  ensureStashConfig,
+} from './config-scaffold.js'
 import {
   detectDrizzle,
   detectSupabase,
@@ -96,6 +99,16 @@ export async function installCommand(options: InstallOptions) {
   const configReady = await ensureStashConfig()
   if (!configReady) {
     process.exit(0)
+  }
+
+  // The config (and the client it points at) `import` `stash` /
+  // `@cipherstash/stack`; make sure they're installed before jiti loads the
+  // config, so a standalone `npx stash eql install` gives actionable guidance
+  // instead of a raw `Cannot find module 'stash'` (#579).
+  const depsReady = await ensureConfigDependencies()
+  if (!depsReady) {
+    p.outro('Installation aborted.')
+    process.exit(1)
   }
 
   const s = p.spinner()

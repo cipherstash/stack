@@ -1,8 +1,25 @@
+import { execSync } from 'node:child_process'
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
+import {
+  combinedInstallCommands,
+  detectPackageManager,
+  isPackageInstalled,
+  runnerCommand,
+} from '../init/utils.js'
 
 export const CONFIG_FILENAME = 'stash.config.ts'
+
+/**
+ * The packages a scaffolded `stash.config.ts` depends on. `stash` (dev) exports
+ * the `defineConfig`/`resolveDatabaseUrl` the config imports; `@cipherstash/stack`
+ * (prod) is imported by the encryption client the config points at. Both must
+ * resolve from the project's node_modules or `loadStashConfig` fails to load the
+ * config with `Cannot find module 'stash'`.
+ */
+const CLI_PACKAGE = 'stash'
+const STACK_PACKAGE = '@cipherstash/stack'
 
 /**
  * Common locations where an encryption client file might live. Checked in
@@ -106,5 +123,86 @@ export async function ensureStashConfig(
 
   writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
   p.log.success(`Created ${CONFIG_FILENAME}`)
+  return true
+}
+
+/**
+ * Which config dependencies the project is missing, split by install kind.
+ * Pure (only the filesystem probe in `isPackageInstalled`), so the decision is
+ * unit-testable without spawning a package manager.
+ */
+export function missingConfigDependencies(cwd: string = process.cwd()): {
+  prod: string[]
+  dev: string[]
+} {
+  return {
+    prod: isPackageInstalled(STACK_PACKAGE, cwd) ? [] : [STACK_PACKAGE],
+    dev: isPackageInstalled(CLI_PACKAGE, cwd) ? [] : [CLI_PACKAGE],
+  }
+}
+
+/**
+ * Ensure the packages a `stash.config.ts` imports are installed before the CLI
+ * tries to load it. Offers to install any missing ones interactively; in
+ * non-interactive contexts (or on cancel / install failure) it prints the exact
+ * install commands and returns `false` so the caller can stop cleanly.
+ *
+ * Without this, a standalone `npx stash eql install` scaffolds a config and then
+ * crashes with a raw `Cannot find module 'stash'` because the CLI packages were
+ * never added as project dependencies (only `stash init` does that) — #579.
+ * Returns `true` when nothing is missing or the install succeeded.
+ */
+export async function ensureConfigDependencies(
+  cwd: string = process.cwd(),
+): Promise<boolean> {
+  const { prod, dev } = missingConfigDependencies(cwd)
+  if (prod.length === 0 && dev.length === 0) return true
+
+  const pm = detectPackageManager()
+  const commands = combinedInstallCommands(pm, prod, dev)
+  const missing = [...prod, ...dev]
+  const missingList = missing.join(', ')
+  const verb = missing.length === 1 ? 'is' : 'are'
+
+  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
+  if (!isTTY) {
+    p.log.warn(
+      `${CONFIG_FILENAME} imports \`${CLI_PACKAGE}\`, but ${missingList} ${verb} not installed in this project.`,
+    )
+    p.note(
+      `Install, then re-run:\n  ${commands.join('\n  ')}\n\nOr run \`${runnerCommand(pm, 'stash init')}\` to set everything up.`,
+      'Missing dependencies',
+    )
+    return false
+  }
+
+  const proceed = await p.confirm({
+    message: `Install ${missingList}? (${commands.join(' && ')})`,
+  })
+  if (p.isCancel(proceed) || !proceed) {
+    p.note(
+      `Install manually, then re-run:\n  ${commands.join('\n  ')}`,
+      'Missing dependencies',
+    )
+    return false
+  }
+
+  for (const cmd of commands) {
+    p.log.step(`Running: ${cmd}`)
+    try {
+      execSync(cmd, { cwd, stdio: 'inherit' })
+    } catch {
+      p.log.error(`Install failed: ${cmd}`)
+      return false
+    }
+  }
+
+  // Re-check from disk — a package manager can exit 0 without the package
+  // actually resolving (registry hiccup, workspace mismatch).
+  const still = missingConfigDependencies(cwd)
+  if (still.prod.length > 0 || still.dev.length > 0) {
+    p.log.warn(`Still missing: ${[...still.prod, ...still.dev].join(', ')}.`)
+    return false
+  }
   return true
 }

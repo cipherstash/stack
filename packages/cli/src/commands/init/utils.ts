@@ -13,8 +13,11 @@ import type { Integration, SchemaDef } from './types.js'
  * `Cannot find module 'stash'` at the jiti import. Requiring the manifest
  * matches what Node's resolver actually needs to load the module.
  */
-export function isPackageInstalled(packageName: string): boolean {
-  const modulePath = resolve(process.cwd(), 'node_modules', packageName)
+export function isPackageInstalled(
+  packageName: string,
+  cwd: string = process.cwd(),
+): boolean {
+  const modulePath = resolve(cwd, 'node_modules', packageName)
   const manifestPath = resolve(modulePath, 'package.json')
   return existsSync(modulePath) && existsSync(manifestPath)
 }
