@@ -72,6 +72,98 @@ describe('groupIntrospectionRows', () => {
   })
 })
 
+describe('introspect happy path', () => {
+  afterEach(() => vi.resetModules())
+
+  it('issues both queries, builds the domains, and closes the connection', async () => {
+    const end = vi.fn(() => Promise.resolve())
+    const queries: Array<{ sql: string; params?: unknown[] }> = []
+
+    vi.doMock('pg', () => {
+      class Client {
+        connect() {
+          return Promise.resolve()
+        }
+        end = end
+        query(sql: string, params?: unknown[]) {
+          queries.push({ sql, params })
+          // The unmodelled query is the parameterised one.
+          return Promise.resolve({
+            rows: params
+              ? [
+                  {
+                    table_name: 'users',
+                    column_name: 'legacy',
+                    domain_name: 'unsupported_domain',
+                  },
+                ]
+              : [
+                  { table_name: 'users', column_name: 'id', domain_name: null },
+                  {
+                    table_name: 'users',
+                    column_name: 'email',
+                    domain_name: 'text_search',
+                  },
+                ],
+          })
+        }
+      }
+      return { default: { Client } }
+    })
+
+    const { introspect } = await import('@/supabase/introspect')
+    const { tables, unmodelled } = await introspect('postgres://ok')
+
+    expect(queries).toHaveLength(2)
+    // The registry IS the query parameter — it must be pushed into Postgres,
+    // not re-derived client-side.
+    const parameterised = queries.find((q) => q.params)!
+    expect(parameterised.params?.[0]).toContain('text_search')
+
+    expect(tables).toEqual([
+      {
+        tableName: 'users',
+        columns: [
+          { columnName: 'id', domainName: null },
+          { columnName: 'email', domainName: 'text_search' },
+        ],
+      },
+    ])
+    expect(unmodelled.get('users')).toEqual([
+      { columnName: 'legacy', domainName: 'unsupported_domain' },
+    ])
+    // A leaked connection is invisible to every other assertion here.
+    expect(end).toHaveBeenCalledTimes(1)
+
+    vi.doUnmock('pg')
+  })
+
+  it('closes the connection when a query throws', async () => {
+    const end = vi.fn(() => Promise.resolve())
+
+    vi.doMock('pg', () => {
+      class Client {
+        connect() {
+          return Promise.resolve()
+        }
+        end = end
+        query() {
+          return Promise.reject(new Error('relation does not exist'))
+        }
+      }
+      return { default: { Client } }
+    })
+
+    const { introspect } = await import('@/supabase/introspect')
+    await expect(introspect('postgres://ok')).rejects.toThrow(
+      'relation does not exist',
+    )
+    expect(end).toHaveBeenCalledTimes(1)
+
+    vi.doUnmock('pg')
+  })
+})
+
 describe('introspect connection error handling', () => {
   afterEach(() => vi.resetModules())
 

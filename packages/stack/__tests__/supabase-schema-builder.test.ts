@@ -147,6 +147,29 @@ describe('mergeDeclaredTables', () => {
     expect(table.buildColumnKeyMap()).toEqual({ createdAt: 'created_on' })
     expect(Object.keys(table.columnBuilders)).toEqual(['createdAt'])
   })
+
+  it('merges a declared table absent from introspection as declared-only', () => {
+    // Unreachable through `encryptedSupabaseV3` — `verifyDeclaredSchemas` throws
+    // on an absent table before the merge runs — but `mergeDeclaredTables` is
+    // exported, so the `if (synthesized)` false arm is reachable by any other
+    // caller and must not read through to a stale table or throw.
+    const synth = synthesizeTables(introspection)
+    const declaredTable = encryptedTable('orders', {
+      total: types.IntegerOrd('total'),
+    })
+    const merged = mergeDeclaredTables(synth, { orders: declaredTable })
+
+    expect(Object.keys(merged.tables.get('orders')!.columnBuilders)).toEqual([
+      'total',
+    ])
+    // The absent table contributes no `allColumns`, so `select('*')` on it
+    // still throws rather than silently selecting nothing.
+    expect(merged.allColumns.get('orders')).toBeUndefined()
+    // The introspected table is untouched.
+    expect(
+      Object.keys(merged.tables.get('users')!.columnBuilders).sort(),
+    ).toEqual(['amount', 'email'])
+  })
 })
 
 // The three-way classification (plaintext / modelled / unmodelled) moved into

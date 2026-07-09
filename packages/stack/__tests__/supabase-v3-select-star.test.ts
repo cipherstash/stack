@@ -115,6 +115,17 @@ describe("v3 select('*') expansion", () => {
     // v2 regression: a bare select() takes the same path and throws the same way.
     expect(() => builder.select()).toThrow(/select\('\*'\)/)
   })
+
+  it("throws select('*') for an empty column list, not an empty select", async () => {
+    // The guard is `=== null || .length === 0`. Only the null arm has a caller
+    // today (`index.ts` passes `?? null`), so nothing stops a future `?? []`
+    // from turning an unusable `*` into a silent zero-column select.
+    const supabase = mockSupabase()
+    const builder = builderFor(supabase, [])
+
+    expect(() => builder.select('*')).toThrow(/select\('\*'\)/)
+    expect(() => builder.select()).toThrow(/select\('\*'\)/)
+  })
 })
 
 describe("REGRESSION: select('*') keys rows by JS property, not DB column", () => {
