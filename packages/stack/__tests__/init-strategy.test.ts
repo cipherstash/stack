@@ -2,13 +2,19 @@
  * Tests for the optional `config.authStrategy` auth strategy (and its
  * deprecated `config.strategy` alias).
  *
- * protect-ffi (0.25+) lets `newClient` take an `AuthStrategy` (any
- * `{ getToken(): Promise<{ token }> }` object — the shape every
- * `@cipherstash/auth` strategy satisfies, including
- * `OidcFederationStrategy` for per-user identity-bound encryption).
- * `Encryption` exposes it via `config.authStrategy`; when provided it must
- * reach `newClient` as `opts.strategy` (the FFI's option name), and when
- * omitted the option must be absent so the default `auto` strategy is used.
+ * protect-ffi (0.25+) lets `newClient` take an `AuthStrategy`: any
+ * `{ getToken(): Promise<{ token }> }` object. `Encryption` exposes it via
+ * `config.authStrategy`; when provided it must reach `newClient` as
+ * `opts.strategy` (the FFI's option name), and when omitted the option must be
+ * absent so the default `auto` strategy is used.
+ *
+ * NOTE: the strategies exported by `@cipherstash/auth` no longer satisfy that
+ * shape. Since 0.41 their `getToken()` resolves a `Result<TokenResult,
+ * AuthFailure>` envelope, and the Node native client reads `.token` off the
+ * resolved value — so a real `OidcFederationStrategy` fails there with
+ * `missing 'token' field`. The strategy below is a hand-rolled stand-in for the
+ * *FFI's* contract, not a stand-in for an auth strategy; it cannot catch that
+ * mismatch. See the known-issue note in `skills/stash-encryption/SKILL.md`.
  * The legacy `config.strategy` field is still honoured (with a runtime
  * deprecation warning) until it is removed.
  */
