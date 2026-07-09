@@ -237,6 +237,7 @@
 		"release": "tsup"
 	},
 	"devDependencies": {
+		"@cipherstash/eql": "3.0.0-alpha.3",
 		"@clack/prompts": "^1.4.0",
 		"@supabase/supabase-js": "^2.105.4",
 		"@types/uuid": "^11.0.0",
