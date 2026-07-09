@@ -1,13 +1,15 @@
 {
   "from": null,
-  "to": "sha256:efa685171bebbb8f078f08d12be3578bb5d96b71669dccc6cc9e4be96af8cdb4",
+  "to": "sha256:5fde95fc595b8f1a040f5e6dd986cd913d07c018319d6fa18fdbeb6d507489ec",
   "labels": [],
-  "providedInvariants": ["cipherstash:install-eql-bundle-v1"],
+  "providedInvariants": [
+    "cipherstash:install-eql-bundle-v1"
+  ],
   "createdAt": "2026-05-09T03:42:56.902Z",
   "hints": {
     "used": [],
     "applied": [],
     "plannerVersion": "2.0.0"
   },
-  "migrationHash": "sha256:76923a92561cdad65c64088ce999bf7afe853b80aac0b787b0d271b0e623abbc"
+  "migrationHash": "sha256:8ca995537c0f89e7064f720471207be4bdd3f4a3186c544adbeba9f54f713a1c"
 }

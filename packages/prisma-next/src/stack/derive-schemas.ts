@@ -6,7 +6,8 @@
  * framework knows about — its physical table name (after `@map(...)`
  * collapsing), its physical column name, its codec id
  * (`cipherstash/<type>@1`), and its per-flag search-mode `typeParams`.
- * `deriveStackSchemas` walks `storage.tables` and returns one
+ * `deriveStackSchemas` walks the tables of every `storage.namespaces`
+ * entry and returns one
  * `EncryptedTable` per table with at least one cipherstash-codec'd
  * column, ready to pass to `Encryption({ schemas })`. Skipping the
  * hand-written second declaration removes a runtime-correctness
@@ -41,7 +42,14 @@ import {
  */
 export interface ContractStorageView {
   readonly storage?: {
-    readonly tables?: Readonly<Record<string, StorageTableView>>
+    readonly namespaces?: Readonly<
+      Record<
+        string,
+        {
+          readonly tables?: Readonly<Record<string, StorageTableView>>
+        }
+      >
+    >
   }
 }
 
@@ -86,8 +94,12 @@ type CipherstashFlag = keyof typeof FLAG_DISPATCH
 export function deriveStackSchemas(
   contractJson: ContractStorageView,
 ): ReadonlyArray<EncryptedTable<EncryptedTableColumn>> {
-  const tables = contractJson.storage?.tables
-  if (!tables) return []
+  const namespaces = contractJson.storage?.namespaces
+  if (!namespaces) return []
+  const tables: Record<string, StorageTableView> = {}
+  for (const namespace of Object.values(namespaces)) {
+    Object.assign(tables, namespace.tables)
+  }
 
   const result: EncryptedTable<EncryptedTableColumn>[] = []
 

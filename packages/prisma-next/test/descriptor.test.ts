@@ -46,9 +46,16 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
   it('exposes a contractSpace declaring the eql_v2_configuration table', () => {
     const space = cipherstashExtensionDescriptor.contractSpace
     expect(space).toBeDefined()
-    expect(Object.keys(space!.contractJson.storage.tables)).toEqual([
-      EQL_V2_CONFIGURATION_TABLE,
-    ])
+    // Since 0.10 the storage IR is namespace-enveloped; the extension's
+    // sole table lives in the late-bound `__unbound__` namespace.
+    const namespaces = space!.contractJson.storage.namespaces as Record<
+      string,
+      { tables?: Record<string, unknown> }
+    >
+    const tables = Object.values(namespaces).flatMap((ns) =>
+      Object.keys(ns.tables ?? {}),
+    )
+    expect(tables).toEqual([EQL_V2_CONFIGURATION_TABLE])
   })
 
   it('publishes one baseline migration sourced from the on-disk emit pipeline', () => {

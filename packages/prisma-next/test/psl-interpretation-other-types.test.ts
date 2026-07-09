@@ -56,7 +56,18 @@ type StorageView = {
   >
   readonly types?: Record<string, Record<string, unknown>>
 }
-const asStorage = (storage: unknown): StorageView => storage as StorageView
+// Since 0.10 the storage IR is namespace-enveloped: tables live under
+// `storage.namespaces.__unbound__`, while `types` stays at the root.
+const asStorage = (storage: unknown): StorageView => {
+  const s = storage as {
+    readonly namespaces?: Record<string, { tables?: StorageView['tables'] }>
+    readonly types?: StorageView['types']
+  }
+  return {
+    tables: s.namespaces?.['__unbound__']?.tables ?? {},
+    ...(s.types !== undefined ? { types: s.types } : {}),
+  }
+}
 
 describe('PSL interpretation: cipherstash.EncryptedDate constructor', () => {
   it('lowers full args to a column with cipherstash/date@1 codec, eql_v2_encrypted nativeType', () => {
