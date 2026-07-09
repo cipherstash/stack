@@ -86,7 +86,7 @@ const BIGINT_LEDGER = -9223372036854775808n
 const schema = extractEncryptionSchemaV3(matrixTable)
 const bigintSchema = extractEncryptionSchemaV3(bigintTable)
 
-type PlainValue = string | number | boolean | Date
+type PlainValue = string | number | bigint | boolean | Date
 type RowKey = typeof ROW_A | typeof ROW_B
 type MatrixPlainRow = Record<string, PlainValue | null | string>
 type SelectRow = { rowKey: string }
@@ -138,6 +138,12 @@ function comparePlain(left: PlainValue, right: PlainValue): number {
   }
   if (typeof left === 'number' && typeof right === 'number') {
     return left - right
+  }
+  // bigint order domains (`bigint_ord`/`bigint_ord_ore`) carry i64 samples
+  // beyond Number.MAX_SAFE_INTEGER, so they must be compared as bigints — the
+  // subtraction is narrowed to -1/0/1 because callers expect a `number`.
+  if (typeof left === 'bigint' && typeof right === 'bigint') {
+    return left < right ? -1 : left > right ? 1 : 0
   }
   if (typeof left === 'string' && typeof right === 'string') {
     // eql_v3 text ordering (ORE) is BYTEWISE, not locale-collated: the oracle
