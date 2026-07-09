@@ -69,7 +69,9 @@ describe('v3Dialect', () => {
       ['equality', () => v3Dialect.equality('eq', col, sql`${hostile}`)],
       ['comparison', () => v3Dialect.comparison('gte', col, sql`${hostile}`)],
       ['contains', () => v3Dialect.contains(col, sql`${hostile}`)],
-    ])('%s binds a hostile operand as $1', (_name, build) => {
+      // `$1` in a title is consumed by vitest as an index into the case tuple,
+      // so it cannot be used to name the SQL placeholder here.
+    ])('%s binds a hostile operand as a positional parameter', (_name, build) => {
       const query = renderFull(build())
 
       expect(query.params).toEqual([hostile])

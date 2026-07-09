@@ -81,6 +81,25 @@ describe('v3 codec', () => {
       expect(() => v3FromDriver(raw)).toThrow(/Failed to parse/)
     })
 
+    // The parse failure is the only codec path with an upstream error to
+    // preserve. Flattening it to a message string discards the SyntaxError and
+    // its stack, so a caller debugging a corrupt column loses where parsing
+    // actually broke.
+    it.each(['{bad', '', '{"v":3,'])(
+      'preserves the underlying SyntaxError as `cause` for %j',
+      (raw) => {
+        let thrown: unknown
+        try {
+          v3FromDriver(raw)
+        } catch (error) {
+          thrown = error
+        }
+
+        expect(thrown).toBeInstanceOf(EqlV3CodecError)
+        expect((thrown as EqlV3CodecError).cause).toBeInstanceOf(SyntaxError)
+      },
+    )
+
     it.each([
       '5',
       '"a string"',

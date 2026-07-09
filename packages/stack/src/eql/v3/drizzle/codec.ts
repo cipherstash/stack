@@ -9,8 +9,8 @@ import type { Encrypted } from '@/types'
 
 /** Thrown when a driver value cannot be read back as an EQL v3 envelope. */
 export class EqlV3CodecError extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'EqlV3CodecError'
   }
 }
@@ -86,6 +86,7 @@ export function v3FromDriver(
   } catch (cause) {
     throw new EqlV3CodecError(
       `Failed to parse an EQL v3 encrypted envelope from the driver: ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause },
     )
   }
   return assertEnvelope(parsed, 'the driver')
