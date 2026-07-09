@@ -14,8 +14,10 @@ import {
   EncryptionFailedError,
 } from './query-builder'
 import type {
+  DbName,
+  DbPendingOrCondition,
+  DbSelect,
   FilterOp,
-  PendingOrCondition,
   SupabaseClientLike,
   SupabaseQueryBuilder,
 } from './types'
@@ -148,8 +150,8 @@ export class EncryptedQueryBuilderV3Impl<
     return Object.hasOwn(this.propToDb, name) ? this.propToDb[name] : name
   }
 
-  protected override filterColumnName(column: string): string {
-    return this.dbNameFor(column)
+  protected override filterColumnName(column: string): DbName {
+    return this.dbNameFor(column) as DbName
   }
 
   /**
@@ -175,7 +177,7 @@ export class EncryptedQueryBuilderV3Impl<
     }
   }
 
-  protected override buildSelectString(): string | null {
+  protected override buildSelectString(): DbSelect | null {
     if (this.selectColumns === null) return null
     return addJsonbCastsV3(this.selectColumns, this.propToDb)
   }
@@ -204,7 +206,7 @@ export class EncryptedQueryBuilderV3Impl<
   protected override transformEncryptedMutationModel(
     model: Record<string, unknown>,
   ): Record<string, unknown> {
-    const out: Record<string, unknown> = {}
+    const out: Record<string, unknown> = Object.create(null)
     for (const [key, value] of Object.entries(model)) {
       out[this.dbNameFor(key)] = value
     }
@@ -276,7 +278,7 @@ export class EncryptedQueryBuilderV3Impl<
   /** Encrypted pattern filters go through the bloom-filter `@>` (`cs`). */
   protected override applyPatternFilter(
     q: SupabaseQueryBuilder,
-    column: string,
+    column: DbName,
     op: 'like' | 'ilike',
     value: unknown,
     wasEncrypted: boolean,
@@ -297,17 +299,25 @@ export class EncryptedQueryBuilderV3Impl<
     return op
   }
 
+  /**
+   * Map `like`/`ilike` to `cs` on the conditions that were encrypted — the same
+   * bloom-filter containment rewrite {@link applyPatternFilter} performs for
+   * regular filters. Operator shaping stays here rather than in `toDbSpace`
+   * because it depends on `wasEncrypted`, which is only known after encryption.
+   *
+   * Column names arrive already in DB-space (`toDbSpace`), so this no longer
+   * translates them.
+   */
   protected override transformOrConditions(
-    conditions: PendingOrCondition[],
+    conditions: DbPendingOrCondition[],
     encryptedIndexes: Set<number>,
-  ): PendingOrCondition[] {
+  ): DbPendingOrCondition[] {
     return conditions.map((cond, j) => {
-      const column = this.filterColumnName(cond.column)
       const op =
         encryptedIndexes.has(j) && (cond.op === 'like' || cond.op === 'ilike')
           ? ('cs' as FilterOp)
           : cond.op
-      return { ...cond, column, op }
+      return op === cond.op ? cond : { ...cond, op }
     })
   }
 

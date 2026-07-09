@@ -260,45 +260,137 @@ export type MutationOp =
 export type ResultMode = 'array' | 'single' | 'maybeSingle'
 
 // ---------------------------------------------------------------------------
+// DB-space brands
+// ---------------------------------------------------------------------------
+
+declare const DbBrand: unique symbol
+
+/**
+ * A column name in DB-space — i.e. one PostgREST will recognise.
+ *
+ * A v3 table may declare a column whose JS property name differs from its DB
+ * column name (`createdAt: types.TimestampOrd('created_at')`). Both are
+ * `string`, so before these brands the compiler could not tell which of the two
+ * reached PostgREST, and each new column-carrying method silently started out
+ * broken — that is how `order()` shipped sending `createdAt` to a database that
+ * only has `created_at`.
+ *
+ * Branding the {@link SupabaseQueryBuilder} seam means a property name will not
+ * type-check where a DB name is required. The only way to obtain a `DbName` is
+ * to call `filterColumnName()`, so forgetting to translate is now a compile
+ * error rather than a wrong query. The brand is erased at runtime.
+ */
+export type DbName = string & { readonly [DbBrand]: 'column' }
+
+/** A PostgREST select list, DB-space and `::jsonb`-cast. Minted by `addJsonbCasts`/`addJsonbCastsV3`. */
+export type DbSelect = string & { readonly [DbBrand]: 'select' }
+
+/** A PostgREST `or()` filter string in DB-space. Minted by `rebuildOrString`. */
+export type DbFilterString = string & { readonly [DbBrand]: 'filter' }
+
+/** A comma-separated `onConflict` column list in DB-space. Minted by `resolveMutationOptions`. */
+export type DbConflictList = string & { readonly [DbBrand]: 'conflict' }
+
+/** Mutation options, with the one column-carrying member in DB-space. */
+export type DbMutationOptions = Record<string, unknown> & {
+  onConflict?: DbConflictList
+}
+
+// ---------------------------------------------------------------------------
+// DB-space IR — the recorded query, with every column name translated.
+//
+// `toDbSpace()` (see ./query-builder) maps the property-space IR above into
+// this one, exactly once, before any column name can reach PostgREST. The
+// branded `column` fields make that translation a compile-time obligation:
+// `applyFilters`/`buildAndExecuteQuery` consume only these types, so feeding
+// them the untranslated `PendingFilter[]` does not type-check.
+// ---------------------------------------------------------------------------
+
+export type DbPendingFilter = Omit<PendingFilter, 'column'> & { column: DbName }
+export type DbPendingNotFilter = Omit<PendingNotFilter, 'column'> & {
+  column: DbName
+}
+export type DbPendingRawFilter = Omit<PendingRawFilter, 'column'> & {
+  column: DbName
+}
+export type DbPendingOrCondition = Omit<PendingOrCondition, 'column'> & {
+  column: DbName
+}
+
+/** Entries rather than a Record: a brand cannot ride on an object key, so this
+ * is the one translation the compiler cannot enforce. Order is preserved. */
+export type DbPendingMatchFilter = {
+  entries: Array<{ column: DbName; value: unknown }>
+}
+
+/** Retains the caller's ORIGINAL text for the verbatim fallback (which must be
+ * forwarded byte-for-byte — `parseOrString`/`rebuildOrString` do not round-trip
+ * nested `and()` or quoted values) alongside the parsed DB-space conditions
+ * used by the encrypt-and-rebuild path. Parsing happens once, here. */
+export type DbPendingOrFilter =
+  | { kind: 'structured'; conditions: DbPendingOrCondition[] }
+  | {
+      kind: 'string'
+      original: string
+      conditions: DbPendingOrCondition[]
+      referencedTable?: string
+    }
+
+type OrderOp = Extract<TransformOp, { kind: 'order' }>
+export type DbTransformOp =
+  | Exclude<TransformOp, OrderOp>
+  | (Omit<OrderOp, 'column'> & { column: DbName })
+
+type InsertOp = Extract<MutationOp, { kind: 'insert' }>
+type UpsertOp = Extract<MutationOp, { kind: 'upsert' }>
+export type DbMutationOp =
+  | (Omit<InsertOp, 'options'> & { options?: DbMutationOptions })
+  | (Omit<UpsertOp, 'options'> & { options?: DbMutationOptions })
+  | Extract<MutationOp, { kind: 'update' }>
+  | Extract<MutationOp, { kind: 'delete' }>
+
+/** The whole recorded query, in DB-space. */
+export type DbQuerySpace = {
+  filters: DbPendingFilter[]
+  matchFilters: DbPendingMatchFilter[]
+  notFilters: DbPendingNotFilter[]
+  rawFilters: DbPendingRawFilter[]
+  orFilters: DbPendingOrFilter[]
+  transforms: DbTransformOp[]
+  mutation: DbMutationOp | null
+}
+
+// ---------------------------------------------------------------------------
 // Minimal Supabase client shape (to avoid hard dependency)
 // ---------------------------------------------------------------------------
 
 export interface SupabaseQueryBuilder {
   select(
-    columns?: string,
+    columns?: DbSelect,
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
   ): SupabaseQueryBuilder
-  insert(
-    values: unknown,
-    options?: Record<string, unknown>,
-  ): SupabaseQueryBuilder
-  update(
-    values: unknown,
-    options?: Record<string, unknown>,
-  ): SupabaseQueryBuilder
-  upsert(
-    values: unknown,
-    options?: Record<string, unknown>,
-  ): SupabaseQueryBuilder
+  insert(values: unknown, options?: DbMutationOptions): SupabaseQueryBuilder
+  update(values: unknown, options?: DbMutationOptions): SupabaseQueryBuilder
+  upsert(values: unknown, options?: DbMutationOptions): SupabaseQueryBuilder
   delete(options?: Record<string, unknown>): SupabaseQueryBuilder
-  eq(column: string, value: unknown): SupabaseQueryBuilder
-  neq(column: string, value: unknown): SupabaseQueryBuilder
-  gt(column: string, value: unknown): SupabaseQueryBuilder
-  gte(column: string, value: unknown): SupabaseQueryBuilder
-  lt(column: string, value: unknown): SupabaseQueryBuilder
-  lte(column: string, value: unknown): SupabaseQueryBuilder
-  like(column: string, value: unknown): SupabaseQueryBuilder
-  ilike(column: string, value: unknown): SupabaseQueryBuilder
-  is(column: string, value: unknown): SupabaseQueryBuilder
-  in(column: string, values: unknown[]): SupabaseQueryBuilder
-  filter(column: string, operator: string, value: unknown): SupabaseQueryBuilder
-  not(column: string, operator: string, value: unknown): SupabaseQueryBuilder
+  eq(column: DbName, value: unknown): SupabaseQueryBuilder
+  neq(column: DbName, value: unknown): SupabaseQueryBuilder
+  gt(column: DbName, value: unknown): SupabaseQueryBuilder
+  gte(column: DbName, value: unknown): SupabaseQueryBuilder
+  lt(column: DbName, value: unknown): SupabaseQueryBuilder
+  lte(column: DbName, value: unknown): SupabaseQueryBuilder
+  like(column: DbName, value: unknown): SupabaseQueryBuilder
+  ilike(column: DbName, value: unknown): SupabaseQueryBuilder
+  is(column: DbName, value: unknown): SupabaseQueryBuilder
+  in(column: DbName, values: unknown[]): SupabaseQueryBuilder
+  filter(column: DbName, operator: string, value: unknown): SupabaseQueryBuilder
+  not(column: DbName, operator: string, value: unknown): SupabaseQueryBuilder
   or(
-    filters: string,
+    filters: DbFilterString,
     options?: { referencedTable?: string; foreignTable?: string },
   ): SupabaseQueryBuilder
   match(query: Record<string, unknown>): SupabaseQueryBuilder
-  order(column: string, options?: Record<string, unknown>): SupabaseQueryBuilder
+  order(column: DbName, options?: Record<string, unknown>): SupabaseQueryBuilder
   limit(count: number, options?: Record<string, unknown>): SupabaseQueryBuilder
   range(
     from: number,

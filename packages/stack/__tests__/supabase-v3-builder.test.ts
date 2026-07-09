@@ -497,6 +497,66 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(or.args[0]).toBe('note.eq.x,id.eq.1')
   })
 
+  it('rebuilds a mixed encrypted/plaintext or() string, mapping only the encrypted column', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id')
+      .or('createdAt.gte.2026-01-01,note.eq.x')
+
+    // The encrypted operand is a JSON envelope containing commas, so the
+    // conditions cannot be split on ','. Assert on the boundaries instead.
+    const [or] = supabase.callsFor('or')
+    const emitted = or.args[0] as string
+    expect(emitted).toMatch(/^created_at\.gte\./)
+    expect(emitted.endsWith(',note.eq.x')).toBe(true)
+  })
+
+  it('keeps every filter array correlated in a combined query', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .select('id, email, createdAt')
+      .eq('email', 'a@b.com')
+      .not('nickname', 'eq', 'ada')
+      .or('createdAt.gte.2026-01-01,note.eq.x')
+      .match({ nickname: 'grace' })
+      .order('createdAt')
+      .limit(5)
+
+    expect(supabase.callsFor('eq')[0].args[0]).toBe('email')
+    expect(supabase.callsFor('not')[0].args[0]).toBe('nickname')
+    expect(supabase.callsFor('or')[0].args[0] as string).toMatch(
+      /^created_at\./,
+    )
+    expect(
+      (supabase.callsFor('match')[0].args[0] as Record<string, unknown>)
+        .nickname,
+    ).toBeDefined()
+    expect(supabase.callsFor('order')[0].args[0]).toBe('created_at')
+    expect(supabase.callsFor('limit')[0].args[0]).toBe(5)
+  })
+
+  // Filter-capability errors are raised in `encryptFilterValues` (execute step
+  // 3); order-capability errors in `validateTransforms`, inside
+  // `buildAndExecuteQuery` (step 4). The filter must therefore win. Pins that
+  // precedence against a refactor that moves validation earlier.
+  it('reports the filter-capability error ahead of the order-capability error', async () => {
+    const { es } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .gte('nickname', 'a') // text_eq: no orderAndRange
+      .order('active') // boolean: storage only
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('does not support orderAndRange')
+    expect(error?.message).not.toContain('does not support ordering')
+  })
+
   it('reconstructs Date values from cast_as on decrypted rows', async () => {
     const rows = [
       {
@@ -605,5 +665,121 @@ describe('encryptedSupabase (v2) wire encoding is unchanged by the dialect seams
 
     const [or] = supabase.callsFor('or')
     expect(or.args[0]).toBe('id.eq.1,note.eq.x')
+  })
+
+  // -------------------------------------------------------------------------
+  // Characterization tests for the paths `toDbSpace()` will rewrite. Each pins
+  // the correlation between the term collector (`encryptFilterValues`) and the
+  // applier (`applyFilters`), which agree only by array index / column name.
+  // -------------------------------------------------------------------------
+
+  it('match() encrypts encrypted keys and passes plaintext through', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es
+      .from('users', usersV2)
+      .select('id')
+      .match({ email: 'a@b.com', note: 'plain' })
+
+    const [match] = supabase.callsFor('match')
+    const query = match.args[0] as Record<string, unknown>
+    expect(query.email).toBe('("a@b.com")')
+    expect(query.note).toBe('plain')
+    // Key order survives the Record -> entries -> Record round-trip
+    expect(Object.keys(query)).toEqual(['email', 'note'])
+  })
+
+  it('not() encrypts on encrypted columns and passes plaintext through', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es.from('users', usersV2).select('id').not('email', 'eq', 'a@b.com')
+    await es.from('users', usersV2).select('id').not('note', 'eq', 'plain')
+
+    const [encrypted, plain] = supabase.callsFor('not')
+    expect(encrypted.args).toEqual(['email', 'eq', '("a@b.com")'])
+    expect(plain.args).toEqual(['note', 'eq', 'plain'])
+  })
+
+  it('in() encrypts each element and leaves plaintext arrays alone', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es.from('users', usersV2).select('id').in('email', ['a@b.com', 'c@d'])
+    await es.from('users', usersV2).select('id').in('note', ['x', 'y'])
+
+    const [encrypted, plain] = supabase.callsFor('in')
+    expect(encrypted.args[1]).toEqual(['("a@b.com")', '("c@d")'])
+    expect(plain.args[1]).toEqual(['x', 'y'])
+  })
+
+  it('is() leaves the value untouched on an encrypted column', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es.from('users', usersV2).select('id').is('email', null)
+
+    const [is] = supabase.callsFor('is')
+    expect(is.args).toEqual(['email', null])
+  })
+
+  it('filter() encrypts the operand on an encrypted column', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es
+      .from('users', usersV2)
+      .select('id')
+      .filter('email', 'eq', 'a@b.com')
+    await es.from('users', usersV2).select('id').filter('note', 'eq', 'plain')
+
+    const [encrypted, plain] = supabase.callsFor('filter')
+    expect(encrypted.args).toEqual(['email', 'eq', '("a@b.com")'])
+    expect(plain.args).toEqual(['note', 'eq', 'plain'])
+  })
+
+  // The single most important characterization test: a strict nonempty SUBSET
+  // of the or-string's conditions is encrypted, so the condition index `j` must
+  // agree between the two `parseOrString` calls that `toDbSpace()` collapses
+  // into one.
+  it('or() rebuilds a mixed encrypted/plaintext string, keeping each condition on its own column', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es
+      .from('users', usersV2)
+      .select('id')
+      .or('email.eq.a@b.com,note.eq.x')
+
+    const [or] = supabase.callsFor('or')
+    const emitted = or.args[0] as string
+    const [emailCond, noteCond] = emitted.split(',')
+    expect(emailCond).toContain('email.eq.')
+    expect(emailCond).toContain('a@b.com')
+    expect(noteCond).toBe('note.eq.x')
+  })
+
+  it('keeps every filter array correlated in a combined query', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es
+      .from('users', usersV2)
+      .select('id, email, age')
+      .eq('email', 'a@b.com')
+      .not('age', 'eq', 30)
+      .or('email.eq.c@d,note.eq.x')
+      .match({ email: 'e@f.com' })
+      .filter('age', 'gte', 18)
+      .order('age')
+      .limit(10)
+
+    expect(supabase.callsFor('eq')[0].args).toEqual(['email', '("a@b.com")'])
+    expect(supabase.callsFor('not')[0].args).toEqual(['age', 'eq', '("30")'])
+    expect(supabase.callsFor('or')[0].args[0]).toContain('note.eq.x')
+    expect(
+      (supabase.callsFor('match')[0].args[0] as Record<string, unknown>).email,
+    ).toBe('("e@f.com")')
+    expect(supabase.callsFor('filter')[0].args).toEqual([
+      'age',
+      'gte',
+      '("18")',
+    ])
+    expect(supabase.callsFor('order')[0].args[0]).toBe('age')
+    expect(supabase.callsFor('limit')[0].args[0]).toBe(10)
   })
 })

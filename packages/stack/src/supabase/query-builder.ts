@@ -19,6 +19,16 @@ import {
   rebuildOrString,
 } from './helpers'
 import type {
+  DbConflictList,
+  DbFilterString,
+  DbMutationOp,
+  DbMutationOptions,
+  DbName,
+  DbPendingOrCondition,
+  DbPendingOrFilter,
+  DbQuerySpace,
+  DbSelect,
+  DbTransformOp,
   EncryptedSupabaseError,
   EncryptedSupabaseResponse,
   FilterOp,
@@ -371,17 +381,21 @@ export class EncryptedQueryBuilderImpl<
       // 2. Build select string with ::jsonb casts
       const selectString = this.buildSelectString()
 
-      // 3. Batch-encrypt filter values
-      const encryptedFilters = await this.encryptFilterValues()
+      // 3. Translate every recorded column name into DB-space, once.
+      const dbSpace = this.toDbSpace()
 
-      // 4. Build and execute real Supabase query
+      // 4. Batch-encrypt filter values
+      const encryptedFilters = await this.encryptFilterValues(dbSpace)
+
+      // 5. Build and execute real Supabase query
       const result = await this.buildAndExecuteQuery(
         encryptedMutation,
         selectString,
         encryptedFilters,
+        dbSpace,
       )
 
-      // 5. Decrypt results
+      // 6. Decrypt results
       return await this.decryptResults(result)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -489,7 +503,7 @@ export class EncryptedQueryBuilderImpl<
   // Step 2: Build select string with casts
   // ---------------------------------------------------------------------------
 
-  protected buildSelectString(): string | null {
+  protected buildSelectString(): DbSelect | null {
     if (this.selectColumns === null) return null
     return addJsonbCasts(this.selectColumns, this.encryptedColumnNames)
   }
@@ -498,7 +512,9 @@ export class EncryptedQueryBuilderImpl<
   // Step 3: Encrypt filter values
   // ---------------------------------------------------------------------------
 
-  protected async encryptFilterValues(): Promise<EncryptedFilterState> {
+  protected async encryptFilterValues(
+    dbSpace: DbQuerySpace,
+  ): Promise<EncryptedFilterState> {
     // Collect all terms that need encryption
     const terms: ScalarQueryTerm[] = []
     const termMap: TermMapping[] = []
@@ -506,8 +522,8 @@ export class EncryptedQueryBuilderImpl<
     const tableColumns = this.getColumnMap()
 
     // Regular filters
-    for (let i = 0; i < this.filters.length; i++) {
-      const f = this.filters[i]
+    for (let i = 0; i < dbSpace.filters.length; i++) {
+      const f = dbSpace.filters[i]
       if (!isEncryptedColumn(f.column, this.encryptedColumnNames)) continue
 
       const column = tableColumns[f.column]
@@ -539,9 +555,9 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Match filters
-    for (let i = 0; i < this.matchFilters.length; i++) {
-      const mf = this.matchFilters[i]
-      for (const [colName, value] of Object.entries(mf.query)) {
+    for (let i = 0; i < dbSpace.matchFilters.length; i++) {
+      const mf = dbSpace.matchFilters[i]
+      for (const { column: colName, value } of mf.entries) {
         if (!isEncryptedColumn(colName, this.encryptedColumnNames)) continue
         const column = tableColumns[colName]
         if (!column) continue
@@ -558,8 +574,8 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Not filters
-    for (let i = 0; i < this.notFilters.length; i++) {
-      const nf = this.notFilters[i]
+    for (let i = 0; i < dbSpace.notFilters.length; i++) {
+      const nf = dbSpace.notFilters[i]
       if (!isEncryptedColumn(nf.column, this.encryptedColumnNames)) continue
       const column = tableColumns[nf.column]
       if (!column) continue
@@ -574,13 +590,12 @@ export class EncryptedQueryBuilderImpl<
       termMap.push({ source: 'not', notIndex: i })
     }
 
-    // Or filters (string form parsed into conditions)
-    for (let i = 0; i < this.orFilters.length; i++) {
-      const of_ = this.orFilters[i]
+    // Or filters — conditions were parsed once, in `toDbSpace`.
+    for (let i = 0; i < dbSpace.orFilters.length; i++) {
+      const of_ = dbSpace.orFilters[i]
       if (of_.kind === 'string') {
-        const parsed = parseOrString(of_.value)
-        for (let j = 0; j < parsed.length; j++) {
-          const cond = parsed[j]
+        for (let j = 0; j < of_.conditions.length; j++) {
+          const cond = of_.conditions[j]
           if (!isEncryptedColumn(cond.column, this.encryptedColumnNames))
             continue
           const column = tableColumns[cond.column]
@@ -620,8 +635,8 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Raw filters
-    for (let i = 0; i < this.rawFilters.length; i++) {
-      const rf = this.rawFilters[i]
+    for (let i = 0; i < dbSpace.rawFilters.length; i++) {
+      const rf = dbSpace.rawFilters[i]
       if (!isEncryptedColumn(rf.column, this.encryptedColumnNames)) continue
       const column = tableColumns[rf.column]
       if (!column) continue
@@ -677,6 +692,109 @@ export class EncryptedQueryBuilderImpl<
   }
 
   // ---------------------------------------------------------------------------
+  // Phase boundary: property-space -> DB-space
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Translate every recorded column name from JS property space into DB space,
+   * once. Downstream (`encryptFilterValues`, `applyFilters`,
+   * `buildAndExecuteQuery`) consumes only the branded result, so a column can
+   * no longer reach PostgREST untranslated — that is a compile error.
+   *
+   * Total: `filterColumnName`, `parseOrString`, and `resolveMutationOptions`
+   * never throw, so this introduces no new early-throw point and cannot perturb
+   * the order in which capability errors surface.
+   *
+   * Safe to run BEFORE encryption: `getColumnMap()`/`encryptedColumnNames` are
+   * keyed by both property and DB name in v3 (and property == DB name in v2),
+   * so column lookup resolves identically either side of the translation, and
+   * `tableColumns[prop]` is the very same builder object as `tableColumns[db]`.
+   */
+  protected toDbSpace(): DbQuerySpace {
+    return {
+      filters: this.filters.map((f) => ({
+        ...f,
+        column: this.filterColumnName(f.column),
+      })),
+      matchFilters: this.matchFilters.map((mf) => ({
+        entries: Object.entries(mf.query).map(([column, value]) => ({
+          column: this.filterColumnName(column),
+          value,
+        })),
+      })),
+      notFilters: this.notFilters.map((nf) => ({
+        ...nf,
+        column: this.filterColumnName(nf.column),
+      })),
+      rawFilters: this.rawFilters.map((rf) => ({
+        ...rf,
+        column: this.filterColumnName(rf.column),
+      })),
+      orFilters: this.orFilters.map((of_) => this.orFilterToDbSpace(of_)),
+      transforms: this.transforms.map((t) => this.transformToDbSpace(t)),
+      mutation: this.mutation ? this.mutationToDbSpace(this.mutation) : null,
+    }
+  }
+
+  /** `encryptedIndexes` is deliberately NOT precomputed here — it stays derived
+   * at apply time from the substitution maps, so this pass never has to agree
+   * with the encryption predicate about which conditions were encrypted. */
+  private orFilterToDbSpace(of_: PendingOrFilter): DbPendingOrFilter {
+    const toDbCondition = (c: PendingOrCondition): DbPendingOrCondition => ({
+      ...c,
+      column: this.filterColumnName(c.column),
+    })
+
+    if (of_.kind === 'string') {
+      return {
+        kind: 'string',
+        original: of_.value,
+        conditions: parseOrString(of_.value).map(toDbCondition),
+        referencedTable: of_.referencedTable,
+      }
+    }
+    return { kind: 'structured', conditions: of_.conditions.map(toDbCondition) }
+  }
+
+  private transformToDbSpace(t: TransformOp): DbTransformOp {
+    switch (t.kind) {
+      case 'order':
+        return { ...t, column: this.filterColumnName(t.column) }
+      // `returns` is in the union but never pushed (`returns()` is a cast).
+      case 'limit':
+      case 'range':
+      case 'single':
+      case 'maybeSingle':
+      case 'csv':
+      case 'abortSignal':
+      case 'throwOnError':
+      case 'returns':
+        return t
+      default: {
+        const exhaustive: never = t
+        return exhaustive
+      }
+    }
+  }
+
+  private mutationToDbSpace(m: MutationOp): DbMutationOp {
+    switch (m.kind) {
+      case 'insert':
+      case 'upsert':
+        // `resolveMutationOptions` returns the SAME reference when no column
+        // needed renaming, which v2 relies on.
+        return { ...m, options: this.resolveMutationOptions(m.options) }
+      case 'update':
+      case 'delete':
+        return m // options carry no column names
+      default: {
+        const exhaustive: never = m
+        return exhaustive
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Step 4: Build and execute real Supabase query
   // ---------------------------------------------------------------------------
 
@@ -685,33 +803,28 @@ export class EncryptedQueryBuilderImpl<
       | Record<string, unknown>
       | Record<string, unknown>[]
       | null,
-    selectString: string | null,
+    selectString: DbSelect | null,
     encryptedFilters: EncryptedFilterState,
+    dbSpace: DbQuerySpace,
   ): Promise<RawSupabaseResult> {
     this.validateTransforms()
 
     let query: SupabaseQueryBuilder = this.supabaseClient.from(this.tableName)
 
-    // Apply mutation
-    if (this.mutation) {
-      switch (this.mutation.kind) {
+    // Apply mutation — options already resolved to DB-space by `toDbSpace`.
+    if (dbSpace.mutation) {
+      switch (dbSpace.mutation.kind) {
         case 'insert':
-          query = query.insert(
-            encryptedMutation!,
-            this.resolveMutationOptions(this.mutation.options),
-          )
+          query = query.insert(encryptedMutation!, dbSpace.mutation.options)
           break
         case 'update':
-          query = query.update(encryptedMutation!, this.mutation.options)
+          query = query.update(encryptedMutation!, dbSpace.mutation.options)
           break
         case 'upsert':
-          query = query.upsert(
-            encryptedMutation!,
-            this.resolveMutationOptions(this.mutation.options),
-          )
+          query = query.upsert(encryptedMutation!, dbSpace.mutation.options)
           break
         case 'delete':
-          query = query.delete(this.mutation.options)
+          query = query.delete(dbSpace.mutation.options)
           break
       }
     }
@@ -721,17 +834,17 @@ export class EncryptedQueryBuilderImpl<
       query = query.select(selectString, this.selectOptions)
     } else if (!this.mutation) {
       // Default select without explicit columns - shouldn't happen but fallback
-      query = query.select('*', this.selectOptions)
+      query = query.select('*' as DbSelect, this.selectOptions)
     }
 
     // Apply resolved filters
-    query = this.applyFilters(query, encryptedFilters)
+    query = this.applyFilters(query, encryptedFilters, dbSpace)
 
-    // Apply transforms
-    for (const t of this.transforms) {
+    // Apply transforms — column names already in DB-space.
+    for (const t of dbSpace.transforms) {
       switch (t.kind) {
         case 'order':
-          query = query.order(this.filterColumnName(t.column), t.options)
+          query = query.order(t.column, t.options)
           break
         case 'limit':
           query = query.limit(t.count, t.options)
@@ -768,6 +881,7 @@ export class EncryptedQueryBuilderImpl<
   protected applyFilters(
     query: SupabaseQueryBuilder,
     encryptedFilters: EncryptedFilterState,
+    dbSpace: DbQuerySpace,
   ): SupabaseQueryBuilder {
     let q = query
 
@@ -820,8 +934,8 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Apply regular filters
-    for (let i = 0; i < this.filters.length; i++) {
-      const f = this.filters[i]
+    for (let i = 0; i < dbSpace.filters.length; i++) {
+      const f = dbSpace.filters[i]
       let value = f.value
 
       if (filterValueMap.has(i)) {
@@ -834,7 +948,7 @@ export class EncryptedQueryBuilderImpl<
         })
       }
 
-      const column = this.filterColumnName(f.column)
+      const column = f.column
       const wasEncrypted = filterValueMap.has(i)
 
       switch (f.op) {
@@ -870,13 +984,13 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Apply match filters
-    for (let i = 0; i < this.matchFilters.length; i++) {
-      const mf = this.matchFilters[i]
+    for (let i = 0; i < dbSpace.matchFilters.length; i++) {
+      const mf = dbSpace.matchFilters[i]
       const resolvedQuery: Record<string, unknown> = {}
 
-      for (const [colName, originalValue] of Object.entries(mf.query)) {
+      for (const { column: colName, value: originalValue } of mf.entries) {
         const key = `${i}:${colName}`
-        resolvedQuery[this.filterColumnName(colName)] = matchValueMap.has(key)
+        resolvedQuery[colName] = matchValueMap.has(key)
           ? matchValueMap.get(key)
           : originalValue
       }
@@ -885,23 +999,20 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Apply not filters
-    for (let i = 0; i < this.notFilters.length; i++) {
-      const nf = this.notFilters[i]
+    for (let i = 0; i < dbSpace.notFilters.length; i++) {
+      const nf = dbSpace.notFilters[i]
       const wasEncrypted = notValueMap.has(i)
       const value = wasEncrypted ? notValueMap.get(i) : nf.value
-      q = q.not(
-        this.filterColumnName(nf.column),
-        this.notFilterOperator(nf.op, wasEncrypted),
-        value,
-      )
+      q = q.not(nf.column, this.notFilterOperator(nf.op, wasEncrypted), value)
     }
 
     // Apply or filters
-    for (let i = 0; i < this.orFilters.length; i++) {
-      const of_ = this.orFilters[i]
+    for (let i = 0; i < dbSpace.orFilters.length; i++) {
+      const of_ = dbSpace.orFilters[i]
 
       if (of_.kind === 'string') {
-        const parsed = parseOrString(of_.value)
+        // Already parsed (once) and translated by `toDbSpace`.
+        const parsed = [...of_.conditions]
         const encryptedIndexes = new Set<number>()
 
         for (let j = 0; j < parsed.length; j++) {
@@ -922,7 +1033,16 @@ export class EncryptedQueryBuilderImpl<
             },
           )
         } else {
-          q = q.or(of_.value, { referencedTable: of_.referencedTable })
+          // No condition referenced an encrypted column. `getColumnMap()` is
+          // keyed by BOTH property and DB name, so an encrypted column always
+          // populates `encryptedIndexes` and takes the branch above, which maps
+          // names. Everything reaching here is therefore a plaintext column,
+          // whose property name IS its DB name — no mapping to do, and the
+          // caller's ORIGINAL string is forwarded byte-for-byte (v2 relies on
+          // this for nested `and()`/quoted values the parser cannot round-trip).
+          q = q.or(of_.original as DbFilterString, {
+            referencedTable: of_.referencedTable,
+          })
         }
       } else {
         // Structured: convert to string
@@ -945,10 +1065,10 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Apply raw filters
-    for (let i = 0; i < this.rawFilters.length; i++) {
-      const rf = this.rawFilters[i]
+    for (let i = 0; i < dbSpace.rawFilters.length; i++) {
+      const rf = dbSpace.rawFilters[i]
       const value = rawValueMap.has(i) ? rawValueMap.get(i) : rf.value
-      q = q.filter(this.filterColumnName(rf.column), rf.operator, value)
+      q = q.filter(rf.column, rf.operator, value)
     }
 
     return q
@@ -964,9 +1084,13 @@ export class EncryptedQueryBuilderImpl<
    * Map a filter's column name to the DB column name PostgREST must see.
    * v2 schemas key columns by their DB name already, so this is the identity;
    * the v3 dialect resolves a JS property name to its DB name.
+   *
+   * This is the ONLY place a {@link DbName} is minted. The
+   * {@link SupabaseQueryBuilder} seam accepts nothing else, so every column
+   * name reaching PostgREST must pass through here.
    */
-  protected filterColumnName(column: string): string {
-    return column
+  protected filterColumnName(column: string): DbName {
+    return column as DbName
   }
 
   /**
@@ -978,15 +1102,17 @@ export class EncryptedQueryBuilderImpl<
    */
   protected resolveMutationOptions<
     O extends { onConflict?: string } | undefined,
-  >(options: O): O {
-    if (!options?.onConflict) return options
+  >(options: O): DbMutationOptions | undefined {
+    if (!options?.onConflict) return options as DbMutationOptions | undefined
     const mapped = options.onConflict
       .split(',')
       .map((column) => this.filterColumnName(column.trim()))
-      .join(',')
-    return mapped === options.onConflict
-      ? options
-      : { ...options, onConflict: mapped }
+      .join(',') as DbConflictList
+    return (
+      mapped === options.onConflict
+        ? options
+        : { ...options, onConflict: mapped }
+    ) as DbMutationOptions
   }
 
   /**
@@ -1005,7 +1131,7 @@ export class EncryptedQueryBuilderImpl<
    */
   protected applyPatternFilter(
     q: SupabaseQueryBuilder,
-    column: string,
+    column: DbName,
     op: 'like' | 'ilike',
     value: unknown,
     _wasEncrypted: boolean,
@@ -1029,9 +1155,9 @@ export class EncryptedQueryBuilderImpl<
    * conditions to `cs`.
    */
   protected transformOrConditions(
-    conditions: PendingOrCondition[],
+    conditions: DbPendingOrCondition[],
     _encryptedIndexes: Set<number>,
-  ): PendingOrCondition[] {
+  ): DbPendingOrCondition[] {
     return conditions
   }
 

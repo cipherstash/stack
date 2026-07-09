@@ -14,5 +14,15 @@ property→DB rename round-trips). A column using an EQL v3 domain this SDK vers
 passing through. Supplying `schemas` remains optional and adds compile-time
 types plus startup verification of the declared tables against the database.
 Requires a Postgres connection for introspection (`pg` is a new optional peer),
-so it cannot run in a Worker or the browser. v2 (`encryptedSupabase`) is
-unchanged.
+so it cannot run in a Worker or the browser.
+
+Every column name a query carries — filters, `match`, `not`, raw `filter`,
+`or()`, `order()`, and the `onConflict` option — is now resolved from its JS
+property name to its DB column name in a single pass before the query is built,
+so a declared rename round-trips everywhere rather than only on the paths that
+remembered to translate. `order()` on a column whose domain has no
+`orderAndRange` capability (e.g. a storage-only `public.boolean`) is rejected —
+at compile time when `schemas` is supplied, and at runtime otherwise — instead
+of silently sorting by the raw ciphertext envelope.
+
+v2 (`encryptedSupabase`) is unchanged.

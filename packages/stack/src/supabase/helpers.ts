@@ -1,6 +1,12 @@
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { QueryTypeName } from '@/types'
-import type { FilterOp, PendingOrCondition } from './types'
+import type {
+  DbFilterString,
+  DbPendingOrCondition,
+  DbSelect,
+  FilterOp,
+  PendingOrCondition,
+} from './types'
 
 /**
  * Get the names of all encrypted columns defined in a table schema.
@@ -33,7 +39,8 @@ export function isEncryptedColumn(
 export function addJsonbCasts(
   columns: string,
   encryptedColumnNames: string[],
-): string {
+): DbSelect {
+  // The mapping below emits DB-space tokens; the brand is asserted once, here.
   return columns
     .split(',')
     .map((col) => {
@@ -65,7 +72,7 @@ export function addJsonbCasts(
 
       return col
     })
-    .join(',')
+    .join(',') as DbSelect
 }
 
 /**
@@ -104,7 +111,7 @@ function lookupDbName(
 export function addJsonbCastsV3(
   columns: string,
   propToDb: Record<string, string>,
-): string {
+): DbSelect {
   const dbNames = new Set(Object.values(propToDb))
 
   return columns
@@ -145,7 +152,7 @@ export function addJsonbCastsV3(
 
       return col
     })
-    .join(',')
+    .join(',') as DbSelect
 }
 
 /**
@@ -211,13 +218,16 @@ export function parseOrString(orString: string): PendingOrCondition[] {
 /**
  * Rebuild an `.or()` string from structured conditions.
  */
-export function rebuildOrString(conditions: PendingOrCondition[]): string {
+export function rebuildOrString(
+  conditions: DbPendingOrCondition[],
+): DbFilterString {
+  // Callers must hand DB-space `c.column` values (see `transformOrConditions`).
   return conditions
     .map((c) => {
       const value = formatOrValue(c.value)
       return `${c.column}.${c.op}.${value}`
     })
-    .join(',')
+    .join(',') as DbFilterString
 }
 
 // ---------------------------------------------------------------------------
