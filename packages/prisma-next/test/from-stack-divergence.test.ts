@@ -24,16 +24,22 @@ import { cipherstashFromStack } from '../src/stack/from-stack'
 function makeContract() {
   return {
     storage: {
-      tables: {
-        users: {
-          columns: {
-            email: {
-              codecId: CIPHERSTASH_STRING_CODEC_ID,
-              typeParams: { equality: true, freeTextSearch: true },
-            },
-            verified: {
-              codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-              typeParams: { equality: true },
+      namespaces: {
+        __unbound__: {
+          entries: {
+            table: {
+              users: {
+                columns: {
+                  email: {
+                    codecId: CIPHERSTASH_STRING_CODEC_ID,
+                    typeParams: { equality: true, freeTextSearch: true },
+                  },
+                  verified: {
+                    codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
+                    typeParams: { equality: true },
+                  },
+                },
+              },
             },
           },
         },
@@ -104,7 +110,13 @@ describe('cipherstashFromStack — divergence check', () => {
   })
 
   it('throws when the contract has no cipherstash columns and no override is supplied', async () => {
-    const emptyContract = { storage: { tables: { users: { columns: {} } } } }
+    const emptyContract = {
+      storage: {
+        namespaces: {
+          __unbound__: { entries: { table: { users: { columns: {} } } } },
+        },
+      },
+    }
     await expect(
       cipherstashFromStack({ contractJson: emptyContract }),
     ).rejects.toThrow(/no cipherstash columns found/)

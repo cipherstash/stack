@@ -82,11 +82,11 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
   it('round-trips an EncryptedJson through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
     const byId = new Map(rows.map((r) => [r.id, r] as const))
@@ -98,7 +98,7 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it.skip('cipherstashJsonbPathExists filters by JSON path (KNOWN LIMITATION: needs client-side selector hashing)', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.preferences.cipherstashJsonbPathExists('$.locale'),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-1'])
@@ -107,10 +107,10 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
   it('exposes cipherstashJsonbPathQueryFirst as a typed SELECT-expression helper', () => {
     // Type-level: the helper accepts an `Expression<ScopeField>` and
     // returns an `Expression` typed as `cipherstash/json@1`. Wiring
-    // it into a `db.sql.users.select(...)` projection exercises the
+    // it into a `db.sql.public.users.select(...)` projection exercises the
     // typed surface; the live SQL execution is held back until the
     // STE-VEC selector hashing gap closes (see file docblock).
-    const projection = db.sql.users
+    const projection = db.sql.public.users
       .select((f) => ({
         id: f.id,
         themeNode: cipherstashJsonbPathQueryFirst(f.preferences, '$.theme'),
@@ -120,7 +120,7 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('exposes cipherstashJsonbGet as a typed SELECT-expression helper', () => {
-    const projection = db.sql.users
+    const projection = db.sql.public.users
       .select((f) => ({
         id: f.id,
         themeNode: cipherstashJsonbGet(f.preferences, 'theme'),

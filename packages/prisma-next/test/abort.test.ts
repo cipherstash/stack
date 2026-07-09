@@ -127,6 +127,7 @@ function makeMiddlewareCtx(
     now: () => Date.now(),
     log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     contentHash: async () => 'mock-hash',
+    planExecutionId: 'test-plan-execution',
     ...(signal === undefined ? {} : { signal }),
   }
 }

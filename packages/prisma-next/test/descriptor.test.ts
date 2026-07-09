@@ -23,6 +23,7 @@
  */
 
 import { assertDescriptorSelfConsistency } from '@prisma-next/migration-tools/spaces'
+import { sqlContractCanonicalizationHooks } from '@prisma-next/sql-contract/canonicalization-hooks'
 import { describe, expect, it } from 'vitest'
 import cipherstashExtensionDescriptor from '../src/exports/control'
 import {
@@ -46,9 +47,18 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
   it('exposes a contractSpace declaring the eql_v2_configuration table', () => {
     const space = cipherstashExtensionDescriptor.contractSpace
     expect(space).toBeDefined()
-    expect(Object.keys(space!.contractJson.storage.tables)).toEqual([
-      EQL_V2_CONFIGURATION_TABLE,
-    ])
+    // Since 0.10 the storage IR is namespace-enveloped (tables under
+    // `storage.namespaces.<ns>.entries.table` since 0.13); the
+    // extension's sole table lives in the target-owned default
+    // namespace (`public`).
+    const namespaces = space!.contractJson.storage.namespaces as Record<
+      string,
+      { entries?: { table?: Record<string, unknown> } }
+    >
+    const tables = Object.values(namespaces).flatMap((ns) =>
+      Object.keys(ns.entries?.table ?? {}),
+    )
+    expect(tables).toEqual([EQL_V2_CONFIGURATION_TABLE])
   })
 
   it('publishes one baseline migration sourced from the on-disk emit pipeline', () => {
@@ -109,6 +119,10 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
           unknown
         >,
         headRefHash: space.headRef.hash,
+        // The emit pipeline hashes through the SQL family's
+        // canonicalization hooks; the recompute must use the same ones.
+        shouldPreserveEmpty: sqlContractCanonicalizationHooks.shouldPreserveEmpty,
+        sortStorage: sqlContractCanonicalizationHooks.sortStorage,
       }),
     ).not.toThrow()
   })

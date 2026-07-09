@@ -6,6 +6,7 @@ import postgresDriver from '@prisma-next/driver-postgres/control'
 import sql from '@prisma-next/family-sql/control'
 import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
 import postgres from '@prisma-next/target-postgres/control'
+import postgresPack from '@prisma-next/target-postgres/pack'
 
 const databaseUrl = process.env['DATABASE_URL']
 
@@ -17,7 +18,9 @@ export default defineConfig({
   extensionPacks: [cipherstash],
   contract: prismaContract('./prisma/schema.prisma', {
     output: 'src/prisma/contract.json',
-    target: postgres,
+    // Since 0.14 `prismaContract` takes the target PACK ref (carrying
+    // `defaultNamespaceId`), not the control descriptor.
+    target: postgresPack,
   }),
   migrations: {
     dir: 'migrations',

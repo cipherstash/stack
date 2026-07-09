@@ -25,6 +25,7 @@ import {
   columnAccessor,
   contract,
   getOperator,
+  literalParamValue,
   makeAdapter,
   selectWithWhere,
   TABLE,
@@ -66,7 +67,7 @@ describe('cipherstash operator lowering — cipherstashEq', () => {
     // `bulk-encrypt.ts:stampRoutingKeysFromAst` does not walk — only
     // insert/update) still participate in the routing-key grouping.
     expect(lowered.params).toHaveLength(1)
-    const envelope = lowered.params[0]
+    const envelope = literalParamValue(lowered.params[0])
     expect(envelope).toBeInstanceOf(EncryptedString)
     const handle = (envelope as EncryptedString).expose()
     expect(handle.plaintext).toBe('alice@example.com')
@@ -89,7 +90,7 @@ describe('cipherstash operator lowering — cipherstashEq', () => {
     // The same envelope object flows through; the operator only
     // augments it with the routing key (write-once-wins semantics —
     // see `setHandleRoutingKey`).
-    expect(lowered.params[0]).toBe(userEnvelope)
+    expect(literalParamValue(lowered.params[0])).toBe(userEnvelope)
     const handle = userEnvelope.expose()
     expect(handle.table).toBe(TABLE)
     expect(handle.column).toBe(COLUMN)
@@ -115,7 +116,9 @@ describe('cipherstash operator lowering — equality extensions', () => {
       `"SELECT "user"."id" AS "id" FROM "user" WHERE NOT eql_v2.eq("user"."email", $1::eql_v2_encrypted)"`,
     )
     expect(lowered.params).toHaveLength(1)
-    expect(lowered.params[0]).toBeInstanceOf(EncryptedString)
+    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(
+      EncryptedString,
+    )
   })
 
   it('lowers cipherstashInArray with a single element to a one-term OR', () => {
@@ -164,8 +167,9 @@ describe('cipherstash operator lowering — equality extensions', () => {
     // Every envelope shares the same `(table, column)` routing key —
     // the bulk-encrypt grouping invariant for variable-arity ops.
     for (const param of lowered.params) {
-      expect(param).toBeInstanceOf(EncryptedString)
-      const handle = (param as EncryptedString).expose()
+      const envelope = literalParamValue(param)
+      expect(envelope).toBeInstanceOf(EncryptedString)
+      const handle = (envelope as EncryptedString).expose()
       expect(handle.table).toBe(TABLE)
       expect(handle.column).toBe(COLUMN)
     }
