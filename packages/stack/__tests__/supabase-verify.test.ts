@@ -62,3 +62,27 @@ describe('verifyDeclaredSchemas', () => {
     )
   })
 })
+
+// Two declared properties resolving to the same DB column pass verification —
+// each checks out against the real column — and only blow up later, inside
+// `EncryptedTable.build()`, with an error from the eql/v3 layer that names
+// neither the colliding properties nor the `schemas` entry they came from.
+describe('duplicate declared DB names', () => {
+  it('throws naming the table and both colliding properties', () => {
+    const users = encryptedTable('users', {
+      a: types.TextSearch('email'),
+      b: types.TextSearch('email'),
+    })
+    expect(() => verifyDeclaredSchemas({ users }, introspection)).toThrow(
+      /users.*email.*"a".*"b"|users.*"a".*"b".*email/,
+    )
+  })
+
+  it('allows two properties on different DB columns', () => {
+    const users = encryptedTable('users', {
+      a: types.TextSearch('email'),
+      b: types.IntegerOrd('amount'),
+    })
+    expect(() => verifyDeclaredSchemas({ users }, introspection)).not.toThrow()
+  })
+})

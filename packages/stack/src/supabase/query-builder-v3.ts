@@ -43,6 +43,38 @@ type V3ColumnLike = {
 }
 
 /**
+ * Reject a declared property name that is also a DIFFERENT physical column.
+ *
+ * `select('*')` expands the introspected DB names into property names, so a
+ * column renamed `created_at → createdAt` and a distinct plaintext column
+ * literally named `createdAt` both emit the token `createdAt`, which
+ * `addJsonbCastsV3` turns into `createdAt:created_at::jsonb` — twice. PostgREST
+ * returns the encrypted column under that key and the plaintext one is never
+ * selected, silently yielding the wrong value for a field the row type
+ * guarantees.
+ *
+ * Nothing downstream can disambiguate the two, and `EncryptedTable.build()`'s
+ * duplicate check only fires when two BUILDERS share a `getName()`. Refuse to
+ * construct instead.
+ */
+function assertNoPropertyDbNameCollision(
+  tableName: string,
+  propToDb: Record<string, string>,
+  allColumns: string[] | null,
+): void {
+  if (!allColumns) return
+  const dbNames = new Set(allColumns)
+
+  for (const [property, dbName] of Object.entries(propToDb)) {
+    if (property === dbName) continue
+    if (!dbNames.has(property)) continue
+    throw new Error(
+      `[supabase v3]: property "${property}" on table "${tableName}" renames DB column "${dbName}", but "${property}" is also a distinct column in the database — the two collide in select('*'). Rename the property, or drop the declared rename.`,
+    )
+  }
+}
+
+/**
  * EQL v3 dialect of {@link EncryptedQueryBuilderImpl} for native concrete-domain
  * columns (`public.*` type domains, `eql_v3` operators). The query mechanism is
  * v2's — direct EQL operators over PostgREST — with four narrow forks:
@@ -56,21 +88,35 @@ type V3ColumnLike = {
  *   `public.*` domains are `DOMAIN … AS jsonb`), not v2's `{ data: … }`
  *   composite wrap.
  * - **Query-term encoding** — every filter operand is the FULL storage
- *   envelope from `encrypt()`, serialized as jsonb text. This is load-bearing:
- *   each `public.*` domain CHECK requires the storage keys (`v`/`i`/`c` plus
- *   the domain's index terms), and the SQL operator functions coerce their
- *   jsonb operand into the domain — so a narrowed `encryptQuery` term (which
- *   carries no `c`) fails the CHECK with 23514 for EVERY domain, not just
- *   `text_search`. The full envelope satisfies the CHECK by construction and
+ *   envelope from `encrypt()`, serialized as jsonb text.
+ *
+ *   NOT because narrowed terms fail the domain CHECK: the bundle defines a
+ *   `public.<domain>_query` companion for each storage domain, whose CHECK
+ *   requires `NOT (VALUE ? 'c')` — i.e. it accepts exactly the no-ciphertext
+ *   shape `encryptQuery` produces. Those domains are simply unreachable from
+ *   here. PostgREST has no syntax to cast a filter VALUE, and an uncast literal
+ *   is ambiguous between the `_query` and `jsonb` `@>`/`=` overloads (42725 —
+ *   the bundle says so itself, see `cipherstash-encrypt-v3-supabase.sql`, the
+ *   `_query_types.sql` note). The reachable overload is the `jsonb` one, whose
+ *   body coerces its operand to the STORAGE domain, which does require `c`.
+ *   Independently, protect-ffi 0.28 throws `EQL_V3_QUERY_UNSUPPORTED` for any
+ *   v3 scalar `encryptQuery`, so a narrowed term cannot be produced today.
+ *
+ *   The full envelope satisfies the storage-domain CHECK by construction, and
  *   the operators extract the term they need (`eq_term`/`ord_term`/
  *   `match_term`).
  * - **`like`/`ilike`** — the v3 domains define no LIKE operator; free-text
- *   match is `@>` on the bloom filter. Encrypted pattern filters are emitted
- *   as PostgREST `cs` instead. (Match is tokenized + downcased, so `like` and
- *   `ilike` behave identically. For substring patterns to match, the column's
- *   match index should set `include_original: false` — with the default
- *   `true`, the full-envelope operand's bloom carries the whole pattern as an
- *   extra token that only matches when the pattern equals the stored value.)
+ *   match is `@>` on the bloom filter, so encrypted pattern filters are emitted
+ *   as PostgREST `cs`. Match is tokenized + downcased, so `like` and `ilike`
+ *   behave identically, and `%` wildcards are NOT interpreted — they are
+ *   tokenized like any other character.
+ *
+ *   KNOWN BROKEN for real substrings, and not fixable from this file. The
+ *   operand is a storage payload, so its bloom carries the whole needle as an
+ *   extra `include_original` token, which the haystack's bloom cannot contain
+ *   unless the needle equals the stored value or is exactly `token_length` (3)
+ *   characters. v3 Drizzle's `contains` has the same defect for the same
+ *   reason. Tracked in EQL; do not paper over it here.
  *
  * Decrypted rows additionally get `Date` reconstruction from the
  * encrypt-config `cast_as`, mirroring the typed v3 client.
@@ -117,6 +163,8 @@ export class EncryptedQueryBuilderV3Impl<
     for (const [property, dbName] of Object.entries(this.propToDb)) {
       this.dbToProp[dbName] = property
     }
+
+    assertNoPropertyDbNameCollision(tableName, this.propToDb, allColumns)
 
     // Null-prototype: keyed by DB column names, and `validateTransforms` reads
     // it without an own-key guard — an inherited `constructor`/`toString` would

@@ -1095,6 +1095,59 @@ describe('encryptedSupabase (v2) wire encoding is unchanged by the dialect seams
 })
 
 // ---------------------------------------------------------------------------
+// Property → DB name collision
+//
+// `createdAt` is declared as the property for DB column `created_at`. If the
+// database ALSO has a distinct plaintext column literally named `createdAt`,
+// `expandAllColumns` maps `created_at → createdAt` and passes the plaintext
+// `createdAt` through unchanged, so `select('*')` emits the same aliased token
+// twice and PostgREST returns the encrypted column under `createdAt`. The real
+// plaintext column is never selected. Nothing downstream can disambiguate, so
+// the builder must refuse to construct.
+// ---------------------------------------------------------------------------
+
+describe('v3 property/DB name collision', () => {
+  const collidingColumns = [
+    'id',
+    'email',
+    'nickname',
+    'amount',
+    'created_at',
+    'createdAt', // distinct plaintext column colliding with the property name
+    'active',
+    'note',
+  ]
+
+  it('throws when a property name collides with a different DB column', () => {
+    const supabase = createMockSupabase()
+    expect(
+      () =>
+        new EncryptedQueryBuilderV3Impl(
+          'users',
+          users,
+          createMockEncryptionClient(),
+          supabase.client,
+          collidingColumns,
+        ),
+    ).toThrow(/createdAt.*created_at|collide/)
+  })
+
+  it('constructs normally when no property name collides', () => {
+    const supabase = createMockSupabase()
+    expect(
+      () =>
+        new EncryptedQueryBuilderV3Impl(
+          'users',
+          users,
+          createMockEncryptionClient(),
+          supabase.client,
+          USERS_ALL_COLUMNS,
+        ),
+    ).not.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // encryptCollectedTerms: failure arm + lockContext/audit threading
 //
 // The existing 500-status tests all reach 500 via the CAPABILITY GUARD, which

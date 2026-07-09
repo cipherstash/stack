@@ -29,6 +29,22 @@ export function verifyDeclaredSchemas(
         `[supabase v3]: declared table "${tableName}" was not found in the database`,
       )
     }
+    // Two properties resolving to the same DB column each verify fine, then
+    // collide in `mergeDeclaredTables` and blow up inside
+    // `EncryptedTable.build()` — from the eql/v3 layer, naming neither the
+    // properties nor the `schemas` entry. Catch it here, where both are known.
+    const dbNameOwner = new Map<string, string>()
+    for (const [property, builder] of Object.entries(declared.columnBuilders)) {
+      const dbName = builder.getName()
+      const owner = dbNameOwner.get(dbName)
+      if (owner !== undefined) {
+        throw new Error(
+          `[supabase v3]: table "${tableName}" declares properties "${owner}" and "${property}" on the same DB column "${dbName}" — each column may be declared once`,
+        )
+      }
+      dbNameOwner.set(dbName, property)
+    }
+
     for (const builder of Object.values(declared.columnBuilders)) {
       const dbName = builder.getName()
       if (!cols.has(dbName)) {
