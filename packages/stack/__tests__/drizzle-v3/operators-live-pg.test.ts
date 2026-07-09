@@ -38,7 +38,7 @@ const RUN = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const ROW_A = 'row-a'
 const ROW_B = 'row-b'
 
-const slug = (eqlType: EqlV3TypeName): string => eqlType.replace('eql_v3.', '')
+const slug = (eqlType: EqlV3TypeName): string => eqlType.replace(/^public\./, '')
 const matrixEntries = typedEntries(V3_MATRIX)
 const matrixColumns = Object.fromEntries(
   matrixEntries.map(([eqlType, spec]) => [

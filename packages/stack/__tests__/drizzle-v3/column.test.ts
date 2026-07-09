@@ -9,7 +9,7 @@ import {
 } from '@/eql/v3/drizzle/column'
 import { typedEntries, V3_MATRIX } from '../v3-matrix/catalog'
 
-const slug = (eqlType: string) => eqlType.replace('eql_v3.', '')
+const slug = (eqlType: string) => eqlType.replace(/^public\./, '')
 
 describe('makeEqlV3Column', () => {
   it('sets dataType() to the concrete eql_v3 domain', () => {

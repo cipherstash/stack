@@ -54,7 +54,7 @@ function setup(
   return { ops, encrypt, render }
 }
 
-const slug = (eqlType: string) => eqlType.replace('eql_v3.', '')
+const slug = (eqlType: string) => eqlType.replace(/^public\./, '')
 const matrixEntries = typedEntries(V3_MATRIX)
 const matrixTable = pgTable(
   'matrix_users',
