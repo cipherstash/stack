@@ -251,6 +251,17 @@ function toPlaintext(value: unknown): string | number {
   if (value instanceof Date) {
     return value.toISOString()
   }
+  if (typeof value === 'bigint') {
+    // Reject rather than fall through to `String(value)` below: a stringified
+    // bigint would be silently encrypted as text and mismatch its column. The
+    // EQL v2 `@cipherstash/protect` query API types its plaintext as
+    // `JsPlaintext | null`, which cannot carry a native bigint, so bigint
+    // columns are unsupported on this integration — fail loudly instead of
+    // corrupting. (EQL v3 bigint columns are supported via `@cipherstash/stack`.)
+    throw new ProtectOperatorError(
+      'bigint values are not supported for encrypted columns in the EQL v2 Drizzle integration; use @cipherstash/stack for EQL v3 bigint columns',
+    )
+  }
   return String(value)
 }
 
