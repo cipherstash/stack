@@ -28,6 +28,7 @@
  *     (`EncryptedDate`, `EncryptedBoolean`, `EncryptedJson`)
  */
 
+import type { Contract } from '@prisma-next/contract/types'
 import { parsePslDocument } from '@prisma-next/psl-parser'
 import { interpretPslDocumentToSqlContract } from '@prisma-next/sql-contract-psl'
 import { describe, expect, it } from 'vitest'
@@ -38,6 +39,7 @@ const postgresTarget = {
   kind: 'target' as const,
   familyId: 'sql' as const,
   targetId: 'postgres' as const,
+  defaultNamespaceId: 'public',
   id: 'postgres',
   version: '0.0.1',
   capabilities: {},
@@ -55,6 +57,12 @@ function interpret(schema: string) {
     target: postgresTarget,
     scalarTypeDescriptors: postgresScalarTypeDescriptors,
     composedExtensionPacks: [cipherstashControl.id],
+    composedExtensionContracts: new Map([
+      [
+        cipherstashControl.id,
+        cipherstashControl.contractSpace!.contractJson as unknown as Contract,
+      ],
+    ]),
     authoringContributions: { type: cipherstashPack.authoring.type, field: {} },
   })
 }
@@ -77,12 +85,15 @@ type StorageView = {
 // `public` for Postgres since 0.12), while `types` stays at the root.
 const asStorage = (storage: unknown): StorageView => {
   const s = storage as {
-    readonly namespaces?: Record<string, { tables?: StorageView['tables'] }>
+    readonly namespaces?: Record<
+      string,
+      { entries?: { table?: StorageView['tables'] } }
+    >
     readonly types?: StorageView['types']
   }
   const tables: StorageView['tables'] = {}
   for (const ns of Object.values(s.namespaces ?? {})) {
-    Object.assign(tables, ns.tables)
+    Object.assign(tables, ns.entries?.table)
   }
   return {
     tables,

@@ -83,49 +83,55 @@ const contract = validateSqlContractFully<PostgresContract>({
     namespaces: {
       __unbound__: {
         id: '__unbound__',
-        tables: {
-          [TABLE]: {
-            columns: {
-              id: { codecId: 'pg/text@1', nativeType: 'text', nullable: false },
-              email: {
-                codecId: CIPHERSTASH_STRING_CODEC_ID,
-                nativeType: EQL_V2_ENCRYPTED_TYPE,
-                nullable: true,
+        entries: {
+          table: {
+            [TABLE]: {
+              columns: {
+                id: {
+                  codecId: 'pg/text@1',
+                  nativeType: 'text',
+                  nullable: false,
+                },
+                email: {
+                  codecId: CIPHERSTASH_STRING_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                score: {
+                  codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                amount: {
+                  codecId: CIPHERSTASH_BIGINT_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                birthday: {
+                  codecId: CIPHERSTASH_DATE_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                enabled: {
+                  codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                payload: {
+                  codecId: CIPHERSTASH_JSON_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                plain: {
+                  codecId: 'pg/text@1',
+                  nativeType: 'text',
+                  nullable: false,
+                },
               },
-              score: {
-                codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
-                nativeType: EQL_V2_ENCRYPTED_TYPE,
-                nullable: true,
-              },
-              amount: {
-                codecId: CIPHERSTASH_BIGINT_CODEC_ID,
-                nativeType: EQL_V2_ENCRYPTED_TYPE,
-                nullable: true,
-              },
-              birthday: {
-                codecId: CIPHERSTASH_DATE_CODEC_ID,
-                nativeType: EQL_V2_ENCRYPTED_TYPE,
-                nullable: true,
-              },
-              enabled: {
-                codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-                nativeType: EQL_V2_ENCRYPTED_TYPE,
-                nullable: true,
-              },
-              payload: {
-                codecId: CIPHERSTASH_JSON_CODEC_ID,
-                nativeType: EQL_V2_ENCRYPTED_TYPE,
-                nullable: true,
-              },
-              plain: {
-                codecId: 'pg/text@1',
-                nativeType: 'text',
-                nullable: false,
-              },
+              uniques: [],
+              indexes: [],
+              foreignKeys: [],
             },
-            uniques: [],
-            indexes: [],
-            foreignKeys: [],
           },
         },
       },
