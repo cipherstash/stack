@@ -244,6 +244,7 @@
 		"dotenv": "17.4.2",
 		"drizzle-orm": "^0.45.2",
 		"execa": "^9.5.2",
+		"fast-check": "^4.8.0",
 		"fta-cli": "3.0.0",
 		"json-schema-to-typescript": "^15.0.2",
 		"postgres": "^3.4.8",
