@@ -226,6 +226,8 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
          WHERE test_run_id = $1 AND row_key = $2`,
       [RUN, ROW_A],
     )
+    expect(row).toBeDefined()
+
     const decrypted = unwrap(
       await client.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
     )
@@ -266,6 +268,12 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
       [RUN, ROW_A],
     )
 
+    // A missing fixture would make `row.value` throw a TypeError inside
+    // `decryptOutcome`, which counts a throw as denial. The message assertions
+    // below already reject that string, so the test fails either way — but it
+    // fails blaming the denial regex. Name the real fault here instead.
+    expect(row).toBeDefined()
+
     // `decrypt` reports denial as a `Result.failure` and does not throw, so a
     // bare `await` here would silently pass. Require denial via either channel,
     // AND require it be a key-derivation denial rather than an outage.
@@ -284,6 +292,8 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
          WHERE test_run_id = $1 AND row_key = $2`,
       [RUN, ROW_A],
     )
+
+    expect(row).toBeDefined()
 
     const { denied, message } = await decryptOutcome(() =>
       client
