@@ -139,8 +139,8 @@ type _ilike_double_neg = Expect<M<'cipherstashIlike', 'cipherstash/double@1'>>
 type _notilike_string_pos = Expect<
   M<'cipherstashNotIlike', 'cipherstash/string@1'>
 >
-// @ts-expect-error cipherstashNotIlike must not surface on cipherstash/double@1.
 type _notilike_double_neg = Expect<
+  // @ts-expect-error cipherstashNotIlike must not surface on cipherstash/double@1.
   M<'cipherstashNotIlike', 'cipherstash/double@1'>
 >
 // @ts-expect-error cipherstashNotIlike must not surface on pg/text@1.
@@ -209,8 +209,8 @@ type _between_double_pos = Expect<
 type _notbetween_date_pos = Expect<
   M<'cipherstashNotBetween', 'cipherstash/date@1'>
 >
-// @ts-expect-error cipherstashBetween must not surface on cipherstash/boolean@1.
 type _between_boolean_neg = Expect<
+  // @ts-expect-error cipherstashBetween must not surface on cipherstash/boolean@1.
   M<'cipherstashBetween', 'cipherstash/boolean@1'>
 >
 // @ts-expect-error cipherstashNotBetween must not surface on pg/text@1.
@@ -221,8 +221,8 @@ type _notbetween_text_neg = Expect<M<'cipherstashNotBetween', 'pg/text@1'>>
 type _jpe_json_pos = Expect<
   M<'cipherstashJsonbPathExists', 'cipherstash/json@1'>
 >
-// @ts-expect-error cipherstashJsonbPathExists must not surface on cipherstash/string@1.
 type _jpe_string_neg = Expect<
+  // @ts-expect-error cipherstashJsonbPathExists must not surface on cipherstash/string@1.
   M<'cipherstashJsonbPathExists', 'cipherstash/string@1'>
 >
 // @ts-expect-error cipherstashJsonbPathExists must not surface on pg/text@1.
