@@ -8,6 +8,7 @@ import {
   createMockSupabase,
   fakeEnvelope,
   isFakeEnvelope,
+  operation,
 } from './helpers/supabase-mock'
 
 // ---------------------------------------------------------------------------
@@ -1651,5 +1652,163 @@ describe('v3 raw filter() resolves the query type from the operator', () => {
     expect(status).toBe(500)
     expect(error?.message).toContain('query type "searchableJson"')
     expect(error?.message).toContain('not supported on scalar EQL v3 columns')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// In-list encryption batching
+//
+// The element-wise `in`/`not.in` fix (each element its own term, so the list is
+// never encrypted whole) fed N same-column terms into `encryptCollectedTerms`,
+// which spent one ZeroKMS/FFI round-trip on each. `bulkEncrypt` takes ONE
+// `{table, column}` for a whole list, so terms must be grouped by column before
+// the crossing — a single bulk call over a multi-column term array would stamp
+// one column onto every plaintext.
+// ---------------------------------------------------------------------------
+
+describe('v3 in-list term encryption batches by column', () => {
+  function batchingInstance() {
+    const supabase = createMockSupabase()
+    const encryption = createMockEncryptionClient()
+    const bulkEncrypt = vi.spyOn(
+      encryption as unknown as { bulkEncrypt: (...a: unknown[]) => unknown },
+      'bulkEncrypt',
+    )
+    const encrypt = vi.spyOn(
+      encryption as unknown as { encrypt: (...a: unknown[]) => unknown },
+      'encrypt',
+    )
+    const builder = () =>
+      new EncryptedQueryBuilderV3Impl(
+        'users',
+        users,
+        encryption,
+        supabase.client,
+        USERS_ALL_COLUMNS,
+      )
+    return { supabase, builder, bulkEncrypt, encrypt }
+  }
+
+  /** The plaintext each emitted operand actually encrypts, in call order. */
+  const plaintextsOf = (calls: { args: unknown[] }[], operandIndex: number) =>
+    calls.map((c) => JSON.parse(c.args[operandIndex] as string).pt)
+
+  it('spends one bulk crossing on an in-list, not one per element', async () => {
+    const { builder, bulkEncrypt, encrypt } = batchingInstance()
+
+    await builder().select('id').in('nickname', ['ada', 'grace', 'hopper'])
+
+    expect(bulkEncrypt).toHaveBeenCalledTimes(1)
+    expect(encrypt).not.toHaveBeenCalled()
+
+    const [payloads, opts] = bulkEncrypt.mock.calls[0] as [
+      Array<{ plaintext: unknown }>,
+      { column: { getName(): string } },
+    ]
+    expect(payloads).toEqual([
+      { plaintext: 'ada' },
+      { plaintext: 'grace' },
+      { plaintext: 'hopper' },
+    ])
+    expect(opts.column.getName()).toBe('nickname')
+  })
+
+  it('groups a multi-column query into one crossing per column', async () => {
+    const { builder, bulkEncrypt } = batchingInstance()
+
+    await builder()
+      .select('id')
+      .eq('email', 'ada@lovelace.dev')
+      .eq('nickname', 'ada')
+      .in('nickname', ['grace', 'hopper'])
+
+    // Two columns, two crossings — NOT four terms, four crossings.
+    expect(bulkEncrypt).toHaveBeenCalledTimes(2)
+
+    const byColumn = new Map(
+      bulkEncrypt.mock.calls.map((call) => {
+        const [payloads, opts] = call as [
+          Array<{ plaintext: unknown }>,
+          { column: { getName(): string } },
+        ]
+        return [opts.column.getName(), payloads.map((p) => p.plaintext)]
+      }),
+    )
+    expect(byColumn.get('email')).toEqual(['ada@lovelace.dev'])
+    expect(byColumn.get('nickname')).toEqual(['ada', 'grace', 'hopper'])
+  })
+
+  // Grouping reorders the crossings; the operands must still land on the filter
+  // that asked for them. This is the assertion that catches a bad scatter.
+  it('scatters each envelope back onto its own filter', async () => {
+    const { supabase, builder } = batchingInstance()
+
+    await builder()
+      .select('id')
+      .eq('email', 'ada@lovelace.dev')
+      .eq('nickname', 'ada')
+      .in('nickname', ['grace', 'hopper'])
+
+    expect(plaintextsOf(supabase.callsFor('eq'), 1)).toEqual([
+      'ada@lovelace.dev',
+      'ada',
+    ])
+
+    const inCall = supabase.callsFor('filter')[0]
+    expect(inCall.args[1]).toBe('in')
+    const elements = (inCall.args[2] as string)
+      .slice(1, -1)
+      .split(/","/)
+      .map((e) => JSON.parse(e.replace(/^"|"$/g, '').replace(/\\"/g, '"')).pt)
+    expect(elements).toEqual(['grace', 'hopper'])
+  })
+
+  it('falls back to per-term encryption when the client has no bulkEncrypt', async () => {
+    const supabase = createMockSupabase()
+    const encryption = createMockEncryptionClient()
+    // biome-ignore lint/performance/noDelete: exercising the capability probe
+    delete (encryption as unknown as { bulkEncrypt?: unknown }).bulkEncrypt
+    const encrypt = vi.spyOn(
+      encryption as unknown as { encrypt: (...a: unknown[]) => unknown },
+      'encrypt',
+    )
+
+    await new EncryptedQueryBuilderV3Impl(
+      'users',
+      users,
+      encryption,
+      supabase.client,
+      USERS_ALL_COLUMNS,
+    )
+      .select('id')
+      .eq('email', 'ada@lovelace.dev')
+      .in('nickname', ['grace', 'hopper'])
+
+    expect(encrypt).toHaveBeenCalledTimes(3)
+    expect(plaintextsOf(supabase.callsFor('eq'), 1)).toEqual([
+      'ada@lovelace.dev',
+    ])
+  })
+
+  it('rejects a bulk response whose length does not match the list', async () => {
+    const supabase = createMockSupabase()
+    const encryption = createMockEncryptionClient()
+    ;(
+      encryption as unknown as { bulkEncrypt: (...a: unknown[]) => unknown }
+    ).bulkEncrypt = () => operation([{ data: fakeEnvelope('ada', 'nickname') }])
+
+    const { error, status } = await new EncryptedQueryBuilderV3Impl(
+      'users',
+      users,
+      encryption,
+      supabase.client,
+      USERS_ALL_COLUMNS,
+    )
+      .select('id')
+      .in('nickname', ['ada', 'grace'])
+
+    // Silently truncating would widen the `in` predicate to one element.
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/1 term(s)? for 2 value(s)?/)
   })
 })

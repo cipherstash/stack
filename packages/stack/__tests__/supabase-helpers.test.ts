@@ -107,6 +107,17 @@ describe('rebuildOrString quoting', () => {
   it('leaves a value with no reserved characters unquoted', () => {
     expect(rebuildOrString([cond('a', 'eq', 'plain')])).toBe('a.eq.plain')
   })
+
+  // A brace is structural to PostgREST's own logic-tree parser inside `or=(…)`,
+  // so an unquoted `a{b` scalar is malformed on the wire — and it desynchronises
+  // our parser on the way back in. Emit and parse must agree on what is structure.
+  it('quotes a scalar value containing an opening brace', () => {
+    expect(rebuildOrString([cond('a', 'eq', 'a{b')])).toBe('a.eq."a{b"')
+  })
+
+  it('quotes a scalar value containing a closing brace', () => {
+    expect(rebuildOrString([cond('a', 'eq', 'a}b')])).toBe('a.eq."a}b"')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -214,6 +225,25 @@ describe('parseOrString / rebuildOrString round-trip', () => {
     expect(parsed[0].value).toBe(ENVELOPE)
     expect(parsed[1].value).toBe('7')
   })
+
+  // The emit side must never produce a string its own parser mis-reads. A scalar
+  // brace was the one character that escaped quoting, so rebuild → parse dropped
+  // the condition behind it.
+  it.each([
+    'a{b',
+    'a}b',
+    'a(b',
+    'a)b',
+  ])('round-trips a scalar value containing %s', (value) => {
+    const conditions = [
+      { column: 'note', op: 'eq', negate: false, value },
+      { column: 'id', op: 'eq', negate: false, value: '7' },
+    ]
+    const s = rebuildOrString(
+      conditions.map((c) => cond(c.column, c.op, c.value)),
+    )
+    expect(parseOrString(s)).toEqual(conditions)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -316,6 +346,26 @@ describe('parseOrString structural characters inside values', () => {
     expect(parseOrString('a.eq.x),b.eq.y')).toEqual([
       { column: 'a', op: 'eq', negate: false, value: 'x)' },
       { column: 'b', op: 'eq', negate: false, value: 'y' },
+    ])
+  })
+
+  // The mirror image of the two cases above, and the one the depth floor cannot
+  // catch: an unmatched OPENING brace or paren leaves `depth` above zero for the
+  // rest of the string, so no later comma ever splits. Every following condition
+  // is swallowed into this operand. With a plaintext column first the group is
+  // then forwarded VERBATIM (nothing looks encrypted), so PostgREST runs the
+  // swallowed `email.eq.ada` with a plaintext operand against a ciphertext column.
+  it('splits after an unmatched opening brace in an unquoted value', () => {
+    expect(parseOrString('note.eq.a{b,email.eq.ada')).toEqual([
+      { column: 'note', op: 'eq', negate: false, value: 'a{b' },
+      { column: 'email', op: 'eq', negate: false, value: 'ada' },
+    ])
+  })
+
+  it('splits after an unmatched opening paren in an unquoted value', () => {
+    expect(parseOrString('note.eq.a(b,email.eq.ada')).toEqual([
+      { column: 'note', op: 'eq', negate: false, value: 'a(b' },
+      { column: 'email', op: 'eq', negate: false, value: 'ada' },
     ])
   })
 })

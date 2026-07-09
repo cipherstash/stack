@@ -1,8 +1,7 @@
-import type { AnyEncryptedV3Column } from './columns'
+import type { V3ColumnFactory } from './columns'
 import { types } from './types'
 
-/** A factory that builds a concrete v3 column for a given DB column name. */
-export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
+export type { V3ColumnFactory } from './columns'
 
 /**
  * Unqualified Postgres `domain_name` → the `eql/v3/types.ts` factory that
@@ -18,6 +17,13 @@ export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
  * `getEqlType()`, no test that also derives them can detect a corrupted domain
  * constant — `eql-v3-domain-registry.test.ts` pins them against a hand-written
  * literal list for exactly that reason.
+ *
+ * `factory('_probe')` runs at module load, so a non-factory value in `types`
+ * would throw here and take the importing modules (`../../supabase/introspect.ts`,
+ * `schema-builder.ts`, `verify.ts`) down with it. `types` is declared
+ * `satisfies Record<string, V3ColumnFactory>` so that mistake is a compile error
+ * at its source instead. Do not reintroduce a cast on `Object.values` below: it
+ * would silence exactly the check that keeps this loop total.
  */
 // NULL PROTOTYPE — load-bearing. A plain object literal inherits from
 // Object.prototype, so `DOMAIN_REGISTRY['constructor']` returns a *function*
@@ -30,7 +36,7 @@ export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
 // exact: on a plain object `'constructor' in registry` is spuriously true.
 export const DOMAIN_REGISTRY: Record<string, V3ColumnFactory> = (() => {
   const registry = Object.create(null) as Record<string, V3ColumnFactory>
-  for (const factory of Object.values(types) as V3ColumnFactory[]) {
+  for (const factory of Object.values(types)) {
     // Probe name only: the constructors store their arguments and nothing else,
     // so building one column per domain at module load is free of side effects.
     const key = stripDomainSchema(factory('_probe').getEqlType())

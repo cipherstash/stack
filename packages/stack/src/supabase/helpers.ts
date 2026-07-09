@@ -324,8 +324,21 @@ export function rebuildOrString(
  * characters, so `a}b` is a valid unquoted scalar; letting a stray one decrement
  * past zero meant no later comma ever split, silently absorbing every remaining
  * condition.
+ *
+ * The floor only covers a stray CLOSING character. A stray OPENING one leaves
+ * `depth` above zero for the rest of the input, and no later comma splits either
+ * — the same silent absorption, mirrored. `depth !== 0` at the end proves the
+ * counting was fooled by a brace or paren that was never structure, so the whole
+ * pass is discarded and the input re-split honouring quotes alone. That can only
+ * recover conditions, never lose them: a real containment literal reaches this
+ * point balanced, and the multi-element ones (the only kind carrying an internal
+ * comma) are quoted by {@link formatOrValue} and therefore already opaque.
+ *
+ * `trackDepth` is the recursion's own flag, never passed by callers. NEVER
+ * throws — `query-builder.ts` relies on `parseOrString` being total so that
+ * capability errors surface in filter order.
  */
-function splitTopLevel(input: string): string[] {
+function splitTopLevel(input: string, trackDepth = true): string[] {
   const parts: string[] = []
   let current = ''
   let depth = 0
@@ -346,7 +359,7 @@ function splitTopLevel(input: string): string[] {
     } else if (char === '"') {
       inQuotes = !inQuotes
       current += char
-    } else if ((char === '(' || char === '{') && !inQuotes) {
+    } else if (trackDepth && (char === '(' || char === '{') && !inQuotes) {
       // `{` as well as `(`: a containment operand is an array (`{vip,admin}`) or
       // a jsonb (`{"a":1,"b":2}`) literal, whose top-level commas are part of
       // the value. PostgREST's own logic-tree parser tracks these braces;
@@ -354,7 +367,7 @@ function splitTopLevel(input: string): string[] {
       // dotless fragment `admin}` that the loop below silently drops.
       depth++
       current += char
-    } else if ((char === ')' || char === '}') && !inQuotes) {
+    } else if (trackDepth && (char === ')' || char === '}') && !inQuotes) {
       depth = Math.max(0, depth - 1)
       current += char
     } else if (char === ',' && depth === 0 && !inQuotes) {
@@ -366,6 +379,10 @@ function splitTopLevel(input: string): string[] {
   }
 
   parts.push(current)
+
+  // An opener that was never structure (`note.eq.a{b,…`) left depth stranded and
+  // swallowed every condition behind it. Re-split without depth: quotes alone.
+  if (trackDepth && depth !== 0) return splitTopLevel(input, false)
 
   return parts
 }
@@ -444,6 +461,23 @@ function parseOrValue(value: string, op?: string): unknown {
 const POSTGREST_RESERVED = /["\\,().]/
 
 /**
+ * The reserved set for a SCALAR operand: {@link POSTGREST_RESERVED} plus the
+ * braces.
+ *
+ * A brace is structure to PostgREST's logic-tree parser inside `or=(…)`, and to
+ * {@link splitTopLevel} on the way back in, so an unquoted `a{b` is malformed on
+ * the wire AND desynchronises our own parse — the condition behind it is absorbed
+ * into this operand and silently dropped. Every character the parser reacts to
+ * must be quoted here.
+ *
+ * Deliberately NOT used for containment literals: those are `{…}` by
+ * construction, and quoting them on the brace alone would turn `tags.cs.{vip}`
+ * into `tags.cs."{vip}"`. Both spellings parse, but the bare one is what
+ * PostgREST documents and what the tests pin.
+ */
+const POSTGREST_RESERVED_SCALAR = /["\\,(){}.]/
+
+/**
  * Operands PostgREST reads as SQL values rather than as the string spelling
  * them. A STRING operand that happens to spell one must be quoted, or
  * `name.eq.null` compares against SQL NULL — a filter that matches nothing —
@@ -501,7 +535,14 @@ function formatOrValue(value: unknown, op?: string): string {
   // the top level. PostgREST accepts a quoted `"{vip,admin}"` inside `or=(…)`.
   if (op !== undefined && CONTAINMENT_OPS.has(op)) {
     const literal = containmentLiteral(value)
-    if (literal !== null) return formatOrValue(literal)
+    // Quoted on the NARROW set, not the scalar one: a containment literal is
+    // always brace-delimited, so the scalar set would quote every one of them.
+    // Its own braces are balanced and `splitTopLevel` counts them correctly.
+    if (literal !== null) {
+      return POSTGREST_RESERVED.test(literal)
+        ? `"${escapeOrValue(literal)}"`
+        : literal
+    }
   }
 
   if (Array.isArray(value)) {
@@ -516,7 +557,10 @@ function formatOrValue(value: unknown, op?: string): string {
   // Wrap in double quotes if the value contains reserved characters.
   // This is required for encrypted values (JSON with commas, braces, etc.)
   // and is safe for all string values per PostgREST spec.
-  if (POSTGREST_RESERVED.test(str) || POSTGREST_RESERVED_WORDS.has(str)) {
+  if (
+    POSTGREST_RESERVED_SCALAR.test(str) ||
+    POSTGREST_RESERVED_WORDS.has(str)
+  ) {
     return `"${escapeOrValue(str)}"`
   }
 
@@ -535,4 +579,23 @@ function formatOrValue(value: unknown, op?: string): string {
  */
 export function formatInListOperand(values: readonly unknown[]): string {
   return formatOrValue([...values])
+}
+
+/**
+ * The operand for a direct `cs`/`contains` filter: `{a,b}` for an array,
+ * `{"a":1}` for a jsonb object, `null` for a scalar.
+ *
+ * `null` means "not a structured operand" — the caller forwards the value as it
+ * stands. That covers both a plaintext string (`cs.plain`) and the v3 encrypted
+ * envelope, which is already `JSON.stringify`d and must not be re-serialized.
+ *
+ * Required because postgrest-js builds an array operand as `{${value.join(',')}}`
+ * with no element quoting, so an element carrying a comma becomes two elements;
+ * and its `not()` stringifies the operand outright, dropping the braces and
+ * rendering an object as `[object Object]`. The `.or()` path formats containment
+ * operands through the same {@link containmentLiteral}; emit them identically
+ * here, or the two paths disagree on what the same call means.
+ */
+export function formatContainmentOperand(value: unknown): string | null {
+  return containmentLiteral(value)
 }

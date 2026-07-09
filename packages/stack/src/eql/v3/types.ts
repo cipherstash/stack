@@ -76,6 +76,7 @@ import {
   TIMESTAMP_EQ,
   TIMESTAMP_ORD,
   TIMESTAMP_ORD_ORE,
+  type V3ColumnFactory,
 } from './columns'
 
 /**
@@ -183,4 +184,9 @@ export const types = {
   DoubleOrdOre: (name: string) =>
     new EncryptedDoubleOrdOreColumn(name, DOUBLE_ORD_ORE),
   DoubleOrd: (name: string) => new EncryptedDoubleOrdColumn(name, DOUBLE_ORD),
-} as const
+  // `satisfies` is load-bearing, not decoration: `DOMAIN_REGISTRY` derives itself
+  // by calling every value here at module load. A non-factory export would throw
+  // during module evaluation and take the supabase introspect/schema-build/verify
+  // path down with it. This turns that into a compile error at the offending line.
+  // `as const` applies first, so literal key inference is preserved.
+} as const satisfies Record<string, V3ColumnFactory>

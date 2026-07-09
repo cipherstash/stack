@@ -16,6 +16,7 @@ import type {
 import { logger } from '@/utils/logger'
 import {
   addJsonbCasts,
+  formatContainmentOperand,
   formatInListOperand,
   getEncryptedColumnNames,
   isEncryptableTerm,
@@ -532,6 +533,48 @@ export class EncryptedQueryBuilderImpl<
 
     const tableColumns = this.getColumnMap()
 
+    const pushTerm = (
+      value: JsPlaintext,
+      column: ScalarQueryTerm['column'],
+      queryType: QueryTypeName,
+      mapping: TermMapping,
+    ) => {
+      terms.push({
+        value,
+        column,
+        table: this.schema,
+        queryType,
+        returnType: 'composite-literal',
+      })
+      termMap.push(mapping)
+    }
+
+    /**
+     * Collect one term per element of an `in`-list operand.
+     *
+     * Element-wise is the only correct encoding: encrypting the array as ONE
+     * value collapses `(a,b)` into a single ciphertext that matches nothing. A
+     * null element is SQL NULL and passes through unencrypted; the applier
+     * restores it by index, which is why the mapping carries `inIndex`.
+     *
+     * Shared by the regular-`in`, `not(…,'in',…)` and or-condition paths. They
+     * drifted apart once already — the `not` path went unfixed while the other
+     * two encrypted element-wise — so they are kept in lockstep here rather than
+     * spelled out three times.
+     */
+    const collectInListTerms = (
+      op: FilterOp,
+      values: readonly unknown[],
+      column: ScalarQueryTerm['column'],
+      queryType: QueryTypeName,
+      mappingFor: (inIndex: number) => TermMapping,
+    ) => {
+      for (let j = 0; j < values.length; j++) {
+        if (!isEncryptableTerm(op, values[j])) continue
+        pushTerm(values[j] as JsPlaintext, column, queryType, mappingFor(j))
+      }
+    }
+
     // Regular filters
     for (let i = 0; i < dbSpace.filters.length; i++) {
       const f = dbSpace.filters[i]
@@ -541,30 +584,20 @@ export class EncryptedQueryBuilderImpl<
       if (!column) continue
 
       if (f.op === 'in' && Array.isArray(f.value)) {
-        // For `in` filters, encrypt each value separately. A null element is
-        // SQL NULL and passes through; the applier restores it by index.
-        for (let j = 0; j < f.value.length; j++) {
-          if (!isEncryptableTerm(f.op, f.value[j])) continue
-          terms.push({
-            value: f.value[j] as JsPlaintext,
-            column,
-            table: this.schema,
-            queryType: mapFilterOpToQueryType(f.op),
-            returnType: 'composite-literal',
-          })
-          termMap.push({ source: 'filter', filterIndex: i, inIndex: j })
-        }
+        collectInListTerms(
+          f.op,
+          f.value,
+          column,
+          mapFilterOpToQueryType(f.op),
+          (inIndex) => ({ source: 'filter', filterIndex: i, inIndex }),
+        )
       } else if (!isEncryptableTerm(f.op, f.value)) {
         // `is` predicate or null operand — forwarded unencrypted.
       } else {
-        terms.push({
-          value: f.value as JsPlaintext,
-          column,
-          table: this.schema,
-          queryType: mapFilterOpToQueryType(f.op),
-          returnType: 'composite-literal',
+        pushTerm(f.value as JsPlaintext, column, mapFilterOpToQueryType(f.op), {
+          source: 'filter',
+          filterIndex: i,
         })
-        termMap.push({ source: 'filter', filterIndex: i })
       }
     }
 
@@ -578,14 +611,11 @@ export class EncryptedQueryBuilderImpl<
         const column = tableColumns[colName]
         if (!column) continue
 
-        terms.push({
-          value: value as JsPlaintext,
-          column,
-          table: this.schema,
-          queryType: 'equality',
-          returnType: 'composite-literal',
+        pushTerm(value as JsPlaintext, column, 'equality', {
+          source: 'match',
+          matchIndex: i,
+          column: colName,
         })
-        termMap.push({ source: 'match', matchIndex: i, column: colName })
       }
     }
 
@@ -598,37 +628,29 @@ export class EncryptedQueryBuilderImpl<
       if (!column) continue
 
       if (nf.op === 'in') {
-        // Each element is its own ciphertext, exactly as the regular `in` and
-        // `or(… .in. …)` paths do. Encrypting the whole list as one value
-        // yields a filter that silently matches nothing.
+        // A PostgREST list literal (`'(a,b)'`) cannot be encrypted element-wise,
+        // and encrypting it whole matches nothing. Refuse it rather than emit a
+        // filter that silently returns no rows.
         if (!Array.isArray(nf.value)) {
           throw new Error(
             `not("${nf.column}", "in", …) on an encrypted column requires an array of values, ` +
               `not a PostgREST list literal — each element must be encrypted separately`,
           )
         }
-        for (let j = 0; j < nf.value.length; j++) {
-          if (!isEncryptableTerm(nf.op, nf.value[j])) continue
-          terms.push({
-            value: nf.value[j] as JsPlaintext,
-            column,
-            table: this.schema,
-            queryType: mapFilterOpToQueryType(nf.op),
-            returnType: 'composite-literal',
-          })
-          termMap.push({ source: 'not', notIndex: i, inIndex: j })
-        }
+        collectInListTerms(
+          nf.op,
+          nf.value,
+          column,
+          mapFilterOpToQueryType(nf.op),
+          (inIndex) => ({ source: 'not', notIndex: i, inIndex }),
+        )
         continue
       }
 
-      terms.push({
-        value: nf.value as JsPlaintext,
-        column,
-        table: this.schema,
-        queryType: mapFilterOpToQueryType(nf.op),
-        returnType: 'composite-literal',
+      pushTerm(nf.value as JsPlaintext, column, mapFilterOpToQueryType(nf.op), {
+        source: 'not',
+        notIndex: i,
       })
-      termMap.push({ source: 'not', notIndex: i })
     }
 
     // Or filters — conditions were parsed once, in `toDbSpace`. The string and
@@ -644,30 +666,23 @@ export class EncryptedQueryBuilderImpl<
         const column = tableColumns[cond.column]
         if (!column) continue
 
-        const pushTerm = (value: JsPlaintext, inIndex?: number) => {
-          terms.push({
-            value,
-            column,
-            table: this.schema,
-            queryType: this.queryTypeForOrOp(cond.op),
-            returnType: 'composite-literal',
-          })
-          termMap.push({ source, orIndex: i, conditionIndex: j, inIndex })
-        }
+        // `queryTypeForOrOp`, not `mapFilterOpToQueryType`: an or-condition may
+        // carry a raw PostgREST operator (`cs`), which is not a `FilterOp`.
+        const queryType = this.queryTypeForOrOp(cond.op)
+        const mappingFor = (inIndex?: number): TermMapping => ({
+          source,
+          orIndex: i,
+          conditionIndex: j,
+          inIndex,
+        })
 
-        // Mirror the regular filter path: each element of an `in` list is its
-        // own term. Encrypting the array as one value collapses `(a,b)` into a
-        // single ciphertext that matches nothing.
         if (cond.op === 'in' && Array.isArray(cond.value)) {
-          for (let k = 0; k < cond.value.length; k++) {
-            if (!isEncryptableTerm(cond.op, cond.value[k])) continue
-            pushTerm(cond.value[k] as JsPlaintext, k)
-          }
+          collectInListTerms(cond.op, cond.value, column, queryType, mappingFor)
           continue
         }
 
         if (!isEncryptableTerm(cond.op, cond.value)) continue
-        pushTerm(cond.value as JsPlaintext)
+        pushTerm(cond.value as JsPlaintext, column, queryType, mappingFor())
       }
     }
 
@@ -679,14 +694,12 @@ export class EncryptedQueryBuilderImpl<
       const column = tableColumns[rf.column]
       if (!column) continue
 
-      terms.push({
-        value: rf.value as JsPlaintext,
+      pushTerm(
+        rf.value as JsPlaintext,
         column,
-        table: this.schema,
-        queryType: this.queryTypeForRawOp(rf.operator),
-        returnType: 'composite-literal',
-      })
-      termMap.push({ source: 'raw', rawIndex: i })
+        this.queryTypeForRawOp(rf.operator),
+        { source: 'raw', rawIndex: i },
+      )
     }
 
     if (terms.length === 0) {
@@ -1064,6 +1077,19 @@ export class EncryptedQueryBuilderImpl<
 
       const wasEncrypted = notValueMap.has(i)
       const value = wasEncrypted ? notValueMap.get(i) : nf.value
+
+      // `contains` is a supabase-js METHOD name, not a PostgREST operator, and
+      // `q.not()` interpolates its operand with `String(value)` — so an array
+      // arrives brace-less and an object as `[object Object]`. Build the
+      // containment literal ourselves and emit the `cs` token, exactly as the
+      // `.or()` path does. A scalar (including the encrypted envelope, already
+      // serialized) yields `null` and is forwarded untouched.
+      if (nf.op === 'contains') {
+        const literal = formatContainmentOperand(value)
+        q = q.not(nf.column, 'cs', literal ?? value)
+        continue
+      }
+
       q = q.not(nf.column, this.notFilterOperator(nf.op, wasEncrypted), value)
     }
 
@@ -1233,6 +1259,10 @@ export class EncryptedQueryBuilderImpl<
    * jsonb/array containment. The v3 dialect overrides it for encrypted columns,
    * where `cs` resolves to the `@>` operator the EQL bundle declares on the
    * domain, backed by `eql_v3.contains` (bloom-filter containment).
+   *
+   * A structured operand is serialized here rather than by postgrest-js, which
+   * joins array elements on `,` without quoting them — so `['with,comma']` would
+   * reach Postgres as two elements. Scalars keep the native path.
    */
   protected applyContainsFilter(
     q: SupabaseQueryBuilder,
@@ -1240,7 +1270,10 @@ export class EncryptedQueryBuilderImpl<
     value: unknown,
     _wasEncrypted: boolean,
   ): SupabaseQueryBuilder {
-    return q.contains(column, value)
+    const literal = formatContainmentOperand(value)
+    return literal !== null
+      ? q.filter(column, 'cs', literal)
+      : q.contains(column, value)
   }
 
   /**
@@ -1253,8 +1286,9 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * The PostgREST operator to use for a `.not()` filter. The v3 dialect maps
-   * `like`/`ilike` on encrypted columns to `cs` (see applyPatternFilter).
+   * The PostgREST operator to use for a `.not()` filter. Every {@link FilterOp}
+   * except `contains` spells the same as its PostgREST operator; `contains` is
+   * handled before this is reached, because it also needs its operand rewritten.
    */
   protected notFilterOperator(op: FilterOp, _wasEncrypted: boolean): string {
     return op

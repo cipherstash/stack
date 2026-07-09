@@ -129,3 +129,69 @@ describe('encrypted not(col, in, …) emits a parseable PostgREST operand', () =
     expect(error?.message).toMatch(/requires an array of values/)
   })
 })
+
+// postgrest-js serializes a `contains` array as `cs.{${value.join(',')}}` — no
+// element quoting — and a `not(col, 'contains', …)` operand as a bare
+// `String(value)` coercion, which loses the braces entirely and renders an object
+// as `[object Object]`. The `.or()` path already formats containment operands
+// correctly; these are the direct paths, and they disagreed with it.
+describe('plaintext contains() emits a parseable containment literal', () => {
+  it('quotes an array element containing a comma', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').contains('note', ['with,comma'])
+
+    // Unquoted, Postgres reads `{with,comma}` as TWO elements.
+    expect(wire.operandFor('note')).toBe('cs.{"with,comma"}')
+  })
+
+  it('leaves a comma-free array operand as a bare array literal', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').contains('note', ['vip', 'admin'])
+
+    expect(wire.operandFor('note')).toBe('cs.{vip,admin}')
+  })
+
+  it('emits a jsonb literal for an object operand', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').contains('note', { a: 1 })
+
+    expect(wire.operandFor('note')).toBe('cs.{"a":1}')
+  })
+
+  it('forwards a string operand verbatim', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').contains('note', 'plain')
+
+    expect(wire.operandFor('note')).toBe('cs.plain')
+  })
+})
+
+describe('plaintext not(col, contains, …) emits a parseable containment literal', () => {
+  it('quotes an array element containing a comma', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').not('note', 'contains', ['with,comma'])
+
+    expect(wire.operandFor('note')).toBe('not.cs.{"with,comma"}')
+  })
+
+  it('emits a jsonb literal for an object operand', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').not('note', 'contains', { a: 1 })
+
+    expect(wire.operandFor('note')).toBe('not.cs.{"a":1}')
+  })
+
+  it('emits the `cs` token, never the `contains` method name', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').not('note', 'contains', ['vip'])
+
+    expect(wire.operandFor('note')).toBe('not.cs.{vip}')
+  })
+})

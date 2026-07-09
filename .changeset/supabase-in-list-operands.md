@@ -33,10 +33,42 @@ and a NULL plaintext is stored as a SQL NULL, so `IS NULL` is not merely legal
 there but the only predicate those columns support. `is(col, true)` remains a
 compile error on encrypted columns.
 
-**`contains()` accepts native operands on plaintext columns.** A plaintext
-jsonb/array column falls through to PostgREST's native containment, so
+**`contains()` accepts native operands on plaintext array and jsonb columns.** A
+plaintext jsonb/array column falls through to PostgREST's native containment, so
 `contains('tags', ['vip'])` and `contains('meta', { plan: 'pro' })` now
-typecheck. Encrypted match columns still take a `string` token. Relatedly,
-`.or([{ op: 'contains' }])` now emits PostgREST's `cs` operator for plaintext
-columns too — previously only encrypted conditions were translated, so a
-plaintext containment reached the wire as `.contains.` and failed to parse.
+typecheck. A plaintext SCALAR column does not: `@>` is undefined on `text`, so
+the operand type follows the column's own shape and a scalar rejects every
+containment operand. Encrypted match columns still take a `string` token.
+Relatedly, `.or([{ op: 'contains' }])` now emits PostgREST's `cs` operator for
+plaintext columns too — previously only encrypted conditions were translated, so
+a plaintext containment reached the wire as `.contains.` and failed to parse.
+
+**Direct `contains()` / `not(col, 'contains', …)` now serialize their operand.**
+postgrest-js builds an array operand as `cs.{a,b}` with no element quoting, so
+`contains('tags', ['with,comma'])` reached Postgres as two elements; and its
+`not()` stringifies the operand outright, emitting `not.contains.with,comma`
+(no braces, and the wrong operator token) or `[object Object]` for a jsonb
+operand. Both paths now build the containment literal the `.or()` path already
+built, and emit the `cs` token.
+
+**`.or()` no longer drops a condition after an unbalanced brace or paren.** A
+scalar operand containing `{` left the parser's depth counter stranded above
+zero, so no later comma separated a condition and everything behind it was
+swallowed into that operand. With a plaintext column first, the group was then
+forwarded verbatim — running the swallowed condition against a ciphertext column
+with a plaintext operand. Braces are now quoted on emit (they are structural to
+PostgREST inside `or=(…)`), and the parser falls back to quote-only splitting
+when its depth tracking does not balance.
+
+**`is(col, true)` is now rejected on every encrypted column, not just the
+storage-only ones.** The boolean form was gated on the filterable keys, which
+exclude storage-only columns but keep queryable encrypted ones — so
+`is(emailTextSearchColumn, true)` compiled and emitted `IS TRUE` against a jsonb
+ciphertext.
+
+**In-list operands encrypt in one crossing per column.** The element-wise `in` /
+`not.in` encoding above spent one ZeroKMS round-trip per element; terms are now
+grouped by column and each group takes a single `bulkEncrypt` call, matching the
+Drizzle v3 path. Falls back to per-term encryption for clients without
+`bulkEncrypt`, and rejects a bulk response whose length does not match the list
+rather than silently truncating the predicate.

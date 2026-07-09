@@ -83,6 +83,19 @@ export function createMockEncryptionClient() {
     encrypt: (value: unknown, opts: { column: { getName(): string } }) =>
       operation(fakeEnvelope(value, opts.column.getName())),
 
+    // v3 filter path: one FFI crossing per (table, column) group. Position-
+    // stable and envelope-identical to `encrypt`, so every wire assertion holds
+    // whichever path the builder takes.
+    bulkEncrypt: (
+      payloads: Array<{ plaintext: unknown }>,
+      opts: { column: { getName(): string } },
+    ) =>
+      operation(
+        payloads.map((p) => ({
+          data: fakeEnvelope(p.plaintext, opts.column.getName()),
+        })),
+      ),
+
     // v2 filter path: batch query terms as composite literals
     encryptQuery: (terms: Array<{ value: unknown }>) =>
       operation(terms.map((t) => `("${String(t.value)}")`)),
