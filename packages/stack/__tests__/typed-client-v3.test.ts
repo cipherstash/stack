@@ -86,4 +86,40 @@ describe('typedClient — decrypt reconstruction', () => {
     const result = await client.decryptModel({}, table)
     expect(result.failure).toBeTruthy()
   })
+
+  it('fails with a DecryptionError when given a table it was not initialized with', async () => {
+    const other = encryptedTable('other', { x: types.Text('x') })
+    const client = typedClient(fakeClient({ when: null }), table)
+
+    const single = await client.decryptModel({}, other as never)
+    expect(single.failure?.type).toBe('DecryptionError')
+    expect(single.failure?.message).toMatch(/not initialized with/i)
+
+    const bulk = await client.bulkDecryptModels([{}], other as never)
+    expect(bulk.failure?.type).toBe('DecryptionError')
+  })
+
+  // Reconstructors are keyed by `tableName`, not object identity: a table
+  // re-imported from another module (or rebuilt across an HMR reload) is a
+  // distinct object that still satisfies `Table extends S[number]`.
+  it('decrypts when handed a structurally identical, separately constructed table', async () => {
+    const sameTableRebuilt = encryptedTable('t', {
+      when: types.Timestamp('when'),
+      note: types.Text('note'),
+      createdOn: types.Date('created_on'),
+    })
+    expect(sameTableRebuilt).not.toBe(table)
+
+    const client = typedClient(
+      fakeClient({ when: '2020-01-02T03:04:05.000Z', note: 'hi' }),
+      table,
+    )
+
+    const result = await client.decryptModel({}, sameTableRebuilt)
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    const data = result.data as Record<string, unknown>
+    expect(data.when).toBeInstanceOf(Date)
+  })
 })
