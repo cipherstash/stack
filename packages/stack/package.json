@@ -105,16 +105,6 @@
 				"default": "./dist/identity/index.cjs"
 			}
 		},
-		"./secrets": {
-			"import": {
-				"types": "./dist/secrets/index.d.ts",
-				"default": "./dist/secrets/index.js"
-			},
-			"require": {
-				"types": "./dist/secrets/index.d.cts",
-				"default": "./dist/secrets/index.cjs"
-			}
-		},
 		"./schema": {
 			"import": {
 				"types": "./dist/schema/index.d.ts",

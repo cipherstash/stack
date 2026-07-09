@@ -72,13 +72,13 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/secrets`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
 - `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
   - `src/index.ts`: Public API (`Encryption`, exports)
   - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`
   - `src/ffi/operations/*`: Encrypt/decrypt/model/bulk/query operations (thenable pattern with optional `.withLockContext()`)
   - `__tests__/*`: End-to-end and API contract tests (Vitest)
-- `packages/cli`: The `stash` CLI — auth, init, encryption schema, database setup (`stash eql install`), and secrets. Has its own `AGENTS.md`.
+- `packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
 - `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
 - `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
 - `packages/prisma-next`: Prisma Next integration (`@cipherstash/prisma-next`) — searchable field-level encryption for Postgres
@@ -91,7 +91,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-secrets`, `stash-supabase`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-supply-chain-security`)
 
 ## Supply Chain Security
 
@@ -120,7 +120,6 @@ Three rules to remember when editing CI or pnpm config:
   - **Drizzle ORM**: `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack/drizzle`
   - **Supabase**: `encryptedSupabase` from `@cipherstash/stack/supabase`
   - **DynamoDB**: `encryptedDynamoDB` from `@cipherstash/stack/dynamodb`
-- **Secrets management**: `Secrets` class from `@cipherstash/stack/secrets` for encrypted secret storage and retrieval.
 
 ## Critical Gotchas (read before coding)
 

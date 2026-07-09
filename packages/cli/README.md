@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/stash.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/stash)
 [![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 
-The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), schema building, and encrypted secrets management. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
+The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), and schema building. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
 
 ---
 
@@ -166,43 +166,6 @@ npx stash wizard [...flags]
 ```
 
 Any flags after `wizard` are forwarded verbatim to the wizard package. On the first run the package manager downloads the wizard (~5s); subsequent runs are instant.
-
----
-
-### `npx stash secrets`
-
-Manage end-to-end encrypted secrets.
-
-```bash
-npx stash secrets <subcommand> [options]
-```
-
-| Subcommand | Description |
-|------------|-------------|
-| `set` | Store an encrypted secret |
-| `get` | Retrieve and decrypt a secret |
-| `get-many` | Retrieve and decrypt multiple secrets (2–100) |
-| `list` | List all secrets in an environment |
-| `delete` | Delete a secret |
-
-**Flags:**
-
-| Flag | Alias | Description |
-|------|-------|-------------|
-| `--name` | `-n` | Secret name (comma-separated for `get-many`) |
-| `--value` | `-V` | Secret value (`set` only) |
-| `--environment` | `-e` | Environment name |
-| `--yes` | `-y` | Skip confirmation (`delete` only) |
-
-**Examples:**
-
-```bash
-npx stash secrets set -n DATABASE_URL -V "postgres://..." -e production
-npx stash secrets get -n DATABASE_URL -e production
-npx stash secrets get-many -n DATABASE_URL,API_KEY -e production
-npx stash secrets list -e production
-npx stash secrets delete -n DATABASE_URL -e production -y
-```
 
 ---
 
