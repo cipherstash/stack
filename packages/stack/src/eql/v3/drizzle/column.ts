@@ -1,15 +1,7 @@
 import { customType } from 'drizzle-orm/pg-core'
-import {
-  type AnyEncryptedV3Column,
-  type PlaintextForColumn,
-  types as v3Types,
-} from '@/eql/v3'
+import { type AnyEncryptedV3Column, types as v3Types } from '@/eql/v3'
+import type { Encrypted } from '@/types'
 import { v3FromDriver, v3ToDriver } from './codec.js'
-
-/** Every concrete `eql_v3.<domain>` string, derived from the eql/v3 factories. */
-export const EQL_V3_DOMAINS: ReadonlySet<string> = new Set(
-  Object.values(v3Types).map((factory) => factory('__probe__').getEqlType()),
-)
 
 const buildersByDomain: ReadonlyMap<
   string,
@@ -19,6 +11,11 @@ const buildersByDomain: ReadonlyMap<
     factory('__probe__').getEqlType(),
     factory,
   ]),
+)
+
+/** Every concrete `public.<domain>` string, derived from the eql/v3 factories. */
+export const EQL_V3_DOMAINS: ReadonlySet<string> = new Set(
+  buildersByDomain.keys(),
 )
 
 /**
@@ -81,19 +78,25 @@ function getSqlType(column: unknown): string | undefined {
 }
 
 export function makeEqlV3Column<C extends AnyEncryptedV3Column>(builder: C) {
-  type TData = PlaintextForColumn<C>
   const domain = builder.getEqlType()
   const name = builder.getName()
 
-  const column = customType<{ data: TData; driverData: string | null }>({
+  // What is stored/inserted/selected is the ENCRYPTED EQL v3 jsonb envelope
+  // (produced by `client.encrypt` / `bulkEncryptModels`), NOT the column's
+  // plaintext. So `data` is the envelope type — an insert takes an already-
+  // encrypted `Encrypted`, and a select yields one, ready for `decryptModel`.
+  const column = customType<{ data: Encrypted; driverData: string | null }>({
     dataType() {
       return domain
     },
-    toDriver(value: TData): string | null {
+    toDriver(value: Encrypted): string | null {
       return v3ToDriver(value)
     },
-    fromDriver(value: string | object | null | undefined): TData {
-      return v3FromDriver<TData>(value)
+    fromDriver(value: string | object | null | undefined): Encrypted {
+      // A present jsonb value round-trips to an envelope; the driver only
+      // reaches here for non-null values, so the SQL-NULL branch is a safety
+      // net rather than a live path (the boundary cast covers it).
+      return v3FromDriver(value) as Encrypted
     },
   })(name)
 

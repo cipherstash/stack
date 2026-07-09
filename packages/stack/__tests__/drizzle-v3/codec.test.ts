@@ -20,8 +20,12 @@ describe('v3 codec', () => {
     expect(v3FromDriver(obj)).toBe(obj)
   })
 
-  it('passes null/undefined through on read', () => {
+  it('normalises null/undefined to SQL NULL (JS null) on read', () => {
     expect(v3FromDriver(null)).toBeNull()
-    expect(v3FromDriver(undefined)).toBeUndefined()
+    expect(v3FromDriver(undefined)).toBeNull()
+  })
+
+  it('does not throw on a stray bigint in the envelope (defensive)', () => {
+    expect(v3ToDriver({ v: 1n } as never)).toBe('{"v":"1"}')
   })
 })

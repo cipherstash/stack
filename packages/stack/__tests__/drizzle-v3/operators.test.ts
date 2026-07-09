@@ -11,7 +11,6 @@ import {
 } from 'drizzle-orm'
 import { integer, PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
 import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
 import {
   createEncryptionOperatorsV3,
@@ -46,7 +45,9 @@ function setup(
   }),
 ) {
   const encrypt = vi.fn((...args: unknown[]) => chainable(encryptImpl(...args)))
-  const client = { encrypt } as unknown as EncryptionClient
+  // The factory's `client` parameter is the structural `{ encrypt }` surface,
+  // so this hand-rolled double satisfies it with no cast (M1).
+  const client = { encrypt }
   const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
   const dialect = new PgDialect()
   const render = (s: unknown) => dialect.sqlToQuery(s as SQL)

@@ -15,17 +15,47 @@ import {
   sql,
 } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import type { EncryptionClient } from '@/encryption'
 import type { AuditConfig } from '@/encryption/operations/base-operation'
 import type { AnyEncryptedV3Column, AnyV3Table } from '@/eql/v3'
 import type { LockContext } from '@/identity'
 import type { ColumnSchema } from '@/schema'
 import { getEqlV3Column } from './column.js'
-import { extractEncryptionSchemaV3 } from './schema-extraction.js'
+import {
+  extractEncryptionSchemaV3,
+  getDrizzleTableName,
+} from './schema-extraction.js'
 import { type ComparisonOp, type EqualityOp, v3Dialect } from './sql-dialect.js'
 
 const MAX_IN_ARRAY_CONCURRENCY = 4
 
+/**
+ * The single client capability this factory consumes: `encrypt`. Declared
+ * structurally — with maximally-permissive operands — so it is satisfied by the
+ * nominal `EncryptionClient`, by the `TypedEncryptionClient` that `EncryptionV3`
+ * returns (whatever its schema tuple), AND by a hand-rolled test double, none
+ * needing a cast. Typing the parameter to the nominal `TypedEncryptionClient<S>`
+ * would reject a client built for a narrower schema tuple (it accepts fewer
+ * tables than `readonly AnyV3Table[]`); the structural surface sidesteps that
+ * variance. The factory resolves the column/table at runtime and encrypts
+ * through its own casts, so it relies on none of the client's per-column
+ * `encrypt` overloads.
+ */
+type OperandEncryptionClient = {
+  encrypt(
+    plaintext: never,
+    opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
+  ): unknown
+}
+
+/**
+ * A dedicated error for v3 operator gating and operand-encryption failures,
+ * carrying the offending column/table/operator for diagnostics.
+ *
+ * INTENTIONAL FORK: this mirrors the v2 adapter's `EncryptionOperatorError`
+ * rather than sharing it. Unifying the two would couple `./drizzle` and
+ * `./eql/v3/drizzle` — two independently-versioned public entry points — so the
+ * duplication is deliberate, not an oversight.
+ */
 export class EncryptionOperatorError extends Error {
   constructor(
     message: string,
@@ -85,11 +115,35 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+/**
+ * Build v3-aware query operators (`eq`, `gte`, `contains`, `asc`, …) bound to an
+ * encryption `client`. Each comparison/containment operator AUTO-ENCRYPTS its
+ * plaintext operand into an EQL v3 query term before handing it to Drizzle, so
+ * callers pass plaintext and the emitted SQL compares encrypted values. Every
+ * operator also gates on the target column's capabilities and throws
+ * {@link EncryptionOperatorError} when the column can't answer the operator
+ * (e.g. ordering a non-`ore` column).
+ *
+ * @param client - anything that can `encrypt` — the nominal `EncryptionClient`
+ *   or the `TypedEncryptionClient` from `EncryptionV3` (no cast needed).
+ * @param defaults - lock context / audit applied to every operand encryption
+ *   unless a per-call override is supplied.
+ *
+ * @example
+ * ```typescript
+ * const ops = createEncryptionOperatorsV3(await EncryptionV3({ schemas: [users] }))
+ * await db.select().from(users).where(await ops.eq(users.email, 'a@b.com'))
+ * ```
+ */
 export function createEncryptionOperatorsV3(
-  client: EncryptionClient,
+  client: OperandEncryptionClient,
   defaults: EncryptionOperatorCallOpts = {},
 ) {
   const tableCache = new WeakMap<PgTable, AnyV3Table>()
+  // Per-column context memo. `resolveContext` is value-independent, so caching
+  // by column identity makes `inArray`/`notInArray` build the context (and its
+  // deep-cloned match block) once for the whole list instead of once per value.
+  const contextCache = new WeakMap<SQLWrapper, ColumnContext>()
 
   function drizzleTableOf(column: SQLWrapper): PgTable | undefined {
     return is(column, Column)
@@ -98,6 +152,9 @@ export function createEncryptionOperatorsV3(
   }
 
   function resolveContext(column: SQLWrapper, operator: string): ColumnContext {
+    const cached = contextCache.get(column)
+    if (cached) return cached
+
     const columnName = is(column, Column) ? column.name : 'unknown'
     const builder = getEqlV3Column(columnName, column)
     if (!builder) {
@@ -108,11 +165,7 @@ export function createEncryptionOperatorsV3(
     }
 
     const drizzleTable = drizzleTableOf(column)
-    const drizzleTableSymbols = drizzleTable as
-      | Record<symbol, string | undefined>
-      | undefined
-    const tableName =
-      drizzleTableSymbols?.[Symbol.for('drizzle:Name')] ?? 'unknown'
+    const tableName = getDrizzleTableName(drizzleTable) ?? 'unknown'
 
     let table = drizzleTable ? tableCache.get(drizzleTable) : undefined
     if (!table && drizzleTable) {
@@ -126,13 +179,15 @@ export function createEncryptionOperatorsV3(
       )
     }
 
-    return {
+    const context: ColumnContext = {
       builder,
       table,
       indexes: builder.build().indexes,
       columnName,
       tableName,
     }
+    contextCache.set(column, context)
+    return context
   }
 
   function requireIndex(
@@ -143,7 +198,7 @@ export function createEncryptionOperatorsV3(
   ): void {
     if (!ctx.indexes[index]) {
       throw new EncryptionOperatorError(
-        `Operator "${operator}" requires ${capability} on column "${ctx.columnName}" (eql_v3 domain ${ctx.builder.getEqlType()} does not support it).`,
+        `Operator "${operator}" requires ${capability} on column "${ctx.columnName}" (domain ${ctx.builder.getEqlType()} does not support it).`,
         { columnName: ctx.columnName, tableName: ctx.tableName, operator },
       )
     }
@@ -180,7 +235,7 @@ export function createEncryptionOperatorsV3(
     const result = await applyOperationOptions(
       client.encrypt(value as never, {
         table: ctx.table,
-        column: ctx.builder as never,
+        column: ctx.builder,
       }) as unknown as ChainableOperation,
       opts,
     )
@@ -234,8 +289,12 @@ export function createEncryptionOperatorsV3(
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
     requireIndex(ctx, 'ore', operator, 'order/range')
-    const encMin = await encryptOperand(ctx, min, operator, opts)
-    const encMax = await encryptOperand(ctx, max, operator, opts)
+    // Independent operands — encrypt concurrently rather than paying two
+    // sequential round-trips to the crypto backend.
+    const [encMin, encMax] = await Promise.all([
+      encryptOperand(ctx, min, operator, opts),
+      encryptOperand(ctx, max, operator, opts),
+    ])
     const condition = v3Dialect.range(colSql(left), encMin, encMax)
     return negate ? sql`NOT (${condition})` : condition
   }
@@ -294,52 +353,93 @@ export function createEncryptionOperatorsV3(
   }
 
   return {
+    /** Equality: `column = value`. Encrypts `r` and emits `eql_v3.eq`.
+     * Requires a `unique` or `ore` index on the column. */
     eq: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       equality('eq', l, r, opts),
+    /** Inequality: `column <> value`. Encrypts `r` and emits `eql_v3.neq`.
+     * Requires a `unique` or `ore` index on the column. */
     ne: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       equality('ne', l, r, opts),
+    /** Greater-than: `column > value`. Encrypts `r` and emits `eql_v3.gt`.
+     * Requires an `ore` (order/range) index. */
     gt: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       comparison('gt', l, r, opts),
+    /** Greater-than-or-equal: `column >= value`. Encrypts `r` and emits
+     * `eql_v3.gte`. Requires an `ore` (order/range) index. */
     gte: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       comparison('gte', l, r, opts),
+    /** Less-than: `column < value`. Encrypts `r` and emits `eql_v3.lt`.
+     * Requires an `ore` (order/range) index. */
     lt: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       comparison('lt', l, r, opts),
+    /** Less-than-or-equal: `column <= value`. Encrypts `r` and emits
+     * `eql_v3.lte`. Requires an `ore` (order/range) index. */
     lte: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       comparison('lte', l, r, opts),
+    /** Inclusive range `min <= column <= max`. Encrypts both bounds
+     * concurrently. Requires an `ore` (order/range) index. */
     between: (
       l: SQLWrapper,
       min: unknown,
       max: unknown,
       opts?: EncryptionOperatorCallOpts,
     ) => range(l, min, max, false, 'between', opts),
+    /** Negated inclusive range `NOT (min <= column <= max)`. Encrypts both
+     * bounds concurrently. Requires an `ore` (order/range) index. */
     notBetween: (
       l: SQLWrapper,
       min: unknown,
       max: unknown,
       opts?: EncryptionOperatorCallOpts,
     ) => range(l, min, max, true, 'notBetween', opts),
+    /** Free-text containment: emits `eql_v3.contains` over the encrypted match
+     * term. Encrypts `r`. Requires a `match` (free-text search) index. */
     contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       contains(l, r, 'contains', opts),
+    /** Membership: ORs one encrypted `eq` term per value. Each value is
+     * encrypted (concurrency-bounded). Rejects an empty list; requires a
+     * `unique` or `ore` index. */
     inArray: (
       l: SQLWrapper,
       values: unknown[],
       opts?: EncryptionOperatorCallOpts,
     ) => inArrayOp(l, values, false, 'inArray', opts),
+    /** Non-membership: ANDs one encrypted `ne` term per value. Each value is
+     * encrypted (concurrency-bounded). Rejects an empty list; requires a
+     * `unique` or `ore` index. */
     notInArray: (
       l: SQLWrapper,
       values: unknown[],
       opts?: EncryptionOperatorCallOpts,
     ) => inArrayOp(l, values, true, 'notInArray', opts),
+    /** Ascending order by the encrypted order term (`eql_v3.ord_term`).
+     * Synchronous (no operand to encrypt). Requires an `ore` index. */
     asc: (c: SQLWrapper) => asc(orderTerm(c, 'asc')),
+    /** Descending order by the encrypted order term (`eql_v3.ord_term`).
+     * Synchronous (no operand to encrypt). Requires an `ore` index. */
     desc: (c: SQLWrapper) => desc(orderTerm(c, 'desc')),
+    /** Conjunction of the given conditions, awaiting any async operands and
+     * dropping `undefined`. Empty input resolves to `true`. */
     and: (...conds: (SQL | SQLWrapper | Promise<SQL> | undefined)[]) =>
       combine(and, sql`true`, conds),
+    /** Disjunction of the given conditions, awaiting any async operands and
+     * dropping `undefined`. Empty input resolves to `false`. */
     or: (...conds: (SQL | SQLWrapper | Promise<SQL> | undefined)[]) =>
       combine(or, sql`false`, conds),
+    /** Drizzle's `isNull`, re-exported unchanged — `column IS NULL` needs no
+     * encryption and works on any (nullable) encrypted column. */
     isNull,
+    /** Drizzle's `isNotNull`, re-exported unchanged — `column IS NOT NULL`
+     * needs no encryption. */
     isNotNull,
+    /** Drizzle's `not`, re-exported unchanged — negates an already-built
+     * (encrypted) predicate. */
     not,
+    /** Drizzle's `exists`, re-exported unchanged — for correlated subqueries. */
     exists,
+    /** Drizzle's `notExists`, re-exported unchanged — for correlated
+     * subqueries. */
     notExists,
   }
 }

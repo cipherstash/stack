@@ -6,11 +6,23 @@ import {
 } from '@/eql/v3'
 import { getEqlV3Column } from './column.js'
 
+/** Drizzle stashes the SQL table name on this well-known symbol key. */
+const DRIZZLE_NAME = Symbol.for('drizzle:Name')
+
+/**
+ * Read the SQL table name Drizzle stashes on a `pgTable`. Returns `undefined`
+ * for a non-object or a table not built with `pgTable()`. Shared by
+ * {@link extractEncryptionSchemaV3} and the operator factory so the
+ * symbol-key introspection lives in exactly one place.
+ */
+export function getDrizzleTableName(table: unknown): string | undefined {
+  if (!table || typeof table !== 'object') return undefined
+  const name = (table as Record<symbol, unknown>)[DRIZZLE_NAME]
+  return typeof name === 'string' ? name : undefined
+}
+
 export function extractEncryptionSchemaV3(table: PgTable): AnyV3Table {
-  // biome-ignore lint/suspicious/noExplicitAny: drizzle stores table metadata on symbols
-  const tableName = (table as any)[Symbol.for('drizzle:Name')] as
-    | string
-    | undefined
+  const tableName = getDrizzleTableName(table)
   if (!tableName) {
     throw new Error(
       'Unable to read table name from Drizzle table. Use a table created with pgTable().',

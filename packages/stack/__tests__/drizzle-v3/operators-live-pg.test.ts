@@ -15,6 +15,7 @@ import {
   createEncryptionOperatorsV3,
   EncryptionOperatorError,
   extractEncryptionSchemaV3,
+  types as v3drizzle,
 } from '@/eql/v3/drizzle'
 import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
 import { installEqlV3IfNeeded } from '../helpers/eql-v3'
@@ -54,7 +55,7 @@ const matrixTable = pgTable(TABLE_NAME, {
     V3_MATRIX['public.text_eq'].builder('nullable_text_eq'),
   ),
   ...matrixColumns,
-} as never)
+})
 
 const accountsTable = pgTable(ACCOUNT_TABLE_NAME, {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -63,12 +64,31 @@ const accountsTable = pgTable(ACCOUNT_TABLE_NAME, {
   testRunId: text('test_run_id').notNull(),
 })
 
+// A statically-typed encrypted table (via the drizzle `types` namespace) with
+// concrete bigint columns. Unlike the dynamic matrix table, its column set is
+// known at compile time, so it exercises A3 end-to-end with ZERO casts: the
+// insert takes envelope rows and the select yields `Encrypted` values ready for
+// decrypt.
+const BIGINT_TABLE_NAME = 'protect_ci_v3_drizzle_bigint'
+const bigintTable = pgTable(BIGINT_TABLE_NAME, {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  rowKey: text('row_key').notNull(),
+  testRunId: text('test_run_id').notNull(),
+  balance: v3drizzle.BigintOrd('balance'),
+  ledger: v3drizzle.BigintEq('ledger'),
+})
+
+// Full i64 bounds — proves protect-ffi 0.28 round-trips a JS bigint beyond
+// Number.MAX_SAFE_INTEGER losslessly through the encrypted column.
+const BIGINT_BALANCE = 9223372036854775807n
+const BIGINT_LEDGER = -9223372036854775808n
+
 const schema = extractEncryptionSchemaV3(matrixTable)
+const bigintSchema = extractEncryptionSchemaV3(bigintTable)
 
 type PlainValue = string | number | boolean | Date
 type RowKey = typeof ROW_A | typeof ROW_B
 type MatrixPlainRow = Record<string, PlainValue | null | string>
-type MatrixDbRow = Record<string, unknown>
 type SelectRow = { rowKey: string }
 type Db = ReturnType<typeof drizzle>
 type Client = Awaited<ReturnType<typeof EncryptionV3>>
@@ -180,7 +200,7 @@ function encryptedInsertRows(): MatrixPlainRow[] {
 beforeAll(async () => {
   if (!LIVE_EQL_V3_PG_ENABLED) return
   await installEqlV3IfNeeded(sqlClient)
-  client = await EncryptionV3({ schemas: [schema] })
+  client = await EncryptionV3({ schemas: [schema, bigintSchema] })
   ops = createEncryptionOperatorsV3(client)
   db = drizzle({ client: sqlClient })
 
@@ -205,8 +225,17 @@ beforeAll(async () => {
       test_run_id TEXT NOT NULL
     )
   `)
+  await sqlClient.unsafe(`
+    CREATE TABLE IF NOT EXISTS ${BIGINT_TABLE_NAME} (
+      id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+      row_key TEXT NOT NULL,
+      test_run_id TEXT NOT NULL,
+      balance public.bigint_ord NOT NULL,
+      ledger public.bigint_eq NOT NULL
+    )
+  `)
 
-  const encryptedRows = unwrap<MatrixDbRow[]>(
+  const encryptedRows = unwrap(
     await client.bulkEncryptModels(encryptedInsertRows(), schema),
   )
   await db.insert(matrixTable).values(encryptedRows)
@@ -214,12 +243,24 @@ beforeAll(async () => {
     { rowKey: ROW_A, label: 'primary', testRunId: RUN },
     { rowKey: ROW_B, label: 'secondary', testRunId: RUN },
   ])
+
+  // A3 end-to-end, cast-free: encrypt a native bigint model, insert the
+  // resulting envelope rows (typed against the column's `Encrypted` data slot),
+  // no `as never` anywhere.
+  const bigintRows = unwrap(
+    await client.bulkEncryptModels(
+      [{ rowKey: ROW_A, testRunId: RUN, balance: BIGINT_BALANCE, ledger: BIGINT_LEDGER }],
+      bigintSchema,
+    ),
+  )
+  await db.insert(bigintTable).values(bigintRows)
 }, 120000)
 
 afterAll(async () => {
   if (!LIVE_EQL_V3_PG_ENABLED) return
   await sqlClient`DELETE FROM ${sqlClient(TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient`DELETE FROM ${sqlClient(ACCOUNT_TABLE_NAME)} WHERE test_run_id = ${RUN}`
+  await sqlClient`DELETE FROM ${sqlClient(BIGINT_TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient.end()
 }, 30000)
 
@@ -555,5 +596,46 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     )
     // Only '' is excluded (ROW_A); ROW_B ('ada@example.com') survives.
     expect(rows).toEqual([ROW_B])
+  }, 30000)
+
+  // A3 + bigint lock: a statically-typed bigint table round-trips a real i64
+  // value through encrypt → insert → select → decrypt with no casts. The select
+  // yields `Encrypted`-typed columns (the envelope), fed straight to decrypt.
+  it('round-trips a native bigint through a statically-typed encrypted column', async () => {
+    const encrypted = await db
+      .select({ balance: bigintTable.balance, ledger: bigintTable.ledger })
+      .from(bigintTable)
+      .where(drizzleEq(bigintTable.testRunId, RUN))
+    expect(encrypted).toHaveLength(1)
+
+    const decrypted = unwrap(
+      await client.decryptModel(encrypted[0], bigintSchema),
+    )
+    expect(decrypted.balance).toBe(BIGINT_BALANCE)
+    expect(decrypted.ledger).toBe(BIGINT_LEDGER)
+  }, 30000)
+
+  it('filters a bigint column by encrypted equality and ordering', async () => {
+    const byLedger = (await db
+      .select({ rowKey: bigintTable.rowKey })
+      .from(bigintTable)
+      .where(
+        and(
+          drizzleEq(bigintTable.testRunId, RUN),
+          await ops.eq(bigintTable.ledger, BIGINT_LEDGER),
+        ),
+      )) as SelectRow[]
+    expect(byLedger.map((row) => row.rowKey)).toEqual([ROW_A])
+
+    const byBalance = (await db
+      .select({ rowKey: bigintTable.rowKey })
+      .from(bigintTable)
+      .where(
+        and(
+          drizzleEq(bigintTable.testRunId, RUN),
+          await ops.gt(bigintTable.balance, 0n),
+        ),
+      )) as SelectRow[]
+    expect(byBalance.map((row) => row.rowKey)).toEqual([ROW_A])
   }, 30000)
 })
