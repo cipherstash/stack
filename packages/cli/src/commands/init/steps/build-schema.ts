@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { DEFAULT_CLIENT_PATH } from '../../../config/index.js'
+import { isInteractive } from '../../../config/tty.js'
 import {
   detectDrizzle,
   detectPrismaNext,
@@ -92,22 +93,32 @@ export const buildSchemaStep: InitStep = {
     // Existing-file branch: silent overwrite is bad. Ask once.
     let keepExisting = false
     if (existsSync(resolvedPath)) {
-      const action = await p.select({
-        message: `${clientFilePath} already exists. What would you like to do?`,
-        options: [
-          {
-            value: 'keep',
-            label: 'Keep existing file',
-            hint: 'skip code generation',
-          },
-          { value: 'overwrite', label: 'Overwrite with placeholder' },
-        ],
-      })
+      // Non-interactive (CI, agents, pipes): keep the existing file rather than
+      // prompt. Keeping is the safe default — never clobber the user's client
+      // without an explicit answer.
+      if (!isInteractive()) {
+        keepExisting = true
+        p.log.info(
+          `${clientFilePath} already exists; keeping it (non-interactive).`,
+        )
+      } else {
+        const action = await p.select({
+          message: `${clientFilePath} already exists. What would you like to do?`,
+          options: [
+            {
+              value: 'keep',
+              label: 'Keep existing file',
+              hint: 'skip code generation',
+            },
+            { value: 'overwrite', label: 'Overwrite with placeholder' },
+          ],
+        })
 
-      if (p.isCancel(action)) throw new CancelledError()
+        if (p.isCancel(action)) throw new CancelledError()
 
-      keepExisting = action === 'keep'
-      if (keepExisting) p.log.info('Keeping existing encryption client file.')
+        keepExisting = action === 'keep'
+        if (keepExisting) p.log.info('Keeping existing encryption client file.')
+      }
     }
 
     if (!keepExisting) {
