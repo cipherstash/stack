@@ -56,6 +56,7 @@
  */
 
 import type {
+  AnyExpression,
   AnyQueryAst,
   InsertAst,
   InsertValue,
@@ -229,7 +230,7 @@ function stampUpdate(ast: UpdateAst): void {
 }
 
 function stampParamRefIfEnvelope(
-  value: InsertValue,
+  value: AnyExpression | InsertValue,
   table: string,
   column: string,
 ): void {
