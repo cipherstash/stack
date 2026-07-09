@@ -570,6 +570,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@cipherstash/eql':
+        specifier: 3.0.0-alpha.3
+        version: 3.0.0-alpha.3
       '@clack/prompts':
         specifier: ^1.4.0
         version: 1.4.0
@@ -938,6 +941,9 @@ packages:
         optional: true
       '@cipherstash/auth-win32-x64-msvc':
         optional: true
+
+  '@cipherstash/eql@3.0.0-alpha.3':
+    resolution: {integrity: sha512-uOIuitxTWs1X4tRttcOuRfQoDofSH/+SDOwnY+DJF8qGbD7/xgEE3fsYoMjIyEdjkg9h4SLgpa04k1XsCIyaQA==}
 
   '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
     resolution: {integrity: sha512-DhkKC+trOfk3RLDvPXqGsrpWdVnLAMEVLUI59OuR9tdTcJeiABtbQx8VaXdbzvNxnbkoDnOqbFRE5D11Z7nerQ==}
@@ -4439,6 +4445,8 @@ snapshots:
       '@cipherstash/auth-linux-x64-gnu': 0.40.0
       '@cipherstash/auth-linux-x64-musl': 0.40.0
       '@cipherstash/auth-win32-x64-msvc': 0.40.0
+
+  '@cipherstash/eql@3.0.0-alpha.3': {}
 
   '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
     optional: true

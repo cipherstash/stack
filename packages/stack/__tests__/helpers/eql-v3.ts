@@ -1,33 +1,33 @@
-import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
 import type postgres from 'postgres'
 
 const EQL_V3_ADVISORY_LOCK_ID = 3_733_003
 
-const helperDir = dirname(fileURLToPath(import.meta.url))
-const eqlV3SqlPath = resolve(
-  helperDir,
-  '../fixtures/eql-v3/cipherstash-encrypt-v3.sql',
-)
-
-// The sentinel must be a type that exists ONLY in the currently vendored
-// bundle, so a database still carrying an older EQL v3 install is detected as
-// stale and reinstalled (the bundle's leading DROP SCHEMA … CASCADE replaces
-// the old install wholesale). public.timestamp is new in the current bundle
-// (the timestamptz → timestamp rename, encrypt-query-language@2e64ca73); the
-// previous sentinel, public.text_search, exists in both generations and would
-// leave a stale install in place.
+// Staleness is decided by asking the database which EQL release it is running
+// and comparing that to the release the pinned @cipherstash/eql ships. Earlier
+// revisions probed for a sentinel type (public.text_search, then
+// public.timestamp) that was hand-picked to exist only in the newest bundle.
+// Every such sentinel decays: the next bundle keeps the type, the check starts
+// reporting "current" against a stale install, and the suite silently exercises
+// the wrong SQL. eql_v3.version() carries the release identity itself, so this
+// needs no maintenance when the pin moves.
+//
+// to_regprocedure() yields NULL instead of raising when the function is absent,
+// so a database with no EQL v3 — or with a bundle predating eql_v3.version() —
+// reads as stale and gets installed rather than erroring.
 async function hasCurrentEqlV3(sql: postgres.Sql): Promise<boolean> {
-  const [row] = await sql<{ installed: boolean }[]>`
-    SELECT to_regtype('public.timestamp') IS NOT NULL AS installed
+  const [row] = await sql<{ version: string | null }[]>`
+    SELECT CASE
+      WHEN to_regprocedure('eql_v3.version()') IS NULL THEN NULL
+      ELSE eql_v3.version()
+    END AS version
   `
-  return row?.installed ?? false
+  return row?.version === releaseManifest.eqlVersion
 }
 
 /**
- * Install the generated EQL v3 SQL bundle only when the target database does
- * not already expose the current bundle's sentinel type (see hasCurrentEqlV3).
+ * Install the EQL v3 SQL bundle shipped by @cipherstash/eql only when the
+ * target database is not already running that exact release.
  *
  * The bundle starts with DROP SCHEMA IF EXISTS eql_v3 CASCADE, so callers must
  * never run it unconditionally against a shared test database.
@@ -45,11 +45,20 @@ export async function installEqlV3IfNeeded(sql: postgres.Sql): Promise<void> {
     try {
       if (await hasCurrentEqlV3(reserved)) return
 
-      const eqlV3Sql = await readFile(eqlV3SqlPath, 'utf8')
-      await reserved.unsafe(eqlV3Sql)
+      // Sent as one multi-statement string: the bundle is ~43k lines and a
+      // statement-at-a-time client would pay a round-trip per CREATE FUNCTION.
+      await reserved.unsafe(readInstallSql())
 
       if (!(await hasCurrentEqlV3(reserved))) {
-        throw new Error('EQL v3 installation did not create public.timestamp')
+        const [row] = await reserved<{ version: string | null }[]>`
+          SELECT CASE
+            WHEN to_regprocedure('eql_v3.version()') IS NULL THEN NULL
+            ELSE eql_v3.version()
+          END AS version
+        `
+        throw new Error(
+          `EQL v3 installation did not yield the expected release: wanted ${releaseManifest.eqlVersion}, got ${row?.version ?? 'no eql_v3.version()'}`,
+        )
       }
     } finally {
       await reserved`SELECT pg_advisory_unlock(${EQL_V3_ADVISORY_LOCK_ID})`

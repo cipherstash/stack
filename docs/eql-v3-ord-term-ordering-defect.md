@@ -33,8 +33,14 @@ ORE-correct — and they are correct regardless of superuser.
 
 ## Why this happens on Supabase
 
-File: `packages/stack/__tests__/fixtures/eql-v3/cipherstash-encrypt-v3.sql`
-(the vendored bundle — do not hand-edit; it is regenerated on re-vendor).
+File: the EQL v3 install bundle shipped by `@cipherstash/eql`, at
+`node_modules/@cipherstash/eql/dist/sql/cipherstash-encrypt.sql` (or via
+`installSqlPath()` from `@cipherstash/eql/sql`). Generated upstream — never
+hand-edit; bump the pinned package version instead.
+
+Line numbers below were recorded against the bundle vendored at the time of
+writing and are indicative only; the released bundle orders its source files
+differently. Locate the definitions by name.
 
 1. `eql_v3.ord_term(a public.text_search)` (and every `*_ord` domain, e.g.
    `public.integer_ord` at line 18117) returns the **composite** type
