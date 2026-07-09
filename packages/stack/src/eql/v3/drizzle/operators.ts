@@ -29,20 +29,27 @@ import { type ComparisonOp, type EqualityOp, v3Dialect } from './sql-dialect.js'
 const MAX_IN_ARRAY_CONCURRENCY = 4
 
 /**
- * The single client capability this factory consumes: `encrypt`. Declared
- * structurally — with maximally-permissive operands — so it is satisfied by the
- * nominal `EncryptionClient`, by the `TypedEncryptionClient` that `EncryptionV3`
- * returns (whatever its schema tuple), AND by a hand-rolled test double, none
- * needing a cast. Typing the parameter to the nominal `TypedEncryptionClient<S>`
- * would reject a client built for a narrower schema tuple (it accepts fewer
- * tables than `readonly AnyV3Table[]`); the structural surface sidesteps that
- * variance. The factory resolves the column/table at runtime and encrypts
- * through its own casts, so it relies on none of the client's per-column
- * `encrypt` overloads.
+ * The client capabilities this factory consumes: `encrypt`, and `bulkEncrypt`
+ * when the client offers it. Declared structurally — with maximally-permissive
+ * operands — so it is satisfied by the nominal `EncryptionClient`, by the
+ * `TypedEncryptionClient` that `EncryptionV3` returns (whatever its schema
+ * tuple), AND by a hand-rolled test double, none needing a cast. Typing the
+ * parameter to the nominal `TypedEncryptionClient<S>` would reject a client
+ * built for a narrower schema tuple (it accepts fewer tables than
+ * `readonly AnyV3Table[]`); the structural surface sidesteps that variance. The
+ * factory resolves the column/table at runtime and encrypts through its own
+ * casts, so it relies on none of the client's per-column `encrypt` overloads.
+ *
+ * `bulkEncrypt` is optional so a `{ encrypt }`-only client stays valid; the
+ * list operators fall back to bounded-concurrency single encryption without it.
  */
 type OperandEncryptionClient = {
   encrypt(
     plaintext: never,
+    opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
+  ): unknown
+  bulkEncrypt?(
+    plaintexts: never,
     opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
   ): unknown
 }
@@ -190,19 +197,28 @@ export function createEncryptionOperatorsV3(
     return context
   }
 
+  /**
+   * Gate an operator on the column's indexes. `indexes` is a disjunction — any
+   * one of them grants the capability — so equality (`unique` OR `ore`) and the
+   * single-index gates share one rule and one diagnostic shape.
+   */
   function requireIndex(
     ctx: ColumnContext,
-    index: 'unique' | 'ore' | 'match',
+    indexes: readonly ('unique' | 'ore' | 'match')[],
     operator: string,
     capability: string,
   ): void {
-    if (!ctx.indexes[index]) {
+    if (!indexes.some((index) => ctx.indexes[index])) {
       throw new EncryptionOperatorError(
         `Operator "${operator}" requires ${capability} on column "${ctx.columnName}" (domain ${ctx.builder.getEqlType()} does not support it).`,
         { columnName: ctx.columnName, tableName: ctx.tableName, operator },
       )
     }
   }
+
+  const EQUALITY_INDEXES = ['unique', 'ore'] as const
+  const ORE_INDEXES = ['ore'] as const
+  const MATCH_INDEXES = ['match'] as const
 
   function applyOperationOptions(
     op: ChainableOperation,
@@ -215,12 +231,11 @@ export function createEncryptionOperatorsV3(
     return withLock
   }
 
-  async function encryptOperand(
+  function requireNonNullOperand(
     ctx: ColumnContext,
     value: unknown,
     operator: string,
-    opts?: EncryptionOperatorCallOpts,
-  ): Promise<SQL> {
+  ): void {
     if (value == null) {
       throw new EncryptionOperatorError(
         `Operator "${operator}" cannot encrypt a null operand for column "${ctx.columnName}". Use isNull() or isNotNull() for NULL checks.`,
@@ -231,6 +246,26 @@ export function createEncryptionOperatorsV3(
         },
       )
     }
+  }
+
+  function operandFailure(
+    ctx: ColumnContext,
+    operator: string,
+    reason: string,
+  ): EncryptionOperatorError {
+    return new EncryptionOperatorError(
+      `Failed to encrypt query operand for "${ctx.columnName}": ${reason}`,
+      { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+    )
+  }
+
+  async function encryptOperand(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    requireNonNullOperand(ctx, value, operator)
 
     const result = await applyOperationOptions(
       client.encrypt(value as never, {
@@ -240,12 +275,56 @@ export function createEncryptionOperatorsV3(
       opts,
     )
     if (result.failure) {
-      throw new EncryptionOperatorError(
-        `Failed to encrypt query operand for "${ctx.columnName}": ${result.failure.message}`,
-        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
-      )
+      throw operandFailure(ctx, operator, result.failure.message)
     }
     return sql`${JSON.stringify(result.data)}`
+  }
+
+  /**
+   * Encrypt a whole operand list. Prefers the client's `bulkEncrypt` — one FFI
+   * crossing for the entire list, rather than one per value — and falls back to
+   * bounded-concurrency single encryption for clients that don't expose it.
+   *
+   * `bulkEncrypt` is position-stable, so the returned terms align index-for-
+   * index with `values`; a response of a different length means the contract
+   * was violated and is rejected rather than silently truncating the predicate
+   * (which would widen an `inArray` or narrow a `notInArray`).
+   */
+  async function encryptOperands(
+    ctx: ColumnContext,
+    values: unknown[],
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL[]> {
+    for (const value of values) requireNonNullOperand(ctx, value, operator)
+
+    const bulkEncrypt = client.bulkEncrypt?.bind(client)
+    if (!bulkEncrypt) {
+      return mapWithConcurrency(values, MAX_IN_ARRAY_CONCURRENCY, (value) =>
+        encryptOperand(ctx, value, operator, opts),
+      )
+    }
+
+    const result = await applyOperationOptions(
+      bulkEncrypt(values.map((plaintext) => ({ plaintext })) as never, {
+        table: ctx.table,
+        column: ctx.builder,
+      }) as unknown as ChainableOperation,
+      opts,
+    )
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+
+    const encrypted = result.data as Array<{ data: unknown }> | undefined
+    if (!Array.isArray(encrypted) || encrypted.length !== values.length) {
+      throw operandFailure(
+        ctx,
+        operator,
+        `bulk encryption returned ${Array.isArray(encrypted) ? encrypted.length : 0} terms for ${values.length} values.`,
+      )
+    }
+    return encrypted.map((term) => sql`${JSON.stringify(term.data)}`)
   }
 
   const colSql = (column: SQLWrapper): SQL => sql`${column}`
@@ -257,12 +336,7 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, op)
-    if (!ctx.indexes.unique && !ctx.indexes.ore) {
-      throw new EncryptionOperatorError(
-        `Operator "${op}" requires equality on column "${ctx.columnName}".`,
-        { columnName: ctx.columnName, tableName: ctx.tableName, operator: op },
-      )
-    }
+    requireIndex(ctx, EQUALITY_INDEXES, op, 'equality')
     const enc = await encryptOperand(ctx, right, op, opts)
     return v3Dialect.equality(op, colSql(left), enc)
   }
@@ -274,7 +348,7 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, op)
-    requireIndex(ctx, 'ore', op, 'order/range')
+    requireIndex(ctx, ORE_INDEXES, op, 'order/range')
     const enc = await encryptOperand(ctx, right, op, opts)
     return v3Dialect.comparison(op, colSql(left), enc)
   }
@@ -288,15 +362,17 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
-    requireIndex(ctx, 'ore', operator, 'order/range')
+    requireIndex(ctx, ORE_INDEXES, operator, 'order/range')
     // Independent operands — encrypt concurrently rather than paying two
     // sequential round-trips to the crypto backend.
     const [encMin, encMax] = await Promise.all([
       encryptOperand(ctx, min, operator, opts),
       encryptOperand(ctx, max, operator, opts),
     ])
+    // `v3Dialect.range` is already parenthesised, so `NOT` binds to the whole
+    // conjunction without a wrapper here.
     const condition = v3Dialect.range(colSql(left), encMin, encMax)
-    return negate ? sql`NOT (${condition})` : condition
+    return negate ? sql`NOT ${condition}` : condition
   }
 
   async function contains(
@@ -306,7 +382,7 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
-    requireIndex(ctx, 'match', operator, 'free-text search')
+    requireIndex(ctx, MATCH_INDEXES, operator, 'free-text search')
     const enc = await encryptOperand(ctx, right, operator, opts)
     return v3Dialect.contains(colSql(left), enc)
   }
@@ -318,17 +394,20 @@ export function createEncryptionOperatorsV3(
     operator: string,
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
+    const ctx = resolveContext(left, operator)
     if (values.length === 0) {
-      const ctx = resolveContext(left, operator)
       throw new EncryptionOperatorError(
         `Operator "${operator}" requires a non-empty list of values for column "${ctx.columnName}".`,
         { columnName: ctx.columnName, tableName: ctx.tableName, operator },
       )
     }
-    const conditions = await mapWithConcurrency(
-      values,
-      MAX_IN_ARRAY_CONCURRENCY,
-      (v) => equality(negate ? 'ne' : 'eq', left, v, opts),
+    // Gate and resolve the context once for the whole list, then encrypt it in
+    // a single crossing where the client supports it.
+    requireIndex(ctx, EQUALITY_INDEXES, operator, 'equality')
+    const op: EqualityOp = negate ? 'ne' : 'eq'
+    const encrypted = await encryptOperands(ctx, values, operator, opts)
+    const conditions = encrypted.map((enc) =>
+      v3Dialect.equality(op, colSql(left), enc),
     )
     const combined = negate ? and(...conditions) : or(...conditions)
     return combined ?? (negate ? sql`true` : sql`false`)
@@ -336,7 +415,7 @@ export function createEncryptionOperatorsV3(
 
   function orderTerm(column: SQLWrapper, operator: string): SQL {
     const ctx = resolveContext(column, operator)
-    requireIndex(ctx, 'ore', operator, 'order/range')
+    requireIndex(ctx, ORE_INDEXES, operator, 'order/range')
     return v3Dialect.orderBy(colSql(column))
   }
 
@@ -397,16 +476,18 @@ export function createEncryptionOperatorsV3(
      * term. Encrypts `r`. Requires a `match` (free-text search) index. */
     contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       contains(l, r, 'contains', opts),
-    /** Membership: ORs one encrypted `eq` term per value. Each value is
-     * encrypted (concurrency-bounded). Rejects an empty list; requires a
+    /** Membership: ORs one encrypted `eq` term per value. The whole list is
+     * encrypted in one `bulkEncrypt` crossing where the client supports it,
+     * otherwise concurrency-bounded. Rejects an empty list; requires a
      * `unique` or `ore` index. */
     inArray: (
       l: SQLWrapper,
       values: unknown[],
       opts?: EncryptionOperatorCallOpts,
     ) => inArrayOp(l, values, false, 'inArray', opts),
-    /** Non-membership: ANDs one encrypted `ne` term per value. Each value is
-     * encrypted (concurrency-bounded). Rejects an empty list; requires a
+    /** Non-membership: ANDs one encrypted `ne` term per value. The whole list
+     * is encrypted in one `bulkEncrypt` crossing where the client supports it,
+     * otherwise concurrency-bounded. Rejects an empty list; requires a
      * `unique` or `ore` index. */
     notInArray: (
       l: SQLWrapper,
@@ -434,7 +515,8 @@ export function createEncryptionOperatorsV3(
      * needs no encryption. */
     isNotNull,
     /** Drizzle's `not`, re-exported unchanged — negates an already-built
-     * (encrypted) predicate. */
+     * (encrypted) predicate. Safe over any operator here, including `between`,
+     * whose fragment is self-parenthesising. */
     not,
     /** Drizzle's `exists`, re-exported unchanged — for correlated subqueries. */
     exists,

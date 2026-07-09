@@ -17,9 +17,7 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
   type V3Client = Awaited<ReturnType<typeof EncryptionV3>>
 
   it('accepts the client EncryptionV3 returns with no cast', () => {
-    expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith(
-      {} as V3Client,
-    )
+    expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith({} as V3Client)
   })
 
   it('still accepts the nominal EncryptionClient', () => {

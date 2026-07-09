@@ -63,6 +63,7 @@ import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
+  eqlTypeSlug as slug,
   typedEntries,
   V3_MATRIX,
 } from './catalog'
@@ -83,12 +84,6 @@ const sql = LIVE_EQL_V3_PG_ENABLED
 
 const TABLE_NAME = 'v3_matrix_live_pg'
 const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-
-/** `public.integer_ord` -> `integer_ord`: a valid, unique Postgres column name.
- * The domains were renamed `eql_v3.* -> public.*`, so strip the `public.`
- * prefix — a leftover dot in the column name breaks both the FFI's identifier
- * resolution and the `"col" <type>` DDL below. */
-const slug = (t: EqlV3TypeName): string => t.replace(/^public\./, '')
 
 const expectDecryptedStorageValue = (
   decrypted: unknown,
@@ -308,10 +303,13 @@ beforeAll(async () => {
   // are built dynamically (`Object.fromEntries`) and carry no static type.
   const encryptOperand = async (t: EqlV3TypeName, value: unknown) =>
     unwrapResult(
-      await client.encrypt(value as never, {
-        table,
-        column: columnRef(t),
-      } as never),
+      await client.encrypt(
+        value as never,
+        {
+          table,
+          column: columnRef(t),
+        } as never,
+      ),
     )
   for (const [t, spec] of eqDomains) {
     eqTerms[slug(t)] = await encryptOperand(t, spec.samples[0])
@@ -475,7 +473,9 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       .sort((x, y) => comparePlaintext(x.value, y.value))
       .map((entry) => entry.id)
 
-    const pairs = await sql.unsafe<Array<{ a: number; b: number; lt: boolean }>>(
+    const pairs = await sql.unsafe<
+      Array<{ a: number; b: number; lt: boolean }>
+    >(
       `SELECT x.id AS a, y.id AS b, eql_v3.lt(x."${col}", y."${col}") AS lt
          FROM ${TABLE_NAME} x
          CROSS JOIN ${TABLE_NAME} y

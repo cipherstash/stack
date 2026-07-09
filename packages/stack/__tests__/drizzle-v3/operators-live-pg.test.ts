@@ -23,6 +23,7 @@ import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
+  eqlTypeSlug as slug,
   typedEntries,
   V3_MATRIX,
 } from '../v3-matrix/catalog'
@@ -38,7 +39,6 @@ const RUN = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const ROW_A = 'row-a'
 const ROW_B = 'row-b'
 
-const slug = (eqlType: EqlV3TypeName): string => eqlType.replace(/^public\./, '')
 const matrixEntries = typedEntries(V3_MATRIX)
 const matrixColumns = Object.fromEntries(
   matrixEntries.map(([eqlType, spec]) => [
@@ -249,7 +249,14 @@ beforeAll(async () => {
   // no `as never` anywhere.
   const bigintRows = unwrap(
     await client.bulkEncryptModels(
-      [{ rowKey: ROW_A, testRunId: RUN, balance: BIGINT_BALANCE, ledger: BIGINT_LEDGER }],
+      [
+        {
+          rowKey: ROW_A,
+          testRunId: RUN,
+          balance: BIGINT_BALANCE,
+          ledger: BIGINT_LEDGER,
+        },
+      ],
       bigintSchema,
     ),
   )
@@ -393,6 +400,37 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
       expect(rows).toEqual(
         expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
       )
+    },
+    30000,
+  )
+
+  // `between` returns a two-function conjunction; Drizzle's passthrough `not`
+  // prepends a bare `not` with no parentheses of its own. Postgres binds NOT
+  // tighter than AND, so an unparenthesised range would run as
+  // `(NOT gte(col, bound)) AND lte(col, bound)` — i.e. `col < bound` — instead
+  // of the range's complement, `col != bound`.
+  //
+  // The bound MUST be the SMALLER of the two seeded values. Anchored at the
+  // larger one, `col < bound` and `col != bound` both select the other row and
+  // the buggy SQL passes; anchored at the smaller, the buggy SQL selects
+  // nothing while the correct SQL selects the larger row. Several domains seed
+  // ROW_A with their maximum sample (`integer_ord` is `[0, -42]`), so keying
+  // off ROW_A directly would make this test vacuous for them.
+  it.each(orderDomains)(
+    '%s not(between(...)) negates the whole range',
+    async (eqlType, spec) => {
+      const bound = [plainValue(spec, ROW_A), plainValue(spec, ROW_B)].sort(
+        comparePlain,
+      )[0]
+      const rows = await selectRowKeys(
+        ops.not(await ops.between(matrixColumn(eqlType), bound, bound)),
+      )
+      expect(rows).toEqual(
+        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
+      )
+      // Guards the guard: the expectation must be non-empty, or the buggy
+      // `col < bound` (which returns nothing) would satisfy it too.
+      expect(rows.length).toBeGreaterThan(0)
     },
     30000,
   )
@@ -564,12 +602,14 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     )
   }, 30000)
 
-  // The matrix inArray/notInArray cases above use 2-element lists, so the
-  // MAX_IN_ARRAY_CONCURRENCY=4 worker pool (operators.ts) never actually
-  // concurrently encrypts more terms than the serial path would. These cross
-  // the pool boundary: 5 values (> 4) forces the pool to reuse workers, and
-  // must still produce the correct OR/AND of eq/ne terms.
-  it('inArray encrypts a >4-value list through the concurrency pool', async () => {
+  // A real `TypedEncryptionClient` exposes `bulkEncrypt`, so these lists are
+  // encrypted in one FFI crossing and the returned terms must line up
+  // index-for-index with the values. Five values also crosses the
+  // MAX_IN_ARRAY_CONCURRENCY=4 boundary of the single-encrypt fallback that a
+  // `bulkEncrypt`-less client would take. Either way the OR/AND of eq/ne terms
+  // must be correct — a misaligned bulk response would silently select the
+  // wrong rows here.
+  it('inArray encrypts a >4-value list in one bulk crossing', async () => {
     const rows = await selectRowKeys(
       await ops.inArray(matrixColumn('public.text_eq'), [
         'ada@example.com',
@@ -584,7 +624,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     expect(rows).toEqual([ROW_A, ROW_B])
   }, 30000)
 
-  it('notInArray encrypts a >4-value list through the concurrency pool', async () => {
+  it('notInArray encrypts a >4-value list in one bulk crossing', async () => {
     const rows = await selectRowKeys(
       await ops.notInArray(matrixColumn('public.text_eq'), [
         '',

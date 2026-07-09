@@ -7,9 +7,12 @@ import {
   isEqlV3Column,
   makeEqlV3Column,
 } from '@/eql/v3/drizzle/column'
-import { typedEntries, V3_MATRIX } from '../v3-matrix/catalog'
-
-const slug = (eqlType: string) => eqlType.replace(/^public\./, '')
+import {
+  EQL_V3_DOMAIN_SCHEMA,
+  eqlTypeSlug as slug,
+  typedEntries,
+  V3_MATRIX,
+} from '../v3-matrix/catalog'
 
 describe('makeEqlV3Column', () => {
   it('sets dataType() to the concrete eql_v3 domain', () => {
@@ -28,6 +31,43 @@ describe('makeEqlV3Column', () => {
     expect(getEqlV3Column('nickname', t.nickname)?.getEqlType()).toBe(
       'public.text_eq',
     )
+  })
+
+  it('stashes the builder under a single symbol key, with no string twin', () => {
+    const symbol = Symbol.for('cipherstash:eqlv3Column')
+    const carrierOf = (column: unknown) =>
+      (column as { config?: { customTypeParams?: Record<string, unknown> } })
+        .config?.customTypeParams
+
+    const col = makeEqlV3Column(v3Types.TextEq('nickname'))
+    const table = pgTable('users', { nickname: col })
+
+    // `pgTable` builds a NEW PgColumn that does not carry the symbol directly —
+    // it reaches the builder only through the shared `config.customTypeParams`.
+    // That is the carrier the operators actually resolve through, so assert on
+    // it specifically rather than on "some carrier somewhere".
+    const pgCarrier = carrierOf(table.nickname)
+    expect(pgCarrier).toBeDefined()
+    expect(symbol in (pgCarrier as object)).toBe(true)
+    expect(getEqlV3Column('nickname', table.nickname)?.getEqlType()).toBe(
+      'public.text_eq',
+    )
+
+    // ...and no carrier keeps a redundant string twin of the symbol key.
+    for (const carrier of [col, carrierOf(col), table.nickname]) {
+      expect(carrier).toBeDefined()
+      expect('_eqlv3Column' in (carrier as object)).toBe(false)
+    }
+  })
+
+  it('every matrix domain slugs to a bare, dot-free column identifier', () => {
+    // Guards the shared slug against drifting from the real domain schema: if
+    // the domains move, the prefix constant must move with them or the slug
+    // silently leaks a qualified name into the generated DDL.
+    for (const [eqlType] of typedEntries(V3_MATRIX)) {
+      expect(eqlType.startsWith(`${EQL_V3_DOMAIN_SCHEMA}.`)).toBe(true)
+      expect(slug(eqlType)).not.toContain('.')
+    }
   })
 
   it('EQL_V3_DOMAINS contains every concrete domain', () => {

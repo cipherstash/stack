@@ -18,7 +18,11 @@ import {
 } from '@/eql/v3/drizzle/operators'
 import { extractEncryptionSchemaV3 } from '@/eql/v3/drizzle/schema-extraction'
 import { types } from '@/eql/v3/drizzle/types'
-import { typedEntries, V3_MATRIX } from '../v3-matrix/catalog'
+import {
+  eqlTypeSlug as slug,
+  typedEntries,
+  V3_MATRIX,
+} from '../v3-matrix/catalog'
 
 const TERM = { c: 'ct', v: 1 }
 const TERM_JSON = JSON.stringify(TERM)
@@ -54,7 +58,32 @@ function setup(
   return { ops, encrypt, render }
 }
 
-const slug = (eqlType: string) => eqlType.replace(/^public\./, '')
+type BulkPayload = Array<{ id?: string; plaintext: unknown }>
+type BulkResult = Promise<
+  { data: Array<{ data: typeof TERM }> } | { failure: { message: string } }
+>
+
+/**
+ * A double for the fuller client surface — one that also exposes `bulkEncrypt`,
+ * as the real `TypedEncryptionClient` does. `inArray`/`notInArray` should
+ * prefer it over N single `encrypt` crossings.
+ */
+function setupBulk(
+  bulkImpl: (payloads: BulkPayload) => BulkResult = async (payloads) => ({
+    data: payloads.map(() => ({ data: TERM })),
+  }),
+) {
+  const encrypt = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
+  const bulkEncrypt = vi.fn((payloads: BulkPayload, ..._rest: unknown[]) =>
+    chainable(bulkImpl(payloads) as never),
+  )
+  const client = { encrypt, bulkEncrypt }
+  const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
+  const dialect = new PgDialect()
+  const render = (s: unknown) => dialect.sqlToQuery(s as SQL)
+  return { ops, encrypt, bulkEncrypt, render }
+}
+
 const matrixEntries = typedEntries(V3_MATRIX)
 const matrixTable = pgTable(
   'matrix_users',
@@ -231,6 +260,34 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     expect(q.params).toEqual([TERM_JSON, TERM_JSON])
   })
 
+  it('not(between(...)) negates the whole range, not just its lower bound', async () => {
+    const { ops, render } = setup()
+
+    const q = render(ops.not(await ops.between(users.age, 25, 40)))
+
+    // `not eql_v3.gte(..) AND eql_v3.lte(..)` would parse as `(NOT gte) AND
+    // lte` in Postgres — every row under the lower bound, none of the intended
+    // complement. The range must arrive pre-parenthesised.
+    expect(q.sql).toBe(
+      'not (eql_v3.gte("users"."age", $1::jsonb) AND eql_v3.lte("users"."age", $2::jsonb))',
+    )
+  })
+
+  it('between stays parenthesised when combined with other predicates', async () => {
+    const { ops, render } = setup()
+
+    const q = render(
+      await ops.or(
+        ops.between(users.age, 25, 40),
+        ops.eq(users.nickname, 'ada'),
+      ),
+    )
+
+    expect(q.sql).toContain(
+      '(eql_v3.gte("users"."age", $1::jsonb) AND eql_v3.lte("users"."age", $2::jsonb))',
+    )
+  })
+
   it.each(orderDomains)('%s asc / desc extract the ord term', (eqlType) => {
     const { ops, render } = setup()
     const ascq = render(ops.asc(matrixColumn(eqlType)))
@@ -353,6 +410,105 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
     expect((q.sql.match(/eql_v3\.neq/g) ?? []).length).toBe(2)
   })
 
+  it('inArray encrypts the whole list in a single bulkEncrypt crossing', async () => {
+    const { ops, encrypt, bulkEncrypt, render } = setupBulk()
+    const values = ['ada', 'grace', 'alan', 'katherine', 'dorothy']
+
+    const q = render(await ops.inArray(users.nickname, values))
+
+    expect(bulkEncrypt).toHaveBeenCalledTimes(1)
+    expect(encrypt).not.toHaveBeenCalled()
+    expect(bulkEncrypt.mock.calls[0]?.[0]).toEqual(
+      values.map((plaintext) => ({ plaintext })),
+    )
+    const opts = bulkEncrypt.mock.calls[0]?.[1] as {
+      column: { getName(): string }
+    }
+    expect(opts.column.getName()).toBe('nickname')
+    expect((q.sql.match(/eql_v3\.eq/g) ?? []).length).toBe(values.length)
+    expect(q.params).toEqual(values.map(() => TERM_JSON))
+  })
+
+  it('notInArray bulk-encrypts once and ANDs one ne term per value', async () => {
+    const { ops, bulkEncrypt, render } = setupBulk()
+
+    const q = render(await ops.notInArray(users.nickname, ['ada', 'grace']))
+
+    expect(bulkEncrypt).toHaveBeenCalledTimes(1)
+    expect((q.sql.match(/eql_v3\.neq/g) ?? []).length).toBe(2)
+    expect(q.sql).toContain(' and ')
+  })
+
+  it('bulk operand encryption carries the lock context and audit config', async () => {
+    const { ops, bulkEncrypt } = setupBulk()
+
+    await ops.inArray(users.nickname, ['ada', 'grace'])
+
+    const op = bulkEncrypt.mock.results[0]?.value
+    expect(op.withLockContext).toHaveBeenCalledWith(lockContext)
+    expect(op.audit).toHaveBeenCalledWith(audit)
+  })
+
+  it('bulk terms keep their positions so each eq term matches its value', async () => {
+    const terms = [{ c: 'ada' }, { c: 'grace' }] as unknown as Array<{
+      data: typeof TERM
+    }>
+    const { ops, render } = setupBulk(async () => ({
+      data: [{ data: terms[0] as never }, { data: terms[1] as never }],
+    }))
+
+    const q = render(await ops.inArray(users.nickname, ['ada', 'grace']))
+
+    expect(q.params).toEqual([
+      JSON.stringify(terms[0]),
+      JSON.stringify(terms[1]),
+    ])
+  })
+
+  it('a bulk encryption failure is wrapped with operator context', async () => {
+    const { ops } = setupBulk(async () => ({
+      failure: { message: 'bad query term' },
+    }))
+
+    await expect(
+      ops.inArray(users.nickname, ['ada', 'grace']),
+    ).rejects.toMatchObject({
+      name: 'EncryptionOperatorError',
+      context: { columnName: 'nickname', operator: 'inArray' },
+    })
+  })
+
+  it('a null value in the list throws before any encryption crossing', async () => {
+    const { ops, bulkEncrypt } = setupBulk()
+
+    await expect(ops.inArray(users.nickname, ['ada', null])).rejects.toThrow(
+      /isNull/,
+    )
+    expect(bulkEncrypt).not.toHaveBeenCalled()
+  })
+
+  it('a bulk response of the wrong length is rejected rather than silently truncated', async () => {
+    const { ops } = setupBulk(async () => ({ data: [{ data: TERM }] }))
+
+    // Pin the counts: an off-by-one guard, or a rejection thrown for some
+    // unrelated reason, must not pass as "handled".
+    await expect(ops.inArray(users.nickname, ['ada', 'grace'])).rejects.toThrow(
+      /bulk encryption returned 1 terms for 2 values/,
+    )
+    await expect(
+      ops.inArray(users.nickname, ['ada', 'grace']),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+  })
+
+  it('inArray gates on the column capability before encrypting anything', async () => {
+    const { ops, bulkEncrypt } = setupBulk()
+
+    await expect(ops.inArray(users.flag, [true])).rejects.toBeInstanceOf(
+      EncryptionOperatorError,
+    )
+    expect(bulkEncrypt).not.toHaveBeenCalled()
+  })
+
   it('and ignores undefined conditions and keeps the encrypted predicates', async () => {
     const { ops, render } = setup()
     const q = render(
@@ -429,6 +585,19 @@ describe('createEncryptionOperatorsV3 - gating errors', () => {
     const { ops } = setup()
     await expect(ops.eq(users.flag, true)).rejects.toBeInstanceOf(
       EncryptionOperatorError,
+    )
+  })
+
+  it('the equality gate reports the offending domain, as every other gate does', async () => {
+    const { ops } = setup()
+
+    // Same diagnostic shape as the ore/match gates: operator, capability,
+    // column, and the domain that cannot answer it.
+    await expect(ops.eq(users.flag, true)).rejects.toThrow(
+      'Operator "eq" requires equality on column "flag" (domain public.boolean does not support it).',
+    )
+    await expect(ops.gt(users.nickname, 'ada')).rejects.toThrow(
+      'Operator "gt" requires order/range on column "nickname" (domain public.text_eq does not support it).',
     )
   })
 

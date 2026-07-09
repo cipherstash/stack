@@ -19,24 +19,21 @@ export const EQL_V3_DOMAINS: ReadonlySet<string> = new Set(
 )
 
 /**
- * Drizzle copies `config.customTypeParams` from the builder into the processed
- * PgColumn. Stashing the v3 builder there keeps recovery tied to the concrete
- * column instance instead of a module-global name lookup.
+ * Drizzle passes `config.customTypeParams` from the builder into the processed
+ * PgColumn by reference — it is never cloned or serialized — so a `Symbol.for`
+ * key survives the whole builder→column path. Stashing the v3 builder there
+ * keeps recovery tied to the concrete column instance instead of a
+ * module-global name lookup. `Symbol.for` is registry-global, so a CJS/ESM
+ * duality of this module still resolves the same key.
  */
 const EQL_V3_COLUMN_PARAM = Symbol.for('cipherstash:eqlv3Column')
-const EQL_V3_COLUMN_LEGACY_PARAM = '_eqlv3Column'
 
-type EqlV3ColumnCarrier = Record<symbol, unknown> & {
-  [EQL_V3_COLUMN_LEGACY_PARAM]?: AnyEncryptedV3Column
-}
+type EqlV3ColumnCarrier = Record<symbol, unknown>
 
 function readBuilder(
   carrier: EqlV3ColumnCarrier | undefined,
 ): AnyEncryptedV3Column | undefined {
-  return (
-    (carrier?.[EQL_V3_COLUMN_PARAM] as AnyEncryptedV3Column | undefined) ??
-    carrier?.[EQL_V3_COLUMN_LEGACY_PARAM]
-  )
+  return carrier?.[EQL_V3_COLUMN_PARAM] as AnyEncryptedV3Column | undefined
 }
 
 function writeBuilder(
@@ -45,7 +42,6 @@ function writeBuilder(
 ): void {
   if (!carrier) return
   carrier[EQL_V3_COLUMN_PARAM] = builder
-  carrier[EQL_V3_COLUMN_LEGACY_PARAM] = builder
 }
 
 function getCarrier(column: unknown): EqlV3ColumnCarrier | undefined {
