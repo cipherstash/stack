@@ -256,8 +256,18 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
   // No `USER_JWT_B` exists, so that remains a follow-up.
   it('an identity-bound row does not match an eq issued with no lock context', async () => {
     if (skipUnlessJwt()) return
-    const condition = await ops.eq(secretTable.secret, SECRET_A)
-    expect(await selectRowKeys(condition)).toEqual([])
+
+    // The control, in this test rather than a sibling one. `[]` is what a held
+    // identity boundary and an unseeded fixture both look like, so the empty
+    // assertion below proves nothing on its own — it only means something
+    // against a demonstration that the row IS reachable with the context.
+    const bound = await ops.eq(secretTable.secret, SECRET_A, {
+      lockContext: IDENTITY_CLAIM as never,
+    })
+    expect(await selectRowKeys(bound)).toEqual([ROW_A])
+
+    const unbound = await ops.eq(secretTable.secret, SECRET_A)
+    expect(await selectRowKeys(unbound)).toEqual([])
   }, 30000)
 
   it('an identity-bound row does not decrypt without its lock context', async () => {

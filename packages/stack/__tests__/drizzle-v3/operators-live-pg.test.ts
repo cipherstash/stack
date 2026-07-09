@@ -601,6 +601,15 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
         await ops.contains(matrixColumn(eqlType), needle),
       )
       expect(rows).toEqual([])
+
+      // The control. An over-rejecting guard would have thrown above, and a
+      // fail-open `contains` would have returned every row — but a
+      // constant-false `contains` also returns [], and nothing above catches
+      // it. Prove the same column still answers a needle that IS present.
+      const present = await selectRowKeys(
+        await ops.contains(matrixColumn(eqlType), 'ada'),
+      )
+      expect(present.length).toBeGreaterThan(0)
     },
     30000,
   )
@@ -661,25 +670,29 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
       ops.gte(matrixColumn('public.integer_ord'), 0),
     ] as const
 
-  it('and requires both encrypted predicates, unlike or', async () => {
-    const rows = await selectRowKeys(await ops.and(...disjointPredicates()))
-    expect(rows).toEqual([])
-  }, 30000)
-
-  // The disjoint pair above proves `and` is not `or`, but every `and` assertion
-  // over it expects []. A constant-false `and` would satisfy that too, and the
-  // `or` tests exercise a different operator. This pins the positive path:
-  // an intersecting pair that must actually return its row.
+  // Two assertions, one block, deliberately. The disjoint pair proves `and` is
+  // not `or`: swapping the operator turns [] into [A,B,C]. But [] is also what
+  // a constant-false `and` returns, and `beforeAll` cannot catch that — it only
+  // catches a failed seed. The intersecting pair is the control that can: it
+  // must return its row, so it dies on a constant-false `and` and on an eq/lt
+  // term that silently matches nothing. Keeping it in a sibling `it` would not
+  // couple them, since vitest runs on past a failure and the sibling could go
+  // red while this stayed green.
   //   text_eq = 'ada@example.com' -> ROW_B only
+  //   integer_ord >= 0            -> ROW_A (0), ROW_C (2147483647), not ROW_B (-42)
   //   integer_ord < 0             -> ROW_B (-42) only
-  it('and returns the rows satisfying both encrypted predicates', async () => {
-    const rows = await selectRowKeys(
+  it('and requires both encrypted predicates, unlike or', async () => {
+    expect(await selectRowKeys(await ops.and(...disjointPredicates()))).toEqual(
+      [],
+    )
+
+    const intersecting = await selectRowKeys(
       await ops.and(
         ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
         ops.lt(matrixColumn('public.integer_ord'), 0),
       ),
     )
-    expect(rows).toEqual([ROW_B])
+    expect(intersecting).toEqual([ROW_B])
   }, 30000)
 
   it('or requires either encrypted predicate, unlike and', async () => {

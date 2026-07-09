@@ -550,6 +550,35 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       [ORDER_RUN_ID, ids, lo, hi],
     )
     expect(new Set(exclusive.map((r) => r.id))).toEqual(new Set(interiorIds))
+
+    // The controls. Domains with only two distinct samples (date, timestamp)
+    // have an empty interior, so the assertion above is satisfied by a
+    // constant-false `gt`/`lt` as well as by a correct one. One-sided strict
+    // bounds are non-empty for every domain: `gt(lo)` must return everything
+    // above the minimum, `lt(hi)` everything below the maximum. Both die on a
+    // constant-false operator, and on a constant-true one (which would drag in
+    // the excluded endpoint).
+    const aboveLo = await sql.unsafe<Row[]>(
+      `SELECT id FROM ${TABLE_NAME}
+         WHERE test_run_id = $1
+           AND id = ANY($2)
+           AND eql_v3.gt("${col}", $3::jsonb)`,
+      [ORDER_RUN_ID, ids, lo],
+    )
+    expect(new Set(aboveLo.map((r) => r.id))).toEqual(
+      new Set(sortedIdx.slice(1).map((i) => ids[i])),
+    )
+
+    const belowHi = await sql.unsafe<Row[]>(
+      `SELECT id FROM ${TABLE_NAME}
+         WHERE test_run_id = $1
+           AND id = ANY($2)
+           AND eql_v3.lt("${col}", $3::jsonb)`,
+      [ORDER_RUN_ID, ids, hi],
+    )
+    expect(new Set(belowHi.map((r) => r.id))).toEqual(
+      new Set(sortedIdx.slice(0, L - 1).map((i) => ids[i])),
+    )
   })
 
   it.each(
