@@ -122,6 +122,7 @@ export async function installCommand(options: InstallOptions) {
   // v3 supports the direct install path only. Explicit --drizzle/--migration
   // are rejected up-front by validateInstallFlags; auto-DETECTED drizzle or
   // migration modes fall back to direct here rather than erroring.
+  // Gating the v2-only paths behind --eql-version 2 is tracked in #585.
   if (eqlVersion === 3 && resolved.drizzle) {
     p.log.info(
       'EQL v3 does not support the Drizzle migration path yet — installing directly.',

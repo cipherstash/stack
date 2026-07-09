@@ -287,6 +287,7 @@ export class EQLInstaller {
     if (latest && eqlVersion === 3) {
       // No public v3 release artifacts exist yet — the v3 bundles are vendored
       // from the generated monolith (see scripts/build-eql-v3-sql.mjs).
+      // Gating --latest behind --eql-version 2 is tracked in #585.
       throw new Error(
         '`--latest` is not supported for EQL v3 yet: no public v3 release artifacts exist. Use the bundled install.',
       )
