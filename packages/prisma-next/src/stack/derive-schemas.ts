@@ -46,7 +46,9 @@ export interface ContractStorageView {
       Record<
         string,
         {
-          readonly tables?: Readonly<Record<string, StorageTableView>>
+          readonly entries?: {
+            readonly table?: Readonly<Record<string, StorageTableView>>
+          }
         }
       >
     >
@@ -98,7 +100,7 @@ export function deriveStackSchemas(
   if (!namespaces) return []
   const tables: Record<string, StorageTableView> = {}
   for (const namespace of Object.values(namespaces)) {
-    Object.assign(tables, namespace.tables)
+    Object.assign(tables, namespace.entries?.table)
   }
 
   const result: EncryptedTable<EncryptedTableColumn>[] = []

@@ -30,20 +30,22 @@ function makeContract(
     storage: {
       namespaces: {
         __unbound__: {
-          tables: Object.fromEntries(
-            Object.entries(tables).map(([name, cols]) => [
-              name,
-              {
-                columns: cols as Record<
-                  string,
-                  {
-                    codecId: string
-                    typeParams?: Record<string, unknown> | null
-                  }
-                >,
-              },
-            ]),
-          ),
+          entries: {
+            table: Object.fromEntries(
+              Object.entries(tables).map(([name, cols]) => [
+                name,
+                {
+                  columns: cols as Record<
+                    string,
+                    {
+                      codecId: string
+                      typeParams?: Record<string, unknown> | null
+                    }
+                  >,
+                },
+              ]),
+            ),
+          },
         },
       },
     },
@@ -57,7 +59,7 @@ describe('deriveStackSchemas', () => {
     expect(deriveStackSchemas({ storage: { namespaces: {} } })).toEqual([])
     expect(
       deriveStackSchemas({
-        storage: { namespaces: { __unbound__: { tables: {} } } },
+        storage: { namespaces: { __unbound__: { entries: { table: {} } } } },
       }),
     ).toEqual([])
   })
