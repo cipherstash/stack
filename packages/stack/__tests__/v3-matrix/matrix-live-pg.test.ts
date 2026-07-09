@@ -16,8 +16,13 @@
  *
  * ONE mega table (all 35 domains, one column each, like `matrix-live.test.ts`),
  * two seeded rows (`samples[0]` / `samples[1]` from the catalog — every domain
- * has at least two), one query per domain proving it selects the expected row
- * and not the other. Queries use the supported EQL v3 API: a FULL encrypted
+ * has at least two), and per domain one proof per query permutation its indexes
+ * support — proving each selects the expected row and not the other. Beyond the
+ * per-capability proofs below, every applicable domain also exercises the public
+ * two-arg negation/containment/range functions: `eql_v3.neq` (eq domains),
+ * `eql_v3.contained_by` (match domains), and explicit two-bound `eql_v3.gte`+`lte`
+ * with strict `gt`+`lt` (ordering domains), plus a strict pairwise-`lt` ordering
+ * proof. Queries use the supported EQL v3 API: a FULL encrypted
  * operand (`client.encrypt`, same payload as storage) compared against the
  * column with a public two-arg `eql_v3.*(col, operand::jsonb)` function. (The
  * old `encryptQuery` scalar-term path is unsupported in protect-ffi 0.28 —
@@ -201,6 +206,13 @@ let orderIds: number[] = []
 const eqTerms: Record<string, unknown> = {}
 const ordTerms: Record<string, unknown> = {}
 const matchTerms: Record<string, unknown> = {}
+// Full operand for each match domain's `samples[0]` value (NOT the 'ada'
+// substring in `matchTerms`) — used by the `contained_by` proof.
+const containedByTerms: Record<string, unknown> = {}
+// Full operand for each ordering domain's distinct samples[0..L-1], reused from
+// the already-encrypted `ORDER_RUN_ID` rows (no extra encryption) — used by the
+// two-bound range / strict gt-lt proof.
+const orderOperands: Record<string, unknown[]> = {}
 
 beforeAll(async () => {
   if (!LIVE_EQL_V3_PG_ENABLED) return
@@ -303,6 +315,20 @@ beforeAll(async () => {
   for (const [t] of matchDomains) {
     matchTerms[slug(t)] = await encryptOperand(t, 'ada')
   }
+  // `contained_by` operand = the FULL `samples[0]` value (row idA). Its token
+  // set equals idA's, so idA is contained_by it, while idB (`samples[1]`) has
+  // tokens the operand lacks. Reuse the already-encrypted `encModels[0]`.
+  for (const [t] of matchDomains) {
+    containedByTerms[slug(t)] = encModels[0][slug(t)]
+  }
+  // Range-bound operands: the full operand for each distinct sample of an
+  // ordering domain, taken straight from the encrypted `ORDER_RUN_ID` rows
+  // (`encModels[i]` ↔ `orderIds[i]` ↔ `samples[i]`). No extra encryption.
+  for (const [t, spec] of orderingDomains) {
+    orderOperands[slug(t)] = encModels
+      .slice(0, spec.samples.length)
+      .map((m) => m[slug(t)])
+  }
 }, 120000)
 
 afterAll(async () => {
@@ -328,8 +354,23 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
   })
 
   it.each(
+    eqDomains,
+  )('%s: eql_v3.neq(col, operand) excludes the matching row', async (eqlType) => {
+    const col = slug(eqlType)
+    // Operand encrypts `samples[0]` (row idA). `neq` selects every row whose
+    // value differs, i.e. row idB (`samples[1]`) only — idA is excluded.
+    const rows = await sql.unsafe<Row[]>(
+      `SELECT id FROM ${TABLE_NAME}
+         WHERE test_run_id = $1
+           AND eql_v3.neq("${col}", $2::jsonb)`,
+      [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
+    )
+    expect(rows.map((r) => r.id)).toEqual([idB])
+  })
+
+  it.each(
     ordDomains,
-  )('%s: ORE range selects the exact row', async (eqlType, spec) => {
+  )('%s: equality-via-ORE selects the exact row', async (eqlType, spec) => {
     const col = slug(eqlType)
     // The proof must exercise the ORDER (`ob`) term, not equality. On text order
     // domains (`text_ord`/`text_ord_ore`, which carry BOTH `unique` and `ore`)
@@ -378,6 +419,24 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([expectedId])
+  })
+
+  it.each(
+    matchDomains,
+  )('%s: eql_v3.contained_by selects the row whose tokens the operand covers', async (eqlType) => {
+    const col = slug(eqlType)
+    // `contained_by(col, operand)` (`col <@ operand`) is true when the column's
+    // bloom tokens are a subset of the operand's. The operand encrypts row idA's
+    // full `samples[0]` value, so idA (equal token set) is contained_by it, while
+    // idB (`samples[1]`) carries tokens the operand lacks and is excluded. This is
+    // the dual of the `contains`/`@>` proof above.
+    const rows = await sql.unsafe<Row[]>(
+      `SELECT id FROM ${TABLE_NAME}
+         WHERE test_run_id = $1
+           AND eql_v3.contained_by("${col}", $2::jsonb)`,
+      [TEST_RUN_ID, sql.json(containedByTerms[col] as never)],
+    )
+    expect(rows.map((r) => r.id)).toEqual([idA])
   })
 
   it.each(
@@ -436,6 +495,52 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
     // order), otherwise the ORE comparison collapsed two values together.
     expect(new Set(lessThanCount.values()).size).toBe(L)
     expect(derivedAscending).toEqual(expectedAscending)
+  })
+
+  it.each(
+    orderingDomains,
+  )('%s: eql_v3.gte/lte (inclusive) and gt/lt (exclusive) bound the ORE range', async (eqlType, spec) => {
+    // Explicit two-bound ORE range over the distinct-sample rows: `[lo, hi]`
+    // spans the whole set, so gte+lte must select ALL of them and strict gt+lt
+    // must select only the interior (excluding the lo and hi rows). Bounds are
+    // the plaintext-min/max samples; membership is compared to the plaintext
+    // order. Uses the boolean comparison operators (ORE-correct on superuser AND
+    // non-superuser Postgres) — never `ORDER BY ord_term`. For L=2 domains
+    // (date/timestamp) the interior is empty: a valid exclusive-bound boundary.
+    const col = slug(eqlType)
+    const L = spec.samples.length
+    const ids = orderIds.slice(0, L)
+    const operands = orderOperands[col]
+
+    const sortedIdx = spec.samples
+      .map((value, i) => ({ value, i }))
+      .sort((a, b) => comparePlaintext(a.value, b.value))
+      .map((entry) => entry.i)
+    const lo = sql.json(operands[sortedIdx[0]] as never)
+    const hi = sql.json(operands[sortedIdx[L - 1]] as never)
+
+    // Inclusive [lo, hi] → every distinct-sample row.
+    const inclusive = await sql.unsafe<Row[]>(
+      `SELECT id FROM ${TABLE_NAME}
+         WHERE test_run_id = $1
+           AND id = ANY($2)
+           AND eql_v3.gte("${col}", $3::jsonb)
+           AND eql_v3.lte("${col}", $4::jsonb)`,
+      [ORDER_RUN_ID, ids, lo, hi],
+    )
+    expect(new Set(inclusive.map((r) => r.id))).toEqual(new Set(ids))
+
+    // Exclusive (lo, hi) via strict gt/lt → strictly-interior rows only.
+    const interiorIds = sortedIdx.slice(1, L - 1).map((i) => ids[i])
+    const exclusive = await sql.unsafe<Row[]>(
+      `SELECT id FROM ${TABLE_NAME}
+         WHERE test_run_id = $1
+           AND id = ANY($2)
+           AND eql_v3.gt("${col}", $3::jsonb)
+           AND eql_v3.lt("${col}", $4::jsonb)`,
+      [ORDER_RUN_ID, ids, lo, hi],
+    )
+    expect(new Set(exclusive.map((r) => r.id))).toEqual(new Set(interiorIds))
   })
 
   it.each(
