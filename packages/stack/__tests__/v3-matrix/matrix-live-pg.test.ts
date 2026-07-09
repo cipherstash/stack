@@ -14,7 +14,7 @@
  * each kind of v3 domain in SQL — useful reference for engineers and agents
  * writing new domain-consuming code.
  *
- * ONE mega table (all 35 domains, one column each, like `matrix-live.test.ts`),
+ * ONE mega table (all 39 domains, one column each, like `matrix-live.test.ts`),
  * two seeded rows (`samples[0]` / `samples[1]` from the catalog — every domain
  * has at least two), and per domain one proof per query permutation its indexes
  * support — proving each selects the expected row and not the other. Beyond the
@@ -346,7 +346,7 @@ afterAll(async () => {
   await sql.end()
 }, 30000)
 
-describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
+describeLivePg('v3 matrix live Postgres coverage (all 39 domains)', () => {
   it.each(
     eqDomains,
   )('%s: eql_v3.eq(col, operand) selects the exact row', async (eqlType) => {
