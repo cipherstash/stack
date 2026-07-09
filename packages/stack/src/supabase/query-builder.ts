@@ -104,12 +104,23 @@ export class EncryptedQueryBuilderImpl<
           "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb.",
         )
       }
-      this.selectColumns = this.allColumns.join(', ')
+      this.selectColumns = this.expandAllColumns(this.allColumns).join(', ')
     } else {
       this.selectColumns = columns
     }
     this.selectOptions = options
     return this
+  }
+
+  /**
+   * Turn the introspected column list (DB names) into select tokens. The base
+   * returns them unchanged — v2 never supplies a column list, so this is dead
+   * for v2. The v3 dialect overrides it to emit JS property names, which is
+   * what makes `addJsonbCastsV3` alias a renamed column back to its property
+   * (`createdAt:created_at::jsonb`) rather than returning it under its DB name.
+   */
+  protected expandAllColumns(columns: string[]): string[] {
+    return columns
   }
 
   insert(

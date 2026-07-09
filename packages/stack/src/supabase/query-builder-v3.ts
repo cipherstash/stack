@@ -79,6 +79,11 @@ export class EncryptedQueryBuilderV3Impl<
   private v3Table: AnyV3Table
   /** JS property name → DB column name, for every encrypted column. */
   private propToDb: Record<string, string>
+  /** DB column name → JS property name — the inverse of {@link propToDb}, used
+   * to expand `select('*')` back into property names. Null prototype: a DB
+   * column literally named `constructor` / `toString` would otherwise resolve
+   * to an inherited `Object.prototype` member and be emitted as a select token. */
+  private dbToProp: Record<string, string>
   /** Built column schemas keyed by DB column name (for `cast_as`). */
   private columnSchemas: Record<string, ColumnSchema>
   /** Column builders keyed by BOTH property name and DB name. */
@@ -106,6 +111,11 @@ export class EncryptedQueryBuilderV3Impl<
     this.propToDb = table.buildColumnKeyMap()
     this.columnSchemas = table.build().columns
 
+    this.dbToProp = Object.create(null) as Record<string, string>
+    for (const [property, dbName] of Object.entries(this.propToDb)) {
+      this.dbToProp[dbName] = property
+    }
+
     this.v3Columns = {}
     for (const [property, builder] of Object.entries(table.columnBuilders)) {
       if (builder instanceof EncryptedV3Column) {
@@ -129,13 +139,39 @@ export class EncryptedQueryBuilderV3Impl<
     return this.v3Columns as unknown as Record<string, BuildableQueryColumn>
   }
 
+  /** Resolve a JS property name to its DB column name. `Object.hasOwn` guards
+   * the inherited-member hazard described on {@link EncryptedTable.buildColumnKeyMap}. */
+  private dbNameFor(name: string): string {
+    return Object.hasOwn(this.propToDb, name) ? this.propToDb[name] : name
+  }
+
   protected override filterColumnName(column: string): string {
-    return this.propToDb[column] ?? column
+    return this.dbNameFor(column)
   }
 
   protected override buildSelectString(): string | null {
     if (this.selectColumns === null) return null
     return addJsonbCastsV3(this.selectColumns, this.propToDb)
+  }
+
+  /**
+   * Expand the introspected column list (DB names) into JS property names.
+   *
+   * Load-bearing for `select('*')` on a DECLARED table that renames a column.
+   * `addJsonbCastsV3` only emits the `prop:db_name::jsonb` alias — the thing
+   * that makes PostgREST return the column under its property name — when the
+   * token it sees is a property name. Feeding it the raw DB name instead takes
+   * the unaliased `dbNames.has(...)` branch, so the row comes back keyed
+   * `created_at` while the declared row type promises `createdAt`, silently
+   * yielding `undefined` for a field TypeScript guarantees.
+   *
+   * A DB column with no encrypted builder (plaintext passthrough, and every
+   * synthesized column, where property == DB name) maps to itself.
+   */
+  protected override expandAllColumns(columns: string[]): string[] {
+    return columns.map((dbName) =>
+      Object.hasOwn(this.dbToProp, dbName) ? this.dbToProp[dbName] : dbName,
+    )
   }
 
   /** v3 domains are plain jsonb — send the raw payload, keyed by DB name. */
@@ -144,7 +180,7 @@ export class EncryptedQueryBuilderV3Impl<
   ): Record<string, unknown> {
     const out: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(model)) {
-      out[this.propToDb[key] ?? key] = value
+      out[this.dbNameFor(key)] = value
     }
     return out
   }

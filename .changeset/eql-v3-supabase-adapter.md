@@ -8,7 +8,8 @@ now a connect-time-async factory: `await encryptedSupabaseV3(url, key)` (or
 by their Postgres domain (`information_schema.columns.domain_name`), and derives
 each column's encryption config from its domain — callers no longer pass a
 schema to `from()`. `select('*')` is supported (expanded from the introspected
-column list). A column using an EQL v3 domain this SDK version does not model
+column list, and aliased back to each declared column's JS property name so a
+property→DB rename round-trips). A column using an EQL v3 domain this SDK version does not model
 (e.g. `public.json`, `*_ord_ope`) throws at construction rather than silently
 passing through. Supplying `schemas` remains optional and adds compile-time
 types plus startup verification of the declared tables against the database.

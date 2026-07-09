@@ -69,6 +69,24 @@ export function addJsonbCasts(
 }
 
 /**
+ * Resolve a select token to its DB column name, or `undefined`.
+ *
+ * `Object.hasOwn` is required, not decorative: the token comes from the caller's
+ * select string (or, for `select('*')`, from the database's own column list).
+ * `buildColumnKeyMap()` already returns a null-prototype map, but an inherited
+ * `Object.prototype` member is truthy, so a plain-object map would let a column
+ * named `constructor` interpolate `function Object() { … }` into the emitted
+ * select string. Both guards are kept — a future refactor that drops the null
+ * prototype must not silently reopen the hole.
+ */
+function lookupDbName(
+  propToDb: Record<string, string>,
+  token: string,
+): string | undefined {
+  return Object.hasOwn(propToDb, token) ? propToDb[token] : undefined
+}
+
+/**
  * Parse a Supabase select string and add `::jsonb` casts to encrypted EQL v3
  * columns, resolving JS property names to DB column names via PostgREST
  * aliasing.
@@ -106,14 +124,15 @@ export function addJsonbCastsV3(
       )
       if (aliasMatch) {
         const [, alias, name] = aliasMatch
-        const db = propToDb[name] ?? (dbNames.has(name) ? name : undefined)
+        const db =
+          lookupDbName(propToDb, name) ?? (dbNames.has(name) ? name : undefined)
         if (db !== undefined) {
           return `${leadingWhitespace}${alias}:${db}::jsonb`
         }
         return col
       }
 
-      const db = propToDb[trimmed]
+      const db = lookupDbName(propToDb, trimmed)
       if (db !== undefined) {
         return db === trimmed
           ? `${leadingWhitespace}${trimmed}::jsonb`

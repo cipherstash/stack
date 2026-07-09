@@ -56,9 +56,19 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
    * encrypt config and FFI by DB name — `build()` keys columns by DB name, so
    * the two only agree when property == name. This recovers the mapping that
    * `build()` discards.
+   *
+   * NULL PROTOTYPE — load-bearing. Callers index this map by a column name that
+   * ultimately comes from the database (`addJsonbCastsV3`, `filterColumnName`,
+   * the mutation transform). On a plain object literal, a column named
+   * `constructor` / `toString` / `valueOf` / `__proto__` resolves to an
+   * inherited `Object.prototype` member, which is truthy — so a *plaintext*
+   * column with such a name would be mistaken for a mapped encrypted column and
+   * its `Object.prototype` value interpolated into the emitted select string.
+   * `encryptedTable()` rejects such names as JS *properties*, but nothing
+   * constrains the DB column names a table may contain.
    */
   buildColumnKeyMap(): Record<string, string> {
-    const map: Record<string, string> = {}
+    const map = Object.create(null) as Record<string, string>
     for (const [property, builder] of Object.entries(this.columnBuilders)) {
       map[property] = builder.getName()
     }
