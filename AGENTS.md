@@ -93,6 +93,46 @@ If these variables are missing, tests that require live encryption will fail or 
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
 - `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-supply-chain-security`)
 
+## Agent Skills — these ship to customers
+
+`skills/*/SKILL.md` are **published artifacts, not internal notes.** Treat a wrong
+sentence in one of them the way you'd treat a wrong line of code:
+
+- `packages/cli/tsup.config.ts` copies `skills/` into `dist/skills/`, so they ship
+  inside the `stash` npm tarball (and the `@cipherstash/wizard` one).
+- `installSkills()` (`packages/cli/src/commands/init/lib/install-skills.ts`) copies the
+  per-integration set into the user's `.claude/skills/` or `.codex/skills/` at handoff time.
+- `readBundledSkill()` inlines a skill's body into the user's `AGENTS.md` for editor
+  agents (Cursor / Windsurf / Cline). Only `SKILL.md` is inlined — content split into
+  sibling files is silently dropped on that path, so keep each `SKILL.md` self-sufficient.
+
+**Every change to a package's public API, the CLI command surface, or a user-facing
+workflow must check the affected skills in the same PR.** These skills drift silently:
+nothing type-checks them, and the damage lands in a customer's repo, not ours.
+
+| If you change… | Check |
+|---|---|
+| `packages/cli` commands, flags, or prompts | `skills/stash-cli` |
+| `packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
+| Drizzle / Supabase / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-dynamodb` |
+| The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
+| pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
+| The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
+
+For CLI changes there is a mechanical check — the command registry is the source of
+truth, so diff the skill against it rather than proofreading:
+
+```bash
+pnpm --filter stash build
+node packages/cli/dist/bin/stash.js manifest --json
+```
+
+Every command and flag named in `skills/stash-cli/SKILL.md` must resolve against that
+manifest (the deprecated `db install` / `db upgrade` / `db status` aliases excepted —
+they're intentionally absent from the registry).
+
+Skills must not contain Linear issue IDs; they're public. GitHub issue numbers are fine.
+
 ## Supply Chain Security
 
 This repo applies a set of supply-chain controls (post-install script policy, install cooldown, frozen-lockfile CI, registry pinning, Dependabot cooldown, CODEOWNERS) sourced from [lirantal/npm-security-best-practices](https://github.com/lirantal/npm-security-best-practices). They're validated by `e2e/tests/supply-chain.e2e.test.ts` so silent regressions fail CI. See `skills/stash-supply-chain-security/SKILL.md` for the full guide.
@@ -184,7 +224,15 @@ pnpm changeset:publish
    Layout in this file and the package list in `SECURITY.md` in the
    same PR. These files have drifted badly before; don't let them.
 
-8. **Add a changeset before opening or finalising the PR** when the
+8. **Check the skills.** If you changed a package's public API, the CLI
+   command surface, or a user-facing workflow, open the affected
+   `skills/*/SKILL.md` and fix anything your change made wrong — in the
+   same PR. Skills ship inside the `stash` tarball and are copied into
+   customer repos, so drift here becomes wrong guidance in someone
+   else's codebase. See "Agent Skills — these ship to customers" above
+   for the package→skill map and the `stash manifest --json` check.
+
+9. **Add a changeset before opening or finalising the PR** when the
    change affects a published package's public behaviour or surface
    (new feature, bug fix, breaking change, UX-visible tweak). Run
    `pnpm changeset` (interactive) or hand-write a markdown file under
@@ -205,6 +253,9 @@ pnpm changeset:publish
    one — releases use Changesets to drive version bumps and
    `CHANGELOG.md` entries, so a missing changeset means the change
    ships invisibly.
+
+   A skills-only change is **not** internal: `skills/` ships inside the
+   `stash` tarball, so it needs a `stash` patch changeset.
 
 ## Useful Links
 
