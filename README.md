@@ -28,7 +28,7 @@ Searchable Encryption nukes the trade-off: encryption-level security without the
 
 * Searchable Encryption for any Postgres including Supabase, RDS, Aurora, Prisma Postgres and Neon
 * Works with Supabase.js, Prisma Next, Drizzle or plain SQL
-* Built-in key management — automatic rotation, auditing and 14x faster than AWS KMS
+* Built-in key management — automatic rotation, auditing and up to 14x faster than AWS KMS
 * Integrates with Supabase Auth, Clerk, Auth0 and Okta
 
 <br/>
@@ -211,19 +211,16 @@ const results = await db.select().from(usersTable)
 
 ## How it works
 
-<!-- TODO before merge: these architecture-diagram paths are RELATIVE so they preview on the PR branch.
-     Restore the absolute prefix "https://raw.githubusercontent.com/cipherstash/stack/main/" on each
-     srcset/src below before merging — relative paths render on GitHub but break on the npm package page. -->
 <p align="center">
   <picture>
     <!-- Dark theme · narrow viewport (mobile) -->
-    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="docs/images/architecture-stacked-dark.svg">
+    <source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-dark.svg">
     <!-- Dark theme · wide viewport (desktop) -->
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-dark.svg">
     <!-- Light theme · narrow viewport (mobile) -->
-    <source media="(max-width: 600px)" srcset="docs/images/architecture-stacked-light.svg">
+    <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-stacked-light.svg">
     <!-- Light theme · wide viewport (desktop) — universal fallback (npm, older renderers) -->
-    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, derived in your app. Plaintext and keys never reach CipherStash, and every decryption is logged for audit." width="880" src="docs/images/architecture-light.svg">
+    <img alt="CipherStash architecture: encryption and decryption happen in your TypeScript app; only ciphertext (EQL JSON) is stored in your PostgreSQL database. ZeroKMS issues a unique key per value, derived in your app. Plaintext and keys never reach CipherStash, and every decryption is logged for audit." width="880" src="https://raw.githubusercontent.com/cipherstash/stack/main/docs/images/architecture-light.svg">
   </picture>
 </p>
 
