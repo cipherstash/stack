@@ -37,3 +37,16 @@ export const LIVE_LOCK_CONTEXT_ENABLED = Boolean(
 export const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 export const describeLivePg = LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip
+
+/**
+ * True when only a Postgres `DATABASE_URL` is configured (no CipherStash creds
+ * needed — introspection reads the schema, it does not encrypt).
+ *
+ * Like the flags above, a false value turns its suites into `describe.skip`,
+ * which in CI would be a silent whole-suite skip on a green job. That hole is
+ * closed by `../live-coverage-guard.test.ts`, which asserts THIS flag in CI.
+ * Any new gate flag added here must be asserted there too.
+ */
+export const LIVE_PG_ENABLED = Boolean(process.env.DATABASE_URL)
+
+export const describeLivePgOnly = LIVE_PG_ENABLED ? describe : describe.skip

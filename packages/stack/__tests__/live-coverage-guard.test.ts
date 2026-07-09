@@ -56,6 +56,7 @@ import {
   LIVE_CIPHERSTASH_ENABLED,
   LIVE_EQL_V3_PG_ENABLED,
   LIVE_LOCK_CONTEXT_ENABLED,
+  LIVE_PG_ENABLED,
 } from './helpers/live-gate'
 
 // GitHub Actions always sets CI=true; treat any truthy CI as "must run live".
@@ -106,6 +107,22 @@ describe('live-coverage guard', () => {
           'operators-lock-context-live-pg.test.ts) SOFT-SKIP when USER_JWT is ' +
           'absent, so a missing/rotated USER_JWT lets them skip green with no ' +
           'signal — the exact failure mode this guard exists to prevent.',
+      ).toBe(true)
+    },
+  )
+
+  it.runIf(IN_CI)(
+    'CI must have DATABASE_URL so the pg-only suites do not silently skip',
+    () => {
+      expect(
+        LIVE_PG_ENABLED,
+        'CI must run the DB-only suites — `LIVE_PG_ENABLED` is false. This ' +
+          'needs only `DATABASE_URL` (no CS_* creds: introspection reads the ' +
+          'schema, it does not encrypt), and `.github/workflows/tests.yml` ' +
+          'writes it as a literal into packages/stack/.env alongside a Postgres ' +
+          'service — so a false value here is a broken workflow, never a valid ' +
+          'configuration. It makes every `describeLivePgOnly` suite (e.g. ' +
+          'supabase-v3-introspect-pg) silently skip while CI stays green.',
       ).toBe(true)
     },
   )
