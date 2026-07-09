@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "prisma-next-extension-upgrade": {
+      "source": "prisma/prisma-next",
+      "sourceType": "github",
+      "skillPath": "skills/extension-author/prisma-next-extension-upgrade/SKILL.md",
+      "computedHash": "c26ea436e29f5568c0359e7156f520a62f2a63a73f1fea7a145a4a6a9242dfd3"
+    },
+    "prisma-next-upgrade": {
+      "source": "prisma/prisma-next",
+      "sourceType": "github",
+      "skillPath": "skills/upgrade/prisma-next-upgrade/SKILL.md",
+      "computedHash": "3f84774b5d39c9855c6584a3bd1de519c9d20e403740e913e48b563fdc90d285"
+    }
+  }
+}
