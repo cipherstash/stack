@@ -62,6 +62,7 @@ describe('addJsonbCastsV3', () => {
     expect(addJsonbCastsV3('a:toString', propToDb)).toBe('a:toString')
   })
 
+  // Pins the leading-whitespace capture: drop it and ` email` loses its space.
   it('maps each token of a multi-column select independently', () => {
     expect(addJsonbCastsV3('id, email, createdAt', propToDb)).toBe(
       'id, email::jsonb, createdAt:created_at::jsonb',
@@ -82,8 +83,8 @@ describe('addJsonbCastsV3', () => {
 const ENVELOPE = '{"v":1,"i":{"t":"users","c":"email"},"c":"ct:abc"}'
 
 /** `rebuildOrString` takes DB-space conditions; `column` is a branded `DbName`. */
-function cond(column: string, op: string, value: unknown) {
-  return { column, op, value } as unknown as DbPendingOrCondition
+function cond(column: string, op: string, value: unknown, negate?: boolean) {
+  return { column, op, value, negate } as unknown as DbPendingOrCondition
 }
 
 describe('rebuildOrString quoting', () => {
@@ -110,7 +111,9 @@ describe('rebuildOrString quoting', () => {
 
 describe('parseOrString / rebuildOrString round-trip', () => {
   it('round-trips an encrypted JSON envelope operand', () => {
-    const conditions = [{ column: 'email', op: 'eq', value: ENVELOPE }]
+    const conditions = [
+      { column: 'email', op: 'eq', negate: false, value: ENVELOPE },
+    ]
     expect(
       parseOrString(
         rebuildOrString(conditions.map((c) => cond(c.column, c.op, c.value))),
@@ -119,7 +122,9 @@ describe('parseOrString / rebuildOrString round-trip', () => {
   })
 
   it('round-trips a value carrying backslashes and quotes', () => {
-    const conditions = [{ column: 'a', op: 'eq', value: 'x\\"y,z' }]
+    const conditions = [
+      { column: 'a', op: 'eq', negate: false, value: 'x\\"y,z' },
+    ]
     expect(
       parseOrString(
         rebuildOrString(conditions.map((c) => cond(c.column, c.op, c.value))),
@@ -136,5 +141,88 @@ describe('parseOrString / rebuildOrString round-trip', () => {
     expect(parsed).toHaveLength(2)
     expect(parsed[0].value).toBe(ENVELOPE)
     expect(parsed[1].value).toBe('7')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PostgREST negation inside .or()
+//
+// The parser split on the first two dots, so `col.not.in.(a,b)` yielded
+// `{ op: 'not', value: 'in.(a,b)' }`. On a plaintext column that round-tripped
+// by accident (rebuild re-joins the pieces verbatim). On an ENCRYPTED column the
+// literal string `in.(a,b)` was encrypted as one plaintext, producing a filter
+// that silently matched nothing.
+// ---------------------------------------------------------------------------
+
+describe('parseOrString negation', () => {
+  it('lifts a not. prefix off the operator', () => {
+    expect(parseOrString('nickname.not.eq.ada')).toEqual([
+      { column: 'nickname', op: 'eq', negate: true, value: 'ada' },
+    ])
+  })
+
+  it('parses a negated in-list as a real list, not a literal string', () => {
+    expect(parseOrString('nickname.not.in.(ada,grace)')).toEqual([
+      { column: 'nickname', op: 'in', negate: true, value: ['ada', 'grace'] },
+    ])
+  })
+
+  it('parses not.is.null', () => {
+    expect(parseOrString('email.not.is.null')).toEqual([
+      { column: 'email', op: 'is', negate: true, value: null },
+    ])
+  })
+
+  it('leaves a non-negated condition unnegated', () => {
+    expect(parseOrString('nickname.in.(ada,grace)')).toEqual([
+      { column: 'nickname', op: 'in', negate: false, value: ['ada', 'grace'] },
+    ])
+  })
+
+  it('does not mistake a column or value named "not" for the prefix', () => {
+    expect(parseOrString('not.eq.ada')).toEqual([
+      { column: 'not', op: 'eq', negate: false, value: 'ada' },
+    ])
+    expect(parseOrString('nickname.eq.not')).toEqual([
+      { column: 'nickname', op: 'eq', negate: false, value: 'not' },
+    ])
+  })
+
+  it('does not swallow a condition whose not. prefix has no operator', () => {
+    // `col.not.<value>` is malformed PostgREST. Consuming the prefix would leave
+    // no operator, and the condition would be silently DROPPED from the or-string
+    // — quietly widening the result set. Pass it through so PostgREST rejects it.
+    expect(parseOrString('nickname.not.ada')).toEqual([
+      { column: 'nickname', op: 'not', negate: false, value: 'ada' },
+    ])
+    expect(
+      rebuildOrString(
+        parseOrString('nickname.not.ada') as DbPendingOrCondition[],
+      ),
+    ).toBe('nickname.not.ada')
+  })
+})
+
+describe('rebuildOrString negation', () => {
+  it('re-emits the not. prefix', () => {
+    expect(rebuildOrString([cond('nickname', 'eq', 'ada', true)])).toBe(
+      'nickname.not.eq.ada',
+    )
+  })
+
+  it('round-trips a negated in-list through parse → rebuild', () => {
+    const parsed = parseOrString('nickname.not.in.(ada,grace)')
+    expect(rebuildOrString(parsed as DbPendingOrCondition[])).toBe(
+      'nickname.not.in.(ada,grace)',
+    )
+  })
+
+  it('omits the prefix when negate is false or absent', () => {
+    expect(rebuildOrString([cond('nickname', 'eq', 'ada', false)])).toBe(
+      'nickname.eq.ada',
+    )
+    expect(rebuildOrString([cond('nickname', 'eq', 'ada')])).toBe(
+      'nickname.eq.ada',
+    )
   })
 })

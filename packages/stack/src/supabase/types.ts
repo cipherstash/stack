@@ -50,11 +50,12 @@ export type EncryptedSupabaseV3Options<
    * and startup verification; undeclared tables behave exactly as with no
    * `schemas`.
    *
-   * ASYMMETRY: the `include_original: false` substring-`like` behaviour of a
-   * `text_search` column can only be honoured on a DECLARED column. A substring
-   * `like` against an UNDECLARED `text_search` column will not match, because
-   * the synthesized default `include_original: true` puts the whole pattern into
-   * the bloom filter as an extra token.
+   * Declaring a `text_search` column does NOT change its match behaviour: a
+   * declared and a synthesized `text_search` column build byte-identically, and
+   * neither `types.TextSearch` nor `EncryptedTextSearchColumn` accepts match
+   * options. `include_original: true` is therefore always in force, so a
+   * substring `contains` matches nothing on either. See the `contains` note on
+   * `EncryptedQueryBuilderV3Impl`.
    */
   schemas?: S
 }
@@ -94,20 +95,97 @@ export type V3FilterableKeys<
 > = Exclude<Extract<keyof Row, string>, NonQueryableV3Keys<Table>>
 
 /**
- * The v3 builder type: the shared {@link EncryptedQueryBuilder} surface with
- * filter methods narrowed to {@link V3FilterableKeys}.
+ * JS property names of a v3 table's columns that carry NO `freeTextSearch`
+ * capability — i.e. every domain but `public.text_match` and
+ * `public.text_search`. Excluded from `contains()`'s keys, so a token-containment
+ * query against a column with no bloom-filter index is a type error rather than
+ * the runtime capability throw in the v3 term encryption path.
  */
-export type EncryptedQueryBuilderV3<
+type NonFreeTextSearchV3Keys<Table extends AnyV3Table> = {
+  [K in Extract<
+    keyof V3ColumnsOfTable<Table>,
+    string
+  >]: 'freeTextSearch' extends QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>
+    ? never
+    : K
+}[Extract<keyof V3ColumnsOfTable<Table>, string>]
+
+/**
+ * Row keys a v3 builder accepts in `contains()`: every row key except the
+ * table's encrypted columns that lack a match index. Plaintext columns pass
+ * through, where `contains` is PostgREST's native jsonb/array containment.
+ */
+export type V3FreeTextSearchableKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
-> = EncryptedQueryBuilder<Row, V3FilterableKeys<Table, Row> & StringKeyOf<Row>>
+> = Exclude<Extract<keyof Row, string>, NonFreeTextSearchV3Keys<Table>>
+
+/**
+ * Row keys a v3 builder accepts in `order()`: every row key that is NOT an
+ * encrypted v3 column. `ORDER BY` on an EQL v3 domain sorts the raw ciphertext
+ * envelope — the bundle declares no btree operator class on any domain, so the
+ * sort resolves through jsonb's default `jsonb_cmp`. Correct ordering needs
+ * `eql_v3.ord_term(col)`, which PostgREST cannot emit.
+ */
+export type V3OrderableKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = Exclude<
+  Extract<keyof Row, string>,
+  Extract<keyof V3ColumnsOfTable<Table>, string>
+>
+
+/**
+ * The v3 builder type: the shared {@link EncryptedQueryBuilderCore} surface with
+ * filter methods narrowed to {@link V3FilterableKeys} and `order()` to
+ * {@link V3OrderableKeys}.
+ *
+ * `like`/`ilike` are absent by construction. EQL v3 free-text search is token
+ * containment over a bloom filter (`@>`), not SQL wildcard matching — `%` is
+ * tokenized like any other character, so a `like` pattern is a category error.
+ * The v3 dialect of Drizzle omits them for the same reason. Use `contains`.
+ */
+export interface EncryptedQueryBuilderV3<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> extends EncryptedQueryBuilderCore<
+    Row,
+    V3FilterableKeys<Table, Row> & StringKeyOf<Row>,
+    EncryptedQueryBuilderV3<Table, Row>,
+    V3OrderableKeys<Table, Row> & StringKeyOf<Row>
+  > {
+  contains<K extends V3FreeTextSearchableKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    value: string,
+  ): EncryptedQueryBuilderV3<Table, Row>
+}
+
+/**
+ * The v3 builder for a table with no declared schema. Without capability
+ * information `contains` cannot be narrowed to match-indexed columns — the
+ * runtime guard in the term-encryption path is the only protection — but the
+ * DIALECT is still v3, so `like`/`ilike` are absent here too. Typing this as
+ * {@link EncryptedQueryBuilder} would hand back the v2 surface.
+ */
+export interface EncryptedQueryBuilderV3Untyped<
+  Row extends Record<string, unknown>,
+> extends EncryptedQueryBuilderCore<
+    Row,
+    StringKeyOf<Row>,
+    EncryptedQueryBuilderV3Untyped<Row>
+  > {
+  contains<K extends StringKeyOf<Row>>(
+    column: K,
+    value: string,
+  ): EncryptedQueryBuilderV3Untyped<Row>
+}
 
 /** Untyped instance (no `schemas`): rows default to `Record<string, unknown>`
  * and `from` accepts any table name. */
 export interface EncryptedSupabaseV3Instance {
   from<Row extends Record<string, unknown> = Record<string, unknown>>(
     tableName: string,
-  ): EncryptedQueryBuilder<Row>
+  ): EncryptedQueryBuilderV3Untyped<Row>
 }
 
 /** Typed instance (with `schemas: S`): a declared table name resolves to the
@@ -130,7 +208,7 @@ export interface TypedEncryptedSupabaseV3Instance<S extends V3Schemas> {
   ): EncryptedQueryBuilderV3<S[K], InferPlaintext<S[K]>>
   from<Row extends Record<string, unknown> = Record<string, unknown>>(
     table: string,
-  ): EncryptedQueryBuilder<Row>
+  ): EncryptedQueryBuilderV3Untyped<Row>
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +240,9 @@ export type FilterOp =
   | 'neq'
   | 'like'
   | 'ilike'
+  /** Token containment. v3-only on encrypted columns; on a plaintext column it
+   * is PostgREST's native jsonb/array `cs`. */
+  | 'contains'
   | 'in'
   | 'gt'
   | 'gte'
@@ -182,6 +263,9 @@ export type PendingOrFilter =
 export type PendingOrCondition = {
   column: string
   op: FilterOp
+  /** PostgREST's `column.not.<op>.<value>` negation. Kept off `op` so the
+   * `in`-list split and the query-type mapping both key on the real operator. */
+  negate?: boolean
   value: unknown
 }
 
@@ -381,6 +465,7 @@ export interface SupabaseQueryBuilder {
   lte(column: DbName, value: unknown): SupabaseQueryBuilder
   like(column: DbName, value: unknown): SupabaseQueryBuilder
   ilike(column: DbName, value: unknown): SupabaseQueryBuilder
+  contains(column: DbName, value: unknown): SupabaseQueryBuilder
   is(column: DbName, value: unknown): SupabaseQueryBuilder
   in(column: DbName, values: unknown[]): SupabaseQueryBuilder
   filter(column: DbName, operator: string, value: unknown): SupabaseQueryBuilder
@@ -434,9 +519,23 @@ export type {
 /** Helper to extract string keys from T */
 type StringKeyOf<T> = Extract<keyof T, string>
 
-export interface EncryptedQueryBuilder<
-  T extends Record<string, unknown> = Record<string, unknown>,
-  FK extends StringKeyOf<T> = StringKeyOf<T>,
+/**
+ * Every builder method shared by the v2 and v3 dialects. `Self` is the concrete
+ * builder each method returns, so a dialect that omits a method (v3 omits
+ * `like`/`ilike`) does not have it laundered back in by a chained call whose
+ * return type widened to the base interface.
+ *
+ * Free-text search is the ONLY axis on which the two dialects differ: v2
+ * matches with SQL wildcards (`like`/`ilike` → `~~`), v3 with token containment
+ * (`contains` → `@>`). Each adds its own method below.
+ */
+export interface EncryptedQueryBuilderCore<
+  T extends Record<string, unknown>,
+  FK extends StringKeyOf<T>,
+  Self,
+  /** Keys `order()` accepts. Defaults to `FK`, so the v2 surface is unchanged;
+   * v3 narrows it to plaintext columns (see {@link V3OrderableKeys}). */
+  OK extends StringKeyOf<T> = FK,
 > extends PromiseLike<EncryptedSupabaseResponse<T[]>> {
   /** `columns` defaults to `'*'`, matching supabase-js. A `'*'` select expands
    * to the introspected column list when one is available (v3), and otherwise
@@ -445,7 +544,7 @@ export interface EncryptedQueryBuilder<
   select(
     columns?: string,
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
   insert(
     data: Partial<T> | Partial<T>[],
     options?: {
@@ -453,11 +552,11 @@ export interface EncryptedQueryBuilder<
       defaultToNull?: boolean
       onConflict?: string
     },
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
   update(
     data: Partial<T>,
     options?: { count?: 'exact' | 'planned' | 'estimated' },
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
   upsert(
     data: Partial<T> | Partial<T>[],
     options?: {
@@ -466,46 +565,31 @@ export interface EncryptedQueryBuilder<
       ignoreDuplicates?: boolean
       defaultToNull?: boolean
     },
-  ): EncryptedQueryBuilder<T, FK>
-  delete(options?: {
-    count?: 'exact' | 'planned' | 'estimated'
-  }): EncryptedQueryBuilder<T, FK>
-  eq<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
-  neq<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
-  gt<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
-  gte<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
-  lt<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
-  lte<K extends FK>(column: K, value: T[K]): EncryptedQueryBuilder<T, FK>
-  like<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
-  ilike<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
-  is<K extends FK>(
-    column: K,
-    value: null | boolean,
-  ): EncryptedQueryBuilder<T, FK>
-  in<K extends FK>(column: K, values: T[K][]): EncryptedQueryBuilder<T, FK>
-  filter<K extends FK>(
-    column: K,
-    operator: string,
-    value: T[K],
-  ): EncryptedQueryBuilder<T, FK>
-  not<K extends FK>(
-    column: K,
-    operator: string,
-    value: T[K],
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
+  delete(options?: { count?: 'exact' | 'planned' | 'estimated' }): Self
+  eq<K extends FK>(column: K, value: T[K]): Self
+  neq<K extends FK>(column: K, value: T[K]): Self
+  gt<K extends FK>(column: K, value: T[K]): Self
+  gte<K extends FK>(column: K, value: T[K]): Self
+  lt<K extends FK>(column: K, value: T[K]): Self
+  lte<K extends FK>(column: K, value: T[K]): Self
+  is<K extends FK>(column: K, value: null | boolean): Self
+  in<K extends FK>(column: K, values: T[K][]): Self
+  filter<K extends FK>(column: K, operator: string, value: T[K]): Self
+  not<K extends FK>(column: K, operator: string, value: T[K]): Self
   or(
     filters: string,
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
   or(
     conditions: PendingOrCondition[],
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T, FK>
-  match(query: Partial<T>): EncryptedQueryBuilder<T, FK>
-  // `FK`, not `StringKeyOf<T>`: ordering an encrypted column relies on its ORE
-  // index, which a storage-only domain lacks. `FK` defaults to `StringKeyOf<T>`,
-  // so the v2 surface is unchanged; only the v3 typed instance narrows.
-  order<K extends FK>(
+  ): Self
+  match(query: Partial<T>): Self
+  // `OK`, not `FK`: v3 cannot order by ANY encrypted column, because PostgREST
+  // cannot emit `ORDER BY eql_v3.ord_term(col)` and a bare `ORDER BY` sorts the
+  // ciphertext envelope. `OK` defaults to `FK`, so the v2 surface is unchanged.
+  order<K extends OK>(
     column: K,
     options?: {
       ascending?: boolean
@@ -513,22 +597,32 @@ export interface EncryptedQueryBuilder<
       referencedTable?: string
       foreignTable?: string
     },
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
   limit(
     count: number,
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T, FK>
+  ): Self
   range(
     from: number,
     to: number,
     options?: { referencedTable?: string; foreignTable?: string },
-  ): EncryptedQueryBuilder<T, FK>
-  single(): EncryptedQueryBuilder<T, FK>
-  maybeSingle(): EncryptedQueryBuilder<T, FK>
-  csv(): EncryptedQueryBuilder<T, FK>
-  abortSignal(signal: AbortSignal): EncryptedQueryBuilder<T, FK>
-  throwOnError(): EncryptedQueryBuilder<T, FK>
+  ): Self
+  single(): Self
+  maybeSingle(): Self
+  csv(): Self
+  abortSignal(signal: AbortSignal): Self
+  throwOnError(): Self
+  /** Escape hatch: re-types the rows and drops back to the v2 builder surface. */
   returns<U extends Record<string, unknown>>(): EncryptedQueryBuilder<U>
-  withLockContext(lockContext: LockContext): EncryptedQueryBuilder<T, FK>
-  audit(config: AuditConfig): EncryptedQueryBuilder<T, FK>
+  withLockContext(lockContext: LockContext): Self
+  audit(config: AuditConfig): Self
+}
+
+/** The v2 builder: free-text search via SQL wildcard matching. */
+export interface EncryptedQueryBuilder<
+  T extends Record<string, unknown> = Record<string, unknown>,
+  FK extends StringKeyOf<T> = StringKeyOf<T>,
+> extends EncryptedQueryBuilderCore<T, FK, EncryptedQueryBuilder<T, FK>> {
+  like<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
+  ilike<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
 }

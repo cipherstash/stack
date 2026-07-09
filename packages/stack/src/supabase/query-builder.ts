@@ -8,7 +8,11 @@ import type { AuditConfig } from '@/encryption/operations/base-operation'
 import type { LockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import { EncryptedColumn } from '@/schema'
-import type { BuildableQueryColumn, ScalarQueryTerm } from '@/types'
+import type {
+  BuildableQueryColumn,
+  QueryTypeName,
+  ScalarQueryTerm,
+} from '@/types'
 import { logger } from '@/utils/logger'
 import {
   addJsonbCasts,
@@ -225,6 +229,11 @@ export class EncryptedQueryBuilderImpl<
 
   ilike(column: string, pattern: string): this {
     this.filters.push({ op: 'ilike', column, value: pattern })
+    return this
+  }
+
+  contains(column: string, value: unknown): this {
+    this.filters.push({ op: 'contains', column, value })
     return this
   }
 
@@ -615,7 +624,7 @@ export class EncryptedQueryBuilderImpl<
             value,
             column,
             table: this.schema,
-            queryType: mapFilterOpToQueryType(cond.op),
+            queryType: this.queryTypeForOrOp(cond.op),
             returnType: 'composite-literal',
           })
           termMap.push({ source, orIndex: i, conditionIndex: j, inIndex })
@@ -649,7 +658,7 @@ export class EncryptedQueryBuilderImpl<
         value: rf.value as JsPlaintext,
         column,
         table: this.schema,
-        queryType: 'equality',
+        queryType: this.queryTypeForRawOp(rf.operator),
         returnType: 'composite-literal',
       })
       termMap.push({ source: 'raw', rawIndex: i })
@@ -974,6 +983,9 @@ export class EncryptedQueryBuilderImpl<
         case 'ilike':
           q = this.applyPatternFilter(q, column, f.op, value, wasEncrypted)
           break
+        case 'contains':
+          q = this.applyContainsFilter(q, column, value, wasEncrypted)
+          break
         case 'is':
           q = q.is(column, value)
           break
@@ -1131,6 +1143,21 @@ export class EncryptedQueryBuilderImpl<
   protected validateTransforms(): void {}
 
   /**
+   * The CipherStash query type to encrypt a raw `.filter(column, operator, …)`
+   * term under. `operator` is an arbitrary PostgREST operator string, not a
+   * {@link FilterOp}, so it cannot go through `mapFilterOpToQueryType`.
+   *
+   * v2 encrypts every raw filter as an equality term. That is wrong — a raw
+   * `.filter('amount', 'gte', …)` wants an ORE term — but in v2 `queryType`
+   * selects the `encryptQuery` narrowing, so correcting it changes the
+   * ciphertext on the wire. Preserved verbatim here and tracked separately;
+   * the v3 dialect, where `queryType` is only a capability gate, overrides it.
+   */
+  protected queryTypeForRawOp(_operator: string): QueryTypeName {
+    return 'equality'
+  }
+
+  /**
    * Apply a `like`/`ilike` filter. v2 relies on the `~~` operator defined on
    * `eql_v2_encrypted`; the v3 dialect overrides this for encrypted columns
    * because the `eql_v3.*` domains expose free-text match via `@>`
@@ -1146,6 +1173,30 @@ export class EncryptedQueryBuilderImpl<
     return op === 'like'
       ? q.like(column, value as string)
       : q.ilike(column, value as string)
+  }
+
+  /**
+   * Apply a `contains` filter. On a plaintext column this is PostgREST's native
+   * jsonb/array containment. The v3 dialect overrides it for encrypted columns,
+   * where `cs` resolves to the `@>` operator the EQL bundle declares on the
+   * domain, backed by `eql_v3.contains` (bloom-filter containment).
+   */
+  protected applyContainsFilter(
+    q: SupabaseQueryBuilder,
+    column: DbName,
+    value: unknown,
+    _wasEncrypted: boolean,
+  ): SupabaseQueryBuilder {
+    return q.contains(column, value)
+  }
+
+  /**
+   * The CipherStash query type for an `.or()` condition's operator on an
+   * encrypted column. String-form conditions carry raw PostgREST operators
+   * (`cs`), which are not {@link FilterOp}s; the v3 dialect maps those.
+   */
+  protected queryTypeForOrOp(op: FilterOp): QueryTypeName {
+    return mapFilterOpToQueryType(op)
   }
 
   /**

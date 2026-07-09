@@ -152,21 +152,28 @@ describe('supabase v3 wire encoding, every domain', () => {
       expect(JSON.parse(gte.args[1] as string).c).toBeDefined()
     })
 
-    it('accepts order()', async () => {
+    // `gte` works — the `>=` operators ARE declared on the ord domains — but
+    // `order()` does not: no btree OPERATOR CLASS exists on any domain, so
+    // `ORDER BY col` falls through to jsonb's default opclass and sorts the
+    // ciphertext envelope. Filtering and sorting resolve through different
+    // machinery, and only sorting is broken.
+    it('rejects order() even though gte() is supported', async () => {
       const { q, supabase, name } = instanceFor(eqlType, spec)
 
-      const { error } = await q.select(`id, ${name}`).order(name)
+      const { error, status } = await q.select(`id, ${name}`).order(name)
 
-      expect(error).toBeNull()
-      expect(supabase.callsFor('order')[0].args[0]).toBe(name)
+      expect(status).toBe(500)
+      expect(error?.message).toContain('cannot order by encrypted column')
+      expect(error?.message).toContain('ord_term')
+      expect(supabase.callsFor('order')).toHaveLength(0)
     })
   })
 
   describe.each(matchDomains)('%s (freeTextSearch)', (eqlType, spec) => {
-    it('rewrites like() to a cs containment filter', async () => {
+    it('emits contains() as a cs containment filter', async () => {
       const { q, supabase, name } = instanceFor(eqlType, spec)
 
-      await q.select(`id, ${name}`).like(name, firstSample(spec))
+      await q.select(`id, ${name}`).contains(name, firstSample(spec))
 
       const [filter] = supabase.callsFor('filter')
       expect(filter.args[0]).toBe(name)
@@ -174,6 +181,14 @@ describe('supabase v3 wire encoding, every domain', () => {
       expect(JSON.parse(filter.args[2] as string).c).toBeDefined()
       // The v3 domains define no LIKE operator — a bare `like` would 42883.
       expect(supabase.callsFor('like')).toHaveLength(0)
+    })
+
+    it('refuses like(), directing the caller to contains()', async () => {
+      const { q, name } = instanceFor(eqlType, spec)
+
+      expect(() => q.like(name, firstSample(spec) as string)).toThrow(
+        /Use contains\(\)/,
+      )
     })
   })
 
@@ -198,13 +213,13 @@ describe('supabase v3 wire encoding, every domain', () => {
       expect(error?.message).toContain('does not support orderAndRange')
     })
 
-    it('rejects order() with the ordering capability message', async () => {
+    it('rejects order() with the encrypted-ordering message', async () => {
       const { q, name } = instanceFor(eqlType, spec)
 
       const { error, status } = await q.select('id').order(name)
 
       expect(status).toBe(500)
-      expect(error?.message).toContain('does not support ordering')
+      expect(error?.message).toContain('cannot order by encrypted column')
     })
   })
 })

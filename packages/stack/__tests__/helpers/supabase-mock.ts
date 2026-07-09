@@ -155,6 +155,7 @@ export function createMockSupabase(resultData: unknown = []) {
     'lte',
     'like',
     'ilike',
+    'contains',
     'is',
     'in',
     'filter',

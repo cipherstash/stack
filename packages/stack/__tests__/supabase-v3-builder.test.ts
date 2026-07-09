@@ -20,6 +20,9 @@ const users = encryptedTable('users', {
   amount: types.IntegerOrd('amount'),
   createdAt: types.TimestampOrd('created_at'),
   active: types.Boolean('active'),
+  // MATCH_ONLY: freeTextSearch WITHOUT equality. The only fixture column that
+  // can distinguish a correct op→queryType mapping from the `equality` default.
+  bio: types.TextMatch('bio'),
 })
 
 const usersV2 = encryptedTableV2('users', {
@@ -35,6 +38,7 @@ const USERS_ALL_COLUMNS = [
   'amount',
   'created_at',
   'active',
+  'bio',
   'note',
 ]
 
@@ -163,22 +167,41 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(JSON.parse(gte.args[1] as string).c).toBeDefined()
   })
 
-  it('emits encrypted like/ilike as PostgREST cs (bloom-filter containment)', async () => {
+  it('emits encrypted contains as PostgREST cs (bloom-filter containment)', async () => {
     const { es, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email').like('email', 'a@b')
-    await es.from('users', users).select('id, email').ilike('email', 'a@b')
+    await es.from('users', users).select('id, email').contains('email', 'a@b')
 
     const filterCalls = supabase.callsFor('filter')
-    expect(filterCalls).toHaveLength(2)
-    for (const call of filterCalls) {
-      expect(call.args[0]).toBe('email')
-      expect(call.args[1]).toBe('cs')
-      expect(JSON.parse(call.args[2] as string).c).toBeDefined()
-    }
-    // No bare like/ilike reached PostgREST for the encrypted column
-    expect(supabase.callsFor('like')).toHaveLength(0)
-    expect(supabase.callsFor('ilike')).toHaveLength(0)
+    expect(filterCalls).toHaveLength(1)
+    expect(filterCalls[0].args[0]).toBe('email')
+    expect(filterCalls[0].args[1]).toBe('cs')
+    // Full storage envelope: eql_v3.contains coerces the operand to the storage
+    // domain, whose CHECK requires `c`.
+    expect(JSON.parse(filterCalls[0].args[2] as string).c).toBeDefined()
+    // postgrest-js's native contains() would re-serialize the operand.
+    expect(supabase.callsFor('contains')).toHaveLength(0)
+  })
+
+  it('refuses like/ilike on an encrypted column, naming contains', async () => {
+    const { es } = v3Instance()
+
+    // The typed builder omits like/ilike, but an untyped JS caller reaches them.
+    expect(() =>
+      es.from('users', users).select('id').like('email', '%a@b%'),
+    ).toThrow(/token containment.*Use contains\(\)/s)
+    expect(() =>
+      es.from('users', users).select('id').ilike('email', '%a@b%'),
+    ).toThrow(/token containment.*Use contains\(\)/s)
+  })
+
+  it('passes contains through to native cs on a plaintext column', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es.from('users', users).select('id').contains('note', 'plain')
+
+    expect(supabase.callsFor('contains')[0].args).toEqual(['note', 'plain'])
+    expect(supabase.callsFor('filter')).toHaveLength(0)
   })
 
   it('keeps like on plain columns as like', async () => {
@@ -190,13 +213,13 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(supabase.callsFor('filter')).toHaveLength(0)
   })
 
-  it('maps not(like) on encrypted columns to not(cs)', async () => {
+  it('maps not(contains) on encrypted columns to not(cs)', async () => {
     const { es, supabase } = v3Instance()
 
     await es
       .from('users', users)
       .select('id, email')
-      .not('email', 'like', 'a@b')
+      .not('email', 'contains', 'a@b')
 
     const [not] = supabase.callsFor('not')
     expect(not.args[0]).toBe('email')
@@ -260,13 +283,41 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(error?.message).toContain('does not support equality')
   })
 
-  it('maps property names to DB names in order()', async () => {
-    const { es, supabase } = v3Instance()
+  // Ordering ANY encrypted v3 column is rejected. The `*_ord` domains are
+  // `DOMAIN … AS jsonb` and the bundle declares no btree OPERATOR CLASS on them
+  // (it lints against one: `domain_opclass`), so `ORDER BY col` resolves through
+  // jsonb's default opclass — `jsonb_cmp` — and sorts by the envelope's byte
+  // structure, first key `bf`. Correct ordering needs `ORDER BY
+  // eql_v3.ord_term(col)`, which PostgREST's `order=` cannot express.
+  //
+  // The old guard only rejected columns LACKING orderAndRange, i.e. exactly the
+  // columns where the wrongness was obvious, and admitted the ORE-capable ones
+  // where it is silent.
+  it('rejects order() on an ORE-capable encrypted column', async () => {
+    const { es } = v3Instance()
 
-    await es.from('users', users).select('id, createdAt').order('createdAt')
+    const { error, status } = await es
+      .from('users', users)
+      .select('id, createdAt')
+      .order('createdAt')
 
-    const [order] = supabase.callsFor('order')
-    expect(order.args[0]).toBe('created_at')
+    expect(status).toBe(500)
+    expect(error?.message).toContain('cannot order by encrypted column')
+    expect(error?.message).toContain('created_at')
+    expect(error?.message).toContain('timestamp_ord')
+    expect(error?.message).toContain('ord_term')
+  })
+
+  it('rejects order() on an equality-only encrypted column', async () => {
+    const { es } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .order('amount')
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('cannot order by encrypted column')
   })
 
   it('leaves plaintext columns untouched in order()', async () => {
@@ -278,7 +329,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(order.args[0]).toBe('note')
   })
 
-  it('rejects order() on a column with no orderAndRange capability', async () => {
+  it('rejects order() on a storage-only encrypted column', async () => {
     const { es } = v3Instance()
 
     // active is public.boolean — storage only, so ordering it would sort ciphertext
@@ -288,7 +339,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       .order('active')
 
     expect(status).toBe(500)
-    expect(error?.message).toContain('does not support ordering')
+    expect(error?.message).toContain('cannot order by encrypted column')
   })
 
   it('maps property names to DB names in the onConflict option', async () => {
@@ -365,7 +416,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       .not('nickname', 'eq', 'ada')
       .or('createdAt.gte.2026-01-01,note.eq.x')
       .match({ nickname: 'grace' })
-      .order('createdAt')
+      .order('note')
       .limit(5)
 
     expect(supabase.callsFor('eq')[0].args[0]).toBe('email')
@@ -377,7 +428,9 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       (supabase.callsFor('match')[0].args[0] as Record<string, unknown>)
         .nickname,
     ).toBeDefined()
-    expect(supabase.callsFor('order')[0].args[0]).toBe('created_at')
+    // `order` can no longer carry an encrypted column, so the rename it used to
+    // exercise here is covered by the filter paths above.
+    expect(supabase.callsFor('order')[0].args[0]).toBe('note')
     expect(supabase.callsFor('limit')[0].args[0]).toBe(5)
   })
 
@@ -509,14 +562,14 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     )
   })
 
-  // `transformOrConditions`' sole remaining job after `toDbSpace` took over
-  // column translation is the `like`/`ilike` → `cs` rewrite. The three or()
-  // string tests above use `gte`/`eq`/`is`, so that branch never ran.
+  // `.or()` string conditions carry raw PostgREST operators, so free-text search
+  // arrives as `cs`. The three or() string tests above use `gte`/`eq`/`is`, so
+  // the freeTextSearch capability branch never ran.
   describe('or() with encrypted pattern and structured conditions', () => {
-    it('rewrites an encrypted ilike inside an or() string to cs', async () => {
+    it('encrypts an encrypted cs inside an or() string and keeps the operator', async () => {
       const { es, supabase } = v3Instance()
 
-      await es.from('users', users).select('id').or('email.ilike.ada')
+      await es.from('users', users).select('id').or('email.cs.ada')
 
       const emitted = supabase.callsFor('or')[0].args[0] as string
       // The envelope is JSON (commas, braces), so `formatOrValue` quotes it.
@@ -524,14 +577,76 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(JSON.parse(orOperand(emitted, 'email.cs.')).c).toBeDefined()
     })
 
-    it('rewrites an encrypted like inside an or() string to cs', async () => {
+    it('gates an or() cs condition on the freeTextSearch capability', async () => {
+      const { es } = v3Instance()
+
+      // amount is public.integer_ord — no match index. Before the query-type
+      // seam this was encrypted as an equality term and silently accepted.
+      const { error, status } = await es
+        .from('users', users)
+        .select('id')
+        .or('amount.cs.5')
+
+      expect(status).toBe(500)
+      expect(error?.message).toContain('does not support freeTextSearch')
+    })
+
+    it('rejects an encrypted like inside an or() string', async () => {
+      const { es } = v3Instance()
+
+      const { error, status } = await es
+        .from('users', users)
+        .select('id')
+        .or('email.like.ada')
+
+      expect(status).toBe(500)
+      expect(error?.message).toContain('unsupported raw filter operator "like"')
+    })
+
+    // PostgREST spells negation `column.not.<op>.<value>`. The parser split on
+    // the first two dots, so this parsed as `{ op: 'not', value: 'in.(ada,grace)' }`
+    // — the `in`-split never fired and the literal string `in.(ada,grace)` was
+    // encrypted as ONE plaintext. Silent: the filter matched nothing.
+    it('encrypts each element of a NEGATED in-list inside or()', async () => {
       const { es, supabase } = v3Instance()
 
-      await es.from('users', users).select('id').or('email.like.ada')
+      await es
+        .from('users', users)
+        .select('id')
+        .or('nickname.not.in.(ada,grace)')
 
-      expect(supabase.callsFor('or')[0].args[0] as string).toMatch(
-        /^email\.cs\."/,
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      expect(emitted).toMatch(/^nickname\.not\.in\.\(/)
+      // Never the literal operand, and never one ciphertext for the whole list.
+      expect(emitted).not.toContain('in.(ada,grace)')
+      expect(emitted).not.toContain('"pt":["ada","grace"]')
+
+      const operands = emitted
+        .slice('nickname.not.in.('.length, -1)
+        .split('","')
+      expect(operands).toHaveLength(2)
+      const pts = operands.map(
+        (o) => JSON.parse(o.replace(/^"|"$/g, '').replace(/\\(.)/g, '$1')).pt,
       )
+      expect(pts).toEqual(['ada', 'grace'])
+    })
+
+    it('preserves negation on a scalar encrypted or() condition', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').or('nickname.not.eq.ada')
+
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      expect(emitted).toMatch(/^nickname\.not\.eq\."/)
+      expect(JSON.parse(orOperand(emitted, 'nickname.not.eq.')).pt).toBe('ada')
+    })
+
+    it('leaves a negated plaintext or() condition verbatim', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').or('note.not.in.(a,b)')
+
+      expect(supabase.callsFor('or')[0].args[0]).toBe('note.not.in.(a,b)')
     })
 
     // The structured form's encrypted path (`query-builder.ts:1065`). The
@@ -591,13 +706,13 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(plain).not.toContain('"pt":["ada","grace"]')
     })
 
-    it('rewrites an encrypted ilike in a structured or() to cs', async () => {
+    it('rewrites an encrypted contains in a structured or() to cs', async () => {
       const { es, supabase } = v3Instance()
 
       await es
         .from('users', users)
         .select('id')
-        .or([{ column: 'email', op: 'ilike', value: 'ada' }])
+        .or([{ column: 'email', op: 'contains', value: 'ada' }])
 
       expect(supabase.callsFor('or')[0].args[0] as string).toMatch(
         /^email\.cs\."/,
@@ -742,7 +857,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     it('sends a full envelope as the not(cs) operand', async () => {
       const { es, supabase } = v3Instance()
 
-      await es.from('users', users).select('id').not('email', 'like', 'a@b')
+      await es.from('users', users).select('id').not('email', 'contains', 'a@b')
 
       const [not] = supabase.callsFor('not')
       expect(not.args[0]).toBe('email')
@@ -750,14 +865,15 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(JSON.parse(not.args[2] as string).c).toBeDefined()
     })
 
-    it('maps not(ilike) on an encrypted column to not(cs)', async () => {
+    it('leaves not(like) on an encrypted column as like — no silent cs rewrite', async () => {
       const { es, supabase } = v3Instance()
 
-      await es.from('users', users).select('id').not('email', 'ilike', 'a@b')
+      // `not()` takes a raw operator string, so it bypasses the like() guard.
+      // It must NOT be rewritten to cs: `~~` does not exist on the domain, so
+      // PostgREST errors loudly instead of returning a wrong row set.
+      await es.from('users', users).select('id').not('email', 'like', 'a@b')
 
-      const [not] = supabase.callsFor('not')
-      expect(not.args[1]).toBe('cs')
-      expect(JSON.parse(not.args[2] as string).c).toBeDefined()
+      expect(supabase.callsFor('not')[0].args[1]).toBe('like')
     })
 
     it('leaves not(like) on a plaintext column as like with a plain operand', async () => {
@@ -1267,5 +1383,85 @@ describe('v3 single() decrypt path', () => {
     const row = data as unknown as { createdAt: Date }
     expect(row.createdAt).toBeInstanceOf(Date)
     expect(row.createdAt.toISOString()).toBe(iso)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Raw .filter() query-type resolution (Workstream D)
+//
+// Every other term collector derives `queryType` from the operator; the raw
+// filter loop hardcoded `'equality'`. In v3 the query type is ONLY a capability
+// gate (the operand is always the full storage envelope), so a wrong query type
+// is a wrong accept/reject — it does not corrupt the ciphertext. The victim is
+// `bio` (public.text_match, MATCH_ONLY): equality:false, freeTextSearch:true.
+// ---------------------------------------------------------------------------
+
+describe('v3 raw filter() resolves the query type from the operator', () => {
+  it('accepts cs on a match-only column and emits it verbatim', async () => {
+    const { es, supabase } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .filter('bio', 'cs', 'ada')
+
+    expect(error).toBeNull()
+    expect(status).toBe(200)
+    const [call] = supabase.callsFor('filter')
+    expect(call.args[0]).toBe('bio')
+    expect(call.args[1]).toBe('cs')
+    expect(JSON.parse(call.args[2] as string).pt).toBe('ada')
+  })
+
+  it('accepts gte on an ord column as an orderAndRange query', async () => {
+    const { es } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .filter('amount', 'gte', 10)
+
+    expect(error).toBeNull()
+    expect(status).toBe(200)
+  })
+
+  it('rejects cs on an ord column, which has no freeTextSearch capability', async () => {
+    const { es } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .filter('amount', 'cs', 'ada')
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('does not support freeTextSearch')
+  })
+
+  it('rejects an unsupported raw operator rather than defaulting to equality', async () => {
+    const { es } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .filter('email', 'ov', 'ada')
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('unsupported raw filter operator "ov"')
+  })
+
+  it('leaves a raw filter on a plaintext column untouched', async () => {
+    const { es, supabase } = v3Instance()
+
+    const { error } = await es
+      .from('users', users)
+      .select('id')
+      .filter('note', 'ov', 'anything')
+
+    expect(error).toBeNull()
+    expect(supabase.callsFor('filter')[0].args).toEqual([
+      'note',
+      'ov',
+      'anything',
+    ])
   })
 })

@@ -316,38 +316,60 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
   })
 
-  // `cs` → `@>` on the bloom filter. With the default `include_original: true`
-  // the pattern's bloom carries the WHOLE pattern as an extra token, so only an
-  // exact-value pattern matches. Asserts the DOCUMENTED semantics, not the
-  // intuitive ones.
-  it('resolves like() through cs containment for an exact-value pattern', async () => {
+  // `cs` → `@>` on the encrypted domain. This is the load-bearing assertion of
+  // the whole suite: the bundle declares
+  //   CREATE OPERATOR @> (FUNCTION = eql_v3.contains, LEFTARG = public.text_search,
+  //                       RIGHTARG = jsonb)
+  // whose body is `match_term(a) @> match_term(b::public.text_search)` — a
+  // smallint[] containment of the two BLOOM FILTERS. It is NOT the built-in
+  // `jsonb @> jsonb`, which would compare whole envelopes and so could only ever
+  // match on an identical ciphertext. The three tests below discriminate: a
+  // 3-char needle matches while a 7-char one does not, and neither shares the
+  // stored `c`. Only bloom containment explains that.
+  //
+  // With the default `include_original: true` the needle's bloom carries the
+  // WHOLE needle as an extra token, so only an exact-value needle matches.
+  // Asserts the DOCUMENTED semantics, not the intuitive ones.
+  it('resolves contains() through cs containment for an exact value', async () => {
     const { data, error } = await from()
       .select('row_key')
-      .like('email', 'ada@example.com')
+      .contains('email', 'ada@example.com')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
   })
 
-  // A pattern LONGER than the tokenizer's 3-gram window contributes an
+  // A needle LONGER than the tokenizer's 3-gram window contributes an
   // `include_original` token no stored trigram can supply, so containment
-  // fails. (A pattern of exactly 3 characters is the degenerate case: its
-  // whole-value token IS a trigram, so `like('email','ada')` DOES match. The
-  // class doc's "only an exact-value pattern matches" is a simplification.)
-  it('does not match a longer substring like() pattern under include_original', async () => {
+  // fails. (A needle of exactly 3 characters is the degenerate case: its
+  // whole-value token IS a trigram, so `contains('email','ada')` DOES match.)
+  // This is the KNOWN-BROKEN substring defect, shared with v3 Drizzle's
+  // `contains` and tracked upstream in EQL. Pinned so a fix is a visible change.
+  it('does not match a longer substring under include_original', async () => {
     const { data, error } = await from()
       .select('row_key')
-      .like('email', 'example')
+      .contains('email', 'example')
 
     expect(error).toBeNull()
     expect(data).toEqual([])
   })
 
   it('matches a 3-character substring, the degenerate include_original case', async () => {
-    const { data, error } = await from().select('row_key').like('email', 'ada')
+    const { data, error } = await from()
+      .select('row_key')
+      .contains('email', 'ada')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // The reason `like` is gone: `~~` is not defined on public.text_search, so
+  // had the adapter emitted it, PostgREST/Postgres would answer 42883. The
+  // client-side guard turns that into an actionable error before the round-trip.
+  it('refuses like() on an encrypted column rather than emitting an undefined operator', async () => {
+    expect(() => from().select('row_key').like('email', 'ada')).toThrow(
+      /Use contains\(\)/,
+    )
   })
 
   // PostgREST must re-parse a double-quoted JSON envelope inside `or=(…)`. The
@@ -357,6 +379,43 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
     const { data, error } = await from()
       .select('row_key')
       .or('nickname.eq.ada,row_key.eq.nobody')
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // An `in`-list inside `or()` has never been executed against a real PostgREST.
+  // Each element is a separate JSON envelope, so the list is a comma-separated
+  // sequence of quote-dense operands nested inside `(…)` inside the or-tree —
+  // the densest thing this adapter emits. A mock cannot catch a PGRST100 here.
+  it('parses an encrypted in-list inside an or() condition', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or('nickname.in.(ada,nobody)')
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // PostgREST negation: `column.not.<op>.<value>`. The parser used to read `not`
+  // AS the operator, encrypt the literal string `in.(ada,nobody)` as one
+  // plaintext, and emit a filter that silently matched nothing.
+  it('parses a NEGATED encrypted in-list inside an or() condition', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or('nickname.not.in.(ada,nobody)')
+
+    expect(error).toBeNull()
+    // `ada` is the only row and it IS in the list, so negation excludes it.
+    // Before the fix this returned `['ada']`: the bogus operand matched nothing,
+    // and `not` of nothing is everything.
+    expect(data).toEqual([])
+  })
+
+  it('parses a negated encrypted scalar inside an or() condition', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or('nickname.not.eq.nobody')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])

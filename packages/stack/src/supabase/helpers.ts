@@ -191,6 +191,7 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
       return 'equality'
     case 'like':
     case 'ilike':
+    case 'contains':
       return 'freeTextSearch'
     case 'gt':
     case 'gte':
@@ -206,7 +207,15 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
  * Parse a Supabase `.or()` filter string into structured conditions.
  *
  * Input: `'email.eq.john@example.com,name.ilike.%john%'`
- * Output: `[{ column: 'email', op: 'eq', value: 'john@example.com' }, { column: 'name', op: 'ilike', value: '%john%' }]`
+ * Output: `[{ column: 'email', op: 'eq', negate: false, value: 'john@example.com' }, …]`
+ *
+ * PostgREST spells negation `column.not.<op>.<value>`. It is lifted onto its own
+ * `negate` flag rather than left as the operator: the term collector keys the
+ * `in`-list split on `op === 'in'`, so a negated list parsed as
+ * `{ op: 'not', value: 'in.(a,b)' }` skipped the split and encrypted the literal
+ * string `in.(a,b)` as a single plaintext — a filter that silently matched
+ * nothing. Only a `not` in the OPERATOR position is a prefix; a column or value
+ * of that name is untouched.
  */
 export function parseOrString(orString: string): PendingOrCondition[] {
   const conditions: PendingOrCondition[] = []
@@ -217,12 +226,24 @@ export function parseOrString(orString: string): PendingOrCondition[] {
     const trimmed = part.trim()
     if (!trimmed) continue
 
-    // Format: column.op.value
+    // Format: column.op.value — or column.not.op.value
     const firstDot = trimmed.indexOf('.')
     if (firstDot === -1) continue
 
     const column = trimmed.slice(0, firstDot)
-    const rest = trimmed.slice(firstDot + 1)
+    let rest = trimmed.slice(firstDot + 1)
+
+    let negate = false
+    if (rest.startsWith('not.')) {
+      const afterNot = rest.slice('not.'.length)
+      // `col.not.<op>.<value>` needs an operator AND a value after the prefix.
+      // Without the second dot, `not` IS the operator (or the string is
+      // malformed) — leave it alone rather than swallow the operator.
+      if (afterNot.includes('.')) {
+        negate = true
+        rest = afterNot
+      }
+    }
 
     const secondDot = rest.indexOf('.')
     if (secondDot === -1) continue
@@ -233,7 +254,7 @@ export function parseOrString(orString: string): PendingOrCondition[] {
     // Handle special value formats
     const parsedValue = parseOrValue(value)
 
-    conditions.push({ column, op, value: parsedValue })
+    conditions.push({ column, op, negate, value: parsedValue })
   }
 
   return conditions
@@ -249,7 +270,8 @@ export function rebuildOrString(
   return conditions
     .map((c) => {
       const value = formatOrValue(c.value)
-      return `${c.column}.${c.op}.${value}`
+      const op = c.negate ? `not.${c.op}` : c.op
+      return `${c.column}.${op}.${value}`
     })
     .join(',') as DbFilterString
 }

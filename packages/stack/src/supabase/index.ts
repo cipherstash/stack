@@ -267,7 +267,9 @@ export async function encryptedSupabaseV3(
 
 export type {
   EncryptedQueryBuilder,
+  EncryptedQueryBuilderCore,
   EncryptedQueryBuilderV3,
+  EncryptedQueryBuilderV3Untyped,
   EncryptedSupabaseConfig,
   EncryptedSupabaseError,
   EncryptedSupabaseInstance,
@@ -278,5 +280,6 @@ export type {
   SupabaseClientLike,
   TypedEncryptedSupabaseV3Instance,
   V3FilterableKeys,
+  V3FreeTextSearchableKeys,
   V3Schemas,
 } from './types'

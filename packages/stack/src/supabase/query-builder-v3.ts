@@ -6,7 +6,11 @@ import type {
   EncryptedTable,
   EncryptedTableColumn,
 } from '@/schema'
-import type { BuildableQueryColumn, ScalarQueryTerm } from '@/types'
+import type {
+  BuildableQueryColumn,
+  QueryTypeName,
+  ScalarQueryTerm,
+} from '@/types'
 import { logger } from '@/utils/logger'
 import { addJsonbCastsV3 } from './helpers'
 import {
@@ -105,11 +109,17 @@ function assertNoPropertyDbNameCollision(
  *   The full envelope satisfies the storage-domain CHECK by construction, and
  *   the operators extract the term they need (`eq_term`/`ord_term`/
  *   `match_term`).
- * - **`like`/`ilike`** — the v3 domains define no LIKE operator; free-text
- *   match is `@>` on the bloom filter, so encrypted pattern filters are emitted
- *   as PostgREST `cs`. Match is tokenized + downcased, so `like` and `ilike`
- *   behave identically, and `%` wildcards are NOT interpreted — they are
- *   tokenized like any other character.
+ * - **`contains`, not `like`/`ilike`** — the v3 domains define no LIKE operator.
+ *   Free-text search is TOKEN CONTAINMENT: the bundle declares `@>` on each
+ *   match domain (`CREATE OPERATOR @> … FUNCTION = eql_v3.contains`), whose body
+ *   is `match_term(a) @> match_term(b)` — `smallint[]` containment of the two
+ *   bloom filters. PostgREST reaches it as `cs`.
+ *
+ *   Match is tokenized + downcased, so `%` is NOT a wildcard — it is tokenized
+ *   like any other character, and a `like` pattern is a category error. v3
+ *   Drizzle omits `like`/`ilike` for this reason and exposes `contains`; so do
+ *   we. The typed builder has no `like`; the runtime methods throw on an
+ *   encrypted column and pass through on a plaintext one.
  *
  *   KNOWN BROKEN for real substrings, and not fixable from this file. The
  *   operand is a storage payload, so its bloom carries the whole needle as an
@@ -203,25 +213,71 @@ export class EncryptedQueryBuilderV3Impl<
   }
 
   /**
-   * Ordering by an encrypted column relies on the domain's ORE index. A
-   * storage-only domain (`public.boolean`, `public.text`, …) has none, so
-   * PostgREST would sort by the raw ciphertext envelope and return a
-   * plausible-looking but meaningless row order. Reject it, mirroring the
-   * capability guard {@link encryptCollectedTerms} applies to filters — that
-   * guard is the only protection the untyped (no-`schemas`) surface has.
+   * Ordering by ANY encrypted v3 column is rejected — including the ORE-capable
+   * ones, which is the non-obvious half.
    *
-   * A column absent from {@link v3Columns} is a plaintext passthrough.
+   * The `*_ord` domains are `CREATE DOMAIN … AS jsonb`, and the bundle declares
+   * NO btree operator class on any domain — it actively lints against one
+   * (`domain_opclass`), because an opclass on a domain bypasses operator
+   * resolution. So `ORDER BY col` does not reach `eql_v3`'s ORE comparisons at
+   * all: it resolves through jsonb's DEFAULT btree opclass, `jsonb_cmp`, and
+   * sorts by the envelope's byte structure — keys compare alphabetically, so the
+   * sort is effectively on the `bf` bloom array. No error, no warning, and a
+   * stable, plausible-looking, meaningless row order.
+   *
+   * Correct ordering is `ORDER BY eql_v3.ord_term(col)`, which PostgREST's
+   * `order=` parameter cannot express. The v3 Drizzle integration emits exactly
+   * that (`sql-dialect.ts` `orderBy`), and proves it against live Postgres.
+   *
+   * The `>=`/`<=` operators ARE declared on the ord domains, so `gte`/`lte`
+   * filters remain correct. Filtering and sorting resolve through different
+   * machinery; only sorting is broken.
+   *
+   * A column absent from {@link v3Columns} is a plaintext passthrough, and
+   * orders normally. This runtime guard is the only protection the untyped
+   * (no-`schemas`) surface has.
    */
   protected override validateTransforms(): void {
     for (const t of this.transforms) {
       if (t.kind !== 'order') continue
       const column = this.v3Columns[t.column]
       if (!column) continue
-      if (!column.getQueryCapabilities().orderAndRange) {
+      throw new Error(
+        `[supabase v3]: cannot order by encrypted column "${column.getName()}" (${column.getEqlType()}) — PostgREST cannot emit \`ORDER BY eql_v3.ord_term("${column.getName()}")\`, and a bare \`ORDER BY\` sorts the raw ciphertext envelope, not the plaintext. Order by a plaintext column, expose \`eql_v3.ord_term()\` as a generated column or view and order by that, or use the EQL v3 Drizzle integration.`,
+      )
+    }
+  }
+
+  /**
+   * Resolve a raw `.filter()` operator to the capability it exercises. Unlike
+   * v2, the v3 operand is always the full storage envelope, so `queryType`
+   * never selects a narrowing — it only tells {@link encryptCollectedTerms}
+   * which capability to demand of the column. Getting it wrong therefore
+   * produces a wrong accept/reject, not a wrong ciphertext: the base class's
+   * `'equality'` default rejects `.filter('bio', 'cs', …)` on a
+   * `public.text_match` column, the one query that column can answer.
+   *
+   * Unknown operators throw rather than silently defaulting to equality, which
+   * would encrypt a term the column may not even be able to compare.
+   */
+  protected override queryTypeForRawOp(operator: string): QueryTypeName {
+    switch (operator) {
+      case 'cs':
+        return 'freeTextSearch'
+      case 'gt':
+      case 'gte':
+      case 'lt':
+      case 'lte':
+        return 'orderAndRange'
+      case 'eq':
+      case 'neq':
+      case 'in':
+      case 'is':
+        return 'equality'
+      default:
         throw new Error(
-          `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ordering — declare the column with a domain that carries the orderAndRange capability`,
+          `[supabase v3]: unsupported raw filter operator "${operator}" on an encrypted column`,
         )
-      }
     }
   }
 
@@ -323,38 +379,82 @@ export class EncryptedQueryBuilderV3Impl<
     )
   }
 
-  /** Encrypted pattern filters go through the bloom-filter `@>` (`cs`). */
-  protected override applyPatternFilter(
+  /**
+   * `like`/`ilike` do not exist on the v3 surface (see the class doc). The
+   * typed builder omits them, but an untyped JS caller can still reach them —
+   * refuse loudly rather than emit a `~~` the domain has no operator for.
+   *
+   * A plaintext column is a genuine PostgREST text column, so `like` there is
+   * exactly what the caller means; let it through.
+   */
+  private assertNotEncryptedPattern(column: string, op: string): void {
+    if (!this.v3Columns[column]) return
+    throw new Error(
+      `[supabase v3]: "${op}" is not supported on encrypted column "${column}" — EQL v3 free-text search is token containment, not SQL wildcard matching ("%" is tokenized like any other character). Use contains().`,
+    )
+  }
+
+  override like(column: string, pattern: string): this {
+    this.assertNotEncryptedPattern(column, 'like')
+    return super.like(column, pattern)
+  }
+
+  override ilike(column: string, pattern: string): this {
+    this.assertNotEncryptedPattern(column, 'ilike')
+    return super.ilike(column, pattern)
+  }
+
+  /**
+   * Encrypted `contains` goes through the bloom-filter `@>`, which the bundle
+   * declares on the domain as PostgREST's `cs`. The operand is the full storage
+   * envelope; `eql_v3.contains` extracts the `bf` array from both sides.
+   *
+   * Emitted via `filter(col, 'cs', json)` rather than `q.contains(col, json)`:
+   * postgrest-js's `contains` re-serializes a non-string operand, and our
+   * operand is already `JSON.stringify`d.
+   */
+  protected override applyContainsFilter(
     q: SupabaseQueryBuilder,
     column: DbName,
-    op: 'like' | 'ilike',
     value: unknown,
     wasEncrypted: boolean,
   ): SupabaseQueryBuilder {
     if (wasEncrypted) {
       return q.filter(column, 'cs', value)
     }
-    return super.applyPatternFilter(q, column, op, value, wasEncrypted)
+    return super.applyContainsFilter(q, column, value, wasEncrypted)
   }
 
   protected override notFilterOperator(
     op: FilterOp,
     wasEncrypted: boolean,
   ): string {
-    if (wasEncrypted && (op === 'like' || op === 'ilike')) {
+    if (wasEncrypted && op === 'contains') {
       return 'cs'
     }
     return op
   }
 
   /**
-   * Map `like`/`ilike` to `cs` on the conditions that were encrypted — the same
-   * bloom-filter containment rewrite {@link applyPatternFilter} performs for
-   * regular filters. Operator shaping stays here rather than in `toDbSpace`
-   * because it depends on `wasEncrypted`, which is only known after encryption.
+   * `.or()` string conditions carry raw PostgREST operators, so a free-text
+   * condition arrives as `cs` — not a {@link FilterOp}. Resolve it through the
+   * same table the raw `.filter()` path uses, so `.or('amount.cs.5')` on an
+   * `integer_ord` column is rejected by the capability guard rather than
+   * silently encrypted as an equality term.
+   */
+  protected override queryTypeForOrOp(op: FilterOp): QueryTypeName {
+    if (op === 'contains') return 'freeTextSearch'
+    return this.queryTypeForRawOp(op)
+  }
+
+  /**
+   * Rewrite the structured form's `contains` to the PostgREST operator token
+   * `cs` before the or-string is rebuilt. String-form callers already write
+   * `cs` — PostgREST syntax — so those pass through untouched.
    *
-   * Column names arrive already in DB-space (`toDbSpace`), so this no longer
-   * translates them.
+   * Operator shaping stays here rather than in `toDbSpace` because it depends
+   * on `wasEncrypted`, which is only known after encryption. Column names
+   * arrive already in DB-space.
    */
   protected override transformOrConditions(
     conditions: DbPendingOrCondition[],
@@ -362,7 +462,7 @@ export class EncryptedQueryBuilderV3Impl<
   ): DbPendingOrCondition[] {
     return conditions.map((cond, j) => {
       const op =
-        encryptedIndexes.has(j) && (cond.op === 'like' || cond.op === 'ilike')
+        encryptedIndexes.has(j) && cond.op === 'contains'
           ? ('cs' as FilterOp)
           : cond.op
       return op === cond.op ? cond : { ...cond, op }

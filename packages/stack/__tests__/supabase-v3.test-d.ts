@@ -3,6 +3,7 @@ import { encryptedTable, type InferPlaintext, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as v2EncryptedTable } from '@/schema'
 import {
   type EncryptedSupabaseResponse,
+  encryptedSupabase,
   encryptedSupabaseV3,
   type SupabaseClientLike,
 } from '@/supabase'
@@ -14,6 +15,8 @@ const users = encryptedTable('users', {
   amount: types.IntegerOrd('amount'),
   createdAt: types.TimestampOrd('created_at'),
   active: types.Boolean('active'),
+  nickname: types.TextEq('nickname'),
+  bio: types.TextMatch('bio'),
 })
 
 type UserRow = InferPlaintext<typeof users>
@@ -55,15 +58,62 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.is('active', true)
   })
 
-  it('rejects order() on storage-only columns at the type level', async () => {
+  it('rejects order() on every encrypted column at the type level', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient, {
       schemas: { users },
     })
     const builder = supabase.from('users')
+    // No btree opclass exists on any EQL v3 domain, so `ORDER BY col` sorts the
+    // ciphertext envelope. This holds for the ORE-capable domains too — which is
+    // the whole point: those are the ones where the wrongness is silent.
+    // @ts-expect-error — timestamp_ord: ORDER BY sorts ciphertext
     builder.order('createdAt')
+    // @ts-expect-error — integer_ord: ORDER BY sorts ciphertext
     builder.order('amount', { ascending: false })
-    // @ts-expect-error — active is public.boolean: no ORE index to order by
+    // @ts-expect-error — active is public.boolean: storage only
     builder.order('active')
+  })
+
+  it('still allows order() on a plaintext row key', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    // `note` is not a declared column, so it is a plaintext passthrough.
+    const builder = supabase.from<{ note: string }>('users')
+    builder.order('note')
+  })
+
+  it('narrows contains() to freeTextSearch-capable columns', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
+    // public.text_search — equality + orderAndRange + freeTextSearch
+    builder.contains('email', 'ada')
+    // public.text_match — freeTextSearch only
+    builder.contains('bio', 'ada')
+    // @ts-expect-error — nickname is public.text_eq: no match index
+    builder.contains('nickname', 'ada')
+    // @ts-expect-error — amount is public.integer_ord: no match index
+    builder.contains('amount', 'ada')
+    // @ts-expect-error — active is public.boolean (storage only)
+    builder.contains('active', 'ada')
+  })
+
+  it('does not expose like/ilike on the v3 builder, at any chain depth', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
+    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    builder.like('email', '%ada%')
+    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    builder.ilike('email', '%ada%')
+    // The chain must not launder the removal back in via a widened return type.
+    // @ts-expect-error — use contains()
+    builder.select('id').eq('email', 'a@b.com').like('email', '%ada%')
+    // contains() survives the chain.
+    builder.select('id').eq('email', 'a@b.com').contains('email', 'ada')
   })
 
   it('accepts plaintext model values on insert', async () => {
@@ -127,6 +177,34 @@ describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
     builder.eq('id', 1)
     // @ts-expect-error — not a row key
     builder.eq('missing', 1)
+  })
+
+  it('exposes contains and not like/ilike, exactly as the typed surface does', async () => {
+    // Without `schemas` there is no capability information, so `contains` cannot
+    // be narrowed — but the DIALECT is still v3, so `like`/`ilike` must be gone.
+    // Otherwise the untyped surface silently hands back the v2 builder type.
+    const supabase = await encryptedSupabaseV3(supabaseClient)
+    const builder = supabase.from<{ id: number; email: string }>('users')
+    builder.contains('email', 'ada')
+    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    builder.like('email', '%ada%')
+    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    builder.ilike('email', '%ada%')
+  })
+
+  it('keeps like/ilike on the v2 builder', () => {
+    const v2Users = v2EncryptedTable('users', {
+      email: encryptedColumn('email').freeTextSearch(),
+    })
+    const v2 = encryptedSupabase({
+      encryptionClient: {} as never,
+      supabaseClient,
+    })
+    const builder = v2.from<{ email: string }>('users', v2Users)
+    builder.like('email', '%ada%')
+    builder.ilike('email', '%ada%')
+    // @ts-expect-error — contains is the v3 dialect's method
+    builder.contains('email', 'ada')
   })
 
   it('supports a no-arg select(), like supabase-js', async () => {
