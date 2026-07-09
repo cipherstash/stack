@@ -1,17 +1,31 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import pg from 'pg'
+import {
+  EQL_SCHEMA_NAME,
+  EQL_V3_SCHEMA_NAME,
+  SUPABASE_PERMISSIONS_SQL,
+  SUPABASE_PERMISSIONS_SQL_V3,
+} from './grants.js'
 
 // EQL release, pinned to match the EQL payload format this package emits.
 // Bump in lockstep with @cipherstash/protect-ffi.
 const EQL_VERSION = 'eql-2.3.1'
 const EQL_INSTALL_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt.sql`
 const EQL_INSTALL_NO_OPERATOR_FAMILY_URL = `https://github.com/cipherstash/encrypt-query-language/releases/download/${EQL_VERSION}/cipherstash-encrypt-supabase.sql`
-const EQL_SCHEMA_NAME = 'eql_v2'
-// EQL v3 installs its operator functions into `eql_v3` (constructors live in
-// `eql_v3_internal`; the scalar type domains live in `public`). The `eql_v3`
-// schema is the install-detection and grant target.
-const EQL_V3_SCHEMA_NAME = 'eql_v3'
+
+// The grants SQL lives in `./grants.ts` (import-free) so the live proof in
+// `@cipherstash/stack` can assert against the exact shipped strings without a
+// package cycle. Re-exported here: this module stays the public entry point.
+export {
+  EQL_SCHEMA_NAME,
+  EQL_V3_INTERNAL_SCHEMA_NAME,
+  EQL_V3_SCHEMA_NAME,
+  SUPABASE_PERMISSIONS_SQL,
+  SUPABASE_PERMISSIONS_SQL_V3,
+  supabaseInternalPermissionsSql,
+  supabasePermissionsSql,
+} from './grants.js'
 
 /**
  * Which EQL generation to install / inspect. `2` is the composite
@@ -25,34 +39,18 @@ function schemaNameFor(eqlVersion: EqlVersion): string {
 }
 
 /**
- * Build the SQL block that grants an EQL schema, tables, routines, and
- * sequences to Supabase's built-in roles (`anon`, `authenticated`,
- * `service_role`).
- *
- * Supabase uses dedicated roles that don't own the schema, so explicit grants
- * are required. Returned as a single multi-statement string so it can be
- * executed in one `client.query()` (Postgres accepts multi-statement strings)
- * AND embedded directly into a Supabase migration file. One source of truth
- * for both the runtime install path and the generated migration file, shared
- * by the v2 (`eql_v2`) and v3 (`eql_v3`) installs.
+ * The grants block for an EQL generation — the ONE source of truth for both the
+ * runtime install path ({@link EQLInstaller.grantSupabasePermissions}) and the
+ * generated Supabase migration file. Previously the installer rebuilt the block
+ * from `supabasePermissionsSql(schemaNameFor(...))`, so a v3-only addition (the
+ * `eql_v3_internal` grants) reached the migration file and NOT the database the
+ * CLI installs into.
  */
-export function supabasePermissionsSql(schemaName: string): string {
-  return `GRANT USAGE ON SCHEMA ${schemaName} TO anon, authenticated, service_role;
-GRANT SELECT ON ALL TABLES IN SCHEMA ${schemaName} TO anon, authenticated, service_role;
-GRANT EXECUTE ON ALL ROUTINES IN SCHEMA ${schemaName} TO anon, authenticated, service_role;
-GRANT USAGE ON ALL SEQUENCES IN SCHEMA ${schemaName} TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT SELECT ON TABLES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT EXECUTE ON ROUTINES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA ${schemaName} GRANT USAGE ON SEQUENCES TO anon, authenticated, service_role;
-`
+export function supabaseGrantsFor(eqlVersion: EqlVersion): string {
+  return eqlVersion === 3
+    ? SUPABASE_PERMISSIONS_SQL_V3
+    : SUPABASE_PERMISSIONS_SQL
 }
-
-/** The v2 (`eql_v2`) Supabase grants block. See {@link supabasePermissionsSql}. */
-export const SUPABASE_PERMISSIONS_SQL = supabasePermissionsSql(EQL_SCHEMA_NAME)
-
-/** The v3 (`eql_v3`) Supabase grants block. See {@link supabasePermissionsSql}. */
-export const SUPABASE_PERMISSIONS_SQL_V3 =
-  supabasePermissionsSql(EQL_V3_SCHEMA_NAME)
 
 /**
  * Get the directory of the current file, supporting both ESM and CJS.
@@ -340,7 +338,7 @@ export class EQLInstaller {
    *
    * Supabase uses dedicated roles (anon, authenticated, service_role) that
    * don't own the schema, so explicit grants are required. Issues the
-   * {@link supabasePermissionsSql} block as a single multi-statement query —
+   * {@link supabaseGrantsFor} block as a single multi-statement query —
    * Postgres accepts that and it keeps the SQL identical to what we'd write
    * into a Supabase migration file.
    */
@@ -348,7 +346,7 @@ export class EQLInstaller {
     client: pg.Client,
     eqlVersion: EqlVersion,
   ): Promise<void> {
-    await client.query(supabasePermissionsSql(schemaNameFor(eqlVersion)))
+    await client.query(supabaseGrantsFor(eqlVersion))
   }
 
   /**
