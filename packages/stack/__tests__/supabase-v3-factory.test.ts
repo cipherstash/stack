@@ -178,4 +178,27 @@ describe('encryptedSupabaseV3 factory', () => {
     ).rejects.toThrow(/integer_ord_ope/)
     expect(encryptionMock).not.toHaveBeenCalled()
   })
+
+  // `eqlVersion` is forced, not defaulted. A caller who passes `eqlVersion: 2`
+  // against v3 domains would otherwise get a v2 encryption client and fail at
+  // runtime with a 23514 CHECK violation, far from the cause.
+  it('forces eqlVersion 3 over a caller-supplied config, passing other keys through', async () => {
+    await encryptedSupabaseV3(fakeClient, {
+      databaseUrl: 'postgres://x',
+      config: { eqlVersion: 2, workspaceCrn: 'crn:test' } as never,
+    })
+
+    const arg = encryptionMock.mock.calls[0][0] as {
+      config: Record<string, unknown>
+    }
+    expect(arg.config.eqlVersion).toBe(3)
+    expect(arg.config.workspaceCrn).toBe('crn:test')
+  })
+
+  it('defaults config to { eqlVersion: 3 } when none is supplied', async () => {
+    await encryptedSupabaseV3(fakeClient, { databaseUrl: 'postgres://x' })
+
+    const arg = encryptionMock.mock.calls[0][0] as { config: unknown }
+    expect(arg.config).toEqual({ eqlVersion: 3 })
+  })
 })

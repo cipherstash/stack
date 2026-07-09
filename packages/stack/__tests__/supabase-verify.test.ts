@@ -51,4 +51,14 @@ describe('verifyDeclaredSchemas', () => {
       /text_eq.*text_search|text_search.*text_eq/,
     )
   })
+
+  // The `actual ?? '(none)'` arm: `id` exists but carries no domain. Declaring
+  // it encrypted must fail at construction, not as a 23514 CHECK violation on
+  // the first insert.
+  it('throws "(none)" when a declared column is plaintext in the database', () => {
+    const users = encryptedTable('users', { id: types.IntegerEq('id') })
+    expect(() => verifyDeclaredSchemas({ users }, introspection)).toThrow(
+      /users\.id.*\(none\).*integer_eq/,
+    )
+  })
 })

@@ -1,188 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
+import { describe, expect, it, vi } from 'vitest'
 import { encryptedTable, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
 import { encryptedSupabase } from '@/supabase'
 import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
-
-// ---------------------------------------------------------------------------
-// Mocks
-//
-// The builders only touch a narrow slice of the encryption client and the
-// supabase client, so both are simulated: the encryption mock produces
-// deterministic fake envelopes (carrying the plaintext in `pt` so the fake
-// decrypt can undo them), and the supabase mock records every builder call.
-// This pins the WIRE ENCODING each dialect produces — the part of the adapter
-// that CI can verify without a live Supabase project.
-// ---------------------------------------------------------------------------
-
-type FakeEnvelope = {
-  v: 2
-  i: { t: string; c: string }
-  c: string
-  hm: string
-  pt: unknown
-}
-
-function fakeEnvelope(value: unknown, column: string): FakeEnvelope {
-  const pt = value instanceof Date ? value.toISOString() : value
-  return {
-    v: 2,
-    i: { t: 'tbl', c: column },
-    c: `ct:${String(pt)}`,
-    hm: `hm:${String(pt)}`,
-    pt,
-  }
-}
-
-function isFakeEnvelope(value: unknown): value is FakeEnvelope {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'pt' in value &&
-    'c' in value &&
-    'hm' in value
-  )
-}
-
-/** A chainable operation resolving to `{ data }`, like the real ones. */
-function operation<T>(data: T) {
-  const op = {
-    withLockContext: () => op,
-    audit: () => op,
-    then: (
-      onfulfilled?: ((value: { data: T }) => unknown) | null,
-      onrejected?: ((reason: unknown) => unknown) | null,
-    ) => Promise.resolve({ data }).then(onfulfilled, onrejected),
-  }
-  return op
-}
-
-type SchemaLike = {
-  build(): { columns: Record<string, unknown> }
-  buildColumnKeyMap?(): Record<string, string>
-}
-
-function createMockEncryptionClient() {
-  const encryptedProps = (table: SchemaLike): string[] =>
-    table.buildColumnKeyMap
-      ? Object.keys(table.buildColumnKeyMap())
-      : Object.keys(table.build().columns)
-
-  const client = {
-    encrypt: (value: unknown, opts: { column: { getName(): string } }) =>
-      operation(fakeEnvelope(value, opts.column.getName())),
-
-    // v2 filter path: batch query terms as composite literals
-    encryptQuery: (terms: Array<{ value: unknown }>) =>
-      operation(terms.map((t) => `("${String(t.value)}")`)),
-
-    encryptModel: (model: Record<string, unknown>, table: SchemaLike) => {
-      const props = encryptedProps(table)
-      const out: Record<string, unknown> = { ...model }
-      for (const prop of props) {
-        if (out[prop] != null) out[prop] = fakeEnvelope(out[prop], prop)
-      }
-      return operation(out)
-    },
-
-    bulkEncryptModels: (
-      models: Record<string, unknown>[],
-      table: SchemaLike,
-    ) => {
-      const props = encryptedProps(table)
-      return operation(
-        models.map((model) => {
-          const out: Record<string, unknown> = { ...model }
-          for (const prop of props) {
-            if (out[prop] != null) out[prop] = fakeEnvelope(out[prop], prop)
-          }
-          return out
-        }),
-      )
-    },
-
-    decryptModel: (model: Record<string, unknown>) => {
-      const out: Record<string, unknown> = {}
-      for (const [key, value] of Object.entries(model)) {
-        out[key] = isFakeEnvelope(value) ? value.pt : value
-      }
-      return operation(out)
-    },
-
-    bulkDecryptModels: (models: Record<string, unknown>[]) =>
-      operation(
-        models.map((model) => {
-          const out: Record<string, unknown> = {}
-          for (const [key, value] of Object.entries(model)) {
-            out[key] = isFakeEnvelope(value) ? value.pt : value
-          }
-          return out
-        }),
-      ),
-  }
-
-  return client as unknown as EncryptionClient
-}
-
-type RecordedCall = { method: string; args: unknown[] }
-
-function createMockSupabase(resultData: unknown = []) {
-  const calls: RecordedCall[] = []
-  // biome-ignore lint/suspicious/noExplicitAny: test double for the supabase query builder
-  const qb: any = {}
-  const methods = [
-    'select',
-    'insert',
-    'update',
-    'upsert',
-    'delete',
-    'eq',
-    'neq',
-    'gt',
-    'gte',
-    'lt',
-    'lte',
-    'like',
-    'ilike',
-    'is',
-    'in',
-    'filter',
-    'not',
-    'or',
-    'match',
-    'order',
-    'limit',
-    'range',
-    'single',
-    'maybeSingle',
-    'csv',
-    'abortSignal',
-    'throwOnError',
-  ]
-  for (const method of methods) {
-    qb[method] = (...args: unknown[]) => {
-      calls.push({ method, args })
-      return qb
-    }
-  }
-  qb.then = (
-    onfulfilled?: ((value: unknown) => unknown) | null,
-    onrejected?: ((reason: unknown) => unknown) | null,
-  ) =>
-    Promise.resolve({
-      data: resultData,
-      error: null,
-      count: null,
-      status: 200,
-      statusText: 'OK',
-    }).then(onfulfilled, onrejected)
-
-  const client = { from: (_table: string) => qb }
-  const callsFor = (method: string) => calls.filter((c) => c.method === method)
-
-  return { client, calls, callsFor }
-}
+import {
+  createMockEncryptionClient,
+  createMockSupabase,
+  fakeEnvelope,
+  isFakeEnvelope,
+} from './helpers/supabase-mock'
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -666,6 +492,302 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       '2026-01-02T03:04:05.000Z',
     )
   })
+
+  // `transformOrConditions`' sole remaining job after `toDbSpace` took over
+  // column translation is the `like`/`ilike` → `cs` rewrite. The three or()
+  // string tests above use `gte`/`eq`/`is`, so that branch never ran.
+  describe('or() with encrypted pattern and structured conditions', () => {
+    it('rewrites an encrypted ilike inside an or() string to cs', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').or('email.ilike.ada')
+
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      // The envelope is JSON (commas, braces), so `formatOrValue` quotes it.
+      expect(emitted).toMatch(/^email\.cs\."/)
+      const quoted = emitted.slice('email.cs."'.length, -1)
+      expect(JSON.parse(quoted).c).toBeDefined()
+    })
+
+    it('rewrites an encrypted like inside an or() string to cs', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').or('email.like.ada')
+
+      expect(supabase.callsFor('or')[0].args[0] as string).toMatch(
+        /^email\.cs\."/,
+      )
+    })
+
+    // The structured form's encrypted path (`query-builder.ts:1065`). The
+    // existing structured test uses `is`, which after `fd33aadf` encrypts
+    // nothing and so never populates `orStructuredConditionMap`.
+    it('encrypts the operand of a structured or() condition', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es
+        .from('users', users)
+        .select('id')
+        .or([
+          {
+            column: 'createdAt',
+            op: 'gte',
+            value: new Date('2026-01-01T00:00:00.000Z'),
+          },
+        ])
+
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      expect(emitted).toMatch(/^created_at\.gte\."/)
+      const quoted = emitted.slice('created_at.gte."'.length, -1)
+      expect(JSON.parse(quoted).c).toBeDefined()
+    })
+
+    it('rewrites an encrypted ilike in a structured or() to cs', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es
+        .from('users', users)
+        .select('id')
+        .or([{ column: 'email', op: 'ilike', value: 'ada' }])
+
+      expect(supabase.callsFor('or')[0].args[0] as string).toMatch(
+        /^email\.cs\."/,
+      )
+    })
+  })
+
+  describe('update / delete / single / maybeSingle', () => {
+    it('updates with raw envelopes keyed by DB column name', async () => {
+      const { es, supabase } = v3Instance()
+
+      const createdAt = new Date('2026-01-02T03:04:05.000Z')
+      await es
+        .from('users', users)
+        .update({ email: 'a@b.com', createdAt })
+        .eq('id', 1)
+
+      const [update] = supabase.callsFor('update')
+      const body = update.args[0] as Record<string, unknown>
+      expect(Object.keys(body).sort()).toEqual(['created_at', 'email'])
+      expect(isFakeEnvelope(body.email)).toBe(true)
+      expect((body.email as Record<string, unknown>).data).toBeUndefined()
+      expect(isFakeEnvelope(body.created_at)).toBe(true)
+    })
+
+    // `delete()` carries no body at all — `buildAndExecuteQuery` calls
+    // `query.delete(options)`. The WHERE operand still has to be encrypted.
+    it('sends no body on delete but still encrypts the WHERE operand', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).delete().eq('nickname', 'ada')
+
+      const [del] = supabase.callsFor('delete')
+      expect(del).toBeDefined()
+      expect(del.args[0]).toBeUndefined()
+
+      const [eq] = supabase.callsFor('eq')
+      expect(eq.args[0]).toBe('nickname')
+      expect(JSON.parse(eq.args[1] as string).pt).toBe('ada')
+    })
+
+    it('single() returns one decrypted object, not an array', async () => {
+      const row = {
+        id: 1,
+        email: fakeEnvelope('a@b.com', 'email'),
+        createdAt: fakeEnvelope(
+          new Date('2026-01-02T03:04:05.000Z'),
+          'created_at',
+        ),
+      }
+      const { es, supabase } = v3Instance(row)
+
+      const { data, error } = await es
+        .from('users', users)
+        .select('id, email, createdAt')
+        .single()
+
+      expect(error).toBeNull()
+      expect(supabase.callsFor('single')).toHaveLength(1)
+      expect(Array.isArray(data)).toBe(false)
+      expect(data!.email).toBe('a@b.com')
+      expect(data!.createdAt).toBeInstanceOf(Date)
+    })
+
+    it('maybeSingle() returns null for null result data without throwing', async () => {
+      const { es } = v3Instance(null)
+
+      const { data, error } = await es
+        .from('users', users)
+        .select('id, email')
+        .maybeSingle()
+
+      expect(error).toBeNull()
+      expect(data).toBeNull()
+    })
+  })
+
+  // `postprocessDecryptedRow` reconstructs `Date` from `cast_as`. Only the
+  // string-via-property-key arm was covered.
+  describe('postprocessDecryptedRow branches', () => {
+    it('leaves a null date-like value as null', async () => {
+      const { es } = v3Instance([{ id: 1, createdAt: null }])
+
+      const { data } = await es.from('users', users).select('id, createdAt')
+
+      expect(data![0].createdAt).toBeNull()
+    })
+
+    it('leaves an already-Date value untouched', async () => {
+      const existing = new Date('2026-01-02T03:04:05.000Z')
+      const { es } = v3Instance([{ id: 1, createdAt: existing }])
+
+      const { data } = await es.from('users', users).select('id, createdAt')
+
+      expect(data![0].createdAt).toBe(existing)
+    })
+
+    it('reconstructs a Date from a numeric epoch', async () => {
+      const epoch = Date.parse('2026-01-02T03:04:05.000Z')
+      const { es } = v3Instance([{ id: 1, createdAt: epoch }])
+
+      const { data } = await es.from('users', users).select('id, createdAt')
+
+      expect(data![0].createdAt).toBeInstanceOf(Date)
+      expect((data![0].createdAt as Date).toISOString()).toBe(
+        '2026-01-02T03:04:05.000Z',
+      )
+    })
+
+    // Selecting by raw DB name means the row comes back keyed `created_at`,
+    // the only way to reach the `dbName` half of the two-key branch. It also
+    // exercises the `value == null` skip on the absent `createdAt` key.
+    it('reconstructs a Date on a row keyed by the raw DB column name', async () => {
+      const rows = [
+        {
+          id: 1,
+          created_at: fakeEnvelope(
+            new Date('2026-01-02T03:04:05.000Z'),
+            'created_at',
+          ),
+        },
+      ]
+      const { es } = v3Instance(rows)
+
+      const { data } = await es.from('users', users).select('id, created_at')
+
+      const row = data![0] as unknown as Record<string, unknown>
+      expect(row.created_at).toBeInstanceOf(Date)
+      expect((row.created_at as Date).toISOString()).toBe(
+        '2026-01-02T03:04:05.000Z',
+      )
+    })
+  })
+
+  // `notFilterOperator` was asserted only on the operator, never on the
+  // operand — a regression dropping envelope encoding on the not() path would
+  // have passed.
+  describe('notFilterOperator', () => {
+    it('sends a full envelope as the not(cs) operand', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').not('email', 'like', 'a@b')
+
+      const [not] = supabase.callsFor('not')
+      expect(not.args[0]).toBe('email')
+      expect(not.args[1]).toBe('cs')
+      expect(JSON.parse(not.args[2] as string).c).toBeDefined()
+    })
+
+    it('maps not(ilike) on an encrypted column to not(cs)', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').not('email', 'ilike', 'a@b')
+
+      const [not] = supabase.callsFor('not')
+      expect(not.args[1]).toBe('cs')
+      expect(JSON.parse(not.args[2] as string).c).toBeDefined()
+    })
+
+    it('leaves not(like) on a plaintext column as like with a plain operand', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').not('note', 'like', '%x%')
+
+      expect(supabase.callsFor('not')[0].args).toEqual(['note', 'like', '%x%'])
+    })
+
+    it('keeps a non-pattern operator on an encrypted column, still enveloped', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').not('nickname', 'eq', 'ada')
+
+      const [not] = supabase.callsFor('not')
+      expect(not.args[0]).toBe('nickname')
+      expect(not.args[1]).toBe('eq')
+      expect(JSON.parse(not.args[2] as string).pt).toBe('ada')
+    })
+  })
+
+  // `v3Columns` / `dbToProp` are null-prototype and `dbNameFor` uses
+  // `Object.hasOwn` precisely so a plaintext DB column named `constructor`
+  // cannot resolve to the inherited `Object.prototype.constructor`. Nothing
+  // exercised those guards through the builder.
+  describe('a plaintext column named `constructor`', () => {
+    // Only encrypted columns are declared; `constructor` is a plaintext DB
+    // column, as introspection would report it.
+    const protoTable = encryptedTable('proto', {
+      email: types.TextSearch('email'),
+      createdAt: types.TimestampOrd('created_at'),
+    })
+    const PROTO_ALL_COLUMNS = ['id', 'email', 'created_at', 'constructor']
+
+    function protoInstance() {
+      const supabase = createMockSupabase()
+      const q = new EncryptedQueryBuilderV3Impl(
+        'proto',
+        protoTable,
+        createMockEncryptionClient(),
+        supabase.client,
+        PROTO_ALL_COLUMNS,
+        // biome-ignore lint/suspicious/noExplicitAny: addressing a column outside the declared row type
+      ) as any
+      return { q, supabase }
+    }
+
+    it('expands it as a real column in select(*)', async () => {
+      const { q, supabase } = protoInstance()
+
+      await q.select('*')
+
+      const emitted = supabase.callsFor('select')[0].args[0] as string
+      expect(emitted.split(', ')).toEqual([
+        'id',
+        'email::jsonb',
+        'createdAt:created_at::jsonb',
+        'constructor',
+      ])
+    })
+
+    it('resolves it as a plaintext filter column', async () => {
+      const { q, supabase } = protoInstance()
+
+      await q.select('id').eq('constructor', 'x')
+
+      expect(supabase.callsFor('eq')[0].args).toEqual(['constructor', 'x'])
+    })
+
+    // The sharpest of the three: `validateTransforms` indexes `v3Columns`
+    // without an own-key guard, so an inherited `constructor` would resolve to
+    // a Function and blow up on `.getQueryCapabilities()`.
+    it('orders by it without consulting the capability guard', async () => {
+      const { q, supabase } = protoInstance()
+
+      const { error } = await q.select('id').order('constructor')
+
+      expect(error).toBeNull()
+      expect(supabase.callsFor('order')[0].args[0]).toBe('constructor')
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -917,5 +1039,128 @@ describe('encryptedSupabase (v2) wire encoding is unchanged by the dialect seams
       await es.from('users', usersV2).select('id').is('email', false)
       expect(supabase.callsFor('is')[0].args).toEqual(['email', false])
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// encryptCollectedTerms: failure arm + lockContext/audit threading
+//
+// The existing 500-status tests all reach 500 via the CAPABILITY GUARD, which
+// throws before `encryptionClient.encrypt()` is ever called — so they pass even
+// if the failure/threading block below is deleted wholesale. These do not: they
+// need a client whose encrypt() actually fails, and one that records what was
+// threaded onto the operation.
+// ---------------------------------------------------------------------------
+
+/** An encrypt operation that resolves to a failure result. */
+function failingEncryptionClient(message: string) {
+  const op = {
+    withLockContext: () => op,
+    audit: () => op,
+    then: (
+      onfulfilled?: ((v: unknown) => unknown) | null,
+      onrejected?: ((r: unknown) => unknown) | null,
+    ) =>
+      Promise.resolve({ failure: { message } }).then(onfulfilled, onrejected),
+  }
+  return { encrypt: () => op }
+}
+
+/** An encrypt operation that records `withLockContext` / `audit` calls. */
+function recordingEncryptionClient() {
+  const withLockContext = vi.fn()
+  const audit = vi.fn()
+  const op: Record<string, unknown> = {
+    withLockContext: (...a: unknown[]) => {
+      withLockContext(...a)
+      return op
+    },
+    audit: (...a: unknown[]) => {
+      audit(...a)
+      return op
+    },
+    then: (
+      onfulfilled?: ((v: unknown) => unknown) | null,
+      onrejected?: ((r: unknown) => unknown) | null,
+    ) =>
+      Promise.resolve({ data: fakeEnvelope('a@b.com', 'email') }).then(
+        onfulfilled,
+        onrejected,
+      ),
+  }
+  return { client: { encrypt: () => op }, withLockContext, audit }
+}
+
+function builderWith(encryptionClient: unknown) {
+  const supabase = createMockSupabase()
+  return new EncryptedQueryBuilderV3Impl(
+    'users',
+    users,
+    encryptionClient as never,
+    supabase.client,
+    USERS_ALL_COLUMNS,
+  )
+}
+
+describe('v3 encryptCollectedTerms', () => {
+  it('surfaces a filter-term encryption failure as a 500 response', async () => {
+    const builder = builderWith(failingEncryptionClient('boom'))
+
+    const { error, status } = await builder
+      .select('id, email')
+      .eq('email', 'a@b.com')
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('Failed to encrypt query terms')
+    expect(error?.message).toContain('boom')
+  })
+
+  it('threads lockContext and audit onto the filter-term encryption', async () => {
+    const { client, withLockContext, audit } = recordingEncryptionClient()
+    const lockContext = { identify: () => {} } as never
+    const auditConfig = { metadata: { a: 1 } }
+
+    await builderWith(client)
+      .withLockContext(lockContext)
+      .audit(auditConfig)
+      .select('id, email')
+      .eq('email', 'a@b.com')
+
+    // Dropping either call would encrypt query terms under the wrong key, or
+    // silently lose the audit trail, with no test failing today.
+    expect(withLockContext).toHaveBeenCalledWith(lockContext)
+    expect(audit).toHaveBeenCalledWith(auditConfig)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Date reconstruction on the single-row decrypt path
+//
+// The `postprocessDecryptedRow` branches themselves are covered above; what is
+// not, is that the SINGLE-row call site invokes it at all. Only the array path
+// was exercised, so a missed reconstruction here hands the caller a string
+// where the row type promises a Date.
+// ---------------------------------------------------------------------------
+
+describe('v3 single() decrypt path', () => {
+  // `postprocessDecryptedRow` is called from both the array path and the
+  // single-row path; only the array path was covered. A missed reconstruction
+  // here hands the caller a string where the row type promises a Date.
+  it('reconstructs Date on the single() path', async () => {
+    const iso = '2026-01-02T03:04:05.000Z'
+    const { es } = v3Instance({
+      id: 1,
+      createdAt: fakeEnvelope(new Date(iso), 'created_at'),
+    })
+
+    const { data, error } = await es
+      .from('users', users)
+      .select('id, createdAt')
+      .single()
+
+    expect(error).toBeNull()
+    const row = data as unknown as { createdAt: Date }
+    expect(row.createdAt).toBeInstanceOf(Date)
+    expect(row.createdAt.toISOString()).toBe(iso)
   })
 })
