@@ -557,6 +557,90 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(error?.message).not.toContain('does not support ordering')
   })
 
+  // `is` is a SQL predicate (PostgREST accepts only null/true/false), never a
+  // data operand — and a null operand is SQL NULL, not a value to search for.
+  // Only the regular `.is()` filter skipped encryption; every other collector
+  // encrypted whatever it was handed. See the v2 block for the released-side
+  // regressions.
+  describe('is / null operands are never encrypted', () => {
+    it('does not encrypt a regular is() operand', async () => {
+      const { es, supabase } = v3Instance()
+      await es.from('users', users).select('id').is('createdAt', null)
+      expect(supabase.callsFor('is')[0].args).toEqual(['created_at', null])
+    })
+
+    it('does not encrypt not(col, is, null)', async () => {
+      const { es, supabase } = v3Instance()
+      await es.from('users', users).select('id').not('createdAt', 'is', null)
+      expect(supabase.callsFor('not')[0].args).toEqual([
+        'created_at',
+        'is',
+        null,
+      ])
+    })
+
+    it('does not encrypt a raw filter() is operand', async () => {
+      const { es, supabase } = v3Instance()
+      await es.from('users', users).select('id').filter('createdAt', 'is', null)
+      expect(supabase.callsFor('filter')[0].args).toEqual([
+        'created_at',
+        'is',
+        null,
+      ])
+    })
+
+    it('does not encrypt a null match() value', async () => {
+      const { es, supabase } = v3Instance()
+      await es.from('users', users).select('id').match({ nickname: null })
+      expect(supabase.callsFor('match')[0].args[0]).toEqual({ nickname: null })
+    })
+
+    // The or-string verbatim branch keys on "was any VALUE encrypted". An `is`
+    // on an encrypted column encrypts nothing, so it would fall through to
+    // verbatim and forward the unmapped property name. It must rebuild whenever
+    // a condition REFERENCES an encrypted column.
+    it('maps the column name in an or() string whose only condition is an is', async () => {
+      const { es, supabase } = v3Instance()
+      await es.from('users', users).select('id').or('createdAt.is.null')
+      expect(supabase.callsFor('or')[0].args[0]).toBe('created_at.is.null')
+    })
+
+    it('maps names in a structured or() carrying an is', async () => {
+      const { es, supabase } = v3Instance()
+      await es
+        .from('users', users)
+        .select('id')
+        .or([{ column: 'createdAt', op: 'is', value: null }])
+      expect(supabase.callsFor('or')[0].args[0]).toBe('created_at.is.null')
+    })
+
+    // `is` maps to the `equality` query type, so before the fix an `is` term
+    // reached the v3 capability gate and threw on a storage-only column.
+    it('does not raise a capability error for an is on a storage-only column', async () => {
+      const { es, supabase } = v3Instance()
+      const { status, error } = await es
+        .from('users', users)
+        .select('id')
+        .or('active.is.null')
+
+      expect(error).toBeNull()
+      expect(status).toBe(200)
+      expect(supabase.callsFor('or')[0].args[0]).toBe('active.is.null')
+    })
+
+    it('encrypts the encrypted condition of a mixed or() but leaves the is alone', async () => {
+      const { es, supabase } = v3Instance()
+      await es
+        .from('users', users)
+        .select('id')
+        .or('nickname.eq.ada,createdAt.is.null')
+
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      expect(emitted).toMatch(/^nickname\.eq\./)
+      expect(emitted.endsWith(',created_at.is.null')).toBe(true)
+    })
+  })
+
   it('reconstructs Date values from cast_as on decrypted rows', async () => {
     const rows = [
       {
@@ -781,5 +865,57 @@ describe('encryptedSupabase (v2) wire encoding is unchanged by the dialect seams
     ])
     expect(supabase.callsFor('order')[0].args[0]).toBe('age')
     expect(supabase.callsFor('limit')[0].args[0]).toBe(10)
+  })
+
+  // Released-side regressions. `is` is a SQL predicate — PostgREST accepts only
+  // null/true/false — and a null operand is SQL NULL, never a value to search
+  // for. Only the regular `.is()` filter skipped encryption; every other
+  // collector encrypted whatever it was handed, emitting operands PostgREST
+  // rejects.
+  describe('is / null operands are never encrypted', () => {
+    it('does not encrypt not(col, is, null)', async () => {
+      const { es, supabase } = v2Instance()
+      await es.from('users', usersV2).select('id').not('age', 'is', null)
+      expect(supabase.callsFor('not')[0].args).toEqual(['age', 'is', null])
+    })
+
+    it('does not encrypt a raw filter() is operand', async () => {
+      const { es, supabase } = v2Instance()
+      await es.from('users', usersV2).select('id').filter('age', 'is', null)
+      expect(supabase.callsFor('filter')[0].args).toEqual(['age', 'is', null])
+    })
+
+    it('forwards an or() is condition unencrypted', async () => {
+      const { es, supabase } = v2Instance()
+      await es.from('users', usersV2).select('id').or('age.is.null')
+      expect(supabase.callsFor('or')[0].args[0]).toBe('age.is.null')
+    })
+
+    it('does not encrypt a null eq() operand', async () => {
+      const { es, supabase } = v2Instance()
+      await es.from('users', usersV2).select('id').eq('email', null)
+      expect(supabase.callsFor('eq')[0].args).toEqual(['email', null])
+    })
+
+    it('does not encrypt a null match() value', async () => {
+      const { es, supabase } = v2Instance()
+      await es.from('users', usersV2).select('id').match({ email: null })
+      expect(supabase.callsFor('match')[0].args[0]).toEqual({ email: null })
+    })
+
+    it('does not encrypt null elements of an in() list', async () => {
+      const { es, supabase } = v2Instance()
+      await es
+        .from('users', usersV2)
+        .select('id')
+        .in('email', ['a@b.com', null])
+      expect(supabase.callsFor('in')[0].args[1]).toEqual(['("a@b.com")', null])
+    })
+
+    it('treats is() as a predicate even with a non-null operand', async () => {
+      const { es, supabase } = v2Instance()
+      await es.from('users', usersV2).select('id').is('email', false)
+      expect(supabase.callsFor('is')[0].args).toEqual(['email', false])
+    })
   })
 })

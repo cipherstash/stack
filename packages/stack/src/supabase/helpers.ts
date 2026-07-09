@@ -156,6 +156,30 @@ export function addJsonbCastsV3(
 }
 
 /**
+ * Whether a filter operand is a value to be encrypted and compared, rather than
+ * a SQL predicate. Every term collector must consult this before pushing an
+ * encryption term.
+ *
+ * - `is` is a predicate, not a comparison: PostgREST accepts only
+ *   `null`/`true`/`false`/`unknown` after it, so an encrypted operand is
+ *   rejected. The operand is non-null for `is(col, false)`, so the operator
+ *   must be checked independently of the value.
+ * - A `null`/`undefined` operand is SQL NULL. A null plaintext is stored as a
+ *   NULL column, not as ciphertext, so it is found with an unencrypted
+ *   `IS NULL` — encrypting the operand can never match anything.
+ *
+ * `operator` is widened to `string` because raw `filter()` accepts any
+ * PostgREST operator, not just a {@link FilterOp}.
+ */
+export function isEncryptableTerm(
+  operator: FilterOp | string,
+  value: unknown,
+): boolean {
+  if (operator === 'is') return false
+  return value != null
+}
+
+/**
  * Map a Supabase filter operation to a CipherStash query type.
  */
 export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {

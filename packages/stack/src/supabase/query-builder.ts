@@ -13,6 +13,7 @@ import { logger } from '@/utils/logger'
 import {
   addJsonbCasts,
   getEncryptedColumnNames,
+  isEncryptableTerm,
   isEncryptedColumn,
   mapFilterOpToQueryType,
   parseOrString,
@@ -530,8 +531,10 @@ export class EncryptedQueryBuilderImpl<
       if (!column) continue
 
       if (f.op === 'in' && Array.isArray(f.value)) {
-        // For `in` filters, encrypt each value separately
+        // For `in` filters, encrypt each value separately. A null element is
+        // SQL NULL and passes through; the applier restores it by index.
         for (let j = 0; j < f.value.length; j++) {
+          if (!isEncryptableTerm(f.op, f.value[j])) continue
           terms.push({
             value: f.value[j] as JsPlaintext,
             column,
@@ -541,7 +544,8 @@ export class EncryptedQueryBuilderImpl<
           })
           termMap.push({ source: 'filter', filterIndex: i, inIndex: j })
         }
-      } else if (f.op === 'is') {
+      } else if (!isEncryptableTerm(f.op, f.value)) {
+        // `is` predicate or null operand — forwarded unencrypted.
       } else {
         terms.push({
           value: f.value as JsPlaintext,
@@ -559,6 +563,8 @@ export class EncryptedQueryBuilderImpl<
       const mf = dbSpace.matchFilters[i]
       for (const { column: colName, value } of mf.entries) {
         if (!isEncryptedColumn(colName, this.encryptedColumnNames)) continue
+        // `match` carries no operator; equality is implied.
+        if (!isEncryptableTerm('eq', value)) continue
         const column = tableColumns[colName]
         if (!column) continue
 
@@ -577,6 +583,7 @@ export class EncryptedQueryBuilderImpl<
     for (let i = 0; i < dbSpace.notFilters.length; i++) {
       const nf = dbSpace.notFilters[i]
       if (!isEncryptedColumn(nf.column, this.encryptedColumnNames)) continue
+      if (!isEncryptableTerm(nf.op, nf.value)) continue
       const column = tableColumns[nf.column]
       if (!column) continue
 
@@ -598,6 +605,7 @@ export class EncryptedQueryBuilderImpl<
           const cond = of_.conditions[j]
           if (!isEncryptedColumn(cond.column, this.encryptedColumnNames))
             continue
+          if (!isEncryptableTerm(cond.op, cond.value)) continue
           const column = tableColumns[cond.column]
           if (!column) continue
 
@@ -615,6 +623,7 @@ export class EncryptedQueryBuilderImpl<
           const cond = of_.conditions[j]
           if (!isEncryptedColumn(cond.column, this.encryptedColumnNames))
             continue
+          if (!isEncryptableTerm(cond.op, cond.value)) continue
           const column = tableColumns[cond.column]
           if (!column) continue
 
@@ -638,6 +647,7 @@ export class EncryptedQueryBuilderImpl<
     for (let i = 0; i < dbSpace.rawFilters.length; i++) {
       const rf = dbSpace.rawFilters[i]
       if (!isEncryptedColumn(rf.column, this.encryptedColumnNames)) continue
+      if (!isEncryptableTerm(rf.operator, rf.value)) continue
       const column = tableColumns[rf.column]
       if (!column) continue
 
@@ -1023,7 +1033,17 @@ export class EncryptedQueryBuilderImpl<
           }
         }
 
-        if (encryptedIndexes.size > 0) {
+        // Rebuild whenever a condition REFERENCES an encrypted column — not
+        // merely when a value was encrypted. An `is`/null operand on an
+        // encrypted column encrypts nothing, so keying on `encryptedIndexes`
+        // would send that condition down the verbatim path below and forward
+        // the caller's JS property name to a DB that only knows the column's
+        // real name. `toDbSpace` has already translated `parsed`.
+        const referencesEncrypted = parsed.some((c) =>
+          isEncryptedColumn(c.column, this.encryptedColumnNames),
+        )
+
+        if (referencesEncrypted) {
           q = q.or(
             rebuildOrString(
               this.transformOrConditions(parsed, encryptedIndexes),
@@ -1033,13 +1053,10 @@ export class EncryptedQueryBuilderImpl<
             },
           )
         } else {
-          // No condition referenced an encrypted column. `getColumnMap()` is
-          // keyed by BOTH property and DB name, so an encrypted column always
-          // populates `encryptedIndexes` and takes the branch above, which maps
-          // names. Everything reaching here is therefore a plaintext column,
-          // whose property name IS its DB name — no mapping to do, and the
-          // caller's ORIGINAL string is forwarded byte-for-byte (v2 relies on
-          // this for nested `and()`/quoted values the parser cannot round-trip).
+          // Every condition names a plaintext column, whose property name IS
+          // its DB name — nothing to map. Forward the caller's ORIGINAL string
+          // byte-for-byte: v2 relies on this for nested `and()` and quoted
+          // values that `parseOrString`/`rebuildOrString` cannot round-trip.
           q = q.or(of_.original as DbFilterString, {
             referencedTable: of_.referencedTable,
           })
