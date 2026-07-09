@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { encryptedTable, types } from '@/eql/v3'
 import type { IntrospectionResult } from '@/supabase/introspect'
+import { groupUnmodelledRows } from '@/supabase/introspect'
 import {
-  assertModelledDomains,
   mergeDeclaredTables,
   synthesizeTables,
 } from '@/supabase/schema-builder'
@@ -149,37 +149,43 @@ describe('mergeDeclaredTables', () => {
   })
 })
 
-describe('assertModelledDomains', () => {
-  it('passes when every EQL domain in use is modelled', () => {
-    const eqlDomains = new Set(['text_search', 'integer_ord'])
-    expect(() => assertModelledDomains(introspection, eqlDomains)).not.toThrow()
-  })
-
-  it('throws naming the column + domain for a recognised-but-unmodelled domain', () => {
-    const withOpe: IntrospectionResult = [
-      {
-        tableName: 'metrics',
-        columns: [
-          { columnName: 'id', domainName: null },
-          { columnName: 'score', domainName: 'integer_ord_ope' },
+// The three-way classification (plaintext / modelled / unmodelled) moved into
+// `UNMODELLED_COLUMNS_QUERY`'s predicate, so it is proven against live Postgres
+// in `supabase-v3-introspect-pg.test.ts`, not here. What remains client-side is
+// the grouping — and, load-bearing, the fact that `synthesizeTables` treats an
+// unmodelled column as plaintext (covered above): that is exactly why the
+// `from()` guard must be unconditional.
+describe('groupUnmodelledRows', () => {
+  it('groups rows by table name, preserving row order', () => {
+    expect(
+      groupUnmodelledRows([
+        {
+          table_name: 'metrics',
+          column_name: 'score',
+          domain_name: 'integer_ord_ope',
+        },
+        { table_name: 'audit', column_name: 'payload', domain_name: 'json' },
+        {
+          table_name: 'metrics',
+          column_name: 'bucket',
+          domain_name: 'text_ord_ope',
+        },
+      ]),
+    ).toEqual(
+      new Map([
+        [
+          'metrics',
+          [
+            { columnName: 'score', domainName: 'integer_ord_ope' },
+            { columnName: 'bucket', domainName: 'text_ord_ope' },
+          ],
         ],
-      },
-    ]
-    // integer_ord_ope IS an EQL v3 domain, but has no types factory.
-    const eqlDomains = new Set(['integer_ord_ope'])
-    expect(() => assertModelledDomains(withOpe, eqlDomains)).toThrow(
-      /metrics\.score.*integer_ord_ope|integer_ord_ope.*metrics\.score/,
+        ['audit', [{ columnName: 'payload', domainName: 'json' }]],
+      ]),
     )
   })
 
-  it('does NOT throw for a user jsonb domain that is not an EQL domain', () => {
-    const withUserDomain: IntrospectionResult = [
-      {
-        tableName: 'docs',
-        columns: [{ columnName: 'body', domainName: 'my_json' }],
-      },
-    ]
-    // my_json is NOT in eqlDomains → plaintext passthrough, no throw.
-    expect(() => assertModelledDomains(withUserDomain, new Set())).not.toThrow()
+  it('returns an empty map when nothing is unmodelled', () => {
+    expect(groupUnmodelledRows([]).size).toBe(0)
   })
 })

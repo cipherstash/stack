@@ -609,8 +609,11 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(error).toBeNull()
       expect(supabase.callsFor('single')).toHaveLength(1)
       expect(Array.isArray(data)).toBe(false)
-      expect(data!.email).toBe('a@b.com')
-      expect(data!.createdAt).toBeInstanceOf(Date)
+      // `data` is declared `T[] | null` on the shared builder surface; single()
+      // narrows it to one row at runtime only.
+      const single = data as unknown as { email: string; createdAt: Date }
+      expect(single.email).toBe('a@b.com')
+      expect(single.createdAt).toBeInstanceOf(Date)
     })
 
     it('maybeSingle() returns null for null result data without throwing', async () => {

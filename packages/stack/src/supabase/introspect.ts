@@ -1,3 +1,5 @@
+import { DOMAIN_REGISTRY } from '@/eql/v3/domain-registry'
+
 /** One introspected column: its DB name and its `public` EQL v3 domain (or `null`). */
 export interface IntrospectedColumn {
   columnName: string
@@ -24,10 +26,46 @@ export interface IntrospectionRow {
   domain_name: string | null
 }
 
-/** Tables + the set of `public` domains recognised as EQL v3 (modelled or not). */
+/** One column carrying an EQL v3 domain this SDK version cannot model. */
+export interface UnmodelledColumn {
+  columnName: string
+  domainName: string
+}
+
+/**
+ * Tables, plus the EQL v3 columns this SDK cannot model, keyed by table name.
+ *
+ * `unmodelled` is deliberately a per-table index rather than a flat list: such
+ * a column is a silent-leak hazard ONLY for a table the caller actually
+ * queries, so the guard is a lookup at `from()`, not a whole-schema veto at
+ * construction. A table absent from this map is safe to serve.
+ */
 export interface IntrospectionData {
   tables: IntrospectionResult
-  eqlDomains: Set<string>
+  unmodelled: Map<string, UnmodelledColumn[]>
+}
+
+/** Raw row of {@link UNMODELLED_COLUMNS_QUERY}. */
+export interface UnmodelledRow {
+  table_name: string
+  column_name: string
+  domain_name: string
+}
+
+/** Group unmodelled-column rows by table name. */
+export function groupUnmodelledRows(
+  rows: UnmodelledRow[],
+): Map<string, UnmodelledColumn[]> {
+  const byTable = new Map<string, UnmodelledColumn[]>()
+  for (const row of rows) {
+    let cols = byTable.get(row.table_name)
+    if (!cols) {
+      cols = []
+      byTable.set(row.table_name, cols)
+    }
+    cols.push({ columnName: row.column_name, domainName: row.domain_name })
+  }
+  return byTable
 }
 
 /**
@@ -79,13 +117,26 @@ const COLUMNS_QUERY = `
 // zero exceptions). The CHECK bodies are NOT usable — they are non-uniform
 // (`integer_ord` names no function; `json` calls a `public.eql_v3_*` function).
 // `obj_description(oid, 'pg_type')` reads that comment for a domain type.
-const EQL_DOMAINS_QUERY = `
-  SELECT tp.typname AS domain_name
-  FROM pg_type tp
-  JOIN pg_namespace ns ON ns.oid = tp.typnamespace
-  WHERE tp.typtype = 'd'
-    AND ns.nspname = 'public'
+//
+// INVERTED: rather than fetching all 89 EQL domain names and re-deriving the
+// offenders client-side, push the modelled set ($1) into the predicate and
+// return only the columns this SDK cannot model. The registry IS the query
+// parameter, so the two cannot drift.
+const UNMODELLED_COLUMNS_QUERY = `
+  SELECT c.table_name, c.column_name, c.domain_name
+  FROM information_schema.columns c
+  JOIN information_schema.tables t
+    ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+  JOIN pg_type tp ON tp.typname = c.domain_name
+  JOIN pg_namespace ns
+    ON ns.oid = tp.typnamespace AND ns.nspname = c.domain_schema
+  WHERE c.table_schema = 'public'
+    AND t.table_type = 'BASE TABLE'
+    AND c.domain_schema = 'public'
+    AND tp.typtype = 'd'
     AND obj_description(tp.oid, 'pg_type') LIKE 'EQL%'
+    AND c.domain_name <> ALL ($1::text[])
+  ORDER BY c.table_name, c.ordinal_position
 `
 
 /** `pg` ships its API on the CJS default export, not the module namespace. */
@@ -125,9 +176,9 @@ export async function loadPg(
 
 /**
  * Connect over `databaseUrl`, read every base table in the `public` schema with
- * its EQL v3 domain (`domain_name`), and the set of `public` domains recognised
- * as EQL v3 (by their `COMMENT`). `pg` is loaded with a dynamic import so
- * bundlers do not pull it in unless introspection runs.
+ * its EQL v3 domain (`domain_name`), plus the EQL v3 columns this SDK cannot
+ * model, indexed by table. `pg` is loaded with a dynamic import so bundlers do
+ * not pull it in unless introspection runs.
  *
  * `udt_name` is `jsonb` for a domain column, so ONLY `domain_name` distinguishes
  * an EQL v3 column from a plain `jsonb` column (whose `domain_name` is NULL).
@@ -144,13 +195,15 @@ export async function introspect(
   })
   await client.connect()
   try {
-    const [columns, domains] = await Promise.all([
+    const [columns, unmodelled] = await Promise.all([
       client.query<IntrospectionRow>(COLUMNS_QUERY),
-      client.query<{ domain_name: string }>(EQL_DOMAINS_QUERY),
+      client.query<UnmodelledRow>(UNMODELLED_COLUMNS_QUERY, [
+        Object.keys(DOMAIN_REGISTRY),
+      ]),
     ])
     return {
       tables: groupIntrospectionRows(columns.rows),
-      eqlDomains: new Set(domains.rows.map((r) => r.domain_name)),
+      unmodelled: groupUnmodelledRows(unmodelled.rows),
     }
   } finally {
     // `end()` runs only after a successful connect; swallow its own failure so it

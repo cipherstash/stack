@@ -32,7 +32,10 @@ vi.mock('@supabase/supabase-js', () => ({ createClient: createClientMock }))
 const fakeClient = { from: () => ({}) } as unknown as SupabaseClientLike
 
 function introspectionOf(data: Partial<IntrospectionData>): IntrospectionData {
-  return { tables: data.tables ?? [], eqlDomains: data.eqlDomains ?? new Set() }
+  return {
+    tables: data.tables ?? [],
+    unmodelled: data.unmodelled ?? new Map(),
+  }
 }
 
 const usersIntrospection = introspectionOf({
@@ -45,7 +48,6 @@ const usersIntrospection = introspectionOf({
       ],
     },
   ],
-  eqlDomains: new Set(['text_search']),
 })
 
 beforeEach(() => {
@@ -110,7 +112,6 @@ describe('encryptedSupabaseV3 factory', () => {
             columns: [{ columnName: 'line', domainName: null }],
           },
         ],
-        eqlDomains: new Set(['text_search']),
       }),
     )
     await encryptedSupabaseV3(fakeClient, { databaseUrl: 'postgres://x' })
@@ -161,22 +162,78 @@ describe('encryptedSupabaseV3 factory', () => {
     ).rejects.toThrow(/orders.*users|record key/)
   })
 
-  it('throws on a recognized-but-unmodelled EQL domain', async () => {
-    introspectMock.mockResolvedValue(
-      introspectionOf({
-        tables: [
-          {
-            tableName: 'metrics',
-            columns: [{ columnName: 'score', domainName: 'integer_ord_ope' }],
-          },
-        ],
-        eqlDomains: new Set(['integer_ord_ope']),
-      }),
-    )
-    await expect(
-      encryptedSupabaseV3(fakeClient, { databaseUrl: 'postgres://x' }),
-    ).rejects.toThrow(/integer_ord_ope/)
-    expect(encryptionMock).not.toHaveBeenCalled()
+  // An unmodelled EQL domain is a silent-leak hazard: the column stays in
+  // `allColumns` so `select('*')` selects it, but it never enters the encrypt
+  // config, so reads return raw ciphertext undecrypted. It MUST throw — but
+  // only for the table the caller actually touches. Scanning the whole `public`
+  // schema at construction bricks the adapter for every consumer of a database
+  // that happens to contain one such column on an unrelated table.
+  describe('unmodelled EQL domains', () => {
+    // `users` is fully modelled. `metrics.score` is not. `metrics.label` is.
+    const withUnmodelledMetrics = introspectionOf({
+      tables: [
+        {
+          tableName: 'users',
+          columns: [
+            { columnName: 'id', domainName: null },
+            { columnName: 'email', domainName: 'text_search' },
+          ],
+        },
+        {
+          tableName: 'metrics',
+          columns: [
+            { columnName: 'label', domainName: 'text_eq' },
+            { columnName: 'score', domainName: 'integer_ord_ope' },
+          ],
+        },
+      ],
+      unmodelled: new Map([
+        ['metrics', [{ columnName: 'score', domainName: 'integer_ord_ope' }]],
+      ]),
+    })
+
+    beforeEach(() => {
+      introspectMock.mockResolvedValue(withUnmodelledMetrics)
+    })
+
+    it('constructs when the unmodelled column is on a table the caller never names', async () => {
+      await expect(
+        encryptedSupabaseV3(fakeClient, { databaseUrl: 'postgres://x' }),
+      ).resolves.toBeDefined()
+      expect(encryptionMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('still serves a fully-modelled table from that same database', async () => {
+      const es = await encryptedSupabaseV3(fakeClient, {
+        databaseUrl: 'postgres://x',
+      })
+      expect(() => es.from('users')).not.toThrow()
+    })
+
+    it('throws from from() naming the table, column and domain', async () => {
+      const es = await encryptedSupabaseV3(fakeClient, {
+        databaseUrl: 'postgres://x',
+      })
+      expect(() => es.from('metrics')).toThrow(
+        /metrics\.score.*integer_ord_ope/,
+      )
+    })
+
+    // A declared table IS named by the caller, so it is validated eagerly —
+    // preserving "fails at construction, not on the first query" exactly where
+    // the caller asked for compile-time types.
+    it('throws at construction when the unmodelled table is declared in schemas', async () => {
+      const metrics = encryptedTable('metrics', {
+        label: types.TextEq('label'),
+      })
+      await expect(
+        encryptedSupabaseV3(fakeClient, {
+          databaseUrl: 'postgres://x',
+          schemas: { metrics },
+        }),
+      ).rejects.toThrow(/metrics\.score.*integer_ord_ope/)
+      expect(encryptionMock).not.toHaveBeenCalled()
+    })
   })
 
   // `eqlVersion` is forced, not defaulted. A caller who passes `eqlVersion: 2`

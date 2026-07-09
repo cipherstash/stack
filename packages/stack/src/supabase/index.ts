@@ -1,13 +1,10 @@
 import { Encryption } from '@/encryption'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
+import type { UnmodelledColumn } from './introspect'
 import { introspect } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
 import { EncryptedQueryBuilderV3Impl } from './query-builder-v3'
-import {
-  assertModelledDomains,
-  mergeDeclaredTables,
-  synthesizeTables,
-} from './schema-builder'
+import { mergeDeclaredTables, synthesizeTables } from './schema-builder'
 import type {
   EncryptedQueryBuilder,
   EncryptedSupabaseConfig,
@@ -71,6 +68,33 @@ export function encryptedSupabase(
       )
     },
   }
+}
+
+/**
+ * Throw if `tableName` carries an EQL v3 column this SDK version cannot model.
+ *
+ * Such a column is a silent data leak: it never enters the encrypt config, but
+ * it IS in `allColumns`, so `select('*')` selects it and `decryptModel` skips
+ * it — the caller gets raw ciphertext typed as data. (Writes fail loudly on the
+ * domain CHECK; only reads are silent.)
+ *
+ * Keyed by table, not applied to the whole schema, because the hazard exists
+ * only for a table the caller actually queries. An `audit_log.payload
+ * public.json` column on a table you never name cannot leak, and must not stop
+ * you constructing a client for `users`.
+ */
+function assertTableIsModelled(
+  tableName: string,
+  unmodelled: Map<string, UnmodelledColumn[]>,
+): void {
+  const columns = unmodelled.get(tableName)
+  if (!columns?.length) return
+  const detail = columns
+    .map((c) => `"${tableName}.${c.columnName}" (public.${c.domainName})`)
+    .join(', ')
+  throw new Error(
+    `[supabase v3]: table "${tableName}" has EQL v3 columns this @cipherstash/stack version does not model: ${detail}. Upgrade the package, or stop using this table — the columns cannot be plaintext passthroughs (reads would return ciphertext undecrypted).`,
+  )
 }
 
 /**
@@ -157,12 +181,13 @@ export async function encryptedSupabaseV3(
     )
   }
 
-  // 3. Introspect, then reject any recognized-but-unmodelled EQL domain BEFORE
-  //    it can silently become a plaintext passthrough.
-  const { tables, eqlDomains } = await introspect(databaseUrl)
-  assertModelledDomains(tables, eqlDomains)
+  // 3. Introspect. Unmodelled EQL columns are NOT a construction-time veto —
+  //    they are checked per table, at the point the caller names one.
+  const { tables, unmodelled } = await introspect(databaseUrl)
 
   // 4. Synthesize; if declared, guard record keys, verify, then merge.
+  //    A DECLARED table is one the caller named, so it is validated eagerly,
+  //    before the encryption client is built.
   let synth = synthesizeTables(tables)
   if (options.schemas) {
     for (const [key, table] of Object.entries(options.schemas)) {
@@ -171,6 +196,7 @@ export async function encryptedSupabaseV3(
           `[supabase v3]: schemas key "${key}" does not match its table name "${table.tableName}" — the record key must equal the table's name`,
         )
       }
+      assertTableIsModelled(key, unmodelled)
     }
     verifyDeclaredSchemas(options.schemas, tables)
     synth = mergeDeclaredTables(synth, options.schemas)
@@ -220,6 +246,10 @@ export async function encryptedSupabaseV3(
           `[supabase v3]: unknown table "${tableName}" — it was not found during introspection`,
         )
       }
+      // Unconditional: `synthesizeTables` silently drops unmodelled columns, so
+      // this is the only thing preventing `select('*')` from returning raw
+      // ciphertext for one. Never make it optional.
+      assertTableIsModelled(tableName, unmodelled)
       const allColumns = synth.allColumns.get(tableName) ?? null
       return new EncryptedQueryBuilderV3Impl(
         tableName,

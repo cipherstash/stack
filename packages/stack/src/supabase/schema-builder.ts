@@ -21,9 +21,10 @@ export interface SynthesizedSchema {
  * plaintext — retained in `allColumns` but not added to the table. Synthesized
  * columns are keyed by DB name (property == DB name).
  *
- * NOTE: this does NOT reject recognized-but-unmodelled EQL domains — call
- * {@link assertModelledDomains} first; here such a column would silently become
- * a plaintext passthrough.
+ * NOTE: this does NOT reject recognized-but-unmodelled EQL domains — such a
+ * column silently becomes a plaintext passthrough here, and reads would return
+ * raw ciphertext. `assertTableIsModelled` (index.ts) is the ONLY thing standing
+ * between a caller and that leak; it must run before any builder is handed out.
  */
 export function synthesizeTables(
   introspection: IntrospectionResult,
@@ -90,28 +91,4 @@ export function mergeDeclaredTables(
   }
 
   return { tables, allColumns: synth.allColumns }
-}
-
-/**
- * Throw if any introspected column uses an EQL v3 domain this SDK version does
- * not model. Such a column would otherwise become a plaintext passthrough:
- * inserts fail on the domain CHECK, but reads return raw ciphertext undecrypted
- * (`decryptModel` skips columns absent from the config) — a silent data leak.
- * A domain not in `eqlDomains` (a user's own jsonb domain) is fine — plaintext.
- */
-export function assertModelledDomains(
-  introspection: IntrospectionResult,
-  eqlDomains: Set<string>,
-): void {
-  for (const table of introspection) {
-    for (const col of table.columns) {
-      const domain = col.domainName
-      if (domain === null) continue
-      if (!eqlDomains.has(domain)) continue // not an EQL domain → plaintext
-      if (factoryForDomain(domain)) continue // modelled → ok
-      throw new Error(
-        `[supabase v3]: column "${table.tableName}.${col.columnName}" uses EQL v3 domain "public.${domain}", which this @cipherstash/stack version does not model. Upgrade the package or drop the column — it cannot be used as a plaintext passthrough (reads would return ciphertext undecrypted).`,
-      )
-    }
-  }
 }

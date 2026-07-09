@@ -3,10 +3,7 @@ import postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { factoryForDomain } from '@/eql/v3/domain-registry'
 import { introspect } from '@/supabase/introspect'
-import {
-  assertModelledDomains,
-  synthesizeTables,
-} from '@/supabase/schema-builder'
+import { synthesizeTables } from '@/supabase/schema-builder'
 import { installEqlV3IfNeeded } from './helpers/eql-v3'
 import { describeLivePgOnly, LIVE_PG_ENABLED } from './helpers/live-gate'
 
@@ -17,6 +14,7 @@ const sql = LIVE_PG_ENABLED
 
 const MODELLED = 'protect_ci_v3_introspect'
 const UNMODELLED = 'protect_ci_v3_unmodelled'
+const USER_DOMAIN = 'protect_ci_v3_user_json'
 
 beforeAll(async () => {
   if (!LIVE_PG_ENABLED) return
@@ -32,12 +30,17 @@ beforeAll(async () => {
       meta jsonb
     )
   `)
+  // A user's OWN jsonb domain, with no EQL comment. It must never be reported
+  // as unmodelled — it is an ordinary plaintext passthrough.
+  await sql.unsafe(`DROP DOMAIN IF EXISTS public.${USER_DOMAIN}`)
+  await sql.unsafe(`CREATE DOMAIN public.${USER_DOMAIN} AS jsonb`)
   // Columns typed with EQL domains that have NO types factory.
   await sql.unsafe(`
     CREATE TABLE ${UNMODELLED} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       score public.integer_ord_ope NOT NULL,
-      doc public.json
+      doc public.json,
+      own public.${USER_DOMAIN}
     )
   `)
 }, 30000)
@@ -46,6 +49,7 @@ afterAll(async () => {
   if (!LIVE_PG_ENABLED) return
   await sql.unsafe(`DROP TABLE IF EXISTS ${MODELLED}`)
   await sql.unsafe(`DROP TABLE IF EXISTS ${UNMODELLED}`)
+  await sql.unsafe(`DROP DOMAIN IF EXISTS public.${USER_DOMAIN}`)
   await sql.end()
 }, 30000)
 
@@ -66,10 +70,7 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
   }, 30000)
 
   it('round-trips the domain → builder mapping via synthesizeTables', async () => {
-    const { tables, eqlDomains } = await introspect(databaseUrl as string)
-    // Sanity: the modelled domains are recognised as EQL domains (by COMMENT).
-    expect(eqlDomains.has('text_search')).toBe(true)
-    expect(eqlDomains.has('integer_ord')).toBe(true)
+    const { tables } = await introspect(databaseUrl as string)
 
     const { tables: synth, allColumns } = synthesizeTables(tables)
     const table = synth.get(MODELLED)
@@ -88,33 +89,45 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
     ])
   }, 30000)
 
-  it('detects unmodelled EQL domains (by COMMENT) and the guard rejects them', async () => {
-    const { tables, eqlDomains } = await introspect(databaseUrl as string)
+  // The three-way classification now lives entirely in the SQL predicate of
+  // `UNMODELLED_COLUMNS_QUERY`: EQL-by-COMMENT, and not in `DOMAIN_REGISTRY`.
+  // These prove it against a real catalog — nothing else does.
+  it('reports unmodelled EQL columns, keyed by table', async () => {
+    const { unmodelled } = await introspect(databaseUrl as string)
 
-    // The COMMENT predicate recognises these as EQL domains...
-    expect(eqlDomains.has('integer_ord_ope')).toBe(true)
-    expect(eqlDomains.has('json')).toBe(true)
-    // ...and they have no types factory (genuinely unmodelled)...
+    // Sanity: these really are EQL domains with no types factory.
     expect(factoryForDomain('integer_ord_ope')).toBeUndefined()
     expect(factoryForDomain('json')).toBeUndefined()
 
-    // Scope the guard to THIS test's tables. `introspect` returns every table in
-    // `public`, and a developer's DATABASE_URL may already carry an unmodelled
-    // EQL column of its own — the assertion would then pass for the wrong
-    // reason, or fail naming a domain this test never created.
-    const modelledOnly = tables.filter((t) => t.tableName === MODELLED)
-    const scoped = tables.filter(
-      (t) => t.tableName === MODELLED || t.tableName === UNMODELLED,
+    const offenders = unmodelled.get(UNMODELLED)
+    expect(offenders).toBeDefined()
+    expect(offenders?.map((c) => c.columnName).sort()).toEqual(['doc', 'score'])
+    expect(offenders?.find((c) => c.columnName === 'score')?.domainName).toBe(
+      'integer_ord_ope',
     )
-    expect(modelledOnly).toHaveLength(1)
-    expect(scoped).toHaveLength(2)
+  }, 30000)
 
-    // The modelled table alone must NOT trip the guard.
-    expect(() => assertModelledDomains(modelledOnly, eqlDomains)).not.toThrow()
+  it('does not report a fully-modelled table', async () => {
+    const { unmodelled } = await introspect(databaseUrl as string)
+    expect(unmodelled.has(MODELLED)).toBe(false)
+  }, 30000)
 
-    // ...and the unmodelled one throws, naming the offending column/domain.
-    expect(() => assertModelledDomains(scoped, eqlDomains)).toThrow(
-      /integer_ord_ope|public\.json/,
-    )
+  it("does not report a user's own jsonb domain as unmodelled", async () => {
+    const { unmodelled } = await introspect(databaseUrl as string)
+    // `own` carries a public domain with NO EQL comment → plaintext, not a leak.
+    const offenders = unmodelled.get(UNMODELLED) ?? []
+    expect(offenders.map((c) => c.columnName)).not.toContain('own')
+  }, 30000)
+
+  // The precondition that makes the `from()` guard load-bearing: an unmodelled
+  // column is silently dropped from the encrypt config, yet stays in
+  // `allColumns` — so `select('*')` would select it and return raw ciphertext.
+  it('synthesizeTables drops an unmodelled column but allColumns keeps it', async () => {
+    const { tables } = await introspect(databaseUrl as string)
+    const { tables: synth, allColumns } = synthesizeTables(tables)
+
+    expect(Object.keys(synth.get(UNMODELLED)!.columnBuilders)).toEqual([])
+    expect(allColumns.get(UNMODELLED)).toContain('score')
+    expect(allColumns.get(UNMODELLED)).toContain('doc')
   }, 30000)
 })
