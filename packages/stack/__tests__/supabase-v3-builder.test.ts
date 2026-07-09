@@ -556,6 +556,41 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(JSON.parse(orOperand(emitted, 'created_at.gte.')).c).toBeDefined()
     })
 
+    // The regular filter path splits an `in` array and encrypts each element
+    // (query-builder.ts:533). The or() path had no such case: it pushed ONE
+    // term whose value was the whole array, so the `(a,b)` list form was lost
+    // and the filter could never match. Fails closed, silently.
+    it('encrypts each element of an in() list inside an or() string', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id').or('nickname.in.(ada,grace)')
+
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      expect(emitted).toMatch(/^nickname\.in\.\(/)
+
+      // Two distinct encrypted operands, not one ciphertext of the array.
+      const plain = emitted.replace(/\\(.)/g, '$1')
+      expect(plain).toContain('"pt":"ada"')
+      expect(plain).toContain('"pt":"grace"')
+      expect(plain).not.toContain('"pt":["ada","grace"]')
+    })
+
+    it('encrypts each element of an in() list in a structured or()', async () => {
+      const { es, supabase } = v3Instance()
+
+      await es
+        .from('users', users)
+        .select('id')
+        .or([{ column: 'nickname', op: 'in', value: ['ada', 'grace'] }])
+
+      const emitted = supabase.callsFor('or')[0].args[0] as string
+      expect(emitted).toMatch(/^nickname\.in\.\(/)
+      const plain = emitted.replace(/\\(.)/g, '$1')
+      expect(plain).toContain('"pt":"ada"')
+      expect(plain).toContain('"pt":"grace"')
+      expect(plain).not.toContain('"pt":["ada","grace"]')
+    })
+
     it('rewrites an encrypted ilike in a structured or() to cs', async () => {
       const { es, supabase } = v3Instance()
 

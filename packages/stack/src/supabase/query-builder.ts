@@ -597,49 +597,43 @@ export class EncryptedQueryBuilderImpl<
       termMap.push({ source: 'not', notIndex: i })
     }
 
-    // Or filters — conditions were parsed once, in `toDbSpace`.
+    // Or filters — conditions were parsed once, in `toDbSpace`. The string and
+    // structured forms differ only in their `source` tag; the encryption rules,
+    // including the `in`-list split below, are identical.
     for (let i = 0; i < dbSpace.orFilters.length; i++) {
       const of_ = dbSpace.orFilters[i]
-      if (of_.kind === 'string') {
-        for (let j = 0; j < of_.conditions.length; j++) {
-          const cond = of_.conditions[j]
-          if (!isEncryptedColumn(cond.column, this.encryptedColumnNames))
-            continue
-          if (!isEncryptableTerm(cond.op, cond.value)) continue
-          const column = tableColumns[cond.column]
-          if (!column) continue
+      const source = of_.kind === 'string' ? 'or-string' : 'or-structured'
 
+      for (let j = 0; j < of_.conditions.length; j++) {
+        const cond = of_.conditions[j]
+        if (!isEncryptedColumn(cond.column, this.encryptedColumnNames)) continue
+        const column = tableColumns[cond.column]
+        if (!column) continue
+
+        const pushTerm = (value: JsPlaintext, inIndex?: number) => {
           terms.push({
-            value: cond.value as JsPlaintext,
+            value,
             column,
             table: this.schema,
             queryType: mapFilterOpToQueryType(cond.op),
             returnType: 'composite-literal',
           })
-          termMap.push({ source: 'or-string', orIndex: i, conditionIndex: j })
+          termMap.push({ source, orIndex: i, conditionIndex: j, inIndex })
         }
-      } else {
-        for (let j = 0; j < of_.conditions.length; j++) {
-          const cond = of_.conditions[j]
-          if (!isEncryptedColumn(cond.column, this.encryptedColumnNames))
-            continue
-          if (!isEncryptableTerm(cond.op, cond.value)) continue
-          const column = tableColumns[cond.column]
-          if (!column) continue
 
-          terms.push({
-            value: cond.value as JsPlaintext,
-            column,
-            table: this.schema,
-            queryType: mapFilterOpToQueryType(cond.op),
-            returnType: 'composite-literal',
-          })
-          termMap.push({
-            source: 'or-structured',
-            orIndex: i,
-            conditionIndex: j,
-          })
+        // Mirror the regular filter path: each element of an `in` list is its
+        // own term. Encrypting the array as one value collapses `(a,b)` into a
+        // single ciphertext that matches nothing.
+        if (cond.op === 'in' && Array.isArray(cond.value)) {
+          for (let k = 0; k < cond.value.length; k++) {
+            if (!isEncryptableTerm(cond.op, cond.value[k])) continue
+            pushTerm(cond.value[k] as JsPlaintext, k)
+          }
+          continue
         }
+
+        if (!isEncryptableTerm(cond.op, cond.value)) continue
+        pushTerm(cond.value as JsPlaintext)
       }
     }
 
@@ -928,17 +922,13 @@ export class EncryptedQueryBuilderImpl<
         case 'raw':
           rawValueMap.set(mapping.rawIndex, encValue)
           break
+        // `inIndex` widens the key to address one element of an `in` list, so a
+        // whole-condition value and a per-element value never collide.
         case 'or-string':
-          orStringConditionMap.set(
-            `${mapping.orIndex}:${mapping.conditionIndex}`,
-            encValue,
-          )
+          orStringConditionMap.set(orKey(mapping), encValue)
           break
         case 'or-structured':
-          orStructuredConditionMap.set(
-            `${mapping.orIndex}:${mapping.conditionIndex}`,
-            encValue,
-          )
+          orStructuredConditionMap.set(orKey(mapping), encValue)
           break
       }
     }
@@ -1026,9 +1016,9 @@ export class EncryptedQueryBuilderImpl<
         const encryptedIndexes = new Set<number>()
 
         for (let j = 0; j < parsed.length; j++) {
-          const key = `${i}:${j}`
-          if (orStringConditionMap.has(key)) {
-            parsed[j] = { ...parsed[j], value: orStringConditionMap.get(key) }
+          const sub = substituteOrValue(orStringConditionMap, i, j, parsed[j])
+          if (sub) {
+            parsed[j] = { ...parsed[j], value: sub.value }
             encryptedIndexes.add(j)
           }
         }
@@ -1065,10 +1055,10 @@ export class EncryptedQueryBuilderImpl<
         // Structured: convert to string
         const encryptedIndexes = new Set<number>()
         const conditions = of_.conditions.map((cond, j) => {
-          const key = `${i}:${j}`
-          if (orStructuredConditionMap.has(key)) {
+          const sub = substituteOrValue(orStructuredConditionMap, i, j, cond)
+          if (sub) {
             encryptedIndexes.add(j)
-            return { ...cond, value: orStructuredConditionMap.get(key) }
+            return { ...cond, value: sub.value }
           }
           return cond
         })
@@ -1350,12 +1340,63 @@ type TermMapping =
   | { source: 'match'; matchIndex: number; column: string }
   | { source: 'not'; notIndex: number }
   | { source: 'raw'; rawIndex: number }
-  | { source: 'or-string'; orIndex: number; conditionIndex: number }
-  | { source: 'or-structured'; orIndex: number; conditionIndex: number }
+  | {
+      source: 'or-string'
+      orIndex: number
+      conditionIndex: number
+      inIndex?: number
+    }
+  | {
+      source: 'or-structured'
+      orIndex: number
+      conditionIndex: number
+      inIndex?: number
+    }
 
 type EncryptedFilterState = {
   encryptedValues: unknown[]
   termMap: TermMapping[]
+}
+
+/** Key an `.or()` condition, or one element of its `in` list. */
+function orKey(mapping: {
+  orIndex: number
+  conditionIndex: number
+  inIndex?: number
+}): string {
+  const base = `${mapping.orIndex}:${mapping.conditionIndex}`
+  return mapping.inIndex === undefined ? base : `${base}:${mapping.inIndex}`
+}
+
+/**
+ * Substitute encrypted operands back into one `.or()` condition, returning
+ * `undefined` when nothing was encrypted for it.
+ *
+ * An `in` list is reconstructed element-by-element so `formatOrValue` re-emits
+ * the `(a,b)` list form. Substituting the array as a single value would collapse
+ * it to one ciphertext that matches nothing.
+ */
+function substituteOrValue(
+  map: Map<string, unknown>,
+  orIndex: number,
+  conditionIndex: number,
+  cond: { op: FilterOp; value: unknown },
+): { value: unknown } | undefined {
+  const whole = orKey({ orIndex, conditionIndex })
+  if (map.has(whole)) return { value: map.get(whole) }
+
+  if (cond.op === 'in' && Array.isArray(cond.value)) {
+    let substituted = false
+    const value = cond.value.map((element, inIndex) => {
+      const key = orKey({ orIndex, conditionIndex, inIndex })
+      if (!map.has(key)) return element
+      substituted = true
+      return map.get(key)
+    })
+    if (substituted) return { value }
+  }
+
+  return undefined
 }
 
 type RawSupabaseResult = {
