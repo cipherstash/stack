@@ -368,6 +368,57 @@ describe('parseOrString structural characters inside values', () => {
       { column: 'email', op: 'eq', negate: false, value: 'ada' },
     ])
   })
+
+  // A stray opener must not cost the or-string its REAL containment literals.
+  // Discarding the depth pass wholesale on an unbalanced count re-splits inside
+  // `{vip,admin}`, and the dotless `admin}` fragment is then dropped by
+  // `parseOrString` — the same silent condition loss, moved one operand along.
+  // A structural brace opens a group or an operand; anywhere else it is data.
+  it('keeps a sibling array literal intact past a stray opening brace', () => {
+    expect(parseOrString('note.eq.a{b,tags.cs.{vip,admin}')).toEqual([
+      { column: 'note', op: 'eq', negate: false, value: 'a{b' },
+      { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
+    ])
+  })
+
+  it('keeps an array literal intact when the stray opener follows it', () => {
+    expect(parseOrString('tags.cs.{vip,admin},note.eq.a{b')).toEqual([
+      { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
+      { column: 'note', op: 'eq', negate: false, value: 'a{b' },
+    ])
+  })
+
+  it('keeps a sibling jsonb literal intact past a stray opening brace', () => {
+    expect(parseOrString('note.eq.a{b,meta.cs.{"a":1,"b":2}')).toEqual([
+      { column: 'note', op: 'eq', negate: false, value: 'a{b' },
+      { column: 'meta', op: 'cs', negate: false, value: '{"a":1,"b":2}' },
+    ])
+  })
+
+  it('keeps a sibling array literal intact past a stray opening paren', () => {
+    expect(parseOrString('note.eq.a(b,tags.cs.{vip,admin}')).toEqual([
+      { column: 'note', op: 'eq', negate: false, value: 'a(b' },
+      { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
+    ])
+  })
+
+  // The boundary rule reads any `{` after a dot as an operand opener, so a
+  // scalar carrying an in-value dot still fools it. The unbalanced-depth
+  // re-split is what recovers this one; both mechanisms are load-bearing.
+  it('recovers a scalar whose brace follows an in-value dot', () => {
+    expect(parseOrString('x.eq.a.{b,y.eq.1')).toEqual([
+      { column: 'x', op: 'eq', negate: false, value: 'a.{b' },
+      { column: 'y', op: 'eq', negate: false, value: '1' },
+    ])
+  })
+
+  it('treats and/or group parens as structure', () => {
+    expect(parseOrString('and(a.eq.1,b.eq.2),c.eq.3')).toHaveLength(2)
+    expect(parseOrString('not.and(a.eq.1,b.eq.2),c.eq.3')).toHaveLength(2)
+    expect(parseOrString('and(a.eq.1,or(b.eq.2,c.eq.3)),d.eq.4')).toHaveLength(
+      2,
+    )
+  })
 })
 
 // An `in`-list element is quoted exactly like any other operand, so the list must

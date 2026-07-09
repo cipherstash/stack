@@ -168,6 +168,26 @@ describe('plaintext contains() emits a parseable containment literal', () => {
 
     expect(wire.operandFor('note')).toBe('cs.plain')
   })
+
+  // An empty element is not an empty array: `{}` is a zero-length array literal,
+  // so the containment would test for nothing at all.
+  it('quotes an empty array element', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').contains('note', [''])
+
+    expect(wire.operandFor('note')).toBe('cs.{""}')
+  })
+
+  // `NULL` is a keyword inside an array literal, case-insensitively. A string
+  // that spells it must be quoted or the element becomes a SQL NULL.
+  it('quotes an element spelling null', async () => {
+    const { wire, builder } = wireInstance()
+
+    await builder().select('id').contains('note', ['null'])
+
+    expect(wire.operandFor('note')).toBe('cs.{"null"}')
+  })
 })
 
 describe('plaintext not(col, contains, …) emits a parseable containment literal', () => {

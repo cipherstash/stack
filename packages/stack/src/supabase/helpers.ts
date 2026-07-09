@@ -310,6 +310,9 @@ export function rebuildOrString(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/** A logic-group token: the only non-operand position an opener may follow. */
+const OR_GROUP_TOKEN = /^(?:not\.)?(?:and|or)$/
+
 /**
  * Split on the commas that separate top-level tokens, leaving those inside a
  * quoted operand or a `(…)` / `{…}` literal alone.
@@ -320,19 +323,25 @@ export function rebuildOrString(
  * the one inside the element. Tracking quotes only at depth 0 ended the literal
  * early and swallowed the following condition into this operand.
  *
- * `depth` never goes below zero. `}` and `)` are not PostgREST reserved
- * characters, so `a}b` is a valid unquoted scalar; letting a stray one decrement
- * past zero meant no later comma ever split, silently absorbing every remaining
- * condition.
+ * Braces and parens count as STRUCTURE only where PostgREST's grammar can put
+ * them: opening a logic group (`and(`, `or(`, and their `not.` forms), opening
+ * an operand (immediately after the operator dot — `col.cs.{…}`, `col.in.(…)`),
+ * or nested inside a literal already open. `}` and `)` are not PostgREST
+ * reserved characters and `{`/`(` are not reserved mid-operand, so `a}b` and
+ * `a{b` are valid unquoted scalars. Counting those as structure desynchronised
+ * the split: a stray closer drove `depth` negative and a stray opener stranded
+ * it above zero, and either way no later comma split — every remaining condition
+ * was silently absorbed into this operand.
  *
- * The floor only covers a stray CLOSING character. A stray OPENING one leaves
- * `depth` above zero for the rest of the input, and no later comma splits either
- * — the same silent absorption, mirrored. `depth !== 0` at the end proves the
- * counting was fooled by a brace or paren that was never structure, so the whole
- * pass is discarded and the input re-split honouring quotes alone. That can only
- * recover conditions, never lose them: a real containment literal reaches this
- * point balanced, and the multi-element ones (the only kind carrying an internal
- * comma) are quoted by {@link formatOrValue} and therefore already opaque.
+ * `current === ''` admits a literal at the start of a token, which is how the
+ * `in`-list reuse below sees `{"a":1},{"b":2}`.
+ *
+ * The rule still reads a `{` after an in-value dot (`x.eq.a.{b`) as an operand
+ * opener. `depth !== 0` at the end proves the counting was fooled, so the pass
+ * is discarded and the input re-split honouring quotes alone — a backstop, not
+ * the primary mechanism. It must stay narrow: applied to an input whose braces
+ * WERE structure, it re-splits inside `{vip,admin}` and `parseOrString` then
+ * drops the dotless `admin}` fragment.
  *
  * `trackDepth` is the recursion's own flag, never passed by callers. NEVER
  * throws — `query-builder.ts` relies on `parseOrString` being total so that
@@ -359,16 +368,30 @@ function splitTopLevel(input: string, trackDepth = true): string[] {
     } else if (char === '"') {
       inQuotes = !inQuotes
       current += char
-    } else if (trackDepth && (char === '(' || char === '{') && !inQuotes) {
+    } else if (
+      trackDepth &&
+      (char === '(' || char === '{') &&
+      !inQuotes &&
       // `{` as well as `(`: a containment operand is an array (`{vip,admin}`) or
       // a jsonb (`{"a":1,"b":2}`) literal, whose top-level commas are part of
       // the value. PostgREST's own logic-tree parser tracks these braces;
       // without them a condition splits mid-literal into `tags.cs.{vip` and a
-      // dotless fragment `admin}` that the loop below silently drops.
+      // dotless fragment `admin}` that the loop below silently drops. Only at a
+      // token boundary, though — mid-operand the character is just data.
+      (depth > 0 ||
+        current === '' ||
+        current.endsWith('.') ||
+        OR_GROUP_TOKEN.test(current))
+    ) {
       depth++
       current += char
-    } else if (trackDepth && (char === ')' || char === '}') && !inQuotes) {
-      depth = Math.max(0, depth - 1)
+    } else if (
+      trackDepth &&
+      (char === ')' || char === '}') &&
+      !inQuotes &&
+      depth > 0
+    ) {
+      depth -= 1
       current += char
     } else if (char === ',' && depth === 0 && !inQuotes) {
       parts.push(current)
