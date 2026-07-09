@@ -83,6 +83,19 @@ export function encryptedSupabase(
  * Requires a Postgres connection (`options.databaseUrl` or `DATABASE_URL`) for
  * introspection, so it cannot run in a Worker or the browser.
  *
+ * A column is an EQL v3 column when its type is one of the `public` domains the
+ * EQL v3 bundle installs. The domain names the capabilities, and introspection
+ * turns it into the column's encryption config:
+ *
+ * ```sql
+ * CREATE TABLE users (
+ *   id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ *   email public.text_search,  -- equality, ordering, free-text match
+ *   age   public.integer_ord,  -- equality, ordering
+ *   name  text                 -- plaintext passthrough, untouched
+ * );
+ * ```
+ *
  * @example
  * ```typescript
  * const supabase = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
