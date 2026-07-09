@@ -549,12 +549,74 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   // A needle below the tokenizer's `token_length` builds an EMPTY bloom filter,
   // and `stored_bf @> '{}'` holds for every row — so before the SDK guard this
   // silently returned the whole table.
+  //
+  // `'👍👍'` is the regression case: 4 UTF-16 code units but only 2 codepoints,
+  // so a `needle.length` floor waved it through and it matched every row. The
+  // tokenizer counts codepoints. `''` tokenizes to nothing under any tokenizer.
   it.each(
-    matchDomains,
-  )('%s contains rejects a needle shorter than token_length', async (eqlType) => {
-    await expect(
-      ops.contains(matrixColumn(eqlType), 'ad'),
-    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+    matchDomains.flatMap(([eqlType]) =>
+      ['ad', '👍👍', ''].map((needle) => [eqlType, needle] as const),
+    ),
+  )(
+    '%s contains rejects the unanswerable needle %j before encrypting',
+    async (eqlType, needle) => {
+      const attempt = ops.contains(matrixColumn(eqlType), needle)
+      await expect(attempt).rejects.toBeInstanceOf(EncryptionOperatorError)
+      // Assert the GUARD rejected it, not the encryption layer.
+      // `operandFailure` also throws `EncryptionOperatorError`, so matching only
+      // the class would let an encryption error stand in for the guard and the
+      // test would pass for the wrong reason.
+      await expect(attempt).rejects.toThrow(/free-text search needs/)
+    },
+    30000,
+  )
+
+  // The complement: a needle that DOES reach the floor in codepoints must be
+  // ANSWERED, not over-rejected — otherwise the fix for the astral fail-open
+  // would just over-correct into rejecting usable needles.
+  //
+  // Restricted to match-ONLY columns: a column that also carries an `ore` index
+  // (`text_search`) cannot encrypt a non-ASCII operand at all — the ORE term
+  // raises "Can only order strings that are pure ASCII" — so a non-ASCII needle
+  // there fails inside encryption, long after the guard has passed it. That
+  // constraint is pinned by its own test below rather than silently conflated
+  // with the codepoint floor.
+  //
+  // Escapes, not literals: the precomposed NFC form of `ee-with-accents` is only
+  // 2 codepoints and IS rejected, so a bare literal would test the opposite case
+  // depending on the file's on-disk normalisation.
+  const NFD_EE = 'e\u0301e\u0301' // 4 codepoints, 2 grapheme clusters
+  const matchOnlyDomains = matchDomains.filter(([, spec]) => !spec.indexes.ore)
+
+  it.each(
+    matchOnlyDomains.flatMap(([eqlType]) =>
+      ['\u{1F44D}\u{1F44D}\u{1F44D}', NFD_EE].map(
+        (needle) => [eqlType, needle] as const,
+      ),
+    ),
+  )(
+    '%s contains answers the codepoint-sufficient needle %j with no match',
+    async (eqlType, needle) => {
+      const rows = await selectRowKeys(
+        await ops.contains(matrixColumn(eqlType), needle),
+      )
+      expect(rows).toEqual([])
+    },
+    30000,
+  )
+
+  // An `ore`-bearing match column rejects a non-ASCII needle inside ENCRYPTION,
+  // not in the needle guard. Pinned so the distinction stays visible: the guard
+  // is about tokenization, this is about the ORE term's ASCII-only ordering.
+  it.each(
+    matchDomains.filter(([, spec]) => spec.indexes.ore),
+  )('%s contains rejects a non-ASCII needle in the ORE term, not the guard', async (eqlType) => {
+    const attempt = ops.contains(
+      matrixColumn(eqlType),
+      '\u{1F44D}\u{1F44D}\u{1F44D}',
+    )
+    await expect(attempt).rejects.toThrow(/pure ASCII/)
+    await expect(attempt).rejects.not.toThrow(/free-text search needs/)
   }, 30000)
 
   it.each(

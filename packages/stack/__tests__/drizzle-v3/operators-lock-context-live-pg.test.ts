@@ -84,21 +84,37 @@ function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
 }
 
 /**
- * True when a decrypt attempt was DENIED. `decrypt` reports denial as a
- * `Result.failure` rather than throwing, so a bare `await` would resolve and a
- * naive `expect(...).rejects` would never fire — denial has to be read off the
- * result. A throw also counts as denial.
+ * The outcome of a decrypt attempt that is EXPECTED to be denied. `decrypt`
+ * reports denial as a `Result.failure` rather than throwing, so a bare `await`
+ * would resolve and a naive `expect(...).rejects` would never fire — denial has
+ * to be read off the result. A throw also counts as denial.
+ *
+ * Returns the message, not just a boolean, so callers can assert WHY it was
+ * denied. A bare boolean would let any infrastructure fault — a DNS failure, an
+ * expired CTS token, a ZeroKMS outage ("SendRequest: Failed to send request") —
+ * read as "the identity boundary held", and the security test would pass for
+ * the wrong reason.
  */
-async function decryptDenied(
+async function decryptOutcome(
   attempt: () => PromiseLike<{ failure?: { message: string } }>,
-): Promise<boolean> {
+): Promise<{ denied: boolean; message: string }> {
   try {
     const result = await attempt()
-    return Boolean(result.failure)
-  } catch {
-    return true
+    return {
+      denied: Boolean(result.failure),
+      message: result.failure?.message ?? '',
+    }
+  } catch (error) {
+    return { denied: true, message: (error as Error).message }
   }
 }
+
+/**
+ * A genuine key-derivation denial. ZeroKMS cannot reproduce the key tag without
+ * the identity claim the row was sealed under, and says so. Asserted verbatim
+ * elsewhere in the suite (`lock-context.test.ts`, `protect-ops.test.ts`).
+ */
+const KEY_DENIAL = /^Failed to retrieve key/
 
 /** Run-scoped SELECT of row keys under an already-encrypted SQL condition. */
 async function selectRowKeys(condition: SQL): Promise<string[]> {
@@ -230,10 +246,14 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
     )
 
     // `decrypt` reports denial as a `Result.failure` and does not throw, so a
-    // bare `await` here would silently pass. Require denial via either channel.
-    expect(await decryptDenied(() => client.decrypt(row.value as never))).toBe(
-      true,
+    // bare `await` here would silently pass. Require denial via either channel,
+    // AND require it be a key-derivation denial rather than an outage.
+    const { denied, message } = await decryptOutcome(() =>
+      client.decrypt(row.value as never),
     )
+
+    expect(denied).toBe(true)
+    expect(message).toMatch(KEY_DENIAL)
   }, 30000)
 
   it('an identity-bound row does not decrypt under a different identity claim', async () => {
@@ -244,12 +264,13 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
       [RUN, ROW_A],
     )
 
-    expect(
-      await decryptDenied(() =>
-        client
-          .decrypt(row.value as never)
-          .withLockContext({ identityClaim: ['email'] } as never),
-      ),
-    ).toBe(true)
+    const { denied, message } = await decryptOutcome(() =>
+      client
+        .decrypt(row.value as never)
+        .withLockContext({ identityClaim: ['email'] } as never),
+    )
+
+    expect(denied).toBe(true)
+    expect(message).toMatch(KEY_DENIAL)
   }, 30000)
 })
