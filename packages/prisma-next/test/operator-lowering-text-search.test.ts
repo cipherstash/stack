@@ -22,6 +22,7 @@ import {
   columnAccessor,
   contract,
   getOperator,
+  literalParamValue,
   makeAdapter,
   selectWithWhere,
   TABLE,
@@ -48,7 +49,7 @@ describe('cipherstash operator lowering — cipherstashIlike', () => {
     const lowered = makeAdapter().lower(ast, { contract })
 
     expect(lowered.params).toHaveLength(1)
-    const envelope = lowered.params[0]
+    const envelope = literalParamValue(lowered.params[0])
     expect(envelope).toBeInstanceOf(EncryptedString)
     const handle = (envelope as EncryptedString).expose()
     expect(handle.plaintext).toBe('%alice%')

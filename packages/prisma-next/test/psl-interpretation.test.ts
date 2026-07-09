@@ -315,8 +315,11 @@ model User {
     // The named type's storage descriptor and the inline column's
     // codec/nativeType/typeParams must agree byte-for-byte; the inline
     // column carries `nullable` (and may carry `default`/etc.) which the
-    // named-type descriptor does not.
+    // named-type descriptor does not, while the named-type entry is
+    // stamped with the `kind` discriminator for the polymorphic
+    // `storage.types` slot.
     expect(aliasNamedType).toEqual({
+      kind: 'codec-instance',
       codecId: inlineCol['codecId'],
       nativeType: inlineCol['nativeType'],
       typeParams: inlineCol['typeParams'],

@@ -24,12 +24,11 @@
 
 import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime'
 import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
-import { emptyCodecLookup } from '@prisma-next/framework-components/codec'
 import type {
   RuntimeExtensionDescriptor,
   RuntimeTargetDescriptor,
 } from '@prisma-next/framework-components/execution'
-import { validateContract } from '@prisma-next/sql-contract/validate'
+import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
 import {
   type AnyExpression,
   ColumnRef,
@@ -71,7 +70,7 @@ function emptySdk(): CipherstashSdk {
 
 const TABLE = 'user'
 
-const contract = validateContract<PostgresContract>(
+const contract = validateSqlContractFully<PostgresContract>(
   {
     target: 'postgres',
     targetFamily: 'sql',
@@ -130,7 +129,6 @@ const contract = validateContract<PostgresContract>(
     },
     models: {},
   },
-  emptyCodecLookup,
 )
 
 const stubRuntimeTarget: RuntimeTargetDescriptor<'sql', 'postgres'> = {
@@ -279,7 +277,9 @@ describe('cipherstashJsonbPathQueryFirst — AST shape and SQL snapshot', () => 
     expect(lowered.sql).toMatchInlineSnapshot(
       `"SELECT eql_v2.jsonb_path_query_first("user"."payload", $1) AS "first_email" FROM "user""`,
     )
-    expect(lowered.params).toEqual(['$.user.email'])
+    expect(lowered.params).toEqual([
+      { kind: 'literal', value: '$.user.email' },
+    ])
   })
 })
 
@@ -301,7 +301,7 @@ describe('cipherstashJsonbGet — AST shape and SQL snapshot', () => {
     expect(lowered.sql).toMatchInlineSnapshot(
       `"SELECT eql_v2."->"("user"."payload", $1) AS "email_field" FROM "user""`,
     )
-    expect(lowered.params).toEqual(['email'])
+    expect(lowered.params).toEqual([{ kind: 'literal', value: 'email' }])
   })
 })
 

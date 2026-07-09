@@ -25,16 +25,16 @@
 
 import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime'
 import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
-import { emptyCodecLookup } from '@prisma-next/framework-components/codec'
 import type {
   RuntimeExtensionDescriptor,
   RuntimeTargetDescriptor,
 } from '@prisma-next/framework-components/execution'
-import { validateContract } from '@prisma-next/sql-contract/validate'
+import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
 import type { SqlOperationDescriptor } from '@prisma-next/sql-operations'
 import {
   type AnyExpression,
   ColumnRef,
+  type LoweredParam,
   ProjectionItem,
   SelectAst,
   TableSource,
@@ -67,7 +67,7 @@ export function emptySdk(): CipherstashSdk {
 export const TABLE = 'user'
 export const COLUMN = 'email'
 
-export const contract = validateContract<PostgresContract>(
+export const contract = validateSqlContractFully<PostgresContract>(
   {
     target: 'postgres',
     targetFamily: 'sql',
@@ -126,7 +126,6 @@ export const contract = validateContract<PostgresContract>(
     },
     models: {},
   },
-  emptyCodecLookup,
 )
 
 // Stub runtime target — the Postgres adapter only consults `familyId` /
@@ -220,4 +219,20 @@ export function selectWithWhere(whereExpr: AnyExpression) {
   return SelectAst.from(TableSource.named(TABLE))
     .withProjection([ProjectionItem.of('id', ColumnRef.of(TABLE, 'id'))])
     .withWhere(whereExpr)
+}
+
+/**
+ * Unwrap the value carried by a lowered `literal` param. Since 0.9 the
+ * adapter's `lower` emits structured `LoweredParam` entries
+ * (`{ kind: 'literal', value } | { kind: 'bind', name }`) instead of raw
+ * values; the operator-lowering assertions all target the literal
+ * payload (the cipherstash envelope).
+ */
+export function literalParamValue(param: LoweredParam): unknown {
+  if (param.kind !== 'literal') {
+    throw new Error(
+      `expected a literal lowered param, got kind '${param.kind}'`,
+    )
+  }
+  return param.value
 }
