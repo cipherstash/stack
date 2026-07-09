@@ -95,7 +95,9 @@ The CLI holds your credentials and reads them itself. No command needs you to op
 - `~/.cipherstash/secretkey.json` — the development key
 - `~/.cipherstash/auth.json` — OAuth token and JWTs
 - anything under `~/.cipherstash/workspaces/`
-- `.env`, `.env.local`, `.env.production`, or any credentials file
+- value-bearing env files — `.env`, `.env.local`, `.env.production`, … — and any credentials file
+
+`.env.example` is the exception: it holds placeholders, not values, and you are expected to edit it.
 
 Referring to env key *names* (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`, `DATABASE_URL`) in code and docs is fine. Their *values* are not. New keys go into `.env.example` as placeholders; ask the user to fill in the real value locally.
 
@@ -204,7 +206,7 @@ Pre-flights `.cipherstash/context.json` (errors with "Run `stash init` first" if
 | Detected state | Plan written |
 |---|---|
 | No `dual_writing` event recorded | **Encryption rollout** — schema-add + dual-write code. Ends at the deploy gate. |
-| A column has `dual_writing` or later | **Encryption cutover** — backfill + schema rename. Requires the rollout to be deployed. |
+| A column has `dual_writing` or later | **Encryption cutover** — backfill, schema rename, read-path switch, drop. Requires the rollout to be deployed. |
 | `--complete-rollout` passed | **Complete rollout** — schema-add through drop, no deploy gate. Default-no confirm with a loud warning. |
 
 The agent writes a machine-readable header into the plan:
@@ -259,7 +261,7 @@ The split is invisible — keep running `plan` and `impl`; the CLI reads `cs_mig
 
 ### Why the split exists
 
-There is no atomic way to replace a populated plaintext column with an encrypted one without corrupting data. The rollout phase deploys the *capability* to write encrypted values (the twin column and the dual-write code). The cutover phase deploys the *transition* (backfill historical rows, then rename-swap so reads decrypt).
+There is no atomic way to replace a populated plaintext column with an encrypted one without corrupting data. The rollout phase deploys the *capability* to write encrypted values (the twin column and the dual-write code). The cutover phase deploys the *transition*: backfill historical rows, rename-swap the columns, switch the application read path through the encryption client, then drop the plaintext column.
 
 Backfill is only safe once dual-writes are running in production. Any row written *during* the backfill window must land in both columns — otherwise it stays plaintext-only and creates silent migration drift. The gate makes that precondition explicit.
 
@@ -429,7 +431,9 @@ stash encrypt cutover --table users --column email
 
 **Preconditions:** the column is in the `backfilled` phase, **and** a pending EQL configuration exists.
 
-In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape. Reads of `<col>` now decrypt transparently — no application read-path change.
+In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape.
+
+> **After cutover, `<col>` holds ciphertext — the read path is not automatic.** Wire reads through the encryption client (`decryptModel(row, table)` for Drizzle, the `encryptedSupabase` wrapper for Supabase, otherwise `decrypt` / `bulkDecryptModels`) before returning values to callers. Skip this and your read paths hand raw EQL payloads to end users. The integration skill has the exact API. **CipherStash Proxy is the one exception** — it decrypts on the wire, so Proxy users need no application change. The cutover plan written by `stash plan` includes this read-path switch as an explicit step.
 
 > **Known gap.** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. Decoupling this — under EQL v3 there is no configuration table at all — is tracked in [issue #585](https://github.com/cipherstash/stack/issues/585).
 
