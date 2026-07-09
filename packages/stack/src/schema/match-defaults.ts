@@ -74,3 +74,42 @@ export function resolveMatchOpts(opts?: MatchIndexOpts): BuiltMatchIndexOpts {
     include_original: opts?.include_original ?? defaults.include_original,
   })
 }
+
+/**
+ * The shortest needle a match index can answer, or `undefined` when its
+ * tokenizer imposes no floor (`standard` splits on word boundaries, so any
+ * non-empty needle yields at least one token).
+ *
+ * Accepts the loose {@link MatchIndexOpts} because a `ColumnSchema`'s built
+ * `indexes.match` is typed from the zod schema, where `tokenizer` is optional.
+ * An absent tokenizer resolves to the same default the schema itself applies
+ * (`ngram`, `token_length: 3`) rather than skipping the floor — skipping would
+ * reintroduce the fail-open this guard exists to close.
+ */
+export function matchNeedleMinLength(opts: MatchIndexOpts): number | undefined {
+  const tokenizer = opts.tokenizer ?? defaultMatchOpts().tokenizer
+  return tokenizer.kind === 'ngram' ? tokenizer.token_length : undefined
+}
+
+/**
+ * Why a needle cannot be answered by this match index, or `undefined` when it
+ * can. Callers throw their own error type with this as the reason.
+ *
+ * A needle shorter than the ngram tokenizer's `token_length` produces NO
+ * ngrams, so its bloom filter is empty — and `stored_bf @> '{}'` is true for
+ * every row ("contains nothing, contained by everything"). Such a query is
+ * unanswerable rather than merely unmatched, so it must fail loudly instead of
+ * silently returning the whole table.
+ *
+ * Shared by the v2 and v3 adapters: both build byte-identical bloom filters, so
+ * the floor is a property of the index config, not of the adapter version.
+ */
+export function matchNeedleError(
+  needle: unknown,
+  opts: MatchIndexOpts,
+): string | undefined {
+  if (typeof needle !== 'string') return undefined
+  const min = matchNeedleMinLength(opts)
+  if (min === undefined || needle.length >= min) return undefined
+  return `free-text search needs at least ${min} characters (the index tokenizer's token_length), but the search term ${JSON.stringify(needle)} has ${needle.length}. A shorter term produces no tokens and would match every row.`
+}

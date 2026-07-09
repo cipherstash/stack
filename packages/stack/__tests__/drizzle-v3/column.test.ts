@@ -133,4 +133,45 @@ describe('makeEqlV3Column', () => {
     expect(pgColumn?.getSQLType()).toBe(eqlType)
     expect(getEqlV3Column(columnName, pgColumn)?.getEqlType()).toBe(eqlType)
   })
+
+  // The `toDriver`/`fromDriver` closures wired into `customType` (column.ts) are
+  // otherwise only tested via the standalone codec functions, so the wiring
+  // itself — including the SQL-NULL safety net — was never exercised.
+  describe('codec wiring on the built column', () => {
+    type Mapper = {
+      mapToDriverValue(value: unknown): unknown
+      mapFromDriverValue(value: unknown): unknown
+    }
+    const mapperFor = (name: string): Mapper => {
+      const table = pgTable('users', {
+        [name]: makeEqlV3Column(v3Types.TextEq(name)),
+      } as never)
+      return (table as unknown as Record<string, Mapper>)[name]
+    }
+
+    const ENVELOPE = {
+      v: 3,
+      i: { t: 'users', c: 'nickname' },
+      c: 'mBbKciphertext',
+      hm: 'hmac',
+    }
+
+    it('serialises an envelope on write and parses it back on read', () => {
+      const column = mapperFor('nickname')
+      const driverValue = column.mapToDriverValue(ENVELOPE)
+
+      expect(driverValue).toBe(JSON.stringify(ENVELOPE))
+      expect(column.mapFromDriverValue(driverValue)).toEqual(ENVELOPE)
+    })
+
+    it('maps a null envelope to SQL NULL on write', () => {
+      expect(mapperFor('nickname').mapToDriverValue(null)).toBeNull()
+    })
+
+    it('rejects a non-envelope driver value rather than passing it through', () => {
+      expect(() => mapperFor('nickname').mapFromDriverValue('5')).toThrow(
+        /EQL encrypted envelope/,
+      )
+    })
+  })
 })

@@ -24,7 +24,7 @@ describe('extractEncryptionSchemaV3', () => {
     )
     const authored = encryptedTable('users', authoredColumns as never)
 
-    expect(extracted.build()).toEqual(authored.build())
+    expect(extracted.build()).toStrictEqual(authored.build())
   })
 
   it('rebuilds an equivalent eql/v3 encryptedTable from a drizzle table', () => {
@@ -40,7 +40,7 @@ describe('extractEncryptionSchemaV3', () => {
       age: v3Types.IntegerOrd('age'),
     })
 
-    expect(extracted.build()).toEqual(authored.build())
+    expect(extracted.build()).toStrictEqual(authored.build())
   })
 
   it('keeps same-named columns on different tables bound to their own v3 domains', () => {
@@ -54,12 +54,12 @@ describe('extractEncryptionSchemaV3', () => {
     const accountsSchema = extractEncryptionSchemaV3(accounts)
     const metricsSchema = extractEncryptionSchemaV3(metrics)
 
-    expect(accountsSchema.build()).toEqual(
+    expect(accountsSchema.build()).toStrictEqual(
       encryptedTable('accounts', {
         email: v3Types.TextEq('email'),
       }).build(),
     )
-    expect(metricsSchema.build()).toEqual(
+    expect(metricsSchema.build()).toStrictEqual(
       encryptedTable('metrics', {
         email: v3Types.IntegerOrd('email'),
       }).build(),
@@ -72,7 +72,7 @@ describe('extractEncryptionSchemaV3', () => {
       emailAddress: types.TextEq('email_address'),
     })
 
-    expect(extractEncryptionSchemaV3(users).build()).toEqual(
+    expect(extractEncryptionSchemaV3(users).build()).toStrictEqual(
       encryptedTable('users', {
         createdOn: v3Types.Date('created_on'),
         emailAddress: v3Types.TextEq('email_address'),
@@ -89,7 +89,7 @@ describe('extractEncryptionSchemaV3', () => {
       },
     }
 
-    expect(extractEncryptionSchemaV3(table as never).build()).toEqual(
+    expect(extractEncryptionSchemaV3(table as never).build()).toStrictEqual(
       encryptedTable('users', {
         createdOn: v3Types.Date('created_on'),
       }).build(),

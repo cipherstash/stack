@@ -99,6 +99,21 @@ const matrixColumn = (eqlType: string) =>
 const sampleFor = (spec: (typeof V3_MATRIX)[keyof typeof V3_MATRIX]) =>
   spec.samples[0]
 
+// `contains` needles must reach the match tokenizer's `token_length` (3), so
+// they cannot come from `sampleFor` — `TEXT_S[0]` is the empty string, which
+// tokenizes to nothing and is rejected as unanswerable.
+const needleFor = (
+  spec: (typeof V3_MATRIX)[keyof typeof V3_MATRIX],
+): string => {
+  const needle = spec.samples.find(
+    (sample) => typeof sample === 'string' && sample.length >= 3,
+  )
+  if (typeof needle !== 'string') {
+    throw new Error('no searchable sample for a match domain')
+  }
+  return needle
+}
+
 const equalityDomains = matrixEntries.filter(
   ([, spec]) => spec.indexes.unique || spec.indexes.ore,
 )
@@ -260,6 +275,33 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     expect(q.params).toEqual([TERM_JSON, TERM_JSON])
   })
 
+  // Every other `between` case passes identical bounds against a constant
+  // encrypt stub, so the operand never reaches an assertion and a min/max
+  // transposition inside `range` is invisible. Echo the plaintext through the
+  // stub instead, and pin that `gte` binds `min` and `lte` binds `max`.
+  it('between binds min to gte and max to lte, in that order', async () => {
+    const { ops, render } = setup(async (value) => ({
+      data: { p: value } as never,
+    }))
+
+    const q = render(await ops.between(users.age, -128, 127))
+
+    expect(q.sql).toBe(
+      '(eql_v3.gte("users"."age", $1::jsonb) AND eql_v3.lte("users"."age", $2::jsonb))',
+    )
+    expect(q.params).toEqual(['{"p":-128}', '{"p":127}'])
+  })
+
+  it('notBetween binds min to gte and max to lte, in that order', async () => {
+    const { ops, render } = setup(async (value) => ({
+      data: { p: value } as never,
+    }))
+
+    const q = render(await ops.notBetween(users.age, -128, 127))
+
+    expect(q.params).toEqual(['{"p":-128}', '{"p":127}'])
+  })
+
   it('not(between(...)) negates the whole range, not just its lower bound', async () => {
     const { ops, render } = setup()
 
@@ -309,13 +351,35 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
     matchDomains,
   )('%s contains emits latest eql_v3.contains with a full-envelope operand', async (eqlType, spec) => {
     const { ops, encrypt, render } = setup()
-    const q = render(await ops.contains(matrixColumn(eqlType), sampleFor(spec)))
+    const q = render(await ops.contains(matrixColumn(eqlType), needleFor(spec)))
 
     expect(q.sql).toContain(
       `eql_v3.contains("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
     )
     expect(q.params).toEqual([TERM_JSON])
     expect(encrypt.mock.calls[0]?.[1]?.column.getName()).toBe(slug(eqlType))
+  })
+
+  // A needle shorter than the tokenizer's `token_length` produces an empty
+  // bloom filter, and `stored_bf @> '{}'` is true for every row — so this must
+  // throw rather than silently return the whole table.
+  it.each(
+    matchDomains,
+  )('%s contains rejects a needle shorter than token_length before encrypting', async (eqlType) => {
+    const { ops, encrypt } = setup()
+    await expect(ops.contains(matrixColumn(eqlType), 'ad')).rejects.toThrow(
+      /at least 3 characters/,
+    )
+    await expect(ops.contains(matrixColumn(eqlType), '')).rejects.toThrow(
+      EncryptionOperatorError,
+    )
+    expect(encrypt).not.toHaveBeenCalled()
+  })
+
+  it('contains accepts a needle exactly at token_length', async () => {
+    const { ops, render } = setup()
+    const q = render(await ops.contains(users.email, 'ada'))
+    expect(q.sql).toContain('eql_v3.contains("users"."email", $1::jsonb)')
   })
 
   it('negation is expressed through the passthrough Drizzle not operator', async () => {

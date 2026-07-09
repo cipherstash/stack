@@ -17,9 +17,17 @@
  * Gated twice: `describeLivePg` (needs `DATABASE_URL` + CS creds) and an inner
  * `USER_JWT` guard (soft-skip, matching the existing identity/lock-context
  * suites). Whether the searchable index terms are themselves identity-bound is
- * decided inside `@cipherstash/protect-ffi`, not this repo — so we assert the
- * SYMMETRIC behaviour (same lock context on seed + query matches and decrypts),
- * not a cross-identity non-match.
+ * decided inside `@cipherstash/protect-ffi`, not this repo.
+ *
+ * We assert the symmetric behaviour (same lock context on seed + query matches
+ * and decrypts) AND the negative path — an identity-bound row must not match a
+ * query issued with no lock context, and must not decrypt without it. The
+ * symmetric tests alone are insufficient: they drop the context identically on
+ * both sides, so they stay green even if it were ignored entirely.
+ *
+ * A cross-identity non-match (sealed under A, queried under B) still needs a
+ * second JWT with a different `sub` — a lock context only names the claim while
+ * ZeroKMS resolves its value from the authenticating token. Tracked separately.
  */
 import 'dotenv/config'
 import { OidcFederationStrategy } from '@cipherstash/auth'
@@ -73,6 +81,23 @@ let userJwt: string | undefined
 function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
   if (result.failure) throw new Error(result.failure.message)
   return result.data as T
+}
+
+/**
+ * True when a decrypt attempt was DENIED. `decrypt` reports denial as a
+ * `Result.failure` rather than throwing, so a bare `await` would resolve and a
+ * naive `expect(...).rejects` would never fire — denial has to be read off the
+ * result. A throw also counts as denial.
+ */
+async function decryptDenied(
+  attempt: () => PromiseLike<{ failure?: { message: string } }>,
+): Promise<boolean> {
+  try {
+    const result = await attempt()
+    return Boolean(result.failure)
+  } catch {
+    return true
+  }
 }
 
 /** Run-scoped SELECT of row keys under an already-encrypted SQL condition. */
@@ -177,5 +202,54 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
       audit: { metadata: { sub: 'toby@cipherstash.com', type: 'query' } },
     })
     expect(await selectRowKeys(condition)).toEqual([ROW_B])
+  }, 30000)
+
+  // NEGATIVE PATH. The three tests above all supply the SAME lock context on
+  // seed and on query, so they cannot distinguish "lock context applied" from
+  // "lock context silently ignored": a regression that dropped the context from
+  // the index term would drop it identically on both sides and still match.
+  // These assert that an identity-bound row is NOT reachable without its
+  // context — the property the suite exists to protect.
+  //
+  // A true CROSS-identity proof (sealed under A, queried under B) needs a
+  // second JWT with a different `sub`; the lock context only names the claim
+  // (`['sub']`) while ZeroKMS resolves its value from the authenticating token.
+  // No `USER_JWT_B` exists, so that remains a follow-up.
+  it('an identity-bound row does not match an eq issued with no lock context', async () => {
+    if (skipUnlessJwt()) return
+    const condition = await ops.eq(secretTable.secret, SECRET_A)
+    expect(await selectRowKeys(condition)).toEqual([])
+  }, 30000)
+
+  it('an identity-bound row does not decrypt without its lock context', async () => {
+    if (skipUnlessJwt()) return
+    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+      `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
+         WHERE test_run_id = $1 AND row_key = $2`,
+      [RUN, ROW_A],
+    )
+
+    // `decrypt` reports denial as a `Result.failure` and does not throw, so a
+    // bare `await` here would silently pass. Require denial via either channel.
+    expect(await decryptDenied(() => client.decrypt(row.value as never))).toBe(
+      true,
+    )
+  }, 30000)
+
+  it('an identity-bound row does not decrypt under a different identity claim', async () => {
+    if (skipUnlessJwt()) return
+    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+      `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
+         WHERE test_run_id = $1 AND row_key = $2`,
+      [RUN, ROW_A],
+    )
+
+    expect(
+      await decryptDenied(() =>
+        client
+          .decrypt(row.value as never)
+          .withLockContext({ identityClaim: ['email'] } as never),
+      ),
+    ).toBe(true)
   }, 30000)
 })

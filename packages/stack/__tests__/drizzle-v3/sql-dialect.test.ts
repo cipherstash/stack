@@ -5,6 +5,7 @@ import { EQL_V3_FN_SCHEMA, v3Dialect } from '@/eql/v3/drizzle/sql-dialect'
 
 const dialect = new PgDialect()
 const render = (s: ReturnType<typeof sql>) => dialect.sqlToQuery(s).sql
+const renderFull = (s: ReturnType<typeof sql>) => dialect.sqlToQuery(s)
 const col = sql`"users"."x"`
 const enc = sql`${'{"v":"t"}'}`
 
@@ -55,6 +56,47 @@ describe('v3Dialect', () => {
 
   it('orderBy extracts the ord term', () => {
     expect(render(v3Dialect.orderBy(col))).toBe('eql_v3.ord_term("users"."x")')
+  })
+
+  // `render` above discards `.params`, so nothing here proved a value was BOUND
+  // rather than concatenated into the SQL text. The only `sql.raw` in the
+  // dialect interpolates constants (the schema + function name), so no
+  // injectable path exists today — these pin that.
+  describe('operand values are bound, never interpolated into SQL text', () => {
+    const hostile = '{"v":"\\" OR 1=1 --","x":"$1","y":"back\\\\slash"}'
+
+    it.each([
+      ['equality', () => v3Dialect.equality('eq', col, sql`${hostile}`)],
+      ['comparison', () => v3Dialect.comparison('gte', col, sql`${hostile}`)],
+      ['contains', () => v3Dialect.contains(col, sql`${hostile}`)],
+    ])('%s binds a hostile operand as $1', (_name, build) => {
+      const query = renderFull(build())
+
+      expect(query.params).toEqual([hostile])
+      expect(query.sql).toContain('$1::jsonb')
+      // The raw value must appear nowhere in the SQL text.
+      expect(query.sql).not.toContain('OR 1=1')
+      expect(query.sql).not.toContain('back\\slash')
+    })
+
+    it('range binds both bounds positionally, min first', () => {
+      const query = renderFull(
+        v3Dialect.range(col, sql`${'{"b":"min"}'}`, sql`${'{"b":"max"}'}`),
+      )
+
+      expect(query.params).toEqual(['{"b":"min"}', '{"b":"max"}'])
+      expect(query.sql).toBe(
+        '(eql_v3.gte("users"."x", $1::jsonb) AND eql_v3.lte("users"."x", $2::jsonb))',
+      )
+    })
+
+    it('binds a large ciphertext without truncating or inlining it', () => {
+      const big = `{"c":"${'z'.repeat(16384)}"}`
+      const query = renderFull(v3Dialect.equality('eq', col, sql`${big}`))
+
+      expect(query.params).toEqual([big])
+      expect(query.sql).toBe('eql_v3.eq("users"."x", $1::jsonb)')
+    })
   })
 
   it('every helper schema-qualifies its function call', () => {
