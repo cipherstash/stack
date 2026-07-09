@@ -7,9 +7,7 @@
   </a>
   <h1>CipherStash Stack for TypeScript</h1>
 
-  <p><b>Searchable, application-level encryption for building privacy-first apps. Encrypt fields in your
-  app, keep them fully queryable in Postgres, and let built-in zero-knowledge key management handle the
-  rest — CipherStash can never see your data or your keys.</b></p>
+  <p><b>Searchable, application-level encryption for building privacy-first apps.</b></p>
 
   <a href="https://www.npmjs.com/package/@cipherstash/stack"><img alt="npm version" src="https://img.shields.io/npm/v/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
   <a href="https://www.npmjs.com/package/@cipherstash/stack"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000"></a>
@@ -21,62 +19,32 @@
   <div>⭐ Star this repo if encryption you can actually query is your thing!</div>
 </div>
 
+
+## Encryption-level security without the pain
+
+Field-level encryption is the strongest way to protect data.
+But if DB functionality or performance suffers, you need to justify the pain.
+Searchable Encryption nukes the trade-off: encryption-level security without the pain.
+
+* Searchable Encryption for any Postgres including Supabase, RDS, Aurora, Prisma Postgres and Neon
+* Works with Supabase.js, Prisma Next, Drizzle or plain SQL
+* Built-in key management — automatic rotation, auditing and 14x faster than AWS KMS
+* Integrates with Supabase Auth, Clerk, Auth0 and Okta
+
 <br/>
-
-> **CipherStash never sees your plaintext — or your keys.** Data is encrypted in your app with a unique
-> key per value, and keys are derived inside your application via [ZeroKMS][zerokms] — so a database
-> breach leaks only ciphertext. [See the security architecture →][security-architecture]
-
-## Encrypted fields. Real queries. Your tools.
-
-The `email` column below is stored as ciphertext with a unique key per row — and the search still works,
-because the query runs on the ciphertext. No decrypt-and-scan, no query rewrites.
-
-**Supabase** — same Supabase.js calls; filters are encrypted on the way in, results decrypted on the way out:
-
-```typescript
-const db = encryptedSupabase({ encryptionClient, supabaseClient });
-
-const { data } = await db.from("users", users)
-  .select("id, name, email")
-  .ilike("email", "%@acme.com"); // encrypted free-text match
-```
-
-**Prisma Next** — declare encrypted columns in `schema.prisma`, query with type-safe operators:
-
-```prisma
-model User {
-  id    String @id
-  email cipherstash.EncryptedString()
-}
-```
-
-```typescript
-const rows = await db.orm.User
-  .where((u) => u.email.cipherstashIlike("%@acme.com"))
-  .all();
-```
-
-**Drizzle** — encrypted column types in your table, auto-encrypting operators in your queries:
-
-```typescript
-export const usersTable = pgTable("users", {
-  id: integer("id").primaryKey(),
-  email: types.TextMatch("email"), // → eql_v3.text_match — the type is the config
-});
-
-const results = await db.select().from(usersTable)
-  .where(await ops.ilike(usersTable.email, "%@acme.com"));
-```
 
 ## Quick starts
 
-Pick the guide for the stack you're already on. Each takes about 5 minutes, starts on the
-**free developer tier** ([sign up][signup]), and begins with the same setup wizard:
+### Use the wizard
+
+Takes 5-10 minutes, starts on the **free developer tier** ([sign up][signup]), includes agent handoff.
 
 ```bash
+# Run this to start (or just ask Claude to)
 npx stash init
 ```
+
+### ORM/database specific guides
 
 | Quick start | Guide |
 |---|---|
@@ -171,6 +139,10 @@ no rotation schedule to babysit:
   than AWS KMS at peak ([benchmarks][benches]).
 - **Every decryption is logged** — a built-in audit trail of who decrypted what, and when.
 
+> **CipherStash never sees your plaintext — or your keys.** Data is encrypted in your app with a unique
+> key per value, and keys are derived inside your application via [ZeroKMS][zerokms] — so a database
+> breach leaks only ciphertext. [See the security architecture →][security-architecture]
+
 ## Advanced features
 
 ### 👤 Identity-aware encryption
@@ -194,6 +166,48 @@ Partition your keys into **keysets** — independent key hierarchies within a si
 tenant its own keyset for cryptographic tenant isolation (revoking a keyset renders that tenant's data
 permanently unreadable), or pin keysets to a region to meet data-sovereignty requirements without
 re-architecting your app. [Keysets →][keysets]
+
+## Encrypted fields. Real queries. Your tools.
+
+The `email` column below is stored as ciphertext with a unique key per row — and the search still works,
+because the query runs on the ciphertext. No decrypt-and-scan, no query rewrites.
+
+**Supabase** — same Supabase.js calls; filters are encrypted on the way in, results decrypted on the way out:
+
+```typescript
+const db = encryptedSupabase({ encryptionClient, supabaseClient });
+
+const { data } = await db.from("users", users)
+  .select("id, name, email")
+  .ilike("email", "%@acme.com"); // encrypted free-text match
+```
+
+**Prisma Next** — declare encrypted columns in `schema.prisma`, query with type-safe operators:
+
+```prisma
+model User {
+  id    String @id
+  email cipherstash.EncryptedString()
+}
+```
+
+```typescript
+const rows = await db.orm.User
+  .where((u) => u.email.cipherstashIlike("%@acme.com"))
+  .all();
+```
+
+**Drizzle** — encrypted column types in your table, auto-encrypting operators in your queries:
+
+```typescript
+export const usersTable = pgTable("users", {
+  id: integer("id").primaryKey(),
+  email: types.TextMatch("email"), // → eql_v3.text_match — the type is the config
+});
+
+const results = await db.select().from(usersTable)
+  .where(await ops.ilike(usersTable.email, "%@acme.com"));
+```
 
 ## How it works
 
