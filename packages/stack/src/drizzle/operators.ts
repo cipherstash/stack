@@ -977,7 +977,10 @@ export function createEncryptionOperators(encryptionClient: EncryptionClient): {
   // Comparison operators
   /**
    * Equality operator - encrypts value for encrypted columns.
-   * Requires either `equality` or `orderAndRange` to be set on {@link EncryptedColumnConfig}.
+   * Requires `equality` on {@link EncryptedColumnConfig}. `orderAndRange` does not
+   * enable it: without `equality` this falls back to the plain Drizzle operator,
+   * comparing the plaintext value against the encrypted column, which matches
+   * nothing and does not throw.
    *
    * @example
    * Select users with a specific email address.
@@ -990,7 +993,10 @@ export function createEncryptionOperators(encryptionClient: EncryptionClient): {
 
   /**
    * Not equal operator - encrypts value for encrypted columns.
-   * Requires either `equality` or `orderAndRange` to be set on {@link EncryptedColumnConfig}.
+   * Requires `equality` on {@link EncryptedColumnConfig}. `orderAndRange` does not
+   * enable it: without `equality` this falls back to the plain Drizzle operator,
+   * comparing the plaintext value against the encrypted column, which matches
+   * nothing and does not throw.
    *
    * @example
    * Select users whose email address is not a specific value.

@@ -22,39 +22,46 @@ Guide for integrating CipherStash field-level encryption with Drizzle ORM using 
 npm install @cipherstash/stack drizzle-orm
 ```
 
-The Drizzle integration is included in `@cipherstash/stack` and imports from `@cipherstash/stack/drizzle`.
+The Drizzle integration is included in `@cipherstash/stack` and imports from `@cipherstash/stack/drizzle`. It is self-contained — you do not need the separate `@cipherstash/drizzle` package, which is an older parallel implementation with different symbol names (`createProtectOperators`, `extractProtectSchema`).
+
+The Drizzle path targets **EQL v2**. `encryptedType` emits the `eql_v2_encrypted` column type and the operators emit `eql_v2.*` SQL. EQL v3 has no Drizzle surface yet: `stash eql install --eql-version 3` skips the Drizzle migration path and installs directly.
 
 ## Database Setup
 
-### Install EQL Extension
+### Install EQL
 
-The EQL (Encrypt Query Language) PostgreSQL extension enables searchable encryption functions. Generate a migration:
+EQL (Encrypt Query Language) provides the server-side functions for searchable encryption. It is **not** a PostgreSQL extension — do not `CREATE EXTENSION eql_v2`. It is a schema (`eql_v2`) plus a composite type (`public.eql_v2_encrypted`), installed by the CLI.
+
+For Drizzle, generate a migration containing the EQL SQL:
 
 ```bash
-npx generate-eql-migration
-# Options:
-#   -n, --name <name>   Migration name (default: "install-eql")
-#   -o, --out <dir>     Output directory (default: "drizzle")
+npx stash eql install --drizzle
+# --name <name>   migration name
+# --out <dir>     output directory (default: "drizzle")
 ```
 
-Then apply it:
+That runs `drizzle-kit generate --custom` and writes the bundled EQL SQL into the generated migration. Apply it as usual:
 
 ```bash
 npx drizzle-kit migrate
 ```
 
+> The older `npx generate-eql-migration` is a bin of the separate `@cipherstash/drizzle` package. If you only installed `@cipherstash/stack` (as above), that command fails with `404 Not Found` — npm looks for a package by that name and there isn't one. It also pins its own EQL version and downloads the SQL from GitHub, rather than using the version bundled with your CLI. Prefer `stash eql install --drizzle`.
+
 ### Column Storage
 
-Encrypted columns use the `eql_v2_encrypted` PostgreSQL type (installed by EQL). If not using EQL directly, use JSONB:
+Encrypted columns use the `eql_v2_encrypted` composite type (created by `stash eql install`). Without EQL installed, an encrypted column is plain `jsonb` — but searchable encryption needs EQL; storage alone does not.
 
 ```sql
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
-  email eql_v2_encrypted,    -- with EQL extension
-  name jsonb NOT NULL,       -- or use jsonb
+  email eql_v2_encrypted,    -- encrypted, EQL installed
+  name jsonb,                -- encrypted, no EQL
   age INTEGER                -- non-encrypted columns are normal types
 );
 ```
+
+> **Encrypted columns are nullable.** Never add `NOT NULL` at creation. The application writes ciphertext *after* the column exists, so a `NOT NULL` constraint breaks inserts during a rollout. Never declare them `text`, `varchar`, or `bytea`.
 
 ## Schema Definition
 
@@ -97,7 +104,7 @@ const usersTable = pgTable("users", {
 
 | Config Option | Type | Description |
 |---|---|---|
-| `dataType` | `"string"` \| `"number"` \| `"json"` \| `"boolean"` \| `"bigint"` \| `"date"` | Plaintext data type (default: `"string"`) |
+| `dataType` | `"string"` \| `"text"` \| `"number"` \| `"bigint"` \| `"boolean"` \| `"date"` \| `"timestamp"` \| `"json"` | Plaintext data type (default: `"string"`) |
 | `equality` | `boolean` \| `TokenFilter[]` | Enable equality index |
 | `freeTextSearch` | `boolean` \| `MatchIndexOpts` | Enable free-text search index |
 | `orderAndRange` | `boolean` | Enable ORE index for sorting and range queries |
@@ -401,7 +408,13 @@ Generate the migration with `drizzle-kit generate`. The generated SQL should be 
 > stash db push
 > ```
 > 
-> If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
+> If this is the project's first encrypted column, `db push` writes directly to the active EQL config and you're done. If an active config already exists, `db push` writes the new config as `pending` — **promote it now with `stash db activate`.**
+>
+> ```bash
+> npx stash db activate
+> ```
+>
+> This step is easy to skip and the failure is silent. `stash encrypt cutover` promotes only the *rename* pending, later in the cutover step — it will not promote this additive one. Worse, the cutover-time `db push` calls `discardPendingConfig()` before writing its own pending, so an un-activated rollout pending is thrown away. Proxy would keep serving the old active config, which knows nothing about `email_encrypted`, for the whole dual-write window.
 > 
 > SDK-only users can skip this step.
 
@@ -458,7 +471,7 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. [Issue #447](https://github.com/cipherstash/stack/issues/447) tracks decoupling this requirement.
+> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. Decoupling this is tracked in [issue #585](https://github.com/cipherstash/stack/issues/585) — under EQL v3 there is no configuration table at all, so the precondition disappears.
 
 #### Cutover: rename swap and activate
 
@@ -481,6 +494,8 @@ stash encrypt cutover --table users --column email
 ```
 
 Inside one transaction it: (1) renames `email` → `email_plaintext` and `email_encrypted` → `email`, (2) promotes the pending EQL config to `active` (and the prior active to `inactive`), (3) records a `cut_over` event in `cs_migrations`.
+
+**Then, for Drizzle projects specifically, it scaffolds a migration for the rename.** The swap above ran outside drizzle-kit's authority, so its snapshot at `<out>/meta/<idx>_snapshot.json` still describes the pre-rename shape — and the next `drizzle-kit generate` would emit a confused diff trying to recreate the old layout. The scaffolded migration carries idempotent rename SQL: a no-op against the database you just cut over (the old column names are gone), but correct when replaying migrations onto a fresh database. Commit it. If the scaffold fails, the CLI warns and you resync with `drizzle-kit pull`.
 
 The Drizzle schema you just edited now matches the physical DB shape — `email` is the encrypted column. Keep the temporary `email_plaintext: text('email_plaintext')` declaration in the schema file until the drop step:
 
@@ -553,8 +568,8 @@ All three are read-only.
 
 | Operator | Usage | Required Index |
 |---|---|---|
-| `eq(col, value)` | Equality | `equality: true` or `orderAndRange: true` |
-| `ne(col, value)` | Not equal | `equality: true` or `orderAndRange: true` |
+| `eq(col, value)` | Equality | `equality: true` |
+| `ne(col, value)` | Not equal | `equality: true` |
 | `gt(col, value)` | Greater than | `orderAndRange: true` |
 | `gte(col, value)` | Greater than or equal | `orderAndRange: true` |
 | `lt(col, value)` | Less than | `orderAndRange: true` |
@@ -569,6 +584,18 @@ All three are read-only.
 | `jsonbPathQueryFirst(col, selector)` | Extract first value at JSONB path | `searchableJson: true` |
 | `jsonbGet(col, selector)` | Get value using JSONB `->` operator | `searchableJson: true` |
 | `jsonbPathExists(col, selector)` | Check if JSONB path exists | `searchableJson: true` |
+
+> **A missing index degrades silently — declare the index the operator needs.**
+>
+> If an encrypted column lacks the required index, most operators fall back to the plain Drizzle operator and compare your **plaintext** value against the ciphertext column. Nothing throws; the query simply cannot match. `eq` on an `equality`-less column is the easy mistake — `orderAndRange` does *not* enable it.
+>
+> ```typescript
+> // email: encryptedType<string>('email', { orderAndRange: true })   // no equality!
+> await db.select().from(users).where(await ops.eq(users.email, 'alice@example.com'))
+> // -> falls back to a plaintext comparison. Returns nothing. No error.
+> ```
+>
+> The `jsonb*` operators are the exception: they **throw** `EncryptionOperatorError` when `searchableJson` is missing, rather than degrading.
 
 ### Sort Operators (sync)
 
