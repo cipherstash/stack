@@ -239,13 +239,17 @@
 	"devDependencies": {
 		"@cipherstash/eql": "3.0.0-alpha.3",
 		"@clack/prompts": "^1.4.0",
+		"@supabase/postgrest-js": "2.105.4",
 		"@supabase/supabase-js": "^2.105.4",
+		"@types/pg": "^8.20.0",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
 		"drizzle-orm": "^0.45.2",
 		"execa": "^9.5.2",
+		"fast-check": "^4.8.0",
 		"fta-cli": "3.0.0",
 		"json-schema-to-typescript": "^15.0.2",
+		"pg": "8.20.0",
 		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
 		"tsx": "catalog:repo",
@@ -274,13 +278,17 @@
 	},
 	"peerDependencies": {
 		"@supabase/supabase-js": ">=2",
-		"drizzle-orm": ">=0.33"
+		"drizzle-orm": ">=0.33",
+		"pg": ">=8"
 	},
 	"peerDependenciesMeta": {
 		"drizzle-orm": {
 			"optional": true
 		},
 		"@supabase/supabase-js": {
+			"optional": true
+		},
+		"pg": {
 			"optional": true
 		}
 	},

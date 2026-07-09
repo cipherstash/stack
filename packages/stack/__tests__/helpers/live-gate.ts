@@ -37,3 +37,38 @@ export const LIVE_LOCK_CONTEXT_ENABLED = Boolean(
 export const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 export const describeLivePg = LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip
+
+/**
+ * True when only a Postgres `DATABASE_URL` is configured (no CipherStash creds
+ * needed — introspection reads the schema, it does not encrypt).
+ *
+ * Like the flags above, a false value turns its suites into `describe.skip`,
+ * which in CI would be a silent whole-suite skip on a green job. That hole is
+ * closed by `../live-coverage-guard.test.ts`, which asserts THIS flag in CI.
+ * Any new gate flag added here must be asserted there too.
+ */
+export const LIVE_PG_ENABLED = Boolean(process.env.DATABASE_URL)
+
+export const describeLivePgOnly = LIVE_PG_ENABLED ? describe : describe.skip
+
+/**
+ * True when a real PostgREST is reachable AND a `DATABASE_URL` is configured.
+ *
+ * The supabase v3 adapter talks to PostgREST, not to Postgres — the aliasing
+ * `prop:db_name::jsonb` casts, the `cs` containment mapping, the quoted
+ * envelopes inside `or=(…)`, and the full storage envelope every `public.*`
+ * domain CHECK must accept are all things only a real server can execute.
+ * Everything else in the repo asserts them as strings against a mock.
+ *
+ * NO CipherStash creds: the suite builds structurally-valid envelopes itself
+ * (the domain CHECKs are structural — `v`/`i`/`c` plus the domain's index
+ * terms), so it can run wherever the DB-only suites run. It proves the WIRE and
+ * the GRANTS. Cryptographic round-tripping is `drizzle-v3/operators-live-pg`'s
+ * job and needs the credentials.
+ */
+export const LIVE_SUPABASE_PGREST_ENABLED =
+  Boolean(process.env.PGRST_URL) && LIVE_PG_ENABLED
+
+export const describeLiveSupabasePgrest = LIVE_SUPABASE_PGREST_ENABLED
+  ? describe
+  : describe.skip

@@ -576,9 +576,15 @@ importers:
       '@clack/prompts':
         specifier: ^1.4.0
         version: 1.4.0
+      '@supabase/postgrest-js':
+        specifier: 2.105.4
+        version: 2.105.4
       '@supabase/supabase-js':
         specifier: ^2.105.4
         version: 2.105.4
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
       '@types/uuid':
         specifier: ^11.0.0
         version: 11.0.0
@@ -591,12 +597,18 @@ importers:
       execa:
         specifier: ^9.5.2
         version: 9.6.1
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.8.0
       fta-cli:
         specifier: 3.0.0
         version: 3.0.0
       json-schema-to-typescript:
         specifier: ^15.0.2
         version: 15.0.4
+      pg:
+        specifier: 8.20.0
+        version: 8.20.0
       postgres:
         specifier: ^3.4.8
         version: 3.4.9

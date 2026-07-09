@@ -2,9 +2,9 @@
  * Live round-trip half of the type-driven v3 matrix — closes the "live cliff".
  *
  * The structural `matrix.test.ts` proves builder/eqlType/capabilities/`build()`
- * wiring for all 35 domains WITHOUT ever touching real FFI ciphertext. This file
+ * wiring for all 39 domains WITHOUT ever touching real FFI ciphertext. This file
  * completes the picture: every domain × every catalog `sample` is encrypted and
- * decrypted through a live CipherStash client, so all 35 domains gain live
+ * decrypted through a live CipherStash client, so all 39 domains gain live
  * behavioral proof (the Rust harness's whole premise) — not just 7.
  *
  * Round-trips go through the MODEL path (`encryptModel`/`decryptModel`) so
@@ -35,7 +35,7 @@ import {
 // `errorSamples` field literally lack that key, rather than typing it
 // `undefined`). Explicit type arguments pin `typedEntries`'s inferred `V` back
 // to the declared `DomainSpec` shape — without them, `spec` below is inferred
-// as the union of all 35 distinct row literals, and `.errorSamples` fails to
+// as the union of all 39 distinct row literals, and `.errorSamples` fails to
 // resolve on members that omit the key (`tsc` catches this; `vitest run`
 // alone would not, since it only transpiles `.test.ts` files, never
 // typechecks them).

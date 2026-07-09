@@ -160,7 +160,11 @@ describe('eql_v3 encryptedTable', () => {
     })
     const built = users.build()
     expect(built.tableName).toBe('users')
-    expect(built.columns).toStrictEqual({
+    // Spread to a plain object: `columns` is null-prototype (a DB column named
+    // `__proto__` must land as an own key), and `toStrictEqual` compares
+    // prototypes. The contract under test is the column configs, not the
+    // prototype — which `supabase-schema-builder.test.ts` pins directly.
+    expect({ ...built.columns }).toStrictEqual({
       email: {
         cast_as: 'string',
         indexes: {

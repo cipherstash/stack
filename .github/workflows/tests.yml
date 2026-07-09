@@ -87,6 +87,34 @@ jobs:
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
 
+      # PostgREST for `supabase-v3-pgrest-live.test.ts` — the only suite that
+      # executes the supabase v3 adapter against a real server rather than a
+      # mock that records strings.
+      #
+      # Started as a STEP, not a `services:` entry. The role it connects as
+      # (`authenticator`, a non-superuser member of `anon`) does not exist in
+      # the postgres image, and service containers all start before the repo is
+      # checked out — so there is no point at which a `services:` PostgREST
+      # could find it. A step runs after the roles exist, deterministically.
+      #
+      # `PGRST_DB_ANON_ROLE: anon` is the whole point: pointing it at the DB
+      # owner would make every grant check pass vacuously.
+      - name: Start PostgREST
+        run: |
+          PGPASSWORD=password psql -h localhost -U cipherstash -d cipherstash \
+            -v ON_ERROR_STOP=1 -f ./local/postgrest-roles.sql
+          docker run -d --name postgrest --network host \
+            -e PGRST_DB_URI="postgres://authenticator:authpass@localhost:5432/cipherstash" \
+            -e PGRST_DB_SCHEMAS=public \
+            -e PGRST_DB_ANON_ROLE=anon \
+            -e PGRST_DB_CHANNEL_ENABLED=true \
+            postgrest/postgrest:v12.2.12
+          for i in $(seq 1 30); do
+            curl -sf -o /dev/null http://localhost:3000/ && exit 0
+            sleep 1
+          done
+          echo "PostgREST did not become ready"; docker logs postgrest; exit 1
+
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
@@ -95,6 +123,7 @@ jobs:
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
+          echo "PGRST_URL=http://localhost:3000" >> ./packages/stack/.env
 
       - name: Create .env file in ./packages/protect-dynamodb/
         run: |
