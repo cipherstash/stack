@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
+import { isInteractive } from '../../../config/tty.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
 import {
@@ -58,9 +59,18 @@ export const installDepsStep: InitStep = {
       ...devPackages.map((pkg) => `${pkg} (dev)`),
     ].join(', ')
 
-    const install = await p.confirm({
-      message: `Install ${missingList}? (${commands.join(' && ')})`,
-    })
+    // Non-interactive (CI, agents, pipes): no TTY to answer, so install by
+    // default and continue rather than abort. `stash init` is a setup command;
+    // installing its own dependencies is the expected non-interactive default.
+    if (!isInteractive()) {
+      p.log.info(`Installing ${missingList} (non-interactive).`)
+    }
+    const install = isInteractive()
+      ? await p.confirm({
+          message: `Install ${missingList}? (${commands.join(' && ')})`,
+          initialValue: true,
+        })
+      : true
 
     if (p.isCancel(install)) throw new CancelledError()
 
