@@ -21,7 +21,12 @@ import { encryptedColumn, encryptedTable } from '@/schema'
  * never ran, which is how the `OidcFederationStrategy.create` Result-unwrap
  * bug survived here unnoticed.
  */
-const LIVE = Boolean(process.env.USER_JWT && process.env.CS_WORKSPACE_CRN)
+const LIVE = Boolean(
+  process.env.USER_JWT &&
+    process.env.CS_WORKSPACE_CRN &&
+    process.env.CS_CLIENT_ID &&
+    process.env.CS_CLIENT_KEY,
+)
 const users = encryptedTable('users', {
   email: encryptedColumn('email').freeTextSearch().equality().orderAndRange(),
   address: encryptedColumn('address').freeTextSearch(),
@@ -126,12 +131,15 @@ describe.skipIf(!LIVE)(
       }
 
       // Decrypting without the identity claim cannot reproduce the key tag.
-      try {
-        await protectClient.decryptModel(encryptedModel.data)
-      } catch (error) {
-        const e = error as Error
-        expect(e.message.startsWith('Failed to retrieve key')).toEqual(true)
-      }
+      // `decryptModel` resolves to a `Result` — it does not throw — so assert on
+      // the failure branch. A try/catch here would never run, and the test would
+      // pass without asserting anything.
+      const decrypted = await protectClient.decryptModel(encryptedModel.data)
+
+      expect(decrypted.failure).toBeDefined()
+      expect(
+        decrypted.failure?.message.startsWith('Failed to retrieve key'),
+      ).toBe(true)
     }, 30000)
 
     it('should bulk encrypt and decrypt models bound to the user identity', async () => {

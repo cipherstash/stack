@@ -60,6 +60,20 @@ ssr: { external: ['@cipherstash/stack', '@cipherstash/protect-ffi'] }
 
 If you skip this step, you'll see runtime errors like `Cannot find module '@cipherstash/protect-ffi-darwin-arm64'` or `dlopen failed` once the bundler tries to inline the native binding.
 
+### The WASM entry needs no exclusion
+
+The exclusion above applies to the **default** `@cipherstash/stack` entry, which loads the native NAPI bindings. Shipping WASM did not remove that requirement — it added a separate entry point:
+
+```typescript
+import { Encryption } from "@cipherstash/stack/wasm-inline"
+```
+
+`/wasm-inline` inlines the WASM build into the JS bundle, so there is no native binary to externalize and no bundler config to write. Use it for Deno, Bun, Cloudflare Workers, Supabase Edge Functions, and any runtime where the NAPI bindings are unavailable.
+
+The trade-off is surface area: the WASM client exposes only `encrypt`, `decrypt`, and `isEncrypted` — no `encryptModel`, `bulk*`, or `encryptQuery` — and it takes a different config (`clientId` + `clientKey`, plus exactly one of `{ workspaceCrn, accessKey }` or a pre-built `authStrategy`).
+
+**On Node with a bundler, you still need the exclusion.**
+
 ## Configuration
 
 ### Environment Variables
@@ -468,14 +482,22 @@ const IDENTITY = { identityClaim: ["sub"] }
 const encrypted = await client
   .encrypt("sensitive data", { column: users.email, table: users })
   .withLockContext(IDENTITY)
+if (encrypted.failure) {
+  throw new Error(`[encryption] ${encrypted.failure.type}: ${encrypted.failure.message}`)
+}
 
 // 3. Decrypt with the SAME claim. Anything else cannot reproduce the key.
 const decrypted = await client
   .decrypt(encrypted.data)
   .withLockContext(IDENTITY)
+if (decrypted.failure) {
+  throw new Error(`[encryption] ${decrypted.failure.type}: ${decrypted.failure.message}`)
+}
 ```
 
 `OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()`.
+
+Every operation returns a `Result` too. Narrow on `.failure` before touching `.data`: the `Failure` branch has no `data` property, so skipping the check is a type error, not merely a runtime risk.
 
 `identityClaim` is an array of JWT claim *names*, not values: `["sub"]` (the default) or `["sub", "org_id"]`. ZeroKMS resolves each claim's value from the JWT the strategy federated. **The same claim must be supplied to encrypt and decrypt** — it is baked into the data key's tag, so decrypting without it fails with `Failed to retrieve key`.
 
