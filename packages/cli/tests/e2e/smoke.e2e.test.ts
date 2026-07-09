@@ -22,7 +22,7 @@ describe('stash CLI — non-interactive smoke', () => {
     // Command-list items — these are the literal command names users type, not
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
-    expect(r.output).toContain('db install')
+    expect(r.output).toContain('eql install')
     // The dotenv "injected env" banner regression guard lives in the
     // dedicated test below — this cwd has no .env file, so a bare
     // `not.toContain('injected env')` here would pass vacuously.

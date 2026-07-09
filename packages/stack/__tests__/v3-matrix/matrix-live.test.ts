@@ -107,9 +107,10 @@ describeLive('v3 matrix live round-trip (all domains × samples)', () => {
     }
   })
 
-  // Mirrors number-protect.test.ts: NaN/±Infinity must be rejected. The guard
-  // (encrypt.ts) throws client-side, so the single-value path is the honest place
-  // to prove where the rejection fires.
+  // Mirrors number-protect.test.ts: NaN/±Infinity (number domains) and
+  // out-of-range i64 values (bigint domains) must be rejected. The guard
+  // (assertValidNumericValue) throws client-side, so the single-value path is
+  // the honest place to prove where the rejection fires.
   it.each(errorCases)('%s is rejected at encrypt', async (_label, col, bad) => {
     const column = (table as unknown as Record<string, unknown>)[col]
     const result = await client.encrypt(bad as never, {

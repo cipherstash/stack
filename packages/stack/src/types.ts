@@ -72,15 +72,21 @@ export type EncryptedQuery =
  * Plaintext values the SDK accepts for encryption.
  *
  * Widens the FFI's `JsPlaintext` (`string | number | boolean |
- * Record<string, unknown> | JsPlaintext[]`) with `Date`. `Date` is a supported
- * cast target that is omitted from the FFI's `JsPlaintext` INPUT union, but it
- * serializes at the boundary via `toJSON` (ISO string), so it is accepted on
- * the way in.
+ * Record<string, unknown> | JsPlaintext[]`) with `Date` and `bigint`. `Date`
+ * is a supported cast target that is omitted from the FFI's `JsPlaintext` INPUT
+ * union, but it serializes at the boundary via `toJSON` (ISO string), so it is
+ * accepted on the way in.
  *
- * When the upstream FFI `JsPlaintext` includes `Date`, this extra arm can
- * collapse back into `JsPlaintext`.
+ * `bigint` is the plaintext for the v3 int8/bigint domains (see `eql/v3`),
+ * which always decrypt to a JS `bigint`. protect-ffi 0.28 marshals a native
+ * `bigint` across the Neon boundary losslessly. i64 bounds
+ * (`-2^63 … 2^63 - 1`) are enforced at the protect-ffi boundary, not here —
+ * out-of-range values surface as encryption errors from the FFI.
+ *
+ * When the upstream FFI `JsPlaintext` includes `Date` and `bigint`, both extra
+ * arms can collapse back into `JsPlaintext`.
  */
-export type Plaintext = JsPlaintext | Date
+export type Plaintext = JsPlaintext | Date | bigint
 
 // ---------------------------------------------------------------------------
 // Client configuration

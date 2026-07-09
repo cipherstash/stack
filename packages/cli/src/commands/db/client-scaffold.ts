@@ -6,7 +6,7 @@ import { generatePlaceholderClient } from '../init/utils.js'
 import { detectDrizzle, detectSupabase } from './detect.js'
 
 /**
- * Pick a placeholder template using the same signals `db install` already
+ * Pick a placeholder template using the same signals `eql install` already
  * detects. Drizzle wins over Supabase when both look present (a Drizzle-on-
  * Supabase project is more naturally scaffolded as Drizzle).
  */
@@ -25,7 +25,7 @@ function detectIntegration(
  *
  * `init`'s `buildSchemaStep` is the primary path that creates this file
  * (and handles the "file already exists" case interactively). This function
- * exists as a safety net for users who run `db install` directly without
+ * exists as a safety net for users who run `eql install` directly without
  * `init` first — they still get a working client file rather than failing
  * later when the config tries to load a non-existent path.
  */

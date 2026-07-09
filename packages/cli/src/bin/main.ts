@@ -90,7 +90,8 @@ Commands:
   wizard               AI-guided encryption setup (reads your codebase)
   doctor               Diagnose install problems (native binaries, runtime)
 
-  db install           Scaffold stash.config.ts (if missing) and install EQL extensions
+  eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
+
   db upgrade           Upgrade EQL extensions to the latest version
   db push              Push encryption schema (writes pending if active config already exists)
   db activate          Promote pending → active without renames (use after additive db push)
@@ -146,17 +147,19 @@ Impl Flags:
                            non-TTY contexts (CI, pipes). Without --target in non-TTY,
                            the command prints a hint and exits cleanly instead of hanging.
 
-DB Flags:
-  --force                    (install) Reinstall / overwrite even if already installed
-  --dry-run                  (install, push, upgrade) Show what would happen without making changes
-  --supabase                 (install, upgrade, validate) Use Supabase-compatible mode (auto-detected from DATABASE_URL)
-  --drizzle                  (install) Generate a Drizzle migration instead of direct install (auto-detected from project)
-  --migration                (install, requires --supabase) Write a Supabase migration file instead of running SQL directly
-  --direct                   (install, requires --supabase) Run the SQL directly against the database (mutually exclusive with --migration)
-  --migrations-dir <path>    (install, requires --supabase) Override the Supabase migrations directory (default: supabase/migrations)
-  --exclude-operator-family  (install, upgrade, validate) Skip operator family creation
-  --latest                   (install, upgrade) Fetch the latest EQL from GitHub
-  --database-url <url>       (all db / schema commands) Override DATABASE_URL for this run only — never written to disk
+DB / EQL Flags:
+  --force                    (eql install) Reinstall / overwrite even if already installed
+  --dry-run                  (eql install, db push, db upgrade) Show what would happen without making changes
+  --supabase                 (eql install, db upgrade, db validate) Use Supabase-compatible mode (auto-detected from DATABASE_URL)
+  --drizzle                  (eql install) Generate a Drizzle migration instead of direct install (auto-detected from project)
+  --migration                (eql install, requires --supabase) Write a Supabase migration file instead of running SQL directly
+  --direct                   (eql install, requires --supabase) Run the SQL directly against the database (mutually exclusive with --migration)
+  --migrations-dir <path>    (eql install, requires --supabase) Override the Supabase migrations directory (default: supabase/migrations)
+  --exclude-operator-family  (eql install, db upgrade, db validate) Skip operator family creation
+  --eql-version <2|3>        (eql install) EQL generation to install (default: 2). v3 installs the native
+                             concrete-domain schema (public.* type domains); direct install only for now
+  --latest                   (eql install, db upgrade) Fetch the latest EQL from GitHub (v2 only)
+  --database-url <url>       (all db / eql / schema commands) Override DATABASE_URL for this run only — never written to disk
 
 Examples:
   ${STASH} init
@@ -169,7 +172,7 @@ Examples:
   ${STASH} status
   ${STASH} auth login
   ${STASH} wizard
-  ${STASH} db install
+  ${STASH} eql install
   ${STASH} db push
   ${STASH} schema build
   ${STASH} doctor
@@ -212,6 +215,44 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { command, subcommand, commandArgs, flags, values }
 }
 
+async function runInstall(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  await installCommand({
+    force: flags.force,
+    dryRun: flags['dry-run'],
+    supabase: flags.supabase,
+    excludeOperatorFamily: flags['exclude-operator-family'],
+    drizzle: flags.drizzle,
+    latest: flags.latest,
+    name: values.name,
+    out: values.out,
+    migration: flags.migration,
+    direct: flags.direct,
+    migrationsDir: values['migrations-dir'],
+    eqlVersion: values['eql-version'],
+    databaseUrl: values['database-url'],
+  })
+}
+
+async function runEqlCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  switch (sub) {
+    case 'install':
+      await runInstall(flags, values)
+      break
+    default:
+      p.log.error(`${messages.eql.unknownSubcommand}: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      process.exit(1)
+  }
+}
+
 async function runDbCommand(
   sub: string | undefined,
   flags: Record<string, boolean>,
@@ -223,20 +264,10 @@ async function runDbCommand(
 
   switch (sub) {
     case 'install':
-      await installCommand({
-        force: flags.force,
-        dryRun: flags['dry-run'],
-        supabase: flags.supabase,
-        excludeOperatorFamily: flags['exclude-operator-family'],
-        drizzle: flags.drizzle,
-        latest: flags.latest,
-        name: values.name,
-        out: values.out,
-        migration: flags.migration,
-        direct: flags.direct,
-        migrationsDir: values['migrations-dir'],
-        databaseUrl,
-      })
+      // Deprecated alias — the command moved to `eql install`. Keep the old
+      // spelling working so existing scripts and published docs don't break.
+      p.log.warn(messages.db.installDeprecated(STASH))
+      await runInstall(flags, values)
       break
     case 'upgrade':
       await upgradeCommand({
@@ -437,6 +468,9 @@ export async function run() {
       await authCommand(authArgs, flags)
       break
     }
+    case 'eql':
+      await runEqlCommand(subcommand, flags, values)
+      break
     case 'db':
       await runDbCommand(subcommand, flags, values)
       break

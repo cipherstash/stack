@@ -32,7 +32,7 @@ export async function upgradeCommand(options: {
   if (!installed) {
     s.stop('EQL is not installed.')
     p.log.warn(
-      `EQL is not currently installed. Run "${runnerCommand(pm, 'stash db install')}" first.`,
+      `EQL is not currently installed. Run "${runnerCommand(pm, 'stash eql install')}" first.`,
     )
     p.outro('Upgrade aborted.')
     process.exit(1)

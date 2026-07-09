@@ -204,6 +204,91 @@ describe('EQLInstaller', () => {
       expect(SUPABASE_PERMISSIONS_SQL).toContain('service_role')
     })
 
+    it('installs the v3 bundle and grants eql_v3 permissions with eqlVersion: 3 + supabase', async () => {
+      mockConnect.mockResolvedValue(undefined)
+      mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
+      mockEnd.mockResolvedValue(undefined)
+
+      const { EQLInstaller, SUPABASE_PERMISSIONS_SQL_V3 } = await import(
+        '@/installer/index.ts'
+      )
+      const installer = new EQLInstaller({
+        databaseUrl: 'postgresql://localhost:5432/test',
+      })
+
+      await installer.install({ eqlVersion: 3, supabase: true })
+
+      const otherCalls = mockQuery.mock.calls
+        .map((call: unknown[]) => call[0])
+        .filter(
+          (sql: unknown): sql is string =>
+            typeof sql === 'string' &&
+            sql !== 'BEGIN' &&
+            sql !== 'COMMIT' &&
+            sql !== 'ROLLBACK',
+        )
+
+      expect(otherCalls).toHaveLength(2)
+      // The bundled SQL is the v3 Supabase variant: creates eql_v3, no
+      // operator classes/families (they need superuser).
+      expect(otherCalls[0]).toContain('eql_v3')
+      expect(otherCalls[0]).not.toContain('CREATE OPERATOR CLASS')
+      expect(otherCalls[0]).not.toContain('CREATE OPERATOR FAMILY')
+      // The grants are keyed to eql_v3, not eql_v2.
+      expect(otherCalls[1]).toBe(SUPABASE_PERMISSIONS_SQL_V3)
+      expect(SUPABASE_PERMISSIONS_SQL_V3).toContain('eql_v3')
+      expect(SUPABASE_PERMISSIONS_SQL_V3).not.toContain('eql_v2')
+    })
+
+    it('installs the full v3 bundle (with operator classes) without supabase', async () => {
+      mockConnect.mockResolvedValue(undefined)
+      mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
+      mockEnd.mockResolvedValue(undefined)
+
+      const { EQLInstaller } = await import('@/installer/index.ts')
+      const installer = new EQLInstaller({
+        databaseUrl: 'postgresql://localhost:5432/test',
+      })
+
+      await installer.install({ eqlVersion: 3 })
+
+      const sqlCall = mockQuery.mock.calls.find(
+        (call: string[]) =>
+          typeof call[0] === 'string' &&
+          call[0] !== 'BEGIN' &&
+          call[0] !== 'COMMIT',
+      )
+      expect(sqlCall).toBeDefined()
+      expect(sqlCall?.[0]).toContain('eql_v3')
+      expect(sqlCall?.[0]).toContain('CREATE OPERATOR CLASS')
+    })
+
+    it('rejects latest: true for eqlVersion: 3', async () => {
+      const { EQLInstaller } = await import('@/installer/index.ts')
+      const installer = new EQLInstaller({
+        databaseUrl: 'postgresql://localhost:5432/test',
+      })
+
+      await expect(
+        installer.install({ eqlVersion: 3, latest: true }),
+      ).rejects.toThrow('not supported for EQL v3')
+    })
+
+    it('checks the eql_v3 schema for isInstalled({ eqlVersion: 3 })', async () => {
+      mockConnect.mockResolvedValue(undefined)
+      mockQuery.mockResolvedValue({ rows: [], rowCount: 0 })
+      mockEnd.mockResolvedValue(undefined)
+
+      const { EQLInstaller } = await import('@/installer/index.ts')
+      const installer = new EQLInstaller({
+        databaseUrl: 'postgresql://localhost:5432/test',
+      })
+
+      await installer.isInstalled({ eqlVersion: 3 })
+
+      expect(mockQuery).toHaveBeenCalledWith(expect.any(String), ['eql_v3'])
+    })
+
     it('rolls back on SQL execution failure', async () => {
       mockConnect.mockResolvedValue(undefined)
       mockEnd.mockResolvedValue(undefined)

@@ -52,7 +52,12 @@ const RUNNER_PREFIXES = Object.values(PACKAGE_MANAGERS).map(
 )
 
 /** Tools allowed to run via any DLX runner. */
-const ALLOWED_DLX_TOOLS = ['drizzle-kit', 'tsc', 'stash db'] as const
+const ALLOWED_DLX_TOOLS = [
+  'drizzle-kit',
+  'tsc',
+  'stash db',
+  'stash eql',
+] as const
 
 /** Allowed Bash commands — whitelist approach. */
 const ALLOWED_BASH_COMMANDS = [
@@ -74,6 +79,7 @@ const ALLOWED_BASH_COMMANDS = [
   'bun run',
   // Build & validation
   'stash db',
+  'stash eql',
 ]
 
 /**

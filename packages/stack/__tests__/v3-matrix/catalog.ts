@@ -23,6 +23,10 @@ import type {
   QueryCapabilities,
 } from '@/eql/v3'
 import {
+  EncryptedBigintColumn,
+  EncryptedBigintEqColumn,
+  EncryptedBigintOrdColumn,
+  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
@@ -99,12 +103,14 @@ export type DomainSpec = Readonly<{
    * tell `integer` from `double`, and a fractional value on an int-named domain is
    * untested territory (it would truncate against a real narrow PG column).
    */
-  samples: ReadonlyArray<string | number | boolean | Date>
+  samples: ReadonlyArray<string | number | bigint | boolean | Date>
   /**
    * Values that MUST fail encryption. Number domains reject `NaN`/`±Infinity`
-   * via a global guard; other domains omit this.
+   * and `bigint` domains reject values outside the signed 64-bit (`int8`) range
+   * — both via the same client-side guard (`assertValidNumericValue`). Domains
+   * whose plaintext type cannot express an invalid value omit this.
    */
-  errorSamples?: ReadonlyArray<number>
+  errorSamples?: ReadonlyArray<number | bigint>
 }>
 
 /**
@@ -175,6 +181,17 @@ const TEXT_SEARCH_IDX: Indexes = {
 // smallint/integer, fractionals for real/double/numeric. See `DomainSpec.samples`.
 const SMALLINT_S = [0, -1, 32767, -32768] as const
 const INTEGER_S = [0, -42, 2147483647, -2147483648] as const
+// Full i64 bounds: i64::MAX, i64::MIN, zero, a negative, and a mid value beyond
+// Number.MAX_SAFE_INTEGER to prove protect-ffi 0.28 round-trips a JS bigint
+// losslessly. Values OUTSIDE this range are rejected client-side (BIGINT_ERR)
+// before protect-ffi, mirroring how NUM_ERR guards the number domains.
+const BIGINT_S = [
+  4611686018427387904n,
+  -42n,
+  9223372036854775807n,
+  -9223372036854775808n,
+  0n,
+] as const
 const REAL_S = [0, 77.5, -117.25, 0.5] as const
 const DOUBLE_S = [0, -117.123456, 1e15, -1e15] as const
 const NUMERIC_S = [0, 12345.678, -42, -0.5] as const
@@ -207,6 +224,10 @@ const NUM_ERR = [
   Number.POSITIVE_INFINITY,
   Number.NEGATIVE_INFINITY,
 ] as const
+// Every bigint domain rejects values outside the signed 64-bit (`int8`) range
+// via the same guard — the bigint analog of NUM_ERR's NaN/±Infinity: i64::MAX+1
+// and i64::MIN-1.
+const BIGINT_ERR = [9223372036854775808n, -9223372036854775809n] as const
 
 // biome-ignore format: one row per domain reads as a table; keep it dense.
 export const V3_MATRIX = {
@@ -220,6 +241,11 @@ export const V3_MATRIX = {
   'public.smallint_eq': { builder: types.SmallintEq, ColumnClass: EncryptedSmallintEqColumn, castAs: 'number', capabilities: EQ, indexes: UNIQUE_IDX, samples: SMALLINT_S, errorSamples: NUM_ERR },
   'public.smallint_ord_ore': { builder: types.SmallintOrdOre, ColumnClass: EncryptedSmallintOrdOreColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: SMALLINT_S, errorSamples: NUM_ERR },
   'public.smallint_ord': { builder: types.SmallintOrd, ColumnClass: EncryptedSmallintOrdColumn, castAs: 'number', capabilities: ORD, indexes: ORE_IDX, samples: SMALLINT_S, errorSamples: NUM_ERR },
+  // bigint (int8) — native JS bigint round-trip on protect-ffi 0.28; ungated
+  'public.bigint': { builder: types.Bigint, ColumnClass: EncryptedBigintColumn, castAs: 'bigint', capabilities: STORAGE, indexes: NONE, samples: BIGINT_S, errorSamples: BIGINT_ERR },
+  'public.bigint_eq': { builder: types.BigintEq, ColumnClass: EncryptedBigintEqColumn, castAs: 'bigint', capabilities: EQ, indexes: UNIQUE_IDX, samples: BIGINT_S, errorSamples: BIGINT_ERR },
+  'public.bigint_ord_ore': { builder: types.BigintOrdOre, ColumnClass: EncryptedBigintOrdOreColumn, castAs: 'bigint', capabilities: ORD, indexes: ORE_IDX, samples: BIGINT_S, errorSamples: BIGINT_ERR },
+  'public.bigint_ord': { builder: types.BigintOrd, ColumnClass: EncryptedBigintOrdColumn, castAs: 'bigint', capabilities: ORD, indexes: ORE_IDX, samples: BIGINT_S, errorSamples: BIGINT_ERR },
   // date
   'public.date': { builder: types.Date, ColumnClass: EncryptedDateColumn, castAs: 'date', capabilities: STORAGE, indexes: NONE, samples: DATE_S },
   'public.date_eq': { builder: types.DateEq, ColumnClass: EncryptedDateEqColumn, castAs: 'date', capabilities: EQ, indexes: UNIQUE_IDX, samples: DATE_S },

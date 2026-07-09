@@ -71,7 +71,7 @@ exercise the same code paths.
   tweak only needs to land in one place. Add to `messages.ts` only when a
   test actually asserts on the string — premature extraction is worse
   than copy-paste here. For literals tests don't touch (e.g. command
-  names like `init`, `db install`), keep them inline.
+  names like `init`, `eql install`), keep them inline.
 - **Telemetry.** The CLI source no longer imports `posthog-node` (analytics
   moved to `packages/wizard`). The dep is still listed in `package.json`
   and should be removed in a follow-up. If you re-introduce telemetry to

@@ -1,4 +1,8 @@
 import {
+  BIGINT,
+  BIGINT_EQ,
+  BIGINT_ORD,
+  BIGINT_ORD_ORE,
   BOOLEAN,
   DATE,
   DATE_EQ,
@@ -8,6 +12,10 @@ import {
   DOUBLE_EQ,
   DOUBLE_ORD,
   DOUBLE_ORD_ORE,
+  EncryptedBigintColumn,
+  EncryptedBigintEqColumn,
+  EncryptedBigintOrdColumn,
+  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
@@ -116,6 +124,14 @@ export const types = {
     new EncryptedSmallintOrdOreColumn(name, SMALLINT_ORD_ORE),
   SmallintOrd: (name: string) =>
     new EncryptedSmallintOrdColumn(name, SMALLINT_ORD),
+
+  // bigint (int8) — plaintext is a JS `bigint`, round-tripped losslessly by
+  // the native protect-ffi boundary (see ./columns)
+  Bigint: (name: string) => new EncryptedBigintColumn(name, BIGINT),
+  BigintEq: (name: string) => new EncryptedBigintEqColumn(name, BIGINT_EQ),
+  BigintOrdOre: (name: string) =>
+    new EncryptedBigintOrdOreColumn(name, BIGINT_ORD_ORE),
+  BigintOrd: (name: string) => new EncryptedBigintOrdColumn(name, BIGINT_ORD),
 
   // date
   Date: (name: string) => new EncryptedDateColumn(name, DATE),
