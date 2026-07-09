@@ -261,17 +261,47 @@ export function parseOrString(orString: string): PendingOrCondition[] {
 }
 
 /**
+ * PostgREST operator tokens whose operand is a CONTAINMENT literal — a
+ * Postgres array literal (`{vip,admin}`) or a jsonb literal (`{"a":1}`) — rather
+ * than a scalar or the `in`-list's `(a,b)`.
+ *
+ * `contains` is supabase-js's METHOD name for this operator; string-form `.or()`
+ * callers write PostgREST's `cs` directly. Both reach here.
+ */
+const CONTAINMENT_OPS = new Set(['contains', 'cs'])
+
+/**
+ * The PostgREST operator token for a {@link FilterOp}.
+ *
+ * `contains` is the only member of the union that is a supabase-js method name
+ * rather than a PostgREST operator: `eq`, `in`, `like`, `is` and the rest spell
+ * the same on both sides, but PostgREST's containment operator is `cs`, and
+ * `or=(tags.contains.vip)` is a PGRST100 parse error ("unexpected \"c\"
+ * expecting \"not\" or operator").
+ *
+ * Applied unconditionally, NOT only to encrypted conditions. The token depends
+ * on the operator, never on whether the operand was encrypted — a plaintext
+ * jsonb/array column reached through `.or([{op: 'contains'}])` needs exactly the
+ * same translation, and gating it on encryption is what left plaintext
+ * containment broken while the encrypted path worked.
+ */
+function orOperatorToken(op: string): string {
+  return op === 'contains' ? 'cs' : op
+}
+
+/**
  * Rebuild an `.or()` string from structured conditions.
  */
 export function rebuildOrString(
   conditions: DbPendingOrCondition[],
 ): DbFilterString {
-  // Callers must hand DB-space `c.column` values (see `transformOrConditions`).
+  // Callers must hand DB-space `c.column` values (see `toDbSpace`).
   return conditions
     .map((c) => {
-      const value = formatOrValue(c.value)
-      const op = c.negate ? `not.${c.op}` : c.op
-      return `${c.column}.${op}.${value}`
+      const op = orOperatorToken(c.op)
+      const value = formatOrValue(c.value, op)
+      const token = c.negate ? `not.${op}` : op
+      return `${c.column}.${token}.${value}`
     })
     .join(',') as DbFilterString
 }
@@ -301,10 +331,15 @@ function splitOrString(input: string): string[] {
     } else if (char === '"' && depth === 0) {
       inQuotes = !inQuotes
       current += char
-    } else if (char === '(' && !inQuotes) {
+    } else if ((char === '(' || char === '{') && !inQuotes) {
+      // `{` as well as `(`: a containment operand is an array (`{vip,admin}`) or
+      // a jsonb (`{"a":1,"b":2}`) literal, whose top-level commas are part of
+      // the value. PostgREST's own logic-tree parser tracks these braces;
+      // without them a condition splits mid-literal into `tags.cs.{vip` and a
+      // dotless fragment `admin}` that the loop below silently drops.
       depth++
       current += char
-    } else if (char === ')' && !inQuotes) {
+    } else if ((char === ')' || char === '}') && !inQuotes) {
       depth--
       current += char
     } else if (char === ',' && depth === 0 && !inQuotes) {
@@ -370,7 +405,49 @@ function unescapeOrValue(str: string): string {
   return str.replace(/\\(.)/g, '$1')
 }
 
-function formatOrValue(value: unknown): string {
+/**
+ * Characters that force an ARRAY-literal element to be double-quoted. Wider
+ * than {@link POSTGREST_RESERVED} because the braces and whitespace that are
+ * harmless in a scalar operand are structural inside `{…}`.
+ */
+const ARRAY_ELEMENT_RESERVED = /[,"\\{}()\s]/
+
+/** One element of a Postgres array literal. `NULL` is a keyword there, so a
+ * string that happens to spell it must be quoted to stay a string. */
+function arrayLiteralElement(value: unknown): string {
+  if (value === null || value === undefined) return 'NULL'
+  const str = String(value)
+  if (str === '' || ARRAY_ELEMENT_RESERVED.test(str) || /^null$/i.test(str)) {
+    return `"${escapeOrValue(str)}"`
+  }
+  return str
+}
+
+/**
+ * The `cs` operand for a structured value: `{a,b}` for an array column,
+ * `{"a":1}` for a jsonb one. Returns null when `value` is a scalar, which takes
+ * the ordinary path — notably the v3 encrypted operand, already a
+ * `JSON.stringify`d envelope STRING, which must not be re-serialized.
+ */
+function containmentLiteral(value: unknown): string | null {
+  if (Array.isArray(value)) {
+    return `{${value.map((v) => arrayLiteralElement(v)).join(',')}}`
+  }
+  if (value !== null && typeof value === 'object' && !(value instanceof Date)) {
+    return JSON.stringify(value)
+  }
+  return null
+}
+
+function formatOrValue(value: unknown, op?: string): string {
+  // A containment literal is a VALUE like any other once built: it goes on to
+  // the quoting below, because its comma would otherwise split the or-string at
+  // the top level. PostgREST accepts a quoted `"{vip,admin}"` inside `or=(…)`.
+  if (op !== undefined && CONTAINMENT_OPS.has(op)) {
+    const literal = containmentLiteral(value)
+    if (literal !== null) return formatOrValue(literal)
+  }
+
   if (Array.isArray(value)) {
     return `(${value.map((v) => formatOrValue(v)).join(',')})`
   }
@@ -388,4 +465,18 @@ function formatOrValue(value: unknown): string {
   }
 
   return str
+}
+
+/**
+ * The operand for an `in`/`not.in` list: `(a,b)`, each element quoted and
+ * escaped exactly as the `or` path does.
+ *
+ * Required because postgrest-js's own `in()` wraps a comma-bearing element in
+ * `"…"` but never escapes the `"` already inside it — and every v3 encrypted
+ * operand is a `JSON.stringify`d envelope, so its quotes would terminate the
+ * value early. Emit this through `filter(col, 'in', …)` / `not(col, 'in', …)`,
+ * both of which forward the operand verbatim.
+ */
+export function formatInListOperand(values: readonly unknown[]): string {
+  return formatOrValue([...values])
 }

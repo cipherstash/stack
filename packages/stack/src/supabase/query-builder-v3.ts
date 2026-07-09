@@ -19,7 +19,6 @@ import {
 } from './query-builder'
 import type {
   DbName,
-  DbPendingOrCondition,
   DbSelect,
   FilterOp,
   SupabaseClientLike,
@@ -445,28 +444,6 @@ export class EncryptedQueryBuilderV3Impl<
   protected override queryTypeForOrOp(op: FilterOp): QueryTypeName {
     if (op === 'contains') return 'freeTextSearch'
     return this.queryTypeForRawOp(op)
-  }
-
-  /**
-   * Rewrite the structured form's `contains` to the PostgREST operator token
-   * `cs` before the or-string is rebuilt. String-form callers already write
-   * `cs` — PostgREST syntax — so those pass through untouched.
-   *
-   * Operator shaping stays here rather than in `toDbSpace` because it depends
-   * on `wasEncrypted`, which is only known after encryption. Column names
-   * arrive already in DB-space.
-   */
-  protected override transformOrConditions(
-    conditions: DbPendingOrCondition[],
-    encryptedIndexes: Set<number>,
-  ): DbPendingOrCondition[] {
-    return conditions.map((cond, j) => {
-      const op =
-        encryptedIndexes.has(j) && cond.op === 'contains'
-          ? ('cs' as FilterOp)
-          : cond.op
-      return op === cond.op ? cond : { ...cond, op }
-    })
   }
 
   /** Rebuild `Date` values from the encrypt-config `cast_as` (date/timestamp),

@@ -109,6 +109,78 @@ describe('rebuildOrString quoting', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// `contains` is the ONLY FilterOp that is a supabase-js METHOD name rather than
+// a PostgREST operator token. Every other member of the union (`eq`, `in`,
+// `like`, `is`, …) spells the same in both. Left untranslated, `rebuildOrString`
+// emits `tags.contains.vip`, which PostgREST rejects with PGRST100
+// ("unexpected \"c\" expecting \"not\" or operator").
+//
+// Translating the operator alone is not enough: `cs` takes a CONTAINMENT
+// literal, not the `(a,b)` list form arrays otherwise get, so `tags.cs.(vip)`
+// fails with 22P02 ("malformed array literal"). Both halves are asserted here
+// and executed against a real PostgREST in `supabase-v3-pgrest-live.test.ts`.
+// ---------------------------------------------------------------------------
+
+describe('rebuildOrString containment', () => {
+  it("translates the `contains` FilterOp to PostgREST's `cs` token", () => {
+    expect(rebuildOrString([cond('tags', 'contains', 'vip')])).toBe(
+      'tags.cs.vip',
+    )
+  })
+
+  it('formats an array operand as an array literal, not an in-list', () => {
+    expect(rebuildOrString([cond('tags', 'contains', ['vip'])])).toBe(
+      'tags.cs.{vip}',
+    )
+  })
+
+  it('quotes a multi-element array literal, whose comma is reserved', () => {
+    expect(rebuildOrString([cond('tags', 'contains', ['vip', 'admin'])])).toBe(
+      'tags.cs."{vip,admin}"',
+    )
+  })
+
+  it('quotes an array element that itself contains a comma', () => {
+    // Inner array-literal quoting, then outer PostgREST quoting of the whole.
+    expect(rebuildOrString([cond('tags', 'contains', ['with,comma'])])).toBe(
+      'tags.cs."{\\"with,comma\\"}"',
+    )
+  })
+
+  it('formats an object operand as a jsonb literal', () => {
+    expect(rebuildOrString([cond('meta', 'contains', { a: 1 })])).toBe(
+      'meta.cs."{\\"a\\":1}"',
+    )
+  })
+
+  it('leaves an already-serialized encrypted envelope as a quoted scalar', () => {
+    // The v3 encrypted operand is `JSON.stringify(envelope)` — a string, not an
+    // array or object. It must keep taking the scalar quoting path.
+    expect(rebuildOrString([cond('email', 'contains', ENVELOPE)])).toBe(
+      `email.cs."{\\"v\\":1,\\"i\\":{\\"t\\":\\"users\\",\\"c\\":\\"email\\"},\\"c\\":\\"ct:abc\\"}"`,
+    )
+  })
+
+  it('keeps the `cs` token a string-form caller already wrote', () => {
+    expect(rebuildOrString([cond('tags', 'cs', ['vip', 'admin'])])).toBe(
+      'tags.cs."{vip,admin}"',
+    )
+  })
+
+  it('negates containment as `not.cs`', () => {
+    expect(rebuildOrString([cond('tags', 'contains', ['vip'], true)])).toBe(
+      'tags.not.cs.{vip}',
+    )
+  })
+
+  it('still renders an `in` array as a parenthesized list', () => {
+    expect(rebuildOrString([cond('nickname', 'in', ['ada', 'grace'])])).toBe(
+      'nickname.in.(ada,grace)',
+    )
+  })
+})
+
 describe('parseOrString / rebuildOrString round-trip', () => {
   it('round-trips an encrypted JSON envelope operand', () => {
     const conditions = [
@@ -153,6 +225,36 @@ describe('parseOrString / rebuildOrString round-trip', () => {
 // literal string `in.(a,b)` was encrypted as one plaintext, producing a filter
 // that silently matched nothing.
 // ---------------------------------------------------------------------------
+
+// A containment literal carries top-level commas inside its braces
+// (`tags.cs.{vip,admin}`). PostgREST's own logic-tree parser tracks those
+// braces; ours must too, or the condition is split mid-literal into
+// `tags.cs.{vip` plus a fragment `admin}` that has no dot and is dropped
+// entirely — a filter that silently matches the wrong rows. Only or-strings
+// that also reference an encrypted column are rebuilt from the parse, so this
+// corrupts precisely the mixed encrypted/plaintext case.
+describe('parseOrString containment literals', () => {
+  it('does not split on a comma inside an array literal', () => {
+    expect(parseOrString('note.eq.hello,tags.cs.{vip,admin}')).toEqual([
+      { column: 'note', op: 'eq', negate: false, value: 'hello' },
+      { column: 'tags', op: 'cs', negate: false, value: '{vip,admin}' },
+    ])
+  })
+
+  it('does not split on a comma inside a jsonb literal', () => {
+    expect(parseOrString('meta.cs.{"a":1,"b":2},note.eq.x')).toEqual([
+      { column: 'meta', op: 'cs', negate: false, value: '{"a":1,"b":2}' },
+      { column: 'note', op: 'eq', negate: false, value: 'x' },
+    ])
+  })
+
+  it('round-trips a plaintext containment literal through rebuild', () => {
+    const parsed = parseOrString('tags.cs.{vip,admin}')
+    expect(rebuildOrString(parsed as DbPendingOrCondition[])).toBe(
+      'tags.cs."{vip,admin}"',
+    )
+  })
+})
 
 describe('parseOrString negation', () => {
   it('lifts a not. prefix off the operator', () => {

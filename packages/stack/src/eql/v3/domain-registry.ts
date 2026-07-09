@@ -5,11 +5,19 @@ import { types } from './types'
 export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
 
 /**
- * Unqualified Postgres `domain_name` → the existing `types` factory. Values are
- * the `eql/v3/types.ts` factories (which pass the literal domain constants),
- * NOT direct `new EncryptedXColumn(...)` calls — the constant carried by each
- * factory is what keeps the domains nominally distinct. `TextSearch` has a
- * different arity, so this is a value map, not a mechanical transform.
+ * Unqualified Postgres `domain_name` → the `eql/v3/types.ts` factory that
+ * builds that domain's column.
+ *
+ * DERIVED, not hand-listed. Every factory already carries its domain in the
+ * constant it passes to the column constructor, so the key is recoverable from
+ * the factory itself — and `types` and this registry cannot drift. Adding a
+ * domain to `types` is enough; forgetting an entry here is no longer possible.
+ *
+ * The keys are an external contract (they are the `information_schema` query
+ * parameter in `../../supabase/introspect.ts`). Because they are derived from
+ * `getEqlType()`, no test that also derives them can detect a corrupted domain
+ * constant — `eql-v3-domain-registry.test.ts` pins them against a hand-written
+ * literal list for exactly that reason.
  */
 // NULL PROTOTYPE — load-bearing. A plain object literal inherits from
 // Object.prototype, so `DOMAIN_REGISTRY['constructor']` returns a *function*
@@ -18,61 +26,21 @@ export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
 // domain and "synthesized" from Object.prototype.constructor. `factoryForDomain`
 // additionally guards with `Object.hasOwn`; both are kept — belt and braces,
 // because a future refactor that drops the null prototype must not silently
-// reopen the hole.
-export const DOMAIN_REGISTRY: Record<string, V3ColumnFactory> = Object.assign(
-  Object.create(null) as Record<string, V3ColumnFactory>,
-  {
-    // integer
-    integer: types.Integer,
-    integer_eq: types.IntegerEq,
-    integer_ord_ore: types.IntegerOrdOre,
-    integer_ord: types.IntegerOrd,
-    // smallint
-    smallint: types.Smallint,
-    smallint_eq: types.SmallintEq,
-    smallint_ord_ore: types.SmallintOrdOre,
-    smallint_ord: types.SmallintOrd,
-    // bigint
-    bigint: types.Bigint,
-    bigint_eq: types.BigintEq,
-    bigint_ord_ore: types.BigintOrdOre,
-    bigint_ord: types.BigintOrd,
-    // date
-    date: types.Date,
-    date_eq: types.DateEq,
-    date_ord_ore: types.DateOrdOre,
-    date_ord: types.DateOrd,
-    // timestamp
-    timestamp: types.Timestamp,
-    timestamp_eq: types.TimestampEq,
-    timestamp_ord_ore: types.TimestampOrdOre,
-    timestamp_ord: types.TimestampOrd,
-    // numeric
-    numeric: types.Numeric,
-    numeric_eq: types.NumericEq,
-    numeric_ord_ore: types.NumericOrdOre,
-    numeric_ord: types.NumericOrd,
-    // text
-    text: types.Text,
-    text_eq: types.TextEq,
-    text_match: types.TextMatch,
-    text_ord_ore: types.TextOrdOre,
-    text_ord: types.TextOrd,
-    text_search: types.TextSearch,
-    // boolean
-    boolean: types.Boolean,
-    // real
-    real: types.Real,
-    real_eq: types.RealEq,
-    real_ord_ore: types.RealOrdOre,
-    real_ord: types.RealOrd,
-    // double
-    double: types.Double,
-    double_eq: types.DoubleEq,
-    double_ord_ore: types.DoubleOrdOre,
-    double_ord: types.DoubleOrd,
-  },
-)
+// reopen the hole. It also makes the `Object.hasOwn` collision check below
+// exact: on a plain object `'constructor' in registry` is spuriously true.
+export const DOMAIN_REGISTRY: Record<string, V3ColumnFactory> = (() => {
+  const registry = Object.create(null) as Record<string, V3ColumnFactory>
+  for (const factory of Object.values(types) as V3ColumnFactory[]) {
+    // Probe name only: the constructors store their arguments and nothing else,
+    // so building one column per domain at module load is free of side effects.
+    const key = stripDomainSchema(factory('_probe').getEqlType())
+    if (Object.hasOwn(registry, key)) {
+      throw new Error(`duplicate EQL v3 domain key: ${key}`)
+    }
+    registry[key] = factory
+  }
+  return registry
+})()
 
 /** Strip a leading `public.` schema qualifier from a qualified `eqlType`. */
 export function stripDomainSchema(eqlType: string): string {

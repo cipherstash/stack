@@ -193,6 +193,8 @@ const ALL_COLUMNS = [
   'created_at',
   'active',
   'note',
+  'tags',
+  'meta',
 ]
 
 // biome-ignore lint/suspicious/noExplicitAny: the suite addresses columns outside the declared row type
@@ -225,7 +227,13 @@ beforeAll(async () => {
       amount public.integer_ord,
       created_at public.timestamp_ord,
       active public.boolean,
-      note TEXT
+      note TEXT,
+      -- Plaintext passthrough columns. contains() on these is PostgREST's
+      -- NATIVE containment (cs, i.e. the @> Postgres declares on array and
+      -- jsonb), not the bloom-filter operator the encrypted domains declare.
+      -- Only a real server can prove the adapter emits an operand each accepts.
+      tags TEXT[],
+      meta JSONB
     )
   `)
   // The grants block covers eql_v3 objects, not application tables.
@@ -252,6 +260,8 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
       createdAt: ADA_CREATED,
       active: true,
       note: 'plain',
+      tags: ['vip', 'admin'],
+      meta: { plan: 'pro', seats: 3 },
     })
 
     expect(error).toBeNull()
@@ -409,6 +419,73 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
     // `ada` is the only row and it IS in the list, so negation excludes it.
     // Before the fix this returned `['ada']`: the bogus operand matched nothing,
     // and `not` of nothing is everything.
+    expect(data).toEqual([])
+  })
+
+  // ---------------------------------------------------------------------------
+  // Plaintext containment. `contains` is the one FilterOp that is a supabase-js
+  // METHOD name and not a PostgREST operator, so a structured `or()` used to
+  // emit `tags.contains.{…}` — PGRST100. Translating the token alone is not
+  // enough: `cs` takes a containment literal, so the `(a,b)` in-list form arrays
+  // otherwise get fails with 22P02. Both are executed here, against a real
+  // server, because a mock can only prove what string we emit.
+  // ---------------------------------------------------------------------------
+
+  it('runs a native array containment through .contains() on a plaintext column', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .contains('tags', ['vip'])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  it('runs a native jsonb containment through .contains() on a plaintext column', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .contains('meta', { plan: 'pro' })
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  it('executes a structured or() contains on a plaintext array column', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or([{ column: 'tags', op: 'contains', value: ['vip', 'admin'] }])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  it('executes a structured or() contains on a plaintext jsonb column', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or([{ column: 'meta', op: 'contains', value: { plan: 'pro' } }])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // A containment literal's braces hold top-level commas. Naming an encrypted
+  // column forces the parse → rebuild path, where those commas must not be read
+  // as condition separators — otherwise `tags` is filtered on a truncated
+  // `{vip` and the whole or-tree quietly returns the wrong rows.
+  it('preserves a plaintext containment literal in a mixed or() string', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or('nickname.eq.nobody,tags.cs.{vip,admin}')
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  it('matches nothing when the containment literal is not contained', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .or([{ column: 'tags', op: 'contains', value: ['vip', 'absent'] }])
+
+    expect(error).toBeNull()
     expect(data).toEqual([])
   })
 

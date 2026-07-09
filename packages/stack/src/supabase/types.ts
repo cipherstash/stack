@@ -121,6 +121,40 @@ export type V3FreeTextSearchableKeys<
 > = Exclude<Extract<keyof Row, string>, NonFreeTextSearchV3Keys<Table>>
 
 /**
+ * The operand `contains()` accepts on a PLAINTEXT column, mirroring
+ * postgrest-js's own untyped `contains` overload: a jsonb literal, an array, or
+ * the raw string form.
+ *
+ * Deliberately NOT `ReadonlyArray<Row[K]>` (postgrest-js's *typed* overload):
+ * for `tags: string[]` that resolves to `string[][]` and rejects the very call
+ * it exists to allow, `contains('tags', ['vip'])`.
+ */
+type NativeContainsValue = string | readonly unknown[] | Record<string, unknown>
+
+/**
+ * The `contains()` operand for column `K`.
+ *
+ * A DECLARED encrypted column reaching `contains` necessarily carries a
+ * `freeTextSearch` capability — only `public.text_match` and
+ * `public.text_search` do, and both `cast_as` to `string` — so its operand is
+ * the string to tokenize into a bloom-filter query term.
+ *
+ * Any other key is a plaintext passthrough, where the runtime forwards the
+ * operand untouched to `q.contains` and `contains` means PostgREST's native
+ * jsonb/array containment. A blanket `value: string` made that half of
+ * {@link V3FreeTextSearchableKeys} unreachable from TypeScript.
+ *
+ * `[K] extends [...]` rather than a bare conditional: a naked type parameter
+ * distributes over unions, which would silently widen a union key to the union
+ * of both operand types instead of demanding every member be a declared column.
+ */
+export type V3ContainsValue<Table extends AnyV3Table, K extends string> = [
+  K,
+] extends [Extract<keyof V3ColumnsOfTable<Table>, string>]
+  ? string
+  : NativeContainsValue
+
+/**
  * Row keys a v3 builder accepts in `order()`: every row key that is NOT an
  * encrypted v3 column. `ORDER BY` on an EQL v3 domain sorts the raw ciphertext
  * envelope — the bundle declares no btree operator class on any domain, so the
@@ -156,7 +190,7 @@ export interface EncryptedQueryBuilderV3<
   > {
   contains<K extends V3FreeTextSearchableKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
-    value: string,
+    value: V3ContainsValue<Table, K>,
   ): EncryptedQueryBuilderV3<Table, Row>
 }
 
@@ -166,6 +200,11 @@ export interface EncryptedQueryBuilderV3<
  * runtime guard in the term-encryption path is the only protection — but the
  * DIALECT is still v3, so `like`/`ilike` are absent here too. Typing this as
  * {@link EncryptedQueryBuilder} would hand back the v2 surface.
+ *
+ * For the same reason nothing here can tell an encrypted match column from a
+ * plaintext jsonb one, so `contains` accepts the full native operand union
+ * (which subsumes the encrypted column's `string`); the runtime resolves the
+ * column and picks the encoding.
  */
 export interface EncryptedQueryBuilderV3Untyped<
   Row extends Record<string, unknown>,
@@ -176,7 +215,7 @@ export interface EncryptedQueryBuilderV3Untyped<
   > {
   contains<K extends StringKeyOf<Row>>(
     column: K,
-    value: string,
+    value: NativeContainsValue,
   ): EncryptedQueryBuilderV3Untyped<Row>
 }
 
@@ -573,7 +612,23 @@ export interface EncryptedQueryBuilderCore<
   gte<K extends FK>(column: K, value: T[K]): Self
   lt<K extends FK>(column: K, value: T[K]): Self
   lte<K extends FK>(column: K, value: T[K]): Self
+  /**
+   * `IS NULL` / `IS TRUE` / `IS FALSE`.
+   *
+   * The `null` form is widened to EVERY row key, not just the filterable ones.
+   * `is` is the one predicate never encrypted — `isEncryptableTerm` rejects it
+   * outright, so no term is collected and no capability guard runs — and a NULL
+   * plaintext is stored as a SQL NULL rather than a ciphertext. On a v3
+   * storage-only column (`types.Boolean`, `types.Integer`, …) `IS NULL` is
+   * therefore not merely legal but the ONLY predicate available, so narrowing it
+   * to `FK` would deny the sole query those columns support.
+   *
+   * The boolean form stays on `FK`: `IS TRUE` against a jsonb ciphertext column
+   * compares an envelope to a plaintext boolean, which is a type error in the
+   * database, not a filter.
+   */
   is<K extends FK>(column: K, value: null | boolean): Self
+  is<K extends StringKeyOf<T>>(column: K, value: null): Self
   in<K extends FK>(column: K, values: T[K][]): Self
   filter<K extends FK>(column: K, operator: string, value: T[K]): Self
   not<K extends FK>(column: K, operator: string, value: T[K]): Self

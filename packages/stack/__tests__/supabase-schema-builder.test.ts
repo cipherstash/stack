@@ -108,6 +108,32 @@ describe('synthesizeTables', () => {
 })
 
 describe('mergeDeclaredTables', () => {
+  // The merge copies synthesized builders across by DB column name. Only the
+  // SYNTHESIZED side can carry `__proto__` — `encryptedTable()` rejects it as a
+  // declared key (`isReservedTableKey`) — so this is the one path that can
+  // reparent the merge target and drop the column from the encrypt config.
+  it('copies a synthesized __proto__ column as an own key', () => {
+    const protoIntrospection: IntrospectionResult = [
+      {
+        tableName: 'users',
+        columns: [
+          { columnName: '__proto__', domainName: 'text_search' },
+          { columnName: 'email', domainName: 'text_search' },
+        ],
+      },
+    ]
+    const synth = synthesizeTables(protoIntrospection)
+    const declaredTable = encryptedTable('users', {
+      email: types.TextSearch('email'),
+    })
+
+    const merged = mergeDeclaredTables(synth, { users: declaredTable })
+    const builders = merged.tables.get('users')!.columnBuilders
+
+    expect(Object.hasOwn(builders, '__proto__')).toBe(true)
+    expect(Object.keys(builders).sort()).toEqual(['__proto__', 'email'])
+  })
+
   it('keeps the declared builder instance over the synthesized one', () => {
     const synth = synthesizeTables(introspection)
     const declaredTable = encryptedTable('users', {
