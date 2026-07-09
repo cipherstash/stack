@@ -8,13 +8,13 @@
  * `opts.strategy` (the FFI's option name), and when omitted the option must be
  * absent so the default `auto` strategy is used.
  *
- * NOTE: the strategies exported by `@cipherstash/auth` no longer satisfy that
- * shape. Since 0.41 their `getToken()` resolves a `Result<TokenResult,
- * AuthFailure>` envelope, and the Node native client reads `.token` off the
- * resolved value — so a real `OidcFederationStrategy` fails there with
- * `missing 'token' field`. The strategy below is a hand-rolled stand-in for the
- * *FFI's* contract, not a stand-in for an auth strategy; it cannot catch that
- * mismatch. See the known-issue note in `skills/stash-encryption/SKILL.md`.
+ * NOTE: since `@cipherstash/auth` 0.41 the real strategies resolve a
+ * `Result<TokenResult, AuthFailure>` envelope from `getToken()`, not a bare
+ * `{ token }`. protect-ffi 0.28 accepts both shapes at runtime (Node and WASM),
+ * but its exported `AuthStrategy` type was never widened, so assigning a real
+ * strategy to `config.authStrategy` is a type error. See cipherstash/stack#602.
+ * The stub below is a stand-in for the *FFI's declared contract*, not for an
+ * auth strategy, so it cannot catch that mismatch.
  * The legacy `config.strategy` field is still honoured (with a runtime
  * deprecation warning) until it is removed.
  */
