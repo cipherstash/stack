@@ -172,11 +172,20 @@ const MAX_ORDER_ROWS = Math.max(
 )
 
 /** Plaintext ordering used to derive the EXPECTED ORE order per domain.
- * Dates compare by instant, numbers numerically, strings by code point (ORE
- * text order is byte order, which matches JS `<` for the ASCII samples here). */
+ * Dates compare by instant, numbers and bigints numerically, strings by code
+ * point (ORE text order is byte order, which matches JS `<` for the ASCII
+ * samples here). */
 const comparePlaintext = (a: unknown, b: unknown): number => {
   if (a instanceof Date && b instanceof Date) return a.getTime() - b.getTime()
   if (typeof a === 'number' && typeof b === 'number') return a - b
+  // `bigint` samples (BIGINT_S) must compare numerically, not lexicographically:
+  // String(-42n) < String(-9223372036854775808n) is TRUE ('-4' < '-9') yet
+  // -42 > -9.2e18. Without this branch the two bigint ORE domains fall through
+  // to the string compare below and the expected order is numerically wrong,
+  // even though the ORE ciphertext order is correct. (`a - b` is a bigint, so
+  // it can't be returned to Array.sort — use the comparison form.)
+  if (typeof a === 'bigint' && typeof b === 'bigint')
+    return a < b ? -1 : a > b ? 1 : 0
   const sa = String(a)
   const sb = String(b)
   return sa < sb ? -1 : sa > sb ? 1 : 0
