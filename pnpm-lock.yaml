@@ -576,6 +576,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.4.0
         version: 1.4.0
+      '@supabase/postgrest-js':
+        specifier: 2.105.4
+        version: 2.105.4
       '@supabase/supabase-js':
         specifier: ^2.105.4
         version: 2.105.4

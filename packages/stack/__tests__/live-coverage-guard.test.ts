@@ -57,6 +57,7 @@ import {
   LIVE_EQL_V3_PG_ENABLED,
   LIVE_LOCK_CONTEXT_ENABLED,
   LIVE_PG_ENABLED,
+  LIVE_SUPABASE_PGREST_ENABLED,
 } from './helpers/live-gate'
 
 // GitHub Actions always sets CI=true; treat any truthy CI as "must run live".
@@ -95,21 +96,18 @@ describe('live-coverage guard', () => {
   // the identity / lock-context live suites soft-skip on a missing USER_JWT, so
   // once the secret lands this guard turns a silent whole-suite skip into a
   // loud failure (as the CS_*/DATABASE_URL guards already do).
-  it.skip(
-    'CI must have USER_JWT so the lock-context live suites do not silently skip',
-    () => {
-      expect(
-        LIVE_LOCK_CONTEXT_ENABLED,
-        'CI must run the live lock-context / identity suites — ' +
-          '`LIVE_LOCK_CONTEXT_ENABLED` is false. This needs the CS_* creds AND ' +
-          'a `USER_JWT`; the identity/lock-context suites (e.g. ' +
-          'lock-context.test.ts, protect-ops.test.ts, ' +
-          'operators-lock-context-live-pg.test.ts) SOFT-SKIP when USER_JWT is ' +
-          'absent, so a missing/rotated USER_JWT lets them skip green with no ' +
-          'signal — the exact failure mode this guard exists to prevent.',
-      ).toBe(true)
-    },
-  )
+  it.skip('CI must have USER_JWT so the lock-context live suites do not silently skip', () => {
+    expect(
+      LIVE_LOCK_CONTEXT_ENABLED,
+      'CI must run the live lock-context / identity suites — ' +
+        '`LIVE_LOCK_CONTEXT_ENABLED` is false. This needs the CS_* creds AND ' +
+        'a `USER_JWT`; the identity/lock-context suites (e.g. ' +
+        'lock-context.test.ts, protect-ops.test.ts, ' +
+        'operators-lock-context-live-pg.test.ts) SOFT-SKIP when USER_JWT is ' +
+        'absent, so a missing/rotated USER_JWT lets them skip green with no ' +
+        'signal — the exact failure mode this guard exists to prevent.',
+    ).toBe(true)
+  })
 
   it.runIf(IN_CI)(
     'CI must have DATABASE_URL so the pg-only suites do not silently skip',
@@ -123,6 +121,26 @@ describe('live-coverage guard', () => {
           'service — so a false value here is a broken workflow, never a valid ' +
           'configuration. It makes every `describeLivePgOnly` suite (e.g. ' +
           'supabase-v3-introspect-pg) silently skip while CI stays green.',
+      ).toBe(true)
+    },
+  )
+
+  it.runIf(IN_CI)(
+    'CI must have PGRST_URL so the live supabase PostgREST suite does not silently skip',
+    () => {
+      expect(
+        LIVE_SUPABASE_PGREST_ENABLED,
+        'CI must run the live supabase PostgREST suite — ' +
+          '`LIVE_SUPABASE_PGREST_ENABLED` is false. This needs a ' +
+          '`DATABASE_URL` AND a `PGRST_URL` pointing at the pinned ' +
+          '`postgrest/postgrest` service in .github/workflows/tests.yml (no ' +
+          'CS_* creds — the domain CHECKs are structural). It is ' +
+          'the ONLY suite that executes the adapter against a real PostgREST — ' +
+          'the `prop:db_name::jsonb` aliasing selects, the `cs` containment ' +
+          'mapping, and the full-envelope filter operands that every `public.*` ' +
+          'domain CHECK must accept. Everything else asserts those as strings ' +
+          'against a mock, so a false value here means the wire encoding is ' +
+          'unproven while CI stays green.',
       ).toBe(true)
     },
   )
