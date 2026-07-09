@@ -264,8 +264,19 @@ function splitOrString(input: string): string[] {
   let depth = 0
   let inQuotes = false
 
+  let escaped = false
+
   for (const char of input) {
-    if (char === '"' && depth === 0) {
+    // A backslash-escaped character is literal: `\"` must NOT toggle `inQuotes`,
+    // or an escaped quote inside an encrypted operand would end the token and
+    // the next comma would split mid-value.
+    if (escaped) {
+      escaped = false
+      current += char
+    } else if (char === '\\' && inQuotes) {
+      escaped = true
+      current += char
+    } else if (char === '"' && depth === 0) {
       inQuotes = !inQuotes
       current += char
     } else if (char === '(' && !inQuotes) {
@@ -290,9 +301,11 @@ function splitOrString(input: string): string[] {
 }
 
 function parseOrValue(value: string): unknown {
-  // Handle double-quoted values (PostgREST quoting for reserved characters)
-  if (value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1)
+  // Handle double-quoted values (PostgREST quoting for reserved characters).
+  // Must undo `escapeOrValue`, or a parse → rebuild round-trip doubles every
+  // backslash. The two functions are only correct as a pair.
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return unescapeOrValue(value.slice(1, -1))
   }
 
   // Handle parenthesized lists: (val1,val2,val3)
@@ -314,14 +327,30 @@ function parseOrValue(value: string): unknown {
 }
 
 /**
- * PostgREST reserved characters that require double-quoting in filter values.
+ * PostgREST characters that require double-quoting in filter values.
+ *
+ * `"` and `\` are here because a value containing either must be quoted AND
+ * escaped: unquoted, a bare `"` is a syntax error mid-value; quoted but
+ * unescaped, it terminates the value early. Every v3 encrypted operand is
+ * `JSON.stringify(envelope)`, so this is the common case, not the exotic one.
+ *
  * See: https://docs.postgrest.org/en/latest/references/api/tables_views.html
  */
-const POSTGREST_RESERVED = /[,().]/
+const POSTGREST_RESERVED = /["\\,().]/
+
+/** Escape `\` first, then `"` — the reverse order would double-escape. */
+function escapeOrValue(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+/** Inverse of {@link escapeOrValue}: consume `\x` as a literal `x`. */
+function unescapeOrValue(str: string): string {
+  return str.replace(/\\(.)/g, '$1')
+}
 
 function formatOrValue(value: unknown): string {
   if (Array.isArray(value)) {
-    return `(${value.join(',')})`
+    return `(${value.map((v) => formatOrValue(v)).join(',')})`
   }
   if (value === null) return 'null'
   if (value === true) return 'true'
@@ -333,7 +362,7 @@ function formatOrValue(value: unknown): string {
   // This is required for encrypted values (JSON with commas, braces, etc.)
   // and is safe for all string values per PostgREST spec.
   if (POSTGREST_RESERVED.test(str)) {
-    return `"${str}"`
+    return `"${escapeOrValue(str)}"`
   }
 
   return str

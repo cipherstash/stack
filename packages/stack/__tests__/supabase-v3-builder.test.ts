@@ -61,6 +61,22 @@ function v3Instance(resultData: unknown = []) {
   return { es, supabase }
 }
 
+/**
+ * Extract the operand from an emitted `.or()` token and undo PostgREST's
+ * quoting, exactly as PostgREST does server-side.
+ *
+ * Asserts the inner quotes ARE escaped before unescaping: an unescaped operand
+ * would be truncated at its first `"` by PostgREST, so a test that merely
+ * `JSON.parse`d the raw slice would pass on a filter the database rejects.
+ */
+function orOperand(emitted: string, prefix: string): string {
+  const quoted = emitted.slice(prefix.length)
+  expect(quoted.startsWith('"') && quoted.endsWith('"')).toBe(true)
+  const inner = quoted.slice(1, -1)
+  expect(inner).toContain('\\"')
+  return inner.replace(/\\(.)/g, '$1')
+}
+
 // ---------------------------------------------------------------------------
 // v3 dialect
 // ---------------------------------------------------------------------------
@@ -505,8 +521,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       const emitted = supabase.callsFor('or')[0].args[0] as string
       // The envelope is JSON (commas, braces), so `formatOrValue` quotes it.
       expect(emitted).toMatch(/^email\.cs\."/)
-      const quoted = emitted.slice('email.cs."'.length, -1)
-      expect(JSON.parse(quoted).c).toBeDefined()
+      expect(JSON.parse(orOperand(emitted, 'email.cs.')).c).toBeDefined()
     })
 
     it('rewrites an encrypted like inside an or() string to cs', async () => {
@@ -538,8 +553,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
 
       const emitted = supabase.callsFor('or')[0].args[0] as string
       expect(emitted).toMatch(/^created_at\.gte\."/)
-      const quoted = emitted.slice('created_at.gte."'.length, -1)
-      expect(JSON.parse(quoted).c).toBeDefined()
+      expect(JSON.parse(orOperand(emitted, 'created_at.gte.')).c).toBeDefined()
     })
 
     it('rewrites an encrypted ilike in a structured or() to cs', async () => {

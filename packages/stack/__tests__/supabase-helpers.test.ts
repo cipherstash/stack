@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { addJsonbCastsV3 } from '@/supabase/helpers'
+import {
+  addJsonbCastsV3,
+  parseOrString,
+  rebuildOrString,
+} from '@/supabase/helpers'
 
 // `createdAt` is a renamed property (DB column `created_at`); `email` is a
 // property whose name already equals its DB column.
@@ -61,5 +65,70 @@ describe('addJsonbCastsV3', () => {
     expect(addJsonbCastsV3('id, email, createdAt', propToDb)).toBe(
       'id, email::jsonb, createdAt:created_at::jsonb',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// .or() operand quoting
+//
+// Every v3 encrypted operand is `JSON.stringify(envelope)` — dense with double
+// quotes and commas. `formatOrValue` wraps a comma-bearing value in quotes but
+// never escapes the quotes already inside it, so PostgREST terminates the value
+// at the first inner `"`. Pre-existing in v2 (its composite literal also
+// carries quotes); v3 makes it certain to fire.
+// ---------------------------------------------------------------------------
+
+const ENVELOPE = '{"v":1,"i":{"t":"users","c":"email"},"c":"ct:abc"}'
+
+describe('rebuildOrString quoting', () => {
+  it('escapes the double quotes inside a quoted operand', () => {
+    const out = rebuildOrString([
+      { column: 'email', op: 'eq', value: ENVELOPE },
+    ])
+    // The operand must be one quoted token whose inner quotes are escaped.
+    expect(out).toBe(
+      `email.eq."{\\"v\\":1,\\"i\\":{\\"t\\":\\"users\\",\\"c\\":\\"email\\"},\\"c\\":\\"ct:abc\\"}"`,
+    )
+  })
+
+  it('escapes a backslash before escaping quotes', () => {
+    expect(rebuildOrString([{ column: 'a', op: 'eq', value: 'x\\y,z' }])).toBe(
+      'a.eq."x\\\\y,z"',
+    )
+  })
+
+  it('quotes a value containing a bare double quote even without a comma', () => {
+    expect(rebuildOrString([{ column: 'a', op: 'eq', value: 'he"llo' }])).toBe(
+      'a.eq."he\\"llo"',
+    )
+  })
+
+  it('leaves a value with no reserved characters unquoted', () => {
+    expect(rebuildOrString([{ column: 'a', op: 'eq', value: 'plain' }])).toBe(
+      'a.eq.plain',
+    )
+  })
+})
+
+describe('parseOrString / rebuildOrString round-trip', () => {
+  it('round-trips an encrypted JSON envelope operand', () => {
+    const conditions = [{ column: 'email', op: 'eq' as const, value: ENVELOPE }]
+    expect(parseOrString(rebuildOrString(conditions))).toEqual(conditions)
+  })
+
+  it('round-trips a value carrying backslashes and quotes', () => {
+    const conditions = [{ column: 'a', op: 'eq' as const, value: 'x\\"y,z' }]
+    expect(parseOrString(rebuildOrString(conditions))).toEqual(conditions)
+  })
+
+  it('does not split on a comma inside a quoted operand', () => {
+    const s = rebuildOrString([
+      { column: 'email', op: 'eq', value: ENVELOPE },
+      { column: 'id', op: 'eq', value: '7' },
+    ])
+    const parsed = parseOrString(s)
+    expect(parsed).toHaveLength(2)
+    expect(parsed[0].value).toBe(ENVELOPE)
+    expect(parsed[1].value).toBe('7')
   })
 })
