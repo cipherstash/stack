@@ -12,17 +12,24 @@ const EQL_V3_ADVISORY_LOCK_ID = 3_733_003
 // the wrong SQL. eql_v3.version() carries the release identity itself, so this
 // needs no maintenance when the pin moves.
 //
-// to_regprocedure() yields NULL instead of raising when the function is absent,
-// so a database with no EQL v3 — or with a bundle predating eql_v3.version() —
-// reads as stale and gets installed rather than erroring.
-async function hasCurrentEqlV3(sql: postgres.Sql): Promise<boolean> {
-  const [row] = await sql<{ version: string | null }[]>`
-    SELECT CASE
-      WHEN to_regprocedure('eql_v3.version()') IS NULL THEN NULL
-      ELSE eql_v3.version()
-    END AS version
+// The probe has to be its own statement. Postgres resolves function references
+// while parsing a statement, before any branch of it runs, so guarding the call
+// with CASE WHEN to_regprocedure(...) IS NULL in the same statement still raises
+// "schema eql_v3 does not exist" against a database with no EQL v3 — the guard
+// only ever succeeds when it is not needed. to_regprocedure() takes the name as
+// a string, so on its own it yields NULL rather than raising, and a database
+// with no EQL v3 — or with a bundle predating eql_v3.version() — reads as stale
+// and gets installed.
+async function readEqlV3Version(sql: postgres.Sql): Promise<string | null> {
+  const [probe] = await sql<{ present: boolean }[]>`
+    SELECT to_regprocedure('eql_v3.version()') IS NOT NULL AS present
   `
-  return row?.version === releaseManifest.eqlVersion
+  if (!probe?.present) return null
+
+  const [row] = await sql<
+    { version: string }[]
+  >`SELECT eql_v3.version() AS version`
+  return row?.version ?? null
 }
 
 /**
@@ -43,21 +50,17 @@ export async function installEqlV3IfNeeded(sql: postgres.Sql): Promise<void> {
     await reserved`SELECT pg_advisory_lock(${EQL_V3_ADVISORY_LOCK_ID})`
 
     try {
-      if (await hasCurrentEqlV3(reserved)) return
+      if ((await readEqlV3Version(reserved)) === releaseManifest.eqlVersion)
+        return
 
       // Sent as one multi-statement string: the bundle is ~43k lines and a
       // statement-at-a-time client would pay a round-trip per CREATE FUNCTION.
       await reserved.unsafe(readInstallSql())
 
-      if (!(await hasCurrentEqlV3(reserved))) {
-        const [row] = await reserved<{ version: string | null }[]>`
-          SELECT CASE
-            WHEN to_regprocedure('eql_v3.version()') IS NULL THEN NULL
-            ELSE eql_v3.version()
-          END AS version
-        `
+      const installed = await readEqlV3Version(reserved)
+      if (installed !== releaseManifest.eqlVersion) {
         throw new Error(
-          `EQL v3 installation did not yield the expected release: wanted ${releaseManifest.eqlVersion}, got ${row?.version ?? 'no eql_v3.version()'}`,
+          `EQL v3 installation did not yield the expected release: wanted ${releaseManifest.eqlVersion}, got ${installed ?? 'no eql_v3.version()'}`,
         )
       }
     } finally {
