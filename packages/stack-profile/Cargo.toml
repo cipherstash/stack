@@ -2,7 +2,7 @@
 name = "stack-profile"
 description = "Centralised ~/.cipherstash profile file management"
 license-file = "LICENSE"
-version = "0.39.1"
+version = "0.40.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
