@@ -25,19 +25,19 @@
         src="https://img.shields.io/npm/dm/@cipherstash/protect.svg?style=for-the-badge&labelColor=000000"
       />
     </a>
-    <a href="https://github.com/cipherstash/protectjs/stargazers">
+    <a href="https://github.com/cipherstash/stack/stargazers">
       <img
         alt="GitHub stars"
-        src="https://img.shields.io/github/stars/cipherstash/protectjs?style=for-the-badge&labelColor=000000"
+        src="https://img.shields.io/github/stars/cipherstash/stack?style=for-the-badge&labelColor=000000"
       />
     </a>
-    <a href="https://github.com/cipherstash/protectjs/blob/main/LICENSE.md">
+    <a href="https://github.com/cipherstash/stack/blob/main/LICENSE.md">
       <img
         alt="License"
         src="https://img.shields.io/npm/l/@cipherstash/protect.svg?style=for-the-badge&labelColor=000000"
       />
     </a>
-    <a href="https://github.com/cipherstash/protectjs/tree/main/docs">
+    <a href="https://cipherstash.com/docs">
       <img
         alt="Docs"
         src="https://img.shields.io/badge/docs-Read-blue?style=for-the-badge&labelColor=000000"
@@ -50,6 +50,9 @@
 
 <!-- start -->
 
+> [!TIP]
+> `@cipherstash/protect` is the core encryption library that powers [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack). For new projects we recommend `@cipherstash/stack`, which re-exports this functionality alongside integrations for Drizzle, Supabase, DynamoDB, secrets, and identity-aware encryption. See the [CipherStash docs](https://cipherstash.com/docs) for the current API.
+
 Protect.js lets you encrypt every value with its own key—without sacrificing performance or usability. Encryption happens in your app; ciphertext is stored in your database.
 
 Per‑value unique keys are powered by CipherStash [ZeroKMS](https://cipherstash.com/products/zerokms) bulk key operations, backed by a root key in [AWS KMS](https://docs.aws.amazon.com/kms/latest/developerguide/overview.html).
@@ -58,7 +61,7 @@ Encrypted data is structured as an [EQL](https://github.com/cipherstash/encrypt-
 
 > [!IMPORTANT]
 > Searching, sorting, and filtering on encrypted data is currently only supported when storing encrypted data in PostgreSQL.
-> Read more about [searching encrypted data](./docs/concepts/searchable-encryption.md).
+> Read more about [searching encrypted data](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption).
 
 Looking for DynamoDB support? Check out the [Protect.js for DynamoDB helper library](https://www.npmjs.com/package/@cipherstash/protect-dynamodb).
 
@@ -100,7 +103,7 @@ const decrypted = await client.decrypt(encrypted.data);
 
 ## Architecture (high level)
 
-![Protect.js Architecture Diagram](https://github.com/cipherstash/protectjs/blob/main/docs/images/protectjs-architecture.png)
+![Protect.js Architecture Diagram](https://raw.githubusercontent.com/cipherstash/stack/45e40dc888ddc412c361139192ed24668d3db60d/docs/images/protectjs-architecture.png)
 
 ## Table of contents
 
@@ -120,7 +123,7 @@ const decrypted = await client.decrypt(encrypted.data);
 - [Contributing](#contributing)
 - [License](#license)
 
-For more specific documentation, refer to the [docs](https://github.com/cipherstash/protectjs/tree/main/docs).
+For more specific documentation, refer to the [docs](https://cipherstash.com/docs).
 
 ## Features
 
@@ -173,7 +176,7 @@ Read more about [building and bundling with Protect.js](#builds-and-bundling).
 ## Getting started
 
 - 🆕 **Existing app?** Skip to [the next step](#configuration).
-- 🌱 **Clean slate?** Check out the [getting started tutorial](./docs/getting-started.md).
+- 🌱 **Clean slate?** Check out the [getting started tutorial](https://cipherstash.com/docs/stack/quickstart).
 
 ### Configuration
 
@@ -249,7 +252,7 @@ export const documents = csTable("documents", {
 });
 ```
 
-Read more about [defining your schema](./docs/reference/schema.md).
+Read more about [defining your schema](https://cipherstash.com/docs/stack/cipherstash/encryption/schema).
 
 ### Initialize the Protect client
 
@@ -850,15 +853,15 @@ CREATE TABLE users (
 
 > [!WARNING]
 > The `eql_v2_encrypted` type is a [composite type](https://www.postgresql.org/docs/current/rowtypes.html) and each ORM/client has a different way of handling inserts and selects.
-> We've documented how to handle inserts and selects for the different ORMs/clients in the [docs](./docs/reference/working-with-composite-types.md).
+> We've documented how to handle inserts and selects for the different ORMs/clients in the [docs](https://cipherstash.com/docs).
 
-Read more about [how to search encrypted data](./docs/reference/searchable-encryption-postgres.md) in the docs.
+Read more about [how to search encrypted data](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption) in the docs.
 
 ## Identity-aware encryption
 
 > [!IMPORTANT]
 > Right now identity-aware encryption is only supported if you are using [Clerk](https://clerk.com/) as your identity provider.
-> Read more about [lock contexts with Clerk and Next.js](./docs/how-to/lock-contexts-with-clerk.md).
+> Read more about [lock contexts with Clerk and Next.js](https://cipherstash.com/docs/stack/cipherstash/encryption/identity).
 
 Protect.js can add an additional layer of protection to your data by requiring a valid JWT to perform a decryption.
 
@@ -993,7 +996,7 @@ const bulkDecryptedResult = await protectClient
 Protect.js currently supports encrypting and decrypting text.
 Other data types like booleans, dates, ints, floats, and JSON are well-supported in other CipherStash products, and will be coming to Protect.js soon.
 
-Until support for other data types are available, you can express interest in this feature by adding a :+1: on this [GitHub Issue](https://github.com/cipherstash/protectjs/issues/48).
+Until support for other data types are available, you can express interest in this feature by adding a :+1: on this [GitHub Issue](https://github.com/cipherstash/stack/issues/48).
 
 ## Searchable encryption
 
@@ -1002,7 +1005,7 @@ Protect.js supports searching encrypted data in PostgreSQL:
 - **Text columns**: Use `.equality()`, `.freeTextSearch()`, and `.orderAndRange()` for exact match, text search, and sorting/range queries.
 - **JSONB columns**: Use `.searchableJson()` (recommended) to enable encrypted JSONPath selector and containment queries on JSON data. The query operation is automatically inferred from the plaintext type.
 
-Read more about [searching encrypted data](./docs/concepts/searchable-encryption.md) and the [PostgreSQL implementation details](./docs/reference/searchable-encryption-postgres.md) in the docs.
+Read more about [searching encrypted data](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption) and the [PostgreSQL implementation details](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption) in the docs.
 
 ## Multi-tenant encryption
 
@@ -1056,9 +1059,9 @@ PROTECT_LOG_LEVEL=error  # Enable error logging
 ## CipherStash Client
 
 Protect.js is built on top of the CipherStash Client Rust SDK which is embedded with the `@cipherstash/protect-ffi` package.
-The `@cipherstash/protect-ffi` source code is available on [GitHub](https://github.com/cipherstash/protectjs-ffi).
+The `@cipherstash/protect-ffi` source code is available on [GitHub](https://github.com/cipherstash/stack-ffi).
 
-Read more about configuring the CipherStash Client in the [configuration docs](./docs/reference/configuration.md).
+Read more about configuring the CipherStash Client in the [configuration docs](https://cipherstash.com/docs/stack/reference).
 
 ## Example applications
 
@@ -1070,7 +1073,7 @@ Check out the [example applications](./examples):
 - [Next.js and lock contexts example using Clerk](/examples/nextjs-clerk) demonstrates how to protect data with identity-aware encryption
 
 `@cipherstash/protect` can be used with most ORMs.
-If you're interested in using `@cipherstash/protect` with a specific ORM, please [create an issue](https://github.com/cipherstash/protectjs/issues/new).
+If you're interested in using `@cipherstash/protect` with a specific ORM, please [create an issue](https://github.com/cipherstash/stack/issues/new).
 
 ## Builds and bundling
 
@@ -1078,11 +1081,11 @@ If you're interested in using `@cipherstash/protect` with a specific ORM, please
 
 Here are a few resources to help based on your tool set:
 
-- [Required Next.js configuration](./docs/how-to/nextjs-external-packages.md).
-- [SST and AWS serverless functions](./docs/how-to/sst-external-packages.md).
+- [Required Next.js configuration](https://cipherstash.com/docs/stack/deploy/bundling).
+- [SST and AWS serverless functions](https://cipherstash.com/docs/stack/deploy/bundling).
   
 > [!TIP]
-> Deploying to Linux (e.g., AWS Lambda) with npm lockfile v3 and seeing runtime module load errors? See the troubleshooting guide: [`docs/how-to/npm-lockfile-v3`](./docs/how-to/npm-lockfile-v3-linux-deployments.md).
+> Deploying to Linux (e.g., AWS Lambda) with npm lockfile v3 and seeing runtime module load errors? See the troubleshooting guide: [bundling guide](https://cipherstash.com/docs/stack/deploy/bundling).
 
 ## Contributing
 
@@ -1096,4 +1099,4 @@ Protect.js is [MIT licensed](./LICENSE.md).
 
 ### Didn't find what you wanted?
 
-[Click here to let us know what was missing from our docs.](https://github.com/cipherstash/protectjs/issues/new?template=docs-feedback.yml&title=[Docs:]%20Feedback%20on%20README.md)
+[Click here to let us know what was missing from our docs.](https://github.com/cipherstash/stack/issues/new?template=docs-feedback.yml&title=[Docs:]%20Feedback%20on%20README.md)

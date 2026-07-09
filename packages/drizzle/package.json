@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/drizzle",
-	"version": "3.0.2",
+	"version": "3.0.3",
 	"description": "CipherStash Protect.js Drizzle ORM integration for TypeScript",
 	"keywords": [
 		"encrypted",
@@ -20,7 +20,7 @@
 		"directory": "packages/drizzle"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"type": "module",
 	"bin": {
 		"generate-eql-migration": "./dist/bin/generate-eql-migration.js"

@@ -53,20 +53,28 @@ const usersV3 = encryptedTableV3('users_v3', {
 // biome-ignore lint/suspicious/noExplicitAny: test helper reads the Result union
 const failure = (result: any) => result.failure
 
-let client: Awaited<ReturnType<typeof Encryption>>
+let clientV2: Awaited<ReturnType<typeof Encryption>>
+let clientV3: Awaited<ReturnType<typeof Encryption>>
 
 beforeEach(async () => {
   vi.clearAllMocks()
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
-  client = await Encryption({ schemas: [users, usersV3] })
+  // One client per wire format: `Encryption` rejects mixed v2 + v3 schema
+  // sets (one client emits exactly one wire format), so the two schema
+  // styles get their own clients and the suites below pick the right one.
+  clientV2 = await Encryption({ schemas: [users] })
+  clientV3 = await Encryption({ schemas: [usersV3] })
 })
 
+const clientFor = (variant: 'v2' | 'v3') =>
+  variant === 'v2' ? clientV2 : clientV3
+
 describe.each([
-  ['v2 fluent builder', { column: users.score, table: users }],
-  ['v3 domain type', { column: usersV3.score, table: usersV3 }],
-] as const)('encrypt with lock context rejects non-finite numbers (%s)', (_variant, target) => {
+  ['v2', { column: users.score, table: users }],
+  ['v3', { column: usersV3.score, table: usersV3 }],
+] as const)('encrypt with lock context rejects non-finite numbers (%s domain)', (variant, target) => {
   it('rejects NaN and never reaches the FFI', async () => {
-    const result = await client
+    const result = await clientFor(variant)
       .encrypt(Number.NaN, target)
       .withLockContext(new LockContext())
 
@@ -76,7 +84,7 @@ describe.each([
   })
 
   it('rejects +Infinity and never reaches the FFI', async () => {
-    const result = await client
+    const result = await clientFor(variant)
       .encrypt(Number.POSITIVE_INFINITY, target)
       .withLockContext(new LockContext())
 
@@ -86,7 +94,7 @@ describe.each([
   })
 
   it('rejects -Infinity and never reaches the FFI', async () => {
-    const result = await client
+    const result = await clientFor(variant)
       .encrypt(Number.NEGATIVE_INFINITY, target)
       .withLockContext(new LockContext())
 
@@ -98,7 +106,7 @@ describe.each([
   it('accepts a finite number and forwards it to the FFI', async () => {
     // Positive control: proves the guards above reject *because* of the value,
     // not because the lock-context path is broken for all numbers.
-    const result = await client
+    const result = await clientFor(variant)
       .encrypt(42, target)
       .withLockContext(new LockContext())
 
@@ -129,7 +137,7 @@ describe('encrypt rejects out-of-range bigint (i64 bounds)', () => {
     ['zero', 0n],
     ['a negative', -42n],
   ] as const)('accepts in-range bigint %s and forwards it to the FFI', async (_label, value) => {
-    const result = await client.encrypt(value, target)
+    const result = await clientV3.encrypt(value, target)
 
     expect(failure(result)).toBeUndefined()
     expect(vi.mocked(ffi.encrypt)).toHaveBeenCalledTimes(1)
@@ -140,7 +148,7 @@ describe('encrypt rejects out-of-range bigint (i64 bounds)', () => {
     ['2^63 (i64::MAX + 1)', 9223372036854775808n],
     ['-(2^63) - 1 (i64::MIN - 1)', -9223372036854775809n],
   ] as const)('rejects out-of-range bigint %s and never reaches the FFI', async (_label, value) => {
-    const result = await client.encrypt(value, target)
+    const result = await clientV3.encrypt(value, target)
 
     expect(failure(result)).toBeDefined()
     expect(failure(result)?.message).toContain(
@@ -150,7 +158,7 @@ describe('encrypt rejects out-of-range bigint (i64 bounds)', () => {
   })
 
   it('rejects out-of-range bigint on the lock-context arm too', async () => {
-    const result = await client
+    const result = await clientV3
       .encrypt(9223372036854775808n, target)
       .withLockContext(new LockContext())
 
@@ -172,7 +180,7 @@ describe('model / bulk encrypt guard out-of-range bigint fields', () => {
   const OUT_OF_RANGE = 9223372036854775808n // i64::MAX + 1
 
   it('encryptModel rejects an out-of-range bigint field and never reaches the FFI', async () => {
-    const result = await client.encryptModel({ big: OUT_OF_RANGE }, usersV3)
+    const result = await clientV3.encryptModel({ big: OUT_OF_RANGE }, usersV3)
 
     expect(failure(result)).toBeDefined()
     expect(failure(result)?.message).toContain(
@@ -182,7 +190,7 @@ describe('model / bulk encrypt guard out-of-range bigint fields', () => {
   })
 
   it('bulkEncryptModels rejects an out-of-range bigint field and never reaches the FFI', async () => {
-    const result = await client.bulkEncryptModels(
+    const result = await clientV3.bulkEncryptModels(
       [{ big: OUT_OF_RANGE }],
       usersV3,
     )
@@ -197,7 +205,7 @@ describe('model / bulk encrypt guard out-of-range bigint fields', () => {
   it('encryptModel forwards an in-range bigint field to the FFI', async () => {
     // Positive control: proves the rejections above are value-driven, not a
     // model path that rejects every bigint.
-    const result = await client.encryptModel({ big: 42n }, usersV3)
+    const result = await clientV3.encryptModel({ big: 42n }, usersV3)
 
     expect(failure(result)).toBeUndefined()
     expect(vi.mocked(ffi.encryptBulk)).toHaveBeenCalledTimes(1)

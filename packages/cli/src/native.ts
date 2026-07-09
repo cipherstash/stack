@@ -15,11 +15,11 @@ import {
   type PackageManager,
   runnerCommand,
 } from './commands/init/utils.js'
-
-interface ModuleError extends Error {
-  code?: string
-  requireStack?: string[]
-}
+import {
+  isModuleNotFound,
+  type ModuleError,
+  moduleNotFoundSpecifier,
+} from './module-error.js'
 
 // Matches the platform-suffixed optional package, e.g.
 // `@cipherstash/protect-ffi-darwin-arm64` or `@cipherstash/auth-linux-x64-gnu`.
@@ -37,13 +37,8 @@ export function currentTarget(): string {
  * to a missing top-level package or any other module error.
  */
 export function isNativeBinaryMissing(err: unknown): err is ModuleError {
-  if (!(err instanceof Error)) return false
-  const e = err as ModuleError
-  // CJS require throws `MODULE_NOT_FOUND`; ESM throws `ERR_MODULE_NOT_FOUND`.
-  if (e.code !== 'MODULE_NOT_FOUND' && e.code !== 'ERR_MODULE_NOT_FOUND') {
-    return false
-  }
-  const haystack = `${e.message}\n${(e.requireStack ?? []).join('\n')}`
+  if (!isModuleNotFound(err)) return false
+  const haystack = `${err.message}\n${(err.requireStack ?? []).join('\n')}`
   // A platform-suffixed @cipherstash package, or a failure surfaced from the
   // neon loader, both mean the optional native binary wasn't installed.
   return (
@@ -58,9 +53,7 @@ function missingModuleName(err: ModuleError): string | undefined {
   // `<platform>-<arch>` guess would miss.
   const pkg = PLATFORM_PKG.exec(haystack)?.[0]
   if (pkg) return pkg
-  // Fall back to the quoted name. CJS says "Cannot find module 'X'"; ESM
-  // (ERR_MODULE_NOT_FOUND) says "Cannot find package 'X'".
-  return /Cannot find (?:module|package) '([^']+)'/.exec(err.message)?.[1]
+  return moduleNotFoundSpecifier(err)
 }
 
 const LOCKFILE: Record<PackageManager, string> = {

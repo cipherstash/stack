@@ -1,15 +1,21 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
+import { DEFAULT_CLIENT_PATH } from '../../config/index.js'
+import { isInteractive } from '../../config/tty.js'
+import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 export const CONFIG_FILENAME = 'stash.config.ts'
 
+// Re-exported so scaffold consumers (and their tests) have a single import site.
+export { DEFAULT_CLIENT_PATH }
+
 /**
  * Common locations where an encryption client file might live. Checked in
- * order of priority during auto-detection.
+ * order of priority during auto-detection — the default path leads.
  */
 const COMMON_CLIENT_PATHS = [
-  './src/encryption/index.ts',
+  DEFAULT_CLIENT_PATH,
   './src/encryption.ts',
   './encryption/index.ts',
   './encryption.ts',
@@ -51,9 +57,9 @@ export async function resolveClientPath(
 
   const clientPath = await p.text({
     message: 'Where is your encryption client file?',
-    placeholder: './src/encryption/index.ts',
-    defaultValue: './src/encryption/index.ts',
-    initialValue: detected ?? './src/encryption/index.ts',
+    placeholder: DEFAULT_CLIENT_PATH,
+    defaultValue: DEFAULT_CLIENT_PATH,
+    initialValue: detected ?? DEFAULT_CLIENT_PATH,
     validate(value) {
       if (!value || value.trim().length === 0) {
         return 'Client file path is required.'
@@ -82,29 +88,66 @@ export default defineConfig({
 `
 }
 
-/**
- * Create a `stash.config.ts` at the project root if one doesn't already exist.
- * Returns `true` if a config is present (either pre-existing or freshly
- * written), `false` if the user cancelled the prompt.
- *
- * Invoked by `eql install` when no `stash.config.ts` exists, so users don't
- * need to run a separate `setup` step before installing EQL.
- */
-export async function ensureStashConfig(
-  cwd: string = process.cwd(),
-): Promise<boolean> {
-  const configPath = resolve(cwd, CONFIG_FILENAME)
-  if (existsSync(configPath)) return true
-
-  p.log.info(`No ${CONFIG_FILENAME} found — let's create one.`)
-
-  const clientPath = await resolveClientPath(cwd)
-  if (!clientPath) {
-    p.cancel('Setup cancelled.')
-    return false
-  }
-
+/** Write the config with the given client path and report it. */
+function writeStashConfig(configPath: string, clientPath: string): string {
   writeFileSync(configPath, generateConfig(clientPath), 'utf-8')
   p.log.success(`Created ${CONFIG_FILENAME}`)
-  return true
+  return clientPath
+}
+
+/**
+ * Create a `stash.config.ts` for the rest of the workflow (`db push` /
+ * `schema build` / `encrypt *` load the encryption client through it).
+ * `eql install` itself doesn't need one — it resolves the database URL
+ * directly — so this is a setup convenience, never a blocker.
+ *
+ * - `opts.ensure` (used by `stash init`, where the user has already committed
+ *   to setup) creates the config without a yes/no prompt.
+ * - Otherwise it *offers* to create it interactively. A non-interactive run
+ *   (CI / agents / pipes) can't prompt, so it does nothing rather than silently
+ *   writing files that reference packages a bare project may not have installed.
+ *
+ * Returns the encryption-client path the config points at when a config was
+ * written, or `null` when nothing was created (declined, non-interactive, or an
+ * existing config) — so the caller skips the client scaffold too.
+ *
+ * Should be called only when no config exists yet (the caller loads an existing
+ * one instead); it never overwrites a present `stash.config.ts`.
+ */
+export async function offerStashConfig(
+  opts: { ensure?: boolean; cwd?: string } = {},
+): Promise<string | null> {
+  const cwd = opts.cwd ?? process.cwd()
+  const configPath = resolve(cwd, CONFIG_FILENAME)
+  if (existsSync(configPath)) return null
+
+  // `ensure` (init) creates the config without asking — the user already
+  // committed to setup by running `stash init`.
+  if (opts.ensure) {
+    return writeStashConfig(
+      configPath,
+      detectClientPath(cwd) ?? DEFAULT_CLIENT_PATH,
+    )
+  }
+
+  // 'offer' mode. A non-interactive run can't prompt; don't write into the
+  // project unasked (that could drop files importing uninstalled packages) —
+  // the missing-config guidance points the user at `stash init` later.
+  if (!isInteractive()) return null
+
+  const create = await p.confirm({
+    message: `Create a ${CONFIG_FILENAME}? (needed later for db push / schema build / encrypt)`,
+    initialValue: true,
+  })
+  if (p.isCancel(create) || !create) {
+    p.log.info(
+      `Skipped ${CONFIG_FILENAME}. Create it later with \`${runnerCommand(detectPackageManager(), 'stash init')}\`.`,
+    )
+    return null
+  }
+
+  const clientPath = await resolveClientPath(cwd)
+  if (!clientPath) return null
+
+  return writeStashConfig(configPath, clientPath)
 }

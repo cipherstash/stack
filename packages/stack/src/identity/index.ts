@@ -68,7 +68,7 @@ export function resolveLockContext(input: LockContextInput): Context {
  * const client = await Encryption({
  *   schemas,
  *   config: {
- *     strategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
+ *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getJwt()),
  *   },
  * })
  *
@@ -118,7 +118,7 @@ export class LockContext {
    *
    * @deprecated Per-operation CTS tokens were removed in protect-ffi 0.25.
    * Authenticate the client as the user with an `OidcFederationStrategy`
-   * (`config.strategy`) instead, and pass the claim to `.withLockContext()`.
+   * (`config.authStrategy`) instead, and pass the claim to `.withLockContext()`.
    * The token fetched here is no longer used by encryption operations. This
    * method is kept for backwards compatibility and will be removed in a
    * future major release.

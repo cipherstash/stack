@@ -15,19 +15,26 @@
     "precheck": [
       {
         "description": "ensure table \"users\" does not exist",
-        "sql": "SELECT to_regclass('\"public\".\"users\"') IS NULL"
+        "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
+        "params": [
+          "\"public\".\"users\""
+        ]
       }
     ],
     "execute": [
       {
         "description": "create table \"users\"",
-        "sql": "CREATE TABLE \"public\".\"users\" (\n  \"accountid\" eql_v2_encrypted NOT NULL,\n  \"birthday\" eql_v2_encrypted NOT NULL,\n  \"email\" eql_v2_encrypted NOT NULL,\n  \"emailverified\" eql_v2_encrypted NOT NULL,\n  \"id\" text NOT NULL,\n  \"preferences\" eql_v2_encrypted NOT NULL,\n  \"salary\" eql_v2_encrypted NOT NULL,\n  PRIMARY KEY (\"id\")\n)"
+        "sql": "CREATE TABLE \"public\".\"users\" (\n  \"accountid\" eql_v2_encrypted NOT NULL,\n  \"birthday\" eql_v2_encrypted NOT NULL,\n  \"email\" eql_v2_encrypted NOT NULL,\n  \"emailverified\" eql_v2_encrypted NOT NULL,\n  \"id\" text NOT NULL,\n  \"preferences\" eql_v2_encrypted NOT NULL,\n  \"salary\" eql_v2_encrypted NOT NULL,\n  PRIMARY KEY (\"id\")\n)",
+        "params": []
       }
     ],
     "postcheck": [
       {
         "description": "verify table \"users\" exists",
-        "sql": "SELECT to_regclass('\"public\".\"users\"') IS NOT NULL"
+        "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
+        "params": [
+          "\"public\".\"users\""
+        ]
       }
     ]
   },

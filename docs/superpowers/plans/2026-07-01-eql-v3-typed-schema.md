@@ -1,5 +1,11 @@
 # EQL v3 Typed Schema Implementation Plan
 
+> **Superseded (re-baseline, 2026-07-05):** written against the
+> pre-`eql-3.0.0-alpha.2` EQL v3 surface — old domain names (`int4`,
+> `timestamptz`, …, since renamed to SQL-standard `integer`, `timestamp`, …),
+> `v: 2` envelope pins, and no `eql_v3_internal` schema. Retained as a
+> historical design record; the shipped surface is the re-baselined one.
+
 > **Superseded (2026-07-03):** this plan added per-domain `encrypted<Domain>Column`
 > builders on `@cipherstash/stack/schema/v3`. Those builders are now the `types`
 > namespace (`types.TextEq` / `types.Int4Ord` / …) on `@cipherstash/stack/eql/v3`.

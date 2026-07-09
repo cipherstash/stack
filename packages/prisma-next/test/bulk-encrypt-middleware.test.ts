@@ -69,6 +69,7 @@ function createCtx(
       error: vi.fn(),
     },
     contentHash: async () => 'mock-hash',
+    planExecutionId: 'test-plan-execution',
     ...overrides,
   }
 }

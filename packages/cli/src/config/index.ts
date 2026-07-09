@@ -3,10 +3,15 @@ import path from 'node:path'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { EncryptConfig } from '@cipherstash/stack/schema'
 import { z } from 'zod'
+import { detectPackageManager, runnerCommand } from '../commands/init/utils.js'
 import {
   type ResolveDatabaseUrlOptions,
   withResolverContext,
 } from './database-url.js'
+import {
+  missingCipherStashPackage,
+  reportMissingCipherStashPackage,
+} from './missing-package.js'
 
 export interface StashConfig {
   /** PostgreSQL connection string */
@@ -39,22 +44,29 @@ export function defineConfig(config: StashConfig): StashConfig {
 
 const CONFIG_FILENAME = 'stash.config.ts'
 
-const DEFAULT_ENCRYPT_CLIENT_PATH = './src/encryption/index.ts'
+/**
+ * Default encryption-client path — the single source of truth for the location
+ * a scaffolded config points at and the Zod default when `client` is omitted.
+ * Imported by the scaffolder and the init schema builder so they can't drift.
+ */
+export const DEFAULT_CLIENT_PATH = './src/encryption/index.ts'
 
 const stashConfigSchema = z.object({
   databaseUrl: z
     .string({ required_error: 'databaseUrl is required' })
     .min(1, 'databaseUrl must not be empty'),
-  client: z.string().default(DEFAULT_ENCRYPT_CLIENT_PATH),
+  client: z.string().default(DEFAULT_CLIENT_PATH),
 })
 
 /**
  * Search for `stash.config.ts` starting from `startDir` and walking up
  * parent directories until the filesystem root is reached.
  *
- * Returns the absolute path if found, or `undefined` if not.
+ * Returns the absolute path if found, or `undefined` if not. Exported so
+ * commands can branch on whether a config is present without loading it (e.g.
+ * `eql install` resolves the database URL directly when there's no config).
  */
-function findConfigFile(startDir: string): string | undefined {
+export function findConfigFile(startDir: string): string | undefined {
   let dir = path.resolve(startDir)
 
   while (true) {
@@ -88,17 +100,25 @@ function findConfigFile(startDir: string): string | undefined {
  * command. This is how the CLI passes flag context into config
  * evaluation without mutating `process.env` or relying on globals.
  *
+ * `knownConfigPath` lets a caller that already located the config (via
+ * {@link findConfigFile}) skip a second cwd→root filesystem walk.
+ *
  * Exits with code 1 if the config file is not found or fails validation.
  */
 export async function loadStashConfig(
   resolverOptions: ResolveDatabaseUrlOptions = {},
+  knownConfigPath?: string,
 ): Promise<ResolvedStashConfig> {
-  const configPath = findConfigFile(process.cwd())
+  const configPath = knownConfigPath ?? findConfigFile(process.cwd())
 
   if (!configPath) {
+    const stash = runnerCommand(detectPackageManager(), 'stash')
     console.error(`Error: Could not find ${CONFIG_FILENAME}
 
-Create a ${CONFIG_FILENAME} file in your project root:
+Run \`${stash} init\` to set up CipherStash (recommended), or
+\`${stash} eql install\` to scaffold a ${CONFIG_FILENAME} and install EQL.
+
+To create it by hand, add ${CONFIG_FILENAME} to your project root:
 
   import { defineConfig, resolveDatabaseUrl } from 'stash'
 
@@ -126,6 +146,11 @@ Create a ${CONFIG_FILENAME} file in your project root:
       jiti.import(configPath, { default: true }),
     )
   } catch (error) {
+    // A missing CipherStash package (the config `import`s `stash`) is the common
+    // standalone-npx failure — translate jiti's raw `Cannot find module 'stash'`
+    // into actionable guidance instead of a stack trace (#579).
+    const missingPkg = missingCipherStashPackage(error)
+    if (missingPkg) reportMissingCipherStashPackage(missingPkg)
     console.error(`Error: Failed to load ${CONFIG_FILENAME} at ${configPath}\n`)
     console.error(error)
     process.exit(1)
@@ -178,6 +203,11 @@ export async function loadEncryptConfig(
     // the user re-exports it as `default` or as a named binding.
     moduleExports = (await jiti.import(resolvedPath)) as Record<string, unknown>
   } catch (error) {
+    // The client `import`s `@cipherstash/stack` (incl. subpaths). If that isn't
+    // installed, translate the raw jiti stack trace into the same actionable
+    // guidance the config load gives, rather than leaking it (#579 / review #3).
+    const missingPkg = missingCipherStashPackage(error)
+    if (missingPkg) reportMissingCipherStashPackage(missingPkg)
     console.error(
       `Error: Failed to load encrypt client file at ${resolvedPath}\n`,
     )

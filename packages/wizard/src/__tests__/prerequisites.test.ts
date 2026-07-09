@@ -5,14 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { checkPrerequisites } from '../lib/prerequisites.js'
 
 // Force the auth check to fail so we exercise the missing-list copy.
+// `@cipherstash/auth` `0.41`: `detect()` returns `Result<AutoStrategy, AuthFailure>`
+// and `getToken()` returns `Result<TokenResult, AuthFailure>` (no throwing).
+// A `NOT_AUTHENTICATED` failure is what `hasCredentials` reads as "missing".
 vi.mock('@cipherstash/auth', () => ({
   default: {
     AutoStrategy: {
       detect: () => ({
-        getToken: async () => {
-          const err = new Error('not authed') as Error & { code: string }
-          err.code = 'NOT_AUTHENTICATED'
-          throw err
+        data: {
+          getToken: async () => ({
+            failure: {
+              type: 'NOT_AUTHENTICATED',
+              error: new Error('not authed'),
+            },
+          }),
         },
       }),
     },

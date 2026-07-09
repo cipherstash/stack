@@ -1,8 +1,11 @@
-# Protect.js Drizzle ORM Integration
+# CipherStash Drizzle ORM Integration
 
 **Type-safe encryption for Drizzle ORM with searchable queries**
 
-Seamlessly integrate Protect.js with Drizzle ORM and PostgreSQL to encrypt your data while maintaining full query capabilities—equality, range queries, text search, and sorting—all with complete TypeScript type safety.
+Seamlessly integrate CipherStash encryption with Drizzle ORM and PostgreSQL to encrypt your data while maintaining full query capabilities—equality, range queries, text search, and sorting—all with complete TypeScript type safety.
+
+> [!TIP]
+> For new projects we recommend [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack), which provides this integration as `encryptedType`, `extractEncryptionSchema`, and `createEncryptionOperators` from `@cipherstash/stack/drizzle`. See the [Drizzle docs](https://cipherstash.com/docs/stack/cipherstash/encryption/drizzle). This package documents the legacy `@cipherstash/protect`-based API.
 
 ## Features
 

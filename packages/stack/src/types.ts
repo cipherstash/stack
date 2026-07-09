@@ -23,11 +23,11 @@ import type {
  * with a `getToken(): Promise<{ token: string }>` method satisfies it —
  * notably the strategies from `@cipherstash/auth`: `OidcFederationStrategy`
  * (per-user, identity-bound encryption) and `AccessKeyStrategy`
- * (service-to-service / CI). When supplied to {@link ClientConfig.strategy},
+ * (service-to-service / CI). When supplied to {@link ClientConfig.authStrategy},
  * `getToken()` is invoked on every ZeroKMS request, taking precedence over
- * the credentials-derived default.
+ * the default `auto` strategy.
  *
- * @see ClientConfig.strategy
+ * @see ClientConfig.authStrategy
  */
 export type { AuthStrategy }
 
@@ -51,8 +51,13 @@ export type Client = Awaited<ReturnType<typeof newClient>> | undefined
 export type EncryptedValue = Brand<CipherStashEncrypted, 'encrypted'>
 
 /** Structural type representing encrypted data stored in the database. Always
- * carries a ciphertext. Covers both wire formats: the EQL v2.3 payloads and
- * the EQL v3 payloads. See also `EncryptedValue` for branded nominal typing,
+ * carries a ciphertext. Covers BOTH wire formats: the EQL v2.3 payloads
+ * (`k: "ct"` / `k: "sv"`) and the EQL v3 payloads (flat `{v: 3, i, c, …}`
+ * scalars and `{v: 3, k: "sv", i, sv}` SteVec documents). Which format
+ * `encrypt` produces is selected by the client's
+ * {@link ClientConfig.eqlVersion}; `decrypt` accepts both regardless.
+ * v3 scalars carry no `k` discriminator, so narrow with `'k' in payload`
+ * before reading it. See also `EncryptedValue` for branded nominal typing,
  * and {@link EncryptedQuery} for the search-term shape returned by
  * `encryptQuery`. */
 export type Encrypted = CipherStashEncryptedPayload
@@ -61,9 +66,9 @@ export type Encrypted = CipherStashEncryptedPayload
  * returned by `encryptQuery` / `encryptQueryBulk` for scalar
  * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
  * queries, plus — under `eqlVersion: 3` — the `eql_v3.jsonb_query`
- * containment needle. Carries no ciphertext — matched against stored values,
- * never decrypted. v2 JSON containment queries (`ste_vec_term`) return a
- * storage-shaped {@link Encrypted} payload instead. */
+ * containment needle. Carries no ciphertext — matched against stored
+ * values, never decrypted. v2 JSON containment queries (`ste_vec_term`)
+ * return a storage-shaped {@link Encrypted} payload instead. */
 export type EncryptedQuery =
   | CipherStashEncryptedQuery
   | CipherStashEncryptedV3Query
@@ -127,7 +132,12 @@ export type ClientConfig = {
    * An optional keyset identifier for multi-tenant encryption.
    * Each keyset provides cryptographic isolation, giving each tenant its own keyspace.
    * Specify by name (`{ name: "tenant-a" }`) or UUID (`{ id: "..." }`).
-   * Keysets are created and managed in the CipherStash dashboard.
+   * Keysets are created and managed in the
+   * [dashboard](https://dashboard.cipherstash.com/workspaces/_/keysets); omit to
+   * use the workspace's default keyset. A client is bound to one keyset for its
+   * lifetime, so use one client per tenant.
+   *
+   * @see {@link Encryption} for the full keysets walkthrough.
    */
   keyset?: KeysetIdentifier
 
@@ -135,8 +145,8 @@ export type ClientConfig = {
    * An optional authentication strategy for ZeroKMS requests, from
    * `@cipherstash/auth` (re-exported by `@cipherstash/stack`). When provided,
    * its `getToken()` is invoked on every ZeroKMS request and takes precedence
-   * over the credentials-derived default strategy (the `clientKey` is still
-   * required for encryption). Use:
+   * over the default `auto` strategy (the `clientKey` is still required for
+   * encryption). Use:
    *
    * - `OidcFederationStrategy` for per-user, identity-bound encryption —
    *   federates an end user's OIDC JWT into a CTS service token, so requests
@@ -146,22 +156,44 @@ export type ClientConfig = {
    * - `AccessKeyStrategy` for service-to-service / CI, or any custom
    *   `{ getToken() }` object for bespoke token acquisition / caching.
    *
-   * Leave unset to let the client build its default strategy from
-   * `workspaceCrn` / `accessKey` / `clientId` / `clientKey` (or the
-   * corresponding `CS_*` environment variables).
+   * Leave unset to use the default `auto` strategy, which reads credentials
+   * from the `CS_*` environment variables and falls back to the local dev
+   * profile created by `npx stash auth login`.
    *
    * @see {@link AuthStrategy}
+   * @see {@link Encryption} for a full walkthrough of the authentication options.
+   */
+  authStrategy?: AuthStrategy
+
+  /**
+   * @deprecated Renamed to {@link ClientConfig.authStrategy}. Still honoured for
+   * backwards compatibility — passing it logs a deprecation warning at runtime —
+   * but it will be removed in a future release. Set `authStrategy` instead.
    */
   strategy?: AuthStrategy
 
   /**
-   * The EQL wire-format version the client encrypts to. Defaults to `2`
-   * (protect-ffi's own default when omitted). v3 concrete-type schemas MUST
-   * use `3` — the {@link EncryptionV3} factory sets this automatically, so you
-   * normally never set it by hand. A mismatch (a `3` client with v2 schemas,
-   * or a `2` client with v3 concrete-type columns) makes the FFI's per-column
-   * domain resolution fail every encrypt with "Cannot convert undefined or
-   * null to object".
+   * The EQL wire version the client emits — one FFI client always emits
+   * exactly one wire format.
+   *
+   * - `2` (the protect-ffi default): payloads target the
+   *   `eql_v2_encrypted` column type.
+   * - `3`: payloads target the per-capability `eql_v3` domains
+   *   (`eql_v3.text_eq`, `eql_v3.integer_ord_ore`, `eql_v3.json`, …),
+   *   derived from each column's `cast_as` and indexes.
+   *
+   * When omitted, {@link Encryption} auto-detects from the schema set:
+   * EQL v3 tables (from `@cipherstash/stack/v3`, marked by
+   * `buildColumnKeyMap()`) select `3`; v2 tables leave the FFI default
+   * (`2`) untouched. Mixing v2 and v3 tables in one client is an error —
+   * split them across two clients instead.
+   *
+   * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
+   * v3 data can coexist during a migration.
+   *
+   * v3 limitation (protect-ffi 0.27): `encryptQuery` supports only JSON
+   * containment queries — scalar-index and selector queries throw
+   * `EQL_V3_QUERY_UNSUPPORTED` until a v3 scalar query wire shape exists.
    */
   eqlVersion?: 2 | 3
 }

@@ -3,7 +3,7 @@
 The all-in-one TypeScript SDK for the CipherStash data security stack.
 
 [![npm version](https://img.shields.io/npm/v/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/@cipherstash/stack)
-[![License: MIT](https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/protectjs/blob/main/LICENSE.md)
+[![License: MIT](https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue?style=for-the-badge&labelColor=000000)](https://www.typescriptlang.org/)
 
 --
@@ -17,7 +17,6 @@ The all-in-one TypeScript SDK for the CipherStash data security stack.
 - [Encryption and Decryption](#encryption-and-decryption)
 - [Searchable Encryption](#searchable-encryption)
 - [Identity-Aware Encryption](#identity-aware-encryption)
-- [Secrets Management](#secrets-management)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Error Handling](#error-handling)
@@ -94,8 +93,7 @@ if (decrypted.failure) {
 - **Searchable encryption** - Exact match, free-text search, order/range queries, and encrypted JSONB queries in PostgreSQL.
 - **Bulk operations** - Encrypt or decrypt thousands of values in a single ZeroKMS call (`bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`).
 - **Identity-aware encryption** - Tie encryption to a user's JWT via `LockContext`, so only that user can decrypt.
-- **Secrets management** - Store, retrieve, list, and delete encrypted secrets with the `Secrets` class.
-- **CLI (`stash`)** - Initialize projects, manage secrets, and set up encryption from the terminal.
+- **CLI (`stash`)** - Initialize projects and set up encryption from the terminal.
 - **TypeScript-first** - Strongly typed schemas, results, and model operations with full generics support.
 
 ## Schema Definition
@@ -479,44 +477,6 @@ const decrypted = await client
 
 Lock contexts work with all operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncryptModels`, `bulkDecryptModels`, `bulkEncrypt`, `bulkDecrypt`.
 
-## Secrets Management
-
-The `Secrets` class provides end-to-end encrypted secret storage. Values are encrypted locally before being sent to the CipherStash API.
-
-```typescript
-import { Secrets } from "@cipherstash/stack/secrets"
-
-const secrets = new Secrets({
-  workspaceCRN: process.env.CS_WORKSPACE_CRN!,
-  clientId: process.env.CS_CLIENT_ID!,
-  clientKey: process.env.CS_CLIENT_KEY!,
-  apiKey: process.env.CS_CLIENT_ACCESS_KEY!,
-  environment: "production",
-})
-
-// Store a secret
-await secrets.set("DATABASE_URL", "postgres://user:pass@host:5432/db")
-
-// Retrieve and decrypt a single secret
-const result = await secrets.get("DATABASE_URL")
-if (!result.failure) {
-  console.log(result.data) // "postgres://user:pass@host:5432/db"
-}
-
-// Retrieve multiple secrets in one call
-const many = await secrets.getMany(["DATABASE_URL", "API_KEY"])
-if (!many.failure) {
-  console.log(many.data.DATABASE_URL)
-  console.log(many.data.API_KEY)
-}
-
-// List secret names (values stay encrypted)
-const list = await secrets.list()
-
-// Delete a secret
-await secrets.delete("DATABASE_URL")
-```
-
 ## CLI Reference
 
 The CLI is available via `npx stash` after install.
@@ -552,24 +512,6 @@ After init, run `npx stash db setup` to configure your database.
 | Flag | Description |
 |------|-------------|
 | `--supabase` | Use Supabase-specific setup flow |
-
-### `npx stash secrets`
-
-Manage encrypted secrets from the terminal.
-
-```bash
-npx stash secrets set  -name DATABASE_URL -value "postgres://..." -environment production
-npx stash secrets get  -name DATABASE_URL -environment production
-npx stash secrets list -environment production
-npx stash secrets delete -name DATABASE_URL -environment production
-```
-
-| Command | Flags | Aliases | Description |
-|-----|----|-----|-------|
-| `npx stash secrets set` | `-name`, `-value`, `-environment` | `-n`, `-V`, `-e` | Encrypt and store a secret |
-| `npx stash secrets get` | `-name`, `-environment` | `-n`, `-e` | Retrieve and decrypt a secret |
-| `npx stash secrets list` | `-environment` | `-e` | List all secret names in an environment |
-| `npx stash secrets delete` | `-name`, `-environment`, `-yes` | `-n`, `-e`, `-y` | Delete a secret (prompts for confirmation unless `-yes`) |
 
 ## Configuration
 
@@ -633,7 +575,7 @@ const client2 = await Encryption({
 
 ### Logging
 
-The SDK uses structured logging across all interfaces (Encryption, Secrets, Supabase, DynamoDB). Each operation emits a single wide event with context such as the operation type, table, column, lock context status, and duration.
+The SDK uses structured logging across all interfaces (Encryption, Supabase, DynamoDB). Each operation emits a single wide event with context such as the operation type, table, column, lock context status, and duration.
 
 Configure the log level with the `STASH_STACK_LOG` environment variable:
 
@@ -712,19 +654,6 @@ const lc = new LockContext(options?)
 const result = await lc.identify(jwtToken)
 ```
 
-### `Secrets`
-
-```typescript
-import { Secrets } from "@cipherstash/stack/secrets"
-
-const secrets = new Secrets(config)
-await secrets.set(name, value)
-await secrets.get(name)
-await secrets.getMany(names)
-await secrets.list()
-await secrets.delete(name)
-```
-
 ### Schema Builders
 
 ```typescript
@@ -742,7 +671,6 @@ csValue(valueName)                 // returns ProtectValue (for nested values)
 | `@cipherstash/stack` | `Encryption` function (main entry point) |
 | `@cipherstash/stack/schema` | `encryptedTable`, `encryptedColumn`, `csValue`, schema types |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
-| `@cipherstash/stack/secrets` | `Secrets` class and secrets types |
 | `@cipherstash/stack/client` | Client-safe exports (schema builders and types only - no native FFI) |
 | `@cipherstash/stack/types` | All TypeScript types (`Encrypted`, `Decrypted`, `ClientConfig`, `EncryptionClientConfig`, query types, etc.) |
 | `@cipherstash/stack/v3` | `EncryptionV3` typed client plus the EQL v3 authoring DSL (`encryptedTable`, `types`, v3 type helpers) |
@@ -758,7 +686,6 @@ If you are migrating from `@cipherstash/protect`, the following table maps the o
 | `csTable(name, cols)` | `encryptedTable(name, cols)` | `@cipherstash/stack/schema` |
 | `csColumn(name)` | `encryptedColumn(name)` | `@cipherstash/stack/schema` |
 | `import { LockContext } from "@cipherstash/protect/identify"` | `import { LockContext } from "@cipherstash/stack/identity"` | `@cipherstash/stack/identity` |
-| N/A | `Secrets` class | `@cipherstash/stack/secrets` |
 | N/A | CLI | `npx stash` |
 
 All method signatures on the encryption client (`encrypt`, `decrypt`, `encryptModel`, etc.) remain the same. The `Result` pattern (`data` / `failure`) is unchanged.
@@ -770,4 +697,4 @@ All method signatures on the encryption client (`encrypt`, `decrypt`, `encryptMo
 
 ## License
 
-MIT - see [LICENSE.md](https://github.com/cipherstash/protectjs/blob/main/LICENSE.md).
+MIT - see [LICENSE.md](https://github.com/cipherstash/stack/blob/main/LICENSE.md).

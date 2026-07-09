@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/wizard",
-	"version": "0.3.0",
+	"version": "0.4.0",
 	"description": "AI-powered encryption setup for CipherStash. Reads your codebase, picks columns to encrypt, and wires everything up.",
 	"repository": {
 		"type": "git",
@@ -8,7 +8,7 @@
 		"directory": "packages/wizard"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"files": [
 		"dist",
 		"dist/skills",
@@ -30,6 +30,7 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/claude-agent-sdk": "^0.3.143",
+		"@anthropic-ai/sdk": "^0.106.0",
 		"@cipherstash/auth": "catalog:repo",
 		"@clack/prompts": "1.4.0",
 		"dotenv": "17.4.2",

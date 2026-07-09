@@ -27,9 +27,11 @@
  */
 
 import { type SpawnSyncReturns, spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { config as loadDotenv } from 'dotenv'
-import { dirname, resolve } from 'pathe'
+import { dirname, join, resolve } from 'pathe'
 
 const HARNESS_DATABASE_URL =
   'postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e'
@@ -73,11 +75,17 @@ export default async function setup(): Promise<() => Promise<void>> {
 
   loadDotenv({ path: resolve(exampleDir, '.env') })
 
-  if (!process.env['CS_WORKSPACE_CRN']) {
+  // Credentials come from either `.env` (`CS_*` variables) or the local
+  // CipherStash profile written by `stash auth login` (device-code flow;
+  // `~/.cipherstash`). The stack client resolves both — this gate only
+  // exists to fail fast with an actionable message when neither is present.
+  const hasProfile = existsSync(join(homedir(), '.cipherstash'))
+  if (!process.env['CS_WORKSPACE_CRN'] && !hasProfile) {
     throw new Error(
-      'cipherstash e2e harness: `CS_WORKSPACE_CRN` is not set. Populate `.env` ' +
-        '(see `.env.example`) with a ZeroKMS workspace and the three companion ' +
-        'credentials before running `pnpm test:e2e`.',
+      'cipherstash e2e harness: no CipherStash credentials found. Either ' +
+        'populate `.env` (see `.env.example`) with a ZeroKMS workspace and ' +
+        'the three companion credentials, or log in once with ' +
+        '`stash auth login` (device-code flow) before running `pnpm test:e2e`.',
     )
   }
 
@@ -113,7 +121,7 @@ export default async function setup(): Promise<() => Promise<void>> {
 
   const apply = spawnSync(
     'pnpm',
-    ['exec', 'prisma-next', 'migration', 'apply'],
+    ['exec', 'prisma-next', 'migrate', '--yes'],
     {
       cwd: exampleDir,
       stdio: 'pipe',
@@ -123,7 +131,7 @@ export default async function setup(): Promise<() => Promise<void>> {
   )
   if (apply.error || apply.signal || apply.status !== 0) {
     throw new Error(
-      describeSpawnFailure('`prisma-next migration apply`', apply),
+      describeSpawnFailure('`prisma-next migrate`', apply),
     )
   }
 

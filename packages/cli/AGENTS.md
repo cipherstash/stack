@@ -62,9 +62,18 @@ exercise the same code paths.
   test run; if not, manually `chmod +x` the helper under
   `node_modules/.pnpm/node-pty@*/node_modules/node-pty/prebuilds/<plat>/spawn-helper`.
 - **Don't broaden the cancel test target.** `auth login` was chosen because
-  `selectRegion()` runs before any network I/O. Don't move the cancel
+  the region picker runs before any network I/O. Don't move the cancel
   assertion to a command that hits the auth server or DB before the first
   prompt — flaky.
+- **Region resolution is CI-aware.** `resolveRegion` (in
+  `src/commands/auth/region.ts`) mirrors the `DATABASE_URL` resolver: it only
+  renders the interactive picker when `stdin.isTTY` **and** `CI` is unset, and
+  otherwise honours `--region` / `STASH_REGION` or exits with an actionable
+  error (JSON in `--json` mode). Because the pty harness defaults `CI=true`,
+  the interactive-cancel test passes `env: { CI: '' }` to force the picker to
+  render. The pure helpers (`normalizeRegion`, `regionSlugs`) and the resolver
+  policy have unit coverage in `src/commands/auth/__tests__/region.test.ts` —
+  the module imports no native code, so it runs under the fast unit config.
 - **Use `src/messages.ts` for assertion-stable strings.** The module is a
   single typed `as const` object grouping copy by area (`cli`, `auth`,
   `db`). Prod call sites import the same constants the tests do, so a copy

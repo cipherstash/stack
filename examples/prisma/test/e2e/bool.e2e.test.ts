@@ -49,11 +49,11 @@ describe('EncryptedBoolean e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
   it('round-trips an EncryptedBoolean through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
     const byId = new Map(rows.map((r) => [r.id, r] as const))
@@ -67,21 +67,21 @@ describe('EncryptedBoolean e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashInArray([true]) returns the verified subset', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.emailVerified.cipherstashInArray([true]),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-bool-0', 'e2e-bool-2'])
   })
 
   it('cipherstashInArray([false]) returns the unverified subset', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.emailVerified.cipherstashInArray([false]),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-bool-1', 'e2e-bool-3'])
   })
 
   it('cipherstashInArray([true, false]) returns the entire population', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.emailVerified.cipherstashInArray([true, false]),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
@@ -93,7 +93,7 @@ describe('EncryptedBoolean e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashNe([true]) excludes the equality match', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.emailVerified.cipherstashNe(true),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-bool-1', 'e2e-bool-3'])

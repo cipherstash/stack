@@ -1,6 +1,7 @@
 import auth from '@cipherstash/auth'
 import * as p from '@clack/prompts'
-import { bindDevice, login, regions, selectRegion } from '../../auth/login.js'
+import { bindDevice, login } from '../../auth/login.js'
+import { regions, resolveRegion } from '../../auth/region.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 
 const { AutoStrategy } = auth
@@ -16,13 +17,20 @@ interface ExistingAuth {
  */
 async function checkExistingAuth(): Promise<ExistingAuth | undefined> {
   try {
-    const strategy = AutoStrategy.detect()
-    const result = await strategy.getToken()
+    // As of `@cipherstash/auth` `0.41`, `detect()` and `getToken()` return a
+    // `Result<T, AuthFailure>` instead of throwing — a failure at either step
+    // just means "not authenticated yet", so fall through to `undefined`.
+    const detected = AutoStrategy.detect()
+    if (detected.failure) return undefined
 
-    const regionEntry = regions.find((r) => result.issuer.includes(r.value))
+    const result = await detected.data.getToken()
+    if (result.failure) return undefined
+
+    const { issuer, workspaceId } = result.data
+    const regionEntry = regions.find((r) => issuer.includes(r.value))
     const regionLabel = regionEntry?.label ?? 'unknown'
 
-    return { workspace: result.workspaceId, regionLabel }
+    return { workspace: workspaceId, regionLabel }
   } catch {
     return undefined
   }
@@ -45,7 +53,10 @@ export const authenticateStep: InitStep = {
       return { ...state, authenticated: true }
     }
 
-    const region = await selectRegion()
+    // Honour `--region` / `STASH_REGION` so `stash init` can run
+    // non-interactively; falls back to the interactive picker in a TTY, or a
+    // clean error (no hang) in an agent / CI context without a region set.
+    const region = await resolveRegion({ regionFlag: state.regionFlag })
     await login(region, provider.name)
     await bindDevice()
     return { ...state, authenticated: true }

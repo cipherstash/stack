@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/stack",
-	"version": "0.18.0",
+	"version": "0.19.0",
 	"description": "CipherStash Stack for TypeScript and JavaScript",
 	"keywords": [
 		"encrypted",
@@ -19,7 +19,7 @@
 		"directory": "packages/stack"
 	},
 	"license": "MIT",
-	"author": "CipherStash <hello@cipherstash.com>",
+	"author": "CipherStash <humans@cipherstash.com>",
 	"files": [
 		"dist",
 		"README.md",
@@ -106,16 +106,6 @@
 			"require": {
 				"types": "./dist/identity/index.d.cts",
 				"default": "./dist/identity/index.cjs"
-			}
-		},
-		"./secrets": {
-			"import": {
-				"types": "./dist/secrets/index.d.ts",
-				"default": "./dist/secrets/index.js"
-			},
-			"require": {
-				"types": "./dist/secrets/index.d.cts",
-				"default": "./dist/secrets/index.cjs"
 			}
 		},
 		"./schema": {

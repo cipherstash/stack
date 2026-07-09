@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import pg from 'pg'
 import {
   EQL_SCHEMA_NAME,
+  EQL_V3_INTERNAL_SCHEMA_NAME,
   EQL_V3_SCHEMA_NAME,
   SUPABASE_PERMISSIONS_SQL,
   SUPABASE_PERMISSIONS_SQL_V3,
@@ -194,16 +195,27 @@ export class EQLInstaller {
    */
   async isInstalled(options?: { eqlVersion?: EqlVersion }): Promise<boolean> {
     const client = new pg.Client({ connectionString: this.databaseUrl })
+    const eqlVersion = options?.eqlVersion ?? 2
 
     try {
       await client.connect()
 
+      // v3 is generation-aware: a pre-alpha.2 install has eql_v3 but no
+      // eql_v3_internal (and pins v:2 envelopes in its domain CHECKs) — treat
+      // it as NOT installed so an install run replaces it (the bundle opens by
+      // dropping both schemas) instead of a stale surface silently accepting
+      // wrong-generation wire data.
+      const requiredSchemas =
+        eqlVersion === 3
+          ? [EQL_V3_SCHEMA_NAME, EQL_V3_INTERNAL_SCHEMA_NAME]
+          : [EQL_SCHEMA_NAME]
+
       const result = await client.query(
-        'SELECT schema_name FROM information_schema.schemata WHERE schema_name = $1',
-        [schemaNameFor(options?.eqlVersion ?? 2)],
+        'SELECT count(*)::int AS found FROM information_schema.schemata WHERE schema_name = ANY($1)',
+        [requiredSchemas],
       )
 
-      return result.rowCount !== null && result.rowCount > 0
+      return result.rows[0]?.found === requiredSchemas.length
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Failed to connect to database: ${detail}`, {

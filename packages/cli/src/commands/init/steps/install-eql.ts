@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { isInteractive } from '../../../config/tty.js'
 import { installCommand } from '../../db/install.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
@@ -44,11 +45,19 @@ export const installEqlStep: InitStep = {
     const supabase = integration === 'supabase' || provider.name === 'supabase'
     const drizzle = integration === 'drizzle' || provider.name === 'drizzle'
 
-    const proceed = await p.confirm({
-      message:
-        'Install the EQL extension into your database now? (required for encryption)',
-      initialValue: true,
-    })
+    // Non-interactive (CI, agents, pipes): there's no TTY to answer the prompt,
+    // so take the default (install) and continue rather than hang or abort. This
+    // is what makes `stash init` honour its documented non-interactive contract.
+    if (!isInteractive()) {
+      p.log.info('Installing the EQL extension (non-interactive).')
+    }
+    const proceed = isInteractive()
+      ? await p.confirm({
+          message:
+            'Install the EQL extension into your database now? (required for encryption)',
+          initialValue: true,
+        })
+      : true
 
     if (p.isCancel(proceed)) throw new CancelledError()
 
@@ -62,11 +71,10 @@ export const installEqlStep: InitStep = {
     }
 
     // installCommand scaffolds stash.config.ts (which `import`s from `stash`)
-    // and immediately loads it via jiti. If `stash` isn't actually loadable
-    // from the project, that load throws `Cannot find module 'stash'` from
-    // deep inside jiti — confusing and fatal mid-flow. Detect the precondition
-    // and bail with a clear message instead. install-deps is what installs
-    // the package, so a "no" there leaves us here.
+    // for the rest of the workflow. `stash` must be installed or the config the
+    // user relies on next (db push / schema build / encrypt) can't load. Detect
+    // the precondition and bail with a clear message instead. install-deps is
+    // what installs the package, so a "no" there leaves us here.
     if (!isPackageInstalled('stash')) {
       p.log.error(
         '`stash` is not installed in this project. The previous step (install-deps) was skipped or failed. Re-run `stash init` and accept the dependency install when prompted, or install it manually:',
@@ -83,6 +91,9 @@ export const installEqlStep: InitStep = {
         supabase: supabase || undefined,
         drizzle: drizzle || undefined,
         databaseUrl: state.databaseUrl,
+        // init passes a resolved URL to avoid re-prompting, but still wants a
+        // config scaffolded — this is NOT a one-shot `--database-url` run.
+        scaffoldConfig: 'ensure',
       })
     } catch {
       // Don't echo the underlying error — Postgres client errors routinely

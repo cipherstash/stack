@@ -6,7 +6,7 @@ import { EQLInstaller } from '@/installer/index.js'
 
 export async function statusCommand(options: { databaseUrl?: string } = {}) {
   const pm = detectPackageManager()
-  p.intro(runnerCommand(pm, 'stash db status'))
+  p.intro(runnerCommand(pm, 'stash eql status'))
 
   const s = p.spinner()
 
@@ -18,15 +18,23 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     databaseUrl: config.databaseUrl,
   })
 
-  // 1. Check EQL installation status and version
+  // 1. Check EQL installation status and version — both generations, so a
+  // v3-only database is not misreported as "not installed" (the v2 check
+  // only looks for the eql_v2 schema).
   s.start('Checking EQL installation...')
 
-  let installed: boolean
-  let version: string | null
+  let installedV2: boolean
+  let installedV3: boolean
+  let versionV2: string | null
+  let versionV3: string | null
 
   try {
-    installed = await installer.isInstalled()
-    version = installed ? await installer.getInstalledVersion() : null
+    installedV2 = await installer.isInstalled()
+    installedV3 = await installer.isInstalled({ eqlVersion: 3 })
+    versionV2 = installedV2 ? await installer.getInstalledVersion() : null
+    versionV3 = installedV3
+      ? await installer.getInstalledVersion({ eqlVersion: 3 })
+      : null
   } catch (error) {
     s.stop('Failed.')
     p.log.error(
@@ -38,9 +46,18 @@ export async function statusCommand(options: { databaseUrl?: string } = {}) {
     process.exit(1)
   }
 
-  if (installed) {
+  if (installedV2 || installedV3) {
     s.stop('EQL is installed.')
-    p.log.success(`EQL installed: yes (version: ${version ?? 'unknown'})`)
+    if (installedV2) {
+      p.log.success(
+        `EQL v2 installed: yes (version: ${versionV2 ?? 'unknown'})`,
+      )
+    }
+    if (installedV3) {
+      p.log.success(
+        `EQL v3 installed: yes (version: ${versionV3 ?? 'unknown'})`,
+      )
+    }
   } else {
     s.stop('EQL is not installed.')
     p.log.warn(

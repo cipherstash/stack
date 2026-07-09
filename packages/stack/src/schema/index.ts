@@ -13,6 +13,7 @@ import { resolveMatchOpts } from './match-defaults'
  * - `"bigint"`
  * - `"boolean"`
  * - `"date"`
+ * - `"timestamp"`
  * - `"number"`
  * - `"string"`
  * - `"json"`

@@ -6,16 +6,20 @@
  * to wire EQL search-config rows alongside structural DDL:
  *
  * ```ts
- * import { Migration, MigrationCLI, createTable } from '@prisma-next/target-postgres/migration';
+ * import { Migration, MigrationCLI } from '@prisma-next/target-postgres/migration';
  * import { cipherstashAddSearchConfig } from '@cipherstash/prisma-next/migration';
  *
  * export default class M extends Migration {
  *   override get operations() {
  *     return [
- *       createTable('public', 'user', [
- *         { name: 'email', typeSql: 'eql_v2_encrypted', defaultSql: '', nullable: false },
- *         { name: 'id', typeSql: 'text', defaultSql: '', nullable: false },
- *       ]),
+ *       this.createTable({
+ *         schema: 'public',
+ *         table: 'user',
+ *         columns: [
+ *           { name: 'email', typeSql: 'eql_v2_encrypted', defaultSql: '', nullable: false },
+ *           { name: 'id', typeSql: 'text', defaultSql: '', nullable: false },
+ *         ],
+ *       }),
  *       cipherstashAddSearchConfig({ table: 'user', column: 'email', index: 'unique' }),
  *     ];
  *   }
@@ -24,8 +28,10 @@
  * MigrationCLI.run(import.meta.url, M);
  * ```
  *
- * Identical ergonomics to `createTable` / `setNotNull` etc. from
- * `@prisma-next/target-postgres/migration`. The codec lifecycle hook
+ * Identical ergonomics to the `this.createTable` / `this.setNotNull`
+ * methods on the `Migration` base class from
+ * `@prisma-next/target-postgres/migration` (the bare op factory
+ * functions were removed in Prisma Next 0.14). The codec lifecycle hook
  * for `Encrypted<string>` columns calls these factories automatically
  * when planning a contract diff.
  */

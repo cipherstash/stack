@@ -1,36 +1,15 @@
 {
   "//1": "Deno smoke test for @cipherstash/stack/wasm-inline. Run `pnpm exec turbo run build --filter @cipherstash/stack` first so dist/ is fresh.",
-  "//2": "stack is imported via a file URL because the wasm-inline subpath isn't on a published version yet — once stack ships with /wasm-inline this can switch to a plain npm: specifier. protect-ffi and auth resolve via npm: against the workspace's installed versions (Deno's nodeModulesDir: auto lets it use what pnpm fetched).",
+  "//2": "Everything resolves to files pnpm already installed in the workspace — no `npm:` specifiers, so Deno never re-resolves against the registry. stack is its locally-built dist; auth and protect-ffi are the WASM-inline entries of the exact versions the catalog pinned, reached via stack's own node_modules symlink (`packages/stack/node_modules/@cipherstash/*`). Both entries import only their own relative wasm bindings, so there are no transitive npm deps to resolve. This keeps the versions in lockstep with the catalog automatically (a bump to pnpm-workspace.yaml needs no edit here) and sidesteps Deno 2.9's default 24h npm freshness cooldown, which would otherwise reject a just-published first-party version and block lockstep bumps for a day. The real supply-chain gate is pnpm's `minimumReleaseAge` (see skills/stash-supply-chain-security/), which already exempts first-party @cipherstash packages.",
   "//3": "No --allow-ffi grant. If protect-ffi ever silently fell back to a native binding under Deno, the test would fail on missing FFI permission — this is the WASM guarantee.",
   "nodeModulesDir": "auto",
-  "//4": "Deno 2.9+ enforces a 24h minimumDependencyAge cooldown by default. Mirror pnpm-workspace.yaml's supply-chain policy (minimumReleaseAge: 7d + minimumReleaseAgeExclude) so the two toolchains agree: keep the 7-day cooldown for third-party deps, but exempt the first-party CipherStash packages this test imports — they ship on their own cadence and are bumped in lockstep. Without the exclude, a just-published protect-ffi/auth (e.g. 0.28.0) fails resolution until it ages past the window.",
-  "//5": "Deno's exclude does not support globs, so the per-platform native binary sub-packages (optional deps published in lockstep at the same version) are enumerated explicitly — mirrors pnpm-workspace.yaml's protect-ffi-* / auth-* wildcards.",
-  "minimumDependencyAge": {
-    "age": "P7D",
-    "exclude": [
-      "npm:@cipherstash/protect-ffi",
-      "npm:@cipherstash/protect-ffi-darwin-arm64",
-      "npm:@cipherstash/protect-ffi-darwin-x64",
-      "npm:@cipherstash/protect-ffi-linux-arm64-gnu",
-      "npm:@cipherstash/protect-ffi-linux-x64-gnu",
-      "npm:@cipherstash/protect-ffi-linux-x64-musl",
-      "npm:@cipherstash/protect-ffi-win32-x64-msvc",
-      "npm:@cipherstash/auth",
-      "npm:@cipherstash/auth-darwin-arm64",
-      "npm:@cipherstash/auth-darwin-x64",
-      "npm:@cipherstash/auth-linux-arm64-gnu",
-      "npm:@cipherstash/auth-linux-x64-gnu",
-      "npm:@cipherstash/auth-linux-x64-musl",
-      "npm:@cipherstash/auth-win32-x64-msvc"
-    ]
-  },
   "tasks": {
     "//task": "--no-check because TypeScript can't infer the column-on-table intersection types when stack is loaded via file URL (the dist .d.ts strips brand info). This test exists to verify RUNTIME WASM round-trips — type narrowing is covered by the package's own vitest suite.",
     "test": "deno test --no-check --allow-env --allow-net --allow-read --allow-sys --no-prompt"
   },
   "imports": {
     "@cipherstash/stack/wasm-inline": "../../packages/stack/dist/wasm-inline.js",
-    "@cipherstash/protect-ffi/wasm-inline": "npm:@cipherstash/protect-ffi@0.28.0/wasm-inline",
-    "@cipherstash/auth/wasm-inline": "npm:@cipherstash/auth@0.40.0/wasm-inline"
+    "@cipherstash/protect-ffi/wasm-inline": "../../packages/stack/node_modules/@cipherstash/protect-ffi/dist/wasm/protect_ffi_inline.js",
+    "@cipherstash/auth/wasm-inline": "../../packages/stack/node_modules/@cipherstash/auth/wasm-inline.mjs"
   }
 }

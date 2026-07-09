@@ -114,10 +114,9 @@ The SDK never logs plaintext data.
 
 | Import Path | Provides |
 |---|---|
-| `@cipherstash/stack` | `Encryption` function, `Secrets` class, `encryptedTable`, `encryptedColumn`, `encryptedField` (convenience re-exports) |
+| `@cipherstash/stack` | `Encryption` function, `encryptedTable`, `encryptedColumn`, `encryptedField` (convenience re-exports) |
 | `@cipherstash/stack/schema` | `encryptedTable`, `encryptedColumn`, `encryptedField`, schema types |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
-| `@cipherstash/stack/secrets` | `Secrets` class and secrets types |
 | `@cipherstash/stack/drizzle` | `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` for Drizzle ORM |
 | `@cipherstash/stack/supabase` | `encryptedSupabase` wrapper for Supabase |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` helper for DynamoDB |

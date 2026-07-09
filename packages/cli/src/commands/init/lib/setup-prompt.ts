@@ -130,8 +130,6 @@ const SKILL_PURPOSES: Record<string, string> = {
     'DynamoDB encryption: per-item encrypt/decrypt, HMAC attribute keys, audit logging',
   'stash-cli':
     '`stash` command reference — `status`, `plan`, `impl`, `eql install`, `encrypt {backfill,cutover,drop}`, etc.',
-  'stash-secrets':
-    'storing and retrieving encrypted secrets (separate concern from column encryption)',
   'stash-supply-chain-security':
     'supply-chain controls (post-install policy, lockfile integrity, etc.)',
 }
@@ -343,7 +341,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
  * Plan-mode tells the agent its task is to produce a reviewable plan file
  * at `.cipherstash/plan.md` — no schema edits, no migrations, no `db push`,
  * no `encrypt *` mutations during this phase. Read-only inspection
- * (`stash status`, `stash db status`, schema grep, file reads) is fine.
+ * (`stash status`, `stash eql status`, schema grep, file reads) is fine.
  *
  * Dispatches by `ctx.planStep`:
  *
@@ -418,7 +416,7 @@ function planSharedNotDoBlock(ctx: SetupPromptContext): string[] {
       'Modify the placeholder encryption client beyond what is required to read it.',
     ),
     '',
-    `Read-only commands (\`${cli} status\`, \`${cli} db status\`, file reads, greps, \`${cli} doctor\` if available) are fine and encouraged — the plan is more useful when grounded in the actual current state.`,
+    `Read-only commands (\`${cli} status\`, \`${cli} eql status\`, file reads, greps, \`${cli} doctor\` if available) are fine and encouraged — the plan is more useful when grounded in the actual current state.`,
     '',
   ]
 }
@@ -513,7 +511,7 @@ function renderRolloutPlanPrompt(ctx: SetupPromptContext): string {
         : 'For migrate columns: what the rollout PR contains — schema-add and the exact dual-write code change. The dual-write definition matters: every persistence path that mutates the row writes both columns, in the same transaction, on every code branch.',
     ),
     bullet(
-      `Project-specific risks. Common ones: bundler exclusion not yet configured (Next.js / webpack / Vite), top-level-await in the placeholder encryption client breaks non-Next contexts, existing partial CipherStash state (run \`${cli} db status\` and note any pre-existing encrypted columns or pending configs).`,
+      `Project-specific risks. Common ones: bundler exclusion not yet configured (Next.js / webpack / Vite), top-level-await in the placeholder encryption client breaks non-Next contexts, existing partial CipherStash state (run \`${cli} eql status\` and note any pre-existing encrypted columns or pending configs).`,
     ),
     bullet(
       'A "Deploy gate" section near the end of the plan that explicitly says: after the rollout PR is in production and serving real traffic, the user runs `' +
@@ -626,7 +624,7 @@ function renderCutoverPlanPrompt(ctx: SetupPromptContext): string {
         ' encrypt drop --table <T> --column <c>`, plus the schema-migration apply step that follows.',
     ),
     bullet(
-      `Risks specific to cutover: row-count for the backfill (use \`${cli} db status\` to estimate if helpful), tables under heavy write load (cutover holds a brief lock on the rename), application code that constructs SQL by string (those reads won't transparently decrypt).`,
+      `Risks specific to cutover: row-count for the backfill (use \`${cli} eql status\` to estimate if helpful), tables under heavy write load (cutover holds a brief lock on the rename), application code that constructs SQL by string (those reads won't transparently decrypt).`,
     ),
     bullet(
       "Open questions for the user — anything you can't determine from the schema, context.json, or the skills.",
@@ -700,7 +698,7 @@ function renderCompletePlanPrompt(ctx: SetupPromptContext): string {
     ),
     bullet('For new columns: the additive single-deploy walkthrough.'),
     bullet(
-      `Project-specific risks. Common ones: bundler exclusion not yet configured (Next.js / webpack / Vite), top-level-await in the placeholder encryption client breaks non-Next contexts, existing partial CipherStash state (run \`${cli} db status\` and note any pre-existing encrypted columns or pending configs).`,
+      `Project-specific risks. Common ones: bundler exclusion not yet configured (Next.js / webpack / Vite), top-level-await in the placeholder encryption client breaks non-Next contexts, existing partial CipherStash state (run \`${cli} eql status\` and note any pre-existing encrypted columns or pending configs).`,
     ),
     bullet(
       "Open questions for the user — anything you can't determine from the schema, context.json, or the skills.",

@@ -40,6 +40,7 @@ function ctx(args: {
   tableName?: string
   fieldName?: string
 }): {
+  readonly namespaceId: string
   readonly tableName: string
   readonly fieldName: string
   readonly priorField?: StorageColumn
@@ -51,6 +52,7 @@ function ctx(args: {
     nullable: false,
   }
   return {
+    namespaceId: '__unbound__',
     tableName: args.tableName ?? TABLE,
     fieldName: args.fieldName ?? FIELD,
     ...(args.prior !== undefined

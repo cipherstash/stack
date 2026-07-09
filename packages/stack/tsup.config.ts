@@ -13,7 +13,6 @@ export default defineConfig([
       'src/client.ts',
       'src/types-public.ts',
       'src/identity/index.ts',
-      'src/secrets/index.ts',
       'src/schema/index.ts',
       'src/eql/v3/index.ts',
       'src/eql/v3/drizzle/index.ts',

@@ -18,7 +18,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@cipherstash/auth/wasm-inline', () => ({
   AccessKeyStrategy: {
-    create: vi.fn(() => ({ __mock: 'access-key-strategy' })),
+    // `@cipherstash/auth` `0.41` `create` returns a `Result<Strategy, AuthFailure>`
+    // (`{ data }` on success) — `resolveStrategy` unwraps `.data`.
+    create: vi.fn(() => ({ data: { __mock: 'access-key-strategy' } })),
   },
   OidcFederationStrategy: class {},
 }))
@@ -100,12 +102,16 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
     expect(arg.encryptConfig.tables.users.email.cast_as).toBe('text')
   })
 
-  it('uses an explicit config.strategy verbatim on the strategy path', async () => {
+  it('uses an explicit config.authStrategy verbatim on the strategy path', async () => {
     const explicit = { getToken: vi.fn() }
     await Encryption({
       schemas: [users],
-      // biome-ignore lint/suspicious/noExplicitAny: exercise the strategy arm of the config union
-      config: { strategy: explicit, clientId: 'cid', clientKey: 'ckey' } as any,
+      config: {
+        authStrategy: explicit,
+        clientId: 'cid',
+        clientKey: 'ckey',
+        // biome-ignore lint/suspicious/noExplicitAny: exercise the authStrategy arm of the config union
+      } as any,
     })
 
     // biome-ignore lint/suspicious/noExplicitAny: reading the recorded single options object

@@ -56,11 +56,11 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
   it('round-trips an EncryptedDouble through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
     const byId = new Map(rows.map((r) => [r.id, r] as const))
@@ -72,14 +72,14 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashGt filters by encrypted IEEE-754 numeric order', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.salary.cipherstashGt(95_000),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-num-2', 'e2e-num-3'])
   })
 
   it('cipherstashGte includes the equality boundary', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.salary.cipherstashGte(95_000),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
@@ -90,14 +90,14 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashLt filters strict-less-than', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.salary.cipherstashLt(120_000),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-num-0', 'e2e-num-1'])
   })
 
   it('cipherstashLte includes the equality boundary', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.salary.cipherstashLte(120_000),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
@@ -108,14 +108,14 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashBetween bounds inclusively on both sides', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.salary.cipherstashBetween(95_000, 120_000),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-num-1', 'e2e-num-2'])
   })
 
   it('cipherstashAsc orders by numeric value via bare-column ORDER BY', async () => {
-    const rows = await db.orm.User.orderBy((u) =>
+    const rows = await db.orm.public.User.orderBy((u) =>
       cipherstashAsc(u.salary),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
@@ -127,7 +127,7 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashDesc reverses the ascending order', async () => {
-    const rows = await db.orm.User.orderBy((u) =>
+    const rows = await db.orm.public.User.orderBy((u) =>
       cipherstashDesc(u.salary),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([

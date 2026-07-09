@@ -1,10 +1,13 @@
 # @cipherstash/schema
 
-A TypeScript schema builder for CipherStash Protect.js that enables you to define encryption schemas with searchable encryption capabilities.
+A TypeScript schema builder for CipherStash encryption that enables you to define encryption schemas with searchable encryption capabilities.
 
 ## Overview
 
-`@cipherstash/schema` is a standalone package that provides the schema building functionality used by `@cipherstash/protect`. While not required for basic Protect.js usage, this package is available if you need to build encryption configuration schemas directly or want to understand the underlying schema structure.
+`@cipherstash/schema` is a standalone package that provides the schema building functionality used by `@cipherstash/protect`. While not required for typical usage, this package is available if you need to build encryption configuration schemas directly or want to understand the underlying schema structure.
+
+> [!TIP]
+> For new projects we recommend [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack), which exposes this functionality as `encryptedTable` / `encryptedColumn` from `@cipherstash/stack/schema`. The `csTable` / `csColumn` API documented below is the legacy naming used by `@cipherstash/protect`.
 
 ## Installation
 

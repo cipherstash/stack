@@ -78,6 +78,14 @@ jobs:
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
+      # The EQL v3 bundles in packages/cli/src/sql are vendored (derived from
+      # the stack fixture monolith by gen:eql-v3-sql). Regenerate and fail on
+      # any diff so the fixture and the shipped bundles cannot drift silently.
+      - name: Check — vendored EQL v3 SQL bundles are in sync
+        run: |
+          pnpm --filter stash run gen:eql-v3-sql
+          git diff --exit-code -- packages/cli/src/sql/cipherstash-encrypt-v3.sql packages/cli/src/sql/cipherstash-encrypt-v3-supabase.sql
+
       - name: Create .env file in ./packages/protect/
         run: |
           touch ./packages/protect/.env

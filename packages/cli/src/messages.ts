@@ -34,15 +34,40 @@ export const messages = {
     unknownSubcommand: 'Unknown auth command',
     selectRegion: 'Select a region',
     cancelled: 'Cancelled.',
+    /**
+     * Shown when `--region` / `STASH_REGION` names a region that isn't in
+     * the known list. `Unknown region` is the stable leader tests assert on;
+     * the offending value and the valid slugs are appended for the human.
+     */
+    regionInvalid: (value: string, validSlugs: readonly string[]) =>
+      `Unknown region: ${value}. Valid regions: ${validSlugs.join(', ')}.`,
+    /**
+     * Shown when no region can be resolved and we're not in an interactive
+     * TTY (agent / CI / piped stdin, or `--json`). Naming both the flag and
+     * the env var lets automation discover the escape hatch instead of
+     * hanging on the picker.
+     */
+    regionMissingNonInteractive:
+      'Cannot resolve a region without a prompt. Pass --region <slug> or set STASH_REGION (e.g. STASH_REGION=us-east-1).',
+    /**
+     * Shown when `--region` is passed with no value (arg parsing turns a
+     * valueless flag into a boolean). Distinguishes "you forgot the value"
+     * from "no region anywhere" so the fix is obvious.
+     */
+    regionFlagNeedsValue:
+      'The --region flag needs a value, e.g. --region us-east-1. Run `stash auth regions` to list valid slugs.',
+  },
+  eql: {
+    unknownSubcommand: 'Unknown eql subcommand',
   },
   eql: {
     unknownSubcommand: 'Unknown eql subcommand',
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',
-    /** Warning shown when the deprecated `db install` alias for `eql install` is used. */
-    installDeprecated: (stashRef: string) =>
-      `"${stashRef} db install" is deprecated — use "${stashRef} eql install" instead.`,
+    /** Warning shown when a deprecated `db <sub>` alias for `eql <sub>` is used. */
+    aliasDeprecated: (stashRef: string, sub: string) =>
+      `"${stashRef} db ${sub}" is deprecated — use "${stashRef} eql ${sub}" instead.`,
     migrateNotImplemented: (stashRef: string) =>
       `"${stashRef} db migrate" is not yet implemented.`,
     /** Source labels surfaced after DATABASE_URL resolution. */
@@ -74,5 +99,17 @@ export const messages = {
     /** Nudge shown after a prompt-sourced run completes. */
     urlHint: (file: string) =>
       `Set DATABASE_URL in ${file} to skip this prompt next time.`,
+    /**
+     * Shown when a `stash.config.ts` (or the encryption client it points at)
+     * can't load because a CipherStash package isn't installed. `installCommands`
+     * is the newline-joined install invocation and `stash` the runner-aware
+     * `stash` prefix (e.g. `npx stash`).
+     */
+    missingCipherStashPackage: (
+      pkg: string,
+      installCommands: string,
+      stash: string,
+    ) =>
+      `\`${pkg}\` is not installed in this project.\n\nInstall the CipherStash packages, then re-run:\n  ${installCommands}\n\nOr run \`${stash} init\` to set everything up.`,
   },
 } as const

@@ -20,7 +20,7 @@ describe('runPostAgentSteps execution commands', () => {
     vi.mocked(childProcess.execSync).mockImplementation(() => Buffer.from(''))
   })
 
-  it('executes db install/db push using the detected runner (bun → bunx) when usesProxy=true', async () => {
+  it('executes eql install/db push using the detected runner (bun → bunx) when usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',
@@ -44,7 +44,7 @@ describe('runPostAgentSteps execution commands', () => {
     }
   })
 
-  it('skips db install when hasStashConfig=true and still uses bunx for db push when usesProxy=true', async () => {
+  it('skips eql install when hasStashConfig=true and still uses bunx for db push when usesProxy=true', async () => {
     await runPostAgentSteps({
       cwd: '/tmp/fake',
       integration: 'supabase',

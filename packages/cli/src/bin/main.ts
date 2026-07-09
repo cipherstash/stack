@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
+import { renderCommandHelp } from '../cli/help.js'
 // Commands that depend on @cipherstash/stack are lazy-loaded in the switch below.
 import {
   authCommand,
@@ -27,6 +28,7 @@ import {
   implCommand,
   initCommand,
   installCommand,
+  manifestCommand,
   planCommand,
   statusCommand,
   testConnectionCommand,
@@ -89,15 +91,16 @@ Commands:
   auth <subcommand>    Authenticate with CipherStash
   wizard               AI-guided encryption setup (reads your codebase)
   doctor               Diagnose install problems (native binaries, runtime)
+  manifest             Print the structured, versioned command surface (--json for docs/agents)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
+  eql upgrade          Upgrade EQL extensions to the latest version
+  eql status           Show EQL installation status
 
-  db upgrade           Upgrade EQL extensions to the latest version
   db push              Push encryption schema (writes pending if active config already exists)
   db activate          Promote pending → active without renames (use after additive db push)
   db validate          Validate encryption schema
   db migrate           Run pending encrypt config migrations
-  db status            Show EQL installation status
   db test-connection   Test database connectivity
 
   schema build         Build an encryption schema from your database
@@ -114,68 +117,15 @@ Options:
   --help, -h           Show help
   --version, -v        Show version
 
-Init Flags:
-  --supabase           Use Supabase-specific setup flow
-  --drizzle            Use Drizzle-specific setup flow
-  --prisma-next        Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply)
-  --proxy              Query encrypted data via CipherStash Proxy
-  --no-proxy           Query encrypted data directly via the SDK (default)
-
-Plan Flags:
-  --complete-rollout       Plan the entire encryption lifecycle (schema-add through drop)
-                           in one document. Skips the production-deploy gate that
-                           normally separates rollout from cutover. Only safe when this
-                           database is not backing a deployed application (local dev,
-                           sandbox, freshly seeded test environment).
-  --target <name>          Skip the agent-target picker and hand off directly to one of
-                           claude-code | codex | agents-md | wizard. Safe to call from
-                           non-TTY contexts (CI, pipes). Without --target in non-TTY,
-                           the command prints a hint and exits cleanly instead of hanging.
-
-Status Flags:
-  --quest                  Force the quest-log output (emoji + progress bars)
-                           even in non-TTY contexts. Default is auto: fancy
-                           in a terminal, plain in CI / pipes / agents.
-  --plain                  Force the plain-text output even in TTY contexts.
-  --json                   Emit a structured JSON document instead.
-
-Impl Flags:
-  --continue-without-plan  Skip planning and go straight to implementation
-                           (interactively confirms before proceeding)
-  --target <name>          Skip the agent-target picker and hand off directly to one of
-                           claude-code | codex | agents-md | wizard. Safe to call from
-                           non-TTY contexts (CI, pipes). Without --target in non-TTY,
-                           the command prints a hint and exits cleanly instead of hanging.
-
-DB / EQL Flags:
-  --force                    (eql install) Reinstall / overwrite even if already installed
-  --dry-run                  (eql install, db push, db upgrade) Show what would happen without making changes
-  --supabase                 (eql install, db upgrade, db validate) Use Supabase-compatible mode (auto-detected from DATABASE_URL)
-  --drizzle                  (eql install) Generate a Drizzle migration instead of direct install (auto-detected from project)
-  --migration                (eql install, requires --supabase) Write a Supabase migration file instead of running SQL directly
-  --direct                   (eql install, requires --supabase) Run the SQL directly against the database (mutually exclusive with --migration)
-  --migrations-dir <path>    (eql install, requires --supabase) Override the Supabase migrations directory (default: supabase/migrations)
-  --exclude-operator-family  (eql install, db upgrade, db validate) Skip operator family creation
-  --eql-version <2|3>        (eql install) EQL generation to install (default: 2). v3 installs the native
-                             concrete-domain schema (public.* type domains); direct install only for now
-  --latest                   (eql install, db upgrade) Fetch the latest EQL from GitHub (v2 only)
-  --database-url <url>       (all db / eql / schema commands) Override DATABASE_URL for this run only — never written to disk
+Run \`${STASH} <command> --help\` for a command's flags and examples
+(e.g. \`${STASH} eql install --help\`, \`${STASH} auth login --help\`).
 
 Examples:
-  ${STASH} init
-  ${STASH} init --supabase
-  ${STASH} init --prisma-next
-  ${STASH} plan
-  ${STASH} impl
-  ${STASH} impl --continue-without-plan
-  ${STASH} impl --target claude-code
-  ${STASH} status
-  ${STASH} auth login
-  ${STASH} wizard
-  ${STASH} eql install
-  ${STASH} db push
-  ${STASH} schema build
-  ${STASH} doctor
+  ${STASH} init                     # set up CipherStash in this project
+  ${STASH} auth login               # authenticate
+  ${STASH} eql install              # install EQL extensions
+  ${STASH} db push                  # push encryption schema
+  ${STASH} manifest --json          # structured command surface for docs / agents
 `.trim()
 
 interface ParsedArgs {
@@ -207,6 +157,13 @@ function parseArgs(argv: string[]): ParsedArgs {
       } else {
         flags[key] = true
       }
+    } else if (arg === '-h') {
+      // Short aliases for the two global boolean flags, normalized to their
+      // long-form keys so downstream `flags.help` / `flags.version` checks catch
+      // `stash <command> -h` too (not just a bare `stash -h`).
+      flags.help = true
+    } else if (arg === '-v') {
+      flags.version = true
     } else {
       commandArgs.push(arg)
     }
@@ -233,6 +190,23 @@ async function runInstall(
     migrationsDir: values['migrations-dir'],
     eqlVersion: values['eql-version'],
     databaseUrl: values['database-url'],
+    // An explicit `--database-url` is a one-shot install against that DB — leave
+    // the project untouched. Otherwise offer to scaffold a config for later.
+    scaffoldConfig: values['database-url'] !== undefined ? 'skip' : 'offer',
+  })
+}
+
+async function runUpgrade(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  await upgradeCommand({
+    dryRun: flags['dry-run'],
+    supabase: flags.supabase,
+    excludeOperatorFamily: flags['exclude-operator-family'],
+    latest: flags.latest,
+    eqlVersion: values['eql-version'],
+    databaseUrl: values['database-url'],
   })
 }
 
@@ -244,6 +218,12 @@ async function runEqlCommand(
   switch (sub) {
     case 'install':
       await runInstall(flags, values)
+      break
+    case 'upgrade':
+      await runUpgrade(flags, values)
+      break
+    case 'status':
+      await dbStatusCommand({ databaseUrl: values['database-url'] })
       break
     default:
       p.log.error(`${messages.eql.unknownSubcommand}: ${sub ?? '(none)'}`)
@@ -263,20 +243,16 @@ async function runDbCommand(
   const databaseUrl = values['database-url']
 
   switch (sub) {
+    // Deprecated aliases — these commands moved to the `eql` group. Keep the
+    // old spellings working so existing scripts and published docs don't
+    // break.
     case 'install':
-      // Deprecated alias — the command moved to `eql install`. Keep the old
-      // spelling working so existing scripts and published docs don't break.
-      p.log.warn(messages.db.installDeprecated(STASH))
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'install'))
       await runInstall(flags, values)
       break
     case 'upgrade':
-      await upgradeCommand({
-        dryRun: flags['dry-run'],
-        supabase: flags.supabase,
-        excludeOperatorFamily: flags['exclude-operator-family'],
-        latest: flags.latest,
-        databaseUrl,
-      })
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'upgrade'))
+      await runUpgrade(flags, values)
       break
     case 'push': {
       const { pushCommand } = await requireStack(
@@ -304,6 +280,7 @@ async function runDbCommand(
       break
     }
     case 'status':
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'status'))
       await dbStatusCommand({ databaseUrl })
       break
     case 'test-connection':
@@ -436,7 +413,7 @@ export async function run() {
     process.argv,
   )
 
-  if (!command || command === '--help' || command === '-h' || flags.help) {
+  if (!command || command === '--help' || command === '-h') {
     console.log(HELP)
     return
   }
@@ -446,9 +423,18 @@ export async function run() {
     return
   }
 
+  // `stash <command> --help` / `-h`: render command-specific help from the
+  // descriptor registry (e.g. `stash eql --help`, `stash eql install --help`).
+  // Falls back to the global banner when the command path matches no descriptor.
+  if (flags.help) {
+    const path = subcommand ? `${command} ${subcommand}` : command
+    console.log(renderCommandHelp(path, STASH) ?? HELP)
+    return
+  }
+
   switch (command) {
     case 'init':
-      await initCommand(flags)
+      await initCommand(flags, values)
       break
     case 'plan':
       await planCommand(flags, values)
@@ -465,7 +451,7 @@ export async function run() {
       break
     case 'auth': {
       const authArgs = subcommand ? [subcommand, ...commandArgs] : commandArgs
-      await authCommand(authArgs, flags)
+      await authCommand(authArgs, flags, values)
       break
     }
     case 'eql':
@@ -482,6 +468,11 @@ export async function run() {
       break
     case 'env':
       await envCommand({ write: flags.write })
+      break
+    case 'manifest':
+      // Pure metadata (no native code) — safe to run anywhere, including when
+      // the native binary is missing.
+      manifestCommand({ json: flags.json, version: pkg.version })
       break
     case 'wizard': {
       // Forward everything after `stash wizard` verbatim. The wizard package

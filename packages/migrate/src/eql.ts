@@ -2,7 +2,7 @@ import type { ClientBase } from 'pg'
 
 /**
  * Thin, typed wrappers around the EQL (Encrypt Query Language) functions
- * installed by `stash db install`. These mirror the canonical SQL API that
+ * installed by `stash eql install`. These mirror the canonical SQL API that
  * CipherStash Proxy also drives, so every action we take here stays
  * visible to Proxy using the same column-level config.
  *

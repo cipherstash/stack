@@ -1,4 +1,4 @@
-This is the Protect.js repository - End-to-end, per-value encryption for JavaScript/TypeScript with zero‑knowledge key management (via CipherStash ZeroKMS). Encrypted data is stored as EQL JSON payloads; searchable encryption is currently supported for PostgreSQL.
+This is the CipherStash Stack repository (`cipherstash/stack`) - End-to-end, per-value encryption for JavaScript/TypeScript with zero‑knowledge key management (via CipherStash ZeroKMS). Encrypted data is stored as EQL JSON payloads; searchable encryption is currently supported for PostgreSQL.
 
 ## Prerequisites
 
@@ -72,20 +72,66 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/schema`, `@cipherstash/stack/identity`, `@cipherstash/stack/secrets`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/supabase`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/client`, `@cipherstash/stack/types`
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
 - `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
   - `src/index.ts`: Public API (`Encryption`, exports)
   - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`
   - `src/ffi/operations/*`: Encrypt/decrypt/model/bulk/query operations (thenable pattern with optional `.withLockContext()`)
   - `__tests__/*`: End-to-end and API contract tests (Vitest)
+- `packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
+- `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
+- `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
+- `packages/prisma-next`: Prisma Next integration (`@cipherstash/prisma-next`) — searchable field-level encryption for Postgres
 - `packages/schema`: Schema builder utilities and types (`encryptedTable`, `encryptedColumn`, `encryptedField`)
 - `packages/drizzle`: Drizzle ORM integration (`encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators`)
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/protect-dynamodb`: DynamoDB helpers (`encryptedDynamoDB`)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
-- `examples/*`: Working apps (basic, drizzle, nextjs-clerk, next-drizzle-mysql, dynamo, hono-supabase)
-- `docs/*`: Concepts, how-to guides (Next.js bundling, SST, npm lockfile v3), reference
-- `skills/*`: Agent skills (`stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-secrets`, `stash-supabase`, `stash-supply-chain-security`)
+- `packages/bench`: Performance / index-engagement benchmarks (private, not published)
+- `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
+- `examples/*`: Working apps (basic, prisma, supabase-worker)
+- `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-supply-chain-security`)
+
+## Agent Skills — these ship to customers
+
+`skills/*/SKILL.md` are **published artifacts, not internal notes.** Treat a wrong
+sentence in one of them the way you'd treat a wrong line of code:
+
+- `packages/cli/tsup.config.ts` copies `skills/` into `dist/skills/`, so they ship
+  inside the `stash` npm tarball (and the `@cipherstash/wizard` one).
+- `installSkills()` (`packages/cli/src/commands/init/lib/install-skills.ts`) copies the
+  per-integration set into the user's `.claude/skills/` or `.codex/skills/` at handoff time.
+- `readBundledSkill()` inlines a skill's body into the user's `AGENTS.md` for editor
+  agents (Cursor / Windsurf / Cline). Only `SKILL.md` is inlined — content split into
+  sibling files is silently dropped on that path, so keep each `SKILL.md` self-sufficient.
+
+**Every change to a package's public API, the CLI command surface, or a user-facing
+workflow must check the affected skills in the same PR.** These skills drift silently:
+nothing type-checks them, and the damage lands in a customer's repo, not ours.
+
+| If you change… | Check |
+|---|---|
+| `packages/cli` commands, flags, or prompts | `skills/stash-cli` |
+| `packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
+| Drizzle / Supabase / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-dynamodb` |
+| The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
+| pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
+| The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
+
+For CLI changes there is a mechanical check — the command registry is the source of
+truth, so diff the skill against it rather than proofreading:
+
+```bash
+pnpm --filter stash build
+node packages/cli/dist/bin/stash.js manifest --json
+```
+
+Every command and flag named in `skills/stash-cli/SKILL.md` must resolve against that
+manifest (the deprecated `db install` / `db upgrade` / `db status` aliases excepted —
+they're intentionally absent from the registry).
+
+Skills must not contain Linear issue IDs; they're public. GitHub issue numbers are fine.
 
 ## Supply Chain Security
 
@@ -114,14 +160,10 @@ Three rules to remember when editing CI or pnpm config:
   - **Drizzle ORM**: `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack/drizzle`
   - **Supabase**: `encryptedSupabase` from `@cipherstash/stack/supabase`
   - **DynamoDB**: `encryptedDynamoDB` from `@cipherstash/stack/dynamodb`
-- **Secrets management**: `Secrets` class from `@cipherstash/stack/secrets` for encrypted secret storage and retrieval.
 
 ## Critical Gotchas (read before coding)
 
-- **Native Node.js module**: `@cipherstash/stack` relies on `@cipherstash/protect-ffi` (Node-API). It must be loaded via native Node.js `require`. Do NOT bundle this module; configure bundlers to externalize it.
-  - Next.js: see `docs/how-to/nextjs-external-packages.md`
-  - SST/Serverless: see `docs/how-to/sst-external-packages.md`
-  - npm lockfile v3 on Linux: see `docs/how-to/npm-lockfile-v3.md`
+- **Native module vs WASM entry**: The default `@cipherstash/stack` entry relies on `@cipherstash/protect-ffi` (Node-API) and must be loaded via native Node.js `require` — if your tooling bundles server code with it, externalize the module. For bundled or non-Node runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions), use `@cipherstash/stack/wasm-inline` instead: it inlines the WASM build into the JS bundle, so no externalization is needed. See the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
 - **Do not log plaintext**: The library never logs plaintext by design. Don't add logs that risk leaking sensitive data.
 - **Result shape is contract**: Operations return `{ data }` or `{ failure }`. Preserve this shape and error `type` values in `EncryptionErrorTypes`.
 - **Encrypted payload shape is contract**: Keys like `c` in the EQL payload are validated by tests and downstream tools. Don't change them.
@@ -158,9 +200,10 @@ pnpm changeset:publish
 
 ## Bundling and Deployment Notes
 
-- When integrating into frameworks/build tools, ensure native modules are externalized and loaded via Node's runtime require.
-- For Next.js, configure `serverExternalPackages` as documented in `docs/how-to/nextjs-external-packages.md`.
-- For serverless/Linux targets with npm lockfile v3, see `docs/how-to/npm-lockfile-v3.md` to avoid runtime load errors.
+- Two deployment paths:
+  - **Native (default entry)**: keep `@cipherstash/protect-ffi` external and loaded via Node's runtime require — e.g. Next.js `serverExternalPackages`. Covers Node servers where native modules are fine.
+  - **WASM (`@cipherstash/stack/wasm-inline`)**: designed to be bundled — no native module, no externalization. Use for edge/serverless runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions) or wherever bundler externalization is awkward.
+- For SST/serverless and npm-lockfile-v3 quirks on Linux, see the bundling guide: https://cipherstash.com/docs/stack/deploy/bundling
 
 ## Adding Features Safely (LLM checklist)
 
@@ -175,8 +218,21 @@ pnpm changeset:publish
    - `pnpm run code:fix`
    - `pnpm --filter <changed-pkg> build`
    - `pnpm --filter <changed-pkg> test`
-6. Update docs in `docs/*` and usage examples if APIs change.
-7. **Add a changeset before opening or finalising the PR** when the
+6. If APIs change, update usage examples in this repo and flag that the docs site (cipherstash.com/docs, maintained separately) needs a corresponding update.
+7. **Keep the meta files honest.** If your change adds/removes/renames a
+   package, example, skill, or subpath export, update the Repository
+   Layout in this file and the package list in `SECURITY.md` in the
+   same PR. These files have drifted badly before; don't let them.
+
+8. **Check the skills.** If you changed a package's public API, the CLI
+   command surface, or a user-facing workflow, open the affected
+   `skills/*/SKILL.md` and fix anything your change made wrong — in the
+   same PR. Skills ship inside the `stash` tarball and are copied into
+   customer repos, so drift here becomes wrong guidance in someone
+   else's codebase. See "Agent Skills — these ship to customers" above
+   for the package→skill map and the `stash manifest --json` check.
+
+9. **Add a changeset before opening or finalising the PR** when the
    change affects a published package's public behaviour or surface
    (new feature, bug fix, breaking change, UX-visible tweak). Run
    `pnpm changeset` (interactive) or hand-write a markdown file under
@@ -198,26 +254,24 @@ pnpm changeset:publish
    `CHANGELOG.md` entries, so a missing changeset means the change
    ships invisibly.
 
-## Useful Links in this repo
+   A skills-only change is **not** internal: `skills/` ships inside the
+   `stash` tarball, so it needs a `stash` patch changeset.
+
+## Useful Links
 
 - `README.md` for quickstart and feature overview
-- `docs/concepts/searchable-encryption.md`
-- `docs/concepts/aws-kms-vs-cipherstash-comparison.md`
-- `docs/reference/schema.md`
-- `docs/reference/searchable-encryption-postgres.md`
-- `docs/reference/configuration.md`
-- `docs/reference/identity.md`
-- `docs/reference/secrets.md`
-- `docs/reference/dynamodb.md`
-- `docs/reference/supabase-sdk.md`
-- `docs/reference/drizzle/drizzle.md`
-- `docs/how-to/nextjs-external-packages.md`
-- `docs/how-to/sst-external-packages.md`
-- `docs/how-to/npm-lockfile-v3.md`
+- `packages/cli/AGENTS.md` for CLI-specific guidance
+- `e2e/README.md` for the cross-package E2E suite
+- `skills/*/SKILL.md` for per-integration agent guides
+- User-facing docs (concepts, reference, how-to) live on the docs site:
+  - https://cipherstash.com/docs
+  - https://cipherstash.com/docs/stack/quickstart
+  - https://cipherstash.com/docs/stack/reference
+  - https://cipherstash.com/docs/stack/deploy/bundling
 
 ## Troubleshooting
 
-- Module load errors on Linux/serverless: review the npm lockfile v3 guide.
+- Module load errors on Linux/serverless: switch to `@cipherstash/stack/wasm-inline`, or review the bundling guide (https://cipherstash.com/docs/stack/deploy/bundling).
 - Can't decrypt after encrypting with a lock context: ensure the exact same lock context is provided to decrypt.
 - Tests failing due to missing credentials: provide `CS_*` env vars; lock-context tests are skipped without `USER_JWT`.
 - Performance testing: prefer bulk operations (`bulkEncrypt*` / `bulkDecrypt*`) to exercise ZeroKMS bulk speed.

@@ -2,6 +2,7 @@ import { type Result, withResult } from '@byteslice/result'
 import type {
   Encrypted as CipherStashEncrypted,
   EncryptedQuery as CipherStashEncryptedQuery,
+  EncryptedV3Query as CipherStashEncryptedV3Query,
 } from '@cipherstash/protect-ffi'
 import {
   encryptQueryBulk as ffiEncryptQueryBulk,

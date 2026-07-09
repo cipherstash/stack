@@ -38,7 +38,7 @@ async function userClient(userJwt: string) {
   return Encryption({
     schemas: [users],
     config: {
-      strategy: OidcFederationStrategy.create(crn, () =>
+      authStrategy: OidcFederationStrategy.create(crn, () =>
         Promise.resolve(userJwt),
       ),
     },

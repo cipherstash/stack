@@ -57,11 +57,11 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
   it('round-trips an EncryptedBigInt through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
     const byId = new Map(rows.map((r) => [r.id, r] as const))
@@ -73,7 +73,7 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashGt filters by encrypted bigint numeric order', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.accountId.cipherstashGt(1_000_000_000_002n),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
@@ -83,7 +83,7 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashLte includes the equality boundary', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.accountId.cipherstashLte(1_000_000_000_002n),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
@@ -93,7 +93,7 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashBetween filters by encrypted bigint range', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.accountId.cipherstashBetween(
         1_000_000_000_002n,
         9_000_000_000_000_000n,
@@ -106,7 +106,7 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashInArray returns rows whose value matches any of the supplied bigints', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.accountId.cipherstashInArray([
         1_000_000_000_001n,
         BigInt(Number.MAX_SAFE_INTEGER),
@@ -119,7 +119,7 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashAsc orders by bigint value (bare-column ORDER BY)', async () => {
-    const rows = await db.orm.User.orderBy((u) =>
+    const rows = await db.orm.public.User.orderBy((u) =>
       cipherstashAsc(u.accountId),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([

@@ -1,54 +1,54 @@
-# How to contribute to @cipherstash/protect
+# Contributing to CipherStash Stack
+
+Thank you for your interest in contributing to the CipherStash Stack for TypeScript! This document walks you through the repository's structure, how to build and run the project locally, and how to make contributions effectively.
 
 ## I want to report a bug, or make a feature request
 
 Please use the GitHub issue tracker to report bugs, suggest features, or documentation improvements.
 
-[When filing an issue](https://github.com/cipherstash/protectjs/issues/new/choose), please check [existing open](https://github.com/cipherstash/protectjs/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc), or [recently closed](https://github.com/cipherstash/protectjs/issues?q=is%3Aissue+sort%3Aupdated-desc+is%3Aclosed), issues to make sure somebody else hasn't already reported the issue. Please try to include as much information as you can.
-
----
-
-# Contributing to @cipherstash/protect
-
-Thank you for your interest in contributing to **@cipherstash/protect**! This document will walk you through the repository’s structure, how to build and run the project locally, and how to make contributions effectively.
+[When filing an issue](https://github.com/cipherstash/stack/issues/new/choose), please check [existing open](https://github.com/cipherstash/stack/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-desc) or [recently closed](https://github.com/cipherstash/stack/issues?q=is%3Aissue+sort%3Aupdated-desc+is%3Aclosed) issues to make sure somebody else hasn't already reported it. Please include as much information as you can.
 
 ## Repository Structure
 
-```
+This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https://pnpm.io/) workspaces:
+
+```text
 .
-├── examples/
-│   ├── example-app-1/
-│   └── example-app-2/
-│
 ├── packages/
-│   └── protect/     <-- Main package published to npm
-│
+│   ├── stack/            <-- Main package (@cipherstash/stack)
+│   ├── cli/              <-- The `stash` CLI
+│   ├── protect/          <-- Core encryption library (re-exported via stack)
+│   └── ...               <-- schema, drizzle, nextjs, prisma-next, migrate, wizard, ...
+├── examples/             <-- Runnable example apps
+├── e2e/                  <-- Cross-package end-to-end tests
+├── skills/               <-- Agent skills
 ├── .changeset/
-├── .turbo/
-├── CONTRIBUTING.md
-├── package.json
-└── ...
+└── package.json
 ```
 
-### Turborepo
+See [AGENTS.md](./AGENTS.md) for a detailed layout, key APIs, environment variables, and gotchas — it's written for coding agents but is the most complete developer reference in the repo.
 
-This repo uses [Turborepo](https://turbo.build/) to manage multiple packages and examples in a monorepo structure. Turborepo orchestrates tasks (build, test, lint, etc.) across the different packages in a consistent and efficient manner.
+### `packages/stack`
 
-### `packages/protect`
-
-The **@cipherstash/protect** package is the core library that is published to npm under the `@cipherstash/protect` namespace. This is likely where you’ll spend most of your time if you’re contributing new features or bug fixes related to JSEQL’s core functionality.
+**@cipherstash/stack** is the main package published to npm. It contains the encryption client and all integrations (Drizzle, Supabase, DynamoDB, secrets, identity). This is likely where you'll spend most of your time.
 
 ### `examples/` Directory
 
-Within the `examples/` directory, you’ll find example applications that demonstrate how to use **@cipherstash/protect**. These examples reference the local `@cipherstash/protect` package, allowing you to test and verify your changes to **@cipherstash/protect** in a real-world application scenario.
+The `examples/` directory contains applications demonstrating how to use `@cipherstash/stack`. They reference the local workspace packages, so you can verify your changes in a real application scenario.
 
 ## Setup Instructions
+
+### Prerequisites
+
+- **Node.js** >= 22
+- **pnpm** (the version pinned in `package.json`'s `packageManager` field)
+- CipherStash credentials if you want to run integration tests or examples (see [AGENTS.md](./AGENTS.md) for the required environment variables)
 
 ### 1. Clone the Repo
 
 ```bash
-git clone https://github.com/cipherstash/protectjs.git
-cd protectjs
+git clone https://github.com/cipherstash/stack.git
+cd stack
 ```
 
 ### 2. Install Dependencies
@@ -57,46 +57,52 @@ cd protectjs
 pnpm install
 ```
 
-### 4. Build the Main Package
-
-Before you can run any example, you need to build the `@cipherstash/protect` package:
+### 3. Build the Packages
 
 ```bash
 pnpm run build
 ```
 
-This command triggers Turborepo’s build pipeline, compiling the **@cipherstash/protect** package in `packages/protect` and linking it locally so the example can reference it.
+This triggers Turborepo's build pipeline, compiling each package in `packages/*` and linking them locally so the examples can reference them.
 
-### 5. Run an Example App
+### 4. Run an Example App
 
-Start the dev script which will watch for changes to the packages which are picked up by the example app.
+Start the dev script, which watches for changes to the packages and is picked up by the example apps:
 
 ```bash
 pnpm run dev
 ```
 
-Navigate to one of the examples in `examples/` and follow the instructions for the corresponding example.
-
-Now, you can view the running application (if it’s a web or server app) or otherwise test the example’s output. This will help confirm your local build of **@cipherstash/protect** is working correctly.
+Then navigate to one of the examples in `examples/` and follow its README.
 
 ## Making Changes
 
-1. **Create a new branch** from `main` (or the default branch):  
+1. **Create a new branch** from `main`:
    ```bash
    git checkout -b feat/my-new-feature
    ```
 
-2. **Implement your changes** in the relevant package (most likely in `packages/protect`).
+2. **Implement your changes** in the relevant package.
 
-3. **Write tests** to cover any new functionality or bug fixes.
+3. **Write tests** to cover any new functionality or bug fixes:
+   ```bash
+   pnpm --filter <package-name> test
+   ```
 
-## Publish Process (via Changeset)
+4. **Format and lint** with Biome before pushing:
+   ```bash
+   pnpm run code:fix
+   ```
+
+5. **Add a changeset** if your change affects a published package's public behaviour (see below).
+
+## Publish Process (via Changesets)
 
 We use [**Changesets**](https://github.com/changesets/changesets) to manage versioning and publication to npm.
 
-- When you’ve completed a feature or bug fix, **add a changeset** using `npx changeset`. 
+- When you've completed a feature or bug fix, **add a changeset** using `pnpm changeset`.
 - Follow the prompts to indicate the type of version bump (patch, minor, major).
-- The [GitHub Actions](./.github/workflows/) (or other CI pipeline) will handle the **publish** step to npm once your PR is merged and the changeset is committed to `main`.
+- The [GitHub Actions workflows](./.github/workflows/) handle the **publish** step to npm once your PR is merged and the changeset is committed to `main`.
 
 ## Pre release process
 
@@ -119,8 +125,18 @@ When you merge the PR, the `next` branch will be merged into `main`, and the pac
 > This process can be dangerous, so please be careful when using it as it's difficult to undo mistakes.
 > If you are unfamiliar with the process, please reach out to the maintainers for help.
 
+## Supply-Chain Rules
+
+This repo applies supply-chain controls that CI enforces (see [SECURITY.md](./SECURITY.md)). When contributing, keep in mind:
+
+1. **CI uses `pnpm install --frozen-lockfile`** — don't drop the flag.
+2. **Adding to `pnpm.onlyBuiltDependencies` is an audit decision** — vet the package and explain the addition in the PR.
+3. **Never commit auth tokens in `.npmrc`** — tokens belong in your user-level `~/.npmrc` or environment variables.
+
 ## Additional Resources
 
+- [AGENTS.md](./AGENTS.md) — detailed developer/agent reference for this repo
+- [CipherStash documentation](https://cipherstash.com/docs)
 - [Turborepo Documentation](https://turbo.build/repo/docs)
 - [Changesets Documentation](https://github.com/changesets/changesets)
 
@@ -128,7 +144,7 @@ When you merge the PR, the `next` branch will be merged into `main`, and the pac
 
 If you discover a potential security issue in this project, we ask that you contact us at security@cipherstash.com.
 
-Please do not create a public GitHub issue.
+Please do not create a public GitHub issue. See [SECURITY.md](./SECURITY.md) for our full security policy.
 
 ## Code of Conduct
 
