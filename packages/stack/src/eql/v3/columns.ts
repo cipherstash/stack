@@ -153,9 +153,10 @@ export const SMALLINT_ORD = {
 } as const
 
 // bigint (int8) domains. Plaintext is a JS `bigint` (always decrypts to
-// `bigint`); bounds are the full i64 range, enforced at the protect-ffi
-// boundary, which round-trips a native bigint losslessly. (`*_ord_ope`
-// variants are out of scope — CIP-3403.)
+// `bigint`); bounds are the full i64 range. protect-ffi round-trips an in-range
+// native bigint losslessly, and values outside the signed 64-bit range are
+// rejected client-side by `assertValidNumericValue` before they reach the FFI
+// (`*_ord_ope` variants are out of scope — CIP-3403.)
 export const BIGINT = {
   eqlType: 'public.bigint',
   castAs: 'bigint',
