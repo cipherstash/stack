@@ -142,7 +142,7 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
     >,
   ])
 
-  it('inlines per-flag add ops on first emit (priorContract null) when flags are enabled', () => {
+  it('inlines per-flag add ops on first emit (priorContract null) when flags are enabled', async () => {
     const ops = planFieldEventOperations({
       priorContract: null,
       newContract: build({
@@ -151,14 +151,15 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       codecHooks,
     })
     expect(ops).toHaveLength(2)
-    const ids = ops.map((c) => c.toOp().invariantId).sort()
+    const lowered = await Promise.all(ops.map((c) => c.toOp()))
+    const ids = lowered.map((op) => op.invariantId).sort()
     expect(ids).toEqual([
       'cipherstash-codec:User.email:add-search-config:match@v1',
       'cipherstash-codec:User.email:add-search-config:unique@v1',
     ])
   })
 
-  it('inlines per-flag remove ops when previously-flagged column is dropped', () => {
+  it('inlines per-flag remove ops when previously-flagged column is dropped', async () => {
     const prior = build({
       User: userTable({ equality: true, freeTextSearch: true }),
     })
@@ -171,7 +172,8 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       codecHooks,
     })
     expect(ops).toHaveLength(2)
-    const ids = ops.map((c) => c.toOp().invariantId).sort()
+    const lowered = await Promise.all(ops.map((c) => c.toOp()))
+    const ids = lowered.map((op) => op.invariantId).sort()
     expect(ids).toEqual([
       'cipherstash-codec:User.email:remove-search-config:match@v1',
       'cipherstash-codec:User.email:remove-search-config:unique@v1',
