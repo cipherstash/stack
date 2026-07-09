@@ -103,9 +103,10 @@ import {
  * })
  * ```
  *
- * `types.TextSearch` keeps the chainable `.freeTextSearch(opts)` tuner (the
- * only capability-bearing chain — every other domain is fully described by its
- * type).
+ * `types.TextSearch` is fully described by its type — like every other domain,
+ * it has no capability-bearing or tuning chain. Its match index is always
+ * emitted with the default configuration; run a free-text query by passing
+ * `queryType: 'freeTextSearch'` to `encryptQuery`.
  */
 export const types = {
   // integer

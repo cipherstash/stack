@@ -37,6 +37,16 @@ export default defineConfig({
       // out of scope (tracked as a follow-up). Run via the `test:types` script
       // with `--typecheck.only` so the runtime suites do NOT also execute.
       tsconfig: './tsconfig.typecheck.json',
+      // Type coverage lives in `*.test-d.ts`. M1 (the factory rejecting the
+      // `TypedEncryptionClient` that `EncryptionV3` returns) slipped through
+      // because the runtime `*.test.ts` suites are not typechecked. Rather than
+      // widen to those files — the drizzle-v3 suites are pervasively loose-typed
+      // by design (dynamic domain matrix: `as never` tables, untyped mock
+      // introspection, `readonly` sample tuples) so a wholesale widen surfaces
+      // dozens of pre-existing, unrelated errors AND risks exposing the
+      // wasm-inline errors via their imports — M1 and the A3 envelope contract
+      // are locked directly in `drizzle-v3/operators.test-d.ts` and
+      // `drizzle-v3/types.test-d.ts`, which this glob already covers.
       include: ['__tests__/**/*.test-d.ts'],
     },
   },

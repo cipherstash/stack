@@ -55,6 +55,7 @@ import { describe, expect, it } from 'vitest'
 import {
   LIVE_CIPHERSTASH_ENABLED,
   LIVE_EQL_V3_PG_ENABLED,
+  LIVE_LOCK_CONTEXT_ENABLED,
 } from './helpers/live-gate'
 
 // GitHub Actions always sets CI=true; treat any truthy CI as "must run live".
@@ -83,6 +84,28 @@ describe('live-coverage guard', () => {
           'false. This needs the CS_* creds AND a `DATABASE_URL`; a missing ' +
           'DATABASE_URL is the hole the require-cs-secrets action does not ' +
           'cover, and makes every `describeLivePg` suite silently skip.',
+      ).toBe(true)
+    },
+  )
+
+  // DEFERRED (follow-up): the CI `USER_JWT` secret is not yet provisioned, so
+  // enforcing this now would fail CI. Skipped until the secret exists — flip
+  // back to `it.runIf(IN_CI)` at that point. It still documents the real gap:
+  // the identity / lock-context live suites soft-skip on a missing USER_JWT, so
+  // once the secret lands this guard turns a silent whole-suite skip into a
+  // loud failure (as the CS_*/DATABASE_URL guards already do).
+  it.skip(
+    'CI must have USER_JWT so the lock-context live suites do not silently skip',
+    () => {
+      expect(
+        LIVE_LOCK_CONTEXT_ENABLED,
+        'CI must run the live lock-context / identity suites — ' +
+          '`LIVE_LOCK_CONTEXT_ENABLED` is false. This needs the CS_* creds AND ' +
+          'a `USER_JWT`; the identity/lock-context suites (e.g. ' +
+          'lock-context.test.ts, protect-ops.test.ts, ' +
+          'operators-lock-context-live-pg.test.ts) SOFT-SKIP when USER_JWT is ' +
+          'absent, so a missing/rotated USER_JWT lets them skip green with no ' +
+          'signal — the exact failure mode this guard exists to prevent.',
       ).toBe(true)
     },
   )

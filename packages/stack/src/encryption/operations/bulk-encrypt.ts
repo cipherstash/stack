@@ -1,6 +1,7 @@
 import { type Result, withResult } from '@byteslice/result'
 import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type Context,
@@ -23,6 +24,12 @@ import { EncryptionOperation } from './base-operation'
 // Drops nulls so they don't reach protect-ffi (which would otherwise
 // produce a SteVec wrapping the JSON null). The dropped positions are
 // re-inserted as null in `mapEncryptedDataToResult`.
+//
+// Each surviving plaintext is validated exactly as `EncryptOperation` validates
+// its single operand: NaN / ±Infinity / out-of-int64 `bigint` are rejected
+// client-side, because protect-ffi's behaviour on such a value is unobservable.
+// Callers that batch instead of looping (the v3 Drizzle `inArray`, for one)
+// must not lose that guard by choosing the bulk path.
 const createEncryptPayloads = (
   plaintexts: BulkEncryptPayload,
   column: BuildableColumn,
@@ -31,13 +38,16 @@ const createEncryptPayloads = (
 ) => {
   return plaintexts
     .filter(({ plaintext }) => plaintext !== null)
-    .map(({ id, plaintext }) => ({
-      id,
-      plaintext: plaintext as JsPlaintext,
-      column: column.getName(),
-      table: table.tableName,
-      ...(lockContext && { lockContext }),
-    }))
+    .map(({ id, plaintext }) => {
+      assertValidNumericValue(plaintext)
+      return {
+        id,
+        plaintext: plaintext as JsPlaintext,
+        column: column.getName(),
+        table: table.tableName,
+        ...(lockContext && { lockContext }),
+      }
+    })
 }
 
 const createNullResult = (plaintexts: BulkEncryptPayload): BulkEncryptedData =>

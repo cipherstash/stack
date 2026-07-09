@@ -366,6 +366,87 @@ For columns with `searchableJson: true`, three JSONB operators are available:
 
 These operators encrypt the JSON path selector using the `steVecSelector` query type and cast it to `eql_v2_encrypted` for use with the EQL PostgreSQL functions.
 
+### EQL v3 Concrete-Type Columns (Drizzle)
+
+The `@cipherstash/stack/eql/v3/drizzle` module targets EQL v3, where each encrypted column is a **concrete Postgres domain type** (`eql_v3.text_eq`, `eql_v3.integer_ord`, …). Instead of toggling capability flags, you pick a concrete type from the `types` namespace and its query capabilities are fixed by that choice. The v2 `@cipherstash/stack/drizzle` module above is unchanged — this is an additive export.
+
+Declare a Drizzle table using the `types` factories. The suffix encodes the capability: `*Eq` (equality), `*Ord` (order + range, which also covers equality), `*Match` / `TextSearch` (free-text search), and the bare name (e.g. `Text`, `Bigint`) is storage-only.
+
+```ts
+import { pgTable, integer } from "drizzle-orm/pg-core"
+import { drizzle } from "drizzle-orm/postgres-js"
+import {
+  types,
+  createEncryptionOperatorsV3,
+  extractEncryptionSchemaV3,
+} from "@cipherstash/stack/eql/v3/drizzle"
+import { EncryptionV3 } from "@cipherstash/stack/v3"
+
+// Capabilities come from the concrete type — no flags to configure.
+const users = pgTable("users", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  email: types.TextEq("email"),      // equality: eq / ne / inArray
+  age: types.IntegerOrd("age"),      // order + range: gt/gte/lt/lte, between, asc/desc
+  bio: types.TextMatch("bio"),       // free-text search: contains
+  balance: types.Bigint("balance"),  // storage only (no query capability)
+})
+```
+
+Derive the v3 schema from the table, build the typed client, and create the capability-checked operators:
+
+```ts
+const usersSchema = extractEncryptionSchemaV3(users)
+const client = await EncryptionV3({ schemas: [usersSchema] })
+const ops = createEncryptionOperatorsV3(client)
+
+const db = drizzle({ client: sqlClient })
+```
+
+The operators auto-encrypt their operands and validate them against the column's concrete type. Applying an operator the type doesn't support throws `EncryptionOperatorError`:
+
+```ts
+// Equality — email is TextEq
+const exact = await db.select().from(users)
+  .where(await ops.eq(users.email, "alice@example.com"))
+
+// Range + ordering — age is IntegerOrd
+const adults = await db.select().from(users)
+  .where(await ops.gte(users.age, 18))
+  .orderBy(ops.asc(users.age))
+
+const midBand = await db.select().from(users)
+  .where(await ops.between(users.age, 25, 40))
+
+// Set membership — built on equality
+const listed = await db.select().from(users)
+  .where(await ops.inArray(users.email, ["alice@example.com", "bob@example.com"]))
+
+// Free-text token containment — bio is TextMatch
+const coffee = await db.select().from(users)
+  .where(await ops.contains(users.bio, "coffee"))
+```
+
+Rows are **pre-encrypted** with `client.bulkEncryptModels(...)` before they reach `db.insert(...).values(...)` — Drizzle never sees plaintext. `Bigint` columns take a native JS `bigint`:
+
+```ts
+const rows = await client.bulkEncryptModels(
+  [
+    { email: "alice@example.com", age: 30, bio: "climbing and coffee", balance: 100_000n },
+    { email: "bob@example.com", age: 41, bio: "cycling and coffee", balance: 250_000n },
+  ],
+  usersSchema,
+)
+if (rows.failure) throw new Error(rows.failure.message)
+
+await db.insert(users).values(rows.data)
+```
+
+Notes:
+
+- **Free-text search uses `ops.contains`** (token containment on a `match` index), not SQL `like` / `ilike`. It matches whole indexed tokens, so `contains(users.bio, "coffee")` finds rows whose `bio` contains the token `coffee`.
+- **The concrete type defines the legal operators.** `TextEq` supports `eq` / `ne` / `inArray` / `notInArray`; `*Ord` types add `gt` / `gte` / `lt` / `lte` / `between` / `notBetween` and `asc` / `desc`; `*Match` and `TextSearch` add `contains`; a bare `Text` / `Integer` / `Bigint` column is storage-only. Using an unsupported operator throws `EncryptionOperatorError`.
+- Combine conditions with `ops.and` / `ops.or`, and do NULL checks with `ops.isNull` / `ops.isNotNull` (the where-clause operators are `async` and must be `await`ed; `ops.asc` / `ops.desc` are synchronous).
+
 ## Identity-Aware Encryption
 
 Lock encryption to a specific user by requiring a valid JWT for decryption.
@@ -664,6 +745,8 @@ csValue(valueName)                 // returns ProtectValue (for nested values)
 | `@cipherstash/stack/secrets` | `Secrets` class and secrets types |
 | `@cipherstash/stack/client` | Client-safe exports (schema builders and types only - no native FFI) |
 | `@cipherstash/stack/types` | All TypeScript types (`Encrypted`, `Decrypted`, `ClientConfig`, `EncryptionClientConfig`, query types, etc.) |
+| `@cipherstash/stack/v3` | `EncryptionV3` typed client plus the EQL v3 authoring DSL (`encryptedTable`, `types`, v3 type helpers) |
+| `@cipherstash/stack/eql/v3/drizzle` | EQL v3 Drizzle integration: `types` column factories, `createEncryptionOperatorsV3`, `extractEncryptionSchemaV3`, `makeEqlV3Column`, `EncryptionOperatorError` |
 
 ## Migration from @cipherstash/protect
 

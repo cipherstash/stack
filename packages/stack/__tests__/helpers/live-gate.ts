@@ -23,6 +23,17 @@ export const LIVE_EQL_V3_PG_ENABLED = Boolean(
   process.env.DATABASE_URL && LIVE_CIPHERSTASH_ENABLED,
 )
 
+/**
+ * True when live credentials AND a `USER_JWT` are configured. The identity /
+ * lock-context live suites additionally require a `USER_JWT` to bind keys to an
+ * end-user identity, and SOFT-SKIP (inline `if (!userJwt) return`) when it is
+ * absent — so a missing/rotated `USER_JWT` lets them skip green in CI. This
+ * flag lets the live-coverage guard assert that path is actually exercised.
+ */
+export const LIVE_LOCK_CONTEXT_ENABLED = Boolean(
+  process.env.USER_JWT && LIVE_CIPHERSTASH_ENABLED,
+)
+
 export const describeLive = LIVE_CIPHERSTASH_ENABLED ? describe : describe.skip
 
 export const describeLivePg = LIVE_EQL_V3_PG_ENABLED ? describe : describe.skip

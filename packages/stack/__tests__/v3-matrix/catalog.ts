@@ -123,6 +123,20 @@ export function typedEntries<K extends string, V>(
   return Object.entries(obj) as Array<[K, V]>
 }
 
+/** The schema the concrete EQL v3 domains live in — see `EqlV3TypeName`. */
+export const EQL_V3_DOMAIN_SCHEMA = 'public'
+
+/**
+ * A `public.integer_ord` domain reduced to a bare `integer_ord`, suitable as a
+ * column identifier in the test tables. Shared by every suite that builds a
+ * table from the matrix, so a future domain-schema move is a one-line change
+ * rather than five.
+ */
+export function eqlTypeSlug(eqlType: EqlV3TypeName | string): string {
+  const prefix = `${EQL_V3_DOMAIN_SCHEMA}.`
+  return eqlType.startsWith(prefix) ? eqlType.slice(prefix.length) : eqlType
+}
+
 // Capability shorthands (mirror the SDK's internal presets).
 const STORAGE = {
   equality: false,
