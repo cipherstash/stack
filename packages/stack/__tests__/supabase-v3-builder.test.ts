@@ -317,7 +317,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   it('rejects a query type the column does not support', async () => {
     const { es } = v3Instance()
 
-    // nickname is public.text_eq — equality only, no order/range
+    // nickname is public.eql_v3_text_eq — equality only, no order/range
     const { error, status } = await es
       .from('users', users)
       .select('id, nickname')
@@ -330,7 +330,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   it('rejects filters on storage-only columns', async () => {
     const { es } = v3Instance()
 
-    // active is public.boolean — storage only
+    // active is public.eql_v3_boolean — storage only
     const { error, status } = await es
       .from('users', users)
       .select('id')
@@ -390,7 +390,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   it('rejects order() on a storage-only encrypted column', async () => {
     const { es } = v3Instance()
 
-    // active is public.boolean — storage only, so ordering it would sort ciphertext
+    // active is public.eql_v3_boolean — storage only, so ordering it would sort ciphertext
     const { error, status } = await es
       .from('users', users)
       .select('id')
@@ -666,7 +666,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     it('gates an or() cs condition on the freeTextSearch capability', async () => {
       const { es } = v3Instance()
 
-      // amount is public.integer_ord — no match index. Before the query-type
+      // amount is public.eql_v3_integer_ord — no match index. Before the query-type
       // seam this was encrypted as an equality term and silently accepted.
       const { error, status } = await es
         .from('users', users)
@@ -1550,7 +1550,7 @@ describe('v3 single() decrypt path', () => {
 // filter loop hardcoded `'equality'`. In v3 the query type is ONLY a capability
 // gate (the operand is always the full storage envelope), so a wrong query type
 // is a wrong accept/reject — it does not corrupt the ciphertext. The victim is
-// `bio` (public.text_match, MATCH_ONLY): equality:false, freeTextSearch:true.
+// `bio` (public.eql_v3_text_match, MATCH_ONLY): equality:false, freeTextSearch:true.
 // ---------------------------------------------------------------------------
 
 describe('v3 raw filter() resolves the query type from the operator', () => {

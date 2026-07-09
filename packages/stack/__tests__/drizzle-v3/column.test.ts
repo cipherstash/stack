@@ -19,17 +19,19 @@ describe('makeEqlV3Column', () => {
     const col = makeEqlV3Column(v3Types.IntegerOrd('age'))
     const table = pgTable('users', { age: col })
 
-    expect(table.age.getSQLType()).toBe('public.integer_ord')
+    expect(table.age.getSQLType()).toBe('public.eql_v3_integer_ord')
   })
 
   it('recovers the stashed builder before and after pgTable processing', () => {
     const col = makeEqlV3Column(v3Types.TextEq('nickname'))
     expect(isEqlV3Column(col)).toBe(true)
-    expect(getEqlV3Column('nickname', col)?.getEqlType()).toBe('public.text_eq')
+    expect(getEqlV3Column('nickname', col)?.getEqlType()).toBe(
+      'public.eql_v3_text_eq',
+    )
 
     const t = pgTable('users', { nickname: col })
     expect(getEqlV3Column('nickname', t.nickname)?.getEqlType()).toBe(
-      'public.text_eq',
+      'public.eql_v3_text_eq',
     )
   })
 
@@ -50,7 +52,7 @@ describe('makeEqlV3Column', () => {
     expect(pgCarrier).toBeDefined()
     expect(symbol in (pgCarrier as object)).toBe(true)
     expect(getEqlV3Column('nickname', table.nickname)?.getEqlType()).toBe(
-      'public.text_eq',
+      'public.eql_v3_text_eq',
     )
 
     // ...and no carrier keeps a redundant string twin of the symbol key.
@@ -82,36 +84,36 @@ describe('makeEqlV3Column', () => {
   it('recognises v3 columns by the Drizzle getSQLType API', () => {
     expect(
       isEqlV3Column({
-        getSQLType: () => 'public.text_eq',
+        getSQLType: () => 'public.eql_v3_text_eq',
       }),
     ).toBe(true)
   })
 
   it('recovers a v3 builder for columns recognised by getSQLType', () => {
     const builder = getEqlV3Column('nickname', {
-      getSQLType: () => 'public.text_eq',
+      getSQLType: () => 'public.eql_v3_text_eq',
     })
 
     expect(builder?.getName()).toBe('nickname')
-    expect(builder?.getEqlType()).toBe('public.text_eq')
+    expect(builder?.getEqlType()).toBe('public.eql_v3_text_eq')
   })
 
   it('recognises v3 columns by dataType() when getSQLType is absent', () => {
-    const column = { dataType: () => 'public.text_eq' }
+    const column = { dataType: () => 'public.eql_v3_text_eq' }
     const builder = getEqlV3Column('nickname', column)
 
     expect(isEqlV3Column(column)).toBe(true)
     expect(builder?.getName()).toBe('nickname')
-    expect(builder?.getEqlType()).toBe('public.text_eq')
+    expect(builder?.getEqlType()).toBe('public.eql_v3_text_eq')
   })
 
   it('recognises v3 columns by sqlName when getSQLType is absent', () => {
-    const column = { sqlName: 'public.integer_ord' }
+    const column = { sqlName: 'public.eql_v3_integer_ord' }
     const builder = getEqlV3Column('age', column)
 
     expect(isEqlV3Column(column)).toBe(true)
     expect(builder?.getName()).toBe('age')
-    expect(builder?.getEqlType()).toBe('public.integer_ord')
+    expect(builder?.getEqlType()).toBe('public.eql_v3_integer_ord')
   })
 
   it.each(

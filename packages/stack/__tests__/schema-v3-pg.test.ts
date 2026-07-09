@@ -46,9 +46,10 @@ async function encryptValue(value: string): Promise<EncryptionPayload> {
 }
 
 // A query operand under EQL v3 is a FULL encrypted payload — the same thing
-// `client.encrypt` produces for storage — NOT an `encryptQuery` term (protect-ffi
-// 0.28 has no v3 scalar query wire shape; `encryptQuery` throws
-// EQL_V3_QUERY_UNSUPPORTED). Compare it to a column with the public two-arg
+// `client.encrypt` produces for storage. (protect-ffi 0.29 can also mint
+// term-only `eql_v3.query_<name>` operands via `encryptQuery`; this suite
+// keeps the full-envelope path because it is what the stack's integrations
+// send.) Compare it to a column with the public two-arg
 // `eql_v3.*(col, operand::jsonb)` functions; the operand carries every index
 // term, so which SQL function you call selects which term is compared.
 async function encryptOperand(
@@ -65,7 +66,7 @@ async function insertRow(label: string, email: string): Promise<number> {
 
   const [inserted] = await sql<{ id: number }[]>`
     INSERT INTO protect_ci_v3_text_search (email, label, test_run_id)
-    VALUES (${sql.json(encrypted)}::public.text_search, ${label}, ${TEST_RUN_ID})
+    VALUES (${sql.json(encrypted)}::public.eql_v3_text_search, ${label}, ${TEST_RUN_ID})
     RETURNING id
   `
 
@@ -114,7 +115,7 @@ beforeAll(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_text_search (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      email public.text_search NOT NULL,
+      email public.eql_v3_text_search NOT NULL,
       label TEXT NOT NULL,
       test_run_id TEXT NOT NULL
     )
@@ -123,9 +124,9 @@ beforeAll(async () => {
   await sql`
     CREATE TABLE IF NOT EXISTS protect_ci_v3_typed_domains (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      age public.integer_ord NOT NULL,
-      nickname public.text_eq NOT NULL,
-      active public.boolean NOT NULL,
+      age public.eql_v3_integer_ord NOT NULL,
+      nickname public.eql_v3_text_eq NOT NULL,
+      active public.eql_v3_boolean NOT NULL,
       test_run_id TEXT NOT NULL
     )
   `
@@ -159,7 +160,7 @@ afterAll(async () => {
 }, 30000)
 
 describeLivePg('eql_v3 text_search postgres integration', () => {
-  it('round-trips an encrypted value through an public.text_search column', async () => {
+  it('round-trips an encrypted value through an public.eql_v3_text_search column', async () => {
     const id = await insertRow('roundtrip', 'roundtrip@example.com')
 
     const [row] = await sql<InsertedRow[]>`
@@ -264,7 +265,8 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     const labels = ['ada', 'grace', 'alan', 'zora']
     const lessThanCount = new Map<string, number>(labels.map((l) => [l, 0]))
     for (const pair of pairs) {
-      if (pair.lt) lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
+      if (pair.lt)
+        lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
     }
 
     const ascending = [...lessThanCount.entries()]
@@ -314,7 +316,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     )
   }, 30000)
 
-  it('rejects a ciphertext-less payload cast as a public.text_search value', async () => {
+  it('rejects a ciphertext-less payload cast as a public.eql_v3_text_search value', async () => {
     // A full operand with its ciphertext (`c`) removed mimics a query-only
     // payload: index terms present, no stored value. The domain CHECK must
     // reject it, so it can never masquerade as a stored ciphertext.
@@ -328,7 +330,7 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       sql`
         INSERT INTO protect_ci_v3_text_search (email, label, test_run_id)
         VALUES (
-          ${sql.json(ciphertextLess as EncryptionPayload)}::public.text_search,
+          ${sql.json(ciphertextLess as EncryptionPayload)}::public.eql_v3_text_search,
           'query-only',
           ${TEST_RUN_ID}
         )
@@ -359,9 +361,9 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
     const [inserted] = await sql<{ id: number }[]>`
       INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
       VALUES (
-        ${sql.json(age as postgres.JSONValue)}::public.integer_ord,
-        ${sql.json(nickname as postgres.JSONValue)}::public.text_eq,
-        ${sql.json(active as postgres.JSONValue)}::public.boolean,
+        ${sql.json(age as postgres.JSONValue)}::public.eql_v3_integer_ord,
+        ${sql.json(nickname as postgres.JSONValue)}::public.eql_v3_text_eq,
+        ${sql.json(active as postgres.JSONValue)}::public.eql_v3_boolean,
         ${TEST_RUN_ID}
       )
       RETURNING id
@@ -410,9 +412,9 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       const [row] = await sql<{ id: number }[]>`
         INSERT INTO protect_ci_v3_typed_domains (age, nickname, active, test_run_id)
         VALUES (
-          ${sql.json(ageCt)}::public.integer_ord,
-          ${sql.json(nick)}::public.text_eq,
-          ${sql.json(act)}::public.boolean,
+          ${sql.json(ageCt)}::public.eql_v3_integer_ord,
+          ${sql.json(nick)}::public.eql_v3_text_eq,
+          ${sql.json(act)}::public.eql_v3_boolean,
           ${TEST_RUN_ID}
         )
         RETURNING id

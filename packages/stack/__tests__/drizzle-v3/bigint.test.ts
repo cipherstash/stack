@@ -41,19 +41,23 @@ const accounts = pgTable('accounts', {
 })
 
 describe('v3 drizzle bigint columns', () => {
-  it('detects a bigint column and reports its concrete public.bigint domain', () => {
+  it('detects a bigint column and reports its concrete public.eql_v3_bigint domain', () => {
     const storage = types.Bigint('n')
     const ord = types.BigintOrd('n_ord')
 
     expect(isEqlV3Column(storage)).toBe(true)
-    expect(getEqlV3Column('n', storage)?.getEqlType()).toBe('public.bigint')
-    expect(getEqlV3Column('n_ord', ord)?.getEqlType()).toBe('public.bigint_ord')
+    expect(getEqlV3Column('n', storage)?.getEqlType()).toBe(
+      'public.eql_v3_bigint',
+    )
+    expect(getEqlV3Column('n_ord', ord)?.getEqlType()).toBe(
+      'public.eql_v3_bigint_ord',
+    )
   })
 
-  it('emits the concrete public.bigint* SQL type through pgTable', () => {
-    expect(accounts.balance.getSQLType()).toBe('public.bigint_ord')
-    expect(accounts.ledgerId.getSQLType()).toBe('public.bigint_eq')
-    expect(accounts.archived.getSQLType()).toBe('public.bigint')
+  it('emits the concrete public.eql_v3_bigint* SQL type through pgTable', () => {
+    expect(accounts.balance.getSQLType()).toBe('public.eql_v3_bigint_ord')
+    expect(accounts.ledgerId.getSQLType()).toBe('public.eql_v3_bigint_eq')
+    expect(accounts.archived.getSQLType()).toBe('public.eql_v3_bigint')
   })
 
   it('encrypts a native bigint operand for eq without JSON-stringifying it', async () => {

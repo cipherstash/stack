@@ -80,7 +80,7 @@ export function encryptedSupabase(
  *
  * Keyed by table, not applied to the whole schema, because the hazard exists
  * only for a table the caller actually queries. An `audit_log.payload
- * public.json` column on a table you never name cannot leak, and must not stop
+ * public.eql_v3_json` column on a table you never name cannot leak, and must not stop
  * you constructing a client for `users`.
  */
 function assertTableIsModelled(
@@ -114,8 +114,8 @@ function assertTableIsModelled(
  * ```sql
  * CREATE TABLE users (
  *   id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
- *   email public.text_search,  -- equality, ordering, free-text match
- *   age   public.integer_ord,  -- equality, ordering
+ *   email public.eql_v3_text_search,  -- equality, ordering, free-text match
+ *   age   public.eql_v3_integer_ord,  -- equality, ordering
  *   name  text                 -- plaintext passthrough, untouched
  * );
  * ```

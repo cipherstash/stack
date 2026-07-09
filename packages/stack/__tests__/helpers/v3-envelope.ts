@@ -1,7 +1,7 @@
 /**
  * Structurally-valid EQL v3 storage envelopes, built without a CipherStash client.
  *
- * The `public.*` domain CHECKs are purely STRUCTURAL — e.g. `public.text_search`
+ * The `public.*` domain CHECKs are purely STRUCTURAL — e.g. `public.eql_v3_text_search`
  * requires an object with `v`/`i`/`c`/`hm`/`ob`/`bf`, a non-empty `ob` array,
  * and `v = '3'`. Nothing in the CHECK is cryptographic. That lets the live
  * PostgREST suite drive the real adapter against real domains and real

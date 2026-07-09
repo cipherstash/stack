@@ -4,7 +4,7 @@ import type { FfiIndexTypeName } from '@/types'
 
 /**
  * Inclusive bounds of a signed 64-bit integer (`int8`) — the range every
- * `bigint` domain (`public.bigint`, `bigint_eq`, `bigint_ord_ore`,
+ * `bigint` domain (`public.eql_v3_bigint`, `bigint_eq`, `bigint_ord_ore`,
  * `bigint_ord`) maps to on the Postgres side. A `bigint` outside this range
  * cannot be expressed as an `int8`, so it must be rejected before it reaches
  * protect-ffi (whose behaviour on an out-of-range value is unobservable here).

@@ -117,6 +117,7 @@ describe('schema builders', () => {
       expect(built.indexes.ste_vec).toEqual({
         prefix: 'enabled',
         array_index_mode: 'all',
+        mode: 'standard',
       })
     })
 
@@ -226,6 +227,7 @@ describe('schema builders', () => {
       expect(built.columns.metadata.indexes.ste_vec).toEqual({
         prefix: 'documents/metadata',
         array_index_mode: 'all',
+        mode: 'standard',
       })
     })
 
@@ -318,6 +320,7 @@ describe('schema builders', () => {
       expect(config.tables.documents.metadata.indexes.ste_vec).toEqual({
         prefix: 'documents/metadata',
         array_index_mode: 'all',
+        mode: 'standard',
       })
     })
   })

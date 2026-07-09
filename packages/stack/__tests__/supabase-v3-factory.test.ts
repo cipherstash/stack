@@ -44,7 +44,7 @@ const usersIntrospection = introspectionOf({
       tableName: 'users',
       columns: [
         { columnName: 'id', domainName: null },
-        { columnName: 'email', domainName: 'text_search' },
+        { columnName: 'email', domainName: 'eql_v3_text_search' },
       ],
     },
   ],
@@ -105,7 +105,9 @@ describe('encryptedSupabaseV3 factory', () => {
         tables: [
           {
             tableName: 'users',
-            columns: [{ columnName: 'email', domainName: 'text_search' }],
+            columns: [
+              { columnName: 'email', domainName: 'eql_v3_text_search' },
+            ],
           },
           {
             tableName: 'logs',
@@ -176,19 +178,22 @@ describe('encryptedSupabaseV3 factory', () => {
           tableName: 'users',
           columns: [
             { columnName: 'id', domainName: null },
-            { columnName: 'email', domainName: 'text_search' },
+            { columnName: 'email', domainName: 'eql_v3_text_search' },
           ],
         },
         {
           tableName: 'metrics',
           columns: [
-            { columnName: 'label', domainName: 'text_eq' },
-            { columnName: 'score', domainName: 'integer_ord_ope' },
+            { columnName: 'label', domainName: 'eql_v3_text_eq' },
+            { columnName: 'score', domainName: 'eql_v3_integer_ord_ope' },
           ],
         },
       ],
       unmodelled: new Map([
-        ['metrics', [{ columnName: 'score', domainName: 'integer_ord_ope' }]],
+        [
+          'metrics',
+          [{ columnName: 'score', domainName: 'eql_v3_integer_ord_ope' }],
+        ],
       ]),
     })
 

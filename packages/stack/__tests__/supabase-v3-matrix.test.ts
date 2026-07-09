@@ -44,7 +44,7 @@ const equalityDomains = matrixEntries.filter(
 )
 const orderDomains = matrixEntries.filter(([, spec]) => spec.indexes.ore)
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
-/** No index at all — the `public.boolean`/`public.text`/… storage-only domains. */
+/** No index at all — the `public.eql_v3_boolean`/`public.eql_v3_text`/… storage-only domains. */
 const storageOnlyDomains = matrixEntries.filter(
   ([, spec]) =>
     !spec.indexes.unique && !spec.indexes.ore && !spec.indexes.match,

@@ -83,8 +83,8 @@ import {
  * The v3 column-type namespace. Each member is a public, semantic factory name
  * for a concrete EQL v3 column. Most members mirror the underlying domain name;
  * JS-friendly scalar names map to Postgres concrete domains, e.g.
- * `types.IntegerOrd` builds a `public.integer_ord` column and `types.Boolean`
- * builds a `public.boolean` column.
+ * `types.IntegerOrd` builds a `public.eql_v3_integer_ord` column and `types.Boolean`
+ * builds a `public.eql_v3_boolean` column.
  *
  * If these factory names stop matching the emitted capability/domain surface,
  * the stack package is out of sync with the underlying EQL build. That is a

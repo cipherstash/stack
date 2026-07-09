@@ -22,12 +22,13 @@
  * two-arg negation/containment/range functions: `eql_v3.neq` (eq domains),
  * `eql_v3.contained_by` (match domains), and explicit two-bound `eql_v3.gte`+`lte`
  * with strict `gt`+`lt` (ordering domains), plus a strict pairwise-`lt` ordering
- * proof. Queries use the supported EQL v3 API: a FULL encrypted
+ * proof. Queries use a FULL encrypted
  * operand (`client.encrypt`, same payload as storage) compared against the
  * column with a public two-arg `eql_v3.*(col, operand::jsonb)` function. (The
- * old `encryptQuery` scalar-term path is unsupported in protect-ffi 0.28 —
- * `EQL_V3_QUERY_UNSUPPORTED` — and the operand carries every index term, so the
- * SQL function per proof, not a `queryType`, selects which term is compared.)
+ * operand carries every index term, so the SQL function per proof, not a
+ * `queryType`, selects which term is compared. protect-ffi 0.29 also mints
+ * term-only `eql_v3.query_<name>` operands via `encryptQuery`; the
+ * full-envelope path stays because it is what the integrations send.)
  * Dispatch mirrors the priority `resolveIndexType` uses (match > unique > ore):
  *   - match   (text_match, text_search):    `eql_v3.contains(col, operand)`
  *   - eq      (any `unique` domain):        `eql_v3.eq(col, operand)`
@@ -148,9 +149,9 @@ const storageDomains = domains.filter(
 )
 const textOreDomains = domains.filter(
   ([t]) =>
-    t === 'public.text_ord_ore' ||
-    t === 'public.text_ord' ||
-    t === 'public.text_search',
+    t === 'public.eql_v3_text_ord_ore' ||
+    t === 'public.eql_v3_text_ord' ||
+    t === 'public.eql_v3_text_search',
 )
 
 // EVERY ORE ordering domain: all `_ord`/`_ord_ore` numeric/date/timestamp
@@ -293,10 +294,8 @@ beforeAll(async () => {
     (table as unknown as Record<string, unknown>)[slug(t)] as never
 
   // Query operands are FULL encrypted payloads — the same thing `client.encrypt`
-  // produces for storage — NOT `encryptQuery` terms. protect-ffi 0.28 has no v3
-  // scalar query wire shape (`encryptQuery` throws EQL_V3_QUERY_UNSUPPORTED), so
-  // the supported path is to encrypt the search value as an operand and compare
-  // it with the public two-arg `eql_v3.*(col, operand::jsonb)` functions in SQL.
+  // produces for storage — compared with the public two-arg
+  // `eql_v3.*(col, operand::jsonb)` functions in SQL.
   // The full operand carries every index term, so `queryType` dispatch is gone —
   // the SQL function chosen per proof (eq / gte+lte / contains) selects which
   // term the comparison uses. `opts` is cast `as never` because these columns

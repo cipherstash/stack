@@ -5,7 +5,7 @@ import {
   v3ToDriver,
 } from '@/eql/v3/drizzle/codec'
 
-// A realistic `public.text_eq` envelope: schema version, table/column
+// A realistic `public.eql_v3_text_eq` envelope: schema version, table/column
 // identifier, mp_base85 ciphertext, HMAC term. The trivial `{v:1,c:'ct'}`
 // fixture this replaced could not distinguish an envelope from a bare object.
 const ENVELOPE = {

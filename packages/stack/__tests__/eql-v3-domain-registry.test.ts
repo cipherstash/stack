@@ -22,51 +22,55 @@ import {
  * that fails. Do not compute it.
  */
 const EXPECTED_DOMAIN_KEYS = [
-  'integer',
-  'integer_eq',
-  'integer_ord_ore',
-  'integer_ord',
-  'smallint',
-  'smallint_eq',
-  'smallint_ord_ore',
-  'smallint_ord',
-  'bigint',
-  'bigint_eq',
-  'bigint_ord_ore',
-  'bigint_ord',
-  'date',
-  'date_eq',
-  'date_ord_ore',
-  'date_ord',
-  'timestamp',
-  'timestamp_eq',
-  'timestamp_ord_ore',
-  'timestamp_ord',
-  'numeric',
-  'numeric_eq',
-  'numeric_ord_ore',
-  'numeric_ord',
-  'text',
-  'text_eq',
-  'text_match',
-  'text_ord_ore',
-  'text_ord',
-  'text_search',
-  'boolean',
-  'real',
-  'real_eq',
-  'real_ord_ore',
-  'real_ord',
-  'double',
-  'double_eq',
-  'double_ord_ore',
-  'double_ord',
+  'eql_v3_integer',
+  'eql_v3_integer_eq',
+  'eql_v3_integer_ord_ore',
+  'eql_v3_integer_ord',
+  'eql_v3_smallint',
+  'eql_v3_smallint_eq',
+  'eql_v3_smallint_ord_ore',
+  'eql_v3_smallint_ord',
+  'eql_v3_bigint',
+  'eql_v3_bigint_eq',
+  'eql_v3_bigint_ord_ore',
+  'eql_v3_bigint_ord',
+  'eql_v3_date',
+  'eql_v3_date_eq',
+  'eql_v3_date_ord_ore',
+  'eql_v3_date_ord',
+  'eql_v3_timestamp',
+  'eql_v3_timestamp_eq',
+  'eql_v3_timestamp_ord_ore',
+  'eql_v3_timestamp_ord',
+  'eql_v3_numeric',
+  'eql_v3_numeric_eq',
+  'eql_v3_numeric_ord_ore',
+  'eql_v3_numeric_ord',
+  'eql_v3_text',
+  'eql_v3_text_eq',
+  'eql_v3_text_match',
+  'eql_v3_text_ord_ore',
+  'eql_v3_text_ord',
+  'eql_v3_text_search',
+  'eql_v3_boolean',
+  'eql_v3_real',
+  'eql_v3_real_eq',
+  'eql_v3_real_ord_ore',
+  'eql_v3_real_ord',
+  'eql_v3_double',
+  'eql_v3_double_eq',
+  'eql_v3_double_ord_ore',
+  'eql_v3_double_ord',
 ] as const
 
 describe('DOMAIN_REGISTRY', () => {
   it('strips the public. schema prefix', () => {
-    expect(stripDomainSchema('public.text_search')).toBe('text_search')
-    expect(stripDomainSchema('public.integer_ord')).toBe('integer_ord')
+    expect(stripDomainSchema('public.eql_v3_text_search')).toBe(
+      'eql_v3_text_search',
+    )
+    expect(stripDomainSchema('public.eql_v3_integer_ord')).toBe(
+      'eql_v3_integer_ord',
+    )
     // idempotent for an already-unqualified name
     expect(stripDomainSchema('boolean')).toBe('boolean')
   })
@@ -95,7 +99,9 @@ describe('DOMAIN_REGISTRY', () => {
 
   it('returns undefined for an unknown domain', () => {
     expect(factoryForDomain('not_a_domain')).toBeUndefined()
-    expect(factoryForDomain('text_search')).toBe(DOMAIN_REGISTRY.text_search)
+    expect(factoryForDomain('eql_v3_text_search')).toBe(
+      DOMAIN_REGISTRY.eql_v3_text_search,
+    )
   })
 
   it('PROPERTY: rejects any string that is not a registry key', () => {

@@ -96,7 +96,7 @@ const TEXT_SEARCH = {
  * Recorded as metadata for future DDL / query-dialect increments; it is
  * intentionally absent from the emitted encrypt config.
  */
-export const TEXT_SEARCH_EQL_TYPE = 'public.text_search'
+export const TEXT_SEARCH_EQL_TYPE = 'public.eql_v3_text_search'
 
 // Per-domain literal definitions. Each concrete column subclass is parameterised
 // by `typeof <CONST>`; the literal `eqlType`/`castAs`/`capabilities` on each is
@@ -106,43 +106,43 @@ export const TEXT_SEARCH_EQL_TYPE = 'public.text_search'
 // Exported for the `types` namespace factory (see ./types); they are internal
 // building blocks and are intentionally NOT re-exported from the public barrel.
 export const INTEGER = {
-  eqlType: 'public.integer',
+  eqlType: 'public.eql_v3_integer',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const INTEGER_EQ = {
-  eqlType: 'public.integer_eq',
+  eqlType: 'public.eql_v3_integer_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const INTEGER_ORD_ORE = {
-  eqlType: 'public.integer_ord_ore',
+  eqlType: 'public.eql_v3_integer_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const INTEGER_ORD = {
-  eqlType: 'public.integer_ord',
+  eqlType: 'public.eql_v3_integer_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const SMALLINT = {
-  eqlType: 'public.smallint',
+  eqlType: 'public.eql_v3_smallint',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const SMALLINT_EQ = {
-  eqlType: 'public.smallint_eq',
+  eqlType: 'public.eql_v3_smallint_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const SMALLINT_ORD_ORE = {
-  eqlType: 'public.smallint_ord_ore',
+  eqlType: 'public.eql_v3_smallint_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const SMALLINT_ORD = {
-  eqlType: 'public.smallint_ord',
+  eqlType: 'public.eql_v3_smallint_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
@@ -153,159 +153,159 @@ export const SMALLINT_ORD = {
 // rejected client-side by `assertValidNumericValue` before they reach the FFI
 // (`*_ord_ope` variants are out of scope — CIP-3403.)
 export const BIGINT = {
-  eqlType: 'public.bigint',
+  eqlType: 'public.eql_v3_bigint',
   castAs: 'bigint',
   capabilities: STORAGE_ONLY,
 } as const
 export const BIGINT_EQ = {
-  eqlType: 'public.bigint_eq',
+  eqlType: 'public.eql_v3_bigint_eq',
   castAs: 'bigint',
   capabilities: EQUALITY_ONLY,
 } as const
 export const BIGINT_ORD_ORE = {
-  eqlType: 'public.bigint_ord_ore',
+  eqlType: 'public.eql_v3_bigint_ord_ore',
   castAs: 'bigint',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const BIGINT_ORD = {
-  eqlType: 'public.bigint_ord',
+  eqlType: 'public.eql_v3_bigint_ord',
   castAs: 'bigint',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const DATE = {
-  eqlType: 'public.date',
+  eqlType: 'public.eql_v3_date',
   castAs: 'date',
   capabilities: STORAGE_ONLY,
 } as const
 export const DATE_EQ = {
-  eqlType: 'public.date_eq',
+  eqlType: 'public.eql_v3_date_eq',
   castAs: 'date',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DATE_ORD_ORE = {
-  eqlType: 'public.date_ord_ore',
+  eqlType: 'public.eql_v3_date_ord_ore',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DATE_ORD = {
-  eqlType: 'public.date_ord',
+  eqlType: 'public.eql_v3_date_ord',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const TIMESTAMP = {
-  eqlType: 'public.timestamp',
+  eqlType: 'public.eql_v3_timestamp',
   castAs: 'timestamp',
   capabilities: STORAGE_ONLY,
 } as const
 export const TIMESTAMP_EQ = {
-  eqlType: 'public.timestamp_eq',
+  eqlType: 'public.eql_v3_timestamp_eq',
   castAs: 'timestamp',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TIMESTAMP_ORD_ORE = {
-  eqlType: 'public.timestamp_ord_ore',
+  eqlType: 'public.eql_v3_timestamp_ord_ore',
   castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TIMESTAMP_ORD = {
-  eqlType: 'public.timestamp_ord',
+  eqlType: 'public.eql_v3_timestamp_ord',
   castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const NUMERIC = {
-  eqlType: 'public.numeric',
+  eqlType: 'public.eql_v3_numeric',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const NUMERIC_EQ = {
-  eqlType: 'public.numeric_eq',
+  eqlType: 'public.eql_v3_numeric_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const NUMERIC_ORD_ORE = {
-  eqlType: 'public.numeric_ord_ore',
+  eqlType: 'public.eql_v3_numeric_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const NUMERIC_ORD = {
-  eqlType: 'public.numeric_ord',
+  eqlType: 'public.eql_v3_numeric_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const TEXT = {
-  eqlType: 'public.text',
+  eqlType: 'public.eql_v3_text',
   castAs: 'string',
   capabilities: STORAGE_ONLY,
 } as const
 export const TEXT_EQ = {
-  eqlType: 'public.text_eq',
+  eqlType: 'public.eql_v3_text_eq',
   castAs: 'string',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TEXT_MATCH = {
-  eqlType: 'public.text_match',
+  eqlType: 'public.eql_v3_text_match',
   castAs: 'string',
   capabilities: MATCH_ONLY,
 } as const
 export const TEXT_ORD_ORE = {
-  eqlType: 'public.text_ord_ore',
+  eqlType: 'public.eql_v3_text_ord_ore',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TEXT_ORD = {
-  eqlType: 'public.text_ord',
+  eqlType: 'public.eql_v3_text_ord',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const BOOLEAN = {
-  eqlType: 'public.boolean',
+  eqlType: 'public.eql_v3_boolean',
   castAs: 'boolean',
   capabilities: STORAGE_ONLY,
 } as const
 
 export const REAL = {
-  eqlType: 'public.real',
+  eqlType: 'public.eql_v3_real',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const REAL_EQ = {
-  eqlType: 'public.real_eq',
+  eqlType: 'public.eql_v3_real_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const REAL_ORD_ORE = {
-  eqlType: 'public.real_ord_ore',
+  eqlType: 'public.eql_v3_real_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const REAL_ORD = {
-  eqlType: 'public.real_ord',
+  eqlType: 'public.eql_v3_real_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const DOUBLE = {
-  eqlType: 'public.double',
+  eqlType: 'public.eql_v3_double',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const DOUBLE_EQ = {
-  eqlType: 'public.double_eq',
+  eqlType: 'public.eql_v3_double_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DOUBLE_ORD_ORE = {
-  eqlType: 'public.double_ord_ore',
+  eqlType: 'public.eql_v3_double_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DOUBLE_ORD = {
-  eqlType: 'public.double_ord',
+  eqlType: 'public.eql_v3_double_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
@@ -317,7 +317,7 @@ export const DOUBLE_ORD = {
  *
  * - `unique` (the `hm` HMAC index) whenever equality is answered via HMAC:
  *   equality-only domains of ANY type, AND text order domains. Text equality is
- *   HMAC-based — the `public.text_ord` / `public.text_ord_ore` SQL domains
+ *   HMAC-based — the `public.eql_v3_text_ord` / `public.eql_v3_text_ord_ore` SQL domains
  *   REQUIRE `hm` in the stored ciphertext (their `eql_v3.eq_term` extracts it).
  * - `ore` for any order/range domain (the `ob` term). For numeric/date order
  *   domains `ob` also answers equality (via the SQL `=` operator), so those emit
@@ -417,7 +417,7 @@ const TEXT_SEARCH_DOMAIN = {
 } as const
 
 /**
- * Builder for a `public.text_search` column.
+ * Builder for a `public.eql_v3_text_search` column.
  *
  * The concrete type inherently enables equality + order/range + free-text
  * match — there are no capability-enabling or tuning methods. The match index

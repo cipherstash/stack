@@ -222,11 +222,11 @@ beforeAll(async () => {
     CREATE TABLE ${TABLE} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
-      email public.text_search,
-      nickname public.text_eq,
-      amount public.integer_ord,
-      created_at public.timestamp_ord,
-      active public.boolean,
+      email public.eql_v3_text_search,
+      nickname public.eql_v3_text_eq,
+      amount public.eql_v3_integer_ord,
+      created_at public.eql_v3_timestamp_ord,
+      active public.eql_v3_boolean,
       note TEXT,
       -- Plaintext passthrough columns. contains() on these is PostgREST's
       -- NATIVE containment (cs, i.e. the @> Postgres declares on array and
@@ -328,9 +328,9 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
 
   // `cs` → `@>` on the encrypted domain. This is the load-bearing assertion of
   // the whole suite: the bundle declares
-  //   CREATE OPERATOR @> (FUNCTION = eql_v3.contains, LEFTARG = public.text_search,
+  //   CREATE OPERATOR @> (FUNCTION = eql_v3.contains, LEFTARG = public.eql_v3_text_search,
   //                       RIGHTARG = jsonb)
-  // whose body is `match_term(a) @> match_term(b::public.text_search)` — a
+  // whose body is `match_term(a) @> match_term(b::public.eql_v3_text_search)` — a
   // smallint[] containment of the two BLOOM FILTERS. It is NOT the built-in
   // `jsonb @> jsonb`, which would compare whole envelopes and so could only ever
   // match on an identical ciphertext. The three tests below discriminate: a
@@ -373,7 +373,7 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
   })
 
-  // The reason `like` is gone: `~~` is not defined on public.text_search, so
+  // The reason `like` is gone: `~~` is not defined on public.eql_v3_text_search, so
   // had the adapter emitted it, PostgREST/Postgres would answer 42883. The
   // client-side guard turns that into an actionable error before the round-trip.
   it('refuses like() on an encrypted column rather than emitting an undefined operator', async () => {

@@ -191,9 +191,10 @@ export type ClientConfig = {
    * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
    * v3 data can coexist during a migration.
    *
-   * v3 limitation (protect-ffi 0.27): `encryptQuery` supports only JSON
-   * containment queries — scalar-index and selector queries throw
-   * `EQL_V3_QUERY_UNSUPPORTED` until a v3 scalar query wire shape exists.
+   * Under `3`, `encryptQuery` returns EQL v3 query operands (protect-ffi
+   * 0.29+): term-only scalar operands for the `eql_v3.query_<name>` twins,
+   * the `eql_v3.query_jsonb` containment needle, and bare selector-hash
+   * strings for JSON path queries.
    */
   eqlVersion?: 2 | 3
 }

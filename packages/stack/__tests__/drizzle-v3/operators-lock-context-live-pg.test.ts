@@ -66,7 +66,7 @@ const secretTable = pgTable(TABLE_NAME, {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
   rowKey: text('row_key').notNull(),
   testRunId: text('test_run_id').notNull(),
-  secret: makeEqlV3Column(V3_MATRIX['public.text_eq'].builder('secret')),
+  secret: makeEqlV3Column(V3_MATRIX['public.eql_v3_text_eq'].builder('secret')),
 } as never)
 
 const schema = extractEncryptionSchemaV3(secretTable)
@@ -173,7 +173,7 @@ beforeAll(async () => {
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,
-      secret public.text_eq NOT NULL
+      secret public.eql_v3_text_eq NOT NULL
     )
   `)
 

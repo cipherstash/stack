@@ -418,9 +418,12 @@ export class EQLInstaller {
  * - `excludeOperatorFamily: true` → no operator family variant
  * - default → standard install
  *
- * For EQL v3 the Supabase variant IS the no-operator-family variant (the v3
- * bundle's only superuser-requiring statements are its two operator-class
- * chunks), so both flags resolve to the same file.
+ * EQL v3 (eql-3.0.0+) ships ONE artifact for every target: its only
+ * superuser-requiring statements (the ore_block_256 operator class/family)
+ * self-skip on `insufficient_privilege`, and the bundle then disables the
+ * ORE-backed encrypted domains it cannot support (CIP-3468). So `supabase`
+ * and `excludeOperatorFamily` change nothing for v3 — the bundle adapts at
+ * install time instead of at file-selection time.
  */
 function resolveBundledFilename(options: {
   excludeOperatorFamily: boolean
@@ -428,8 +431,6 @@ function resolveBundledFilename(options: {
   eqlVersion?: EqlVersion
 }): string {
   if ((options.eqlVersion ?? 2) === 3) {
-    if (options.supabase || options.excludeOperatorFamily)
-      return 'cipherstash-encrypt-v3-supabase.sql'
     return 'cipherstash-encrypt-v3.sql'
   }
   if (options.supabase) return 'cipherstash-encrypt-supabase.sql'

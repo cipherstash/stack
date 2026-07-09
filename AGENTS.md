@@ -72,7 +72,7 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/eql/v3/drizzle`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
 - `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
   - `src/index.ts`: Public API (`Encryption`, exports)
   - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`

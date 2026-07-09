@@ -230,11 +230,14 @@ describe('EQLInstaller', () => {
         )
 
       expect(otherCalls).toHaveLength(2)
-      // The bundled SQL is the v3 Supabase variant: creates eql_v3, no
-      // operator classes/families (they need superuser).
+      // Since eql-3.0.0 there is ONE v3 bundle for every target: the
+      // operator-class statements run inside a DO block that self-skips on
+      // insufficient_privilege, and the bundle disables the ORE-backed
+      // domains when the opclass is absent (CIP-3468). The supabase install
+      // therefore executes the SAME artifact as the direct install.
       expect(otherCalls[0]).toContain('eql_v3')
-      expect(otherCalls[0]).not.toContain('CREATE OPERATOR CLASS')
-      expect(otherCalls[0]).not.toContain('CREATE OPERATOR FAMILY')
+      expect(otherCalls[0]).toContain('CREATE OPERATOR CLASS')
+      expect(otherCalls[0]).toContain('insufficient_privilege')
       // The grants are keyed to eql_v3, not eql_v2. The installed block must be
       // the SAME string the Supabase migration file embeds — the installer used
       // to rebuild it from the schema name alone, letting the two drift.

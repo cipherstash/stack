@@ -24,8 +24,8 @@ beforeAll(async () => {
   await sql.unsafe(`
     CREATE TABLE ${MODELLED} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      email public.text_search NOT NULL,
-      amount public.integer_ord NOT NULL,
+      email public.eql_v3_text_search NOT NULL,
+      amount public.eql_v3_integer_ord NOT NULL,
       note TEXT,
       meta jsonb
     )
@@ -38,8 +38,8 @@ beforeAll(async () => {
   await sql.unsafe(`
     CREATE TABLE ${UNMODELLED} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-      score public.integer_ord_ope NOT NULL,
-      doc public.json,
+      score public.eql_v3_integer_ord_ope NOT NULL,
+      doc public.eql_v3_json,
       own public.${USER_DOMAIN}
     )
   `)
@@ -61,8 +61,8 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
     const domains = Object.fromEntries(
       table!.columns.map((c) => [c.columnName, c.domainName]),
     )
-    expect(domains.email).toBe('text_search')
-    expect(domains.amount).toBe('integer_ord')
+    expect(domains.email).toBe('eql_v3_text_search')
+    expect(domains.amount).toBe('eql_v3_integer_ord')
     // Plaintext + plain jsonb → NULL (udt_name is jsonb for all of these).
     expect(domains.id).toBeNull()
     expect(domains.note).toBeNull()
@@ -78,8 +78,12 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
       'amount',
       'email',
     ])
-    expect(table!.columnBuilders.email.getEqlType()).toBe('public.text_search')
-    expect(table!.columnBuilders.amount.getEqlType()).toBe('public.integer_ord')
+    expect(table!.columnBuilders.email.getEqlType()).toBe(
+      'public.eql_v3_text_search',
+    )
+    expect(table!.columnBuilders.amount.getEqlType()).toBe(
+      'public.eql_v3_integer_ord',
+    )
     expect(allColumns.get(MODELLED)).toEqual([
       'id',
       'email',
@@ -103,7 +107,7 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
     expect(offenders).toBeDefined()
     expect(offenders?.map((c) => c.columnName).sort()).toEqual(['doc', 'score'])
     expect(offenders?.find((c) => c.columnName === 'score')?.domainName).toBe(
-      'integer_ord_ope',
+      'eql_v3_integer_ord_ope',
     )
   }, 30000)
 

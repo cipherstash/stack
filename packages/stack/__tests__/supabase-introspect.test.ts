@@ -6,13 +6,17 @@ describe('groupIntrospectionRows', () => {
   it('groups rows by table, preserving row order as column order', () => {
     const result = groupIntrospectionRows([
       { table_name: 'users', column_name: 'id', domain_name: null },
-      { table_name: 'users', column_name: 'email', domain_name: 'text_search' },
+      {
+        table_name: 'users',
+        column_name: 'email',
+        domain_name: 'eql_v3_text_search',
+      },
       { table_name: 'users', column_name: 'note', domain_name: null },
       { table_name: 'orders', column_name: 'id', domain_name: null },
       {
         table_name: 'orders',
         column_name: 'total',
-        domain_name: 'integer_ord',
+        domain_name: 'eql_v3_integer_ord',
       },
     ])
 
@@ -21,7 +25,7 @@ describe('groupIntrospectionRows', () => {
         tableName: 'users',
         columns: [
           { columnName: 'id', domainName: null },
-          { columnName: 'email', domainName: 'text_search' },
+          { columnName: 'email', domainName: 'eql_v3_text_search' },
           { columnName: 'note', domainName: null },
         ],
       },
@@ -29,7 +33,7 @@ describe('groupIntrospectionRows', () => {
         tableName: 'orders',
         columns: [
           { columnName: 'id', domainName: null },
-          { columnName: 'total', domainName: 'integer_ord' },
+          { columnName: 'total', domainName: 'eql_v3_integer_ord' },
         ],
       },
     ])
@@ -102,7 +106,7 @@ describe('introspect happy path', () => {
                   {
                     table_name: 'users',
                     column_name: 'email',
-                    domain_name: 'text_search',
+                    domain_name: 'eql_v3_text_search',
                   },
                 ],
           })
@@ -118,14 +122,14 @@ describe('introspect happy path', () => {
     // The registry IS the query parameter — it must be pushed into Postgres,
     // not re-derived client-side.
     const parameterised = queries.find((q) => q.params)!
-    expect(parameterised.params?.[0]).toContain('text_search')
+    expect(parameterised.params?.[0]).toContain('eql_v3_text_search')
 
     expect(tables).toEqual([
       {
         tableName: 'users',
         columns: [
           { columnName: 'id', domainName: null },
-          { columnName: 'email', domainName: 'text_search' },
+          { columnName: 'email', domainName: 'eql_v3_text_search' },
         ],
       },
     ])

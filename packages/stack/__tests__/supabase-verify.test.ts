@@ -8,8 +8,8 @@ const introspection: IntrospectionResult = [
     tableName: 'users',
     columns: [
       { columnName: 'id', domainName: null },
-      { columnName: 'email', domainName: 'text_search' },
-      { columnName: 'amount', domainName: 'integer_ord' },
+      { columnName: 'email', domainName: 'eql_v3_text_search' },
+      { columnName: 'amount', domainName: 'eql_v3_integer_ord' },
     ],
   },
 ]

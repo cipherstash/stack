@@ -96,8 +96,8 @@ export type V3FilterableKeys<
 
 /**
  * JS property names of a v3 table's columns that carry NO `freeTextSearch`
- * capability — i.e. every domain but `public.text_match` and
- * `public.text_search`. Excluded from `contains()`'s keys, so a token-containment
+ * capability — i.e. every domain but `public.eql_v3_text_match` and
+ * `public.eql_v3_text_search`. Excluded from `contains()`'s keys, so a token-containment
  * query against a column with no bloom-filter index is a type error rather than
  * the runtime capability throw in the v3 term encryption path.
  */
@@ -151,8 +151,8 @@ type PlaintextContainsValue<V> = V extends readonly unknown[]
  * The `contains()` operand for column `K`.
  *
  * A DECLARED encrypted column reaching `contains` necessarily carries a
- * `freeTextSearch` capability — only `public.text_match` and
- * `public.text_search` do, and both `cast_as` to `string` — so its operand is
+ * `freeTextSearch` capability — only `public.eql_v3_text_match` and
+ * `public.eql_v3_text_search` do, and both `cast_as` to `string` — so its operand is
  * the string to tokenize into a bloom-filter query term.
  *
  * Any other key is a plaintext passthrough, where `contains` means PostgREST's

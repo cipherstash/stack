@@ -85,7 +85,7 @@ describe('extractEncryptionSchemaV3', () => {
       [Symbol.for('drizzle:Name')]: 'users',
       createdOn: {
         name: 'created_on',
-        getSQLType: () => 'public.date',
+        getSQLType: () => 'public.eql_v3_date',
       },
     }
 
@@ -104,7 +104,7 @@ describe('extractEncryptionSchemaV3', () => {
   it('throws the table-name error before checking for encrypted columns', () => {
     expect(() =>
       extractEncryptionSchemaV3({
-        secret: { getSQLType: () => 'public.text_eq', name: 'secret' },
+        secret: { getSQLType: () => 'public.eql_v3_text_eq', name: 'secret' },
       } as never),
     ).toThrow('Unable to read table name from Drizzle table.')
   })

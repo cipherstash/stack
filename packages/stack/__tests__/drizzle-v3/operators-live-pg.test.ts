@@ -60,7 +60,7 @@ const matrixTable = pgTable(TABLE_NAME, {
   rowKey: text('row_key').notNull(),
   testRunId: text('test_run_id').notNull(),
   nullableTextEq: makeEqlV3Column(
-    V3_MATRIX['public.text_eq'].builder('nullable_text_eq'),
+    V3_MATRIX['public.eql_v3_text_eq'].builder('nullable_text_eq'),
   ),
   ...matrixColumns,
 })
@@ -237,7 +237,7 @@ beforeAll(async () => {
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,
-      nullable_text_eq public.text_eq,
+      nullable_text_eq public.eql_v3_text_eq,
       ${columnDefs}
     )
   `)
@@ -254,8 +254,8 @@ beforeAll(async () => {
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,
-      balance public.bigint_ord NOT NULL,
-      ledger public.bigint_eq NOT NULL
+      balance public.eql_v3_bigint_ord NOT NULL,
+      ledger public.eql_v3_bigint_eq NOT NULL
     )
   `)
 
@@ -666,8 +666,8 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   //   integer_ord >= 0           -> ROW_A (0) and ROW_C (2147483647), not ROW_B (-42)
   const disjointPredicates = () =>
     [
-      ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
-      ops.gte(matrixColumn('public.integer_ord'), 0),
+      ops.eq(matrixColumn('public.eql_v3_text_eq'), 'ada@example.com'),
+      ops.gte(matrixColumn('public.eql_v3_integer_ord'), 0),
     ] as const
 
   // Two assertions, one block, deliberately. The disjoint pair proves `and` is
@@ -688,8 +688,8 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
 
     const intersecting = await selectRowKeys(
       await ops.and(
-        ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
-        ops.lt(matrixColumn('public.integer_ord'), 0),
+        ops.eq(matrixColumn('public.eql_v3_text_eq'), 'ada@example.com'),
+        ops.lt(matrixColumn('public.eql_v3_integer_ord'), 0),
       ),
     )
     expect(intersecting).toEqual([ROW_B])
@@ -703,8 +703,8 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   it('or combines encrypted predicates', async () => {
     const rows = await selectRowKeys(
       await ops.or(
-        ops.eq(matrixColumn('public.text_eq'), ''),
-        ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
+        ops.eq(matrixColumn('public.eql_v3_text_eq'), ''),
+        ops.eq(matrixColumn('public.eql_v3_text_eq'), 'ada@example.com'),
       ),
     )
     expect(rows).toEqual([ROW_A, ROW_B])
@@ -712,7 +712,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
 
   it('not negates an encrypted predicate', async () => {
     const rows = await selectRowKeys(
-      ops.not(await ops.eq(matrixColumn('public.text_eq'), '')),
+      ops.not(await ops.eq(matrixColumn('public.eql_v3_text_eq'), '')),
     )
     expect(rows).toEqual([ROW_B, ROW_C])
   }, 30000)
@@ -769,18 +769,23 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
         ),
       )
       .where(
-        scoped(await ops.eq(matrixColumn('public.text_eq'), 'ada@example.com')),
+        scoped(
+          await ops.eq(
+            matrixColumn('public.eql_v3_text_eq'),
+            'ada@example.com',
+          ),
+        ),
       )) as SelectRow[]
     expect(rows.map((row) => row.rowKey)).toEqual([ROW_B])
   }, 30000)
 
   it('paginates encrypted ordering results with limit and offset', async () => {
-    const spec = V3_MATRIX['public.integer_ord']
+    const spec = V3_MATRIX['public.eql_v3_integer_ord']
     const rows = (await db
       .select({ rowKey: matrixTable.rowKey })
       .from(matrixTable)
       .where(drizzleEq(matrixTable.testRunId, RUN))
-      .orderBy(ops.asc(matrixColumn('public.integer_ord')))
+      .orderBy(ops.asc(matrixColumn('public.eql_v3_integer_ord')))
       .limit(1)
       .offset(1)) as SelectRow[]
     expect(rows.map((row) => row.rowKey)).toEqual(
@@ -797,7 +802,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   // wrong rows here.
   it('inArray encrypts a >4-value list in one bulk crossing', async () => {
     const rows = await selectRowKeys(
-      await ops.inArray(matrixColumn('public.text_eq'), [
+      await ops.inArray(matrixColumn('public.eql_v3_text_eq'), [
         'ada@example.com',
         '',
         'nobody-1@example.com',
@@ -813,7 +818,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
 
   it('notInArray encrypts a >4-value list in one bulk crossing', async () => {
     const rows = await selectRowKeys(
-      await ops.notInArray(matrixColumn('public.text_eq'), [
+      await ops.notInArray(matrixColumn('public.eql_v3_text_eq'), [
         '',
         'nobody-1@example.com',
         'nobody-2@example.com',

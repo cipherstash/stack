@@ -44,12 +44,16 @@ const nullableTable = pgTable(TABLE_NAME, {
   rowKey: text('row_key').notNull(),
   testRunId: text('test_run_id').notNull(),
   storageText: makeEqlV3Column(
-    V3_MATRIX['public.text'].builder('storage_text'),
+    V3_MATRIX['public.eql_v3_text'].builder('storage_text'),
   ),
-  eqText: makeEqlV3Column(V3_MATRIX['public.text_eq'].builder('eq_text')),
-  ordInt: makeEqlV3Column(V3_MATRIX['public.integer_ord'].builder('ord_int')),
+  eqText: makeEqlV3Column(
+    V3_MATRIX['public.eql_v3_text_eq'].builder('eq_text'),
+  ),
+  ordInt: makeEqlV3Column(
+    V3_MATRIX['public.eql_v3_integer_ord'].builder('ord_int'),
+  ),
   matchText: makeEqlV3Column(
-    V3_MATRIX['public.text_match'].builder('match_text'),
+    V3_MATRIX['public.eql_v3_text_match'].builder('match_text'),
   ),
 } as never)
 
@@ -58,20 +62,25 @@ const TIERS = [
   {
     key: 'storageText',
     db: 'storage_text',
-    domain: 'public.text',
+    domain: 'public.eql_v3_text',
     sample: 'stored-secret',
   },
   {
     key: 'eqText',
     db: 'eq_text',
-    domain: 'public.text_eq',
+    domain: 'public.eql_v3_text_eq',
     sample: 'ada@example.com',
   },
-  { key: 'ordInt', db: 'ord_int', domain: 'public.integer_ord', sample: 42 },
+  {
+    key: 'ordInt',
+    db: 'ord_int',
+    domain: 'public.eql_v3_integer_ord',
+    sample: 42,
+  },
   {
     key: 'matchText',
     db: 'match_text',
-    domain: 'public.text_match',
+    domain: 'public.eql_v3_text_match',
     sample: 'ada lovelace',
   },
 ] as const

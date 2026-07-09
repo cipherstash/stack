@@ -99,11 +99,12 @@ function assertNoPropertyDbNameCollision(
  *   shape `encryptQuery` produces. Those domains are simply unreachable from
  *   here. PostgREST has no syntax to cast a filter VALUE, and an uncast literal
  *   is ambiguous between the `_query` and `jsonb` `@>`/`=` overloads (42725 —
- *   the bundle says so itself, see `cipherstash-encrypt-v3-supabase.sql`, the
+ *   the bundle says so itself, see `cipherstash-encrypt-v3.sql`, the
  *   `_query_types.sql` note). The reachable overload is the `jsonb` one, whose
  *   body coerces its operand to the STORAGE domain, which does require `c`.
- *   Independently, protect-ffi 0.28 throws `EQL_V3_QUERY_UNSUPPORTED` for any
- *   v3 scalar `encryptQuery`, so a narrowed term cannot be produced today.
+ *   (protect-ffi 0.29 can mint narrowed `eql_v3.query_<name>` operands via
+ *   `encryptQuery`, but with no way to cast a PostgREST filter value they
+ *   stay unreachable from this adapter.)
  *
  *   The full envelope satisfies the storage-domain CHECK by construction, and
  *   the operators extract the term they need (`eq_term`/`ord_term`/
@@ -254,7 +255,7 @@ export class EncryptedQueryBuilderV3Impl<
    * which capability to demand of the column. Getting it wrong therefore
    * produces a wrong accept/reject, not a wrong ciphertext: the base class's
    * `'equality'` default rejects `.filter('bio', 'cs', …)` on a
-   * `public.text_match` column, the one query that column can answer.
+   * `public.eql_v3_text_match` column, the one query that column can answer.
    *
    * Unknown operators throw rather than silently defaulting to equality, which
    * would encrypt a term the column may not even be able to compare.

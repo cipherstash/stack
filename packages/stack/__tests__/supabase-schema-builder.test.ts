@@ -12,8 +12,8 @@ const introspection: IntrospectionResult = [
     tableName: 'users',
     columns: [
       { columnName: 'id', domainName: null },
-      { columnName: 'email', domainName: 'text_search' },
-      { columnName: 'amount', domainName: 'integer_ord' },
+      { columnName: 'email', domainName: 'eql_v3_text_search' },
+      { columnName: 'amount', domainName: 'eql_v3_integer_ord' },
       { columnName: 'note', domainName: null },
       { columnName: 'weird', domainName: 'not_a_domain' }, // unknown → plaintext
     ],
@@ -81,8 +81,8 @@ describe('synthesizeTables', () => {
     {
       tableName: 'users',
       columns: [
-        { columnName: '__proto__', domainName: 'text_search' },
-        { columnName: 'email', domainName: 'text_search' },
+        { columnName: '__proto__', domainName: 'eql_v3_text_search' },
+        { columnName: 'email', domainName: 'eql_v3_text_search' },
       ],
     },
   ]
@@ -117,8 +117,8 @@ describe('mergeDeclaredTables', () => {
       {
         tableName: 'users',
         columns: [
-          { columnName: '__proto__', domainName: 'text_search' },
-          { columnName: 'email', domainName: 'text_search' },
+          { columnName: '__proto__', domainName: 'eql_v3_text_search' },
+          { columnName: 'email', domainName: 'eql_v3_text_search' },
         ],
       },
     ]
@@ -160,7 +160,7 @@ describe('mergeDeclaredTables', () => {
         tableName: 'events',
         columns: [
           { columnName: 'id', domainName: null },
-          { columnName: 'created_on', domainName: 'timestamp_ord' },
+          { columnName: 'created_on', domainName: 'eql_v3_timestamp_ord' },
         ],
       },
     ]
@@ -211,13 +211,17 @@ describe('groupUnmodelledRows', () => {
         {
           table_name: 'metrics',
           column_name: 'score',
-          domain_name: 'integer_ord_ope',
+          domain_name: 'eql_v3_integer_ord_ope',
         },
-        { table_name: 'audit', column_name: 'payload', domain_name: 'json' },
+        {
+          table_name: 'audit',
+          column_name: 'payload',
+          domain_name: 'eql_v3_json',
+        },
         {
           table_name: 'metrics',
           column_name: 'bucket',
-          domain_name: 'text_ord_ope',
+          domain_name: 'eql_v3_text_ord_ope',
         },
       ]),
     ).toEqual(
@@ -225,11 +229,11 @@ describe('groupUnmodelledRows', () => {
         [
           'metrics',
           [
-            { columnName: 'score', domainName: 'integer_ord_ope' },
-            { columnName: 'bucket', domainName: 'text_ord_ope' },
+            { columnName: 'score', domainName: 'eql_v3_integer_ord_ope' },
+            { columnName: 'bucket', domainName: 'eql_v3_text_ord_ope' },
           ],
         ],
-        ['audit', [{ columnName: 'payload', domainName: 'json' }]],
+        ['audit', [{ columnName: 'payload', domainName: 'eql_v3_json' }]],
       ]),
     )
   })

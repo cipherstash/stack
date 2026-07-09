@@ -89,32 +89,42 @@ describe('eql_v3 text_match column', () => {
 
 describe('eql_v3 concrete type names', () => {
   it('preserves public factory names while exposing concrete Postgres domain names', () => {
-    expect(types.Integer('n').getEqlType()).toBe('public.integer')
-    expect(types.IntegerEq('n').getEqlType()).toBe('public.integer_eq')
-    expect(types.IntegerOrdOre('n').getEqlType()).toBe('public.integer_ord_ore')
-    expect(types.IntegerOrd('n').getEqlType()).toBe('public.integer_ord')
-
-    expect(types.Smallint('n').getEqlType()).toBe('public.smallint')
-    expect(types.SmallintEq('n').getEqlType()).toBe('public.smallint_eq')
-    expect(types.SmallintOrdOre('n').getEqlType()).toBe(
-      'public.smallint_ord_ore',
+    expect(types.Integer('n').getEqlType()).toBe('public.eql_v3_integer')
+    expect(types.IntegerEq('n').getEqlType()).toBe('public.eql_v3_integer_eq')
+    expect(types.IntegerOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_integer_ord_ore',
     )
-    expect(types.SmallintOrd('n').getEqlType()).toBe('public.smallint_ord')
+    expect(types.IntegerOrd('n').getEqlType()).toBe('public.eql_v3_integer_ord')
 
-    expect(types.Bigint('n').getEqlType()).toBe('public.bigint')
-    expect(types.BigintEq('n').getEqlType()).toBe('public.bigint_eq')
-    expect(types.BigintOrdOre('n').getEqlType()).toBe('public.bigint_ord_ore')
-    expect(types.BigintOrd('n').getEqlType()).toBe('public.bigint_ord')
+    expect(types.Smallint('n').getEqlType()).toBe('public.eql_v3_smallint')
+    expect(types.SmallintEq('n').getEqlType()).toBe('public.eql_v3_smallint_eq')
+    expect(types.SmallintOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_smallint_ord_ore',
+    )
+    expect(types.SmallintOrd('n').getEqlType()).toBe(
+      'public.eql_v3_smallint_ord',
+    )
 
-    expect(types.Boolean('b').getEqlType()).toBe('public.boolean')
-    expect(types.Real('n').getEqlType()).toBe('public.real')
-    expect(types.RealEq('n').getEqlType()).toBe('public.real_eq')
-    expect(types.RealOrdOre('n').getEqlType()).toBe('public.real_ord_ore')
-    expect(types.RealOrd('n').getEqlType()).toBe('public.real_ord')
-    expect(types.Double('n').getEqlType()).toBe('public.double')
-    expect(types.DoubleEq('n').getEqlType()).toBe('public.double_eq')
-    expect(types.DoubleOrdOre('n').getEqlType()).toBe('public.double_ord_ore')
-    expect(types.DoubleOrd('n').getEqlType()).toBe('public.double_ord')
+    expect(types.Bigint('n').getEqlType()).toBe('public.eql_v3_bigint')
+    expect(types.BigintEq('n').getEqlType()).toBe('public.eql_v3_bigint_eq')
+    expect(types.BigintOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_bigint_ord_ore',
+    )
+    expect(types.BigintOrd('n').getEqlType()).toBe('public.eql_v3_bigint_ord')
+
+    expect(types.Boolean('b').getEqlType()).toBe('public.eql_v3_boolean')
+    expect(types.Real('n').getEqlType()).toBe('public.eql_v3_real')
+    expect(types.RealEq('n').getEqlType()).toBe('public.eql_v3_real_eq')
+    expect(types.RealOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_real_ord_ore',
+    )
+    expect(types.RealOrd('n').getEqlType()).toBe('public.eql_v3_real_ord')
+    expect(types.Double('n').getEqlType()).toBe('public.eql_v3_double')
+    expect(types.DoubleEq('n').getEqlType()).toBe('public.eql_v3_double_eq')
+    expect(types.DoubleOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_double_ord_ore',
+    )
+    expect(types.DoubleOrd('n').getEqlType()).toBe('public.eql_v3_double_ord')
   })
 })
 
@@ -390,12 +400,12 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
 })
 
 describe('eql_v3 text order domains carry the hm (unique) index (regression)', () => {
-  // The `public.text_ord` and `public.text_ord_ore` SQL domains require BOTH
+  // The `public.eql_v3_text_ord` and `public.eql_v3_text_ord_ore` SQL domains require BOTH
   // `hm` (HMAC) and `ob` (ORE) in the stored ciphertext: text equality is
   // HMAC-based (their `eql_v3.eq_term` extracts `hm`), unlike numeric/date order
   // domains which answer equality via `ob` and need only ORE. So text order
   // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
-  // fails with `value for domain public.text_ord_ore violates check constraint`.
+  // fails with `value for domain public.eql_v3_text_ord_ore violates check constraint`.
   it.each([
     ['text_ord_ore', types.TextOrdOre],
     ['text_ord', types.TextOrd],

@@ -644,10 +644,10 @@ describe('createEncryptionOperatorsV3 - gating errors', () => {
     // Same diagnostic shape as the ore/match gates: operator, capability,
     // column, and the domain that cannot answer it.
     await expect(ops.eq(users.flag, true)).rejects.toThrow(
-      'Operator "eq" requires equality on column "flag" (domain public.boolean does not support it).',
+      'Operator "eq" requires equality on column "flag" (domain public.eql_v3_boolean does not support it).',
     )
     await expect(ops.gt(users.nickname, 'ada')).rejects.toThrow(
-      'Operator "gt" requires order/range on column "nickname" (domain public.text_eq does not support it).',
+      'Operator "gt" requires order/range on column "nickname" (domain public.eql_v3_text_eq does not support it).',
     )
   })
 

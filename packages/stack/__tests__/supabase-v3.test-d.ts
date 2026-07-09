@@ -69,7 +69,7 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
       schemas: { users },
     })
     const builder = supabase.from('users')
-    // @ts-expect-error — active is public.boolean (storage only)
+    // @ts-expect-error — active is public.eql_v3_boolean (storage only)
     builder.eq('active', true)
     // @ts-expect-error — you cannot IS TRUE-compare a ciphertext to a plaintext
     builder.is('active', true)
@@ -85,11 +85,11 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
       schemas: { users },
     })
     const builder = supabase.from('users')
-    // @ts-expect-error — email is public.text_search: a jsonb ciphertext
+    // @ts-expect-error — email is public.eql_v3_text_search: a jsonb ciphertext
     builder.is('email', true)
-    // @ts-expect-error — nickname is public.text_eq: a jsonb ciphertext
+    // @ts-expect-error — nickname is public.eql_v3_text_eq: a jsonb ciphertext
     builder.is('nickname', false)
-    // @ts-expect-error — amount is public.integer_ord: a jsonb ciphertext
+    // @ts-expect-error — amount is public.eql_v3_integer_ord: a jsonb ciphertext
     builder.is('amount', true)
   })
 
@@ -117,7 +117,7 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.order('createdAt')
     // @ts-expect-error — integer_ord: ORDER BY sorts ciphertext
     builder.order('amount', { ascending: false })
-    // @ts-expect-error — active is public.boolean: storage only
+    // @ts-expect-error — active is public.eql_v3_boolean: storage only
     builder.order('active')
   })
 
@@ -135,15 +135,15 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
       schemas: { users },
     })
     const builder = supabase.from('users')
-    // public.text_search — equality + orderAndRange + freeTextSearch
+    // public.eql_v3_text_search — equality + orderAndRange + freeTextSearch
     builder.contains('email', 'ada')
-    // public.text_match — freeTextSearch only
+    // public.eql_v3_text_match — freeTextSearch only
     builder.contains('bio', 'ada')
-    // @ts-expect-error — nickname is public.text_eq: no match index
+    // @ts-expect-error — nickname is public.eql_v3_text_eq: no match index
     builder.contains('nickname', 'ada')
-    // @ts-expect-error — amount is public.integer_ord: no match index
+    // @ts-expect-error — amount is public.eql_v3_integer_ord: no match index
     builder.contains('amount', 'ada')
-    // @ts-expect-error — active is public.boolean (storage only)
+    // @ts-expect-error — active is public.eql_v3_boolean (storage only)
     builder.contains('active', 'ada')
   })
 
@@ -160,9 +160,9 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
 
   it('still pins an encrypted text-search operand to string', () => {
     mixedBuilder.contains('email', 'ada')
-    // @ts-expect-error — email is public.text_search: the match term is a string
+    // @ts-expect-error — email is public.eql_v3_text_search: the match term is a string
     mixedBuilder.contains('email', ['ada'])
-    // @ts-expect-error — bio is public.text_match: the match term is a string
+    // @ts-expect-error — bio is public.eql_v3_text_match: the match term is a string
     mixedBuilder.contains('bio', { a: 1 })
   })
 
@@ -173,9 +173,9 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
   // `cast_as: text` column.
   it('pins a mixed union key to the encrypted string operand', () => {
     mixedBuilder.contains(mixedKey, 'ada')
-    // @ts-expect-error — the union includes email (public.text_search)
+    // @ts-expect-error — the union includes email (public.eql_v3_text_search)
     mixedBuilder.contains(mixedKey, ['vip'])
-    // @ts-expect-error — the union includes email (public.text_search)
+    // @ts-expect-error — the union includes email (public.eql_v3_text_search)
     mixedBuilder.contains(mixedKey, { plan: 'pro' })
   })
 

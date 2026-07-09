@@ -5,8 +5,8 @@ const EQL_V3_ADVISORY_LOCK_ID = 3_733_003
 
 // Staleness is decided by asking the database which EQL release it is running
 // and comparing that to the release the pinned @cipherstash/eql ships. Earlier
-// revisions probed for a sentinel type (public.text_search, then
-// public.timestamp) that was hand-picked to exist only in the newest bundle.
+// revisions probed for a sentinel type (public.eql_v3_text_search, then
+// public.eql_v3_timestamp) that was hand-picked to exist only in the newest bundle.
 // Every such sentinel decays: the next bundle keeps the type, the check starts
 // reporting "current" against a stale install, and the suite silently exercises
 // the wrong SQL. eql_v3.version() carries the release identity itself, so this
