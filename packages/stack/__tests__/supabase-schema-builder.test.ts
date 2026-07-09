@@ -70,6 +70,41 @@ describe('synthesizeTables', () => {
     expect(Object.keys(tables.get('weird')!.columnBuilders)).toEqual([])
     expect(allColumns.get('weird')).toEqual(['a', 'b', 'c'])
   })
+
+  // A DB column may legally be named `__proto__`; `encryptedTable()` rejects
+  // such names as JS properties, but nothing constrains the database. On a plain
+  // object literal, `builders['__proto__'] = builder` reparents the object
+  // instead of adding an own key, so the column disappears — it would then be
+  // treated as a plaintext passthrough and its ciphertext returned undecrypted
+  // (`decryptModel` skips columns absent from the encrypt config).
+  const protoColumn: IntrospectionResult = [
+    {
+      tableName: 'users',
+      columns: [
+        { columnName: '__proto__', domainName: 'text_search' },
+        { columnName: 'email', domainName: 'text_search' },
+      ],
+    },
+  ]
+
+  it('keeps a column literally named __proto__ as an own builder key', () => {
+    const { tables } = synthesizeTables(protoColumn)
+    const builders = tables.get('users')!.columnBuilders
+
+    expect(Object.hasOwn(builders, '__proto__')).toBe(true)
+    expect(Object.keys(builders).sort()).toEqual(['__proto__', 'email'])
+  })
+
+  it('registers a __proto__ column in the encrypt config, not on the prototype', () => {
+    const { columns } = synthesizeTables(protoColumn)
+      .tables.get('users')!
+      .build()
+
+    // The load-bearing assertion: absent from the config, the column is a
+    // plaintext passthrough and reads return raw ciphertext.
+    expect(Object.hasOwn(columns, '__proto__')).toBe(true)
+    expect(Object.keys(columns).sort()).toEqual(['__proto__', 'email'])
+  })
 })
 
 describe('mergeDeclaredTables', () => {

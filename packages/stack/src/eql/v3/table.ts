@@ -25,7 +25,14 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
   ) {}
 
   build(): TableDefinition {
-    const builtColumns: Record<string, ColumnSchema> = {}
+    // NULL PROTOTYPE — load-bearing, for the same reason as
+    // {@link buildColumnKeyMap}. Keys are DB column names, which the database
+    // supplies. On a plain object literal, `builtColumns['__proto__'] = schema`
+    // REPARENTS the object rather than adding an own key, so the column never
+    // reaches the encrypt config — `decryptModel` then skips it and its
+    // ciphertext is returned undecrypted. `encryptedTable()` rejects such names
+    // as JS properties, but nothing constrains a table's DB column names.
+    const builtColumns: Record<string, ColumnSchema> = Object.create(null)
     for (const builder of Object.values(this.columnBuilders)) {
       // Key by the column's DB name (`getName()`), NOT the JS property name.
       // `encrypt`/`decrypt` look columns up in the config by `column.getName()`,
