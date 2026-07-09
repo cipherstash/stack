@@ -155,7 +155,7 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
     })
     runtime = (await db.connect({ url })) as { close(): Promise<void> }
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
     counting.counts.reset()
   })
 
@@ -166,7 +166,7 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('executes a four-column WHERE + ordered read end-to-end', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       and(
         u.email.cipherstashIlike('%@example.com'),
         u.salary.cipherstashGt(75_000),
@@ -185,7 +185,7 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
 
   it('groups search-term encrypts: one bulkEncrypt per (table, column)', async () => {
     counting.counts.reset()
-    await db.orm.User.where((u) =>
+    await db.orm.public.User.where((u) =>
       and(
         u.email.cipherstashIlike('%@example.com'),
         u.salary.cipherstashGt(75_000),
@@ -204,7 +204,7 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
 
   it('groups result decrypts: one bulkDecrypt per (table, column)', async () => {
     counting.counts.reset()
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     await decryptAll(rows)
     // Six encrypted columns × N rows ⇒ exactly 6 `bulkDecrypt` calls
     // (one per `(users, <column>)` group).

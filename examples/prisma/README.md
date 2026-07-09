@@ -33,7 +33,7 @@ docker compose up -d
 pnpm install
 pnpm emit                  # PSL → contract.{json,d.ts}
 pnpm migration:plan --name initial
-pnpm migration:apply       # installs EQL bundle + your app schema in one sweep
+pnpm migration:apply       # installs EQL bundle + your app schema in one sweep (runs `prisma-next migrate`)
 pnpm start                 # runs the demo
 ```
 

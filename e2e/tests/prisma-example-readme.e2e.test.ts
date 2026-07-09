@@ -62,10 +62,15 @@ function runStep(commandLine: string, timeoutMs: number): StepResult {
   }
 }
 
+// `.env` is included so a developer's real credentials file survives the
+// walkthrough: the README's `cp .env.example .env` step overwrites it, and
+// without the snapshot the teardown would delete it outright. The snapshot
+// captures it before the run and the restore puts the original back.
 const TRANSIENT_PATHS = [
   'migrations/app',
   'src/prisma/contract.json',
   'src/prisma/contract.d.ts',
+  '.env',
 ] as const
 
 async function snapshotTransientOutputs(): Promise<string> {
@@ -170,10 +175,11 @@ describe.skipIf(!authConfigured)(
     afterAll(async () => {
       // Teardown the bundled Postgres container regardless of outcome.
       runStep('docker compose down -v', 60_000)
-      // Restore the transient outputs from snapshot so the working tree is clean.
+      // Restore the transient outputs from snapshot so the working tree is
+      // clean. `.env` is part of the snapshot: the walkthrough's
+      // `cp .env.example .env` overwrote it, and the restore brings back the
+      // developer's original (or removes the copy when none existed before).
       await restoreTransientOutputs(snapDir)
-      // Remove the .env we copied in the walkthrough (not tracked anyway).
-      rmSync(join(EXAMPLE_DIR, '.env'), { force: true })
     }, 120_000)
 
     // Per-step exit-zero assertion, registered once per non-skipped README line.

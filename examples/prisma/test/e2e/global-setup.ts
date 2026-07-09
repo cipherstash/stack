@@ -113,7 +113,7 @@ export default async function setup(): Promise<() => Promise<void>> {
 
   const apply = spawnSync(
     'pnpm',
-    ['exec', 'prisma-next', 'migration', 'apply'],
+    ['exec', 'prisma-next', 'migrate', '--yes'],
     {
       cwd: exampleDir,
       stdio: 'pipe',
@@ -123,7 +123,7 @@ export default async function setup(): Promise<() => Promise<void>> {
   )
   if (apply.error || apply.signal || apply.status !== 0) {
     throw new Error(
-      describeSpawnFailure('`prisma-next migration apply`', apply),
+      describeSpawnFailure('`prisma-next migrate`', apply),
     )
   }
 
