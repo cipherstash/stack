@@ -110,6 +110,11 @@ const tokenizerSchema = z
 
 const oreIndexOptsSchema = z.object({})
 
+// The OPE (CLLW-OPE, `op` term) ordering index — protect-ffi 0.29+. Emitted by
+// the EQL v3 `_ord` domains; the `_ord_ore` domains keep `ore` (block-ORE,
+// `ob`). v2 columns never emit it.
+const opeIndexOptsSchema = z.object({})
+
 const uniqueIndexOptsSchema = z.object({
   token_filters: z.array(tokenFilterSchema).default([]).optional(),
 })
@@ -141,6 +146,7 @@ const steVecIndexOptsSchema = z.object({
 const indexesSchema = z
   .object({
     ore: oreIndexOptsSchema.optional(),
+    ope: opeIndexOptsSchema.optional(),
     unique: uniqueIndexOptsSchema.optional(),
     match: matchIndexOptsSchema.optional(),
     ste_vec: steVecIndexOptsSchema.optional(),
@@ -181,6 +187,7 @@ export type MatchIndexOpts = z.infer<typeof matchIndexOptsSchema>
 export type SteVecIndexOpts = z.infer<typeof steVecIndexOptsSchema>
 export type UniqueIndexOpts = z.infer<typeof uniqueIndexOptsSchema>
 export type OreIndexOpts = z.infer<typeof oreIndexOptsSchema>
+export type OpeIndexOpts = z.infer<typeof opeIndexOptsSchema>
 export type ColumnSchema = z.infer<typeof columnSchema>
 
 /**

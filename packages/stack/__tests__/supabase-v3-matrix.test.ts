@@ -40,14 +40,19 @@ const matrixEntries = typedEntries(V3_MATRIX)
 
 // Tiering, mirroring `drizzle-v3/operators-live-pg.test.ts`.
 const equalityDomains = matrixEntries.filter(
-  ([, spec]) => spec.indexes.unique || spec.indexes.ore,
+  ([, spec]) => spec.indexes.unique || spec.indexes.ore || spec.indexes.ope,
 )
-const orderDomains = matrixEntries.filter(([, spec]) => spec.indexes.ore)
+const orderDomains = matrixEntries.filter(
+  ([, spec]) => spec.indexes.ore || spec.indexes.ope,
+)
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
 /** No index at all — the `public.eql_v3_boolean`/`public.eql_v3_text`/… storage-only domains. */
 const storageOnlyDomains = matrixEntries.filter(
   ([, spec]) =>
-    !spec.indexes.unique && !spec.indexes.ore && !spec.indexes.match,
+    !spec.indexes.unique &&
+    !spec.indexes.ore &&
+    !spec.indexes.ope &&
+    !spec.indexes.match,
 )
 
 /**

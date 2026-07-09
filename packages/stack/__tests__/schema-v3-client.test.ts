@@ -38,7 +38,7 @@ describeLive('eql_v3 client integration', () => {
 
     expect(encrypted).toMatchObject({
       i: { t: 'schema_v3_client_users', c: 'email' },
-      v: 2,
+      v: 3,
     })
     expect(encrypted).toHaveProperty('c')
     expect(encrypted).toHaveProperty('hm')
@@ -59,7 +59,7 @@ describeLive('eql_v3 client integration', () => {
 
     expect(queryTerm).toMatchObject({
       i: { t: 'schema_v3_client_users', c: 'email' },
-      v: 2,
+      v: 3,
     })
     expect(queryTerm).toHaveProperty('hm')
     expect(queryTerm).not.toHaveProperty('c')
@@ -97,7 +97,7 @@ describeLive('eql_v3 client integration', () => {
     )
     expect(encryptedText).toMatchObject({
       i: { t: 'schema_v3_client_users', c: 'notes' },
-      v: 2,
+      v: 3,
     })
     expect(encryptedText).toHaveProperty('c')
     expect(encryptedText).not.toHaveProperty('hm')

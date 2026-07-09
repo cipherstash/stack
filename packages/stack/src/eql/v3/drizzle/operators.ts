@@ -205,7 +205,7 @@ export function createEncryptionOperatorsV3(
    */
   function requireIndex(
     ctx: ColumnContext,
-    indexes: readonly ('unique' | 'ore' | 'match')[],
+    indexes: readonly ('unique' | 'ore' | 'ope' | 'match')[],
     operator: string,
     capability: string,
   ): void {
@@ -217,8 +217,12 @@ export function createEncryptionOperatorsV3(
     }
   }
 
-  const EQUALITY_INDEXES = ['unique', 'ore'] as const
-  const ORE_INDEXES = ['ore'] as const
+  // Ordering flavour is pinned by the column's domain (eql-3.0.0): `_ord`
+  // domains carry `ope` (`op` CLLW-OPE term), `_ord_ore` domains carry `ore`
+  // (`ob` block-ORE term). Either satisfies the order/range operators, and an
+  // order-capable column answers equality via its ordering term too.
+  const EQUALITY_INDEXES = ['unique', 'ore', 'ope'] as const
+  const ORDERING_INDEXES = ['ore', 'ope'] as const
   const MATCH_INDEXES = ['match'] as const
 
   function applyOperationOptions(
@@ -371,7 +375,7 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, op)
-    requireIndex(ctx, ORE_INDEXES, op, 'order/range')
+    requireIndex(ctx, ORDERING_INDEXES, op, 'order/range')
     const enc = await encryptOperand(ctx, right, op, opts)
     return v3Dialect.comparison(op, colSql(left), enc)
   }
@@ -385,7 +389,7 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
-    requireIndex(ctx, ORE_INDEXES, operator, 'order/range')
+    requireIndex(ctx, ORDERING_INDEXES, operator, 'order/range')
     // Independent operands — encrypt concurrently rather than paying two
     // sequential round-trips to the crypto backend.
     const [encMin, encMax] = await Promise.all([
@@ -440,7 +444,7 @@ export function createEncryptionOperatorsV3(
 
   function orderTerm(column: SQLWrapper, operator: string): SQL {
     const ctx = resolveContext(column, operator)
-    requireIndex(ctx, ORE_INDEXES, operator, 'order/range')
+    requireIndex(ctx, ORDERING_INDEXES, operator, 'order/range')
     return v3Dialect.orderBy(colSql(column))
   }
 

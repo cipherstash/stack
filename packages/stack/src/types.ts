@@ -435,7 +435,7 @@ export type QueryTypeName =
   | 'searchableJson'
 
 /** @internal */
-export type FfiIndexTypeName = 'ore' | 'match' | 'unique' | 'ste_vec'
+export type FfiIndexTypeName = 'ore' | 'ope' | 'match' | 'unique' | 'ste_vec'
 
 export const queryTypes = {
   orderAndRange: 'orderAndRange',
@@ -448,6 +448,8 @@ export const queryTypes = {
 
 /** @internal */
 export const queryTypeToFfi: Record<QueryTypeName, FfiIndexTypeName> = {
+  // v3 `_ord` domains carry `ope` instead — `resolveIndexType` swaps this
+  // static default for the ordering index the column actually configures.
   orderAndRange: 'ore',
   freeTextSearch: 'match',
   equality: 'unique',

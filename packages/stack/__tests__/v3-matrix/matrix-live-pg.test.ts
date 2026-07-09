@@ -112,23 +112,30 @@ const table = encryptedTable(TABLE_NAME, columns as never)
  * its indexes support:
  *
  * - eq  (`hm`): every domain carrying a `unique` index → `eq_term`/`hmac_256`.
- * - ord (`ob`): every domain carrying an `ore` index   → `ord_term`/`ore_block_256`.
+ * - ord: every domain carrying an ordering index — `ore` (`ob` term) or `ope`
+ *   (`op` term, the eql-3.0.0 flavour of the plain `_ord` domains) →
+ *   `ord_term`.
  * - match (`bf`): every domain carrying a `match` index → `match_term`/`bloom_filter`.
  * - storage: a domain with NO index — only the ciphertext round-trip proof.
  *
- * Text order domains (`text_ord`/`text_ord_ore`) carry BOTH `unique` and `ore`,
- * so they appear in `eqDomains` AND `ordDomains` and run both proofs — a
- * wrong-valued `ob` would otherwise slip through an eq-only check (text equality
- * is HMAC-based, so `queryType:'equality'` on them resolves to `hm`, never `ob`;
- * their ord term is built with `queryType:'orderAndRange'` below). `text_search`
- * also carries all three indexes but is deliberately exercised by the match
- * proof ALONE — its distinguishing, richest capability and the one canonical
- * example per tier — so it is excluded from the eq/ord lists via `!match`.
+ * Text order domains (`text_ord`/`text_ord_ore`) carry BOTH `unique` and an
+ * ordering index, so they appear in `eqDomains` AND `ordDomains` and run both
+ * proofs — a wrong-valued ordering term would otherwise slip through an
+ * eq-only check (text equality is HMAC-based, so `queryType:'equality'` on
+ * them resolves to `hm`, never the ordering term; their ord term is built with
+ * `queryType:'orderAndRange'` below). `text_search` also carries all three
+ * indexes but is deliberately exercised by the match proof ALONE — its
+ * distinguishing, richest capability and the one canonical example per tier —
+ * so it is excluded from the eq/ord lists via `!match`.
  */
 const hasIndex = (
   indexes: DomainSpec['indexes'],
-  key: 'unique' | 'ore' | 'match',
+  key: 'unique' | 'ore' | 'ope' | 'match',
 ): boolean => Boolean(indexes?.[key])
+
+/** Either ordering flavour — `ore` (`ob`) or `ope` (`op`). */
+const hasOrdering = (indexes: DomainSpec['indexes']): boolean =>
+  hasIndex(indexes, 'ore') || hasIndex(indexes, 'ope')
 
 const matchDomains = domains.filter(([, spec]) =>
   hasIndex(spec.indexes, 'match'),
@@ -138,13 +145,12 @@ const eqDomains = domains.filter(
     hasIndex(spec.indexes, 'unique') && !hasIndex(spec.indexes, 'match'),
 )
 const ordDomains = domains.filter(
-  ([, spec]) =>
-    hasIndex(spec.indexes, 'ore') && !hasIndex(spec.indexes, 'match'),
+  ([, spec]) => hasOrdering(spec.indexes) && !hasIndex(spec.indexes, 'match'),
 )
 const storageDomains = domains.filter(
   ([, spec]) =>
     !hasIndex(spec.indexes, 'unique') &&
-    !hasIndex(spec.indexes, 'ore') &&
+    !hasOrdering(spec.indexes) &&
     !hasIndex(spec.indexes, 'match'),
 )
 const textOreDomains = domains.filter(
@@ -154,15 +160,13 @@ const textOreDomains = domains.filter(
     t === 'public.eql_v3_text_search',
 )
 
-// EVERY ORE ordering domain: all `_ord`/`_ord_ore` numeric/date/timestamp
+// EVERY ordering domain: all `_ord`/`_ord_ore` numeric/date/timestamp
 // domains PLUS the three text order domains (`text_ord`, `text_ord_ore`,
-// `text_search`) — i.e. every domain carrying an `ore` index. `text_search`
-// is intentionally INCLUDED here (unlike `ordDomains`, which excludes it so
-// its canonical proof stays the match one): strict ORE ordering is a real
-// capability of that domain and gets its own proof below.
-const orderingDomains = domains.filter(([, spec]) =>
-  hasIndex(spec.indexes, 'ore'),
-)
+// `text_search`) — i.e. every domain carrying an ordering index (`ore` or
+// `ope`). `text_search` is intentionally INCLUDED here (unlike `ordDomains`,
+// which excludes it so its canonical proof stays the match one): strict
+// ordering is a real capability of that domain and gets its own proof below.
+const orderingDomains = domains.filter(([, spec]) => hasOrdering(spec.indexes))
 
 // The number of separate ordering rows to seed: the widest ordering domain's
 // distinct sample count (numeric domains carry 4; text carries 3; date/

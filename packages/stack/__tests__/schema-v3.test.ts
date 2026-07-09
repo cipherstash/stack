@@ -11,21 +11,33 @@ import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import { type DomainSpec, typedEntries, V3_MATRIX } from './v3-matrix/catalog'
 
 describe('eql_v3 text_search column', () => {
-  it('LOAD-BEARING: default build() deep-equals the v2 equality+order+match column', () => {
+  it('LOAD-BEARING: default build() matches the v2 equality+order+match column modulo the ordering index', () => {
+    // eql-3.0.0 pins text_search's ordering to CLLW-OPE (`ope`/`op` term); the
+    // v2 fluent builder keeps block-ORE (`ore`/`ob`) — its wire format must not
+    // change. Everything else (unique, match, cast_as) stays byte-identical.
     const v3 = types.TextSearch('email').build()
     const v2 = encryptedColumn('email')
       .equality()
       .orderAndRange()
       .freeTextSearch()
       .build()
+    expect(v3.indexes.ope).toEqual({})
+    expect(v3.indexes.ore).toBeUndefined()
+    expect(v2.indexes.ore).toEqual({})
+    expect(v2.indexes.ope).toBeUndefined()
+    const { ope: _v3Ord, ...v3Rest } = v3.indexes
+    const { ore: _v2Ord, ...v2Rest } = v2.indexes
     // toStrictEqual: byte-identical, no extra/undefined keys on either side.
-    expect(v3).toStrictEqual(v2)
+    expect({ ...v3, indexes: v3Rest }).toStrictEqual({
+      ...v2,
+      indexes: v2Rest,
+    })
   })
 
-  it('default build() emits the unique, ore, and match indexes', () => {
+  it('default build() emits the unique, ope, and match indexes', () => {
     const built = types.TextSearch('email').build()
     expect(built.indexes.unique).toEqual({ token_filters: [] })
-    expect(built.indexes.ore).toEqual({})
+    expect(built.indexes.ope).toEqual({})
     expect(built.indexes.match).toEqual({
       tokenizer: { kind: 'ngram', token_length: 3 },
       token_filters: [{ kind: 'downcase' }],
@@ -179,7 +191,7 @@ describe('eql_v3 encryptedTable', () => {
         cast_as: 'string',
         indexes: {
           unique: { token_filters: [] },
-          ore: {},
+          ope: {},
           match: {
             tokenizer: { kind: 'ngram', token_length: 3 },
             token_filters: [{ kind: 'downcase' }],
@@ -310,16 +322,17 @@ const SCALAR_QUERY_TYPES = [
 
 // The ground-truth for whether `resolveIndexType` accepts a (domain, queryType)
 // pair: does the domain carry the index that query resolves to? Derived from the
-// catalog's `indexes` data, AMENDED for the equality-via-ORE rule — an
-// order-capable column answers equality via its `ore` index, not `unique`. This
-// mirrors `resolveIndexType`'s real logic, so it needs no live FFI.
+// catalog's `indexes` data, AMENDED for the equality-via-ordering rule — an
+// order-capable column answers equality via its ordering index (`ope` on `_ord`
+// domains, `ore` on `_ord_ore`), not `unique`. This mirrors
+// `resolveIndexType`'s real logic, so it needs no live FFI.
 function queryTypeAllowed(
   indexes: DomainSpec['indexes'],
   queryType: (typeof SCALAR_QUERY_TYPES)[number],
 ): boolean {
   const idx = indexes ?? {}
-  if (queryType === 'equality') return Boolean(idx.unique || idx.ore)
-  if (queryType === 'orderAndRange') return Boolean(idx.ore)
+  if (queryType === 'equality') return Boolean(idx.unique || idx.ore || idx.ope)
+  if (queryType === 'orderAndRange') return Boolean(idx.ore || idx.ope)
   return Boolean(idx.match) // freeTextSearch
 }
 
@@ -370,22 +383,24 @@ describe('eql_v3 catalog-driven query capability sweep', () => {
   })
 })
 
-describe('eql_v3 equality via ORE on order-capable columns (regression)', () => {
-  // The capability contract documents equality as answerable "via `ob`", so a
-  // numeric/date order-capable column (which has NO `hm`) resolves equality to
-  // its `ore` index (same term as orderAndRange, distinguished by the SQL `=`
-  // operator) instead of throwing on the absent `unique` index. (Text order
-  // domains DO carry `hm` and resolve equality to `unique` instead — see the
-  // text-order regression below.)
+describe('eql_v3 equality via the ordering index on order-capable columns (regression)', () => {
+  // The capability contract documents equality as answerable via the ordering
+  // term, so a numeric/date order-capable column (which has NO `hm`) resolves
+  // equality to its ordering index (same term as orderAndRange, distinguished
+  // by the SQL `=` operator) instead of throwing on the absent `unique` index.
+  // `_ord` domains are OPE-backed (eql-3.0.0), `_ord_ore` keep block-ORE.
+  // (Text order domains DO carry `hm` and resolve equality to `unique`
+  // instead — see the text-order regression below.)
   // Keep these labels aligned with the checked-in EQL build; a mismatch here
   // means the stack package is out of sync with the underlying domain surface.
   it.each([
-    ['IntegerOrd', types.IntegerOrd],
-    ['date_ord', types.DateOrd],
-    ['numeric_ord', types.NumericOrd],
-  ] as const)('%s resolves equality to the ore index', (_name, builder) => {
+    ['IntegerOrd', types.IntegerOrd, 'ope'],
+    ['date_ord', types.DateOrd, 'ope'],
+    ['numeric_ord', types.NumericOrd, 'ope'],
+    ['IntegerOrdOre', types.IntegerOrdOre, 'ore'],
+  ] as const)('%s resolves equality to its ordering index (%s)', (_name, builder, ordering) => {
     expect(resolveIndexType(builder('value'), 'equality')).toEqual({
-      indexType: 'ore',
+      indexType: ordering,
     })
   })
 
@@ -407,22 +422,19 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
   // fails with `value for domain public.eql_v3_text_ord_ore violates check constraint`.
   it.each([
-    ['text_ord_ore', types.TextOrdOre],
-    ['text_ord', types.TextOrd],
-  ] as const)('%s emits both unique (hm) and ore (ob)', (_name, builder) => {
-    expect(builder('c').build().indexes).toStrictEqual({
-      unique: { token_filters: [] },
-      ore: {},
-    })
+    ['text_ord_ore', types.TextOrdOre, { unique: { token_filters: [] }, ore: {} }],
+    ['text_ord', types.TextOrd, { unique: { token_filters: [] }, ope: {} }],
+  ] as const)('%s emits both unique (hm) and its ordering index', (_name, builder, expected) => {
+    expect(builder('c').build().indexes).toStrictEqual(expected)
   })
 
   it.each([
-    ['IntegerOrdOre', types.IntegerOrdOre],
-    ['IntegerOrd', types.IntegerOrd],
-    ['date_ord_ore', types.DateOrdOre],
-    ['numeric_ord', types.NumericOrd],
-  ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {
-    expect(builder('c').build().indexes).toStrictEqual({ ore: {} })
+    ['IntegerOrdOre', types.IntegerOrdOre, { ore: {} }],
+    ['IntegerOrd', types.IntegerOrd, { ope: {} }],
+    ['date_ord_ore', types.DateOrdOre, { ore: {} }],
+    ['numeric_ord', types.NumericOrd, { ope: {} }],
+  ] as const)('%s (numeric/date order) emits its ordering index only — no unique', (_name, builder, expected) => {
+    expect(builder('c').build().indexes).toStrictEqual(expected)
   })
 
   // With `unique` present, text order equality resolves to the hm index (not

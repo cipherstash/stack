@@ -112,14 +112,18 @@ let ops: Ops
 let db: Db
 
 const equalityDomains = matrixEntries.filter(
-  ([, spec]) => spec.indexes.unique || spec.indexes.ore,
+  ([, spec]) => spec.indexes.unique || spec.indexes.ore || spec.indexes.ope,
 )
-const orderDomains = matrixEntries.filter(([, spec]) => spec.indexes.ore)
+const orderDomains = matrixEntries.filter(
+  ([, spec]) => spec.indexes.ore || spec.indexes.ope,
+)
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
 const noEqualityDomains = matrixEntries.filter(
-  ([, spec]) => !spec.indexes.unique && !spec.indexes.ore,
+  ([, spec]) => !spec.indexes.unique && !spec.indexes.ore && !spec.indexes.ope,
 )
-const noOrderDomains = matrixEntries.filter(([, spec]) => !spec.indexes.ore)
+const noOrderDomains = matrixEntries.filter(
+  ([, spec]) => !spec.indexes.ore && !spec.indexes.ope,
+)
 const noMatchDomains = matrixEntries.filter(([, spec]) => !spec.indexes.match)
 const comparisonOperators: Array<
   [ComparisonOperator, (cmp: number) => boolean]
@@ -586,7 +590,9 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   // 2 codepoints and IS rejected, so a bare literal would test the opposite case
   // depending on the file's on-disk normalisation.
   const NFD_EE = 'e\u0301e\u0301' // 4 codepoints, 2 grapheme clusters
-  const matchOnlyDomains = matchDomains.filter(([, spec]) => !spec.indexes.ore)
+  const matchOnlyDomains = matchDomains.filter(
+    ([, spec]) => !spec.indexes.ore && !spec.indexes.ope,
+  )
 
   it.each(
     matchOnlyDomains.flatMap(([eqlType]) =>
@@ -618,7 +624,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   // not in the needle guard. Pinned so the distinction stays visible: the guard
   // is about tokenization, this is about the ORE term's ASCII-only ordering.
   it.each(
-    matchDomains.filter(([, spec]) => spec.indexes.ore),
+    matchDomains.filter(([, spec]) => spec.indexes.ore || spec.indexes.ope),
   )('%s contains rejects a non-ASCII needle in the ORE term, not the guard', async (eqlType) => {
     const attempt = ops.contains(
       matrixColumn(eqlType),

@@ -63,12 +63,12 @@ const users = encryptedTable(TABLE, {
 /** Which index terms each DB column's domain CHECK demands. */
 const COLUMN_TERMS: Record<
   string,
-  { hmac?: boolean; ore?: boolean; bloom?: boolean }
+  { hmac?: boolean; ope?: boolean; bloom?: boolean }
 > = {
-  email: { hmac: true, ore: true, bloom: true }, // text_search
+  email: { hmac: true, ope: true, bloom: true }, // text_search — hm + op + bf
   nickname: { hmac: true }, // text_eq
-  amount: { ore: true }, // integer_ord
-  created_at: { ore: true }, // timestamp_ord
+  amount: { ope: true }, // integer_ord — op (CLLW-OPE, eql-3.0.0)
+  created_at: { ope: true }, // timestamp_ord
   active: {}, // boolean — storage only
 }
 
@@ -285,7 +285,7 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
         column: 'email',
         seed: 1,
         hmac: 'x',
-        ore: true,
+        ope: true,
         bloom: [1, 2],
       }),
     })

@@ -2,8 +2,8 @@
  * Structurally-valid EQL v3 storage envelopes, built without a CipherStash client.
  *
  * The `public.*` domain CHECKs are purely STRUCTURAL — e.g. `public.eql_v3_text_search`
- * requires an object with `v`/`i`/`c`/`hm`/`ob`/`bf`, a non-empty `ob` array,
- * and `v = '3'`. Nothing in the CHECK is cryptographic. That lets the live
+ * requires an object with `v`/`i`/`c`/`hm`/`op`/`bf` and `v = '3'`. Nothing in
+ * the CHECK is cryptographic. That lets the live
  * PostgREST suite drive the real adapter against real domains and real
  * `eql_v3` operators with no ZeroKMS round-trip, so it runs wherever
  * `DATABASE_URL` runs.
@@ -44,6 +44,17 @@ function oreTermFor(seed: number): string {
   return byte.repeat(ORE_TERM_BYTES)
 }
 
+/**
+ * `op` — the CLLW-OPE term (eql-3.0.0 `_ord` / `text_search` domains): a
+ * hex-encoded bytea, compared byte-wise. Any even-length hex string clears the
+ * structural CHECK; identical seeds compare equal, which is all the suites
+ * rely on (no `<`/`>` semantics on synthetic terms).
+ */
+function opeTermFor(seed: number): string {
+  const byte = (seed % 251).toString(16).padStart(2, '0')
+  return byte.repeat(16)
+}
+
 /** `bf` — the bloom filter for match/`cs`. A set of token positions. */
 function bloomFor(tokens: number[]): number[] {
   return [...new Set(tokens)].sort((a, b) => a - b)
@@ -56,8 +67,10 @@ export type EnvelopeParts = {
   seed: number
   /** Present on equality-capable domains (`hm`). */
   hmac?: string
-  /** Present on order-capable domains (`ob`). */
+  /** Present on block-ORE order domains — `_ord_ore` (`ob`). */
   ore?: boolean
+  /** Present on CLLW-OPE order domains — `_ord`, `text_search` (`op`). */
+  ope?: boolean
   /** Present on match-capable domains (`bf`). */
   bloom?: number[]
 }
@@ -72,6 +85,7 @@ export function storageEnvelope(parts: EnvelopeParts): Record<string, unknown> {
   }
   if (parts.hmac !== undefined) envelope.hm = hmacFor(parts.hmac)
   if (parts.ore) envelope.ob = [oreTermFor(parts.seed)]
+  if (parts.ope) envelope.op = opeTermFor(parts.seed)
   if (parts.bloom) envelope.bf = bloomFor(parts.bloom)
   return envelope
 }

@@ -9,7 +9,9 @@ import { queryTypeToFfi, queryTypeToQueryOp } from '../../types'
 
 /**
  * Infer the primary index type from a column's configured indexes.
- * Priority: unique > match > ore > ste_vec (for scalar queries)
+ * Priority: unique > match > ore/ope > ste_vec (for scalar queries; a column
+ * carries at most one of `ore`/`ope` — the ordering flavour is pinned by its
+ * EQL v3 domain).
  */
 export function inferIndexType(column: BuildableQueryColumn): FfiIndexTypeName {
   const config = column.build()
@@ -23,6 +25,7 @@ export function inferIndexType(column: BuildableQueryColumn): FfiIndexTypeName {
   if (indexes.unique) return 'unique'
   if (indexes.match) return 'match'
   if (indexes.ore) return 'ore'
+  if (indexes.ope) return 'ope'
   if (indexes.ste_vec) return 'ste_vec'
 
   throw new Error(
@@ -66,6 +69,7 @@ export function validateIndexType(
     unique: !!indexes.unique,
     match: !!indexes.match,
     ore: !!indexes.ore,
+    ope: !!indexes.ope,
     ste_vec: !!indexes.ste_vec,
   }
 
@@ -77,24 +81,32 @@ export function validateIndexType(
 }
 
 /**
- * v3-only: an order-capable column answers EQUALITY via its `ore` (`ob`) index.
+ * v3-only: an order-capable column answers EQUALITY via its ordering index
+ * (`ope`/`op` on `_ord` domains, `ore`/`ob` on `_ord_ore` domains).
  *
- * The v3 capability contract (`src/schema/v3`) documents `equality` as "exact-match
- * lookups (EQL `hm`, or comparison via `ob`)", so an order-capable column with only
- * an `ore` index still supports equality — the equality-vs-range distinction is made
- * by the SQL comparison operator (`=` vs `>=`), NOT by the ciphertext (the FFI emits
- * the same `ob` term either way). The default `equality → unique` mapping would
- * wrongly reject these columns.
+ * The v3 capability contract (`src/eql/v3`) documents `equality` as "exact-match
+ * lookups (EQL `hm`, or comparison via the ordering term)", so an order-capable
+ * column with only an ordering index still supports equality — the
+ * equality-vs-range distinction is made by the SQL comparison operator (`=` vs
+ * `>=`), NOT by the ciphertext (the FFI emits the same ordering term either
+ * way). The default `equality → unique` mapping would wrongly reject these
+ * columns. Returns the ordering index to use, or `null` when equality does not
+ * resolve through one.
  *
  * Gated on `getQueryCapabilities`, which only v3 queryable columns expose — a v2
  * `EncryptedColumn` lacks it and so never matches, preserving v2's
  * equality-without-unique throw unchanged (the no-v2-change constraint).
  */
-function resolvesEqualityViaOre(column: BuildableQueryColumn): boolean {
-  if (!('getQueryCapabilities' in column)) return false
-  if (!column.getQueryCapabilities().equality) return false
+function equalityOrderingIndex(
+  column: BuildableQueryColumn,
+): 'ore' | 'ope' | null {
+  if (!('getQueryCapabilities' in column)) return null
+  if (!column.getQueryCapabilities().equality) return null
   const indexes = column.build().indexes ?? {}
-  return !indexes.unique && !!indexes.ore
+  if (indexes.unique) return null
+  if (indexes.ore) return 'ore'
+  if (indexes.ope) return 'ope'
+  return null
 }
 
 /**
@@ -113,17 +125,23 @@ export function resolveIndexType(
   queryType?: QueryTypeName,
   plaintext?: Plaintext | null,
 ): { indexType: FfiIndexTypeName; queryOp?: QueryOpName } {
-  const indexType = queryType
-    ? queryTypeToFfi[queryType]
-    : inferIndexType(column)
+  let indexType = queryType ? queryTypeToFfi[queryType] : inferIndexType(column)
 
   if (queryType) {
-    // An order-capable v3 column answers equality via its `ore` index (`ob`
-    // term) — the same term `orderAndRange` emits, distinguished only by the SQL
-    // `=` operator. Resolve to `ore` (queryOp undefined) instead of throwing on
-    // the missing `unique` index. v2 columns never enter here (see helper).
-    if (queryType === 'equality' && resolvesEqualityViaOre(column)) {
-      return { indexType: 'ore' }
+    // An order-capable v3 column answers equality via its ordering index (`op`
+    // or `ob`) — the same term `orderAndRange` emits, distinguished only by the
+    // SQL `=` operator. Resolve to that index (queryOp undefined) instead of
+    // throwing on the missing `unique` index. v2 columns never enter here.
+    if (queryType === 'equality') {
+      const ordering = equalityOrderingIndex(column)
+      if (ordering) return { indexType: ordering }
+    }
+
+    // `orderAndRange` maps statically to `ore`; v3 `_ord` domains configure
+    // `ope` instead. Swap to the ordering index the column actually carries.
+    if (queryType === 'orderAndRange' && indexType === 'ore') {
+      const indexes = column.build().indexes ?? {}
+      if (!indexes.ore && indexes.ope) indexType = 'ope'
     }
 
     validateIndexType(column, indexType)

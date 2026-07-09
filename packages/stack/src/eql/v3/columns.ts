@@ -8,7 +8,7 @@ import { defaultMatchOpts } from '@/schema/match-defaults'
  * `build()`.
  *
  * - `equality`: exact-match lookups (EQL `hm`, or comparison via `ob`).
- * - `orderAndRange`: comparison / range lookups (EQL `ob`).
+ * - `orderAndRange`: comparison / range lookups (EQL `op`, or `ob` on `_ord_ore` domains).
  * - `freeTextSearch`: tokenised substring match (EQL `bf`).
  */
 export type QueryCapabilities = Readonly<{
@@ -312,28 +312,34 @@ export const DOUBLE_ORD = {
 
 /**
  * Translate a domain's semantic {@link QueryCapabilities} (plus its plaintext
- * `castAs`, which decides how equality is answered) into the concrete EQL index
- * block emitted by `build()`.
+ * `castAs`, which decides how equality is answered, and its ordering flavour)
+ * into the concrete EQL index block emitted by `build()`.
  *
  * - `unique` (the `hm` HMAC index) whenever equality is answered via HMAC:
  *   equality-only domains of ANY type, AND text order domains. Text equality is
  *   HMAC-based — the `public.eql_v3_text_ord` / `public.eql_v3_text_ord_ore` SQL domains
  *   REQUIRE `hm` in the stored ciphertext (their `eql_v3.eq_term` extracts it).
- * - `ore` for any order/range domain (the `ob` term). For numeric/date order
- *   domains `ob` also answers equality (via the SQL `=` operator), so those emit
- *   `ore` ONLY — no `hm`. Text order domains emit BOTH `unique` and `ore`.
+ * - ONE ordering index for any order/range domain, selected by the domain's
+ *   name (eql-3.0.0): plain `_ord` domains (and `text_search`) are OPE-backed —
+ *   `ope`, the `op` CLLW-OPE term — while `_ord_ore` domains keep block-ORE —
+ *   `ore`, the `ob` term. The two terms are not cross-comparable, and each
+ *   domain's SQL CHECK requires exactly its own. For numeric/date order
+ *   domains the ordering term also answers equality (via the SQL `=`
+ *   operator), so those emit no `hm`. Text order domains emit BOTH `unique`
+ *   and the ordering index.
  * - `match` (the `bf` bloom-filter index) for free-text search, deep-cloned from
  *   the per-call defaults so no nested object is ever shared across columns.
  */
 function indexesForCapabilities(
   capabilities: QueryCapabilities,
   castAs: PlaintextKind,
+  ordering: 'ope' | 'ore',
 ): ColumnSchema['indexes'] {
   const indexes: ColumnSchema['indexes'] = {}
 
   // Text equality is always HMAC-based, so a text order domain (`string` +
   // order/range) still needs `unique`; numeric/date order domains answer
-  // equality via `ob` and must NOT emit `unique`.
+  // equality via their ordering term and must NOT emit `unique`.
   if (
     capabilities.equality &&
     (!capabilities.orderAndRange || castAs === 'string')
@@ -342,7 +348,7 @@ function indexesForCapabilities(
   }
 
   if (capabilities.orderAndRange) {
-    indexes.ore = {}
+    indexes[ordering] = {}
   }
 
   if (capabilities.freeTextSearch) {
@@ -352,6 +358,15 @@ function indexesForCapabilities(
   }
 
   return indexes
+}
+
+/**
+ * The ordering flavour a domain's name pins (eql-3.0.0): `_ord_ore` domains
+ * are block-ORE (`ore` index, `ob` term); every other ordering domain —
+ * `_ord` and `text_search` — is CLLW-OPE (`ope` index, `op` term).
+ */
+function orderingForEqlType(eqlType: string): 'ope' | 'ore' {
+  return eqlType.endsWith('_ord_ore') ? 'ore' : 'ope'
 }
 
 /** Whether a domain's capabilities make it queryable at all (any flag set). */
@@ -405,6 +420,7 @@ export class EncryptedV3Column<D extends V3DomainDefinition> {
       indexes: indexesForCapabilities(
         this.definition.capabilities,
         this.definition.castAs,
+        orderingForEqlType(this.definition.eqlType),
       ),
     }
   }
@@ -424,8 +440,8 @@ const TEXT_SEARCH_DOMAIN = {
  * is always emitted with the default configuration.
  *
  * NOTE — querying: a `text_search` column emits all three indexes (`unique`,
- * `ore`, `match`), and the shared index-inference picks them by fixed priority
- * `unique > match > ore`. So `encryptQuery(value, { column, table })` with NO
+ * `ope`, `match`), and the shared index-inference picks them by fixed priority
+ * `unique > match > ordering`. So `encryptQuery(value, { column, table })` with NO
  * explicit `queryType` builds an EQUALITY term (via `unique`), NOT a free-text
  * match — a substring like `'joh'` then matches nothing. To run a free-text
  * match query you MUST pass `queryType: 'freeTextSearch'`:

@@ -101,13 +101,18 @@ const sampleFor = (spec: (typeof V3_MATRIX)[keyof typeof V3_MATRIX]) =>
   spec.samples[0]
 
 const equalityDomains = matrixEntries.filter(
-  ([, spec]) => spec.indexes.unique || spec.indexes.ore,
+  ([, spec]) => spec.indexes.unique || spec.indexes.ore || spec.indexes.ope,
 )
-const orderDomains = matrixEntries.filter(([, spec]) => spec.indexes.ore)
+const orderDomains = matrixEntries.filter(
+  ([, spec]) => spec.indexes.ore || spec.indexes.ope,
+)
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
 const storageDomains = matrixEntries.filter(
   ([, spec]) =>
-    !spec.indexes.unique && !spec.indexes.ore && !spec.indexes.match,
+    !spec.indexes.unique &&
+    !spec.indexes.ore &&
+    !spec.indexes.ope &&
+    !spec.indexes.match,
 )
 
 const users = pgTable('users', {
