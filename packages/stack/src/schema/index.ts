@@ -268,6 +268,9 @@ export class EncryptedColumn {
   private castAsValue: CastAs
   private indexesValue: {
     ore?: OreIndexOpts
+    // Never set by the v2 fluent builder (the OPE index is EQL v3-only);
+    // declared so `build()` stays assignable to the shared indexes shape.
+    ope?: OpeIndexOpts
     unique?: UniqueIndexOpts
     match?: Required<MatchIndexOpts>
     ste_vec?: SteVecIndexOpts

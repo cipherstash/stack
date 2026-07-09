@@ -14,7 +14,8 @@ Two entry points, one query mechanism:
 Both filter via **direct EQL operators over PostgREST**: the wrapper encrypts
 the filter term and emits an ordinary `col <op> term` filter, which resolves
 to the custom operator defined on the encrypted type (equality by HMAC, range
-by ORE, free-text by bloom-filter containment).
+by the ordering term — CLLW-OPE on `_ord` domains, block-ORE on `_ord_ore` —
+free-text by bloom-filter containment).
 
 ## Quick start (EQL v3)
 
@@ -193,7 +194,7 @@ These are internal to the adapter but explain observable behaviour. Envelopes
   overloads (`42725`), so the reachable overload is the `jsonb` one — whose
   body coerces its operand into the STORAGE domain, whose CHECK requires the
   storage keys (`v`/`i`/`c` plus the domain's index terms: `hm` for
-  `text_eq`, `ob` for `integer_ord`, all three for `text_search`). So the
+  `text_eq`, `op` for `integer_ord`, `hm`+`op`+`bf` for `text_search`). So the
   adapter encrypts each filter value with the full storage path and the
   operators extract the term they need (`eq_term`/`ord_term`/`match_term`).
 
