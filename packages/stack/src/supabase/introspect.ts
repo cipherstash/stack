@@ -88,6 +88,41 @@ const EQL_DOMAINS_QUERY = `
     AND obj_description(tp.oid, 'pg_type') LIKE 'EQL%'
 `
 
+/** `pg` ships its API on the CJS default export, not the module namespace. */
+type PgDefaultExport = typeof import('pg')['default']
+
+/**
+ * `pg` is an optional peer dependency, so a missing install surfaces here as a
+ * module-resolution error. Remap it to the actionable message; let every other
+ * failure propagate. Guard on `err.code` rather than message text — CJS throws
+ * `MODULE_NOT_FOUND`, ESM throws `ERR_MODULE_NOT_FOUND`.
+ *
+ * `importPg` is injectable because `vi.mock` cannot reproduce a module that
+ * fails to resolve — it replaces any factory rejection with its own error,
+ * discarding the `code` this function branches on.
+ *
+ * @internal
+ */
+export async function loadPg(
+  importPg: () => Promise<{ default: PgDefaultExport }> = () => import('pg'),
+) {
+  try {
+    const { default: pg } = await importPg()
+    return pg
+  } catch (err) {
+    const code = (err as { code?: string }).code
+    if (code !== 'MODULE_NOT_FOUND' && code !== 'ERR_MODULE_NOT_FOUND')
+      throw err
+    throw new Error(
+      '[supabase v3]: encryptedSupabaseV3 introspects the database over a direct ' +
+        "Postgres connection, but the optional peer dependency 'pg' is not installed. " +
+        'Install it (`npm install pg`). This also means encryptedSupabaseV3 cannot run ' +
+        'in a Worker or the browser — use encryptedSupabase (EQL v2) there.',
+      { cause: err },
+    )
+  }
+}
+
 /**
  * Connect over `databaseUrl`, read every base table in the `public` schema with
  * its EQL v3 domain (`domain_name`), and the set of `public` domains recognised
@@ -100,7 +135,7 @@ const EQL_DOMAINS_QUERY = `
 export async function introspect(
   databaseUrl: string,
 ): Promise<IntrospectionData> {
-  const { default: pg } = await import('pg')
+  const pg = await loadPg()
   // Mirror the CLI introspector's bounded connect so an unreachable DB fails
   // fast rather than hanging construction.
   const client = new pg.Client({

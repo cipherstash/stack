@@ -1,6 +1,6 @@
 import fc from 'fast-check'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { groupIntrospectionRows } from '@/supabase/introspect'
+import { groupIntrospectionRows, loadPg } from '@/supabase/introspect'
 
 describe('groupIntrospectionRows', () => {
   it('groups rows by table, preserving row order as column order', () => {
@@ -97,5 +97,28 @@ describe('introspect connection error handling', () => {
       'ECONNREFUSED',
     )
     vi.doUnmock('pg')
+  })
+})
+
+describe('loadPg', () => {
+  const failingImport = (err: unknown) => () => Promise.reject(err)
+
+  for (const code of ['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND']) {
+    it(`remaps a missing optional \`pg\` peer (${code}) to an install message`, async () => {
+      const err = Object.assign(new Error("Cannot find package 'pg'"), { code })
+
+      await expect(loadPg(failingImport(err))).rejects.toThrow(
+        /'pg' is not installed/,
+      )
+      await expect(loadPg(failingImport(err))).rejects.toHaveProperty(
+        'cause',
+        err,
+      )
+    })
+  }
+
+  it('does not swallow an unrelated module-load failure', async () => {
+    const err = new Error('boom: pg self-check failed')
+    await expect(loadPg(failingImport(err))).rejects.toBe(err)
   })
 })
