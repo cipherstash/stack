@@ -116,7 +116,10 @@ export class EncryptedQueryBuilderV3Impl<
       this.dbToProp[dbName] = property
     }
 
-    this.v3Columns = {}
+    // Null-prototype: keyed by DB column names, and `validateTransforms` reads
+    // it without an own-key guard — an inherited `constructor`/`toString` would
+    // otherwise resolve truthy for a plaintext column of that name.
+    this.v3Columns = Object.create(null) as Record<string, V3ColumnLike>
     for (const [property, builder] of Object.entries(table.columnBuilders)) {
       if (builder instanceof EncryptedV3Column) {
         const col = builder as unknown as V3ColumnLike
@@ -147,6 +150,29 @@ export class EncryptedQueryBuilderV3Impl<
 
   protected override filterColumnName(column: string): string {
     return this.dbNameFor(column)
+  }
+
+  /**
+   * Ordering by an encrypted column relies on the domain's ORE index. A
+   * storage-only domain (`public.boolean`, `public.text`, …) has none, so
+   * PostgREST would sort by the raw ciphertext envelope and return a
+   * plausible-looking but meaningless row order. Reject it, mirroring the
+   * capability guard {@link encryptCollectedTerms} applies to filters — that
+   * guard is the only protection the untyped (no-`schemas`) surface has.
+   *
+   * A column absent from {@link v3Columns} is a plaintext passthrough.
+   */
+  protected override validateTransforms(): void {
+    for (const t of this.transforms) {
+      if (t.kind !== 'order') continue
+      const column = this.v3Columns[t.column]
+      if (!column) continue
+      if (!column.getQueryCapabilities().orderAndRange) {
+        throw new Error(
+          `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ordering — declare the column with a domain that carries the orderAndRange capability`,
+        )
+      }
+    }
   }
 
   protected override buildSelectString(): string | null {

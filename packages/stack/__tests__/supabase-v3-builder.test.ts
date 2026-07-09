@@ -418,6 +418,85 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(error?.message).toContain('does not support equality')
   })
 
+  it('maps property names to DB names in order()', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es.from('users', users).select('id, createdAt').order('createdAt')
+
+    const [order] = supabase.callsFor('order')
+    expect(order.args[0]).toBe('created_at')
+  })
+
+  it('leaves plaintext columns untouched in order()', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es.from('users', users).select('id, note').order('note')
+
+    const [order] = supabase.callsFor('order')
+    expect(order.args[0]).toBe('note')
+  })
+
+  it('rejects order() on a column with no orderAndRange capability', async () => {
+    const { es } = v3Instance()
+
+    // active is public.boolean — storage only, so ordering it would sort ciphertext
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .order('active')
+
+    expect(status).toBe(500)
+    expect(error?.message).toContain('does not support ordering')
+  })
+
+  it('maps property names to DB names in the onConflict option', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .upsert({ email: 'a@b.com' }, { onConflict: 'createdAt' })
+
+    const [upsert] = supabase.callsFor('upsert')
+    expect((upsert.args[1] as { onConflict: string }).onConflict).toBe(
+      'created_at',
+    )
+  })
+
+  it('maps every column of a multi-column onConflict list', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es
+      .from('users', users)
+      .upsert({ email: 'a@b.com' }, { onConflict: 'createdAt,amount' })
+
+    const [upsert] = supabase.callsFor('upsert')
+    expect((upsert.args[1] as { onConflict: string }).onConflict).toBe(
+      'created_at,amount',
+    )
+  })
+
+  // `or()` had no v3 coverage at all. Any condition naming an encrypted column
+  // — under either its property or DB name — routes through
+  // `transformOrConditions`, which maps names; the verbatim branch is reached
+  // only when every condition names a plaintext column, which needs no mapping.
+  it('maps property names to DB names in an or() string', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es.from('users', users).select('id').or('createdAt.gte.2026-01-01')
+
+    const [or] = supabase.callsFor('or')
+    expect(or.args[0] as string).toMatch(/^created_at\.gte\./)
+  })
+
+  it('passes an all-plaintext or() string through verbatim', async () => {
+    const { es, supabase } = v3Instance()
+
+    await es.from('users', users).select('id').or('note.eq.x,id.eq.1')
+
+    const [or] = supabase.callsFor('or')
+    expect(or.args[0]).toBe('note.eq.x,id.eq.1')
+  })
+
   it('reconstructs Date values from cast_as on decrypted rows', async () => {
     const rows = [
       {
@@ -498,5 +577,33 @@ describe('encryptedSupabase (v2) wire encoding is unchanged by the dialect seams
 
     const [select] = supabase.callsFor('select')
     expect(select.args[0]).toBe('id, email::jsonb, age::jsonb')
+  })
+
+  it('passes order() column names through unchanged', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es.from('users', usersV2).select('id, age').order('age')
+
+    const [order] = supabase.callsFor('order')
+    expect(order.args[0]).toBe('age')
+  })
+
+  it('passes the onConflict option through by reference', async () => {
+    const { es, supabase } = v2Instance()
+
+    const options = { onConflict: 'email' }
+    await es.from('users', usersV2).upsert({ email: 'a@b.com' }, options)
+
+    const [upsert] = supabase.callsFor('upsert')
+    expect(upsert.args[1]).toBe(options)
+  })
+
+  it('passes an all-plaintext or() string through verbatim', async () => {
+    const { es, supabase } = v2Instance()
+
+    await es.from('users', usersV2).select('id').or('id.eq.1,note.eq.x')
+
+    const [or] = supabase.callsFor('or')
+    expect(or.args[0]).toBe('id.eq.1,note.eq.x')
   })
 })

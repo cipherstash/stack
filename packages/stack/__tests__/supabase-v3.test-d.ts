@@ -55,6 +55,17 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.is('active', true)
   })
 
+  it('rejects order() on storage-only columns at the type level', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
+    builder.order('createdAt')
+    builder.order('amount', { ascending: false })
+    // @ts-expect-error — active is public.boolean: no ORE index to order by
+    builder.order('active')
+  })
+
   it('accepts plaintext model values on insert', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient, {
       schemas: { users },

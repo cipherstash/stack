@@ -688,19 +688,27 @@ export class EncryptedQueryBuilderImpl<
     selectString: string | null,
     encryptedFilters: EncryptedFilterState,
   ): Promise<RawSupabaseResult> {
+    this.validateTransforms()
+
     let query: SupabaseQueryBuilder = this.supabaseClient.from(this.tableName)
 
     // Apply mutation
     if (this.mutation) {
       switch (this.mutation.kind) {
         case 'insert':
-          query = query.insert(encryptedMutation!, this.mutation.options)
+          query = query.insert(
+            encryptedMutation!,
+            this.resolveMutationOptions(this.mutation.options),
+          )
           break
         case 'update':
           query = query.update(encryptedMutation!, this.mutation.options)
           break
         case 'upsert':
-          query = query.upsert(encryptedMutation!, this.mutation.options)
+          query = query.upsert(
+            encryptedMutation!,
+            this.resolveMutationOptions(this.mutation.options),
+          )
           break
         case 'delete':
           query = query.delete(this.mutation.options)
@@ -723,7 +731,7 @@ export class EncryptedQueryBuilderImpl<
     for (const t of this.transforms) {
       switch (t.kind) {
         case 'order':
-          query = query.order(t.column, t.options)
+          query = query.order(this.filterColumnName(t.column), t.options)
           break
         case 'limit':
           query = query.limit(t.count, t.options)
@@ -960,6 +968,34 @@ export class EncryptedQueryBuilderImpl<
   protected filterColumnName(column: string): string {
     return column
   }
+
+  /**
+   * Resolve the column names carried by a mutation's options. `onConflict` is a
+   * comma-separated column list, so it needs the same property→DB mapping as a
+   * filter. Returns the original object when nothing changed, so v2 — where
+   * {@link filterColumnName} is the identity — passes the caller's reference on
+   * untouched.
+   */
+  protected resolveMutationOptions<
+    O extends { onConflict?: string } | undefined,
+  >(options: O): O {
+    if (!options?.onConflict) return options
+    const mapped = options.onConflict
+      .split(',')
+      .map((column) => this.filterColumnName(column.trim()))
+      .join(',')
+    return mapped === options.onConflict
+      ? options
+      : { ...options, onConflict: mapped }
+  }
+
+  /**
+   * Validate the accumulated transforms before the query is built. Called from
+   * inside {@link execute}'s try, so a throw surfaces as a `status: 500` error
+   * result (or rethrows under `throwOnError`), matching the filter-path
+   * capability guard. v2 imposes no constraints.
+   */
+  protected validateTransforms(): void {}
 
   /**
    * Apply a `like`/`ilike` filter. v2 relies on the `~~` operator defined on

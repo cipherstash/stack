@@ -410,7 +410,10 @@ export interface EncryptedQueryBuilder<
     options?: { referencedTable?: string; foreignTable?: string },
   ): EncryptedQueryBuilder<T, FK>
   match(query: Partial<T>): EncryptedQueryBuilder<T, FK>
-  order<K extends StringKeyOf<T>>(
+  // `FK`, not `StringKeyOf<T>`: ordering an encrypted column relies on its ORE
+  // index, which a storage-only domain lacks. `FK` defaults to `StringKeyOf<T>`,
+  // so the v2 surface is unchanged; only the v3 typed instance narrows.
+  order<K extends FK>(
     column: K,
     options?: {
       ascending?: boolean
