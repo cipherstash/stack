@@ -33,6 +33,11 @@ declare const mixedBuilder: EncryptedQueryBuilderV3<
   UserRow & { tags: string[]; meta: Record<string, unknown> }
 >
 
+/** A column key that is a UNION spanning an encrypted and a plaintext column. */
+declare const mixedKey: 'email' | 'tags'
+/** A column key that is a union of plaintext columns only. */
+declare const plaintextKey: 'tags' | 'meta'
+
 describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
   it('rows carry each column its domain plaintext type', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient, {
@@ -142,6 +147,24 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     mixedBuilder.contains('email', ['ada'])
     // @ts-expect-error — bio is public.text_match: the match term is a string
     mixedBuilder.contains('bio', { a: 1 })
+  })
+
+  // A union column key is only as permissive as its STRICTEST member. If any
+  // member is a declared encrypted column the operand must be the string term:
+  // that member's runtime path hands the operand to `encrypt()`, which has no
+  // plaintext-type guard, so an array reaches protect-ffi as the plaintext for a
+  // `cast_as: text` column.
+  it('pins a mixed union key to the encrypted string operand', () => {
+    mixedBuilder.contains(mixedKey, 'ada')
+    // @ts-expect-error — the union includes email (public.text_search)
+    mixedBuilder.contains(mixedKey, ['vip'])
+    // @ts-expect-error — the union includes email (public.text_search)
+    mixedBuilder.contains(mixedKey, { plan: 'pro' })
+  })
+
+  it('leaves a union of plaintext keys on the native operand', () => {
+    mixedBuilder.contains(plaintextKey, ['vip'])
+    mixedBuilder.contains(plaintextKey, { plan: 'pro' })
   })
 
   it('does not expose like/ilike on the v3 builder, at any chain depth', async () => {

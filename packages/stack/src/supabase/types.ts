@@ -144,15 +144,21 @@ type NativeContainsValue = string | readonly unknown[] | Record<string, unknown>
  * jsonb/array containment. A blanket `value: string` made that half of
  * {@link V3FreeTextSearchableKeys} unreachable from TypeScript.
  *
- * `[K] extends [...]` rather than a bare conditional: a naked type parameter
- * distributes over unions, which would silently widen a union key to the union
- * of both operand types instead of demanding every member be a declared column.
+ * A UNION key is only as permissive as its strictest member: if ANY member is a
+ * declared column, the operand is the string term. `[K] extends [declared]` gets
+ * this backwards — a mixed `'email' | 'tags'` fails that test and falls to
+ * `NativeContainsValue`, so an array typechecks for a key that may resolve to
+ * the encrypted `email` at runtime. Nothing downstream catches it: the operand
+ * goes straight to `encrypt()`, which has no plaintext-type guard.
+ *
+ * So test the INTERSECTION instead, wrapped in a tuple to stop the naked type
+ * parameter distributing (which would rebuild the same permissive union).
  */
 export type V3ContainsValue<Table extends AnyV3Table, K extends string> = [
-  K,
-] extends [Extract<keyof V3ColumnsOfTable<Table>, string>]
-  ? string
-  : NativeContainsValue
+  Extract<K, Extract<keyof V3ColumnsOfTable<Table>, string>>,
+] extends [never]
+  ? NativeContainsValue
+  : string
 
 /**
  * Row keys a v3 builder accepts in `order()`: every row key that is NOT an

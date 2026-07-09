@@ -220,7 +220,7 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
 export function parseOrString(orString: string): PendingOrCondition[] {
   const conditions: PendingOrCondition[] = []
   // Split on commas that are not inside parentheses (nested or/and)
-  const parts = splitOrString(orString)
+  const parts = splitTopLevel(orString)
 
   for (const part of parts) {
     const trimmed = part.trim()
@@ -252,7 +252,7 @@ export function parseOrString(orString: string): PendingOrCondition[] {
     const value = rest.slice(secondDot + 1)
 
     // Handle special value formats
-    const parsedValue = parseOrValue(value)
+    const parsedValue = parseOrValue(value, op)
 
     conditions.push({ column, op, negate, value: parsedValue })
   }
@@ -310,7 +310,22 @@ export function rebuildOrString(
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function splitOrString(input: string): string[] {
+/**
+ * Split on the commas that separate top-level tokens, leaving those inside a
+ * quoted operand or a `(…)` / `{…}` literal alone.
+ *
+ * Quotes are tracked at EVERY depth. A quoted string is opaque wherever it
+ * appears, and an array literal quotes any element carrying a reserved character
+ * (see {@link arrayLiteralElement}) — so `{"a}b"}` closes at the LAST brace, not
+ * the one inside the element. Tracking quotes only at depth 0 ended the literal
+ * early and swallowed the following condition into this operand.
+ *
+ * `depth` never goes below zero. `}` and `)` are not PostgREST reserved
+ * characters, so `a}b` is a valid unquoted scalar; letting a stray one decrement
+ * past zero meant no later comma ever split, silently absorbing every remaining
+ * condition.
+ */
+function splitTopLevel(input: string): string[] {
   const parts: string[] = []
   let current = ''
   let depth = 0
@@ -328,7 +343,7 @@ function splitOrString(input: string): string[] {
     } else if (char === '\\' && inQuotes) {
       escaped = true
       current += char
-    } else if (char === '"' && depth === 0) {
+    } else if (char === '"') {
       inQuotes = !inQuotes
       current += char
     } else if ((char === '(' || char === '{') && !inQuotes) {
@@ -340,7 +355,7 @@ function splitOrString(input: string): string[] {
       depth++
       current += char
     } else if ((char === ')' || char === '}') && !inQuotes) {
-      depth--
+      depth = Math.max(0, depth - 1)
       current += char
     } else if (char === ',' && depth === 0 && !inQuotes) {
       parts.push(current)
@@ -350,14 +365,43 @@ function splitOrString(input: string): string[] {
     }
   }
 
-  if (current) {
-    parts.push(current)
-  }
+  parts.push(current)
 
   return parts
 }
 
-function parseOrValue(value: string): unknown {
+/**
+ * One element of an `in`-list operand, undoing {@link formatOrValue}'s quoting.
+ * Unquoted elements are trimmed, as PostgREST ignores whitespace around them;
+ * inside quotes it is significant.
+ */
+function parseInListElement(element: string): string {
+  const trimmed = element.trim()
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return unescapeOrValue(trimmed.slice(1, -1))
+  }
+  return trimmed
+}
+
+/**
+ * PostgREST operators whose operand is delimited by parentheses: the `in` list
+ * and the range operators. Everywhere else `(` is an ordinary character, and a
+ * parenthesized operand is a scalar that happens to start with one.
+ *
+ * The range operators earn their place by round-trip fidelity rather than by
+ * encryption: none is supported on an encrypted column, but an or-string is
+ * rebuilt whole as soon as ANY of its conditions names one, so a plaintext
+ * `period.ov.(1,10)` sharing the group must re-emit byte-for-byte.
+ */
+const PAREN_OPERAND_OPS = new Set(['in', 'ov', 'sl', 'sr', 'nxr', 'nxl', 'adj'])
+
+/**
+ * @param op the operator the value belongs to, already stripped of any `not.`
+ * prefix. Parsing a parenthesized scalar as an array meant an encrypted `eq`
+ * operand was encrypted as a JS array rather than the intended string, and the
+ * filter matched nothing.
+ */
+function parseOrValue(value: string, op?: string): unknown {
   // Handle double-quoted values (PostgREST quoting for reserved characters).
   // Must undo `escapeOrValue`, or a parse → rebuild round-trip doubles every
   // backslash. The two functions are only correct as a pair.
@@ -365,12 +409,16 @@ function parseOrValue(value: string): unknown {
     return unescapeOrValue(value.slice(1, -1))
   }
 
-  // Handle parenthesized lists: (val1,val2,val3)
-  if (value.startsWith('(') && value.endsWith(')')) {
-    return value
-      .slice(1, -1)
-      .split(',')
-      .map((v) => v.trim())
+  // Handle parenthesized lists: (val1,val2,val3). Elements are quoted exactly as
+  // any other operand, so the split must respect those quotes: `("a,b",c)` is
+  // two elements, not three.
+  if (
+    op !== undefined &&
+    PAREN_OPERAND_OPS.has(op) &&
+    value.startsWith('(') &&
+    value.endsWith(')')
+  ) {
+    return splitTopLevel(value.slice(1, -1)).map(parseInListElement)
   }
 
   // Handle booleans
@@ -394,6 +442,14 @@ function parseOrValue(value: string): unknown {
  * See: https://docs.postgrest.org/en/latest/references/api/tables_views.html
  */
 const POSTGREST_RESERVED = /["\\,().]/
+
+/**
+ * Operands PostgREST reads as SQL values rather than as the string spelling
+ * them. A STRING operand that happens to spell one must be quoted, or
+ * `name.eq.null` compares against SQL NULL — a filter that matches nothing —
+ * instead of against the three-character string.
+ */
+const POSTGREST_RESERVED_WORDS = new Set(['null', 'true', 'false'])
 
 /** Escape `\` first, then `"` — the reverse order would double-escape. */
 function escapeOrValue(str: string): string {
@@ -460,7 +516,7 @@ function formatOrValue(value: unknown, op?: string): string {
   // Wrap in double quotes if the value contains reserved characters.
   // This is required for encrypted values (JSON with commas, braces, etc.)
   // and is safe for all string values per PostgREST spec.
-  if (POSTGREST_RESERVED.test(str)) {
+  if (POSTGREST_RESERVED.test(str) || POSTGREST_RESERVED_WORDS.has(str)) {
     return `"${escapeOrValue(str)}"`
   }
 

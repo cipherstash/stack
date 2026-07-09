@@ -256,6 +256,160 @@ describe('parseOrString containment literals', () => {
   })
 })
 
+// A quoted operand is opaque at EVERY depth, and a stray brace or paren in an
+// unquoted value is a literal character, not structure. Tracking quotes only at
+// depth 0 let a `}` inside a quoted array element close the literal early; an
+// unmatched `}` in a plain value drove the depth counter negative, after which no
+// top-level comma ever split again. Both silently absorb the following condition
+// into the preceding operand — and only or-strings that also reference an
+// encrypted column are rebuilt from the parse, so it corrupts precisely the
+// mixed encrypted/plaintext case.
+describe('parseOrString structural characters inside values', () => {
+  it('does not close an array literal on a brace inside a quoted element', () => {
+    expect(parseOrString('tags.cs.{"a}b"},email.eq.secret')).toEqual([
+      { column: 'tags', op: 'cs', negate: false, value: '{"a}b"}' },
+      { column: 'email', op: 'eq', negate: false, value: 'secret' },
+    ])
+  })
+
+  it('does not close a jsonb literal on a brace inside a quoted value', () => {
+    expect(parseOrString('meta.cs.{"a":"v}"},id.eq.1')).toEqual([
+      { column: 'meta', op: 'cs', negate: false, value: '{"a":"v}"}' },
+      { column: 'id', op: 'eq', negate: false, value: '1' },
+    ])
+  })
+
+  // Every structural character, quoted as a jsonb VALUE, with the encrypted
+  // column ahead of the literal and a plaintext condition behind it — the shape
+  // that actually reaches `rebuildOrString`, since the encrypted `email` is what
+  // forces the group to be rebuilt rather than forwarded verbatim.
+  it.each([
+    '}',
+    '{',
+    ')',
+    '(',
+  ])('keeps a quoted %s inside a jsonb literal out of the depth count', (char) => {
+    expect(
+      parseOrString(`email.eq.x,meta.cs.{"a":"${char}"},note.eq.y`),
+    ).toEqual([
+      { column: 'email', op: 'eq', negate: false, value: 'x' },
+      { column: 'meta', op: 'cs', negate: false, value: `{"a":"${char}"}` },
+      { column: 'note', op: 'eq', negate: false, value: 'y' },
+    ])
+  })
+
+  it('keeps an escaped quote inside a jsonb value opaque', () => {
+    // `\"` must not close the element, or the `}` behind it decrements depth.
+    expect(parseOrString('a.eq.1,meta.cs.{"a":"\\"}"},b.eq.2')).toHaveLength(3)
+  })
+
+  it('splits after an unmatched brace in an unquoted value', () => {
+    // `}` is not a PostgREST reserved character, so `a}b` is a valid unquoted
+    // scalar operand.
+    expect(parseOrString('nickname.eq.a}b,id.eq.1')).toEqual([
+      { column: 'nickname', op: 'eq', negate: false, value: 'a}b' },
+      { column: 'id', op: 'eq', negate: false, value: '1' },
+    ])
+  })
+
+  it('splits after an unmatched paren in an unquoted value', () => {
+    expect(parseOrString('a.eq.x),b.eq.y')).toEqual([
+      { column: 'a', op: 'eq', negate: false, value: 'x)' },
+      { column: 'b', op: 'eq', negate: false, value: 'y' },
+    ])
+  })
+})
+
+// An `in`-list element is quoted exactly like any other operand, so the list must
+// be split on top-level commas and each element unquoted. Splitting the raw
+// string on every comma tore `("a,b",c)` into three fragments and left the quotes
+// embedded in them — on an encrypted column each fragment is encrypted as its own
+// term, so the intended element never matches.
+describe('parseOrString in-list elements', () => {
+  it('does not split on a comma inside a quoted element', () => {
+    expect(parseOrString('email.in.("a,b",c)')).toEqual([
+      { column: 'email', op: 'in', negate: false, value: ['a,b', 'c'] },
+    ])
+  })
+
+  it('unescapes a quoted element', () => {
+    expect(parseOrString('a.in.("x\\"y",z)')).toEqual([
+      { column: 'a', op: 'in', negate: false, value: ['x"y', 'z'] },
+    ])
+  })
+
+  it('round-trips a comma-bearing element through rebuild', () => {
+    const s = 'name.in.("Doe, John",Smith)'
+    expect(rebuildOrString(parseOrString(s) as DbPendingOrCondition[])).toBe(s)
+  })
+
+  it('round-trips an encrypted envelope element', () => {
+    const parsed = parseOrString(
+      rebuildOrString([cond('email', 'in', [ENVELOPE, 'x'])]),
+    )
+    expect(parsed).toEqual([
+      { column: 'email', op: 'in', negate: false, value: [ENVELOPE, 'x'] },
+    ])
+  })
+
+  it('splits a negated list on top-level commas only', () => {
+    expect(parseOrString('email.not.in.("a,b",c)')).toEqual([
+      { column: 'email', op: 'in', negate: true, value: ['a,b', 'c'] },
+    ])
+  })
+
+  // Only the operators whose operand PostgREST delimits with parens take a list.
+  // A parenthesized operand anywhere else is a scalar that happens to start with
+  // `(`: parsed as an array, an encrypted `eq` operand is encrypted as a JS array
+  // rather than the intended string, and the filter matches nothing.
+  it('does not read a parenthesized scalar as a list for a scalar operator', () => {
+    expect(parseOrString('email.eq.(foo)')).toEqual([
+      { column: 'email', op: 'eq', negate: false, value: '(foo)' },
+    ])
+  })
+
+  // The range operators take a paren-delimited operand too. Excluding them would
+  // re-emit `period.ov.(1,10)` as a quoted scalar — a wire-format change on a
+  // plaintext column that merely shares an `.or()` with an encrypted one.
+  it.each([
+    'ov',
+    'sl',
+    'sr',
+    'nxr',
+    'nxl',
+    'adj',
+  ])('round-trips a paren-delimited %s operand', (op) => {
+    const s = `period.${op}.(1,10)`
+    expect(parseOrString(s)).toEqual([
+      { column: 'period', op, negate: false, value: ['1', '10'] },
+    ])
+    expect(rebuildOrString(parseOrString(s) as DbPendingOrCondition[])).toBe(s)
+  })
+})
+
+// PostgREST reads a bare `null` / `true` / `false` operand as the SQL value, not
+// as the string spelling it. A string operand that happens to spell one must be
+// quoted, or `name.eq.null` compares against SQL NULL and matches nothing.
+describe('rebuildOrString reserved words', () => {
+  it.each(['null', 'true', 'false'])('quotes the string %s', (word) => {
+    expect(rebuildOrString([cond('name', 'eq', word)])).toBe(
+      `name.eq."${word}"`,
+    )
+  })
+
+  it('leaves the SQL values unquoted', () => {
+    expect(rebuildOrString([cond('a', 'is', null)])).toBe('a.is.null')
+    expect(rebuildOrString([cond('a', 'is', true)])).toBe('a.is.true')
+    expect(rebuildOrString([cond('a', 'is', false)])).toBe('a.is.false')
+  })
+
+  it('quotes a reserved word inside an in-list', () => {
+    expect(rebuildOrString([cond('a', 'in', ['null', 'x'])])).toBe(
+      'a.in.("null",x)',
+    )
+  })
+})
+
 describe('parseOrString negation', () => {
   it('lifts a not. prefix off the operator', () => {
     expect(parseOrString('nickname.not.eq.ada')).toEqual([
