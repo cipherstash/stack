@@ -23,6 +23,7 @@ import {
   typedEntries,
   V3_MATRIX,
 } from '../v3-matrix/catalog'
+import { needleFor } from '../v3-matrix/needle-for'
 
 const TERM = { c: 'ct', v: 1 }
 const TERM_JSON = JSON.stringify(TERM)
@@ -98,21 +99,6 @@ const matrixColumn = (eqlType: string) =>
   (matrixTable as Record<string, SQLWrapper>)[slug(eqlType)]
 const sampleFor = (spec: (typeof V3_MATRIX)[keyof typeof V3_MATRIX]) =>
   spec.samples[0]
-
-// `contains` needles must reach the match tokenizer's `token_length` (3), so
-// they cannot come from `sampleFor` — `TEXT_S[0]` is the empty string, which
-// tokenizes to nothing and is rejected as unanswerable.
-const needleFor = (
-  spec: (typeof V3_MATRIX)[keyof typeof V3_MATRIX],
-): string => {
-  const needle = spec.samples.find(
-    (sample) => typeof sample === 'string' && sample.length >= 3,
-  )
-  if (typeof needle !== 'string') {
-    throw new Error('no searchable sample for a match domain')
-  }
-  return needle
-}
 
 const equalityDomains = matrixEntries.filter(
   ([, spec]) => spec.indexes.unique || spec.indexes.ore,

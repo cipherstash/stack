@@ -24,8 +24,10 @@ an EQL envelope, instead of surfacing a raw `SyntaxError` for malformed JSON and
 passing a bare scalar through unchecked — `v3FromDriver('5')` previously returned
 `5` typed as `Encrypted`, which then reached `decrypt` as garbage. The guard
 accepts both scalar envelopes (ciphertext at `c`) and SteVec documents
-(ciphertext at `sv[0].c`). `EqlV3CodecError` is exported from
-`@cipherstash/stack/eql/v3/drizzle` so callers can catch it.
+(ciphertext at `sv[0].c`). A SteVec's `sv` must be a non-empty array: `sv[0]` is
+the decryption root, so `sv: []` carries a ciphertext key but no ciphertext, and
+is now rejected rather than passed to `decrypt`. `EqlV3CodecError` is exported
+from `@cipherstash/stack/eql/v3/drizzle` so callers can catch it.
 
 Also removes an unreachable branch in `inArray`/`notInArray`, whose empty-list
 guard already throws before it.

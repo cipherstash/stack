@@ -59,6 +59,21 @@ describe('v3 codec', () => {
     )
   })
 
+  // `sv: []` has no `sv[0]`, so the guard's premise — a ciphertext at the
+  // decryption root — does not hold. Presence of the key is not enough.
+  it.each([
+    ['an empty SteVec', { v: 3, k: 'sv', sv: [] }],
+    ['a non-array SteVec', { v: 3, k: 'sv', sv: {} }],
+    ['a null SteVec with no c', { v: 3, k: 'sv', sv: null }],
+  ])('rejects %s', (_label, envelope) => {
+    expect(() => v3FromDriver(envelope as never)).toThrow(EqlV3CodecError)
+    expect(() => v3FromDriver(envelope as never)).toThrow(/ciphertext/)
+  })
+
+  it('still accepts a scalar envelope, which has c and no sv', () => {
+    expect(v3FromDriver(ENVELOPE as never)).toBe(ENVELOPE)
+  })
+
   it('normalises null/undefined to SQL NULL (JS null) on read', () => {
     expect(v3FromDriver(null)).toBeNull()
     expect(v3FromDriver(undefined)).toBeNull()
@@ -85,20 +100,21 @@ describe('v3 codec', () => {
     // preserve. Flattening it to a message string discards the SyntaxError and
     // its stack, so a caller debugging a corrupt column loses where parsing
     // actually broke.
-    it.each(['{bad', '', '{"v":3,'])(
-      'preserves the underlying SyntaxError as `cause` for %j',
-      (raw) => {
-        let thrown: unknown
-        try {
-          v3FromDriver(raw)
-        } catch (error) {
-          thrown = error
-        }
+    it.each([
+      '{bad',
+      '',
+      '{"v":3,',
+    ])('preserves the underlying SyntaxError as `cause` for %j', (raw) => {
+      let thrown: unknown
+      try {
+        v3FromDriver(raw)
+      } catch (error) {
+        thrown = error
+      }
 
-        expect(thrown).toBeInstanceOf(EqlV3CodecError)
-        expect((thrown as EqlV3CodecError).cause).toBeInstanceOf(SyntaxError)
-      },
-    )
+      expect(thrown).toBeInstanceOf(EqlV3CodecError)
+      expect((thrown as EqlV3CodecError).cause).toBeInstanceOf(SyntaxError)
+    })
 
     it.each([
       '5',

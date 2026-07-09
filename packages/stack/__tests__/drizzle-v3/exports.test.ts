@@ -22,20 +22,19 @@ describe('v3 drizzle barrel', () => {
     expect(Object.keys(barrel).sort()).toEqual([...PUBLIC_SURFACE])
   })
 
-  it('exports the public surface', () => {
-    expect(typeof barrel.createEncryptionOperatorsV3).toBe('function')
-    expect(typeof barrel.extractEncryptionSchemaV3).toBe('function')
-    expect(typeof barrel.EncryptionOperatorError).toBe('function')
-    expect(typeof barrel.EqlV3CodecError).toBe('function')
+  // The key check above sees names, not values: a re-export that resolves to
+  // `undefined` still lists its key. Sweep every export the barrel claims.
+  it('exports every name as a callable, and types as a namespace', () => {
+    const callables = Object.entries(barrel).filter(
+      ([name]) => name !== 'types',
+    )
+    expect(callables).toHaveLength(PUBLIC_SURFACE.length - 1)
+
+    for (const [name, value] of callables) {
+      expect(typeof value, name).toBe('function')
+    }
+
     expect(typeof barrel.types.TextSearch).toBe('function')
     expect(barrel.types.IntegerOrd('age')).toBeDefined()
-  })
-
-  it('re-exports the codec and column helpers as callables', () => {
-    expect(typeof barrel.v3ToDriver).toBe('function')
-    expect(typeof barrel.v3FromDriver).toBe('function')
-    expect(typeof barrel.getEqlV3Column).toBe('function')
-    expect(typeof barrel.isEqlV3Column).toBe('function')
-    expect(typeof barrel.makeEqlV3Column).toBe('function')
   })
 })

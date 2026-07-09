@@ -666,6 +666,22 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     expect(rows).toEqual([])
   }, 30000)
 
+  // The disjoint pair above proves `and` is not `or`, but every `and` assertion
+  // over it expects []. A constant-false `and` would satisfy that too, and the
+  // `or` tests exercise a different operator. This pins the positive path:
+  // an intersecting pair that must actually return its row.
+  //   text_eq = 'ada@example.com' -> ROW_B only
+  //   integer_ord < 0             -> ROW_B (-42) only
+  it('and returns the rows satisfying both encrypted predicates', async () => {
+    const rows = await selectRowKeys(
+      await ops.and(
+        ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
+        ops.lt(matrixColumn('public.integer_ord'), 0),
+      ),
+    )
+    expect(rows).toEqual([ROW_B])
+  }, 30000)
+
   it('or requires either encrypted predicate, unlike and', async () => {
     const rows = await selectRowKeys(await ops.or(...disjointPredicates()))
     expect(rows).toEqual([ROW_A, ROW_B, ROW_C])

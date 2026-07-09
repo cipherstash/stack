@@ -116,6 +116,27 @@ async function decryptOutcome(
  */
 const KEY_DENIAL = /^Failed to retrieve key/
 
+/**
+ * Denial under a claim the token may not carry at all. Naming a claim does not
+ * assert it exists: `resolveLockContext` is a passthrough, and ZeroKMS resolves
+ * the claim's value from the authenticating token. So decrypting under
+ * `['email']` a row sealed under `['sub']` either fails key derivation, or — if
+ * the token has no `email` claim — is refused by the authorization layer before
+ * key derivation is ever attempted. Both are denials; which one surfaces is a
+ * ZeroKMS server-side detail we do not pin.
+ *
+ * What must NOT pass is an infrastructure fault masquerading as a denial, so
+ * that is excluded separately. Kept loose rather than pinned to `KEY_DENIAL`
+ * because no CI run exercises this path — `USER_JWT` is unset in CI (#530) —
+ * and a wrong message-shape guess would only surface once that secret lands.
+ */
+const IDENTITY_DENIAL =
+  /failed to retrieve key|unauthoriz|unauthoris|forbidden|denied|not authorized|not authorised/i
+
+/** A transport/outage failure, which must never be mistaken for a denial. */
+const INFRA_FAULT =
+  /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|timed? ?out|network error/i
+
 /** Run-scoped SELECT of row keys under an already-encrypted SQL condition. */
 async function selectRowKeys(condition: SQL): Promise<string[]> {
   const rows = (await db
@@ -271,6 +292,7 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
     )
 
     expect(denied).toBe(true)
-    expect(message).toMatch(KEY_DENIAL)
+    expect(message).toMatch(IDENTITY_DENIAL)
+    expect(message).not.toMatch(INFRA_FAULT)
   }, 30000)
 })

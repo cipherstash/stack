@@ -21,6 +21,10 @@ export class EqlV3CodecError extends Error {
  * which has no top-level `c`. Checking `v` plus either carrier distinguishes an
  * envelope from a bare scalar, an array, or an unrelated object — without
  * paying a full structural validation on every decrypted row.
+ *
+ * The `sv` carrier must be a non-empty array: `sv[0]` is the decryption root,
+ * so `sv: []` has a ciphertext key but no ciphertext, and would reach `decrypt`
+ * as garbage.
  */
 function assertEnvelope(value: unknown, source: string): Encrypted {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -29,11 +33,14 @@ function assertEnvelope(value: unknown, source: string): Encrypted {
     )
   }
   const envelope = value as { v?: unknown; c?: unknown; sv?: unknown }
+  // A SteVec carries its root ciphertext at `sv[0].c`, so an empty or non-array
+  // `sv` carries no ciphertext at all — presence of the key is not enough.
+  const hasSteVec = Array.isArray(envelope.sv) && envelope.sv.length > 0
   const missing =
     envelope.v === undefined
       ? '"v"'
-      : envelope.c === undefined && envelope.sv === undefined
-        ? 'a ciphertext ("c", or "sv" for a SteVec document)'
+      : envelope.c === undefined && !hasSteVec
+        ? 'a ciphertext ("c", or a non-empty "sv" for a SteVec document)'
         : undefined
   if (missing) {
     throw new EqlV3CodecError(
