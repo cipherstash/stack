@@ -1,6 +1,6 @@
 ---
 name: stash-encryption
-description: Implement field-level encryption with @cipherstash/stack. Covers schema definition, encrypt/decrypt operations, searchable encryption (equality, free-text, range, JSON), bulk operations, model operations, identity-aware encryption with LockContext, multi-tenant keysets, and the full TypeScript type system. Use when adding encryption to a project, defining encrypted schemas, or working with the CipherStash Encryption API.
+description: Implement field-level encryption with @cipherstash/stack. Covers schema definition, encrypt/decrypt operations, searchable encryption (equality, free-text, range, JSON), bulk and model operations, identity-aware encryption with OidcFederationStrategy and lock contexts, multi-tenant keysets, the rollout-and-cutover lifecycle for taking encryption to production, and the full TypeScript type system. Use when adding encryption to a project, defining encrypted schemas, or working with the CipherStash Encryption API.
 ---
 
 # CipherStash Stack - Encryption
@@ -92,6 +92,15 @@ const client = await Encryption({
 
 If `config` is omitted, the client reads `CS_*` environment variables automatically.
 
+| `config` field | Purpose |
+|---|---|
+| `workspaceCrn`, `clientId`, `clientKey`, `accessKey` | Credentials. Default to the matching `CS_*` env vars. |
+| `keyset` | `{ name }` or `{ id }` — per-tenant key isolation. |
+| `authStrategy` | An explicit auth strategy (`OidcFederationStrategy` for identity-aware encryption, `AccessKeyStrategy` for service/CI). Omit for the default env-var flow. |
+| `eqlVersion` | Pin the EQL wire format (`2` or `3`). Auto-detected from the schema set otherwise. |
+
+> `config.strategy` is the old name for `authStrategy`. It still works and logs a deprecation warning once per process. Use `authStrategy`.
+
 ### Logging
 
 Logging is enabled by default at the `error` level. Configure the log level with the `STASH_STACK_LOG` environment variable:
@@ -114,9 +123,9 @@ The SDK never logs plaintext data.
 
 | Import Path | Provides |
 |---|---|
-| `@cipherstash/stack` | `Encryption` function, `encryptedTable`, `encryptedColumn`, `encryptedField` (convenience re-exports) |
+| `@cipherstash/stack` | `Encryption` function, the auth strategies (`OidcFederationStrategy`, `AccessKeyStrategy`, `AutoStrategy`), and `encryptedTable` / `encryptedColumn` / `encryptedField` (convenience re-exports) |
 | `@cipherstash/stack/schema` | `encryptedTable`, `encryptedColumn`, `encryptedField`, schema types |
-| `@cipherstash/stack/identity` | `LockContext` class and identity types |
+| `@cipherstash/stack/identity` | `LockContext` class and identity types (the class is legacy — see [Identity-Aware Encryption](#identity-aware-encryption)) |
 | `@cipherstash/stack/drizzle` | `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` for Drizzle ORM |
 | `@cipherstash/stack/supabase` | `encryptedSupabase` wrapper for Supabase |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` helper for DynamoDB |
@@ -124,6 +133,8 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/errors` | `EncryptionErrorTypes`, `StackError`, error subtypes, `getErrorMessage` |
 | `@cipherstash/stack/client` | Client-safe exports: schema builders, schema types, `EncryptionClient` type (no native FFI) |
 | `@cipherstash/stack/types` | All TypeScript types |
+| `@cipherstash/stack/wasm-inline` | Edge/bundled runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions). Inlines the WASM build, so **no bundler exclusion is needed** — but the client surface is smaller: `encrypt`, `decrypt`, `isEncrypted` only. |
+| `@cipherstash/stack/v3`, `/eql/v3` | EQL v3 typed column classes. |
 
 ## Schema Definition
 
@@ -162,7 +173,21 @@ const documents = encryptedTable("documents", {
 | `.searchableJson()` | Encrypted JSONB path and containment queries (auto-sets `dataType` to `'json'`) | `'searchableJson'` |
 | `.dataType(cast)` | Set plaintext data type | N/A |
 
-**Supported data types:** `'string'` (default), `'text'`, `'number'`, `'boolean'`, `'date'`, `'bigint'`, `'json'`
+**Supported data types:** `'string'` (default), `'text'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'bigint'`, `'json'`
+
+> `dataType('bigint')` is declarable, but the native `@cipherstash/protect-ffi` build cannot marshal a JS `bigint`, so you cannot pass a `bigint` *value* at runtime.
+
+Each SDK data type maps to an EQL `cast_as` value on the database side. `stash db push` (Proxy only) performs this translation:
+
+| `dataType()` | EQL `cast_as` |
+|---|---|
+| `string`, `text` | `text` |
+| `number` | `double` |
+| `bigint` | `big_int` |
+| `boolean` | `boolean` |
+| `date` | `date` |
+| `timestamp` | `timestamp` |
+| `json` | `jsonb` |
 
 Methods are chainable - call as many as you need on a single column.
 
@@ -412,45 +437,63 @@ const results = await client.encryptQuery(terms)
 
 All values in the array must be non-null.
 
-## Identity-Aware Encryption (Lock Contexts)
+## Identity-Aware Encryption
 
-Lock encryption to a specific user by requiring a valid JWT for decryption.
+Bind a data key to a claim from the end user's JWT, so only that user can decrypt.
+
+You do this in two parts: **authenticate the client as the user** with `OidcFederationStrategy`, then **name the claim** on each operation with `.withLockContext({ identityClaim })`.
 
 ```typescript
-import { LockContext } from "@cipherstash/stack/identity"
+import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-// 1. Create a lock context (defaults to the "sub" claim)
-const lc = new LockContext()
-// Or with custom claims: new LockContext({ context: { identityClaim: ["sub", "org_id"] } })
-// Or with a pre-fetched CTS token: new LockContext({ ctsToken: { accessToken: "...", expiry: 123456 } })
-
-// 2. Identify the user with their JWT
-const identifyResult = await lc.identify(userJwt)
-if (identifyResult.failure) {
-  throw new Error(identifyResult.failure.message)
+// 1. Authenticate the client as the end user. `getJwt` is re-invoked on every
+//    (re-)federation and must return the *current* third-party OIDC JWT
+//    (Clerk, Supabase, Auth0, Okta, ...).
+const strategy = OidcFederationStrategy.create(
+  process.env.CS_WORKSPACE_CRN!,
+  () => getUserJwt(),
+)
+if (strategy.failure) {
+  throw new Error(`[auth] ${strategy.failure.type}: ${strategy.failure.error.message}`)
 }
-const lockContext = identifyResult.data
 
-// 3. Encrypt with lock context
+const client = await Encryption({
+  schemas: [users],
+  config: { authStrategy: strategy.data },
+})
+
+// 2. Bind the data key to the user's `sub` claim.
+const IDENTITY = { identityClaim: ["sub"] }
+
 const encrypted = await client
   .encrypt("sensitive data", { column: users.email, table: users })
-  .withLockContext(lockContext)
+  .withLockContext(IDENTITY)
 
-// 4. Decrypt with the same lock context
+// 3. Decrypt with the SAME claim. Anything else cannot reproduce the key.
 const decrypted = await client
   .decrypt(encrypted.data)
-  .withLockContext(lockContext)
+  .withLockContext(IDENTITY)
 ```
 
-Lock contexts work with ALL operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`.
+`OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()`.
 
-### CTS Token Service
+`identityClaim` is an array of JWT claim *names*, not values: `["sub"]` (the default) or `["sub", "org_id"]`. ZeroKMS resolves each claim's value from the JWT the strategy federated. **The same claim must be supplied to encrypt and decrypt** — it is baked into the data key's tag, so decrypting without it fails with `Failed to retrieve key`.
 
-The lock context exchanges the JWT for a CTS (CipherStash Token Service) token. Set the endpoint:
+Lock contexts work with every operation: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`.
 
-```bash
-CS_CTS_ENDPOINT=https://ap-southeast-2.aws.auth.viturhosted.net
+`AccessKeyStrategy` is the service-to-service / CI path. It authenticates a *service*, not a user, so it cannot be used with a lock context.
+
+### Deprecated: `LockContext.identify()`
+
+Older code fetched a per-operation CTS token:
+
+```typescript
+const lc = new LockContext()
+const identified = await lc.identify(userJwt)   // deprecated
+await client.encrypt(...).withLockContext(identified.data)
 ```
+
+**Per-operation CTS tokens were removed in `protect-ffi` 0.25.** `LockContext`, `identify()` and `getLockContext()` still exist for backwards compatibility, but the token `identify()` fetches is no longer used by encryption — and `CS_CTS_ENDPOINT` is only read on that dead path. Authenticate with `OidcFederationStrategy` instead and pass the claim directly. `.withLockContext()` accepts either a `LockContext` instance or a plain `{ identityClaim }`.
 
 ## Multi-Tenant Encryption (Keysets)
 
@@ -504,10 +547,12 @@ if (result.failure) {
 | Type | When |
 |---|---|
 | `ClientInitError` | Client initialization fails (bad credentials, missing config) |
-| `EncryptionError` | An encrypt operation fails (has optional `code` field) |
-| `DecryptionError` | A decrypt operation fails |
+| `EncryptionError` | An encrypt operation fails (optional `code` field) |
+| `DecryptionError` | A decrypt operation fails (optional `code` field) |
 | `LockContextError` | Lock context creation or usage fails |
 | `CtsTokenError` | Identity token exchange fails |
+
+> **Two different failure shapes — don't conflate them.** Encryption operations fail with a *flat* `EncryptionError`: read `failure.type` and `failure.message`. The auth strategies (`OidcFederationStrategy.create`, `AccessKeyStrategy.create`, `getToken()`) come from `@cipherstash/auth` and fail with an `AuthFailure`: read `failure.type` and **`failure.error.message`**. Reaching for `failure.error.message` on an encryption result gives you `undefined`.
 
 `StackError` is a discriminated union of all the error types above, enabling exhaustive `switch` handling. `EncryptionErrorTypes` provides runtime constants for each error type string. Use `getErrorMessage(error: unknown): string` to safely extract a message from any thrown value.
 
@@ -564,25 +609,41 @@ Operator family support for Supabase is being developed in collaboration with th
 
 ## PostgreSQL Storage
 
-Encrypted data is stored as EQL (Encrypt Query Language) JSON payloads. Install the EQL extension in PostgreSQL:
+Encrypted data is stored as EQL (Encrypt Query Language) JSON payloads.
+
+**EQL is not a PostgreSQL extension — do not `CREATE EXTENSION eql_v2`.** It is a schema (`eql_v2`) plus a composite type (`public.eql_v2_encrypted`) installed by the CLI:
+
+```bash
+stash eql install
+```
+
+Then declare encrypted columns against the composite type:
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS eql_v2;
-
 CREATE TABLE users (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email eql_v2_encrypted
 );
 ```
 
-Or store as JSONB if not using the EQL extension directly:
+Without EQL installed, an encrypted column is plain `jsonb`. Searchable encryption needs EQL; storage alone does not.
 
 ```sql
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
-  email jsonb NOT NULL
+  email jsonb
 );
 ```
+
+> **Encrypted columns are nullable.** Never add `NOT NULL` at creation. The application writes ciphertext *after* the column exists, so a `NOT NULL` constraint breaks inserts during a rollout. Never declare them `text`, `varchar`, or `bytea`.
+
+### EQL v2 and v3
+
+`stash eql install` targets **EQL v2** by default (`--eql-version 2`), which is what this skill documents. EQL v3 — the native `eql_v3.*` domain schema — is available behind `stash eql install --eql-version 3` and `@cipherstash/stack/v3`.
+
+The client picks the wire format from your schema set, or you can pin it with `config.eqlVersion`. One client emits exactly one wire format; a mixed v2 + v3 schema set throws.
+
+The practical difference for this skill: **EQL v3 has no configuration table.** Column config lives in the column's own `eql_v3.*` type, so `stash db push` and `stash db activate` do not apply. See the [Proxy-only](#eql-v2--cipherstash-proxy-only) note below.
 
 ## Rolling Encryption Out to Production
 
@@ -615,7 +676,7 @@ Everything that lands in the repo and ships in **one** PR:
 | Schema-add | Migration adds `<col>_encrypted` (nullable `jsonb`) alongside the existing plaintext column. Plaintext column unchanged; application still writes only plaintext. |
 | Dual-write code | Application now writes both `<col>` and `<col>_encrypted` on every persistence path that mutates the row, in the same transaction, on every code branch. Reads still come from the plaintext column. |
 
-> **If you use CipherStash Proxy:** After the schema-add, run `stash db push` to register the new column in `eql_v2_configuration`. With no active config yet it writes directly to `active`; with an existing active config it writes `pending` (cutover will promote it). Required for Proxy-based queries.
+> **If you use CipherStash Proxy:** After the schema-add, run `stash db push` to register the new column in `eql_v2_configuration`. With no active config yet it writes straight to `active` and you're done. If an active config already exists it writes `pending` — promote that purely-additive change with `stash db activate`. (`stash encrypt cutover` promotes only the `pending` that accompanies the *rename*, later.) Required for Proxy-based queries; SDK users skip this.
 
 **The dual-write definition matters.** "Writes both columns" is not enough. The rule is: every persistence path that mutates this row writes both columns, in the same transaction, on every code branch. A single missed branch — a CSV import, an admin action, a background job, a third-party webhook handler — means rows inserted in production after deploy land in plaintext only, and backfill won't catch them. Grep for every site that writes the plaintext column before declaring rollout complete.
 
@@ -635,19 +696,29 @@ Once dual-writes are recorded as live in `cs_migrations`:
 |---|---|
 | `stash encrypt backfill` | Walks the table in keyset-pagination order, encrypts each chunk, writes a single transactional `UPDATE` per chunk plus a `cs_migrations` checkpoint. SIGINT-safe; idempotent re-runs converge. |
 | Schema rename | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. |
-| `stash encrypt cutover` | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. |
+| `stash encrypt cutover` | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes `pending` → `active`. **`<col>` now holds ciphertext.** Reads are *not* automatic — see the next row. (CipherStash Proxy is the exception: it decrypts on the wire, so Proxy users need no application change.) |
 | Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; `encryptedSupabase` wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw `eql_v2_encrypted` payloads to end users. |
 | Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
 | `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
 
 > **If you use CipherStash Proxy:** After the schema rename, run `stash db push` to register the renamed shape as `pending`. This is required for Proxy-based queries; SDK users skip this step.
 
+### EQL v2 + CipherStash Proxy only
+
+`stash db push` and `stash db activate` write `public.eql_v2_configuration`. **Only CipherStash Proxy reads that table.**
+
+- **SDK users** — Drizzle, Supabase, plain PostgreSQL — keep their encryption config in application code. The database needs no copy. Skip both commands. `stash init` records this choice as `usesProxy` in `.cipherstash/context.json`.
+- **Proxy users** — run them where the rollout steps above say to.
+- **EQL v3** has no configuration table at all; column config lives in the `eql_v3.*` column type. Neither command applies.
+
+The one exception is the cutover precondition noted above, which is a bug, not a design: see [issue #585](https://github.com/cipherstash/stack/issues/585).
+
 ### State storage
 
 Three sources of truth, kept separate on purpose:
 
 - **`.cipherstash/migrations.json`** (repo) — *intent*. Which columns the developer wants to encrypt and at which phase, code-reviewable.
-- **`eql_v2_configuration`** (DB, EQL-managed) — *EQL intent*. Which columns are encrypted and with which indexes; drives the CipherStash Proxy.
+- **`eql_v2_configuration`** (DB, EQL-managed) — *EQL intent*, EQL v2 + Proxy only. Which columns are encrypted and with which indexes; drives the CipherStash Proxy.
 - **`cipherstash.cs_migrations`** (DB, CipherStash-managed) — *runtime state*. Append-only event log: phase transitions, backfill cursors, error rows. Latest row per `(table, column)` is the current state.
 
 `stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing). `stash status` (the quest log) rolls them up into the per-column "what's the next move" view used during a rollout.
@@ -656,7 +727,7 @@ Three sources of truth, kept separate on purpose:
 
 ### CLI sequence for a single column
 
-> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked in issue [#447](https://github.com/cipherstash/stack/issues/447) follow-up work.
+> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling this is tracked in [issue #585](https://github.com/cipherstash/stack/issues/585) — under EQL v3 there is no configuration table at all, so the precondition disappears.
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.
@@ -772,7 +843,7 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 
 ### Invariants the rollout preserves
 
-- **Reads never return the wrong value.** Until cutover, reads come from the plaintext column. After cutover, the same `SELECT email` returns the decrypted ciphertext via Proxy or the encryption client. There is no in-between.
+- **Reads never return the wrong value.** Until cutover, reads come from the plaintext column. After cutover, a raw `SELECT email` returns *ciphertext* — the encryption client decrypts it (or Proxy does, on the wire). There is no in-between where a read silently returns a stale plaintext.
 - **Writes never drop.** Dual-writing keeps both columns in sync until the cutover moment. After cutover, writes go to the encrypted column.
 - **The deploy gate is a one-way door for production.** Backfill against rows the dual-write code never saw produces silent drift. The CLI refuses to run cutover-step plans without a `dual_writing` event recorded; do not paper over that refusal.
 - **Re-runs are safe.** Backfill is idempotent (`<col> IS NOT NULL AND <col>_encrypted IS NULL` guards every chunk). `cs_migrations` is append-only.
@@ -799,11 +870,11 @@ All method signatures on the encryption client remain the same. The `Result` pat
 | `decrypt` | `(encryptedData)` | `DecryptOperation` |
 | `encryptQuery` | `(plaintext, { column, table, queryType?, returnType? })` | `EncryptQueryOperation` |
 | `encryptQuery` | `(terms: readonly ScalarQueryTerm[])` | `BatchEncryptQueryOperation` |
-| `encryptModel` | `(model, table)` | `EncryptModelOperation<EncryptedFromSchema<T, S>>` |
+| `encryptModel` | `(model, table)` | `EncryptModelOperation<EncryptedFromBuildableTable<T, Table>>` |
 | `decryptModel` | `(encryptedModel)` | `DecryptModelOperation<T>` — resolves to `Decrypted<T>` |
 | `bulkEncrypt` | `(plaintexts, { column, table })` | `BulkEncryptOperation` |
 | `bulkDecrypt` | `(encryptedPayloads)` | `BulkDecryptOperation` |
-| `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation<EncryptedFromSchema<T, S>>` |
+| `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation<EncryptedFromBuildableTable<T, Table>>` |
 | `bulkDecryptModels` | `(encryptedModels)` | `BulkDecryptModelsOperation<T>` — resolves to `Decrypted<T>[]` |
 
 All operations are thenable (awaitable) and support `.withLockContext()` and `.audit()` chaining.

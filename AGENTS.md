@@ -155,7 +155,7 @@ Three rules to remember when editing CI or pnpm config:
   - `bulkEncryptModels(models[], table)` / `bulkDecryptModels(models[])`
   - `encryptQuery(value, { table, column, queryType?, returnType? })` for searchable queries
   - `encryptQuery(terms[])` for batch query encryption
-- **Identity-aware encryption**: Authenticate the client as the end user with `OidcFederationStrategy` (`config.strategy`, re-exported from `@cipherstash/stack`), then chain `.withLockContext({ identityClaim })` on operations to bind the data key to a claim. The same claim must be used for encrypt and decrypt. (`LockContext.identify()` from `@cipherstash/stack/identity` is deprecated — the strategy now handles token acquisition; `.withLockContext()` also accepts a `LockContext`.)
+- **Identity-aware encryption**: Authenticate the client as the end user with `OidcFederationStrategy` (`config.authStrategy`, re-exported from `@cipherstash/stack`), then chain `.withLockContext({ identityClaim })` on operations to bind the data key to a claim. The same claim must be used for encrypt and decrypt. `create()` returns a `Result` — unwrap it (`strategy.data`) before passing it to `authStrategy`; the envelope has no `getToken()`. (`config.strategy` is the deprecated name for `authStrategy`. `LockContext.identify()` from `@cipherstash/stack/identity` is deprecated — the strategy now handles token acquisition; `.withLockContext()` also accepts a `LockContext`.)
 - **Integrations**:
   - **Drizzle ORM**: `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack/drizzle`
   - **Supabase**: `encryptedSupabase` from `@cipherstash/stack/supabase`

@@ -752,14 +752,21 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * `AccessKeyStrategy` — like `auto`, but only ever uses an access key; it never falls back to the
  * local dev profile. Ideal for services and CI:
  *
+ * As of `@cipherstash/auth` `0.41`, `create()` returns a `Result` — unwrap it before handing the
+ * strategy to `authStrategy`. The envelope has no `getToken()`, so passing it straight through
+ * fails inside the FFI.
+ *
  * ```typescript
  * import { Encryption, AccessKeyStrategy } from "@cipherstash/stack"
  *
+ * const strategy = AccessKeyStrategy.create(workspaceCrn, accessKey)
+ * if (strategy.failure) {
+ *   throw new Error(`${strategy.failure.type}: ${strategy.failure.error.message}`)
+ * }
+ *
  * const client = await Encryption({
  *   schemas: [users],
- *   config: {
- *     authStrategy: AccessKeyStrategy.create(workspaceCrn, accessKey),
- *   },
+ *   config: { authStrategy: strategy.data },
  * })
  * ```
  *
@@ -773,11 +780,14 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
  *
  * // Authenticate every ZeroKMS request as the signed-in user.
+ * const strategy = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt())
+ * if (strategy.failure) {
+ *   throw new Error(`${strategy.failure.type}: ${strategy.failure.error.message}`)
+ * }
+ *
  * const client = await Encryption({
  *   schemas: [users],
- *   config: {
- *     authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()),
- *   },
+ *   config: { authStrategy: strategy.data },
  * })
  * ```
  *
