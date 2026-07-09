@@ -22,63 +22,17 @@ describe('eql_v3 text_search column', () => {
     expect(v3).toStrictEqual(v2)
   })
 
-  it('.freeTextSearch(opts) overrides each provided key and keeps the rest as defaults', () => {
-    const built = types
-      .TextSearch('email')
-      .freeTextSearch({
-        tokenizer: { kind: 'ngram', token_length: 4 },
-        k: 8,
-        m: 4096,
-        include_original: false,
-      })
-      .build()
-    expect(built.indexes.match).toEqual({
-      tokenizer: { kind: 'ngram', token_length: 4 },
-      // omitted -> default downcase filter retained
-      token_filters: [{ kind: 'downcase' }],
-      k: 8,
-      m: 4096,
-      include_original: false,
-    })
-  })
-
-  it('.freeTextSearch({ token_filters: [] }) overrides the downcase default with an empty array', () => {
-    // LOAD-BEARING: `[] ?? default` evaluates to `[]` (an empty array is not
-    // nullish), so an explicit empty array must OVERRIDE the downcase default,
-    // not fall back to it. Mirrors v2 (schema-builders.test.ts).
-    const built = types
-      .TextSearch('email')
-      .freeTextSearch({ token_filters: [] })
-      .build()
-    expect(built.indexes.match.token_filters).toEqual([])
-  })
-
-  it('repeated .freeTextSearch() calls are last-call-wins-fully (each re-merges against defaults, not prior state)', () => {
-    // Each call re-merges against a fresh defaultMatchOpts(), not the
-    // accumulated matchOpts — so the second call resets k back to its default
-    // of 6. This is intentional: it mirrors v2 exactly. Pinned here so a future
-    // "merge against current state" change can't silently slip in.
-    const built = types
-      .TextSearch('email')
-      .freeTextSearch({ k: 8 })
-      .freeTextSearch({ m: 4096 })
-      .build()
-    expect(built.indexes.match.k).toBe(6)
-    expect(built.indexes.match.m).toBe(4096)
-  })
-
-  it('.freeTextSearch() with no argument is a no-op: build() equals the default build()', () => {
-    // Pins the opts === undefined branch: every `opts?.x ?? default` falls
-    // through, so a bare call must emit exactly the default match block.
-    expect(types.TextSearch('email').freeTextSearch().build()).toStrictEqual(
-      types.TextSearch('email').build(),
-    )
-  })
-
-  it('.freeTextSearch() is tuning-only: unique and ore indexes stay present', () => {
-    const built = types.TextSearch('email').freeTextSearch({ k: 8 }).build()
+  it('default build() emits the unique, ore, and match indexes', () => {
+    const built = types.TextSearch('email').build()
     expect(built.indexes.unique).toEqual({ token_filters: [] })
     expect(built.indexes.ore).toEqual({})
+    expect(built.indexes.match).toEqual({
+      tokenizer: { kind: 'ngram', token_length: 3 },
+      token_filters: [{ kind: 'downcase' }],
+      k: 6,
+      m: 2048,
+      include_original: true,
+    })
   })
 
   it('built columns share no mutable state: mutating one build() output does not affect another', () => {
@@ -103,29 +57,6 @@ describe('eql_v3 text_search column', () => {
     const c = types.TextSearch('c').build()
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
-  })
-
-  it('clones caller opts on freeTextSearch(): mutating them before build() does not leak', () => {
-    // build() deep-clones at build time, but if freeTextSearch stored the
-    // caller's nested tokenizer / token_filters by reference, a caller mutating
-    // their own opts object between freeTextSearch(opts) and build() would leak
-    // the mutation into the emitted config. freeTextSearch must clone on write.
-    const opts = {
-      tokenizer: { kind: 'ngram' as const, token_length: 3 },
-      token_filters: [{ kind: 'downcase' as const }],
-    }
-    const col = types.TextSearch('email').freeTextSearch(opts)
-
-    // Mutate the caller's own opts AFTER freeTextSearch but BEFORE build().
-    opts.tokenizer.token_length = 999
-    opts.token_filters.push({ kind: 'downcase' as const })
-
-    const built = col.build()
-    expect(built.indexes.match.tokenizer).toEqual({
-      kind: 'ngram',
-      token_length: 3,
-    })
-    expect(built.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
   })
 })
 

@@ -1,10 +1,5 @@
-import type { ColumnSchema, MatchIndexOpts } from '@/schema'
-import {
-  type BuiltMatchIndexOpts,
-  cloneMatchOpts,
-  defaultMatchOpts,
-  resolveMatchOpts,
-} from '@/schema/match-defaults'
+import type { ColumnSchema } from '@/schema'
+import { defaultMatchOpts } from '@/schema/match-defaults'
 
 /**
  * The query capabilities a v3 concrete domain exposes. These are SDK-facing
@@ -425,8 +420,8 @@ const TEXT_SEARCH_DOMAIN = {
  * Builder for a `public.text_search` column.
  *
  * The concrete type inherently enables equality + order/range + free-text
- * match — there are no capability-enabling methods. `.freeTextSearch(opts?)`
- * tunes the match index only.
+ * match — there are no capability-enabling or tuning methods. The match index
+ * is always emitted with the default configuration.
  *
  * NOTE — querying: a `text_search` column emits all three indexes (`unique`,
  * `ore`, `match`), and the shared index-inference picks them by fixed priority
@@ -445,45 +440,8 @@ const TEXT_SEARCH_DOMAIN = {
 export class EncryptedTextSearchColumn extends EncryptedV3Column<
   typeof TEXT_SEARCH_DOMAIN
 > {
-  private matchOpts: BuiltMatchIndexOpts
-
   constructor(columnName: string) {
     super(columnName, TEXT_SEARCH_DOMAIN)
-    this.matchOpts = defaultMatchOpts()
-  }
-
-  /**
-   * Tune the match index. Each provided key replaces its default; omitted
-   * keys keep the default. This NEVER enables a capability — match is always
-   * on for this type. Merge semantics mirror v2's `opts?.x ?? default`.
-   */
-  freeTextSearch(opts?: MatchIndexOpts): this {
-    // Shared merge+clone (schema/match-defaults) — one source of truth with the
-    // v2 `freeTextSearch()` builder. `resolveMatchOpts` merges each key over the
-    // per-call defaults and deep-clones, so a caller mutating their own opts
-    // object between `freeTextSearch(opts)` and `build()` cannot leak into the
-    // emitted config (clone-on-write).
-    this.matchOpts = resolveMatchOpts(opts)
-    return this
-  }
-
-  /** Emit the encrypt-config column. Byte-identical to a v2 equality+order+match column. */
-  override build(): ColumnSchema {
-    // Derive `cast_as` + the `unique`/`ore` blocks from the shared
-    // capability→index mapping (this domain's TEXT_SEARCH capabilities produce
-    // exactly `{ unique, ore, match }`), then override ONLY `match` with this
-    // builder's tuned opts. Hand-writing the unique/ore shape here would let it
-    // silently drift from `indexesForCapabilities` — the exact divergence class
-    // behind the text_ord `hm`-index bug. Deep-clone the match block so the
-    // returned config never aliases this builder's internal `matchOpts`.
-    const base = super.build()
-    return {
-      ...base,
-      indexes: {
-        ...base.indexes,
-        match: cloneMatchOpts(this.matchOpts),
-      },
-    }
   }
 }
 
