@@ -495,7 +495,7 @@ if (decrypted.failure) {
 }
 ```
 
-> **Known issue on the Node entry.** The example above is the intended API, but it does not currently typecheck or run on `@cipherstash/stack`'s default (Node/NAPI) entry. `@cipherstash/auth` 0.41 strategies return `getToken(): Promise<Result<TokenResult, AuthFailure>>`, while `@cipherstash/protect-ffi`'s Node `AuthStrategy` expects `getToken(): Promise<{ token: string }>` — and its native client reads `.token` directly, so an auth-0.41 strategy fails with `missing 'token' field`. `@cipherstash/stack` needs to adapt at that boundary. The `@cipherstash/stack/wasm-inline` entry is unaffected: protect-ffi's WASM client unwraps the envelope itself.
+> **Known issue on the Node entry.** The example above is the intended API, but it does not currently typecheck or run on `@cipherstash/stack`'s default (Node/NAPI) entry. `@cipherstash/auth` 0.41 strategies return `getToken(): Promise<Result<TokenResult, AuthFailure>>`, while `@cipherstash/protect-ffi`'s Node `AuthStrategy` expects `getToken(): Promise<{ token: string }>` — and its native client reads `.token` directly, so an auth-0.41 strategy fails with `missing 'token' field`. `@cipherstash/stack` needs to adapt at that boundary — tracked in [issue #602](https://github.com/cipherstash/stack/issues/602). The `@cipherstash/stack/wasm-inline` entry is unaffected: protect-ffi's WASM client unwraps the envelope itself.
 
 `OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()` at all.
 
