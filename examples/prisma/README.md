@@ -10,7 +10,7 @@ A single `User` model with one column per cipherstash codec (string, double, big
 
 | Path                       | Purpose                                                                                       |
 | -------------------------- | --------------------------------------------------------------------------------------------- |
-| `docker-compose.yml`       | Local Postgres 16 on port 5544.                                                               |
+| `docker-compose.yml`       | Local Postgres 16 on port 54338.                                                               |
 | `prisma/schema.prisma`     | Application schema (one `User` model exercising all six cipherstash codecs).                  |
 | `prisma-next.config.ts`    | Wires `cipherstash` into `extensionPacks`.                                                    |
 | `src/db.ts`                | One-call setup via `cipherstashFromStack({ contractJson })`.                                  |
@@ -20,7 +20,7 @@ A single `User` model with one column per cipherstash codec (string, double, big
 
 ## Prerequisites
 
-1. **Docker** for the bundled Postgres on port 5544 (or any Postgres 16+).
+1. **Docker** for the bundled Postgres on port 54338 (or any Postgres 16+).
 2. **A CipherStash workspace** — sign up at [cipherstash.com](https://cipherstash.com), then run `stash auth login` (PKCE; caches credentials in your OS keychain — no `CS_*` env vars needed in local dev).
 
 ## Run it

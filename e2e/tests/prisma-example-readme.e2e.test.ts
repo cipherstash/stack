@@ -20,7 +20,13 @@ const authConfigured = (() => {
   if (process.env.CS_CLIENT_ID && process.env.CS_CLIENT_KEY) return true
   const home = process.env.HOME
   if (!home) return false
-  return existsSync(join(home, '.cipherstash', 'auth.json'))
+  // `stash auth login` stores either an `auth.json` (legacy PKCE flow) or a
+  // `device.json` (device-code flow) under the profile directory; both let
+  // the stack client authenticate without CS_* env vars.
+  return (
+    existsSync(join(home, '.cipherstash', 'auth.json')) ||
+    existsSync(join(home, '.cipherstash', 'device.json'))
+  )
 })()
 
 interface StepResult {
