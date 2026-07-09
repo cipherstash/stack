@@ -1,16 +1,12 @@
 import { describe, expectTypeOf, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
-import { encryptedTable, types } from '@/eql/v3'
+import { encryptedTable, type InferPlaintext, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as v2EncryptedTable } from '@/schema'
 import {
-  type EncryptedQueryBuilder,
   type EncryptedSupabaseResponse,
-  encryptedSupabase,
   encryptedSupabaseV3,
   type SupabaseClientLike,
 } from '@/supabase'
 
-declare const encryptionClient: EncryptionClient
 declare const supabaseClient: SupabaseClientLike
 
 const users = encryptedTable('users', {
@@ -20,95 +16,110 @@ const users = encryptedTable('users', {
   active: types.Boolean('active'),
 })
 
-type UserRow = {
-  id: number
-  email: string
-  amount: number
-  createdAt: Date
-  active: boolean
-  note: string
-}
+type UserRow = InferPlaintext<typeof users>
 
-const es = encryptedSupabaseV3({ encryptionClient, supabaseClient })
-
-describe('encryptedSupabaseV3 typing', () => {
-  it('defaults rows to InferPlaintext of the table plus passthrough fields', async () => {
-    const builder = es.from('users', users)
-    const { data } = await builder.select('id, email, amount')
-
-    // Schema columns carry their domain plaintext types
+describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
+  it('rows carry each column its domain plaintext type', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const { data } = await supabase.from('users').select('id, email, amount')
     expectTypeOf(data![0].email).toEqualTypeOf<string>()
     expectTypeOf(data![0].amount).toEqualTypeOf<number>()
     expectTypeOf(data![0].createdAt).toEqualTypeOf<Date>()
     expectTypeOf(data![0].active).toEqualTypeOf<boolean>()
   })
 
-  it('pins filter value types to the column plaintext with an explicit row type', () => {
-    const builder = es.from<typeof users, UserRow>('users', users)
-
+  it('pins filter value types to the column plaintext', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
     builder.eq('email', 'a@b.com')
     builder.gte('amount', 10)
     builder.gte('createdAt', new Date())
-    builder.eq('id', 1)
-
-    // Wrong value type for a column
     // @ts-expect-error — email is a string column
     builder.eq('email', 42)
     // @ts-expect-error — amount is a number column
     builder.gte('amount', 'ten')
   })
 
-  it('rejects filters on storage-only columns at the type level', () => {
-    const builder = es.from<typeof users, UserRow>('users', users)
-
-    // active is public.boolean — storage-only, not filterable
-    // @ts-expect-error — storage-only column is excluded from filter keys
+  it('rejects filters on storage-only columns at the type level', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
+    // @ts-expect-error — active is public.boolean (storage only)
     builder.eq('active', true)
     // @ts-expect-error — storage-only column is excluded from filter keys
     builder.is('active', true)
   })
 
-  it('accepts plaintext model values on insert', () => {
-    const builder = es.from<typeof users, UserRow>('users', users)
-
+  it('accepts plaintext model values on insert', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
     builder.insert({ email: 'a@b.com', amount: 3, createdAt: new Date() })
-    builder.insert([{ email: 'a@b.com' }, { note: 'plain' }])
-
     // @ts-expect-error — createdAt is a Date column
     builder.insert({ createdAt: 'not-a-date' })
   })
 
-  it('resolves responses to the row type', () => {
-    const builder = es.from<typeof users, UserRow>('users', users)
-    expectTypeOf(builder.select('id, email')).resolves.toEqualTypeOf<
-      EncryptedSupabaseResponse<UserRow[]>
-    >()
+  it('resolves responses to the row type', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    expectTypeOf(
+      supabase.from('users').select('id, email'),
+    ).resolves.toEqualTypeOf<EncryptedSupabaseResponse<UserRow[]>>()
   })
 
-  it('rejects a v2 schema', () => {
+  it('keeps undeclared tables reachable on the untyped surface (the gradient)', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    // `orders` was introspected but not declared. It MUST still compile, falling
+    // through to the untyped `from(table: string)` overload — declaring one
+    // table must not make every other table unreachable.
+    const builder = supabase.from('orders')
+    builder.eq('anything', 1)
+    const { data } = await builder.select('id')
+    expectTypeOf(data![0]).toEqualTypeOf<Record<string, unknown>>()
+  })
+
+  it('rejects a v2 table in schemas', async () => {
     const v2Table = v2EncryptedTable('users', {
       email: encryptedColumn('email').equality(),
     })
-
-    // @ts-expect-error — encryptedSupabaseV3 only accepts v3 tables
-    es.from('users', v2Table)
+    // The directive sits on the call, not the property: no overload accepts a
+    // v2 table, so TypeScript reports the failure at the call expression.
+    // @ts-expect-error — schemas only accepts v3 tables
+    await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users: v2Table },
+    })
   })
 })
 
-describe('encryptedSupabase (v2) typing is unchanged', () => {
-  it('keeps the single-generic builder shape', () => {
-    const esV2 = encryptedSupabase({ encryptionClient, supabaseClient })
-    const v2Table = v2EncryptedTable('users', {
-      email: encryptedColumn('email').equality(),
-    })
+describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
+  it('rows default to Record<string, unknown> and from accepts any string', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient)
+    const builder = supabase.from('anything')
+    const { data } = await builder.select('id, email')
+    expectTypeOf(data![0]).toEqualTypeOf<Record<string, unknown>>()
+    builder.eq('whatever', 123)
+  })
 
-    type V2Row = { id: number; email: string }
-    const builder = esV2.from<V2Row>('users', v2Table)
-    expectTypeOf(builder).toEqualTypeOf<EncryptedQueryBuilder<V2Row>>()
-
+  it('accepts an explicit row generic', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient)
+    const builder = supabase.from<{ id: number; email: string }>('users')
     builder.eq('email', 'a@b.com')
     builder.eq('id', 1)
     // @ts-expect-error — not a row key
     builder.eq('missing', 1)
+  })
+
+  it('supports a no-arg select(), like supabase-js', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient)
+    supabase.from('users').select()
   })
 })

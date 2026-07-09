@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
-import { encryptedSupabase, encryptedSupabaseV3 } from '@/supabase'
+import { encryptedSupabase } from '@/supabase'
+import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -200,12 +201,37 @@ const usersV2 = encryptedTableV2('users', {
   age: encryptedColumn('age').dataType('number').equality().orderAndRange(),
 })
 
+// DB column names as introspection would report them (id/note are plaintext).
+const USERS_ALL_COLUMNS = [
+  'id',
+  'email',
+  'nickname',
+  'amount',
+  'created_at',
+  'active',
+  'note',
+]
+
+// `encryptedSupabaseV3` is now an async, DB-introspecting factory, so the wire
+// tests construct the v3 builder directly. The declared `users` table is kept
+// (not a synthesized one) because the `createdAt:created_at::jsonb` assertions
+// are inherently about a property→DB rename that a synthesized table — where
+// property == DB name — cannot express. `supabase-schema-builder.test.ts`
+// proves synthesized ≡ declared byte-for-byte.
 function v3Instance(resultData: unknown = []) {
   const supabase = createMockSupabase(resultData)
-  const es = encryptedSupabaseV3({
-    encryptionClient: createMockEncryptionClient(),
-    supabaseClient: supabase.client,
-  })
+  const encryptionClient = createMockEncryptionClient()
+  const es = {
+    from(tableName: string, table: typeof users) {
+      return new EncryptedQueryBuilderV3Impl(
+        tableName,
+        table,
+        encryptionClient,
+        supabase.client,
+        USERS_ALL_COLUMNS,
+      )
+    },
+  }
   return { es, supabase }
 }
 

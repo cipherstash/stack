@@ -1,14 +1,24 @@
-import type { AnyV3Table, InferPlaintext } from '@/eql/v3'
+import { Encryption } from '@/encryption'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
+import { introspect } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
 import { EncryptedQueryBuilderV3Impl } from './query-builder-v3'
+import {
+  assertModelledDomains,
+  mergeDeclaredTables,
+  synthesizeTables,
+} from './schema-builder'
 import type {
-  EncryptedQueryBuilderV3,
+  EncryptedQueryBuilder,
   EncryptedSupabaseConfig,
   EncryptedSupabaseInstance,
-  EncryptedSupabaseV3Config,
   EncryptedSupabaseV3Instance,
+  EncryptedSupabaseV3Options,
+  SupabaseClientLike,
+  TypedEncryptedSupabaseV3Instance,
+  V3Schemas,
 } from './types'
+import { verifyDeclaredSchemas } from './verify'
 
 /**
  * Create an encrypted Supabase wrapper that transparently handles encryption
@@ -64,56 +74,152 @@ export function encryptedSupabase(
 }
 
 /**
- * Create an encrypted Supabase wrapper for **EQL v3** schemas — tables
- * authored with `@cipherstash/stack/eql/v3` whose columns are native
- * concrete-domain columns (`public.*` type domains, `eql_v3` operators).
+ * Create an encrypted Supabase wrapper for **EQL v3** schemas by introspecting
+ * the database at connect time. Detects EQL v3 columns by their Postgres domain
+ * and derives each column's encryption config from it — callers no longer pass a
+ * schema to `from()`. Supplying `schemas` is optional: it adds compile-time
+ * types and verifies the declared tables against the database at construction.
  *
- * The public surface and call shape are identical to {@link encryptedSupabase}
- * (`.eq/.neq/.in/.gt/.gte/.lt/.lte/.like/.ilike/.match/.or/.not/.filter`,
- * `withLockContext`, `audit`); only the schema type and the wire encoding
- * differ. The same Supabase caveats carry over: the `eql_v3` schema must be
- * added to the project's **Exposed schemas** and granted to the Supabase
- * roles for the operators to resolve, and encrypted `ORDER BY` is
- * unsupported (range *filtering* works).
+ * Requires a Postgres connection (`options.databaseUrl` or `DATABASE_URL`) for
+ * introspection, so it cannot run in a Worker or the browser.
  *
  * @example
  * ```typescript
- * import { Encryption } from '@cipherstash/stack'
- * import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
- * import { encryptedSupabaseV3 } from '@cipherstash/stack/supabase'
- *
- * const users = encryptedTable('users', {
- *   email:  types.TextSearch('email'),   // public.text_search
- *   amount: types.IntegerOrd('amount'),  // public.integer_ord
- * })
- *
- * const client = await Encryption({ schemas: [users] })
- * const es = encryptedSupabaseV3({ encryptionClient: client, supabaseClient: supabase })
- *
- * await es.from('users', users).insert({ email: 'a@b.com', amount: 30 })
- * await es.from('users', users).select('id, email, amount').eq('email', 'a@b.com')
- * await es.from('users', users).select('id, amount').gte('amount', 10).lte('amount', 100)
+ * const supabase = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
+ * await supabase.from('users').insert({ email: 'alice@example.com' })
+ * const { data } = await supabase.from('users').select().eq('email', 'alice@example.com')
  * ```
  */
-export function encryptedSupabaseV3(
-  config: EncryptedSupabaseV3Config,
-): EncryptedSupabaseV3Instance {
-  const { encryptionClient, supabaseClient } = config
+export async function encryptedSupabaseV3<S extends V3Schemas>(
+  supabaseUrl: string,
+  supabaseKey: string,
+  options: EncryptedSupabaseV3Options<S> & { schemas: S },
+): Promise<TypedEncryptedSupabaseV3Instance<S>>
+export async function encryptedSupabaseV3(
+  supabaseUrl: string,
+  supabaseKey: string,
+  options?: EncryptedSupabaseV3Options,
+): Promise<EncryptedSupabaseV3Instance>
+export async function encryptedSupabaseV3<S extends V3Schemas>(
+  supabaseClient: SupabaseClientLike,
+  options: EncryptedSupabaseV3Options<S> & { schemas: S },
+): Promise<TypedEncryptedSupabaseV3Instance<S>>
+export async function encryptedSupabaseV3(
+  supabaseClient: SupabaseClientLike,
+  options?: EncryptedSupabaseV3Options,
+): Promise<EncryptedSupabaseV3Instance>
+// The implementation's option params are `EncryptedSupabaseV3Options<V3Schemas |
+// undefined>`, NOT `<V3Schemas>`. The no-schemas overloads take
+// `EncryptedSupabaseV3Options` — i.e. `<undefined>`, whose `schemas` is typed
+// `undefined` — and TS2394s against an implementation param whose `schemas` is
+// typed `V3Schemas`. Widening the type argument to the full constraint makes
+// every overload relatable to the implementation signature.
+export async function encryptedSupabaseV3(
+  clientOrUrl: SupabaseClientLike | string,
+  keyOrOptions?: string | EncryptedSupabaseV3Options<V3Schemas | undefined>,
+  maybeOptions?: EncryptedSupabaseV3Options<V3Schemas | undefined>,
+): Promise<
+  EncryptedSupabaseV3Instance | TypedEncryptedSupabaseV3Instance<V3Schemas>
+> {
+  // 1. Resolve the Supabase client + options from the overload shape.
+  let supabaseClient: SupabaseClientLike
+  let options: EncryptedSupabaseV3Options<V3Schemas | undefined>
+  if (typeof clientOrUrl === 'string') {
+    const url = clientOrUrl
+    const key = keyOrOptions as string
+    options = maybeOptions ?? {}
+    const { createClient } = await import('@supabase/supabase-js')
+    supabaseClient = createClient(url, key) as unknown as SupabaseClientLike
+  } else {
+    supabaseClient = clientOrUrl
+    options =
+      (keyOrOptions as EncryptedSupabaseV3Options<V3Schemas | undefined>) ?? {}
+  }
 
-  return {
-    from<
-      Table extends AnyV3Table,
-      Row extends Record<string, unknown> = InferPlaintext<Table> &
-        Record<string, unknown>,
-    >(tableName: string, table: Table) {
-      return new EncryptedQueryBuilderV3Impl<Row>(
+  // 2. Resolve the database URL for introspection.
+  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL
+  if (!databaseUrl) {
+    throw new Error(
+      '[supabase v3]: no database URL — pass options.databaseUrl or set the DATABASE_URL environment variable',
+    )
+  }
+
+  // 3. Introspect, then reject any recognized-but-unmodelled EQL domain BEFORE
+  //    it can silently become a plaintext passthrough.
+  const { tables, eqlDomains } = await introspect(databaseUrl)
+  assertModelledDomains(tables, eqlDomains)
+
+  // 4. Synthesize; if declared, guard record keys, verify, then merge.
+  let synth = synthesizeTables(tables)
+  if (options.schemas) {
+    for (const [key, table] of Object.entries(options.schemas)) {
+      if (key !== table.tableName) {
+        throw new Error(
+          `[supabase v3]: schemas key "${key}" does not match its table name "${table.tableName}" — the record key must equal the table's name`,
+        )
+      }
+    }
+    verifyDeclaredSchemas(options.schemas, tables)
+    synth = mergeDeclaredTables(synth, options.schemas)
+  }
+
+  // 5. Build the raw (eqlVersion 3) encryption client from the merged tables.
+  //    NB: `Encryption`, not `EncryptionV3` — the query builder consumes the raw
+  //    chainable `EncryptionClient`, whereas `EncryptionV3` returns the typed
+  //    wrapper whose `decryptModel` returns a plain Promise<Result>. Pass only
+  //    tables that carry at least one encrypted column (`Encryption` requires a
+  //    non-empty schema list).
+  const encryptionSchemas = [...synth.tables.values()].filter(
+    (t) => Object.keys(t.columnBuilders).length > 0,
+  )
+
+  // A database with no modelled EQL v3 columns anywhere would hand `Encryption`
+  // an empty array, which throws "[encryption]: At least one encryptedTable must
+  // be provided to initialize the encryption client" (encryption/index.ts:693).
+  // That message is about a caller-supplied schema list the caller never
+  // supplied — actively misleading here. Fail with a diagnosis instead. The
+  // realistic causes are: EQL v3 is not installed, the tables live outside the
+  // `public` schema, or the columns were never migrated to `eql_v3` domains.
+  if (encryptionSchemas.length === 0) {
+    throw new Error(
+      '[supabase v3]: no EQL v3 encrypted columns found in schema "public". ' +
+        'Check that EQL v3 is installed (`stash eql install --eql-version 3`) ' +
+        'and that at least one column uses an eql_v3 domain type.',
+    )
+  }
+
+  const encryptionClient = await Encryption({
+    schemas: encryptionSchemas as unknown as Parameters<
+      typeof Encryption
+    >[0]['schemas'],
+    config: { ...options.config, eqlVersion: 3 },
+  })
+
+  // 6. Return the instance. `from` resolves the introspected/merged table and
+  //    threads the full column list for select('*'). Casts are localized to the
+  //    builder/instance boundary (this-chaining does not match structurally),
+  //    NOT `as any` — the four overloads above remain the caller-facing contract.
+  const instance = {
+    from(tableName: string) {
+      const table = synth.tables.get(tableName)
+      if (!table) {
+        throw new Error(
+          `[supabase v3]: unknown table "${tableName}" — it was not found during introspection`,
+        )
+      }
+      const allColumns = synth.allColumns.get(tableName) ?? null
+      return new EncryptedQueryBuilderV3Impl(
         tableName,
         table,
         encryptionClient,
         supabaseClient,
-      ) as unknown as EncryptedQueryBuilderV3<Table, Row>
+        allColumns,
+      ) as unknown as EncryptedQueryBuilder<Record<string, unknown>>
     },
   }
+  return instance as unknown as
+    | EncryptedSupabaseV3Instance
+    | TypedEncryptedSupabaseV3Instance<V3Schemas>
 }
 
 export type {
@@ -123,9 +229,11 @@ export type {
   EncryptedSupabaseError,
   EncryptedSupabaseInstance,
   EncryptedSupabaseResponse,
-  EncryptedSupabaseV3Config,
   EncryptedSupabaseV3Instance,
+  EncryptedSupabaseV3Options,
   PendingOrCondition,
   SupabaseClientLike,
+  TypedEncryptedSupabaseV3Instance,
   V3FilterableKeys,
+  V3Schemas,
 } from './types'

@@ -4,6 +4,8 @@ import type { AnyV3Table, InferPlaintext, QueryTypesForColumn } from '@/eql/v3'
 import type { EncryptionError } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
+import type { ClientConfig } from '@/types'
+import type { V3Schemas } from './schema-builder'
 
 // ---------------------------------------------------------------------------
 // Config & instance
@@ -25,9 +27,36 @@ export interface EncryptedSupabaseInstance {
 // EQL v3 config & instance
 // ---------------------------------------------------------------------------
 
-export type EncryptedSupabaseV3Config = {
-  encryptionClient: EncryptionClient
-  supabaseClient: SupabaseClientLike
+export type { V3Schemas }
+
+/**
+ * Options for {@link import('./index').encryptedSupabaseV3}.
+ *
+ * @typeParam S - declared v3 tables. When present, `from()` is constrained to
+ *   the declared table names and returns typed builders, and the tables are
+ *   verified against the database at construction.
+ */
+export type EncryptedSupabaseV3Options<
+  S extends V3Schemas | undefined = undefined,
+> = {
+  /** Postgres connection string for introspection. Defaults to
+   * `process.env.DATABASE_URL`. */
+  databaseUrl?: string
+  /** Passed through to the encryption client (`eqlVersion` is forced to 3). */
+  config?: ClientConfig
+  /**
+   * Optional declared v3 tables, keyed by table name (each record key MUST
+   * equal its table's `tableName`). Declaring a table adds compile-time types
+   * and startup verification; undeclared tables behave exactly as with no
+   * `schemas`.
+   *
+   * ASYMMETRY: the `include_original: false` substring-`like` behaviour of a
+   * `text_search` column can only be honoured on a DECLARED column. A substring
+   * `like` against an UNDECLARED `text_search` column will not match, because
+   * the synthesized default `include_original: true` puts the whole pattern into
+   * the bloom filter as an extra token.
+   */
+  schemas?: S
 }
 
 /**
@@ -73,12 +102,35 @@ export type EncryptedQueryBuilderV3<
   Row extends Record<string, unknown>,
 > = EncryptedQueryBuilder<Row, V3FilterableKeys<Table, Row> & StringKeyOf<Row>>
 
+/** Untyped instance (no `schemas`): rows default to `Record<string, unknown>`
+ * and `from` accepts any table name. */
 export interface EncryptedSupabaseV3Instance {
-  from<
-    Table extends AnyV3Table,
-    Row extends Record<string, unknown> = InferPlaintext<Table> &
-      Record<string, unknown>,
-  >(tableName: string, table: Table): EncryptedQueryBuilderV3<Table, Row>
+  from<Row extends Record<string, unknown> = Record<string, unknown>>(
+    tableName: string,
+  ): EncryptedQueryBuilder<Row>
+}
+
+/** Typed instance (with `schemas: S`): a declared table name resolves to the
+ * narrowed v3 builder; any other table name falls back to the untyped surface.
+ *
+ * The fallback overload is REQUIRED, not a convenience. The design spec
+ * promises a gradient — "declare one table, leave the rest introspected;
+ * undeclared tables behave exactly as they would with no `schemas` at all".
+ * With only the `keyof S` overload, `schemas: { users }` makes `from('orders')`
+ * a compile error even though `orders` was introspected and works perfectly at
+ * runtime. Declaring one table would silently make every other table
+ * unreachable.
+ *
+ * Overload order matters: the literal-constrained signature is declared first,
+ * so TypeScript prefers it whenever the argument is a declared key and only
+ * falls through to `string` otherwise. */
+export interface TypedEncryptedSupabaseV3Instance<S extends V3Schemas> {
+  from<K extends keyof S & string>(
+    table: K,
+  ): EncryptedQueryBuilderV3<S[K], InferPlaintext<S[K]>>
+  from<Row extends Record<string, unknown> = Record<string, unknown>>(
+    table: string,
+  ): EncryptedQueryBuilder<Row>
 }
 
 // ---------------------------------------------------------------------------
