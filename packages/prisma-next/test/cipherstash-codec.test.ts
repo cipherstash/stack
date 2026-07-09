@@ -26,7 +26,11 @@ import {
   planFieldEventOperations,
 } from '@prisma-next/family-sql/control'
 import type { TargetBoundComponentDescriptor } from '@prisma-next/framework-components/components'
-import { SqlStorage, type StorageTable } from '@prisma-next/sql-contract/types'
+import {
+  buildSqlNamespace,
+  SqlStorage,
+  type StorageTable,
+} from '@prisma-next/sql-contract/types'
 import { ifDefined } from '@prisma-next/utils/defined'
 import { describe, expect, it } from 'vitest'
 import cipherstashExtensionDescriptor from '../src/exports/control'
@@ -119,9 +123,11 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       profileHash: profileHash('sha256:test'),
       storage: new SqlStorage({
         storageHash: 'sha256:test' as StorageHashBase<string>,
-        namespaces: { __unbound__: { id: '__unbound__', tables } },
+        namespaces: {
+          __unbound__: buildSqlNamespace({ id: '__unbound__', tables }),
+        },
       }),
-      models: {},
+      domain: { namespaces: { __unbound__: { models: {} } } },
       roots: {},
       capabilities: {},
       extensionPacks: {},

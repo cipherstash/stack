@@ -128,7 +128,7 @@ export const contract = validateSqlContractFully<PostgresContract>({
       },
     },
   },
-  models: {},
+  domain: { namespaces: { __unbound__: { models: {} } } },
 })
 
 // Stub runtime target — the Postgres adapter only consults `familyId` /

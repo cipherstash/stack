@@ -23,6 +23,7 @@
  */
 
 import { assertDescriptorSelfConsistency } from '@prisma-next/migration-tools/spaces'
+import { sqlContractCanonicalizationHooks } from '@prisma-next/sql-contract/canonicalization-hooks'
 import { describe, expect, it } from 'vitest'
 import cipherstashExtensionDescriptor from '../src/exports/control'
 import {
@@ -116,6 +117,10 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
           unknown
         >,
         headRefHash: space.headRef.hash,
+        // The emit pipeline hashes through the SQL family's
+        // canonicalization hooks; the recompute must use the same ones.
+        shouldPreserveEmpty: sqlContractCanonicalizationHooks.shouldPreserveEmpty,
+        sortStorage: sqlContractCanonicalizationHooks.sortStorage,
       }),
     ).not.toThrow()
   })

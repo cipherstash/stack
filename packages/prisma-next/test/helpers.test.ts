@@ -131,7 +131,7 @@ const contract = validateSqlContractFully<PostgresContract>({
       },
     },
   },
-  models: {},
+  domain: { namespaces: { __unbound__: { models: {} } } },
 })
 
 const stubRuntimeTarget: RuntimeTargetDescriptor<'sql', 'postgres'> = {

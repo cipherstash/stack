@@ -73,14 +73,19 @@ type StorageView = {
   readonly types?: Record<string, Record<string, unknown>>
 }
 // Since 0.10 the storage IR is namespace-enveloped: tables live under
-// `storage.namespaces.__unbound__`, while `types` stays at the root.
+// `storage.namespaces.<ns>` (the target-owned default namespace —
+// `public` for Postgres since 0.12), while `types` stays at the root.
 const asStorage = (storage: unknown): StorageView => {
   const s = storage as {
     readonly namespaces?: Record<string, { tables?: StorageView['tables'] }>
     readonly types?: StorageView['types']
   }
+  const tables: StorageView['tables'] = {}
+  for (const ns of Object.values(s.namespaces ?? {})) {
+    Object.assign(tables, ns.tables)
+  }
   return {
-    tables: s.namespaces?.['__unbound__']?.tables ?? {},
+    tables,
     ...(s.types !== undefined ? { types: s.types } : {}),
   }
 }
