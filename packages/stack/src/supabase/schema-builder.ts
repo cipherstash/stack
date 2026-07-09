@@ -32,7 +32,9 @@ export function synthesizeTables(
   const allColumns = new Map<string, string[]>()
 
   for (const table of introspection) {
-    const builders: Record<string, AnyEncryptedV3Column> = {}
+    // Null-prototype: keys are DB column names, so `__proto__` must land as an
+    // own key rather than reparenting the object (which would drop the column).
+    const builders: Record<string, AnyEncryptedV3Column> = Object.create(null)
     for (const col of table.columns) {
       if (col.domainName === null) continue
       const factory = factoryForDomain(col.domainName)
@@ -69,7 +71,7 @@ export function mergeDeclaredTables(
     const tableName = declared.tableName
     const synthesized = tables.get(tableName)
 
-    const merged: Record<string, AnyEncryptedV3Column> = {}
+    const merged: Record<string, AnyEncryptedV3Column> = Object.create(null)
     if (synthesized) {
       for (const [prop, builder] of Object.entries(
         synthesized.columnBuilders,
