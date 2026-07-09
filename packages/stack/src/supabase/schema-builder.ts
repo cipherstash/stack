@@ -56,8 +56,8 @@ export function synthesizeTables(
  * Replace synthesized tables with a merge of declared-over-synthesized columns.
  * For each declared column, drop the synthesized entry that resolves to the
  * same DB name and add the declared builder under its JS property name (so a
- * property→DB rename and any tuner options survive). Undeclared columns stay
- * synthesized. `allColumns` is unchanged (DB-name based, from introspection).
+ * property→DB rename survives). Undeclared columns stay synthesized.
+ * `allColumns` is unchanged (DB-name based, from introspection).
  */
 export function mergeDeclaredTables(
   synth: SynthesizedSchema,

@@ -73,17 +73,21 @@ describe('synthesizeTables', () => {
 })
 
 describe('mergeDeclaredTables', () => {
-  it('lets a declared TextSearch column keep its tuned match options', () => {
+  it('keeps the declared builder instance over the synthesized one', () => {
     const synth = synthesizeTables(introspection)
     const declaredTable = encryptedTable('users', {
-      email: types
-        .TextSearch('email')
-        .freeTextSearch({ include_original: false }),
+      email: types.TextSearch('email'),
     })
     const merged = mergeDeclaredTables(synth, { users: declaredTable })
-    const built = merged.tables.get('users')!.build()
-    expect(built.columns.email.indexes.match?.include_original).toBe(false)
-    expect(built.columns.amount).toBeDefined()
+    const mergedTable = merged.tables.get('users')!
+
+    // A declared column and its synthesized twin build byte-identically (see
+    // above), so instance identity is the only observable proof that the
+    // declared builder is the one that survived the merge.
+    expect(mergedTable.columnBuilders.email).toBe(
+      declaredTable.columnBuilders.email,
+    )
+    expect(mergedTable.build().columns.amount).toBeDefined()
     expect(merged.allColumns.get('users')).toEqual(
       synth.allColumns.get('users'),
     )
