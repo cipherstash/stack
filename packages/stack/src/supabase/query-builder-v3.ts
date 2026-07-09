@@ -89,6 +89,7 @@ export class EncryptedQueryBuilderV3Impl<
     table: AnyV3Table,
     encryptionClient: EncryptionClient,
     supabaseClient: SupabaseClientLike,
+    allColumns: string[] | null = null,
   ) {
     super(
       tableName,
@@ -98,6 +99,7 @@ export class EncryptedQueryBuilderV3Impl<
       table as unknown as EncryptedTable<EncryptedTableColumn>,
       encryptionClient,
       supabaseClient,
+      allColumns,
     )
 
     this.v3Table = table

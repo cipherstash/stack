@@ -294,8 +294,12 @@ export interface EncryptedQueryBuilder<
   T extends Record<string, unknown> = Record<string, unknown>,
   FK extends StringKeyOf<T> = StringKeyOf<T>,
 > extends PromiseLike<EncryptedSupabaseResponse<T[]>> {
+  /** `columns` defaults to `'*'`, matching supabase-js. A `'*'` select expands
+   * to the introspected column list when one is available (v3), and otherwise
+   * throws — v2 has no column list to cast, so `select()` and `select('*')`
+   * both throw there. */
   select(
-    columns: string,
+    columns?: string,
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
   ): EncryptedQueryBuilder<T, FK>
   insert(

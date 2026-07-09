@@ -51,6 +51,10 @@ export class EncryptedQueryBuilderImpl<
   protected encryptionClient: EncryptionClient
   protected supabaseClient: SupabaseClientLike
   protected encryptedColumnNames: string[]
+  /** All column names for the table (encrypted + plaintext), in ordinal order,
+   * used to expand `select('*')`. `null` when the caller supplied no column
+   * list (v2, or a v3 client that could not introspect). */
+  protected allColumns: string[] | null = null
 
   // Recorded operations
   protected mutation: MutationOp | null = null
@@ -76,12 +80,14 @@ export class EncryptedQueryBuilderImpl<
     schema: EncryptedTable<EncryptedTableColumn>,
     encryptionClient: EncryptionClient,
     supabaseClient: SupabaseClientLike,
+    allColumns: string[] | null = null,
   ) {
     this.tableName = tableName
     this.schema = schema
     this.encryptionClient = encryptionClient
     this.supabaseClient = supabaseClient
     this.encryptedColumnNames = getEncryptedColumnNames(schema)
+    this.allColumns = allColumns
   }
 
   // ---------------------------------------------------------------------------
@@ -89,15 +95,19 @@ export class EncryptedQueryBuilderImpl<
   // ---------------------------------------------------------------------------
 
   select(
-    columns: string,
+    columns = '*',
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
   ): this {
     if (columns === '*') {
-      throw new Error(
-        "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb.",
-      )
+      if (this.allColumns === null || this.allColumns.length === 0) {
+        throw new Error(
+          "encryptedSupabase does not support select('*'). Please list columns explicitly so that encrypted columns can be cast with ::jsonb.",
+        )
+      }
+      this.selectColumns = this.allColumns.join(', ')
+    } else {
+      this.selectColumns = columns
     }
-    this.selectColumns = columns
     this.selectOptions = options
     return this
   }
