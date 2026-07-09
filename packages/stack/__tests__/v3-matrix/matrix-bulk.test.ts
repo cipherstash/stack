@@ -13,7 +13,7 @@ import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const people = encryptedTable('v3_bulk_people', {
   nickname: types.TextEq('nickname'),
-  age: types.Int4Ord('age'),
+  age: types.IntegerOrd('age'),
 })
 
 describeLive('v3 typed client bulk-at-scale (live)', () => {

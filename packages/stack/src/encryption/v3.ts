@@ -259,7 +259,11 @@ export async function EncryptionV3<
     schemas: config.schemas as unknown as Parameters<
       typeof Encryption
     >[0]['schemas'],
-    config: config.config,
+    // Force the v3 EQL wire format. protect-ffi's newClient defaults to
+    // eqlVersion 2; a v2-mode client cannot resolve v3 concrete-type columns
+    // and fails every encrypt with "Cannot convert undefined or null to
+    // object". This is a v3-only invariant, so it overrides any user value.
+    config: { ...config.config, eqlVersion: 3 },
   })
   return typedClient(client, ...config.schemas)
 }

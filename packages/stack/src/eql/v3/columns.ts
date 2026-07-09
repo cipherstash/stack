@@ -47,11 +47,11 @@ type PlaintextKind = 'string' | 'number' | 'boolean' | DateLikeCast
  * the base column class carries a private field of this type so that every
  * concrete (otherwise-empty) subclass is discriminated by its literal
  * `eqlType`/`castAs`/`capabilities` — TypeScript empty subclasses are NOT
- * nominal, so without this a storage-only `bool` column would be assignable to
+ * nominal, so without this a storage-only `boolean` column would be assignable to
  * a storage-only `date` column and plaintext inference would collapse.
  */
 type V3DomainDefinition = Readonly<{
-  eqlType: `eql_v3.${string}`
+  eqlType: `public.${string}`
   castAs: PlaintextKind
   capabilities: QueryCapabilities
 }>
@@ -101,7 +101,7 @@ const TEXT_SEARCH = {
  * Recorded as metadata for future DDL / query-dialect increments; it is
  * intentionally absent from the emitted encrypt config.
  */
-export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
+export const TEXT_SEARCH_EQL_TYPE = 'public.text_search'
 
 // Per-domain literal definitions. Each concrete column subclass is parameterised
 // by `typeof <CONST>`; the literal `eqlType`/`castAs`/`capabilities` on each is
@@ -110,188 +110,181 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
 //
 // Exported for the `types` namespace factory (see ./types); they are internal
 // building blocks and are intentionally NOT re-exported from the public barrel.
-export const INT4 = {
-  eqlType: 'eql_v3.int4',
+export const INTEGER = {
+  eqlType: 'public.integer',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-export const INT4_EQ = {
-  eqlType: 'eql_v3.int4_eq',
+export const INTEGER_EQ = {
+  eqlType: 'public.integer_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-export const INT4_ORD_ORE = {
-  eqlType: 'eql_v3.int4_ord_ore',
+export const INTEGER_ORD_ORE = {
+  eqlType: 'public.integer_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-export const INT4_ORD = {
-  eqlType: 'eql_v3.int4_ord',
+export const INTEGER_ORD = {
+  eqlType: 'public.integer_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-export const INT2 = {
-  eqlType: 'eql_v3.int2',
+export const SMALLINT = {
+  eqlType: 'public.smallint',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-export const INT2_EQ = {
-  eqlType: 'eql_v3.int2_eq',
+export const SMALLINT_EQ = {
+  eqlType: 'public.smallint_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-export const INT2_ORD_ORE = {
-  eqlType: 'eql_v3.int2_ord_ore',
+export const SMALLINT_ORD_ORE = {
+  eqlType: 'public.smallint_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-export const INT2_ORD = {
-  eqlType: 'eql_v3.int2_ord',
+export const SMALLINT_ORD = {
+  eqlType: 'public.smallint_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-
-// NOTE: int8 (bigint) domains are intentionally NOT defined yet. The native
-// protect-ffi build cannot round-trip a 64-bit int losslessly: a JS `bigint`
-// fails JSON serialization, and a `string` is rejected for a `big_int` column
-// ("Cannot convert String to BigInt"), while `number` loses precision above
-// 2^53. Re-add INT8/INT8_EQ/INT8_ORD_ORE/INT8_ORD and their builders once the
-// FFI accepts a lossless bigint on input and returns it on decrypt.
 
 export const DATE = {
-  eqlType: 'eql_v3.date',
+  eqlType: 'public.date',
   castAs: 'date',
   capabilities: STORAGE_ONLY,
 } as const
 export const DATE_EQ = {
-  eqlType: 'eql_v3.date_eq',
+  eqlType: 'public.date_eq',
   castAs: 'date',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DATE_ORD_ORE = {
-  eqlType: 'eql_v3.date_ord_ore',
+  eqlType: 'public.date_ord_ore',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DATE_ORD = {
-  eqlType: 'eql_v3.date_ord',
+  eqlType: 'public.date_ord',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const TIMESTAMP = {
-  eqlType: 'eql_v3.timestamp',
+  eqlType: 'public.timestamp',
   castAs: 'timestamp',
   capabilities: STORAGE_ONLY,
 } as const
 export const TIMESTAMP_EQ = {
-  eqlType: 'eql_v3.timestamp_eq',
+  eqlType: 'public.timestamp_eq',
   castAs: 'timestamp',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TIMESTAMP_ORD_ORE = {
-  eqlType: 'eql_v3.timestamp_ord_ore',
+  eqlType: 'public.timestamp_ord_ore',
   castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TIMESTAMP_ORD = {
-  eqlType: 'eql_v3.timestamp_ord',
+  eqlType: 'public.timestamp_ord',
   castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const NUMERIC = {
-  eqlType: 'eql_v3.numeric',
+  eqlType: 'public.numeric',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const NUMERIC_EQ = {
-  eqlType: 'eql_v3.numeric_eq',
+  eqlType: 'public.numeric_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const NUMERIC_ORD_ORE = {
-  eqlType: 'eql_v3.numeric_ord_ore',
+  eqlType: 'public.numeric_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const NUMERIC_ORD = {
-  eqlType: 'eql_v3.numeric_ord',
+  eqlType: 'public.numeric_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const TEXT = {
-  eqlType: 'eql_v3.text',
+  eqlType: 'public.text',
   castAs: 'string',
   capabilities: STORAGE_ONLY,
 } as const
 export const TEXT_EQ = {
-  eqlType: 'eql_v3.text_eq',
+  eqlType: 'public.text_eq',
   castAs: 'string',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TEXT_MATCH = {
-  eqlType: 'eql_v3.text_match',
+  eqlType: 'public.text_match',
   castAs: 'string',
   capabilities: MATCH_ONLY,
 } as const
 export const TEXT_ORD_ORE = {
-  eqlType: 'eql_v3.text_ord_ore',
+  eqlType: 'public.text_ord_ore',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TEXT_ORD = {
-  eqlType: 'eql_v3.text_ord',
+  eqlType: 'public.text_ord',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-export const BOOL = {
-  eqlType: 'eql_v3.bool',
+export const BOOLEAN = {
+  eqlType: 'public.boolean',
   castAs: 'boolean',
   capabilities: STORAGE_ONLY,
 } as const
 
-export const FLOAT4 = {
-  eqlType: 'eql_v3.float4',
+export const REAL = {
+  eqlType: 'public.real',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-export const FLOAT4_EQ = {
-  eqlType: 'eql_v3.float4_eq',
+export const REAL_EQ = {
+  eqlType: 'public.real_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-export const FLOAT4_ORD_ORE = {
-  eqlType: 'eql_v3.float4_ord_ore',
+export const REAL_ORD_ORE = {
+  eqlType: 'public.real_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-export const FLOAT4_ORD = {
-  eqlType: 'eql_v3.float4_ord',
+export const REAL_ORD = {
+  eqlType: 'public.real_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-export const FLOAT8 = {
-  eqlType: 'eql_v3.float8',
+export const DOUBLE = {
+  eqlType: 'public.double',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
-export const FLOAT8_EQ = {
-  eqlType: 'eql_v3.float8_eq',
+export const DOUBLE_EQ = {
+  eqlType: 'public.double_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
-export const FLOAT8_ORD_ORE = {
-  eqlType: 'eql_v3.float8_ord_ore',
+export const DOUBLE_ORD_ORE = {
+  eqlType: 'public.double_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
-export const FLOAT8_ORD = {
-  eqlType: 'eql_v3.float8_ord',
+export const DOUBLE_ORD = {
+  eqlType: 'public.double_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
@@ -303,7 +296,7 @@ export const FLOAT8_ORD = {
  *
  * - `unique` (the `hm` HMAC index) whenever equality is answered via HMAC:
  *   equality-only domains of ANY type, AND text order domains. Text equality is
- *   HMAC-based — the `eql_v3.text_ord` / `eql_v3.text_ord_ore` SQL domains
+ *   HMAC-based — the `public.text_ord` / `public.text_ord_ore` SQL domains
  *   REQUIRE `hm` in the stored ciphertext (their `eql_v3.eq_term` extracts it).
  * - `ore` for any order/range domain (the `ob` term). For numeric/date order
  *   domains `ob` also answers equality (via the SQL `=` operator), so those emit
@@ -353,7 +346,7 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
  * Shared base for every v3 concrete domain column. Parameterised by the FULL
  * literal {@link V3DomainDefinition} (not by capabilities alone): the private
  * `definition` field carries the literal `eqlType`/`castAs`/`capabilities`, so
- * two otherwise-empty subclasses (e.g. `EncryptedBoolColumn` and
+ * two otherwise-empty subclasses (e.g. `EncryptedBooleanColumn` and
  * `EncryptedDateColumn`, both storage-only) are NOT mutually assignable. This
  * nominality is what keeps plaintext inference precise.
  */
@@ -403,7 +396,7 @@ const TEXT_SEARCH_DOMAIN = {
 } as const
 
 /**
- * Builder for an `eql_v3.text_search` column.
+ * Builder for a `public.text_search` column.
  *
  * The concrete type inherently enables equality + order/range + free-text
  * match — there are no capability-enabling methods. `.freeTextSearch(opts?)`
@@ -478,29 +471,31 @@ export class EncryptedTextSearchColumn extends EncryptedV3Column<
 // distinct domains nominally incompatible.
 // ---------------------------------------------------------------------------
 
-// int4
-export class EncryptedInt4Column extends EncryptedV3Column<typeof INT4> {}
-export class EncryptedInt4EqColumn extends EncryptedV3Column<typeof INT4_EQ> {}
-export class EncryptedInt4OrdOreColumn extends EncryptedV3Column<
-  typeof INT4_ORD_ORE
+// integer
+export class EncryptedIntegerColumn extends EncryptedV3Column<typeof INTEGER> {}
+export class EncryptedIntegerEqColumn extends EncryptedV3Column<
+  typeof INTEGER_EQ
 > {}
-export class EncryptedInt4OrdColumn extends EncryptedV3Column<
-  typeof INT4_ORD
+export class EncryptedIntegerOrdOreColumn extends EncryptedV3Column<
+  typeof INTEGER_ORD_ORE
 > {}
-
-// int2
-export class EncryptedInt2Column extends EncryptedV3Column<typeof INT2> {}
-export class EncryptedInt2EqColumn extends EncryptedV3Column<typeof INT2_EQ> {}
-export class EncryptedInt2OrdOreColumn extends EncryptedV3Column<
-  typeof INT2_ORD_ORE
-> {}
-export class EncryptedInt2OrdColumn extends EncryptedV3Column<
-  typeof INT2_ORD
+export class EncryptedIntegerOrdColumn extends EncryptedV3Column<
+  typeof INTEGER_ORD
 > {}
 
-// int8 (bigint) domain builders are intentionally omitted pending FFI support
-// for lossless bigint round-tripping — see the note by the INT4/DATE domain
-// definitions above.
+// smallint
+export class EncryptedSmallintColumn extends EncryptedV3Column<
+  typeof SMALLINT
+> {}
+export class EncryptedSmallintEqColumn extends EncryptedV3Column<
+  typeof SMALLINT_EQ
+> {}
+export class EncryptedSmallintOrdOreColumn extends EncryptedV3Column<
+  typeof SMALLINT_ORD_ORE
+> {}
+export class EncryptedSmallintOrdColumn extends EncryptedV3Column<
+  typeof SMALLINT_ORD
+> {}
 
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
@@ -551,31 +546,29 @@ export class EncryptedTextOrdColumn extends EncryptedV3Column<
   typeof TEXT_ORD
 > {}
 
-// bool
-export class EncryptedBoolColumn extends EncryptedV3Column<typeof BOOL> {}
+// boolean
+export class EncryptedBooleanColumn extends EncryptedV3Column<typeof BOOLEAN> {}
 
-// float4
-export class EncryptedFloat4Column extends EncryptedV3Column<typeof FLOAT4> {}
-export class EncryptedFloat4EqColumn extends EncryptedV3Column<
-  typeof FLOAT4_EQ
+// real
+export class EncryptedRealColumn extends EncryptedV3Column<typeof REAL> {}
+export class EncryptedRealEqColumn extends EncryptedV3Column<typeof REAL_EQ> {}
+export class EncryptedRealOrdOreColumn extends EncryptedV3Column<
+  typeof REAL_ORD_ORE
 > {}
-export class EncryptedFloat4OrdOreColumn extends EncryptedV3Column<
-  typeof FLOAT4_ORD_ORE
-> {}
-export class EncryptedFloat4OrdColumn extends EncryptedV3Column<
-  typeof FLOAT4_ORD
+export class EncryptedRealOrdColumn extends EncryptedV3Column<
+  typeof REAL_ORD
 > {}
 
-// float8
-export class EncryptedFloat8Column extends EncryptedV3Column<typeof FLOAT8> {}
-export class EncryptedFloat8EqColumn extends EncryptedV3Column<
-  typeof FLOAT8_EQ
+// double
+export class EncryptedDoubleColumn extends EncryptedV3Column<typeof DOUBLE> {}
+export class EncryptedDoubleEqColumn extends EncryptedV3Column<
+  typeof DOUBLE_EQ
 > {}
-export class EncryptedFloat8OrdOreColumn extends EncryptedV3Column<
-  typeof FLOAT8_ORD_ORE
+export class EncryptedDoubleOrdOreColumn extends EncryptedV3Column<
+  typeof DOUBLE_ORD_ORE
 > {}
-export class EncryptedFloat8OrdColumn extends EncryptedV3Column<
-  typeof FLOAT8_ORD
+export class EncryptedDoubleOrdColumn extends EncryptedV3Column<
+  typeof DOUBLE_ORD
 > {}
 
 /**
@@ -583,14 +576,14 @@ export class EncryptedFloat8OrdColumn extends EncryptedV3Column<
  * columns so a table may mix any generated domains.
  */
 export type AnyEncryptedV3Column =
-  | EncryptedInt4Column
-  | EncryptedInt4EqColumn
-  | EncryptedInt4OrdOreColumn
-  | EncryptedInt4OrdColumn
-  | EncryptedInt2Column
-  | EncryptedInt2EqColumn
-  | EncryptedInt2OrdOreColumn
-  | EncryptedInt2OrdColumn
+  | EncryptedIntegerColumn
+  | EncryptedIntegerEqColumn
+  | EncryptedIntegerOrdOreColumn
+  | EncryptedIntegerOrdColumn
+  | EncryptedSmallintColumn
+  | EncryptedSmallintEqColumn
+  | EncryptedSmallintOrdOreColumn
+  | EncryptedSmallintOrdColumn
   | EncryptedDateColumn
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
@@ -609,15 +602,15 @@ export type AnyEncryptedV3Column =
   | EncryptedTextOrdOreColumn
   | EncryptedTextOrdColumn
   | EncryptedTextSearchColumn
-  | EncryptedBoolColumn
-  | EncryptedFloat4Column
-  | EncryptedFloat4EqColumn
-  | EncryptedFloat4OrdOreColumn
-  | EncryptedFloat4OrdColumn
-  | EncryptedFloat8Column
-  | EncryptedFloat8EqColumn
-  | EncryptedFloat8OrdOreColumn
-  | EncryptedFloat8OrdColumn
+  | EncryptedBooleanColumn
+  | EncryptedRealColumn
+  | EncryptedRealEqColumn
+  | EncryptedRealOrdOreColumn
+  | EncryptedRealOrdColumn
+  | EncryptedDoubleColumn
+  | EncryptedDoubleEqColumn
+  | EncryptedDoubleOrdOreColumn
+  | EncryptedDoubleOrdColumn
 
 /**
  * Shape of v3 table columns: every value is a v3 concrete column builder.

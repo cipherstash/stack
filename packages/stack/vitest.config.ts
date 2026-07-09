@@ -21,6 +21,17 @@ export default defineConfig({
     },
   },
   test: {
+    // Live suites make real ZeroKMS / CTS network round-trips. The vast
+    // majority of these tests already pass an explicit `, 30000)` per-test
+    // timeout (300+ call sites); a handful were written without one and so
+    // fell back to Vitest's 5000ms default. Under the default forks pool with
+    // file parallelism, many live suites hit ZeroKMS concurrently and those
+    // 5000ms-default tests intermittently time out (they pass in isolation).
+    // Align the global default with the dominant explicit value so the intent
+    // is uniform. 30s is comfortably above real network latency but still low
+    // enough to surface a genuine hang.
+    testTimeout: 30000,
+    hookTimeout: 30000,
     typecheck: {
       // Scoped tsconfig keeps the 124 pre-existing wasm-inline typecheck errors
       // out of scope (tracked as a follow-up). Run via the `test:types` script

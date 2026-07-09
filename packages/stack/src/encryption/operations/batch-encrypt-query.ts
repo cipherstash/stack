@@ -82,13 +82,17 @@ function buildQueryPayload(
  */
 function assembleResults(
   totalLength: number,
-  encryptedValues: (CipherStashEncrypted | CipherStashEncryptedQuery)[],
+  // Typed as the FFI bulk-query return so it tracks the upstream union. As of
+  // protect-ffi 0.27 that union also includes `SteVecQuery`, but scalar query
+  // terms (all this operation builds) never produce a ste_vec result, so each
+  // element is narrowed back to the scalar shape `formatEncryptedResult` takes.
+  encryptedValues: Awaited<ReturnType<typeof ffiEncryptQueryBulk>>,
   nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[],
 ): EncryptedQueryResult[] {
   const results: EncryptedQueryResult[] = new Array(totalLength).fill(null)
   nonNullTerms.forEach(({ term, originalIndex }, i) => {
     results[originalIndex] = formatEncryptedResult(
-      encryptedValues[i],
+      encryptedValues[i] as CipherStashEncrypted | CipherStashEncryptedQuery,
       term.returnType,
     )
   })

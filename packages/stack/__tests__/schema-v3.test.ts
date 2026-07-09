@@ -156,6 +156,32 @@ describe('eql_v3 text_match column', () => {
   })
 })
 
+describe('eql_v3 concrete type names', () => {
+  it('preserves public factory names while exposing concrete Postgres domain names', () => {
+    expect(types.Integer('n').getEqlType()).toBe('public.integer')
+    expect(types.IntegerEq('n').getEqlType()).toBe('public.integer_eq')
+    expect(types.IntegerOrdOre('n').getEqlType()).toBe('public.integer_ord_ore')
+    expect(types.IntegerOrd('n').getEqlType()).toBe('public.integer_ord')
+
+    expect(types.Smallint('n').getEqlType()).toBe('public.smallint')
+    expect(types.SmallintEq('n').getEqlType()).toBe('public.smallint_eq')
+    expect(types.SmallintOrdOre('n').getEqlType()).toBe(
+      'public.smallint_ord_ore',
+    )
+    expect(types.SmallintOrd('n').getEqlType()).toBe('public.smallint_ord')
+
+    expect(types.Boolean('b').getEqlType()).toBe('public.boolean')
+    expect(types.Real('n').getEqlType()).toBe('public.real')
+    expect(types.RealEq('n').getEqlType()).toBe('public.real_eq')
+    expect(types.RealOrdOre('n').getEqlType()).toBe('public.real_ord_ore')
+    expect(types.RealOrd('n').getEqlType()).toBe('public.real_ord')
+    expect(types.Double('n').getEqlType()).toBe('public.double')
+    expect(types.DoubleEq('n').getEqlType()).toBe('public.double_eq')
+    expect(types.DoubleOrdOre('n').getEqlType()).toBe('public.double_ord_ore')
+    expect(types.DoubleOrd('n').getEqlType()).toBe('public.double_ord')
+  })
+})
+
 describe('eql_v3 encryptedTable', () => {
   it('creates a table exposing column builders as properties', () => {
     const users = encryptedTable('users', {
@@ -401,8 +427,10 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
   // operator) instead of throwing on the absent `unique` index. (Text order
   // domains DO carry `hm` and resolve equality to `unique` instead — see the
   // text-order regression below.)
+  // Keep these labels aligned with the checked-in EQL build; a mismatch here
+  // means the stack package is out of sync with the underlying domain surface.
   it.each([
-    ['int4_ord', types.Int4Ord],
+    ['IntegerOrd', types.IntegerOrd],
     ['date_ord', types.DateOrd],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s resolves equality to the ore index', (_name, builder) => {
@@ -422,12 +450,12 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
 })
 
 describe('eql_v3 text order domains carry the hm (unique) index (regression)', () => {
-  // The `eql_v3.text_ord` and `eql_v3.text_ord_ore` SQL domains require BOTH
+  // The `public.text_ord` and `public.text_ord_ore` SQL domains require BOTH
   // `hm` (HMAC) and `ob` (ORE) in the stored ciphertext: text equality is
   // HMAC-based (their `eql_v3.eq_term` extracts `hm`), unlike numeric/date order
   // domains which answer equality via `ob` and need only ORE. So text order
   // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
-  // fails with `value for domain eql_v3.text_ord_ore violates check constraint`.
+  // fails with `value for domain public.text_ord_ore violates check constraint`.
   it.each([
     ['text_ord_ore', types.TextOrdOre],
     ['text_ord', types.TextOrd],
@@ -439,8 +467,8 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   })
 
   it.each([
-    ['int4_ord_ore', types.Int4OrdOre],
-    ['int4_ord', types.Int4Ord],
+    ['IntegerOrdOre', types.IntegerOrdOre],
+    ['IntegerOrd', types.IntegerOrd],
     ['date_ord_ore', types.DateOrdOre],
     ['numeric_ord', types.NumericOrd],
   ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {

@@ -17,24 +17,40 @@
  * ONE mega table (all 35 domains, one column each, like `matrix-live.test.ts`),
  * two seeded rows (`samples[0]` / `samples[1]` from the catalog — every domain
  * has at least two), one query per domain proving it selects the expected row
- * and not the other. Dispatch mirrors the priority `resolveIndexType` itself
- * uses (match > unique > ore > none):
- *   - match   (text_match, text_search):    `eql_v3.match_term` + `bloom_filter`
- *   - eq      (any `unique`/`hm` domain):   `eql_v3.eq_term`    + `hmac_256`
- *   - ord     (any `ore`/`ob` domain):      `eql_v3.ord_term`   + `ore_block_256`.
- *     Pure-ORE domains (numeric/date `*_ord`/`*_ord_ore`) are queried with
- *     `queryType:'equality'` — the equality-via-ORE path Part A fixed — because
- *     `ob` is their only index and they have no `eq_term` at all in the real
- *     `eql_v3` SQL (verified against the fixture). Text order domains carry BOTH
- *     `hm` and `ob`, so they run the eq proof AND the ord proof; their `ob` term
- *     is built with `queryType:'orderAndRange'` (equality would resolve to `hm`).
+ * and not the other. Queries use the supported EQL v3 API: a FULL encrypted
+ * operand (`client.encrypt`, same payload as storage) compared against the
+ * column with a public two-arg `eql_v3.*(col, operand::jsonb)` function. (The
+ * old `encryptQuery` scalar-term path is unsupported in protect-ffi 0.28 —
+ * `EQL_V3_QUERY_UNSUPPORTED` — and the operand carries every index term, so the
+ * SQL function per proof, not a `queryType`, selects which term is compared.)
+ * Dispatch mirrors the priority `resolveIndexType` uses (match > unique > ore):
+ *   - match   (text_match, text_search):    `eql_v3.contains(col, operand)`
+ *   - eq      (any `unique` domain):        `eql_v3.eq(col, operand)`
+ *   - ord     (any `ore` domain):           ORE range `eql_v3.gte(col,op) AND
+ *     eql_v3.lte(col,op)`. Pure-ORE numeric/date `*_ord`/`*_ord_ore` domains
+ *     have no `hm` term, so `eql_v3.eq` there resolves to `ord_term` — that IS
+ *     the equality-via-ORE proof — while text order domains carry BOTH `hm` and
+ *     `ob`, so they use the explicit range to exercise `ob` (a bare `eql_v3.eq`
+ *     would silently compare `hm`). Text order domains also run the eq proof.
  *   - storage (no index): no query is possible; proves the ciphertext, cast to
  *     THIS SPECIFIC Postgres domain type, survives a real INSERT/SELECT and
  *     still decrypts — the one thing the FFI-only round-trip can't show.
+ *
+ * In addition, EVERY ORE ordering domain (every `ore`-indexed domain: all
+ * `_ord`/`_ord_ore` numeric/date/timestamp domains plus `text_ord`,
+ * `text_ord_ore` and `text_search`) gets a STRICT total-order proof. Its
+ * distinct sample values are each seeded as their own row (under a separate
+ * `ORDER_RUN_ID`, so the two-row proofs above are unaffected) and the boolean
+ * `eql_v3.lt` comparison is used — via a self cross-join ranking — to prove the
+ * ORE order reproduces the full plaintext order (a<b<c<d where the domain has
+ * that many distinct samples). This strengthens the `ord` proof above, which
+ * only shows equality-via-ORE / a single degenerate range. The comparison
+ * operator (NOT `ORDER BY eql_v3.ord_term(col)`) is used deliberately: it is
+ * ORE-correct on both superuser (CI) and non-superuser (local) Postgres.
  */
 import 'dotenv/config'
 import postgres from 'postgres'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 import { unwrapResult } from '../fixtures'
 import { installEqlV3IfNeeded } from '../helpers/eql-v3'
@@ -63,8 +79,11 @@ const sql = LIVE_EQL_V3_PG_ENABLED
 const TABLE_NAME = 'v3_matrix_live_pg'
 const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-/** `eql_v3.int4_ord` -> `int4_ord`: a valid, unique Postgres column name. */
-const slug = (t: EqlV3TypeName): string => t.replace('eql_v3.', '')
+/** `public.integer_ord` -> `integer_ord`: a valid, unique Postgres column name.
+ * The domains were renamed `eql_v3.* -> public.*`, so strip the `public.`
+ * prefix — a leftover dot in the column name breaks both the FFI's identifier
+ * resolution and the `"col" <type>` DDL below. */
+const slug = (t: EqlV3TypeName): string => t.replace(/^public\./, '')
 
 const expectDecryptedStorageValue = (
   decrypted: unknown,
@@ -108,7 +127,7 @@ const table = encryptedTable(TABLE_NAME, columns as never)
 const hasIndex = (
   indexes: DomainSpec['indexes'],
   key: 'unique' | 'ore' | 'match',
-): boolean => Boolean((indexes ?? {})[key])
+): boolean => Boolean(indexes?.[key])
 
 const matchDomains = domains.filter(([, spec]) =>
   hasIndex(spec.indexes, 'match'),
@@ -129,16 +148,55 @@ const storageDomains = domains.filter(
 )
 const textOreDomains = domains.filter(
   ([t]) =>
-    t === 'eql_v3.text_ord_ore' ||
-    t === 'eql_v3.text_ord' ||
-    t === 'eql_v3.text_search',
+    t === 'public.text_ord_ore' ||
+    t === 'public.text_ord' ||
+    t === 'public.text_search',
 )
+
+// EVERY ORE ordering domain: all `_ord`/`_ord_ore` numeric/date/timestamp
+// domains PLUS the three text order domains (`text_ord`, `text_ord_ore`,
+// `text_search`) — i.e. every domain carrying an `ore` index. `text_search`
+// is intentionally INCLUDED here (unlike `ordDomains`, which excludes it so
+// its canonical proof stays the match one): strict ORE ordering is a real
+// capability of that domain and gets its own proof below.
+const orderingDomains = domains.filter(([, spec]) =>
+  hasIndex(spec.indexes, 'ore'),
+)
+
+// The number of separate ordering rows to seed: the widest ordering domain's
+// distinct sample count (numeric domains carry 4; text carries 3; date/
+// timestamp carry 2). Narrower domains reuse their last sample in the extra
+// rows (harmless — each per-domain proof only reads its own first N rows).
+const MAX_ORDER_ROWS = Math.max(
+  ...orderingDomains.map(([, spec]) => spec.samples.length),
+)
+
+/** Plaintext ordering used to derive the EXPECTED ORE order per domain.
+ * Dates compare by instant, numbers numerically, strings by code point (ORE
+ * text order is byte order, which matches JS `<` for the ASCII samples here). */
+const comparePlaintext = (a: unknown, b: unknown): number => {
+  if (a instanceof Date && b instanceof Date) return a.getTime() - b.getTime()
+  if (typeof a === 'number' && typeof b === 'number') return a - b
+  const sa = String(a)
+  const sb = String(b)
+  return sa < sb ? -1 : sa > sb ? 1 : 0
+}
 
 type Row = { id: number }
 
 let client: Awaited<ReturnType<typeof EncryptionV3>>
 let idA: number
 let idB: number
+// Separate run id for the multi-row ordering rows. Kept DISTINCT from
+// TEST_RUN_ID so the existing eq/match/storage/ord proofs (which filter on
+// TEST_RUN_ID and expect exactly the two idA/idB rows) never see these extra
+// rows — e.g. the `text_match` "contains ada" proof would otherwise also match
+// a downcased 'Ada Lovelace' row.
+const ORDER_RUN_ID = `${TEST_RUN_ID}-order`
+// Row ids of the seeded ordering rows, in sample-index order: orderIds[i]
+// holds `samples[min(i, L-1)]` for every domain, so orderIds[0..L-1] map 1:1
+// to a domain's distinct samples[0..L-1].
+let orderIds: number[] = []
 // Query terms, pre-encrypted once in `beforeAll` (not per `it.each` case).
 const eqTerms: Record<string, unknown> = {}
 const ordTerms: Record<string, unknown> = {}
@@ -154,6 +212,12 @@ beforeAll(async () => {
     .map(([t]) => `"${slug(t)}" ${t} NOT NULL`)
     .join(',\n    ')
 
+  // DROP first: the table is created with IF NOT EXISTS and cleaned up by row
+  // DELETE only, so a table left by an earlier local run keeps its OLD column
+  // domain types across the `eql_v3.* -> public.*` / `timestamptz -> timestamp`
+  // renames — silently testing against a stale schema. Harmless in CI (fresh
+  // Postgres each run); load-bearing for reliable local reruns.
+  await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE_NAME}`)
   await sql.unsafe(`
     CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
@@ -162,21 +226,31 @@ beforeAll(async () => {
     )
   `)
 
-  // Two model rows: row A carries samples[0], row B carries samples[1], for
-  // every domain — every catalog `samples` array has at least two entries.
-  const rowA: Record<string, unknown> = {}
-  const rowB: Record<string, unknown> = {}
-  for (const [t, spec] of domains) {
-    rowA[slug(t)] = spec.samples[0]
-    rowB[slug(t)] = spec.samples[1]
-  }
+  // Model rows for the ordering proofs: row i carries `samples[min(i, L-1)]`
+  // for every domain (`L` = that domain's sample count). Rows 0/1 double as the
+  // classic two-row seed (samples[0]/samples[1]) reused by the existing proofs;
+  // rows 2..MAX_ORDER_ROWS-1 give the extra distinct values numeric/text
+  // ordering domains need for a full a<b<c(<d). Encrypted in ONE
+  // bulkEncryptModels batch, then the same ciphertexts are inserted twice: rows
+  // 0/1 under TEST_RUN_ID (idA/idB) for the existing proofs, and all rows under
+  // ORDER_RUN_ID for the ordering proofs.
+  const models = Array.from({ length: MAX_ORDER_ROWS }, (_, i) => {
+    const row: Record<string, unknown> = {}
+    for (const [t, spec] of domains) {
+      row[slug(t)] = spec.samples[Math.min(i, spec.samples.length - 1)]
+    }
+    return row
+  })
 
-  const [encA, encB] = unwrapResult(
-    await client.bulkEncryptModels([rowA, rowB] as never, table as never),
+  const encModels = unwrapResult(
+    await client.bulkEncryptModels(models as never, table as never),
   ) as Array<Record<string, unknown>>
 
   const colNames = domains.map(([t]) => `"${slug(t)}"`)
-  const insertRow = async (enc: Record<string, unknown>): Promise<number> => {
+  const insertRow = async (
+    enc: Record<string, unknown>,
+    runId: string,
+  ): Promise<number> => {
     const casts = domains.map(([t], i) => `$${i + 2}::${t}`)
     // `sql.json(...)` (not the bare ciphertext object): postgres.js only infers
     // an explicit wire type for `Parameter`/`Date`/`Uint8Array`/boolean/bigint —
@@ -188,76 +262,53 @@ beforeAll(async () => {
       `INSERT INTO ${TABLE_NAME} (test_run_id, ${colNames.join(', ')})
        VALUES ($1, ${casts.join(', ')})
        RETURNING id`,
-      [TEST_RUN_ID, ...values],
+      [runId, ...values],
     )
     return row.id
   }
-  idA = await insertRow(encA)
-  idB = await insertRow(encB)
+  idA = await insertRow(encModels[0], TEST_RUN_ID)
+  idB = await insertRow(encModels[1], TEST_RUN_ID)
+  orderIds = []
+  for (const enc of encModels) {
+    orderIds.push(await insertRow(enc, ORDER_RUN_ID))
+  }
 
   const columnRef = (t: EqlV3TypeName) =>
     (table as unknown as Record<string, unknown>)[slug(t)] as never
 
-  // The full `opts` object (not just `column`) is cast `as never`: `encryptQuery`
-  // derives its allowed `queryType` union FROM the column's type
-  // (`QueryTypesForColumn<C>`), so a `never`-typed `column` alone collapses
-  // `queryType` to `undefined` rather than widening it — this table's columns
-  // are built dynamically (`Object.fromEntries`), so none of them carry a
-  // statically-known type for `encryptQuery` to key off in the first place.
-  for (const [t, spec] of eqDomains) {
-    eqTerms[slug(t)] = unwrapResult(
-      await client.encryptQuery(
-        spec.samples[0] as never,
-        {
-          table,
-          column: columnRef(t),
-          queryType: 'equality',
-        } as never,
-      ),
+  // Query operands are FULL encrypted payloads — the same thing `client.encrypt`
+  // produces for storage — NOT `encryptQuery` terms. protect-ffi 0.28 has no v3
+  // scalar query wire shape (`encryptQuery` throws EQL_V3_QUERY_UNSUPPORTED), so
+  // the supported path is to encrypt the search value as an operand and compare
+  // it with the public two-arg `eql_v3.*(col, operand::jsonb)` functions in SQL.
+  // The full operand carries every index term, so `queryType` dispatch is gone —
+  // the SQL function chosen per proof (eq / gte+lte / contains) selects which
+  // term the comparison uses. `opts` is cast `as never` because these columns
+  // are built dynamically (`Object.fromEntries`) and carry no static type.
+  const encryptOperand = async (t: EqlV3TypeName, value: unknown) =>
+    unwrapResult(
+      await client.encrypt(value as never, {
+        table,
+        column: columnRef(t),
+      } as never),
     )
+  for (const [t, spec] of eqDomains) {
+    eqTerms[slug(t)] = await encryptOperand(t, spec.samples[0])
   }
   for (const [t, spec] of ordDomains) {
-    // Pure-ORE domains (numeric/date) answer equality via ORE, so
-    // `queryType:'equality'` resolves to the `ob` term — the exact
-    // equality-via-ORE path Part A fixed. Text order domains ALSO carry `hm`,
-    // where `equality` resolves to HMAC by the shared `unique > … > ore`
-    // priority; force `orderAndRange` there so the term still carries the `ob`
-    // this proof extracts with `ore_block_256`.
-    const queryType = hasIndex(spec.indexes, 'unique')
-      ? 'orderAndRange'
-      : 'equality'
-    ordTerms[slug(t)] = unwrapResult(
-      await client.encryptQuery(
-        spec.samples[0] as never,
-        {
-          table,
-          column: columnRef(t),
-          queryType,
-        } as never,
-      ),
-    )
+    ordTerms[slug(t)] = await encryptOperand(t, spec.samples[0])
   }
-  // text_match/text_search: query a substring of whichever seeded sample
-  // contains "ada". `text_match` still uses the shared TEXT_S with an empty row
-  // A, while `text_search` uses non-empty TEXT_ORE_S to satisfy its `ob` check.
+  // text_match/text_search: query the substring "ada", present only in the
+  // seeded sample of exactly one row per domain.
   for (const [t] of matchDomains) {
-    matchTerms[slug(t)] = unwrapResult(
-      await client.encryptQuery(
-        'ada' as never,
-        {
-          table,
-          column: columnRef(t),
-          queryType: 'freeTextSearch',
-        } as never,
-      ),
-    )
+    matchTerms[slug(t)] = await encryptOperand(t, 'ada')
   }
 }, 120000)
 
 afterAll(async () => {
   if (!LIVE_EQL_V3_PG_ENABLED) return
-  await sql.unsafe(`DELETE FROM ${TABLE_NAME} WHERE test_run_id = $1`, [
-    TEST_RUN_ID,
+  await sql.unsafe(`DELETE FROM ${TABLE_NAME} WHERE test_run_id = ANY($1)`, [
+    [TEST_RUN_ID, ORDER_RUN_ID],
   ])
   await sql.end()
 }, 30000)
@@ -265,12 +316,12 @@ afterAll(async () => {
 describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
   it.each(
     eqDomains,
-  )('%s: eq_term/hmac_256 selects the exact row', async (eqlType) => {
+  )('%s: eql_v3.eq(col, operand) selects the exact row', async (eqlType) => {
     const col = slug(eqlType)
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.eq_term("${col}") = eql_v3.hmac_256($2::jsonb)`,
+           AND eql_v3.eq("${col}", $2::jsonb)`,
       [TEST_RUN_ID, sql.json(eqTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
@@ -278,12 +329,21 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
 
   it.each(
     ordDomains,
-  )('%s: ord_term/ore_block_256 equality-via-ORE selects the exact row', async (eqlType) => {
+  )('%s: ORE range selects the exact row', async (eqlType, spec) => {
     const col = slug(eqlType)
+    // The proof must exercise the ORDER (`ob`) term, not equality. On text order
+    // domains (`text_ord`/`text_ord_ore`, which carry BOTH `unique` and `ore`)
+    // `eql_v3.eq` compares the `hm` term, so pin the ORE term with a degenerate
+    // range `col >= operand AND col <= operand` (both `ord_term`-based) — it
+    // selects the equal row via ORE. Pure-ORE numeric/date domains have no `hm`,
+    // so `eql_v3.eq` resolves to `ord_term`: that IS the equality-via-ORE proof.
+    const predicate = hasIndex(spec.indexes, 'unique')
+      ? `eql_v3.gte("${col}", $2::jsonb) AND eql_v3.lte("${col}", $2::jsonb)`
+      : `eql_v3.eq("${col}", $2::jsonb)`
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.ord_term("${col}") = eql_v3.ore_block_256($2::jsonb)`,
+           AND ${predicate}`,
       [TEST_RUN_ID, sql.json(ordTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([idA])
@@ -308,16 +368,74 @@ describeLivePg('v3 matrix live Postgres coverage (all 35 domains)', () => {
 
   it.each(
     matchDomains,
-  )('%s: match_term/bloom_filter selects the row containing "ada"', async (eqlType, spec) => {
+  )('%s: eql_v3.contains selects the row containing "ada"', async (eqlType, spec) => {
     const col = slug(eqlType)
     const expectedId = String(spec.samples[0]).includes('ada') ? idA : idB
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.match_term("${col}") @> eql_v3.bloom_filter($2::jsonb)`,
+           AND eql_v3.contains("${col}", $2::jsonb)`,
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([expectedId])
+  })
+
+  it.each(
+    orderingDomains,
+  )('%s: ORE pairwise-lt reproduces plaintext order across all distinct samples', async (eqlType, spec) => {
+    // STRICT ordering proof: seed each of a domain's distinct sample values as
+    // its OWN row (orderIds[0..L-1] ↔ samples[0..L-1]) and prove the ORE
+    // comparison reproduces the FULL plaintext order (a<b<c<d where available),
+    // not just equality-via-ORE or a single 2-row range.
+    //
+    // The order is reconstructed with the boolean `eql_v3.lt` comparison
+    // operator (a self cross-join counting, per row, how many rows it is
+    // strictly-less-than → its ascending rank). This is ENVIRONMENT-INDEPENDENT:
+    // it is ORE-correct on both a superuser Postgres (CI) and a non-superuser
+    // one (typical local dev), unlike `ORDER BY eql_v3.ord_term(col)`, whose
+    // ORE-aware btree opclass is superuser-gated and silently falls back to
+    // raw-byte record order on managed installs. See
+    // docs/eql-v3-ord-term-ordering-defect.md.
+    const col = slug(eqlType)
+    const L = spec.samples.length
+    const ids = orderIds.slice(0, L)
+
+    // Expected ascending order: sort the distinct samples by plaintext, mapping
+    // each to the id of the row that carries it (samples[i] -> orderIds[i]).
+    const expectedAscending = spec.samples
+      .map((value, i) => ({ value, id: ids[i] }))
+      .sort((x, y) => comparePlaintext(x.value, y.value))
+      .map((entry) => entry.id)
+
+    const pairs = await sql.unsafe<Array<{ a: number; b: number; lt: boolean }>>(
+      `SELECT x.id AS a, y.id AS b, eql_v3.lt(x."${col}", y."${col}") AS lt
+         FROM ${TABLE_NAME} x
+         CROSS JOIN ${TABLE_NAME} y
+        WHERE x.test_run_id = $1
+          AND y.test_run_id = $1
+          AND x.id = ANY($2)
+          AND y.id = ANY($2)
+          AND x.id <> y.id`,
+      [ORDER_RUN_ID, ids],
+    )
+
+    const lessThanCount = new Map<number, number>(ids.map((id) => [id, 0]))
+    for (const pair of pairs) {
+      if (pair.lt) {
+        lessThanCount.set(pair.a, (lessThanCount.get(pair.a) ?? 0) + 1)
+      }
+    }
+
+    // Ascending rank = strictly-less-than count, descending (the smallest value
+    // is < every other row, so it has the highest count and sorts first).
+    const derivedAscending = [...ids].sort(
+      (a, b) => (lessThanCount.get(b) ?? 0) - (lessThanCount.get(a) ?? 0),
+    )
+
+    // Sanity: distinct samples must yield distinct ranks 0..L-1 (a strict total
+    // order), otherwise the ORE comparison collapsed two values together.
+    expect(new Set(lessThanCount.values()).size).toBe(L)
+    expect(derivedAscending).toEqual(expectedAscending)
   })
 
   it.each(

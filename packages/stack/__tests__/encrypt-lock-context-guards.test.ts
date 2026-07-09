@@ -40,7 +40,7 @@ const users = encryptedTable('users', {
 })
 
 const usersV3 = encryptedTableV3('users_v3', {
-  score: types.Int4Ord('score'),
+  score: types.IntegerOrd('score'),
 })
 
 // biome-ignore lint/suspicious/noExplicitAny: test helper reads the Result union
