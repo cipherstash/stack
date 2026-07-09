@@ -6,7 +6,7 @@
 
 **Architecture:** v3 is a **parallel, self-contained namespace** — never v3 branches grafted onto v2 code. Capability is encoded by constructor identity: the constructor you choose *is* the capability set, and it emits its concrete descriptor statically (`(codec id) ⟺ (public.* domain) ⟺ capabilities` is bijective — nothing is resolved). The **domains / native types live in `public`** (`public.text_eq`, `public.integer_ord`, `public.boolean`, `public.bigint_ord`); the **operator functions live in `eql_v3`** (`eql_v3.eq`, `eql_v3.gt`, `eql_v3.contains`, `eql_v3.ord_term`). These two schemas must never be conflated. The constructor set, codec ids, capabilities, cast kinds, and native types are all **derived from the imported `DOMAIN_REGISTRY`** in `@cipherstash/stack/eql/v3` — there is no hand-maintained local table. Concrete per-domain types are threaded end-to-end (literal `codecId` / `nativeType` / `capabilities`; see Task 3's `V3ColumnDescriptor<C>` and the `.test-d.ts`). **v2 and v3 are separate entry points** (decision 1b): v3 is its own extension factory with its own distinct extension id, keeping the same `cipherstash*` method names, and is **never co-registered** with v2 in one client (the flat `OperationRegistry` disallows the duplicate-method override). A client is v2 or v3; mixed v2+v3 columns in one client are unsupported this release.
 
-**Tech Stack:** TypeScript, `@cipherstash/stack` (`/eql/v3` catalog + a v3 `EncryptionV3` client), `@cipherstash/eql@3.0.0-alpha.3` (`/sql` → `readInstallSql` / `releaseManifest`), `@prisma-next/*` framework, `arktype`, `vitest` (`vitest run`), `fast-check ^4.8.0` (added here), `biome` (lint), `tsup` (build), `postgres` (live tests).
+**Tech Stack:** TypeScript, `@cipherstash/stack` (`/eql/v3` catalog + a v3 `EncryptionV3` client), `@cipherstash/eql@3.0.0-alpha.3` (`/sql` → `readInstallSql` / `releaseManifest`), `@prisma-next/*` framework **pinned at 0.14.0** (see the "Prisma Next 0.14 ground truth" notes below — this plan was originally drafted against 0.8.0 and has been re-aligned), `arktype`, `vitest` (`vitest run`), `fast-check ^4.8.0` (added here), `biome` (lint), `tsup` (build), `postgres` (live tests).
 
 ## Global Constraints
 
@@ -37,6 +37,31 @@
 6. **`@cipherstash/eql/sql`** exports `readInstallSql(): string` and `releaseManifest` (`.eqlVersion`). `installEqlV3IfNeeded(sql)` lives in `packages/stack/__tests__/helpers/eql-v3.ts` (advisory lock `3_733_003`; staleness via `eql_v3.version()`).
 7. **The Drizzle reference operator/gating shapes** live on branch `eql-v3-drizzle-concrete-types` (not the working tree). Their shapes are reproduced inline in the relevant tasks. Operator SQL is proven live in `packages/stack/__tests__/v3-matrix/matrix-live-pg.test.ts` and `schema-v3-pg.test.ts`.
 8. **Operator method names + the flat registry (resolved: decision 1b).** The framework `OperationRegistry` is a flat, method-name-keyed map that disallows override, so two descriptors both defining `cipherstashEq` collide at registration regardless of extension id. Resolution: v2 and v3 are **separate entry points** — v3 registers its own extension descriptor (its own distinct `id`/`version`, same `cipherstash*` method names) and is **never co-registered** with the v2 descriptor. There is no single-shared-gated-descriptor and no in-one-client mixing. This is not a fallback; it is the design.
+
+## Prisma Next 0.14 ground truth (re-alignment, 2026-07-09)
+
+This plan was drafted while `packages/prisma-next` pinned `@prisma-next/*` at **0.8.0**. The package has since been upgraded to **0.14.0** (branch `chore/prisma-next-0.14-upgrade`, one commit per minor). Everything below is verified against that branch and **overrides** any 0.8-era shape the original draft assumed. Tasks whose steps this affects carry an inline `> **0.14:**` note.
+
+1. **Contract JSON shape (affects every contract fixture and every contract walker).** `contract.json` is namespace-enveloped at both planes:
+   - Storage: `storage.namespaces.<ns>.entries.table.<tableName>` (the `entries.<kind>` envelope landed in 0.13). There is **no** flat `storage.tables` — the structural validator rejects it.
+   - Domain: `domain.namespaces.<ns>.models` replaces flat `models`; `roots` entries are `{ model, namespace }` objects.
+   - The Postgres default namespace is **`public`** (`kind: 'postgres-schema'`) since 0.12; the emitted extension contract carries the sole namespace `public` (0.14 dropped the spurious empty `__unbound__` slot, TML-2916).
+   - Reference implementation: the v2 `deriveStackSchemas` (`src/stack/derive-schemas.ts`) already walks `storage.namespaces.<ns>.tables`-era → 0.14 `entries`-shaped views on the branch; `deriveStackSchemasV3` must walk the same envelope (Task 7 has been updated accordingly).
+2. **Handcrafted contract fixtures** (`test/operator-lowering.helpers.ts`, `test/helpers.test.ts`) are validated with `validateSqlContractFully<PostgresContract>(value)` — single argument, imported from `@prisma-next/sql-contract/validators` (`@prisma-next/sql-contract/validate` and the two-arg `validateContract` are gone). Fixtures carry `storage.namespaces.__unbound__ = { id, entries: { table: {...} } }` and `domain: { namespaces: { __unbound__: { models: {} } } }`. Mirror this shape for `contractV3` (Task 6).
+3. **Lowered params are structured.** `adapter.lower(...)` emits `LoweredParam` entries (`{ kind: 'literal', value } | { kind: 'bind', name }`), not raw values. The v2 helpers export `literalParamValue(param)` for unwrapping — reuse it in v3 lowering tests that assert on `lowered.params`.
+4. **PSL interpreter harness.** `interpretPslDocumentToSqlContract` requires the target ref to carry `defaultNamespaceId` (`'public'`) and requires `composedExtensionContracts: ReadonlyMap<spaceId, Contract>` (the composed cipherstash contract must be in the map or interpretation fails with `PSL_UNKNOWN_CONTRACT_SPACE`). Interpreted tables land under the `public` namespace at `storage.namespaces.public.entries.table`. The `psl-interpretation*.test.ts` harnesses (`interpret()`, `asStorage()`) are already 0.14-shaped on the branch — new v3 cases extend them, don't fork them.
+5. **Contract-space emit / re-pin loop (Task 8's backbone).** The self-emit (`pnpm exec tsx migrations/<dir>/migration.ts`) writes **only** `ops.json` + `migration.json`. It does not write `end-contract.json`, does not print a contract hash, and does not touch `migrations/refs/head.json`. The full maintainer loop, exercised four times on the upgrade branch, is:
+   1. `pnpm exec prisma-next contract emit` (from `packages/prisma-next/`) → rewrites `src/contract.{json,d.ts}`; the new hash is `src/contract.json` → `storage.storageHash`.
+   2. Copy `src/contract.json` → `migrations/<dir>/end-contract.json` and `src/contract.d.ts` → `migrations/<dir>/end-contract.d.ts`.
+   3. Hand-edit the migration's `describe()` hash literal(s).
+   4. Self-emit: `pnpm exec tsx migrations/<dir>/migration.ts` → regenerates `ops.json` + `migration.json` (0.12+ manifests carry no `labels`/`hints` and no inlined `fromContract`/`toContract`).
+   5. Hand-edit `migrations/refs/head.json` (`{ hash, invariants }`).
+   - Current head after the 0.14 upgrade: `hash: sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7`, `invariants: ["cipherstash:install-eql-bundle-v1"]`. The v2 baseline's `describe()` is `{ from: null, to: <that hash> }`.
+6. **Descriptor self-consistency requires the family canonicalization hooks.** `assertDescriptorSelfConsistency` must be passed `sqlContractCanonicalizationHooks.shouldPreserveEmpty` / `.sortStorage` (from `@prisma-next/sql-contract/canonicalization-hooks`) or the recomputed hash will not match the emitted one. `test/descriptor.test.ts` already does this on the branch; Task 8's "descriptor test passes with the second migration wired" step inherits it.
+7. **Codec control hooks carry a namespace coordinate.** `FieldEventContext` has a required `namespaceId` (plus optional `priorTable`/`newTable`), and `planFieldEventOperations` walks `storage.namespaces.<ns>` — relevant only to v2 hooks (v3 registers none), but any new test that invokes a hook directly must pass `namespaceId`.
+8. **Plan ops can lower lazily.** `OpFactoryCall.toOp()` may return a `Promise<MigrationPlanOperation>`; tests await `Promise.all(ops.map((c) => c.toOp()))` (see `test/cipherstash-codec.test.ts` on the branch).
+9. **Middleware context requires `planExecutionId`.** `SqlMiddlewareContext` (via `RuntimeMiddlewareContext`) has a required `planExecutionId: string`; the v2 test `createCtx()` fixtures already stamp one — the extracted shared helper (Task 5) inherits it.
+10. **`createRuntime` is removed** from `@prisma-next/sql-runtime` (construct `new PostgresRuntimeImpl(...)` from `@prisma-next/postgres/runtime`), the bare migration op factories are methods on the `Migration` base class (`this.createTable({...})` etc.) — but **`rawSql` survives as a free function** in 0.14 and the v2 baseline still uses it; Task 8's migration module is unaffected. ORM access is namespace-qualified (`db.orm.public.User`) — relevant to any live-suite example code.
 
 ## File Structure
 
@@ -69,7 +94,8 @@ packages/prisma-next/
       eql-bundle-v3.ts              (NEW) re-export readInstallSql / releaseManifest from @cipherstash/eql/sql
     migrations/20260601T0100_install_eql_v3_bundle/
       migration.ts                  (NEW) rawSql install op, invariant cipherstash:install-eql-v3-bundle-v1
-      migration.json / ops.json / end-contract.json  (GENERATED by migration.ts)
+      migration.json / ops.json      (GENERATED by the migration.ts self-emit)
+      end-contract.{json,d.ts}       (COPIED from src/contract.{json,d.ts} after `prisma-next contract emit`)
     exports/control.ts              (MODIFY) add the v3 baseline to the migrations array
     exports/runtime.ts              (MODIFY) export v3 runtime surface
     exports/stack.ts                (MODIFY) export v3 derivation/adapter
@@ -855,6 +881,8 @@ Expected: PASS for the v3 + V2 cases.
 - [ ] **Step 5: Retarget pre-existing v2 assertions in `psl-interpretation*.test.ts`**
 
 Any assertion expecting the unqualified `EncryptedString`/`EncryptedDouble`/`EncryptedBigInt`/`EncryptedDate`/`EncryptedBoolean`/`EncryptedJson` to lower to `cipherstash/*@1` + `eql_v2_encrypted` must be retargeted to the `*V2` name (or moved to a v3 expectation where the unqualified name is now a v3 domain).
+
+> **0.14:** extend the existing `interpret()` / `asStorage()` harnesses in `psl-interpretation*.test.ts` — they already carry the 0.14 requirements (target ref with `defaultNamespaceId: 'public'`, the `composedExtensionContracts` map keyed by the cipherstash space id, and namespace-envelope reads via `entries.table`). Interpreted tables land under the `public` namespace (ground-truth note 4). Do not fork a pre-0.13 harness shape for the v3 cases.
 
 Run: `pnpm --filter @cipherstash/prisma-next test -- psl-interpretation`
 Expected: the failing assertions name the exact lines; update each to `EncryptedStringV2` / `EncryptedDoubleV2` / etc.
@@ -1675,6 +1703,8 @@ Keep the `cipherstash*` method names but lower v3 columns to the two-arg `eql_v3
 
 Create `packages/prisma-next/test/v3/operator-lowering-v3.helpers.ts` mirroring the v2 `operator-lowering.helpers.ts`, but composing the v3 runtime (`createCipherstashV3RuntimeDescriptor({ sdk: emptySdk() })` from Task 7 — until Task 7 lands, compose a minimal adapter directly from `createV3CodecDescriptors` + `cipherstashV3QueryOperations`) and v3 codec ids in `columnAccessorV3` / `contractV3`. Export `callOperator`, `columnAccessorV3`, `contractV3`, `makeV3Adapter`, `selectWithWhere`, `TABLE`, `emptySdk`.
 
+> **0.14:** the v2 helpers file being mirrored is already 0.14-shaped on the branch — `contractV3` must follow it: `validateSqlContractFully<PostgresContract>(value)` (single arg, from `@prisma-next/sql-contract/validators`), storage as `namespaces.__unbound__ = { id: '__unbound__', entries: { table: {...} } }`, a `domain: { namespaces: { __unbound__: { models: {} } } }` plane, and per-column `nativeType` set to the concrete `public.*` domain. If any v3 lowering assertion reads `lowered.params`, unwrap the structured `LoweredParam` entries with the exported `literalParamValue` helper (ground-truth notes 2–3).
+
 Create `packages/prisma-next/test/v3/operator-lowering-v3.test.ts`:
 
 ```ts
@@ -2018,7 +2048,7 @@ Derive `@cipherstash/stack/eql/v3` schemas from v3 contract columns (mapping `na
   - `function createCipherstashV3RuntimeDescriptor(opts: { sdk: CipherstashSdk }): SqlRuntimeExtensionDescriptor<'postgres'>`
   - `function assertV3SchemasAgree(derived: AnyV3Table, override: AnyV3Table): void`
   - `function cipherstashFromStackV3(opts: CipherstashFromStackV3Options): Promise<CipherstashFromStackResult>` — the v3-only entry point (decision 1b). The v2 `cipherstashFromStack` is **unchanged** and not touched by this task.
-  - `interface V3ContractShape` (structural view of the contract storage): `{ storage?: { tables?: Record<string, { columns?: Record<string, { codecId?: string; nativeType?: string; typeParams?: unknown }> }> } }` (exported for reuse by tests/properties).
+  - `interface V3ContractShape` (structural view of the contract storage — the 0.14 namespace envelope, mirroring the v2 `ContractStorageView` in `src/stack/derive-schemas.ts`): `{ storage?: { namespaces?: Record<string, { entries?: { table?: Record<string, { columns?: Record<string, { codecId?: string; nativeType?: string; typeParams?: unknown }> }> } }> } }` (exported for reuse by tests/properties).
 
 - [ ] **Step 1: Write the failing derivation test**
 
@@ -2028,8 +2058,14 @@ Create `packages/prisma-next/test/v3/derive-schemas-v3.test.ts`:
 import { describe, expect, it } from 'vitest'
 import { deriveStackSchemasV3 } from '../../src/v3/derive-schemas-v3'
 
+// 0.14 contract shape: tables live under storage.namespaces.<ns>.entries.table
+// (Postgres default namespace is `public`).
 function contract(columns: Record<string, { codecId: string; nativeType: string; typeParams?: unknown }>) {
-  return { storage: { tables: { user: { columns } } } }
+  return {
+    storage: {
+      namespaces: { public: { entries: { table: { user: { columns } } } } },
+    },
+  }
 }
 
 describe('deriveStackSchemasV3', () => {
@@ -2067,18 +2103,28 @@ import { type AnyEncryptedV3Column, type AnyV3Table, encryptedTable } from '@cip
 import { isCipherstashV3CodecId } from '../extension-metadata/constants-v3'
 import { V3_FACTORY_BY_NATIVE_TYPE } from './catalog'
 
+interface V3TableView {
+  readonly columns?: Record<
+    string,
+    { codecId?: string; nativeType?: string; typeParams?: unknown }
+  >
+}
+
+// 0.14 storage envelope: namespaces.<ns>.entries.table.<name> (see the
+// "Prisma Next 0.14 ground truth" notes; mirrors the v2 ContractStorageView).
 export interface V3ContractShape {
   storage?: {
-    tables?: Record<
-      string,
-      { columns?: Record<string, { codecId?: string; nativeType?: string; typeParams?: unknown }> }
-    >
+    namespaces?: Record<string, { entries?: { table?: Record<string, V3TableView> } }>
   }
 }
 
 export function deriveStackSchemasV3(contractJson: V3ContractShape): ReadonlyArray<AnyV3Table> {
-  const tables = contractJson.storage?.tables
-  if (!tables) return []
+  const namespaces = contractJson.storage?.namespaces
+  if (!namespaces) return []
+  const tables: Record<string, V3TableView> = {}
+  for (const namespace of Object.values(namespaces)) {
+    Object.assign(tables, namespace.entries?.table)
+  }
   const result: AnyV3Table[] = []
   for (const [tableName, table] of Object.entries(tables)) {
     const columns: Record<string, AnyEncryptedV3Column> = {}
@@ -2427,7 +2473,15 @@ const INSTALL_LABEL = `Install EQL v3 bundle (${releaseManifest.eqlVersion}: pub
 
 export default class M extends Migration {
   override describe() {
-    return { from: null, to: 'sha256:REPLACE_WITH_EMITTED_HASH' }
+    // The v3 baseline is the SECOND migration in the cipherstash contract
+    // space: `from` is the v2 baseline's `to` (the current head hash — see
+    // "Prisma Next 0.14 ground truth" note 5; after the 0.14 upgrade it is
+    // sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7).
+    // `to` is the storage hash after this migration (see Step 4).
+    return {
+      from: 'sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7',
+      to: 'sha256:REPLACE_WITH_EMITTED_HASH',
+    }
   }
   override get operations() {
     return [
@@ -2462,11 +2516,25 @@ MigrationCLI.run(import.meta.url, M)
 ```
 
 > Match the exact `rawSql` field names + the `Migration` subclass shape against the v2 `migration.ts`. In particular confirm whether it uses `get operations()` or `override operations()` and the postcheck object keys; copy the v2 shape verbatim, changing only id/label/invariant/sql/postcheck.
+>
+> **0.14:** the bare structural op factories (`createTable`, `setNotNull`, …) became protected methods on the `Migration` base class in Prisma Next 0.14, but **`rawSql` survives as a free function** and the v2 baseline still imports it — the import above is correct as written (ground-truth note 10).
 
-- [ ] **Step 4: Emit the migration artifacts**
+- [ ] **Step 4: Emit the migration artifacts (0.14 loop — self-emit writes `ops.json` + `migration.json` ONLY)**
 
-Run: `node packages/prisma-next/migrations/20260601T0100_install_eql_v3_bundle/migration.ts`
-Expected: writes `migration.json`, `ops.json`, `end-contract.json` and prints the `to` contract hash. Copy that hash into `describe().to` (replacing `REPLACE_WITH_EMITTED_HASH`) and re-run once so the artifacts are internally consistent. If the CLI manages `migrations/refs/head.json`, let it; otherwise append `cipherstash:install-eql-v3-bundle-v1` to its `invariants` and update `hash` per the CLI's printed guidance.
+> **0.14:** the self-emit does **not** write `end-contract.json`, does **not** print a contract hash, and does **not** touch `migrations/refs/head.json` — all three are manual (ground-truth note 5). The loop below was exercised four times on the upgrade branch.
+
+First decide the `to` hash — it depends on whether this migration changes the extension's declared contract storage:
+
+- **If `src/contract.prisma` is unchanged** (the v3 bundle only creates `public.*` domains + `eql_v3.*` functions, and no config table is added to the contract space), the storage hash does not move: `to` equals `from` (the current head hash) and the edge is **invariant-only**. VERIFY the migration graph (`reconstructGraph` / `readMigrationsDir` in `@prisma-next/migration-tools`) accepts a `from === to` edge before committing to this shape; if it rejects self-loop edges, declare the v3 configuration state in `src/contract.prisma` (mirroring how the v2 space declares `eql_v2_configuration`) so the hash genuinely moves.
+- **If the contract space gains v3-visible storage** (e.g. a v3 config table), run the full re-pin loop and use the new hash.
+
+The loop (all from `packages/prisma-next/`):
+
+1. If the contract changed: `pnpm exec prisma-next contract emit` → rewrites `src/contract.{json,d.ts}`; read the new hash from `src/contract.json` → `storage.storageHash`.
+2. Copy `src/contract.json` → `migrations/20260601T0100_install_eql_v3_bundle/end-contract.json` and `src/contract.d.ts` → `.../end-contract.d.ts` (for an invariant-only edge these equal the v2 baseline's end-contract — copy them anyway; every on-disk migration package carries its destination snapshot).
+3. Replace `REPLACE_WITH_EMITTED_HASH` in `describe().to` with the hash from (1) (or the `from` hash for an invariant-only edge).
+4. Self-emit: `pnpm exec tsx migrations/20260601T0100_install_eql_v3_bundle/migration.ts` → writes `ops.json` + `migration.json`.
+5. Hand-edit `migrations/refs/head.json`: set `hash` to the v3 `to` hash and append `cipherstash:install-eql-v3-bundle-v1` to `invariants` (keeping `cipherstash:install-eql-bundle-v1`).
 
 - [ ] **Step 5: Wire the v3 baseline into control.ts**
 
@@ -2513,7 +2581,7 @@ describe('v3 baseline migration', () => {
 - [ ] **Step 7: Run and commit**
 
 Run: `pnpm --filter @cipherstash/prisma-next test -- v3/migration-v3 descriptor && pnpm --filter @cipherstash/prisma-next build`
-Expected: PASS (including the existing `descriptor.test.ts` self-consistency check with the second migration wired).
+Expected: PASS (including the existing `descriptor.test.ts` self-consistency check with the second migration wired — note it already passes `sqlContractCanonicalizationHooks` to `assertDescriptorSelfConsistency`, required since 0.12, and its "head ref tracks the latest migration's `to`" assertion will now point at the v3 baseline; ground-truth notes 5–6).
 
 ```bash
 git add packages/prisma-next/package.json packages/prisma-next/src/migration/eql-bundle-v3.ts packages/prisma-next/migrations/20260601T0100_install_eql_v3_bundle packages/prisma-next/migrations/refs/head.json packages/prisma-next/src/exports/control.ts packages/prisma-next/test/v3/migration-v3.test.ts ../../pnpm-lock.yaml
@@ -2622,7 +2690,15 @@ describe('property: derivation round-trip', () => {
     fc.assert(
       fc.property(fc.constantFrom(...V3_DOMAIN_META_BY_CODEC_ID.entries()), ([codecId, meta]) => {
         const [table] = deriveStackSchemasV3({
-          storage: { tables: { user: { columns: { c: { codecId, nativeType: meta.nativeType } } } } },
+          storage: {
+            namespaces: {
+              public: {
+                entries: {
+                  table: { user: { columns: { c: { codecId, nativeType: meta.nativeType } } } },
+                },
+              },
+            },
+          },
         })
         const col = Object.values(table!.columnBuilders)[0]!
         expect((col as { getEqlType(): string }).getEqlType()).toBe(meta.nativeType)
@@ -2728,7 +2804,7 @@ export async function installEqlV3IfNeeded(sql: postgres.Sql): Promise<void> {
 
 - [ ] **Step 3: Write the seven live suites (self-skipping)**
 
-Create the following under `packages/prisma-next/test/live/`, each guarded by `describeLivePg`, installing v3 in `beforeAll`, and driving real INSERT/SELECT/decrypt against the `public.*` domains + `eql_v3.*` operators via `cipherstashFromStack` + a real `EncryptionV3` client. Shared skeleton:
+Create the following under `packages/prisma-next/test/live/`, each guarded by `describeLivePg`, installing v3 in `beforeAll`, and driving real INSERT/SELECT/decrypt against the `public.*` domains + `eql_v3.*` operators via `cipherstashFromStackV3` (the v3-only entry point — decision 1b) + a real `EncryptionV3` client. Shared skeleton:
 
 ```ts
 import { afterAll, beforeAll, expect, it } from 'vitest'
@@ -2747,7 +2823,7 @@ afterAll(async () => { if (sql) await sql.end() })
 4. `bigint-live-pg.test.ts` — `public.bigint` / `bigint_eq` / `bigint_ord` encrypt → INSERT → query (eq / order-range) → decrypt to a JS `bigint`; assert `typeof decrypted === 'bigint'`, lossless value, and ORE ordering over real domains.
 5. `migration-apply-live-pg.test.ts` — apply the v3 bundle (`installEqlV3IfNeeded`); assert `to_regtype('public.text_search')`/`public.integer_ord` are non-null, the `eql_v3` schema exists, the invariant `cipherstash:install-eql-v3-bundle-v1` is recorded (via the migration ops fixture or the runner's marker table), and no `add_search_config` was executed.
 6. `bulk-encrypt-live-pg.test.ts` — drive the v3 middleware against a **real** `EncryptionV3(...)` client (not a fake) → INSERT; assert the stored cell parses as JSON and decrypts to the original, proving routing-key stamping + JSONB payloads end-to-end.
-7. `mixed-v2-v3-live-pg.test.ts` — one table with a legacy `*V2` column and v3 columns; insert/query/decrypt both, proving mixed-mode derivation + two-client routing against a real DB.
+7. `side-by-side-clients-live-pg.test.ts` — a v2 client (`cipherstashFromStack`, v2-only contract/table) and a v3 client (`cipherstashFromStackV3`, v3-only contract/table) running in the same process against the same database; insert/query/decrypt through each, proving the two entry points coexist without sharing a registry, descriptor, or dispatch. (Mixed v2+v3 columns in ONE client are unsupported per decision 1b — the spec explicitly excludes a mixed-client live test; this replaces the earlier `mixed-v2-v3-live-pg.test.ts` item, which contradicted it.)
 
 - [ ] **Step 4: Verify self-skip locally, then commit**
 
