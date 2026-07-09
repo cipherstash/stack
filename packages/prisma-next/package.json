@@ -96,6 +96,7 @@
 		"@prisma-next/adapter-postgres": "0.8.0",
 		"@prisma-next/cli": "0.8.0",
 		"@prisma-next/driver-postgres": "0.8.0",
+		"@prisma-next/extension-author-tools": "0.14.0",
 		"@prisma-next/psl-parser": "0.8.0",
 		"@prisma-next/sql-contract-psl": "0.8.0",
 		"@prisma-next/sql-contract-ts": "0.8.0",
