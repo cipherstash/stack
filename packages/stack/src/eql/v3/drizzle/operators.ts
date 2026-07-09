@@ -445,7 +445,7 @@ export function createEncryptionOperatorsV3(
   function orderTerm(column: SQLWrapper, operator: string): SQL {
     const ctx = resolveContext(column, operator)
     requireIndex(ctx, ORDERING_INDEXES, operator, 'order/range')
-    return v3Dialect.orderBy(colSql(column))
+    return v3Dialect.orderBy(colSql(column), ctx.indexes.ore ? 'ore' : 'ope')
   }
 
   async function combine(
@@ -523,11 +523,13 @@ export function createEncryptionOperatorsV3(
       values: unknown[],
       opts?: EncryptionOperatorCallOpts,
     ) => inArrayOp(l, values, true, 'notInArray', opts),
-    /** Ascending order by the encrypted order term (`eql_v3.ord_term`).
-     * Synchronous (no operand to encrypt). Requires an `ore` index. */
+    /** Ascending order by the encrypted order term (`eql_v3.ord_term` /
+     * `eql_v3.ord_term_ore`, by the column's ordering flavour).
+     * Synchronous (no operand to encrypt). Requires an ordering index. */
     asc: (c: SQLWrapper) => asc(orderTerm(c, 'asc')),
-    /** Descending order by the encrypted order term (`eql_v3.ord_term`).
-     * Synchronous (no operand to encrypt). Requires an `ore` index. */
+    /** Descending order by the encrypted order term (`eql_v3.ord_term` /
+     * `eql_v3.ord_term_ore`, by the column's ordering flavour).
+     * Synchronous (no operand to encrypt). Requires an ordering index. */
     desc: (c: SQLWrapper) => desc(orderTerm(c, 'desc')),
     /** Conjunction of the given conditions, awaiting any async operands and
      * dropping `undefined`. Empty input resolves to `true`. */

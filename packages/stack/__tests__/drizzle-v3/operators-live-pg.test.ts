@@ -622,9 +622,11 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
 
   // An `ore`-bearing match column rejects a non-ASCII needle inside ENCRYPTION,
   // not in the needle guard. Pinned so the distinction stays visible: the guard
-  // is about tokenization, this is about the ORE term's ASCII-only ordering.
+  // is about tokenization, this is about the block-ORE term's ASCII-only
+  // ordering. OPE-backed match domains (text_search) encrypt non-ASCII fine —
+  // only the `ore`-flavoured ones carry the restriction.
   it.each(
-    matchDomains.filter(([, spec]) => spec.indexes.ore || spec.indexes.ope),
+    matchDomains.filter(([, spec]) => spec.indexes.ore),
   )('%s contains rejects a non-ASCII needle in the ORE term, not the guard', async (eqlType) => {
     const attempt = ops.contains(
       matrixColumn(eqlType),

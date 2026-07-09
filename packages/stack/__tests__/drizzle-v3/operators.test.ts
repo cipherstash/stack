@@ -321,17 +321,20 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     )
   })
 
-  it.each(orderDomains)('%s asc / desc extract the ord term', (eqlType) => {
+  it.each(orderDomains)('%s asc / desc extract the ord term', (eqlType, spec) => {
     const { ops, render } = setup()
+    // eql-3.0.0 splits the extractor by ordering flavour: `ord_term` for the
+    // OPE-backed `_ord` domains, `ord_term_ore` for the block-ORE `_ord_ore`.
+    const fn = spec.indexes.ore ? 'ord_term_ore' : 'ord_term'
     const ascq = render(ops.asc(matrixColumn(eqlType)))
     expect(ascq.sql).toContain(
-      `eql_v3.ord_term("matrix_users"."${slug(eqlType)}")`,
+      `eql_v3.${fn}("matrix_users"."${slug(eqlType)}")`,
     )
     expect(ascq.sql.toLowerCase()).toContain('asc')
 
     const descq = render(ops.desc(matrixColumn(eqlType)))
     expect(descq.sql).toContain(
-      `eql_v3.ord_term("matrix_users"."${slug(eqlType)}")`,
+      `eql_v3.${fn}("matrix_users"."${slug(eqlType)}")`,
     )
     expect(descq.sql.toLowerCase()).toContain('desc')
   })

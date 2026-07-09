@@ -43,7 +43,8 @@ describeLive('eql_v3 client integration', () => {
     expect(encrypted).toHaveProperty('c')
     expect(encrypted).toHaveProperty('hm')
     expect(encrypted).toHaveProperty('bf')
-    expect(encrypted).toHaveProperty('ob')
+    // eql-3.0.0: text_search is OPE-backed — `op`, not the block-ORE `ob`.
+    expect(encrypted).toHaveProperty('op')
 
     const decrypted = unwrapResult(await protectClient.decrypt(encrypted))
     expect(decrypted).toBe('ada@example.com')
@@ -84,7 +85,7 @@ describeLive('eql_v3 client integration', () => {
 
     expect(matchTerm).toHaveProperty('bf')
     expect(matchTerm).not.toHaveProperty('c')
-    expect(orderTerm).toHaveProperty('ob')
+    expect(orderTerm).toHaveProperty('op')
     expect(orderTerm).not.toHaveProperty('c')
   }, 30000)
 
@@ -103,6 +104,7 @@ describeLive('eql_v3 client integration', () => {
     expect(encryptedText).not.toHaveProperty('hm')
     expect(encryptedText).not.toHaveProperty('bf')
     expect(encryptedText).not.toHaveProperty('ob')
+    expect(encryptedText).not.toHaveProperty('op')
     expect(unwrapResult(await protectClient.decrypt(encryptedText))).toBe(
       'private note',
     )
@@ -134,7 +136,7 @@ describeLive('eql_v3 client integration', () => {
         queryType: 'orderAndRange',
       }),
     )
-    expect(orderTerm).toHaveProperty('ob')
+    expect(orderTerm).toHaveProperty('op')
     expect(orderTerm).not.toHaveProperty('c')
   }, 30000)
 
@@ -149,6 +151,7 @@ describeLive('eql_v3 client integration', () => {
     expect(encrypted).toHaveProperty('bf')
     expect(encrypted).not.toHaveProperty('hm')
     expect(encrypted).not.toHaveProperty('ob')
+    expect(encrypted).not.toHaveProperty('op')
 
     const matchTerm = unwrapResult(
       await protectClient.encryptQuery('Lovelace', {

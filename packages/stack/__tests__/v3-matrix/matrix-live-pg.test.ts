@@ -153,11 +153,15 @@ const storageDomains = domains.filter(
     !hasOrdering(spec.indexes) &&
     !hasIndex(spec.indexes, 'match'),
 )
+// The block-ORE text domains: their `ob` term is an ARRAY the FFI leaves
+// empty for '' — the domain CHECK rejects it. The OPE-backed text domains
+// (`text_ord`, `text_search`) emit a scalar `op` term even for '', so the
+// same insert is accepted there (proven below).
 const textOreDomains = domains.filter(
-  ([t]) =>
-    t === 'public.eql_v3_text_ord_ore' ||
-    t === 'public.eql_v3_text_ord' ||
-    t === 'public.eql_v3_text_search',
+  ([t]) => t === 'public.eql_v3_text_ord_ore',
+)
+const textOpeDomains = domains.filter(
+  ([t]) => t === 'public.eql_v3_text_ord' || t === 'public.eql_v3_text_search',
 )
 
 // EVERY ordering domain: all `_ord`/`_ord_ore` numeric/date/timestamp
@@ -415,6 +419,24 @@ describeLivePg('v3 matrix live Postgres coverage (all 39 domains)', () => {
     await expect(
       sql.unsafe(`SELECT $1::${eqlType}`, [sql.json(encrypted as never)]),
     ).rejects.toThrow(/violates check constraint/)
+  })
+
+  it.each(
+    textOpeDomains,
+  )('%s: encrypted empty string clears the Postgres domain (scalar op term)', async (eqlType) => {
+    const col = slug(eqlType)
+    const column = (table as unknown as Record<string, unknown>)[col] as never
+    const encrypted = unwrapResult(
+      await client.encrypt('', {
+        table: table as never,
+        column,
+      }),
+    )
+
+    const rows = await sql.unsafe(`SELECT $1::${eqlType} AS v`, [
+      sql.json(encrypted as never),
+    ])
+    expect(rows).toHaveLength(1)
   })
 
   it.each(

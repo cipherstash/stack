@@ -111,7 +111,7 @@ function envelopeFor(
     column: dbColumn,
     seed: seedOf(pt),
     hmac: terms.hmac ? String(pt) : undefined,
-    ore: terms.ore,
+    ope: terms.ope,
     bloom: terms.bloom ? bloomTokens(String(pt)) : undefined,
   })
   env.c = `ct:${JSON.stringify(pt)}`
