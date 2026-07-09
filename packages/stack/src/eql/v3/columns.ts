@@ -614,6 +614,15 @@ export type AnyEncryptedV3Column =
   | EncryptedDoubleOrdColumn
 
 /**
+ * A factory that builds a concrete v3 column for a given DB column name.
+ *
+ * Declared here rather than beside `DOMAIN_REGISTRY` so that `./types` can
+ * constrain its own export against it without importing from `./domain-registry`,
+ * which imports `./types` back as a value.
+ */
+export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
+
+/**
  * Shape of v3 table columns: every value is a v3 concrete column builder.
  * (Nested fields are deferred to later increments.)
  */

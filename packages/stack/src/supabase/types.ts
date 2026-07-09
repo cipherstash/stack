@@ -121,6 +121,73 @@ export type V3FreeTextSearchableKeys<
 > = Exclude<Extract<keyof Row, string>, NonFreeTextSearchV3Keys<Table>>
 
 /**
+ * The operand `contains()` accepts on a PLAINTEXT column, mirroring
+ * postgrest-js's own untyped `contains` overload: a jsonb literal, an array, or
+ * the raw string form.
+ *
+ * Deliberately NOT `ReadonlyArray<Row[K]>` (postgrest-js's *typed* overload):
+ * for `tags: string[]` that resolves to `string[][]` and rejects the very call
+ * it exists to allow, `contains('tags', ['vip'])`.
+ */
+type NativeContainsValue = string | readonly unknown[] | Record<string, unknown>
+
+/**
+ * The `contains()` operand for a PLAINTEXT column, derived from the column's own
+ * declared shape.
+ *
+ * `@>` is defined on arrays and on jsonb, never on a scalar: `contains('note',
+ * ['vip'])` against a plaintext `text` column emits `note.cs.{vip}` and Postgres
+ * answers 42883 (operator does not exist). A scalar therefore maps to `never`,
+ * which costs no legitimate call. `string` stays available on the container
+ * columns for the raw-literal form (`contains('tags', '{vip}')`).
+ */
+type PlaintextContainsValue<V> = V extends readonly unknown[]
+  ? V | string
+  : V extends Record<string, unknown>
+    ? V | string
+    : never
+
+/**
+ * The `contains()` operand for column `K`.
+ *
+ * A DECLARED encrypted column reaching `contains` necessarily carries a
+ * `freeTextSearch` capability — only `public.text_match` and
+ * `public.text_search` do, and both `cast_as` to `string` — so its operand is
+ * the string to tokenize into a bloom-filter query term.
+ *
+ * Any other key is a plaintext passthrough, where `contains` means PostgREST's
+ * native jsonb/array containment and the operand follows the column
+ * ({@link PlaintextContainsValue}). A blanket `value: string` made that half of
+ * {@link V3FreeTextSearchableKeys} unreachable from TypeScript; a blanket
+ * {@link NativeContainsValue} then over-corrected, admitting an array on a
+ * plaintext scalar.
+ *
+ * A UNION key is only as permissive as its strictest member: if ANY member is a
+ * declared column, the operand is the string term. `[K] extends [declared]` gets
+ * this backwards — a mixed `'email' | 'tags'` fails that test and falls to the
+ * plaintext branch, so an array typechecks for a key that may resolve to the
+ * encrypted `email` at runtime. Nothing downstream catches it: the operand goes
+ * straight to `encrypt()`, which has no plaintext-type guard.
+ *
+ * So test the INTERSECTION instead, wrapped in a tuple to stop the naked type
+ * parameter distributing (which would rebuild the same permissive union).
+ *
+ * `PlaintextContainsValue` DOES distribute over `Row[K]`, which is safe only
+ * because the tuple guard above has already excluded every encrypted member: a
+ * union of plaintext keys (`'tags' | 'meta'`) must accept the operands of each.
+ * The residual imprecision is a plaintext scalar unioned with a container column
+ * (`'note' | 'tags'`), where an array still typechecks — and yields a loud 42883
+ * rather than a silent mis-encryption.
+ */
+export type V3ContainsValue<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+  K extends string,
+> = [Extract<K, Extract<keyof V3ColumnsOfTable<Table>, string>>] extends [never]
+  ? PlaintextContainsValue<K extends keyof Row ? Row[K] : never>
+  : string
+
+/**
  * Row keys a v3 builder accepts in `order()`: every row key that is NOT an
  * encrypted v3 column. `ORDER BY` on an EQL v3 domain sorts the raw ciphertext
  * envelope — the bundle declares no btree operator class on any domain, so the
@@ -152,11 +219,15 @@ export interface EncryptedQueryBuilderV3<
     Row,
     V3FilterableKeys<Table, Row> & StringKeyOf<Row>,
     EncryptedQueryBuilderV3<Table, Row>,
+    V3OrderableKeys<Table, Row> & StringKeyOf<Row>,
+    // `is(col, true)` is legal only on a plaintext column. That is exactly the
+    // orderable set today — every encrypted column is excluded from both — but
+    // the two are threaded separately so they can diverge.
     V3OrderableKeys<Table, Row> & StringKeyOf<Row>
   > {
   contains<K extends V3FreeTextSearchableKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
-    value: string,
+    value: V3ContainsValue<Table, Row, K>,
   ): EncryptedQueryBuilderV3<Table, Row>
 }
 
@@ -166,6 +237,11 @@ export interface EncryptedQueryBuilderV3<
  * runtime guard in the term-encryption path is the only protection — but the
  * DIALECT is still v3, so `like`/`ilike` are absent here too. Typing this as
  * {@link EncryptedQueryBuilder} would hand back the v2 surface.
+ *
+ * For the same reason nothing here can tell an encrypted match column from a
+ * plaintext jsonb one, so `contains` accepts the full native operand union
+ * (which subsumes the encrypted column's `string`); the runtime resolves the
+ * column and picks the encoding.
  */
 export interface EncryptedQueryBuilderV3Untyped<
   Row extends Record<string, unknown>,
@@ -176,7 +252,7 @@ export interface EncryptedQueryBuilderV3Untyped<
   > {
   contains<K extends StringKeyOf<Row>>(
     column: K,
-    value: string,
+    value: NativeContainsValue,
   ): EncryptedQueryBuilderV3Untyped<Row>
 }
 
@@ -536,6 +612,12 @@ export interface EncryptedQueryBuilderCore<
   /** Keys `order()` accepts. Defaults to `FK`, so the v2 surface is unchanged;
    * v3 narrows it to plaintext columns (see {@link V3OrderableKeys}). */
   OK extends StringKeyOf<T> = FK,
+  /** Keys the BOOLEAN form of `is()` accepts. Defaults to `FK`, so the v2
+   * surface is unchanged; v3 narrows it to plaintext columns. Distinct from
+   * `OK` on purpose: "sortable" and "IS TRUE-able" are different capability
+   * axes that happen to select the same keys today, and narrowing `order()`
+   * later must not silently narrow `is()` with it. */
+  BK extends StringKeyOf<T> = FK,
 > extends PromiseLike<EncryptedSupabaseResponse<T[]>> {
   /** `columns` defaults to `'*'`, matching supabase-js. A `'*'` select expands
    * to the introspected column list when one is available (v3), and otherwise
@@ -573,7 +655,27 @@ export interface EncryptedQueryBuilderCore<
   gte<K extends FK>(column: K, value: T[K]): Self
   lt<K extends FK>(column: K, value: T[K]): Self
   lte<K extends FK>(column: K, value: T[K]): Self
-  is<K extends FK>(column: K, value: null | boolean): Self
+  /**
+   * `IS NULL` / `IS TRUE` / `IS FALSE`.
+   *
+   * The `null` form is widened to EVERY row key, not just the filterable ones.
+   * `is` is the one predicate never encrypted — `isEncryptableTerm` rejects it
+   * outright, so no term is collected and no capability guard runs — and a NULL
+   * plaintext is stored as a SQL NULL rather than a ciphertext. On a v3
+   * storage-only column (`types.Boolean`, `types.Integer`, …) `IS NULL` is
+   * therefore not merely legal but the ONLY predicate available, so narrowing it
+   * to `FK` would deny the sole query those columns support.
+   *
+   * The boolean form narrows to `BK`: `IS TRUE` against a jsonb ciphertext
+   * column compares an envelope to a plaintext boolean, which is a type error in
+   * the database, not a filter. `FK` is the wrong gate for it — that set
+   * excludes only the STORAGE-ONLY columns, so a queryable encrypted column
+   * (`types.TextSearch`, `types.TextEq`, any `*_ord`) is in `FK` and would still
+   * compile `is(col, true)`. Every encrypted column stores an envelope,
+   * capability or not, so `BK` excludes them all.
+   */
+  is<K extends BK>(column: K, value: null | boolean): Self
+  is<K extends StringKeyOf<T>>(column: K, value: null): Self
   in<K extends FK>(column: K, values: T[K][]): Self
   filter<K extends FK>(column: K, operator: string, value: T[K]): Self
   not<K extends FK>(column: K, operator: string, value: T[K]): Self

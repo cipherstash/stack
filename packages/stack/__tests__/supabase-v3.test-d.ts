@@ -2,6 +2,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import { encryptedTable, type InferPlaintext, types } from '@/eql/v3'
 import { encryptedColumn, encryptedTable as v2EncryptedTable } from '@/schema'
 import {
+  type EncryptedQueryBuilderV3,
   type EncryptedSupabaseResponse,
   encryptedSupabase,
   encryptedSupabaseV3,
@@ -20,6 +21,22 @@ const users = encryptedTable('users', {
 })
 
 type UserRow = InferPlaintext<typeof users>
+
+/**
+ * A declared table whose ROW also carries plaintext passthrough columns —
+ * `tags` (text[]), `meta` (jsonb) and `note` (a SCALAR text column).
+ * `InferPlaintext` alone yields only the declared encrypted columns, so this is
+ * the shape that exercises the plaintext half of `V3FreeTextSearchableKeys`.
+ */
+declare const mixedBuilder: EncryptedQueryBuilderV3<
+  typeof users,
+  UserRow & { tags: string[]; meta: Record<string, unknown>; note: string }
+>
+
+/** A column key that is a UNION spanning an encrypted and a plaintext column. */
+declare const mixedKey: 'email' | 'tags'
+/** A column key that is a union of plaintext columns only. */
+declare const plaintextKey: 'tags' | 'meta'
 
 describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
   it('rows carry each column its domain plaintext type', async () => {
@@ -54,8 +71,38 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     const builder = supabase.from('users')
     // @ts-expect-error — active is public.boolean (storage only)
     builder.eq('active', true)
-    // @ts-expect-error — storage-only column is excluded from filter keys
+    // @ts-expect-error — you cannot IS TRUE-compare a ciphertext to a plaintext
     builder.is('active', true)
+  })
+
+  // Every encrypted column stores a jsonb envelope, whether or not it carries a
+  // query capability. `IS TRUE` compares that envelope to a plaintext boolean —
+  // a database type error, not a filter. Gating the boolean form on the
+  // FILTERABLE keys only excluded the storage-only columns, so a queryable
+  // encrypted column like `email` slipped through.
+  it('rejects is(col, true) on queryable encrypted columns', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
+    // @ts-expect-error — email is public.text_search: a jsonb ciphertext
+    builder.is('email', true)
+    // @ts-expect-error — nickname is public.text_eq: a jsonb ciphertext
+    builder.is('nickname', false)
+    // @ts-expect-error — amount is public.integer_ord: a jsonb ciphertext
+    builder.is('amount', true)
+  })
+
+  // `IS NULL` is forwarded unencrypted (a NULL plaintext is stored as a SQL
+  // NULL, not a ciphertext), and it is the ONLY predicate a storage-only column
+  // supports — so it must not be gated behind the filterable-key narrowing.
+  it('allows is(col, null) on every column, including storage-only ones', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
+    builder.is('active', null)
+    builder.is('email', null)
   })
 
   it('rejects order() on every encrypted column at the type level', async () => {
@@ -98,6 +145,57 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.contains('amount', 'ada')
     // @ts-expect-error — active is public.boolean (storage only)
     builder.contains('active', 'ada')
+  })
+
+  // `V3FreeTextSearchableKeys` deliberately admits plaintext row keys so that
+  // `contains()` reaches PostgREST's NATIVE jsonb/array containment — which the
+  // runtime already does, forwarding a non-encrypted operand straight to
+  // `q.contains`. A blanket `value: string` made that unreachable from
+  // TypeScript: the operand type must follow the column.
+  it('accepts native containment operands on a plaintext key', () => {
+    mixedBuilder.contains('tags', ['vip'])
+    mixedBuilder.contains('meta', { plan: 'pro' })
+    mixedBuilder.contains('tags', 'vip')
+  })
+
+  it('still pins an encrypted text-search operand to string', () => {
+    mixedBuilder.contains('email', 'ada')
+    // @ts-expect-error — email is public.text_search: the match term is a string
+    mixedBuilder.contains('email', ['ada'])
+    // @ts-expect-error — bio is public.text_match: the match term is a string
+    mixedBuilder.contains('bio', { a: 1 })
+  })
+
+  // A union column key is only as permissive as its STRICTEST member. If any
+  // member is a declared encrypted column the operand must be the string term:
+  // that member's runtime path hands the operand to `encrypt()`, which has no
+  // plaintext-type guard, so an array reaches protect-ffi as the plaintext for a
+  // `cast_as: text` column.
+  it('pins a mixed union key to the encrypted string operand', () => {
+    mixedBuilder.contains(mixedKey, 'ada')
+    // @ts-expect-error — the union includes email (public.text_search)
+    mixedBuilder.contains(mixedKey, ['vip'])
+    // @ts-expect-error — the union includes email (public.text_search)
+    mixedBuilder.contains(mixedKey, { plan: 'pro' })
+  })
+
+  it('leaves a union of plaintext keys on the native operand', () => {
+    mixedBuilder.contains(plaintextKey, ['vip'])
+    mixedBuilder.contains(plaintextKey, { plan: 'pro' })
+  })
+
+  // `@>` is defined on arrays and jsonb, not on a scalar. Postgres answers a
+  // containment query against a plaintext `text` column with 42883
+  // (operator does not exist), so the operand type must follow the column's own
+  // shape rather than admitting every native containment value on every
+  // plaintext key.
+  it('rejects containment on a plaintext scalar column', () => {
+    // @ts-expect-error — note is plaintext text: `text @> text[]` does not exist
+    mixedBuilder.contains('note', ['vip'])
+    // @ts-expect-error — note is plaintext text: `text @> jsonb` does not exist
+    mixedBuilder.contains('note', { a: 1 })
+    // @ts-expect-error — a scalar column supports no containment operand at all
+    mixedBuilder.contains('note', 'vip')
   })
 
   it('does not expose like/ilike on the v3 builder, at any chain depth', async () => {
@@ -190,6 +288,21 @@ describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
     builder.like('email', '%ada%')
     // @ts-expect-error — v3 free-text search is token containment: use contains()
     builder.ilike('email', '%ada%')
+  })
+
+  // No `schemas` means no capability information, so nothing here can tell an
+  // encrypted match column from a plaintext jsonb one. The operand must accept
+  // both — the runtime decides which by looking the column up.
+  it('accepts native containment operands, having no capability info to narrow with', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient)
+    const builder = supabase.from<{
+      id: number
+      tags: string[]
+      meta: Record<string, unknown>
+    }>('users')
+    builder.contains('tags', ['vip'])
+    builder.contains('meta', { plan: 'pro' })
+    builder.contains('tags', 'vip')
   })
 
   it('keeps like/ilike on the v2 builder', () => {

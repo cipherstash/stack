@@ -8,6 +8,61 @@ import {
   type V3ColumnFactory,
 } from '@/eql/v3/domain-registry'
 
+/**
+ * The EXTERNAL CONTRACT: the SQL domain names this package ships as the
+ * `information_schema` query parameter (`introspect.ts`) and matches
+ * `domain_name` rows against.
+ *
+ * Hand-written ON PURPOSE. `DOMAIN_REGISTRY` is derived from
+ * `stripDomainSchema(factory(…).getEqlType())`, so any expectation *also*
+ * derived from `getEqlType()` only measures the source against itself: corrupt
+ * a domain constant in `columns.ts` and the registry silently re-keys, the SQL
+ * param ships the wrong name, real columns are misclassified as unmodelled —
+ * and a derived assertion still passes. This literal list is the only thing
+ * that fails. Do not compute it.
+ */
+const EXPECTED_DOMAIN_KEYS = [
+  'integer',
+  'integer_eq',
+  'integer_ord_ore',
+  'integer_ord',
+  'smallint',
+  'smallint_eq',
+  'smallint_ord_ore',
+  'smallint_ord',
+  'bigint',
+  'bigint_eq',
+  'bigint_ord_ore',
+  'bigint_ord',
+  'date',
+  'date_eq',
+  'date_ord_ore',
+  'date_ord',
+  'timestamp',
+  'timestamp_eq',
+  'timestamp_ord_ore',
+  'timestamp_ord',
+  'numeric',
+  'numeric_eq',
+  'numeric_ord_ore',
+  'numeric_ord',
+  'text',
+  'text_eq',
+  'text_match',
+  'text_ord_ore',
+  'text_ord',
+  'text_search',
+  'boolean',
+  'real',
+  'real_eq',
+  'real_ord_ore',
+  'real_ord',
+  'double',
+  'double_eq',
+  'double_ord_ore',
+  'double_ord',
+] as const
+
 describe('DOMAIN_REGISTRY', () => {
   it('strips the public. schema prefix', () => {
     expect(stripDomainSchema('public.text_search')).toBe('text_search')
@@ -16,26 +71,25 @@ describe('DOMAIN_REGISTRY', () => {
     expect(stripDomainSchema('boolean')).toBe('boolean')
   })
 
-  it('has an entry for every types factory, keyed by the unqualified domain', () => {
-    const factories = Object.values(types) as V3ColumnFactory[]
-    for (const factory of factories) {
-      const eqlType = factory('probe').getEqlType()
-      const key = stripDomainSchema(eqlType)
-      expect(
-        DOMAIN_REGISTRY[key],
-        `missing registry entry for ${key}`,
-      ).toBeDefined()
-      expect(DOMAIN_REGISTRY[key]('c').getEqlType()).toBe(eqlType)
+  it('keys are exactly the expected SQL domain names', () => {
+    expect(Object.keys(DOMAIN_REGISTRY).sort()).toEqual(
+      [...EXPECTED_DOMAIN_KEYS].sort(),
+    )
+  })
+
+  it('maps each expected domain to a factory that builds that domain', () => {
+    for (const key of EXPECTED_DOMAIN_KEYS) {
+      const factory = factoryForDomain(key)
+      expect(factory, `missing registry entry for ${key}`).toBeDefined()
+      expect((factory as V3ColumnFactory)('c').getEqlType()).toBe(
+        `public.${key}`,
+      )
     }
   })
 
-  it('has no registry entry that does not round-trip to its own key', () => {
-    for (const [key, factory] of Object.entries(DOMAIN_REGISTRY)) {
-      expect(stripDomainSchema(factory('c').getEqlType())).toBe(key)
-    }
-  })
-
-  it('has exactly as many entries as there are types factories', () => {
+  // The derivation drops an entry rather than throwing only if two factories
+  // collide on one key; a short registry is that collision.
+  it('derives one entry per types factory, with no key collisions', () => {
     expect(Object.keys(DOMAIN_REGISTRY)).toHaveLength(Object.keys(types).length)
   })
 
@@ -44,18 +98,8 @@ describe('DOMAIN_REGISTRY', () => {
     expect(factoryForDomain('text_search')).toBe(DOMAIN_REGISTRY.text_search)
   })
 
-  it('PROPERTY: round-trips for any registry key and rejects any non-key', () => {
-    const keys = Object.keys(DOMAIN_REGISTRY)
-    // Any known key builds a column whose stripped eqlType is that key.
-    fc.assert(
-      fc.property(fc.constantFrom(...keys), (key) => {
-        expect(stripDomainSchema(DOMAIN_REGISTRY[key]('c').getEqlType())).toBe(
-          key,
-        )
-      }),
-    )
-    // Any arbitrary string that is not a registry key resolves to undefined.
-    const keySet = new Set(keys)
+  it('PROPERTY: rejects any string that is not a registry key', () => {
+    const keySet = new Set(Object.keys(DOMAIN_REGISTRY))
     fc.assert(
       fc.property(fc.string(), (s) => {
         fc.pre(!keySet.has(s))

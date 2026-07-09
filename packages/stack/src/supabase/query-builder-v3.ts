@@ -19,7 +19,6 @@ import {
 } from './query-builder'
 import type {
   DbName,
-  DbPendingOrCondition,
   DbSelect,
   FilterOp,
   SupabaseClientLike,
@@ -324,36 +323,136 @@ export class EncryptedQueryBuilderV3Impl<
   }
 
   /**
-   * Encrypt every filter operand as a full storage envelope (see the class
-   * doc for why `encryptQuery` terms cannot be used), serialized to jsonb
+   * Validate a term's query type against its column's declared capabilities.
+   * Pure validation: `encrypt`/`bulkEncrypt` never receive the query type — the
+   * v3 filter operand is a full storage envelope (see the class doc for why
+   * `encryptQuery` terms cannot be used).
+   */
+  private assertTermQueryable(term: ScalarQueryTerm): V3ColumnLike {
+    const column = term.column as unknown as V3ColumnLike
+    const queryType = term.queryType ?? 'equality'
+
+    if (
+      queryType !== 'equality' &&
+      queryType !== 'orderAndRange' &&
+      queryType !== 'freeTextSearch'
+    ) {
+      throw new Error(
+        `[supabase v3]: query type "${queryType}" is not supported on scalar EQL v3 columns`,
+      )
+    }
+
+    if (!column.getQueryCapabilities()[queryType]) {
+      throw new Error(
+        `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ${queryType} queries — declare the column with a domain that carries that capability`,
+      )
+    }
+
+    return column
+  }
+
+  private encryptionFailure(message: string, cause?: unknown): never {
+    logger.error(
+      `Supabase: failed to encrypt query terms for table "${this.tableName}"`,
+    )
+    throw new EncryptionFailedError(
+      `Failed to encrypt query terms: ${message}`,
+      cause,
+    )
+  }
+
+  /**
+   * Encrypt every filter operand as a full storage envelope, serialized to jsonb
    * text for the PostgREST filter value.
+   *
+   * Terms are grouped by column and each group takes ONE `bulkEncrypt` crossing.
+   * `in(col, [a, b, c])` collects one term per element (the list must never be
+   * encrypted whole), so encrypting per term spent N ZeroKMS/FFI round-trips
+   * where one would do. `bulkEncrypt` carries a single `{table, column}` for the
+   * whole payload, so the grouping is mandatory, not an optimisation: one bulk
+   * call over a mixed-column term array would stamp one column onto every
+   * plaintext. Results are scattered back onto the terms' original indices,
+   * which is the contract `termMap` downstream relies on.
+   *
+   * Mirrors `eql/v3/drizzle/operators.ts` `encryptOperands` — same batching
+   * contract, same length assertion, same fallback. Kept separate because that
+   * one encrypts a single-column operand list and returns `SQL[]`, while this
+   * must group a multi-column term array and preserve positions.
    */
   protected override async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
   ): Promise<unknown[]> {
+    const groups = new Map<
+      V3ColumnLike,
+      { indices: number[]; values: ScalarQueryTerm['value'][] }
+    >()
+    terms.forEach((term, index) => {
+      const column = this.assertTermQueryable(term)
+      const group = groups.get(column) ?? { indices: [], values: [] }
+      group.indices.push(index)
+      group.values.push(term.value)
+      groups.set(column, group)
+    })
+
+    const bulkEncrypt = this.encryptionClient.bulkEncrypt?.bind(
+      this.encryptionClient,
+    )
+    const results = new Array<unknown>(terms.length)
+
+    await Promise.all(
+      Array.from(groups, async ([column, { indices, values }]) => {
+        const encrypted = bulkEncrypt
+          ? await this.bulkEncryptGroup(bulkEncrypt, column, values)
+          : await this.encryptGroupPerTerm(column, values)
+
+        encrypted.forEach((envelope, i) => {
+          results[indices[i]] = JSON.stringify(envelope)
+        })
+      }),
+    )
+
+    return results
+  }
+
+  /** One FFI crossing for a column's whole operand list. */
+  private async bulkEncryptGroup(
+    bulkEncrypt: NonNullable<EncryptionClient['bulkEncrypt']>,
+    column: V3ColumnLike,
+    values: ScalarQueryTerm['value'][],
+  ): Promise<unknown[]> {
+    const baseOp = bulkEncrypt(
+      values.map((plaintext) => ({ plaintext })) as never,
+      { column, table: this.v3Table } as never,
+    )
+    const op = this.lockContext
+      ? baseOp.withLockContext(this.lockContext)
+      : baseOp
+    if (this.auditConfig) op.audit(this.auditConfig)
+
+    const result = await op
+    if (result.failure)
+      this.encryptionFailure(result.failure.message, result.failure)
+
+    // `bulkEncrypt` is position-stable, so a length mismatch means the contract
+    // was violated. Truncating instead would silently widen an `in` predicate
+    // (or narrow a `not.in`) to whatever came back.
+    const encrypted = result.data as Array<{ data: unknown }> | undefined
+    if (!Array.isArray(encrypted) || encrypted.length !== values.length) {
+      this.encryptionFailure(
+        `bulk encryption returned ${Array.isArray(encrypted) ? encrypted.length : 0} terms for ${values.length} values on column "${column.getName()}".`,
+      )
+    }
+    return encrypted.map((term) => term.data)
+  }
+
+  /** Fallback for a client that predates `bulkEncrypt`. */
+  private async encryptGroupPerTerm(
+    column: V3ColumnLike,
+    values: ScalarQueryTerm['value'][],
+  ): Promise<unknown[]> {
     return Promise.all(
-      terms.map(async (term) => {
-        const column = term.column as unknown as V3ColumnLike
-        const queryType = term.queryType ?? 'equality'
-        const capabilities = column.getQueryCapabilities()
-
-        if (
-          queryType !== 'equality' &&
-          queryType !== 'orderAndRange' &&
-          queryType !== 'freeTextSearch'
-        ) {
-          throw new Error(
-            `[supabase v3]: query type "${queryType}" is not supported on scalar EQL v3 columns`,
-          )
-        }
-
-        if (!capabilities[queryType]) {
-          throw new Error(
-            `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ${queryType} queries — declare the column with a domain that carries that capability`,
-          )
-        }
-
-        const baseOp = this.encryptionClient.encrypt(term.value, {
+      values.map(async (value) => {
+        const baseOp = this.encryptionClient.encrypt(value, {
           column,
           table: this.v3Table,
         })
@@ -364,17 +463,9 @@ export class EncryptedQueryBuilderV3Impl<
 
         const result = await op
         if (result.failure) {
-          logger.error(
-            `Supabase: failed to encrypt query terms for table "${this.tableName}"`,
-          )
-
-          throw new EncryptionFailedError(
-            `Failed to encrypt query terms: ${result.failure.message}`,
-            result.failure,
-          )
+          this.encryptionFailure(result.failure.message, result.failure)
         }
-
-        return JSON.stringify(result.data)
+        return result.data
       }),
     )
   }
@@ -425,16 +516,6 @@ export class EncryptedQueryBuilderV3Impl<
     return super.applyContainsFilter(q, column, value, wasEncrypted)
   }
 
-  protected override notFilterOperator(
-    op: FilterOp,
-    wasEncrypted: boolean,
-  ): string {
-    if (wasEncrypted && op === 'contains') {
-      return 'cs'
-    }
-    return op
-  }
-
   /**
    * `.or()` string conditions carry raw PostgREST operators, so a free-text
    * condition arrives as `cs` — not a {@link FilterOp}. Resolve it through the
@@ -445,28 +526,6 @@ export class EncryptedQueryBuilderV3Impl<
   protected override queryTypeForOrOp(op: FilterOp): QueryTypeName {
     if (op === 'contains') return 'freeTextSearch'
     return this.queryTypeForRawOp(op)
-  }
-
-  /**
-   * Rewrite the structured form's `contains` to the PostgREST operator token
-   * `cs` before the or-string is rebuilt. String-form callers already write
-   * `cs` — PostgREST syntax — so those pass through untouched.
-   *
-   * Operator shaping stays here rather than in `toDbSpace` because it depends
-   * on `wasEncrypted`, which is only known after encryption. Column names
-   * arrive already in DB-space.
-   */
-  protected override transformOrConditions(
-    conditions: DbPendingOrCondition[],
-    encryptedIndexes: Set<number>,
-  ): DbPendingOrCondition[] {
-    return conditions.map((cond, j) => {
-      const op =
-        encryptedIndexes.has(j) && cond.op === 'contains'
-          ? ('cs' as FilterOp)
-          : cond.op
-      return op === cond.op ? cond : { ...cond, op }
-    })
   }
 
   /** Rebuild `Date` values from the encrypt-config `cast_as` (date/timestamp),
