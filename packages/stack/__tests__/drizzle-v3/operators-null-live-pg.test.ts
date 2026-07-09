@@ -159,6 +159,9 @@ describeLivePg('v3 drizzle NULL persistence across tiers (live pg)', () => {
          WHERE test_run_id = $1 AND row_key = $2`,
       [RUN, ROW_A],
     )
+    // Without this, a missing fixture makes `row.value` raise a TypeError and
+    // the failure reads as a null-handling bug rather than an absent row.
+    expect(row).toBeDefined()
     expect(row.value).toBeNull()
   }, 30000)
 

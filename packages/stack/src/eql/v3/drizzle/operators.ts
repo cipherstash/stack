@@ -19,6 +19,7 @@ import type { AuditConfig } from '@/encryption/operations/base-operation'
 import type { AnyEncryptedV3Column, AnyV3Table } from '@/eql/v3'
 import type { LockContext } from '@/identity'
 import type { ColumnSchema } from '@/schema'
+import { matchNeedleError } from '@/schema/match-defaults'
 import { getEqlV3Column } from './column.js'
 import {
   extractEncryptionSchemaV3,
@@ -248,6 +249,28 @@ export function createEncryptionOperatorsV3(
     }
   }
 
+  /**
+   * Reject a free-text needle the column's match index cannot answer. A needle
+   * shorter than the tokenizer's `token_length` yields an empty bloom filter,
+   * and `stored_bf @> '{}'` holds for every row — so without this the query
+   * silently returns the whole table.
+   */
+  function requireAnswerableNeedle(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+  ): void {
+    const match = ctx.indexes.match
+    if (!match) return
+    const reason = matchNeedleError(value, match)
+    if (reason) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot search column "${ctx.columnName}": ${reason}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+  }
+
   function operandFailure(
     ctx: ColumnContext,
     operator: string,
@@ -383,6 +406,7 @@ export function createEncryptionOperatorsV3(
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
     requireIndex(ctx, MATCH_INDEXES, operator, 'free-text search')
+    requireAnswerableNeedle(ctx, right, operator)
     const enc = await encryptOperand(ctx, right, operator, opts)
     return v3Dialect.contains(colSql(left), enc)
   }
@@ -409,8 +433,9 @@ export function createEncryptionOperatorsV3(
     const conditions = encrypted.map((enc) =>
       v3Dialect.equality(op, colSql(left), enc),
     )
-    const combined = negate ? and(...conditions) : or(...conditions)
-    return combined ?? (negate ? sql`true` : sql`false`)
+    // The empty-list guard above leaves `conditions` non-empty, so `and`/`or`
+    // never return undefined here.
+    return (negate ? and(...conditions) : or(...conditions)) as SQL
   }
 
   function orderTerm(column: SQLWrapper, operator: string): SQL {

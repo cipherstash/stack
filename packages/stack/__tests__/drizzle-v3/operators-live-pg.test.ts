@@ -38,6 +38,14 @@ const ACCOUNT_TABLE_NAME = 'protect_ci_v3_drizzle_matrix_accounts'
 const RUN = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 const ROW_A = 'row-a'
 const ROW_B = 'row-b'
+// A third row. With only two rows every predicate can return just [A], [B],
+// [A,B] or [] — so an `eq` that over-matches a near-miss value is undetectable,
+// and ordering can never carry a tie. Row `i` takes `samples[min(i, len-1)]`
+// per domain (the scheme `v3-matrix/matrix-live-pg.test.ts` already uses), so
+// domains with a third distinct sample get a near-miss row, and domains with
+// only two (date, timestamp, boolean) get a deliberate ORDER BY tie with ROW_B.
+const ROW_C = 'row-c'
+const ROWS = [ROW_A, ROW_B, ROW_C] as const
 
 const matrixEntries = typedEntries(V3_MATRIX)
 const matrixColumns = Object.fromEntries(
@@ -82,12 +90,16 @@ const bigintTable = pgTable(BIGINT_TABLE_NAME, {
 // Number.MAX_SAFE_INTEGER losslessly through the encrypted column.
 const BIGINT_BALANCE = 9223372036854775807n
 const BIGINT_LEDGER = -9223372036854775808n
+// A second row the filters must exclude: a negative balance (so `gt(0n)` has
+// something to reject) and a small positive ledger.
+const BIGINT_B_BALANCE = -5n
+const BIGINT_B_LEDGER = 100n
 
 const schema = extractEncryptionSchemaV3(matrixTable)
 const bigintSchema = extractEncryptionSchemaV3(bigintTable)
 
 type PlainValue = string | number | bigint | boolean | Date
-type RowKey = typeof ROW_A | typeof ROW_B
+type RowKey = (typeof ROWS)[number]
 type MatrixPlainRow = Record<string, PlainValue | null | string>
 type SelectRow = { rowKey: string }
 type Db = ReturnType<typeof drizzle>
@@ -130,7 +142,7 @@ const scoped = (cond: SQL | undefined): SQL | undefined =>
   cond ? and(drizzleEq(matrixTable.testRunId, RUN), cond) : cond
 
 const plainValue = (spec: DomainSpec, rowKey: RowKey): PlainValue =>
-  spec.samples[rowKey === ROW_A ? 0 : 1]
+  spec.samples[Math.min(ROWS.indexOf(rowKey), spec.samples.length - 1)]
 
 function comparePlain(left: PlainValue, right: PlainValue): number {
   if (left instanceof Date && right instanceof Date) {
@@ -162,15 +174,21 @@ function expectedKeysFor(
   spec: DomainSpec,
   predicate: (value: PlainValue) => boolean,
 ): RowKey[] {
-  return ([ROW_A, ROW_B] as const).filter((rowKey) =>
-    predicate(plainValue(spec, rowKey)),
-  )
+  return ROWS.filter((rowKey) => predicate(plainValue(spec, rowKey)))
 }
 
+/**
+ * Oracle for the encrypted ORDER BY. Domains with only two samples give ROW_B
+ * and ROW_C equal values, so the comparison alone does not determine the row
+ * order — ties break on `rowKey` ascending, which the query mirrors with a
+ * secondary `ORDER BY row_key`. Without that both sides would be arbitrary and
+ * the test would flake rather than prove ordering.
+ */
 function sortedKeysFor(spec: DomainSpec, direction: 'asc' | 'desc'): RowKey[] {
-  return ([ROW_A, ROW_B] as const).sort((left, right) => {
+  return [...ROWS].sort((left, right) => {
     const cmp = comparePlain(plainValue(spec, left), plainValue(spec, right))
-    return direction === 'asc' ? cmp : -cmp
+    if (cmp !== 0) return direction === 'asc' ? cmp : -cmp
+    return left < right ? -1 : left > right ? 1 : 0
   })
 }
 
@@ -190,11 +208,11 @@ function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
 }
 
 function encryptedInsertRows(): MatrixPlainRow[] {
-  return ([ROW_A, ROW_B] as const).map((rowKey) => {
+  return ROWS.map((rowKey) => {
     const row: MatrixPlainRow = {
       rowKey,
       testRunId: RUN,
-      nullableTextEq: rowKey === ROW_A ? null : 'nullable-present',
+      nullableTextEq: rowKey === ROW_A ? null : `nullable-${rowKey}`,
     }
     for (const [eqlType, spec] of matrixEntries) {
       row[slug(eqlType)] = plainValue(spec, rowKey)
@@ -253,6 +271,10 @@ beforeAll(async () => {
   // A3 end-to-end, cast-free: encrypt a native bigint model, insert the
   // resulting envelope rows (typed against the column's `Encrypted` data slot),
   // no `as never` anywhere.
+  //
+  // ROW_B exists so the filter proofs below have a row they must EXCLUDE. On a
+  // one-row table `gt(balance, 0n)` returning every row is indistinguishable
+  // from it returning the right row.
   const bigintRows = unwrap(
     await client.bulkEncryptModels(
       [
@@ -261,6 +283,12 @@ beforeAll(async () => {
           testRunId: RUN,
           balance: BIGINT_BALANCE,
           ledger: BIGINT_LEDGER,
+        },
+        {
+          rowKey: ROW_B,
+          testRunId: RUN,
+          balance: BIGINT_B_BALANCE,
+          ledger: BIGINT_B_LEDGER,
         },
       ],
       bigintSchema,
@@ -281,21 +309,29 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   it.each(equalityDomains)(
     '%s eq selects the exact row',
     async (eqlType, spec) => {
+      const bound = plainValue(spec, ROW_A)
       const rows = await selectRowKeys(
-        await ops.eq(matrixColumn(eqlType), plainValue(spec, ROW_A)),
+        await ops.eq(matrixColumn(eqlType), bound),
       )
-      expect(rows).toEqual([ROW_A])
+      // Oracle, not `[ROW_A]`: ROW_C carries a near-miss value for domains with
+      // a third sample, so an `eq` that over-matches now shows up here.
+      expect(rows).toEqual(
+        expectedKeysFor(spec, (value) => comparePlain(value, bound) === 0),
+      )
     },
     30000,
   )
 
   it.each(equalityDomains)(
-    '%s ne selects the complement row',
+    '%s ne selects the complement rows',
     async (eqlType, spec) => {
+      const bound = plainValue(spec, ROW_A)
       const rows = await selectRowKeys(
-        await ops.ne(matrixColumn(eqlType), plainValue(spec, ROW_A)),
+        await ops.ne(matrixColumn(eqlType), bound),
       )
-      expect(rows).toEqual([ROW_B])
+      expect(rows).toEqual(
+        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
+      )
     },
     30000,
   )
@@ -303,13 +339,15 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   it.each(equalityDomains)(
     '%s inArray selects all listed rows',
     async (eqlType, spec) => {
+      const listed = [plainValue(spec, ROW_A), plainValue(spec, ROW_B)]
       const rows = await selectRowKeys(
-        await ops.inArray(matrixColumn(eqlType), [
-          plainValue(spec, ROW_A),
-          plainValue(spec, ROW_B),
-        ]),
+        await ops.inArray(matrixColumn(eqlType), listed),
       )
-      expect(rows).toEqual([ROW_A, ROW_B])
+      expect(rows).toEqual(
+        expectedKeysFor(spec, (value) =>
+          listed.some((entry) => comparePlain(value, entry) === 0),
+        ),
+      )
     },
     30000,
   )
@@ -317,10 +355,13 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   it.each(equalityDomains)(
     '%s notInArray excludes listed rows',
     async (eqlType, spec) => {
+      const bound = plainValue(spec, ROW_A)
       const rows = await selectRowKeys(
-        await ops.notInArray(matrixColumn(eqlType), [plainValue(spec, ROW_A)]),
+        await ops.notInArray(matrixColumn(eqlType), [bound]),
       )
-      expect(rows).toEqual([ROW_B])
+      expect(rows).toEqual(
+        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
+      )
     },
     30000,
   )
@@ -339,21 +380,29 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     30000,
   )
 
+  // The bounds span ROW_A and ROW_B. ROW_C carries a third sample that may sit
+  // outside that span (most domains) or tie with ROW_B (date, timestamp), so
+  // membership is computed rather than assumed — with only A and B seeded these
+  // were `[ROW_A, ROW_B]` and `[]`, which no longer holds.
+  const spanBounds = (spec: DomainSpec): [PlainValue, PlainValue] => {
+    const sorted = [plainValue(spec, ROW_A), plainValue(spec, ROW_B)].sort(
+      comparePlain,
+    )
+    return [sorted[0], sorted[1]]
+  }
+  const withinSpan = (spec: DomainSpec) => (value: PlainValue) => {
+    const [min, max] = spanBounds(spec)
+    return comparePlain(value, min) >= 0 && comparePlain(value, max) <= 0
+  }
+
   it.each(orderDomains)(
     '%s between selects the inclusive range',
     async (eqlType, spec) => {
-      const sortedValues = [
-        plainValue(spec, ROW_A),
-        plainValue(spec, ROW_B),
-      ].sort(comparePlain)
+      const [min, max] = spanBounds(spec)
       const rows = await selectRowKeys(
-        await ops.between(
-          matrixColumn(eqlType),
-          sortedValues[0],
-          sortedValues[1],
-        ),
+        await ops.between(matrixColumn(eqlType), min, max),
       )
-      expect(rows).toEqual([ROW_A, ROW_B])
+      expect(rows).toEqual(expectedKeysFor(spec, withinSpan(spec)))
     },
     30000,
   )
@@ -361,26 +410,21 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
   it.each(orderDomains)(
     '%s notBetween excludes the inclusive range',
     async (eqlType, spec) => {
-      const sortedValues = [
-        plainValue(spec, ROW_A),
-        plainValue(spec, ROW_B),
-      ].sort(comparePlain)
+      const [min, max] = spanBounds(spec)
       const rows = await selectRowKeys(
-        await ops.notBetween(
-          matrixColumn(eqlType),
-          sortedValues[0],
-          sortedValues[1],
-        ),
+        await ops.notBetween(matrixColumn(eqlType), min, max),
       )
-      expect(rows).toEqual([])
+      expect(rows).toEqual(
+        expectedKeysFor(spec, (value) => !withinSpan(spec)(value)),
+      )
     },
     30000,
   )
 
-  // The spanning cases above only ever prove INCLUSION (both rows are inside
-  // the range, so `between` -> [A,B] and `notBetween` -> []). These narrow
-  // cases use a single-point range at ROW_A's value to prove the operators
-  // also EXCLUDE: `between` must drop ROW_B, `notBetween` must keep it. Without
+  // The spanning cases above put ROW_A and ROW_B inside the range, so on most
+  // domains only ROW_C proves exclusion. These narrow cases use a single-point
+  // range at ROW_A's value to prove the operators EXCLUDE regardless of where
+  // ROW_C falls: `between` must drop ROW_B, `notBetween` must keep it. Without
   // these, a `between` that matched everything (or a `notBetween` no-op) passes.
   it.each(orderDomains)(
     '%s between at a single point excludes the out-of-range row',
@@ -441,6 +485,9 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     30000,
   )
 
+  // The secondary `ORDER BY row_key` mirrors the oracle's tie-break. Domains
+  // with only two samples (date, timestamp) give ROW_B and ROW_C equal values,
+  // so without it the tied pair's order is arbitrary in Postgres.
   it.each(orderDomains)(
     '%s asc orders by encrypted order term',
     async (eqlType, spec) => {
@@ -448,7 +495,10 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
         .select({ rowKey: matrixTable.rowKey })
         .from(matrixTable)
         .where(drizzleEq(matrixTable.testRunId, RUN))
-        .orderBy(ops.asc(matrixColumn(eqlType)))) as SelectRow[]
+        .orderBy(
+          ops.asc(matrixColumn(eqlType)),
+          drizzleAsc(matrixTable.rowKey),
+        )) as SelectRow[]
       expect(rows.map((row) => row.rowKey)).toEqual(sortedKeysFor(spec, 'asc'))
     },
     30000,
@@ -461,26 +511,122 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
         .select({ rowKey: matrixTable.rowKey })
         .from(matrixTable)
         .where(drizzleEq(matrixTable.testRunId, RUN))
-        .orderBy(ops.desc(matrixColumn(eqlType)))) as SelectRow[]
+        .orderBy(
+          ops.desc(matrixColumn(eqlType)),
+          drizzleAsc(matrixTable.rowKey),
+        )) as SelectRow[]
       expect(rows.map((row) => row.rowKey)).toEqual(sortedKeysFor(spec, 'desc'))
     },
     30000,
   )
 
-  it.each(matchDomains)(
-    '%s contains matches plaintext terms',
-    async (eqlType, spec) => {
+  // Needles are driven through the same substring oracle, so each domain gets
+  // the rows it should. `'ada'` is exactly `token_length`; `'lovelace'` and
+  // `'grace'` are longer (the suite previously had no `contains` proof above
+  // the token length at all); `'qqqzzz'` is present in no row, so a `contains`
+  // that matched everything would fail here rather than pass silently.
+  it.each(
+    matchDomains.flatMap(([eqlType, spec]) =>
+      ['ada', 'lovelace', 'grace', 'qqqzzz'].map(
+        (needle) => [eqlType, spec, needle] as const,
+      ),
+    ),
+  )(
+    '%s contains %s matches exactly the rows holding it',
+    async (eqlType, spec, needle) => {
       const rows = await selectRowKeys(
-        await ops.contains(matrixColumn(eqlType), 'ada'),
+        await ops.contains(matrixColumn(eqlType), needle),
       )
       expect(rows).toEqual(
         expectedKeysFor(spec, (value) =>
-          String(value).toLowerCase().includes('ada'),
+          String(value).toLowerCase().includes(needle),
         ),
       )
     },
     30000,
   )
+
+  // A needle below the tokenizer's `token_length` builds an EMPTY bloom filter,
+  // and `stored_bf @> '{}'` holds for every row — so before the SDK guard this
+  // silently returned the whole table.
+  //
+  // `'👍👍'` is the regression case: 4 UTF-16 code units but only 2 codepoints,
+  // so a `needle.length` floor waved it through and it matched every row. The
+  // tokenizer counts codepoints. `''` tokenizes to nothing under any tokenizer.
+  it.each(
+    matchDomains.flatMap(([eqlType]) =>
+      ['ad', '👍👍', ''].map((needle) => [eqlType, needle] as const),
+    ),
+  )(
+    '%s contains rejects the unanswerable needle %j before encrypting',
+    async (eqlType, needle) => {
+      const attempt = ops.contains(matrixColumn(eqlType), needle)
+      await expect(attempt).rejects.toBeInstanceOf(EncryptionOperatorError)
+      // Assert the GUARD rejected it, not the encryption layer.
+      // `operandFailure` also throws `EncryptionOperatorError`, so matching only
+      // the class would let an encryption error stand in for the guard and the
+      // test would pass for the wrong reason.
+      await expect(attempt).rejects.toThrow(/free-text search needs/)
+    },
+    30000,
+  )
+
+  // The complement: a needle that DOES reach the floor in codepoints must be
+  // ANSWERED, not over-rejected — otherwise the fix for the astral fail-open
+  // would just over-correct into rejecting usable needles.
+  //
+  // Restricted to match-ONLY columns: a column that also carries an `ore` index
+  // (`text_search`) cannot encrypt a non-ASCII operand at all — the ORE term
+  // raises "Can only order strings that are pure ASCII" — so a non-ASCII needle
+  // there fails inside encryption, long after the guard has passed it. That
+  // constraint is pinned by its own test below rather than silently conflated
+  // with the codepoint floor.
+  //
+  // Escapes, not literals: the precomposed NFC form of `ee-with-accents` is only
+  // 2 codepoints and IS rejected, so a bare literal would test the opposite case
+  // depending on the file's on-disk normalisation.
+  const NFD_EE = 'e\u0301e\u0301' // 4 codepoints, 2 grapheme clusters
+  const matchOnlyDomains = matchDomains.filter(([, spec]) => !spec.indexes.ore)
+
+  it.each(
+    matchOnlyDomains.flatMap(([eqlType]) =>
+      ['\u{1F44D}\u{1F44D}\u{1F44D}', NFD_EE].map(
+        (needle) => [eqlType, needle] as const,
+      ),
+    ),
+  )(
+    '%s contains answers the codepoint-sufficient needle %j with no match',
+    async (eqlType, needle) => {
+      const rows = await selectRowKeys(
+        await ops.contains(matrixColumn(eqlType), needle),
+      )
+      expect(rows).toEqual([])
+
+      // The control. An over-rejecting guard would have thrown above, and a
+      // fail-open `contains` would have returned every row — but a
+      // constant-false `contains` also returns [], and nothing above catches
+      // it. Prove the same column still answers a needle that IS present.
+      const present = await selectRowKeys(
+        await ops.contains(matrixColumn(eqlType), 'ada'),
+      )
+      expect(present.length).toBeGreaterThan(0)
+    },
+    30000,
+  )
+
+  // An `ore`-bearing match column rejects a non-ASCII needle inside ENCRYPTION,
+  // not in the needle guard. Pinned so the distinction stays visible: the guard
+  // is about tokenization, this is about the ORE term's ASCII-only ordering.
+  it.each(
+    matchDomains.filter(([, spec]) => spec.indexes.ore),
+  )('%s contains rejects a non-ASCII needle in the ORE term, not the guard', async (eqlType) => {
+    const attempt = ops.contains(
+      matrixColumn(eqlType),
+      '\u{1F44D}\u{1F44D}\u{1F44D}',
+    )
+    await expect(attempt).rejects.toThrow(/pure ASCII/)
+    await expect(attempt).rejects.not.toThrow(/free-text search needs/)
+  }, 30000)
 
   it.each(
     noEqualityDomains,
@@ -512,14 +658,46 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     ).rejects.toBeInstanceOf(EncryptionOperatorError)
   })
 
-  it('and combines encrypted predicates', async () => {
-    const rows = await selectRowKeys(
+  // The two predicates must be satisfied by DISJOINT row sets, or `and` and
+  // `or` return the same thing and the test cannot tell them apart. The old
+  // pairing (`text_eq = 'ada@example.com'` AND `integer_ord < 0`) was true for
+  // ROW_B alone under both operators, so swapping `and` for `or` still passed.
+  //   text_eq = 'ada@example.com' -> ROW_B only
+  //   integer_ord >= 0           -> ROW_A (0) and ROW_C (2147483647), not ROW_B (-42)
+  const disjointPredicates = () =>
+    [
+      ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
+      ops.gte(matrixColumn('public.integer_ord'), 0),
+    ] as const
+
+  // Two assertions, one block, deliberately. The disjoint pair proves `and` is
+  // not `or`: swapping the operator turns [] into [A,B,C]. But [] is also what
+  // a constant-false `and` returns, and `beforeAll` cannot catch that — it only
+  // catches a failed seed. The intersecting pair is the control that can: it
+  // must return its row, so it dies on a constant-false `and` and on an eq/lt
+  // term that silently matches nothing. Keeping it in a sibling `it` would not
+  // couple them, since vitest runs on past a failure and the sibling could go
+  // red while this stayed green.
+  //   text_eq = 'ada@example.com' -> ROW_B only
+  //   integer_ord >= 0            -> ROW_A (0), ROW_C (2147483647), not ROW_B (-42)
+  //   integer_ord < 0             -> ROW_B (-42) only
+  it('and requires both encrypted predicates, unlike or', async () => {
+    expect(await selectRowKeys(await ops.and(...disjointPredicates()))).toEqual(
+      [],
+    )
+
+    const intersecting = await selectRowKeys(
       await ops.and(
         ops.eq(matrixColumn('public.text_eq'), 'ada@example.com'),
         ops.lt(matrixColumn('public.integer_ord'), 0),
       ),
     )
-    expect(rows).toEqual([ROW_B])
+    expect(intersecting).toEqual([ROW_B])
+  }, 30000)
+
+  it('or requires either encrypted predicate, unlike and', async () => {
+    const rows = await selectRowKeys(await ops.or(...disjointPredicates()))
+    expect(rows).toEqual([ROW_A, ROW_B, ROW_C])
   }, 30000)
 
   it('or combines encrypted predicates', async () => {
@@ -536,7 +714,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     const rows = await selectRowKeys(
       ops.not(await ops.eq(matrixColumn('public.text_eq'), '')),
     )
-    expect(rows).toEqual([ROW_B])
+    expect(rows).toEqual([ROW_B, ROW_C])
   }, 30000)
 
   it('isNull and isNotNull work on nullable encrypted columns', async () => {
@@ -545,7 +723,7 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     )
     expect(
       await selectRowKeys(ops.isNotNull(matrixTable.nullableTextEq)),
-    ).toEqual([ROW_B])
+    ).toEqual([ROW_B, ROW_C])
   }, 30000)
 
   it('exists and notExists work with correlated subqueries', async () => {
@@ -571,9 +749,11 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
       )
 
     expect(await selectRowKeys(ops.exists(primaryAccount))).toEqual([ROW_A])
+    // ROW_C has no account row at all, so it too has no 'missing' account.
     expect(await selectRowKeys(ops.notExists(missingAccount))).toEqual([
       ROW_A,
       ROW_B,
+      ROW_C,
     ])
   }, 30000)
 
@@ -626,7 +806,8 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
       ]),
     )
     // '' -> ROW_A, 'ada@example.com' -> ROW_B; the three "nobody" terms match
-    // nothing, exercising the pool without changing the expected set.
+    // nothing, exercising the pool without changing the expected set. ROW_C
+    // ('Ada Lovelace') is listed by neither and must be excluded.
     expect(rows).toEqual([ROW_A, ROW_B])
   }, 30000)
 
@@ -640,8 +821,9 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
         'nobody-4@example.com',
       ]),
     )
-    // Only '' is excluded (ROW_A); ROW_B ('ada@example.com') survives.
-    expect(rows).toEqual([ROW_B])
+    // Only '' is excluded (ROW_A); ROW_B ('ada@example.com') and ROW_C
+    // ('Ada Lovelace') survive.
+    expect(rows).toEqual([ROW_B, ROW_C])
   }, 30000)
 
   // A3 + bigint lock: a statically-typed bigint table round-trips a real i64
@@ -651,7 +833,12 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     const encrypted = await db
       .select({ balance: bigintTable.balance, ledger: bigintTable.ledger })
       .from(bigintTable)
-      .where(drizzleEq(bigintTable.testRunId, RUN))
+      .where(
+        and(
+          drizzleEq(bigintTable.testRunId, RUN),
+          drizzleEq(bigintTable.rowKey, ROW_A),
+        ),
+      )
     expect(encrypted).toHaveLength(1)
 
     const decrypted = unwrap(
@@ -661,27 +848,44 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     expect(decrypted.ledger).toBe(BIGINT_LEDGER)
   }, 30000)
 
-  it('filters a bigint column by encrypted equality and ordering', async () => {
-    const byLedger = (await db
+  // Each assertion below names a row that must be EXCLUDED. Against the former
+  // one-row table an operator matching everything passed all of these.
+  const bigintRowKeys = async (condition: SQL): Promise<string[]> => {
+    const rows = (await db
       .select({ rowKey: bigintTable.rowKey })
       .from(bigintTable)
-      .where(
-        and(
-          drizzleEq(bigintTable.testRunId, RUN),
-          await ops.eq(bigintTable.ledger, BIGINT_LEDGER),
-        ),
-      )) as SelectRow[]
-    expect(byLedger.map((row) => row.rowKey)).toEqual([ROW_A])
+      .where(and(drizzleEq(bigintTable.testRunId, RUN), condition))
+      .orderBy(drizzleAsc(bigintTable.rowKey))) as SelectRow[]
+    return rows.map((row) => row.rowKey)
+  }
 
-    const byBalance = (await db
-      .select({ rowKey: bigintTable.rowKey })
-      .from(bigintTable)
-      .where(
-        and(
-          drizzleEq(bigintTable.testRunId, RUN),
-          await ops.gt(bigintTable.balance, 0n),
-        ),
-      )) as SelectRow[]
-    expect(byBalance.map((row) => row.rowKey)).toEqual([ROW_A])
+  it('filters a bigint column by encrypted equality, excluding the other row', async () => {
+    expect(
+      await bigintRowKeys(await ops.eq(bigintTable.ledger, BIGINT_LEDGER)),
+    ).toEqual([ROW_A])
+    expect(
+      await bigintRowKeys(await ops.eq(bigintTable.ledger, BIGINT_B_LEDGER)),
+    ).toEqual([ROW_B])
+    // i64::MIN and 100n are both representable; a needle matching neither row
+    // must return nothing rather than everything.
+    expect(await bigintRowKeys(await ops.eq(bigintTable.ledger, 7n))).toEqual(
+      [],
+    )
+  }, 30000)
+
+  it('filters a bigint column by encrypted ordering across zero', async () => {
+    // ROW_B's balance is -5n, so `> 0n` must reject it.
+    expect(await bigintRowKeys(await ops.gt(bigintTable.balance, 0n))).toEqual([
+      ROW_A,
+    ])
+    expect(await bigintRowKeys(await ops.lt(bigintTable.balance, 0n))).toEqual([
+      ROW_B,
+    ])
+    // Range up to i64::MAX inclusive: ROW_A sits exactly on the upper bound.
+    expect(
+      await bigintRowKeys(
+        await ops.between(bigintTable.balance, 0n, BIGINT_BALANCE),
+      ),
+    ).toEqual([ROW_A])
   }, 30000)
 })

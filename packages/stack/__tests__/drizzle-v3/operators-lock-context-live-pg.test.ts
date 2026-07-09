@@ -17,9 +17,17 @@
  * Gated twice: `describeLivePg` (needs `DATABASE_URL` + CS creds) and an inner
  * `USER_JWT` guard (soft-skip, matching the existing identity/lock-context
  * suites). Whether the searchable index terms are themselves identity-bound is
- * decided inside `@cipherstash/protect-ffi`, not this repo — so we assert the
- * SYMMETRIC behaviour (same lock context on seed + query matches and decrypts),
- * not a cross-identity non-match.
+ * decided inside `@cipherstash/protect-ffi`, not this repo.
+ *
+ * We assert the symmetric behaviour (same lock context on seed + query matches
+ * and decrypts) AND the negative path — an identity-bound row must not match a
+ * query issued with no lock context, and must not decrypt without it. The
+ * symmetric tests alone are insufficient: they drop the context identically on
+ * both sides, so they stay green even if it were ignored entirely.
+ *
+ * A cross-identity non-match (sealed under A, queried under B) still needs a
+ * second JWT with a different `sub` — a lock context only names the claim while
+ * ZeroKMS resolves its value from the authenticating token. Tracked separately.
  */
 import 'dotenv/config'
 import { OidcFederationStrategy } from '@cipherstash/auth'
@@ -74,6 +82,60 @@ function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
   if (result.failure) throw new Error(result.failure.message)
   return result.data as T
 }
+
+/**
+ * The outcome of a decrypt attempt that is EXPECTED to be denied. `decrypt`
+ * reports denial as a `Result.failure` rather than throwing, so a bare `await`
+ * would resolve and a naive `expect(...).rejects` would never fire — denial has
+ * to be read off the result. A throw also counts as denial.
+ *
+ * Returns the message, not just a boolean, so callers can assert WHY it was
+ * denied. A bare boolean would let any infrastructure fault — a DNS failure, an
+ * expired CTS token, a ZeroKMS outage ("SendRequest: Failed to send request") —
+ * read as "the identity boundary held", and the security test would pass for
+ * the wrong reason.
+ */
+async function decryptOutcome(
+  attempt: () => PromiseLike<{ failure?: { message: string } }>,
+): Promise<{ denied: boolean; message: string }> {
+  try {
+    const result = await attempt()
+    return {
+      denied: Boolean(result.failure),
+      message: result.failure?.message ?? '',
+    }
+  } catch (error) {
+    return { denied: true, message: (error as Error).message }
+  }
+}
+
+/**
+ * A genuine key-derivation denial. ZeroKMS cannot reproduce the key tag without
+ * the identity claim the row was sealed under, and says so. Asserted verbatim
+ * elsewhere in the suite (`lock-context.test.ts`, `protect-ops.test.ts`).
+ */
+const KEY_DENIAL = /^Failed to retrieve key/
+
+/**
+ * Denial under a claim the token may not carry at all. Naming a claim does not
+ * assert it exists: `resolveLockContext` is a passthrough, and ZeroKMS resolves
+ * the claim's value from the authenticating token. So decrypting under
+ * `['email']` a row sealed under `['sub']` either fails key derivation, or — if
+ * the token has no `email` claim — is refused by the authorization layer before
+ * key derivation is ever attempted. Both are denials; which one surfaces is a
+ * ZeroKMS server-side detail we do not pin.
+ *
+ * What must NOT pass is an infrastructure fault masquerading as a denial, so
+ * that is excluded separately. Kept loose rather than pinned to `KEY_DENIAL`
+ * because no CI run exercises this path — `USER_JWT` is unset in CI (#530) —
+ * and a wrong message-shape guess would only surface once that secret lands.
+ */
+const IDENTITY_DENIAL =
+  /failed to retrieve key|unauthoriz|unauthoris|forbidden|denied|not authorized|not authorised/i
+
+/** A transport/outage failure, which must never be mistaken for a denial. */
+const INFRA_FAULT =
+  /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|timed? ?out|network error/i
 
 /** Run-scoped SELECT of row keys under an already-encrypted SQL condition. */
 async function selectRowKeys(condition: SQL): Promise<string[]> {
@@ -164,6 +226,8 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
          WHERE test_run_id = $1 AND row_key = $2`,
       [RUN, ROW_A],
     )
+    expect(row).toBeDefined()
+
     const decrypted = unwrap(
       await client.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
     )
@@ -177,5 +241,78 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
       audit: { metadata: { sub: 'toby@cipherstash.com', type: 'query' } },
     })
     expect(await selectRowKeys(condition)).toEqual([ROW_B])
+  }, 30000)
+
+  // NEGATIVE PATH. The three tests above all supply the SAME lock context on
+  // seed and on query, so they cannot distinguish "lock context applied" from
+  // "lock context silently ignored": a regression that dropped the context from
+  // the index term would drop it identically on both sides and still match.
+  // These assert that an identity-bound row is NOT reachable without its
+  // context — the property the suite exists to protect.
+  //
+  // A true CROSS-identity proof (sealed under A, queried under B) needs a
+  // second JWT with a different `sub`; the lock context only names the claim
+  // (`['sub']`) while ZeroKMS resolves its value from the authenticating token.
+  // No `USER_JWT_B` exists, so that remains a follow-up.
+  it('an identity-bound row does not match an eq issued with no lock context', async () => {
+    if (skipUnlessJwt()) return
+
+    // The control, in this test rather than a sibling one. `[]` is what a held
+    // identity boundary and an unseeded fixture both look like, so the empty
+    // assertion below proves nothing on its own — it only means something
+    // against a demonstration that the row IS reachable with the context.
+    const bound = await ops.eq(secretTable.secret, SECRET_A, {
+      lockContext: IDENTITY_CLAIM as never,
+    })
+    expect(await selectRowKeys(bound)).toEqual([ROW_A])
+
+    const unbound = await ops.eq(secretTable.secret, SECRET_A)
+    expect(await selectRowKeys(unbound)).toEqual([])
+  }, 30000)
+
+  it('an identity-bound row does not decrypt without its lock context', async () => {
+    if (skipUnlessJwt()) return
+    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+      `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
+         WHERE test_run_id = $1 AND row_key = $2`,
+      [RUN, ROW_A],
+    )
+
+    // A missing fixture would make `row.value` throw a TypeError inside
+    // `decryptOutcome`, which counts a throw as denial. The message assertions
+    // below already reject that string, so the test fails either way — but it
+    // fails blaming the denial regex. Name the real fault here instead.
+    expect(row).toBeDefined()
+
+    // `decrypt` reports denial as a `Result.failure` and does not throw, so a
+    // bare `await` here would silently pass. Require denial via either channel,
+    // AND require it be a key-derivation denial rather than an outage.
+    const { denied, message } = await decryptOutcome(() =>
+      client.decrypt(row.value as never),
+    )
+
+    expect(denied).toBe(true)
+    expect(message).toMatch(KEY_DENIAL)
+  }, 30000)
+
+  it('an identity-bound row does not decrypt under a different identity claim', async () => {
+    if (skipUnlessJwt()) return
+    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+      `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
+         WHERE test_run_id = $1 AND row_key = $2`,
+      [RUN, ROW_A],
+    )
+
+    expect(row).toBeDefined()
+
+    const { denied, message } = await decryptOutcome(() =>
+      client
+        .decrypt(row.value as never)
+        .withLockContext({ identityClaim: ['email'] } as never),
+    )
+
+    expect(denied).toBe(true)
+    expect(message).toMatch(IDENTITY_DENIAL)
+    expect(message).not.toMatch(INFRA_FAULT)
   }, 30000)
 })
