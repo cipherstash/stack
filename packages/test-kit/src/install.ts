@@ -15,10 +15,15 @@ export type DbVariant = 'postgres' | 'supabase'
 /**
  * Which database the integration suite is pointed at.
  *
- * `PGRST_URL` is only ever set for the Supabase variant — the Drizzle suite
- * talks straight to Postgres — so its presence identifies the variant without a
- * second environment variable to keep in sync. `CS_IT_DB_VARIANT` overrides,
- * for the case where that stops being true.
+ * Set `CS_IT_DB_VARIANT` explicitly. The `PGRST_URL` fallback exists only for a
+ * developer running one suite by hand, and it is a guess: it once inferred
+ * `postgres` for the Drizzle job running against `supabase/postgres`, because
+ * that job needs no PostgREST and leaves the variable unset. The consequence was
+ * silent — EQL installed without `--supabase`, so the role grants were never
+ * applied and the grants test skipped, while the suite passed because Drizzle
+ * connects as `postgres` rather than as `anon`.
+ *
+ * The variant decides how EQL is installed. It must not be a guess in CI.
  */
 export function dbVariant(): DbVariant {
   const explicit = process.env['CS_IT_DB_VARIANT']

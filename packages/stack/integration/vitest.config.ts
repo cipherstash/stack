@@ -80,5 +80,9 @@ export default defineConfig({
      * only place to do it without changing product logging behaviour.
      */
     silent: 'passed-only',
+
+    // Fail the run if anything is skipped. A skipped test reads exactly like a
+    // passing one, and every silent hole this suite has found took that shape.
+    reporters: ['default', resolve(__dirname, 'no-skips-reporter.ts')],
   },
 })

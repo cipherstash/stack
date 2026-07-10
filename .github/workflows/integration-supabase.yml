@@ -62,6 +62,8 @@ jobs:
       # as they do on a real Supabase project.
       DATABASE_URL: postgres://postgres:password@localhost:55433/postgres
       PGRST_URL: http://localhost:55430
+      # EXPLICIT, never inferred from `PGRST_URL` — see `dbVariant()`.
+      CS_IT_DB_VARIANT: ${{ matrix.db }}
       # Scoped to the suites this database serves. The Drizzle suites talk to
       # plain Postgres and get their own job; the harness and bloom suites are
       # adapter-agnostic and run here because a database is already up.

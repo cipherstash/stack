@@ -1,12 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { IntegrationAdapter } from './adapter.ts'
 import type { DomainSpec } from './catalog.ts'
-import {
-  deferredForFamily,
-  domainsForFamily,
-  type FamilyDomain,
-  type FamilyName,
-} from './families.ts'
+import { domainsForFamily, type FamilyName } from './families.ts'
 import { negativeOps, type Plain, positiveOps, type QueryOp } from './ops.ts'
 import {
   comparePlain,
@@ -148,7 +143,6 @@ export function runFamilySuite(
 ): void {
   const adapter = makeAdapter()
   const domains = domainsForFamily(family)
-  const deferred = deferredForFamily(family)
 
   // Unique per run so a crashed run never leaves a table that shadows the next.
   const runId = Math.random().toString(36).slice(2, 8)
@@ -179,9 +173,6 @@ export function runFamilySuite(
       await adapter.teardown()
     })
 
-    if (deferred.length > 0) {
-      it.skip(`defers ${deferred.map((d) => d.bare).join(', ')}: ${deferred[0]?.reason}`, () => {})
-    }
 
     for (const domain of domains) {
       describe(domain.bare, () => {

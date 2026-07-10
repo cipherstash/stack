@@ -59,8 +59,13 @@ jobs:
         include:
           - db: postgres
             database-url: postgres://cipherstash:password@localhost:55432/cipherstash
+            pgrest-url: ''
           - db: supabase
             database-url: postgres://postgres:password@localhost:55433/postgres
+            # The supabase compose file starts PostgREST anyway. Drizzle does not
+            # use it, but supplying the URL lets the harness assert the `anon`
+            # path on the database it is actually running against.
+            pgrest-url: http://localhost:55430
 
     env:
       CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
@@ -70,8 +75,14 @@ jobs:
       # Job-level env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
       DATABASE_URL: ${{ matrix.database-url }}
-      # Scoped to the Drizzle suites plus the adapter-agnostic ones. `PGRST_URL`
-      # is deliberately unset: a Supabase suite scoped here would throw, not skip.
+      PGRST_URL: ${{ matrix.pgrest-url }}
+      # EXPLICIT, never inferred. The variant decides whether EQL is installed
+      # with `--supabase` (and therefore whether the role grants are applied).
+      # Inferring it from `PGRST_URL` reported `postgres` for this job's Supabase
+      # cell and silently skipped the grants.
+      CS_IT_DB_VARIANT: ${{ matrix.db }}
+      # Scoped to the Drizzle suites plus the adapter-agnostic ones. The Supabase
+      # adapter suites are not run here; they have their own job.
       CS_IT_SUITE: >-
         integration/drizzle-v3/**/*.integration.test.ts,
         integration/harness.integration.test.ts,

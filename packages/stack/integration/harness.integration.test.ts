@@ -66,26 +66,60 @@ it('installs the ORE opclass only when the connecting role is a superuser', asyn
   }
 })
 
-it.runIf(dbVariant() === 'supabase')(
-  'grants anon USAGE on both eql_v3 and eql_v3_internal',
-  async () => {
+/**
+ * Both database variants are asserted, neither is skipped.
+ *
+ * A skipped test reads exactly like a passing one, and the two skips that used to
+ * live here hid a real bug: `dbVariant()` inferred `postgres` for the Drizzle job
+ * running against `supabase/postgres`, so EQL installed without `--supabase`, the
+ * grants were never applied, and the grants test quietly did not run.
+ *
+ * So assert the whole truth: on a Supabase database the roles exist and hold the
+ * grants; on a plain one they do not exist at all.
+ */
+it('applies the anon grants on Supabase, and has no such roles on plain Postgres', async () => {
+  const [roles] = await sql<{ count: string }[]>`
+    SELECT count(*)::text AS count FROM pg_roles
+    WHERE rolname IN ('anon', 'authenticated', 'service_role')
+  `
+
+  if (dbVariant() === 'supabase') {
+    expect(Number(roles?.count)).toBe(3)
+
     // `eql_v3_internal` is load-bearing: the SECURITY INVOKER extractors resolve
     // it with the CALLER's privileges, so without this grant every encrypted
     // filter fails for `anon` with "permission denied for schema".
-    const [row] = await sql<{ eql_v3: boolean; internal: boolean }[]>`
+    const [privs] = await sql<{ eql_v3: boolean; internal: boolean }[]>`
       SELECT has_schema_privilege('anon', 'eql_v3', 'USAGE') AS eql_v3,
              has_schema_privilege('anon', 'eql_v3_internal', 'USAGE') AS internal
     `
+    expect(privs).toEqual({ eql_v3: true, internal: true })
+    return
+  }
 
-    expect(row).toEqual({ eql_v3: true, internal: true })
-  },
-)
+  // Plain Postgres: the Supabase roles do not exist, so there is nothing to
+  // grant. Asserting their ABSENCE is what makes the variant claim falsifiable —
+  // if this database ever grew them, the `--supabase` install path would have to
+  // run here too.
+  expect(Number(roles?.count)).toBe(0)
+})
 
-it.runIf(dbVariant() === 'supabase')(
-  'serves PostgREST as anon through the authenticator role',
-  async () => {
-    const response = await fetch(`${pgrestUrl()}/`)
+/**
+ * PostgREST is asserted on its own axis, not on the variant. The Drizzle job runs
+ * against the Supabase database and does not need PostgREST; conflating "is this
+ * Supabase" with "is PostgREST up" is precisely what made `dbVariant()` lie.
+ */
+it('serves PostgREST when configured, and is not configured otherwise', async () => {
+  const url = process.env['PGRST_URL']
 
-    expect(response.status).toBe(200)
-  },
-)
+  if (!url) {
+    // Only the plain-Postgres compose file omits PostgREST. A Supabase database
+    // with no `PGRST_URL` means the job forgot to pass it.
+    expect(dbVariant()).toBe('postgres')
+    return
+  }
+
+  const response = await fetch(`${pgrestUrl()}/`)
+
+  expect(response.status).toBe(200)
+})
