@@ -63,5 +63,22 @@ export default defineConfig({
     // One database, shared tables. File-level parallelism would have two family
     // suites installing EQL and reloading the PostgREST schema cache at once.
     fileParallelism: false,
+
+    /**
+     * Show console output only for tests that FAIL.
+     *
+     * The capability-rejection tests are the bulk of the suite, and each one
+     * makes the adapter refuse an operation. `EncryptedQueryBuilderImpl.execute`
+     * logs `logger.error(...)` before returning its `Result` error, so every
+     * passing rejection emits an ERROR block with a stack trace. A CI run
+     * printed 213 of them — all from passing tests — which is enough noise to
+     * bury a real failure and enough to make a green job look broken.
+     *
+     * `'passed-only'` suppresses those and keeps the logs of any test that
+     * actually fails, which is when they are worth reading. The stack logger has
+     * no silent level (`STASH_STACK_LOG` bottoms out at `error`), so this is the
+     * only place to do it without changing product logging behaviour.
+     */
+    silent: 'passed-only',
   },
 })
