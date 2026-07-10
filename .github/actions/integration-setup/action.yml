@@ -10,7 +10,9 @@ inputs:
   node-version:
     description: Node major to run the suites on.
     required: false
-    default: '22'
+    # The newest major `tests.yml` exercises, and what the repo develops on.
+    # `engines` is `>=22`; the unit job still covers 22 in its matrix.
+    default: '24'
 
 runs:
   using: composite

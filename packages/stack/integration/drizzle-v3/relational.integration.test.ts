@@ -23,6 +23,7 @@ import {
   type DomainSpec,
   databaseUrl,
   type EqlV3TypeName,
+  isCovered,
   eqlTypeSlug as slug,
   typedEntries,
   V3_MATRIX,
@@ -63,7 +64,14 @@ const ROW_B = 'row-b'
 const ROW_C = 'row-c'
 const ROWS = [ROW_A, ROW_B, ROW_C] as const
 
-const matrixEntries = typedEntries(V3_MATRIX)
+// Covered domains only. The `_ord_ore` rows are `deferred`: their columns cannot
+// hold data on managed Postgres — the domain CHECK calls `ore_domain_unavailable`
+// and the seed INSERT raises — so a table built from every row can only ever run
+// against a superuser database. Filtering here is what lets this suite run on
+// both the plain-Postgres and Supabase variants.
+const matrixEntries = typedEntries(V3_MATRIX).filter(([, spec]) =>
+  isCovered(spec),
+)
 const matrixColumns = Object.fromEntries(
   matrixEntries.map(([eqlType, spec]) => [
     slug(eqlType),
@@ -250,8 +258,17 @@ beforeAll(async () => {
     .map(([eqlType]) => `"${slug(eqlType)}" ${eqlType} NOT NULL`)
     .join(',\n      ')
 
+  // DROP, not `CREATE TABLE IF NOT EXISTS`. A table left by an earlier run keeps
+  // its old columns, so a change to the catalog silently reuses the stale schema.
+  // That bit: after the `_ord_ore` domains were filtered out of `matrixEntries`,
+  // the leftover table still carried its nine ORE columns, and on managed
+  // Postgres every INSERT raised `ore_domain_unavailable` — even leaving those
+  // columns NULL, because the domain CHECK calls a function that RAISEs.
   await sqlClient.unsafe(`
-    CREATE TABLE IF NOT EXISTS ${TABLE_NAME} (
+    DROP TABLE IF EXISTS ${TABLE_NAME}
+  `)
+  await sqlClient.unsafe(`
+    CREATE TABLE ${TABLE_NAME} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,
@@ -260,7 +277,10 @@ beforeAll(async () => {
     )
   `)
   await sqlClient.unsafe(`
-    CREATE TABLE IF NOT EXISTS ${ACCOUNT_TABLE_NAME} (
+    DROP TABLE IF EXISTS ${ACCOUNT_TABLE_NAME}
+  `)
+  await sqlClient.unsafe(`
+    CREATE TABLE ${ACCOUNT_TABLE_NAME} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       label TEXT NOT NULL,
@@ -268,7 +288,10 @@ beforeAll(async () => {
     )
   `)
   await sqlClient.unsafe(`
-    CREATE TABLE IF NOT EXISTS ${BIGINT_TABLE_NAME} (
+    DROP TABLE IF EXISTS ${BIGINT_TABLE_NAME}
+  `)
+  await sqlClient.unsafe(`
+    CREATE TABLE ${BIGINT_TABLE_NAME} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,

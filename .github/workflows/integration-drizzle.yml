@@ -1,7 +1,13 @@
 name: Integration — Drizzle (EQL v3)
 
-# Real ZeroKMS ciphertext against a real Postgres. The Drizzle adapter talks
-# straight to the database, so no PostgREST here — that is the Supabase job.
+# Real ZeroKMS ciphertext against a real Postgres, on BOTH database variants.
+#
+# The Drizzle adapter talks straight to the database, so it does not need
+# PostgREST — but it does need to work on managed Postgres, where the `postgres`
+# role is not a superuser, the EQL install takes its self-skipping path, and the
+# ORE domains cannot hold data. The Supabase compose file brings up PostgREST
+# too; this job simply ignores it, and leaves `PGRST_URL` unset so a Supabase
+# suite scoped here would throw rather than silently skip.
 #
 # Separate from `tests.yml` on purpose: these suites need CipherStash credentials
 # and a database, and they THROW rather than skip when unconfigured. Keeping them
@@ -16,6 +22,8 @@ on:
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
+      - 'local/docker-compose.supabase.yml'
+      - 'local/supabase-init.sql'
       - '.github/workflows/integration-drizzle.yml'
       - '.github/actions/integration-setup/**'
   pull_request:
@@ -27,6 +35,8 @@ on:
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
+      - 'local/docker-compose.supabase.yml'
+      - 'local/supabase-init.sql'
       - '.github/workflows/integration-drizzle.yml'
       - '.github/actions/integration-setup/**'
 
@@ -39,10 +49,18 @@ jobs:
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     strategy:
-      # A one-element matrix, not a cross-product: the Drizzle adapter only runs
-      # against plain Postgres. Kept as a matrix so adding a variant is one line.
+      fail-fast: false
+      # Drizzle talks straight to Postgres, so it runs against BOTH databases.
+      # The Supabase variant is not a formality: its `postgres` role is not a
+      # superuser, so the EQL install takes its self-skipping path and the ORE
+      # domains become unusable. A suite that passes on a superuser database can
+      # still fail there.
       matrix:
-        db: [postgres]
+        include:
+          - db: postgres
+            database-url: postgres://cipherstash:password@localhost:55432/cipherstash
+          - db: supabase
+            database-url: postgres://postgres:password@localhost:55433/postgres
 
     env:
       CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
@@ -51,9 +69,9 @@ jobs:
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       # Job-level env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
-      DATABASE_URL: postgres://cipherstash:password@localhost:55432/cipherstash
-      # Scoped to the suites this database serves. `PGRST_URL` is deliberately
-      # unset — the Supabase suites would throw here, which is the point.
+      DATABASE_URL: ${{ matrix.database-url }}
+      # Scoped to the Drizzle suites plus the adapter-agnostic ones. `PGRST_URL`
+      # is deliberately unset: a Supabase suite scoped here would throw, not skip.
       CS_IT_SUITE: >-
         integration/drizzle-v3/**/*.integration.test.ts,
         integration/harness.integration.test.ts,
