@@ -282,38 +282,32 @@ const BIGINT_ERR = [9223372036854775808n, -9223372036854775809n] as const
 // biome-ignore format: one row per domain reads as a table; keep it dense.
 /**
  * The `_ord_ore` domains are block-ORE, whose operator class is superuser-only:
- * the eql-3.0.0 bundle self-skips those statements on `insufficient_privilege`.
+ * the eql-3.0.0 bundle self-skips that statement on `insufficient_privilege`.
  *
  * Measured against `supabase/postgres:17.4.1.048` after `stash eql install
- * --eql-version 3 --supabase --direct`, connected as the non-superuser
- * `postgres` role: all 51 `public.eql_v3_*` domains install, and so do the 33
- * ORE comparison functions. Only the btree OPCLASS
- * (`eql_v3_internal.ore_block_256_operator_class`) is skipped.
+ * --eql-version 3 --supabase --direct`, as the non-superuser `postgres` role:
+ * the domains ARE created, but they cannot hold data. Their CHECK calls
+ * `eql_v3_internal.ore_domain_unavailable()`, so the first INSERT raises
  *
- * What that does and does not break:
+ *   ERROR: EQL: public.eql_v3_integer_ord_ore cannot be used on this platform:
+ *          the EQL installer could not create the ORE operator class
+ *   HINT:  Use public.eql_v3_integer_eq (equality) or public.eql_v3_integer_ord
+ *          (ordering) or public.eql_v3_integer_ord_ope (ordering) instead.
  *
- * - RANGE FILTERS STILL WORK. The `<`/`>`/`<=`/`>=` operators on
- *   `ore_block_256` are backed by `ore_block_256_lt` → the ORE comparator, and
- *   operators need no opclass. `eql_v3.gt`/`lt`/`gte`/`lte` compare in true ORE
- *   order on every provider.
- * - `ORDER BY eql_v3.ord_term_ore(col)` DOES NOT ERROR — it sorts, wrongly.
- *   `ore_block_256` is a COMPOSITE type, so with no opclass to resolve, Postgres
- *   falls back to its built-in record comparison, which walks down to the raw
- *   `bytes` field and compares bytewise. Bytewise order over ORE ciphertext is
- *   deterministic and stable but uncorrelated with plaintext order: measured
- *   over 200 random well-formed terms, it disagreed with the ORE comparator on
- *   87 of them. A stable, plausible-looking, silently wrong ordering.
- * - A btree INDEX on such a column cannot be created at all.
+ * The same INSERT succeeds on plain Postgres as a superuser. So ORE is not
+ * silently wrong on managed Postgres — it is loudly unusable, which is the right
+ * behaviour and means no query can ever return wrong rows from an ORE column.
  *
- * A matrix whose ordering assertions must hold on every provider cannot straddle
- * that, so ORE gets its own suite.
+ * A matrix that must pass on both a superuser and a managed database therefore
+ * cannot cover them: the seed INSERT fails on one of the two. ORE gets a
+ * superuser-only suite instead.
  *
- * The OPE-backed `_ord` domains have no such split: they order via a native
- * `bytea` btree and behave identically everywhere. See
- * `docs/eql-v3-ord-term-ordering-defect.md`.
+ * (The OPE-backed `_ord` domains have no such split. `eql_v3_internal.ope_cllw`
+ * is a domain over `bytea`, so it orders via the native btree everywhere, and
+ * the Supabase adapter sorts by it through the jsonb path `col->>op`.)
  */
 const ORE_DEFERRED =
-  'block-ORE opclass is superuser-only, so ORDER BY silently mis-sorts on managed Postgres; covered by a follow-up suite'
+  'block-ORE columns cannot hold data on managed Postgres (domain CHECK raises ore_domain_unavailable); covered by a superuser-only follow-up suite'
 
 export const V3_MATRIX = {
   // integer
