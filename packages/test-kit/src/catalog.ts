@@ -287,12 +287,26 @@ const BIGINT_ERR = [9223372036854775808n, -9223372036854775809n] as const
  * Measured against `supabase/postgres:17.4.1.048` after `stash eql install
  * --eql-version 3 --supabase --direct`, connected as the non-superuser
  * `postgres` role: all 51 `public.eql_v3_*` domains install, and so do the 33
- * ORE comparison functions. Only the btree OPCLASS is skipped. So an `_ord_ore`
- * column is creatable, and `eql_v3.gt`/`lt`/`gte`/`lte` still compare in true
- * ORE order — but `ORDER BY eql_v3.ord_term_ore(col)` falls back to raw `bytea`
- * ordering and sorts DETERMINISTICALLY WRONG, with no error. A matrix whose
- * ordering assertions must hold on every provider cannot straddle that, so ORE
- * gets its own suite.
+ * ORE comparison functions. Only the btree OPCLASS
+ * (`eql_v3_internal.ore_block_256_operator_class`) is skipped.
+ *
+ * What that does and does not break:
+ *
+ * - RANGE FILTERS STILL WORK. The `<`/`>`/`<=`/`>=` operators on
+ *   `ore_block_256` are backed by `ore_block_256_lt` → the ORE comparator, and
+ *   operators need no opclass. `eql_v3.gt`/`lt`/`gte`/`lte` compare in true ORE
+ *   order on every provider.
+ * - `ORDER BY eql_v3.ord_term_ore(col)` DOES NOT ERROR — it sorts, wrongly.
+ *   `ore_block_256` is a COMPOSITE type, so with no opclass to resolve, Postgres
+ *   falls back to its built-in record comparison, which walks down to the raw
+ *   `bytes` field and compares bytewise. Bytewise order over ORE ciphertext is
+ *   deterministic and stable but uncorrelated with plaintext order: measured
+ *   over 200 random well-formed terms, it disagreed with the ORE comparator on
+ *   87 of them. A stable, plausible-looking, silently wrong ordering.
+ * - A btree INDEX on such a column cannot be created at all.
+ *
+ * A matrix whose ordering assertions must hold on every provider cannot straddle
+ * that, so ORE gets its own suite.
  *
  * The OPE-backed `_ord` domains have no such split: they order via a native
  * `bytea` btree and behave identically everywhere. See
