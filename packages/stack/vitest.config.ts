@@ -1,9 +1,14 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
+import { sharedAlias } from '../../vitest.shared'
 
 export default defineConfig({
   resolve: {
     alias: {
+      // `@cipherstash/test-kit` + the stack subpaths its catalog imports, all
+      // resolved to source. Must precede `@/` only in spirit — the keys do not
+      // overlap — but keep it first so the shared block is obvious.
+      ...sharedAlias,
       '@/': resolve(__dirname, './src') + '/',
       // The installed `@cipherstash/{protect-ffi,auth}` only export `.`; their
       // `/wasm-inline` subpaths (imported by `src/wasm-inline.ts`) are not

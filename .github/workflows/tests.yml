@@ -72,6 +72,13 @@ jobs:
       - name: Type tests (stack)
         run: pnpm --filter @cipherstash/stack run test:types
 
+      # The v3 domain catalog lives in the test kit, and its
+      # `satisfies Record<EqlV3TypeName, DomainSpec>` is what forces a new SDK
+      # domain to be covered. That check only fires under `tsc`, so without this
+      # step a domain added to stack would slip through untested.
+      - name: Type tests (test-kit — enforces v3 domain coverage)
+        run: pnpm --filter @cipherstash/test-kit run test:types
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

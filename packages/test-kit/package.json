@@ -1,0 +1,21 @@
+{
+  "name": "@cipherstash/test-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared EQL v3 test harness: the domain catalog, the plaintext oracle, and the integration-suite driver. Consumed as TypeScript source — no build step.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./catalog": "./src/catalog.ts"
+  },
+  "scripts": {
+    "test:types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cipherstash/stack": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:repo",
+    "vitest": "catalog:repo"
+  }
+}
