@@ -222,28 +222,39 @@ export class EncryptedQueryBuilderV3Impl<
   }
 
   /**
-   * Ordering by ANY encrypted v3 column is rejected — including the ORE-capable
-   * ones, which is the non-obvious half.
+   * `ORDER BY` on an OPE-backed column is supported; on every other encrypted
+   * column it is rejected.
    *
-   * The `*_ord` domains are `CREATE DOMAIN … AS jsonb`, and the bundle declares
-   * NO btree operator class on any domain — it actively lints against one
-   * (`domain_opclass`), because an opclass on a domain bypasses operator
-   * resolution. So `ORDER BY col` does not reach `eql_v3`'s ORE comparisons at
-   * all: it resolves through jsonb's DEFAULT btree opclass, `jsonb_cmp`, and
-   * sorts by the envelope's byte structure — keys compare alphabetically, so the
-   * sort is effectively on the `bf` bloom array. No error, no warning, and a
-   * stable, plausible-looking, meaningless row order.
+   * A bare `ORDER BY col` IS wrong. The `*_ord` domains are
+   * `CREATE DOMAIN … AS jsonb`, and the bundle declares no btree operator class
+   * on any domain — it actively lints against one (`domain_opclass`), because an
+   * opclass on a domain bypasses operator resolution. So the sort resolves
+   * through jsonb's default `jsonb_cmp` and compares the envelope's keys in
+   * storage order, starting at the random ciphertext `c`. No error, and a
+   * stable, meaningless row order. (Measured: over 10 rows it returns
+   * `r00,r04,r08,r01,…` where the plaintext order is `r00..r09`.)
    *
-   * Correct ordering is `ORDER BY eql_v3.ord_term(col)`, which PostgREST's
-   * `order=` parameter cannot express. The v3 Drizzle integration emits exactly
-   * that (`sql-dialect.ts` `orderBy`), and proves it against live Postgres.
+   * But the correct sort key is reachable without a function call. `eql_v3.ord_term`
+   * returns the domain's `op` term, and OPE is order-preserving by construction:
+   * ordering by the term reproduces the plaintext order. PostgREST cannot emit
+   * `ORDER BY eql_v3.ord_term(col)`, but it CAN emit a jsonb path —
+   * `order=col->>op.asc` — which selects exactly that term. Measured against a
+   * live PostgREST: `order=amount->>op.asc` and `.desc` both reproduce the
+   * plaintext order for `integer_ord` and `text_search`, over 10 rows.
    *
-   * The `>=`/`<=` operators ARE declared on the ord domains, so `gte`/`lte`
-   * filters remain correct. Filtering and sorting resolve through different
-   * machinery; only sorting is broken.
+   * So the guard is on the ordering FLAVOUR, not on encryption:
    *
-   * A column absent from {@link v3Columns} is a plaintext passthrough, and
-   * orders normally. This runtime guard is the only protection the untyped
+   * - `ope` present → order by `col->>op`. Every plain `_ord` domain, plus
+   *   `text_ord` and `text_search`.
+   * - `ore` present → reject. The `ob` term is an array of ORE blocks whose
+   *   comparison needs the superuser-only opclass; a jsonb-path sort over it is
+   *   meaningless. (Such a column cannot hold data on managed Postgres at all:
+   *   its domain CHECK raises `ore_domain_unavailable`.)
+   * - neither → reject. Storage-only, equality-only and match-only columns
+   *   carry no ordering term to sort by.
+   *
+   * A column absent from {@link v3Columns} is a plaintext passthrough and orders
+   * normally. This runtime guard is the only protection the untyped
    * (no-`schemas`) surface has.
    */
   protected override validateTransforms(): void {
@@ -251,10 +262,41 @@ export class EncryptedQueryBuilderV3Impl<
       if (t.kind !== 'order') continue
       const column = this.v3Columns[t.column]
       if (!column) continue
+
+      const indexes = this.columnSchemas[column.getName()]?.indexes
+      if (indexes?.ope) continue
+
+      const reason = indexes?.ore
+        ? 'its ORE ordering term (`ob`) needs the superuser-only ORE operator class, which PostgREST cannot reach through a jsonb path'
+        : 'it carries no ordering term to sort by'
+
       throw new Error(
-        `[supabase v3]: cannot order by encrypted column "${column.getName()}" (${column.getEqlType()}) — PostgREST cannot emit \`ORDER BY eql_v3.ord_term("${column.getName()}")\`, and a bare \`ORDER BY\` sorts the raw ciphertext envelope, not the plaintext. Order by a plaintext column, expose \`eql_v3.ord_term()\` as a generated column or view and order by that, or use the EQL v3 Drizzle integration.`,
+        `[supabase v3]: cannot order by encrypted column "${column.getName()}" (${column.getEqlType()}) — ${reason}. ` +
+          'Order by a plaintext column, or use an OPE-backed ordering domain ' +
+          '(`*_ord`, `text_ord`, `text_search`), or use the EQL v3 Drizzle integration.',
       )
     }
+  }
+
+  /**
+   * Encrypted ordering columns sort by their `op` term, not by the envelope.
+   *
+   * `order=col->>op` is the one ordering expression PostgREST can emit that
+   * reaches the OPE term. It must NOT leak into filters — those compare whole
+   * envelopes through the `eql_v3.*` operators — which is why this is its own
+   * seam rather than a change to `filterColumnName`.
+   *
+   * `validateTransforms` has already rejected every encrypted column that lacks
+   * an `ope` index, so reaching the jsonb path here implies the term exists.
+   */
+  protected override orderColumnName(column: string): DbName {
+    const dbName = this.dbNameFor(column)
+    const encrypted = this.v3Columns[column]
+    if (!encrypted) return dbName as DbName
+
+    return (
+      this.columnSchemas[dbName]?.indexes?.ope ? `${dbName}->>op` : dbName
+    ) as DbName
   }
 
   /**

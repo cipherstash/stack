@@ -831,10 +831,19 @@ export class EncryptedQueryBuilderImpl<
     return { kind: 'structured', conditions: of_.conditions.map(toDbCondition) }
   }
 
+  /**
+   * The column expression `order()` sends to PostgREST. Its own seam, separate
+   * from {@link filterColumnName}: v3 orders an encrypted column by a jsonb path
+   * into its ordering term, which must not leak into filters.
+   */
+  protected orderColumnName(column: string): DbName {
+    return this.filterColumnName(column)
+  }
+
   private transformToDbSpace(t: TransformOp): DbTransformOp {
     switch (t.kind) {
       case 'order':
-        return { ...t, column: this.filterColumnName(t.column) }
+        return { ...t, column: this.orderColumnName(t.column) }
       // `returns` is in the union but never pushed (`returns()` is a cast).
       case 'limit':
       case 'range':

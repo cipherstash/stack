@@ -351,31 +351,33 @@ describe('encryptedSupabaseV3 wire encoding', () => {
   // The old guard only rejected columns LACKING orderAndRange, i.e. exactly the
   // columns where the wrongness was obvious, and admitted the ORE-capable ones
   // where it is silent.
-  it('rejects order() on an ORE-capable encrypted column', async () => {
-    const { es } = v3Instance()
+  it('orders an OPE-backed encrypted column by its op term', async () => {
+    const { es, supabase } = v3Instance()
 
-    const { error, status } = await es
+    const { error } = await es
       .from('users', users)
       .select('id, createdAt')
       .order('createdAt')
 
-    expect(status).toBe(500)
-    expect(error?.message).toContain('cannot order by encrypted column')
-    expect(error?.message).toContain('created_at')
-    expect(error?.message).toContain('timestamp_ord')
-    expect(error?.message).toContain('ord_term')
+    expect(error).toBeNull()
+    // The jsonb path, not a bare column: `ORDER BY created_at` would sort the
+    // ciphertext envelope through jsonb's default opclass.
+    expect(supabase.callsFor('order')[0].args[0]).toBe('created_at->>op')
   })
 
   it('rejects order() on an equality-only encrypted column', async () => {
     const { es } = v3Instance()
 
+    // `nickname` is public.eql_v3_text_eq: an `hm` term and nothing to sort by.
+    // (`amount` is IntegerOrd — OPE-backed, and therefore orderable.)
     const { error, status } = await es
       .from('users', users)
       .select('id')
-      .order('amount')
+      .order('nickname')
 
     expect(status).toBe(500)
     expect(error?.message).toContain('cannot order by encrypted column')
+    expect(error?.message).toContain('no ordering term')
   })
 
   it('leaves plaintext columns untouched in order()', async () => {

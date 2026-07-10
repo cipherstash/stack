@@ -13,6 +13,7 @@ import {
   containsPlain,
   expectedKeysFor,
   plainValue,
+  sortedKeysFor,
 } from './oracle.ts'
 import { planRows, planTable } from './rows.ts'
 
@@ -305,6 +306,22 @@ export function runFamilySuite(
               { kind: 'contains', column: slug, needle },
               keysWhere((v) => containsPlain(v, needle)),
             )
+          })
+        }
+
+        if (positive.has('order')) {
+          it.each([
+            'asc',
+            'desc',
+          ] as const)('order(%s) returns rows in plaintext order', async (direction) => {
+            // Order is the one operation whose ROW ORDER is the assertion, so
+            // it does not go through `expectRows` (which sorts both sides).
+            const rows = await adapter.run(table, {
+              kind: 'order',
+              column: slug,
+              direction,
+            })
+            expect(rows).toEqual(sortedKeysFor(spec, rowKeys, direction))
           })
         }
 

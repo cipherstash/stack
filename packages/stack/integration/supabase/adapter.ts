@@ -23,8 +23,12 @@ import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
  * introspection reads it — which is why `createTable` also builds the client.
  */
 
-/** PostgREST cannot emit `ORDER BY eql_v3.ord_term(col)`, and a bare `ORDER BY` */
-/** sorts the raw ciphertext envelope. The adapter refuses ordering outright. */
+/**
+ * `order` is supported. The builder rewrites an encrypted ordering column to the
+ * jsonb path `col->>op`, which selects the OPE term; OPE is order-preserving, so
+ * PostgREST reproduces the plaintext order. Columns with no ordering term are
+ * rejected by the capability matrix, exactly like `gt`/`lt`.
+ */
 const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
   'eq',
   'ne',
@@ -43,12 +47,11 @@ const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
 ])
 
 /**
- * `order` is refused on EVERY encrypted column, whatever its capabilities. That
- * is the half of the contract the capability matrix cannot derive — an
- * ORE-capable column still cannot be ordered through PostgREST — so it is
- * declared here and pinned by a test on every domain.
+ * Nothing is refused adapter-wide. ORE-backed columns cannot be ordered through
+ * PostgREST, but they are `deferred` in the catalog — they cannot hold data on
+ * managed Postgres at all — so no test reaches them here.
  */
-const ALWAYS_REJECTED: ReadonlySet<QueryOpKind> = new Set(['order'])
+const ALWAYS_REJECTED: ReadonlySet<QueryOpKind> = new Set()
 
 type Instance = Awaited<ReturnType<typeof encryptedSupabaseV3>>
 
@@ -106,7 +109,20 @@ export function makeSupabaseAdapter(): IntegrationAdapter {
       case 'isNotNull':
         return q.not(op.column, 'is', null)
       case 'order':
-        return q.order(op.column)
+        // Exclude the all-NULL row: NULL ordering is a property of the SQL
+        // dialect, not of the encrypted ordering term, and the oracle sorts
+        // value rows only.
+        //
+        // The secondary sort on `row_key` is load-bearing. A domain with fewer
+        // distinct samples than rows gives two rows the SAME plaintext, so the
+        // encrypted term alone does not determine their order — the oracle
+        // breaks such ties on `row_key` ascending, and the query must mirror it
+        // or the test flakes rather than proving ordering. (date/timestamp have
+        // two samples across three rows; the numeric families have four.)
+        return q
+          .not(op.column, 'is', null)
+          .order(op.column, { ascending: op.direction === 'asc' })
+          .order('row_key', { ascending: true })
     }
   }
 

@@ -321,7 +321,9 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     )
   })
 
-  it.each(orderDomains)('%s asc / desc extract the ord term', (eqlType, spec) => {
+  it.each(
+    orderDomains,
+  )('%s asc / desc extract the ord term', (eqlType, spec) => {
     const { ops, render } = setup()
     // eql-3.0.0 splits the extractor by ordering flavour: `ord_term` for the
     // OPE-backed `_ord` domains, `ord_term_ore` for the block-ORE `_ord_ore`.
