@@ -10,6 +10,7 @@ import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import { EncryptedColumn } from '@/schema'
 import type {
   BuildableQueryColumn,
+  EncryptedQueryResult,
   QueryTypeName,
   ScalarQueryTerm,
 } from '@/types'
@@ -741,7 +742,7 @@ export class EncryptedQueryBuilderImpl<
    */
   protected async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
-  ): Promise<unknown[]> {
+  ): Promise<EncryptedQueryResult[]> {
     // Batch encrypt all terms in one call
     const baseOp = this.encryptionClient.encryptQuery(terms)
     const op = this.lockContext
