@@ -290,6 +290,14 @@ Observed, not assumed.
 6. **Ordering works on the managed-Postgres variant.** `asc`/`desc` on an `_ord` (OPE) column returns true plaintext order against `supabase/postgres`.
 7. **CI shape.** `pnpm test` at the repo root runs zero integration tests; a fork PR shows the integration jobs as *skipped*, not failed.
 
+## Follow-ups queued after PR1
+
+Both are consequences of PR1, and both are about the same thing: a skipped test reads exactly like a passing one.
+
+**Remove the `LIVE_*` gates and the 16 unit-suite skips.** `__tests__/helpers/live-gate.ts` still turns `LIVE_CIPHERSTASH_ENABLED`, `LIVE_EQL_V3_PG_ENABLED`, `LIVE_PG_ENABLED` and `LIVE_LOCK_CONTEXT_ENABLED` into `describe.skip`. `live-coverage-guard.test.ts` exists *only* because a false gate is a silent whole-suite skip on a green job. Move those suites into the integration jobs — which throw rather than skip — then delete both files, and extend `no-skips-reporter.ts` to the unit config once it is clean.
+
+**Port the remaining live suites onto the shared harness.** Still bypassing it: `drizzle-v3/operators-null-live-pg`, `drizzle-v3/operators-lock-context-live-pg`, `v3-matrix/matrix-live*`, `schema-v3-pg`, `supabase-v3-grants-pg`, `supabase-v3-introspect-pg`. Each gets the shared env gate and no skips. This is also where the **superuser-only ORE suite** lands — the one the catalog's `deferred` field points at, covering the nine `_ord_ore` domains that cannot hold data on managed Postgres.
+
 ## PR2 — type robustness (outline)
 
 Import the canonical per-domain types from `@cipherstash/eql` and thread them through. Stop typing `OperandEncryptionClient.encrypt`/`bulkEncrypt` as returning `unknown` (`eql/v3/drizzle/operators.ts:51,55`); stop collapsing `Result<…>` to `{ data?: unknown }` (`:94-101`); stop returning `Promise<unknown[]>` from `encryptOperands` and from `encryptCollectedTerms`/`bulkEncryptGroup`/`encryptGroupPerTerm` (`supabase/query-builder-v3.ts:393,433,463`). Where a `JSON.stringify` is genuinely required at the SQL boundary, it should serialize a *typed* envelope, not an `unknown`. The PR1 suite is what makes this safe to attempt.
