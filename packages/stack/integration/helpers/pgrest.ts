@@ -18,7 +18,9 @@ export function makePostgrestClient(): SupabaseClientLike {
   const url = process.env.PGRST_URL
   if (!url) {
     throw new Error(
-      'PGRST_URL is not set — makePostgrestClient() must only be called behind `describeLiveSupabasePgrest`',
+      'PGRST_URL is not set. The integration `globalSetup` asserts it before any ' +
+        'suite is collected, so reaching this means makePostgrestClient() was ' +
+        'called outside the integration harness.',
     )
   }
   return new PostgrestClient(url) as unknown as SupabaseClientLike

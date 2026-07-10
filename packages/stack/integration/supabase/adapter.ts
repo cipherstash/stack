@@ -9,10 +9,7 @@ import {
 import postgres from 'postgres'
 import { encryptedTable } from '@/eql/v3'
 import { encryptedSupabaseV3 } from '@/supabase'
-import {
-  makePostgrestClient,
-  reloadSchemaCache,
-} from '../../__tests__/helpers/pgrest'
+import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
 
 /**
  * The Supabase v3 adapter under real ZeroKMS ciphertext.

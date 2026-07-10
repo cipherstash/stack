@@ -11,11 +11,20 @@ import { sharedAlias } from '../../../vitest.shared'
  * jobs. That separation is what lets the integration suites throw on missing
  * configuration instead of skipping.
  *
- * `SUITE_GLOB` selects the adapter, so one config serves both without a second
- * near-identical file. CI passes it per job; locally it defaults to everything.
+ * `CS_IT_SUITE` selects which suites run, so one config serves every adapter
+ * without a second near-identical file. Comma-separated globs; each CI job scopes
+ * itself to the adapter it provisioned a database for. Locally it defaults to
+ * everything.
+ *
+ * Scoping matters: the Drizzle suites talk straight to Postgres and the Supabase
+ * suites need PostgREST, so a job running both would have to provision both.
  */
-const SUITE_GLOB =
+const SUITE_GLOBS = (
   process.env['CS_IT_SUITE'] ?? 'integration/**/*.integration.test.ts'
+)
+  .split(',')
+  .map((glob) => glob.trim())
+  .filter(Boolean)
 
 export default defineConfig({
   resolve: {
@@ -34,7 +43,7 @@ export default defineConfig({
   },
   test: {
     root: resolve(__dirname, '..'),
-    include: [SUITE_GLOB],
+    include: SUITE_GLOBS,
     globalSetup: [resolve(__dirname, 'global-setup.ts')],
     server: {
       deps: {

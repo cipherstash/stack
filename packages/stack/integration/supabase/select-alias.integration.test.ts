@@ -3,10 +3,7 @@ import postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { encryptedTable, types } from '@/eql/v3'
 import { encryptedSupabaseV3 } from '@/supabase'
-import {
-  makePostgrestClient,
-  reloadSchemaCache,
-} from '../../__tests__/helpers/pgrest'
+import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
 
 /**
  * `Date` reconstruction across every way PostgREST can key a result row.

@@ -28,26 +28,21 @@
  * `permission denied for schema eql_v3_internal` (see `supabase-v3-grants-pg`).
  */
 
-import 'dotenv/config'
+import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
-import { SUPABASE_PERMISSIONS_SQL_V3 } from '../../cli/src/installer/grants'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
 import {
-  describeLiveSupabasePgrest,
-  LIVE_SUPABASE_PGREST_ENABLED,
-} from './helpers/live-gate'
-import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
-import { narrowedQueryTerm, storageEnvelope } from './helpers/v3-envelope'
+  narrowedQueryTerm,
+  storageEnvelope,
+} from '../../__tests__/helpers/v3-envelope'
+import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
 
 const TABLE = 'protect_ci_v3_pgrest'
 
-const sql = LIVE_SUPABASE_PGREST_ENABLED
-  ? postgres(process.env.DATABASE_URL as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sql = postgres(databaseUrl(), { prepare: false })
 
 // A DECLARED table: `createdAt → created_at` is the rename the aliasing
 // `prop:db_name::jsonb` select exists for, and a synthesized table (property ==
@@ -211,12 +206,9 @@ function from(): any {
 const ADA_CREATED = new Date('2026-01-02T03:04:05.000Z')
 
 beforeAll(async () => {
-  if (!LIVE_SUPABASE_PGREST_ENABLED) return
-  await installEqlV3IfNeeded(sql)
-
-  // The shipped Supabase grants — the thing under test, not a hand-rolled
-  // approximation. Re-applied after install because the bundle DROPs eql_v3.
-  await sql.unsafe(SUPABASE_PERMISSIONS_SQL_V3)
+  // EQL v3 and the Supabase grants are installed once per run by `globalSetup`,
+  // which shells out to the real `stash eql install --eql-version 3 --supabase`.
+  // Re-applying them here would only test a hand-rolled approximation.
   await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE}`)
   await sql.unsafe(`
     CREATE TABLE ${TABLE} (
@@ -245,12 +237,11 @@ beforeAll(async () => {
 }, 180_000)
 
 afterAll(async () => {
-  if (!LIVE_SUPABASE_PGREST_ENABLED) return
   await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE}`)
   await sql.end()
 })
 
-describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
+describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   it('inserts raw envelopes that clear every domain CHECK, as anon', async () => {
     const { error, status } = await from().insert({
       row_key: 'ada',
