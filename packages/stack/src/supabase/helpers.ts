@@ -117,42 +117,85 @@ export function addJsonbCastsV3(
   return columns
     .split(',')
     .map((col) => {
-      const trimmed = col.trim()
-
-      if (!trimmed) return col
-      if (trimmed.includes('::')) return col
-      if (trimmed.includes('(') || trimmed.includes('.')) return col
+      const resolved = resolveSelectToken(col.trim(), propToDb, dbNames)
+      if (resolved === null) return col
 
       const leadingWhitespace = col.match(/^(\s*)/)?.[1] ?? ''
-
-      // Already-aliased token: `alias:column`
-      const aliasMatch = trimmed.match(
-        /^([A-Za-z_][A-Za-z0-9_]*):([A-Za-z_][A-Za-z0-9_]*)$/,
-      )
-      if (aliasMatch) {
-        const [, alias, name] = aliasMatch
-        const db =
-          lookupDbName(propToDb, name) ?? (dbNames.has(name) ? name : undefined)
-        if (db !== undefined) {
-          return `${leadingWhitespace}${alias}:${db}::jsonb`
-        }
-        return col
-      }
-
-      const db = lookupDbName(propToDb, trimmed)
-      if (db !== undefined) {
-        return db === trimmed
-          ? `${leadingWhitespace}${trimmed}::jsonb`
-          : `${leadingWhitespace}${trimmed}:${db}::jsonb`
-      }
-
-      if (dbNames.has(trimmed)) {
-        return `${leadingWhitespace}${trimmed}::jsonb`
-      }
-
-      return col
+      return `${leadingWhitespace}${resolved.emit}`
     })
     .join(',') as DbSelect
+}
+
+/**
+ * The result-row key each encrypted column comes back under for a given select
+ * string, mapped to its DB column name.
+ *
+ * The two differ whenever PostgREST renames: `createdAt` on a `created_at`
+ * column keys rows by `createdAt`, and a caller-chosen alias (`ts:createdAt`)
+ * keys them by `ts`. Consumers that resolve per-column config by DB name —
+ * `postprocessDecryptedRow` reading `cast_as` to rebuild `Date` values — need
+ * this bridge, because the row key alone does not identify the column.
+ *
+ * Shares {@link resolveSelectToken} with {@link addJsonbCastsV3} so the keys
+ * this reports are exactly the keys that helper causes PostgREST to emit. Any
+ * token the cast helper leaves untouched is absent here.
+ */
+export function selectKeyToDbV3(
+  columns: string,
+  propToDb: Record<string, string>,
+): Record<string, string> {
+  const dbNames = new Set(Object.values(propToDb))
+  const keyToDb: Record<string, string> = Object.create(null)
+
+  for (const col of columns.split(',')) {
+    const resolved = resolveSelectToken(col.trim(), propToDb, dbNames)
+    if (resolved !== null) keyToDb[resolved.key] = resolved.db
+  }
+
+  return keyToDb
+}
+
+/**
+ * Resolve one select-string token to the row key it produces, the DB column it
+ * names, and the `::jsonb`-cast text to emit for it. `null` for a token this
+ * helper does not rewrite: empty, already cast, a function call or foreign-table
+ * path (parens/dots), or a name belonging to no encrypted column.
+ */
+function resolveSelectToken(
+  trimmed: string,
+  propToDb: Record<string, string>,
+  dbNames: ReadonlySet<string>,
+): { key: string; db: string; emit: string } | null {
+  if (!trimmed) return null
+  if (trimmed.includes('::')) return null
+  if (trimmed.includes('(') || trimmed.includes('.')) return null
+
+  // Already-aliased token: `alias:column`
+  const aliasMatch = trimmed.match(
+    /^([A-Za-z_][A-Za-z0-9_]*):([A-Za-z_][A-Za-z0-9_]*)$/,
+  )
+  if (aliasMatch) {
+    const [, alias, name] = aliasMatch
+    const db =
+      lookupDbName(propToDb, name) ?? (dbNames.has(name) ? name : undefined)
+    if (db === undefined) return null
+    return { key: alias, db, emit: `${alias}:${db}::jsonb` }
+  }
+
+  const db = lookupDbName(propToDb, trimmed)
+  if (db !== undefined) {
+    return {
+      key: trimmed,
+      db,
+      emit: db === trimmed ? `${trimmed}::jsonb` : `${trimmed}:${db}::jsonb`,
+    }
+  }
+
+  if (dbNames.has(trimmed)) {
+    return { key: trimmed, db: trimmed, emit: `${trimmed}::jsonb` }
+  }
+
+  return null
 }
 
 /**

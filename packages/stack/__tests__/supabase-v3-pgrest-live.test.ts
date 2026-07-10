@@ -509,6 +509,94 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
     expect(data).toEqual([])
   })
 
+  // The `in()` method path, executed for the first time against a real server.
+  // Each element is its own quote-dense envelope, so the operand is the densest
+  // list PostgREST has to parse outside an or-tree.
+  it('matches an encrypted in-list through the in() method', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .in('nickname', ['ada', 'nobody'])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // The RAW filter path reached `in` with no element-split: the whole list was
+  // encrypted as one equality term, so the request parsed and returned zero
+  // rows. A mock records the emitted operand and cannot tell that apart from a
+  // correct one — only a real server proves the predicate selects `ada`.
+  it('matches an encrypted in-list through the raw filter() path', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .filter('nickname', 'in', ['ada', 'nobody'])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // The same call must still EXCLUDE a row whose value is absent from the list.
+  // Without this, a filter that matched everything would pass the test above.
+  it('excludes a row whose value is absent from a raw in-list', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .filter('nickname', 'in', ['nobody', 'someone'])
+
+    expect(error).toBeNull()
+    expect(data).toEqual([])
+  })
+
+  // A PostgREST list literal cannot be encrypted element-wise; the adapter
+  // refuses it rather than emit a filter that silently matches nothing.
+  it('rejects a raw in-list passed as a PostgREST list literal', async () => {
+    const { error } = await from()
+      .select('row_key')
+      .filter('nickname', 'in', '("ada","nobody")')
+
+    expect(error?.message).toMatch(/requires an array of values/)
+  })
+
+  // A plaintext column keeps postgrest-js's own encoding, untouched. Passing a
+  // list LITERAL is the only form its raw `.filter()` renders correctly.
+  it('leaves a raw in-list literal on a plaintext column to postgrest-js', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .filter('row_key', 'in', '("ada","nobody")')
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // Pins what we did NOT change. postgrest-js renders `.filter(col,'in',[…])`
+  // as an unparenthesized `in.ada,nobody`, which PostgREST rejects with
+  // PGRST100 — true of every plaintext column, before this change and after.
+  // The encrypted path cannot inherit that: it must take an array (nothing else
+  // can be encrypted element-wise) and so builds the literal itself. Asserting
+  // the asymmetry keeps a future "helpfully format plaintext arrays too" from
+  // landing unnoticed as a behaviour change.
+  it('does not rescue a raw in-list ARRAY on a plaintext column', async () => {
+    const { error } = await from()
+      .select('row_key')
+      .filter('row_key', 'in', ['ada', 'nobody'])
+
+    expect(error?.code).toBe('PGRST100')
+    expect(error?.details).toContain('expecting "("')
+  })
+
+  // A caller-chosen alias keys the row by neither the property nor the DB name.
+  // PostgREST has to parse `ts:created_at::jsonb` and key the row `ts`, and the
+  // adapter has to follow that alias back to the column's `cast_as` to rebuild
+  // the `Date`. Both halves are only observable against a real server.
+  it('reconstructs a Date under a caller-chosen select alias', async () => {
+    const { data, error } = await from()
+      .select('row_key, ts:createdAt')
+      .eq('row_key', 'ada')
+
+    expect(error).toBeNull()
+    expect(data).toHaveLength(1)
+    expect(data[0].ts).toBeInstanceOf(Date)
+    expect((data[0].ts as Date).toISOString()).toBe(ADA_CREATED.toISOString())
+  })
+
   it('updates and deletes through encrypted WHERE operands', async () => {
     const updated = await from()
       .update({ note: 'changed' })

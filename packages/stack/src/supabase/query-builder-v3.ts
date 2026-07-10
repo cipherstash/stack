@@ -12,7 +12,7 @@ import type {
   ScalarQueryTerm,
 } from '@/types'
 import { logger } from '@/utils/logger'
-import { addJsonbCastsV3 } from './helpers'
+import { addJsonbCastsV3, selectKeyToDbV3 } from './helpers'
 import {
   EncryptedQueryBuilderImpl,
   EncryptionFailedError,
@@ -146,6 +146,15 @@ export class EncryptedQueryBuilderV3Impl<
   private columnSchemas: Record<string, ColumnSchema>
   /** Column builders keyed by BOTH property name and DB name. */
   private v3Columns: Record<string, V3ColumnLike>
+  /**
+   * Result-row key → DB column name for the columns the current select
+   * produces, including caller-chosen PostgREST aliases (`ts:createdAt` keys
+   * rows by `ts`). Populated by {@link buildSelectString}; consumed by
+   * {@link postprocessDecryptedRow} so aliased date columns still get `Date`
+   * reconstruction. Empty on paths with no recorded select (an insert or update
+   * that returns rows), which fall back to the static property/DB names.
+   */
+  private selectKeyToDb: Record<string, string> = Object.create(null)
 
   constructor(
     tableName: string,
@@ -283,6 +292,7 @@ export class EncryptedQueryBuilderV3Impl<
 
   protected override buildSelectString(): DbSelect | null {
     if (this.selectColumns === null) return null
+    this.selectKeyToDb = selectKeyToDbV3(this.selectColumns, this.propToDb)
     return addJsonbCastsV3(this.selectColumns, this.propToDb)
   }
 
@@ -534,18 +544,27 @@ export class EncryptedQueryBuilderV3Impl<
   protected override postprocessDecryptedRow(
     row: Record<string, unknown>,
   ): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...row }
+    // Every key an encrypted column can appear under: the keys this select
+    // actually produces (including caller-chosen aliases like `ts:createdAt`),
+    // plus the static property and DB names as a fallback for paths that record
+    // no select. Aliases win — `selectKeyToDb` describes the row in hand.
+    const keyToDb: Record<string, string> = Object.assign(
+      Object.create(null),
+      this.selectKeyToDb,
+    )
     for (const [property, dbName] of Object.entries(this.propToDb)) {
+      keyToDb[property] ??= dbName
+      keyToDb[dbName] ??= dbName
+    }
+
+    const out: Record<string, unknown> = { ...row }
+    for (const [key, dbName] of Object.entries(keyToDb)) {
       const castAs = this.columnSchemas[dbName]?.cast_as
       if (!DATE_LIKE_CAST_SET.has(castAs as string)) continue
-      // Rows are keyed by property name when selected via the aliasing cast
-      // helper, but a caller selecting by raw DB name gets DB-name keys.
-      for (const key of property === dbName ? [property] : [property, dbName]) {
-        const value = out[key]
-        if (value == null || value instanceof Date) continue
-        if (typeof value === 'string' || typeof value === 'number') {
-          out[key] = new Date(value)
-        }
+      const value = out[key]
+      if (value == null || value instanceof Date) continue
+      if (typeof value === 'string' || typeof value === 'number') {
+        out[key] = new Date(value)
       }
     }
     return out

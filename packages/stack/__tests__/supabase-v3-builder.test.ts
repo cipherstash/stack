@@ -977,6 +977,40 @@ describe('encryptedSupabaseV3 wire encoding', () => {
         '2026-01-02T03:04:05.000Z',
       )
     })
+
+    // A caller-chosen PostgREST alias keys the row by neither the property nor
+    // the DB name, so the reconstruction has to follow the select string. This
+    // regressed once when the alias→DB map was dropped from `buildSelectString`.
+    it('reconstructs a Date on a row keyed by a caller-chosen alias', async () => {
+      const rows = [
+        { id: 1, ts: fakeEnvelope(new Date('2026-01-02T03:04:05.000Z'), 'ts') },
+      ]
+      const { es, supabase } = v3Instance(rows)
+
+      const { data } = await es.from('users', users).select('id, ts:createdAt')
+
+      // The alias survives into the emitted select, so PostgREST keys rows `ts`.
+      expect(supabase.callsFor('select')[0].args[0]).toBe(
+        'id, ts:created_at::jsonb',
+      )
+      const row = data![0] as unknown as Record<string, unknown>
+      expect(row.ts).toBeInstanceOf(Date)
+      expect((row.ts as Date).toISOString()).toBe('2026-01-02T03:04:05.000Z')
+    })
+
+    // An alias onto the raw DB name takes the other `resolveSelectToken` branch.
+    it('reconstructs a Date on an alias of the raw DB column name', async () => {
+      const rows = [
+        { at: fakeEnvelope(new Date('2026-01-02T03:04:05.000Z'), 'at') },
+      ]
+      const { es } = v3Instance(rows)
+
+      const { data } = await es.from('users', users).select('at:created_at')
+
+      const row = data![0] as unknown as Record<string, unknown>
+      expect(row.at).toBeInstanceOf(Date)
+      expect((row.at as Date).toISOString()).toBe('2026-01-02T03:04:05.000Z')
+    })
   })
 
   // `notFilterOperator` was asserted only on the operator, never on the
@@ -1580,6 +1614,60 @@ describe('v3 raw filter() resolves the query type from the operator', () => {
 
     expect(error).toBeNull()
     expect(status).toBe(200)
+  })
+
+  // The raw path reached `in` with no element-split, so the whole list was
+  // encrypted as one equality term and the filter matched nothing. It now
+  // mirrors the `not(…, 'in', …)` contract exactly.
+  it('encrypts a raw in-list element-wise, not as one whole-list term', async () => {
+    const { es, supabase } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .filter('nickname', 'in', ['ada', 'grace'])
+
+    expect(error).toBeNull()
+    expect(status).toBe(200)
+
+    const [call] = supabase.callsFor('filter')
+    expect(call.args[0]).toBe('nickname')
+    expect(call.args[1]).toBe('in')
+
+    // One envelope per element, quoted into a PostgREST list literal — never a
+    // single ciphertext of the literal string `("ada","grace")`.
+    const operand = call.args[2] as string
+    expect(operand.startsWith('(')).toBe(true)
+    expect(operand.endsWith(')')).toBe(true)
+    const plaintexts = [...operand.matchAll(/\\"pt\\":\\"([^\\]+)\\"/g)].map(
+      (m) => m[1],
+    )
+    expect(plaintexts).toEqual(['ada', 'grace'])
+  })
+
+  it('rejects a raw in-list passed as a PostgREST list literal', async () => {
+    const { es } = v3Instance()
+
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .filter('nickname', 'in', '("ada","grace")')
+
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/requires an array of values/)
+  })
+
+  it('leaves a raw in-list on a plaintext column untouched', async () => {
+    const { es, supabase } = v3Instance()
+
+    const { error } = await es
+      .from('users', users)
+      .select('id')
+      .filter('id', 'in', [1, 2])
+
+    expect(error).toBeNull()
+    const [call] = supabase.callsFor('filter')
+    expect(call.args[2]).toEqual([1, 2])
   })
 
   it('rejects cs on an ord column, which has no freeTextSearch capability', async () => {
