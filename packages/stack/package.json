@@ -224,7 +224,8 @@
 		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
-		"release": "tsup"
+		"release": "tsup",
+		"test:integration": "vitest run --config integration/vitest.config.ts"
 	},
 	"devDependencies": {
 		"@cipherstash/eql": "3.0.0",
@@ -257,7 +258,7 @@
 		"uuid": "14.0.0",
 		"zod": "3.25.76"
 	},
-	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies — pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. Required because @cipherstash/stack re-exports the Node auth strategies (OidcFederationStrategy, AccessKeyStrategy, …). All seven names share a single catalog entry to keep them in lockstep.",
+	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies \u2014 pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. Required because @cipherstash/stack re-exports the Node auth strategies (OidcFederationStrategy, AccessKeyStrategy, \u2026). All seven names share a single catalog entry to keep them in lockstep.",
 	"optionalDependencies": {
 		"@cipherstash/auth-darwin-arm64": "catalog:repo",
 		"@cipherstash/auth-darwin-x64": "catalog:repo",

@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { sharedAlias } from '../../vitest.shared'
 
 export default defineConfig({
@@ -26,6 +26,11 @@ export default defineConfig({
     },
   },
   test: {
+    // Integration suites live in `integration/` and require credentials, a
+    // database and PostgREST. They THROW rather than skip when unconfigured, so
+    // they must never be picked up by `pnpm test` — that is the whole reason
+    // they are a separate config and a separate CI job.
+    exclude: [...configDefaults.exclude, 'integration/**'],
     // Live suites make real ZeroKMS / CTS network round-trips. The vast
     // majority of these tests already pass an explicit `, 30000)` per-test
     // timeout (300+ call sites); a handful were written without one and so

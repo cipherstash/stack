@@ -23,12 +23,19 @@ export {
   V3_MATRIX,
 } from './catalog.ts'
 export {
+  databaseUrl,
+  pgrestUrl,
+  type Requirement,
+  requireIntegrationEnv,
+} from './env.ts'
+export {
   deferredForFamily,
   domainsForFamily,
   FAMILY_NAMES,
   type FamilyDomain,
   type FamilyName,
 } from './families.ts'
+export { type DbVariant, dbVariant, installEqlV3 } from './install.ts'
 export {
   negativeOps,
   type Plain,

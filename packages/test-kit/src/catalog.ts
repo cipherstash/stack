@@ -282,15 +282,24 @@ const BIGINT_ERR = [9223372036854775808n, -9223372036854775809n] as const
 // biome-ignore format: one row per domain reads as a table; keep it dense.
 /**
  * The `_ord_ore` domains are block-ORE, whose operator class is superuser-only:
- * the eql-3.0.0 bundle self-skips those statements on `insufficient_privilege`,
- * so on managed Postgres (Supabase) the ORE domains are not installed at all.
- * The integration matrix runs against both a plain and a managed Postgres, so it
- * covers the OPE-backed `_ord` domains — which order via a native `bytea` btree
- * and behave identically on every provider — and defers ORE to a suite that can
- * assert its superuser-only install. See `docs/eql-v3-ord-term-ordering-defect.md`.
+ * the eql-3.0.0 bundle self-skips those statements on `insufficient_privilege`.
+ *
+ * Measured against `supabase/postgres:17.4.1.048` after `stash eql install
+ * --eql-version 3 --supabase --direct`, connected as the non-superuser
+ * `postgres` role: all 51 `public.eql_v3_*` domains install, and so do the 33
+ * ORE comparison functions. Only the btree OPCLASS is skipped. So an `_ord_ore`
+ * column is creatable, and `eql_v3.gt`/`lt`/`gte`/`lte` still compare in true
+ * ORE order — but `ORDER BY eql_v3.ord_term_ore(col)` falls back to raw `bytea`
+ * ordering and sorts DETERMINISTICALLY WRONG, with no error. A matrix whose
+ * ordering assertions must hold on every provider cannot straddle that, so ORE
+ * gets its own suite.
+ *
+ * The OPE-backed `_ord` domains have no such split: they order via a native
+ * `bytea` btree and behave identically everywhere. See
+ * `docs/eql-v3-ord-term-ordering-defect.md`.
  */
 const ORE_DEFERRED =
-  'block-ORE opclass is superuser-only, so these domains are absent on managed Postgres; covered by a follow-up suite'
+  'block-ORE opclass is superuser-only, so ORDER BY silently mis-sorts on managed Postgres; covered by a follow-up suite'
 
 export const V3_MATRIX = {
   // integer
