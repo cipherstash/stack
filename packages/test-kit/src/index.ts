@@ -9,6 +9,12 @@
  *
  * Consumed as TypeScript source (no build). See `vitest.shared.ts` at the repo
  * root for the runtime aliases and `tsconfig.json` here for the compile-time ones.
+ *
+ * This barrel MUST NOT import `vitest`, directly or transitively. Vitest's
+ * `globalSetup` runs in a different context from the test workers, and a
+ * `vitest` import reached from there fails with "Vitest failed to access its
+ * internal state". `global-setup.ts` imports this barrel, so the test driver
+ * lives behind its own subpath: `@cipherstash/test-kit/suite`.
  */
 
 export type { IntegrationAdapter } from './adapter.ts'

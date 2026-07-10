@@ -44,6 +44,7 @@
       // `.test-d.ts` matrix collapses to `never`. Mirrors `vitest.shared.ts`
       // and `packages/test-kit/tsconfig.json`; keep the three in step.
       "@cipherstash/test-kit": ["../test-kit/src/index.ts"],
+      "@cipherstash/test-kit/suite": ["../test-kit/src/run-family-suite.ts"],
       "@cipherstash/test-kit/catalog": ["../test-kit/src/catalog.ts"],
       "@cipherstash/stack": ["./src/index.ts"],
       "@cipherstash/stack/eql/v3": ["./src/eql/v3/index.ts"],

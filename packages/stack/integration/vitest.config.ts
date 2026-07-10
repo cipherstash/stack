@@ -36,6 +36,16 @@ export default defineConfig({
     root: resolve(__dirname, '..'),
     include: [SUITE_GLOB],
     globalSetup: [resolve(__dirname, 'global-setup.ts')],
+    server: {
+      deps: {
+        // `@cipherstash/test-kit` resolves to source in ANOTHER package, i.e.
+        // outside this config's root, so Vitest externalizes it and loads it
+        // through Node rather than the transform pipeline. Its driver imports
+        // `vitest`, and a `vitest` imported outside a worker cannot reach the
+        // runner's state: "Vitest failed to access its internal state".
+        inline: [/packages\/test-kit/],
+      },
+    },
     // Real crypto round-trips over the network. The unit config uses 30s for the
     // same reason; seeding a family table encrypts every sample, so hooks need
     // more headroom than tests do.
