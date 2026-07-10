@@ -130,6 +130,8 @@ export function makeSupabaseAdapter(): IntegrationAdapter {
     name: 'supabase',
     supportedOps: SUPPORTED_OPS,
     alwaysRejectedOps: ALWAYS_REJECTED,
+    // `.in()` and the raw `.filter(col, 'in', […])` are different code paths.
+    hasRawInListPath: true,
 
     async setup() {
       sql = postgres(databaseUrl(), { prepare: false })

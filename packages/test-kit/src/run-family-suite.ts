@@ -220,10 +220,10 @@ export function runFamilySuite(
         }
 
         if (positive.has('in')) {
-          // Both the `in()` method and the raw `filter(col, 'in', [...])` path:
-          // they are different code paths, and the raw one encrypted the whole
-          // list as a single term until recently.
-          for (const asRawFilter of [false, true]) {
+          // Adapters with a second `in`-list code path drive both against the
+          // same oracle. See `IntegrationAdapter.hasRawInListPath`.
+          const variants = adapter.hasRawInListPath ? [false, true] : [false]
+          for (const asRawFilter of variants) {
             const label = asRawFilter ? 'filter(in)' : 'in()'
 
             it(`${label} selects the union of the listed values`, async () => {

@@ -1,4 +1,32 @@
-import 'dotenv/config'
+/**
+ * The Drizzle v3 tests the family driver cannot express.
+ *
+ * Per-domain equality, ordering, ranges, containment and capability rejections
+ * moved to `families.integration.test.ts`, where they are derived from the
+ * catalog and shared with the Supabase adapter. What remains is everything that
+ * is about SQL shape rather than about a domain:
+ *
+ *   - boolean combinators (`and`/`or`/`not`) over disjoint encrypted predicates
+ *   - `exists` / `notExists` correlated subqueries
+ *   - joins against plain tables while filtering encrypted columns
+ *   - `limit`/`offset` pagination over an encrypted ordering
+ *   - the free-text needle guards: a needle below `token_length` blooms to
+ *     nothing and `stored_bf @> '{}'` holds for EVERY row, so before the guard a
+ *     short needle silently returned the whole table
+ *   - a statically-typed bigint round-trip
+ *
+ * EQL v3 is installed once per run by `globalSetup`, via the real
+ * `stash eql install`. This suite throws rather than skips when unconfigured.
+ */
+
+import {
+  type DomainSpec,
+  databaseUrl,
+  type EqlV3TypeName,
+  eqlTypeSlug as slug,
+  typedEntries,
+  V3_MATRIX,
+} from '@cipherstash/test-kit'
 import {
   and,
   asc as drizzleAsc,
@@ -9,7 +37,7 @@ import {
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3 } from '@/encryption/v3'
 import {
   createEncryptionOperatorsV3,
@@ -18,20 +46,8 @@ import {
   types as v3drizzle,
 } from '@/eql/v3/drizzle'
 import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
-import { installEqlV3IfNeeded } from '../helpers/eql-v3'
-import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
-import {
-  type DomainSpec,
-  type EqlV3TypeName,
-  eqlTypeSlug as slug,
-  typedEntries,
-  V3_MATRIX,
-} from '../v3-matrix/catalog'
 
-const url = process.env.DATABASE_URL
-const sqlClient = LIVE_EQL_V3_PG_ENABLED
-  ? postgres(url as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sqlClient = postgres(databaseUrl(), { prepare: false })
 
 const TABLE_NAME = 'protect_ci_v3_drizzle_matrix'
 const ACCOUNT_TABLE_NAME = 'protect_ci_v3_drizzle_matrix_accounts'
@@ -226,8 +242,6 @@ function encryptedInsertRows(): MatrixPlainRow[] {
 }
 
 beforeAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-  await installEqlV3IfNeeded(sqlClient)
   client = await EncryptionV3({ schemas: [schema, bigintSchema] })
   ops = createEncryptionOperatorsV3(client)
   db = drizzle({ client: sqlClient })
@@ -302,254 +316,13 @@ beforeAll(async () => {
 }, 120000)
 
 afterAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
   await sqlClient`DELETE FROM ${sqlClient(TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient`DELETE FROM ${sqlClient(ACCOUNT_TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient`DELETE FROM ${sqlClient(BIGINT_TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient.end()
 }, 30000)
 
-describeLivePg('v3 drizzle operators (live pg matrix)', () => {
-  it.each(equalityDomains)(
-    '%s eq selects the exact row',
-    async (eqlType, spec) => {
-      const bound = plainValue(spec, ROW_A)
-      const rows = await selectRowKeys(
-        await ops.eq(matrixColumn(eqlType), bound),
-      )
-      // Oracle, not `[ROW_A]`: ROW_C carries a near-miss value for domains with
-      // a third sample, so an `eq` that over-matches now shows up here.
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => comparePlain(value, bound) === 0),
-      )
-    },
-    30000,
-  )
-
-  it.each(equalityDomains)(
-    '%s ne selects the complement rows',
-    async (eqlType, spec) => {
-      const bound = plainValue(spec, ROW_A)
-      const rows = await selectRowKeys(
-        await ops.ne(matrixColumn(eqlType), bound),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
-      )
-    },
-    30000,
-  )
-
-  it.each(equalityDomains)(
-    '%s inArray selects all listed rows',
-    async (eqlType, spec) => {
-      const listed = [plainValue(spec, ROW_A), plainValue(spec, ROW_B)]
-      const rows = await selectRowKeys(
-        await ops.inArray(matrixColumn(eqlType), listed),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) =>
-          listed.some((entry) => comparePlain(value, entry) === 0),
-        ),
-      )
-    },
-    30000,
-  )
-
-  it.each(equalityDomains)(
-    '%s notInArray excludes listed rows',
-    async (eqlType, spec) => {
-      const bound = plainValue(spec, ROW_A)
-      const rows = await selectRowKeys(
-        await ops.notInArray(matrixColumn(eqlType), [bound]),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
-      )
-    },
-    30000,
-  )
-
-  it.each(comparisonDomains)(
-    '%s %s selects rows by encrypted ordering',
-    async (eqlType, spec, operator, predicate) => {
-      const bound = plainValue(spec, ROW_A)
-      const rows = await selectRowKeys(
-        await ops[operator](matrixColumn(eqlType), bound),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => predicate(comparePlain(value, bound))),
-      )
-    },
-    30000,
-  )
-
-  // The bounds span ROW_A and ROW_B. ROW_C carries a third sample that may sit
-  // outside that span (most domains) or tie with ROW_B (date, timestamp), so
-  // membership is computed rather than assumed — with only A and B seeded these
-  // were `[ROW_A, ROW_B]` and `[]`, which no longer holds.
-  const spanBounds = (spec: DomainSpec): [PlainValue, PlainValue] => {
-    const sorted = [plainValue(spec, ROW_A), plainValue(spec, ROW_B)].sort(
-      comparePlain,
-    )
-    return [sorted[0], sorted[1]]
-  }
-  const withinSpan = (spec: DomainSpec) => (value: PlainValue) => {
-    const [min, max] = spanBounds(spec)
-    return comparePlain(value, min) >= 0 && comparePlain(value, max) <= 0
-  }
-
-  it.each(orderDomains)(
-    '%s between selects the inclusive range',
-    async (eqlType, spec) => {
-      const [min, max] = spanBounds(spec)
-      const rows = await selectRowKeys(
-        await ops.between(matrixColumn(eqlType), min, max),
-      )
-      expect(rows).toEqual(expectedKeysFor(spec, withinSpan(spec)))
-    },
-    30000,
-  )
-
-  it.each(orderDomains)(
-    '%s notBetween excludes the inclusive range',
-    async (eqlType, spec) => {
-      const [min, max] = spanBounds(spec)
-      const rows = await selectRowKeys(
-        await ops.notBetween(matrixColumn(eqlType), min, max),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => !withinSpan(spec)(value)),
-      )
-    },
-    30000,
-  )
-
-  // The spanning cases above put ROW_A and ROW_B inside the range, so on most
-  // domains only ROW_C proves exclusion. These narrow cases use a single-point
-  // range at ROW_A's value to prove the operators EXCLUDE regardless of where
-  // ROW_C falls: `between` must drop ROW_B, `notBetween` must keep it. Without
-  // these, a `between` that matched everything (or a `notBetween` no-op) passes.
-  it.each(orderDomains)(
-    '%s between at a single point excludes the out-of-range row',
-    async (eqlType, spec) => {
-      const bound = plainValue(spec, ROW_A)
-      const rows = await selectRowKeys(
-        await ops.between(matrixColumn(eqlType), bound, bound),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => comparePlain(value, bound) === 0),
-      )
-    },
-    30000,
-  )
-
-  it.each(orderDomains)(
-    '%s notBetween at a single point keeps the out-of-range row',
-    async (eqlType, spec) => {
-      const bound = plainValue(spec, ROW_A)
-      const rows = await selectRowKeys(
-        await ops.notBetween(matrixColumn(eqlType), bound, bound),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
-      )
-    },
-    30000,
-  )
-
-  // `between` returns a two-function conjunction; Drizzle's passthrough `not`
-  // prepends a bare `not` with no parentheses of its own. Postgres binds NOT
-  // tighter than AND, so an unparenthesised range would run as
-  // `(NOT gte(col, bound)) AND lte(col, bound)` — i.e. `col < bound` — instead
-  // of the range's complement, `col != bound`.
-  //
-  // The bound MUST be the SMALLER of the two seeded values. Anchored at the
-  // larger one, `col < bound` and `col != bound` both select the other row and
-  // the buggy SQL passes; anchored at the smaller, the buggy SQL selects
-  // nothing while the correct SQL selects the larger row. Several domains seed
-  // ROW_A with their maximum sample (`integer_ord` is `[0, -42]`), so keying
-  // off ROW_A directly would make this test vacuous for them.
-  it.each(orderDomains)(
-    '%s not(between(...)) negates the whole range',
-    async (eqlType, spec) => {
-      const bound = [plainValue(spec, ROW_A), plainValue(spec, ROW_B)].sort(
-        comparePlain,
-      )[0]
-      const rows = await selectRowKeys(
-        ops.not(await ops.between(matrixColumn(eqlType), bound, bound)),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) => comparePlain(value, bound) !== 0),
-      )
-      // Guards the guard: the expectation must be non-empty, or the buggy
-      // `col < bound` (which returns nothing) would satisfy it too.
-      expect(rows.length).toBeGreaterThan(0)
-    },
-    30000,
-  )
-
-  // The secondary `ORDER BY row_key` mirrors the oracle's tie-break. Domains
-  // with only two samples (date, timestamp) give ROW_B and ROW_C equal values,
-  // so without it the tied pair's order is arbitrary in Postgres.
-  it.each(orderDomains)(
-    '%s asc orders by encrypted order term',
-    async (eqlType, spec) => {
-      const rows = (await db
-        .select({ rowKey: matrixTable.rowKey })
-        .from(matrixTable)
-        .where(drizzleEq(matrixTable.testRunId, RUN))
-        .orderBy(
-          ops.asc(matrixColumn(eqlType)),
-          drizzleAsc(matrixTable.rowKey),
-        )) as SelectRow[]
-      expect(rows.map((row) => row.rowKey)).toEqual(sortedKeysFor(spec, 'asc'))
-    },
-    30000,
-  )
-
-  it.each(orderDomains)(
-    '%s desc orders by encrypted order term',
-    async (eqlType, spec) => {
-      const rows = (await db
-        .select({ rowKey: matrixTable.rowKey })
-        .from(matrixTable)
-        .where(drizzleEq(matrixTable.testRunId, RUN))
-        .orderBy(
-          ops.desc(matrixColumn(eqlType)),
-          drizzleAsc(matrixTable.rowKey),
-        )) as SelectRow[]
-      expect(rows.map((row) => row.rowKey)).toEqual(sortedKeysFor(spec, 'desc'))
-    },
-    30000,
-  )
-
-  // Needles are driven through the same substring oracle, so each domain gets
-  // the rows it should. `'ada'` is exactly `token_length`; `'lovelace'` and
-  // `'grace'` are longer (the suite previously had no `contains` proof above
-  // the token length at all); `'qqqzzz'` is present in no row, so a `contains`
-  // that matched everything would fail here rather than pass silently.
-  it.each(
-    matchDomains.flatMap(([eqlType, spec]) =>
-      ['ada', 'lovelace', 'grace', 'qqqzzz'].map(
-        (needle) => [eqlType, spec, needle] as const,
-      ),
-    ),
-  )(
-    '%s contains %s matches exactly the rows holding it',
-    async (eqlType, spec, needle) => {
-      const rows = await selectRowKeys(
-        await ops.contains(matrixColumn(eqlType), needle),
-      )
-      expect(rows).toEqual(
-        expectedKeysFor(spec, (value) =>
-          String(value).toLowerCase().includes(needle),
-        ),
-      )
-    },
-    30000,
-  )
-
+describe('v3 drizzle — relational, needle guards, pagination', () => {
   // A needle below the tokenizer's `token_length` builds an EMPTY bloom filter,
   // and `stored_bf @> '{}'` holds for every row — so before the SDK guard this
   // silently returned the whole table.
@@ -620,50 +393,18 @@ describeLivePg('v3 drizzle operators (live pg matrix)', () => {
     30000,
   )
 
-  // An `ore`-bearing match column rejects a non-ASCII needle inside ENCRYPTION,
-  // not in the needle guard. Pinned so the distinction stays visible: the guard
-  // is about tokenization, this is about the block-ORE term's ASCII-only
-  // ordering. OPE-backed match domains (text_search) encrypt non-ASCII fine —
-  // only the `ore`-flavoured ones carry the restriction.
-  it.each(
-    matchDomains.filter(([, spec]) => spec.indexes.ore),
-  )('%s contains rejects a non-ASCII needle in the ORE term, not the guard', async (eqlType) => {
-    const attempt = ops.contains(
-      matrixColumn(eqlType),
-      '\u{1F44D}\u{1F44D}\u{1F44D}',
-    )
-    await expect(attempt).rejects.toThrow(/pure ASCII/)
-    await expect(attempt).rejects.not.toThrow(/free-text search needs/)
-  }, 30000)
+  // The non-ASCII ORE-needle test that used to live here drove
+  // `matchDomains.filter(([, spec]) => spec.indexes.ore)`. Since the eql-3.0.0
+  // OPE re-pin, NO match domain carries an `ore` index — `text_search` is
+  // `unique + ope + match`, `text_match` is `match` — so that `it.each` had zero
+  // cases and reported nothing. A vacuous test reads exactly like a passing one.
+  //
+  // Assert the state instead. If an ORE-flavoured match domain ever returns, this
+  // fails and whoever adds it has to restore the needle test with it.
+  it('no match domain carries an ORE index, so no ASCII-only needle rule applies', () => {
+    const oreMatchDomains = matchDomains.filter(([, spec]) => spec.indexes.ore)
 
-  it.each(
-    noEqualityDomains,
-  )('%s eq rejects unsupported equality', async (eqlType, spec) => {
-    await expect(
-      ops.eq(matrixColumn(eqlType), plainValue(spec, ROW_A)),
-    ).rejects.toBeInstanceOf(EncryptionOperatorError)
-  })
-
-  it.each(
-    noOrderDomains,
-  )('%s gt rejects unsupported ordering', async (eqlType, spec) => {
-    await expect(
-      ops.gt(matrixColumn(eqlType), plainValue(spec, ROW_A)),
-    ).rejects.toBeInstanceOf(EncryptionOperatorError)
-  })
-
-  it.each(noOrderDomains)('%s asc rejects unsupported ordering', (eqlType) => {
-    expect(() => ops.asc(matrixColumn(eqlType))).toThrow(
-      EncryptionOperatorError,
-    )
-  })
-
-  it.each(
-    noMatchDomains,
-  )('%s contains rejects unsupported match', async (eqlType, spec) => {
-    await expect(
-      ops.contains(matrixColumn(eqlType), plainValue(spec, ROW_A)),
-    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+    expect(oreMatchDomains.map(([eqlType]) => eqlType)).toEqual([])
   })
 
   // The two predicates must be satisfied by DISJOINT row sets, or `and` and

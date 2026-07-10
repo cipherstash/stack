@@ -27,6 +27,17 @@ export interface IntegrationAdapter {
    */
   readonly alwaysRejectedOps: ReadonlySet<QueryOpKind>
 
+  /**
+   * Whether the adapter has a SECOND, distinct code path for `in`-lists that the
+   * driver should exercise alongside the primary one.
+   *
+   * Supabase does: `.in()` and the raw `.filter(col, 'in', […])` are different
+   * code paths, and the raw one encrypted the whole list as a single term until
+   * recently. Drizzle has one `inArray`, so running the variant there would add
+   * a duplicate test under a name (`filter(in)`) that means nothing to it.
+   */
+  readonly hasRawInListPath?: boolean
+
   setup(): Promise<void>
   teardown(): Promise<void>
 
