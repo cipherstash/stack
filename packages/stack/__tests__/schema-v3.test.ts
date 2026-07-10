@@ -11,7 +11,7 @@ import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import { type DomainSpec, typedEntries, V3_MATRIX } from './v3-matrix/catalog'
 
 describe('eql_v3 text_search column', () => {
-  it('LOAD-BEARING: default build() matches the v2 equality+order+match column modulo the ordering index', () => {
+  it('LOAD-BEARING: default build() matches the v2 equality+order+match column modulo the ordering index and include_original', () => {
     // eql-3.0.0 pins text_search's ordering to CLLW-OPE (`ope`/`op` term); the
     // v2 fluent builder keeps block-ORE (`ore`/`ob`) — its wire format must not
     // change. Everything else (unique, match, cast_as) stays byte-identical.
@@ -25,12 +25,29 @@ describe('eql_v3 text_search column', () => {
     expect(v3.indexes.ore).toBeUndefined()
     expect(v2.indexes.ore).toEqual({})
     expect(v2.indexes.ope).toBeUndefined()
-    const { ope: _v3Ord, ...v3Rest } = v3.indexes
-    const { ore: _v2Ord, ...v2Rest } = v2.indexes
+
+    // The second deliberate divergence. protect-ffi ignores `include_original`
+    // (`match-bloom-live.test.ts` pins that against real ffi), so v3 emits the
+    // value a substring-search domain wants while v2 holds its historical
+    // `true` — no v2 wire movement. Asserted on BOTH sides, then excluded from
+    // the byte-identity check below, so neither can drift unnoticed.
+    expect(v3.indexes.match?.include_original).toBe(false)
+    expect(v2.indexes.match?.include_original).toBe(true)
+
+    const { ope: _v3Ord, match: v3Match, ...v3Rest } = v3.indexes
+    const { ore: _v2Ord, match: v2Match, ...v2Rest } = v2.indexes
+    const withoutIncludeOriginal = (match: typeof v3Match) => {
+      if (!match) return match
+      const { include_original: _drop, ...rest } = match
+      return rest
+    }
     // toStrictEqual: byte-identical, no extra/undefined keys on either side.
-    expect({ ...v3, indexes: v3Rest }).toStrictEqual({
+    expect({
+      ...v3,
+      indexes: { ...v3Rest, match: withoutIncludeOriginal(v3Match) },
+    }).toStrictEqual({
       ...v2,
-      indexes: v2Rest,
+      indexes: { ...v2Rest, match: withoutIncludeOriginal(v2Match) },
     })
   })
 
@@ -43,7 +60,7 @@ describe('eql_v3 text_search column', () => {
       token_filters: [{ kind: 'downcase' }],
       k: 6,
       m: 2048,
-      include_original: true,
+      include_original: false,
     })
   })
 
@@ -197,7 +214,7 @@ describe('eql_v3 encryptedTable', () => {
             token_filters: [{ kind: 'downcase' }],
             k: 6,
             m: 2048,
-            include_original: true,
+            include_original: false,
           },
         },
       },
@@ -422,7 +439,11 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
   // fails with `value for domain public.eql_v3_text_ord_ore violates check constraint`.
   it.each([
-    ['text_ord_ore', types.TextOrdOre, { unique: { token_filters: [] }, ore: {} }],
+    [
+      'text_ord_ore',
+      types.TextOrdOre,
+      { unique: { token_filters: [] }, ore: {} },
+    ],
     ['text_ord', types.TextOrd, { unique: { token_filters: [] }, ope: {} }],
   ] as const)('%s emits both unique (hm) and its ordering index', (_name, builder, expected) => {
     expect(builder('c').build().indexes).toStrictEqual(expected)

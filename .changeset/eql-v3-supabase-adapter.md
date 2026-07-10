@@ -56,10 +56,12 @@ of always encrypting an equality term, so `filter('bio', 'cs', …)` on a
 `public.text_match` column works rather than being rejected, and an unsupported
 operator throws instead of silently encrypting the wrong term.
 
-Substring `contains` still matches only when the needle equals the stored value
-or is exactly the tokenizer's window (3 characters): the operand is a storage
-envelope whose bloom carries the whole needle as an `include_original` token.
-This is shared with v3 Drizzle's `contains` and tracked upstream in EQL.
+Substring `contains` matches any needle whose trigrams are all present in the
+stored value; needles shorter than the tokenizer's window (3 characters) bloom to
+nothing and are rejected rather than silently matching every row. The v3 match
+index now emits `include_original: false` — the flag is inert in protect-ffi (the
+bloom is trigram-only either way), so this moves no ciphertext and only pins the
+value a substring-search domain wants.
 
 v2 (`encryptedSupabase`) is unchanged: it keeps `like`/`ilike` (`eql_v2.like`,
 `~~`) and its raw-`filter` query-type mapping, so no v2 ciphertext moves.

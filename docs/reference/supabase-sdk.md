@@ -212,12 +212,11 @@ These are internal to the adapter but explain observable behaviour. Envelopes
   downcased and `%` is tokenized like any other character, so a `like`
   pattern is a category error. On plaintext columns `like`/`ilike` (and
   native `contains`) pass through unchanged.
-- **`contains()` matches exact values, not general substrings.** The match
-  index always uses its default configuration (`types.TextSearch` takes no
-  match options), in which the operand's bloom carries the whole needle as an
-  extra token — so `contains()` matches when the needle equals the stored
-  value, or is exactly one token (3 characters) long; longer substrings do
-  not match. Known limitation, tracked upstream in EQL.
+- **`contains()` matches substrings.** The search term blooms to its own
+  trigrams, and a row matches when the stored value's bloom contains all of
+  them — so any substring of at least 3 characters (the tokenizer's
+  `token_length`) matches. Shorter terms bloom to nothing and would match every
+  row, so they are rejected with an error rather than answered.
 - **`select('*')` (and bare `select()`) works on v3** — it expands to the
   introspected column list, with encrypted columns aliased and `::jsonb`-cast.
 - **Mutations send the raw encrypted payload** (the domains are
