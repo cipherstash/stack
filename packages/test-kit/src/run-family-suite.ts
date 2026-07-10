@@ -38,27 +38,75 @@ function distinctValues(spec: DomainSpec, rowKeys: readonly string[]): Plain[] {
   )
 }
 
+/** A needle to search for, and what it is meant to discriminate. */
+type Needle = Readonly<{ label: string; needle: string }>
+
 /**
- * A needle guaranteed to be answerable: the first three characters of the first
- * sample long enough to produce one, downcased. `token_length` is 3, so a
- * shorter needle blooms to nothing and the adapters reject it — see
- * `requireAnswerableNeedle`.
+ * The needle set for a `freeTextSearch` domain.
  *
- * THROWS rather than skipping when no sample qualifies. It previously derived
- * the needle from the domain's MINIMUM value, which for the text samples is the
- * empty string — so `text_match`, the only match-only domain, silently skipped
- * the only test that exercises its one capability. A `freeTextSearch` domain
- * whose catalog row cannot produce a needle is a catalog bug, and must be loud.
+ * A single 3-character needle is NOT sufficient coverage, and the reason is
+ * subtle enough to be worth stating.
+ *
+ * The match index tokenizes into downcased 3-grams. `include_original: true`
+ * additionally blooms the WHOLE value as one token. Storage wants that; a QUERY
+ * operand must not have it, or the needle's bloom carries a whole-needle token
+ * that the haystack's bloom cannot contain, and every strict-substring search
+ * returns nothing.
+ *
+ * Both v3 adapters build match operands with `encrypt` — the full storage
+ * envelope — not `encryptQuery`, because PostgREST cannot cast a filter value to
+ * `eql_v3.query_*`. So both are structurally exposed to exactly that. Today it
+ * is masked: protect-ffi ignores `include_original` outright, so neither the
+ * stored value nor the operand carries the whole-value token. Two bugs cancel.
+ * The day protect-ffi honours the flag, substring search breaks — silently, by
+ * returning no rows. See cipherstash/stack#615.
+ *
+ * A 3-character needle cannot see any of this: its whole-value token IS a
+ * trigram, so it matches either way. That is the degenerate case. The
+ * discriminating needle is a strict substring LONGER than `token_length`, taken
+ * from the interior so no prefix-specific shortcut can satisfy it.
+ *
+ * THROWS rather than skipping when no sample qualifies: a `freeTextSearch`
+ * domain whose catalog row cannot produce a needle is a catalog bug, and must be
+ * loud. (This previously derived the needle from the domain's MINIMUM value —
+ * the empty string for text — so `text_match`, the only match-only domain,
+ * silently skipped the only test of its only capability.)
  */
-function needleFrom(values: readonly Plain[]): string {
-  for (const value of values) {
-    const text = String(value)
-    if (text.length >= 3) return text.slice(0, 3).toLowerCase()
+function needlesFrom(values: readonly Plain[]): Needle[] {
+  const longest = [...values]
+    .map(String)
+    .sort((left, right) => right.length - left.length)[0]
+
+  if (longest === undefined || longest.length < 3) {
+    throw new Error(
+      'No sample is long enough to build an answerable needle (>= token_length 3). ' +
+        'A freeTextSearch domain must carry at least one such sample in the catalog.',
+    )
   }
-  throw new Error(
-    'No sample is long enough to build an answerable needle (>= token_length 3). ' +
-      'A freeTextSearch domain must carry at least one such sample in the catalog.',
-  )
+
+  const value = longest.toLowerCase()
+  const needles: Needle[] = [
+    // Degenerate: exactly one trigram. Matches whether or not `include_original`
+    // is honoured, because the whole needle IS a trigram.
+    { label: 'a 3-character needle (one trigram)', needle: value.slice(0, 3) },
+    // The whole stored value. Matches under either behaviour.
+    { label: 'the whole stored value', needle: value },
+    // Absent from every sample, so it must never match. Guards against a
+    // predicate that ignores its operand — and against a bloom false positive
+    // being mistaken for coverage.
+    { label: 'a needle absent from every value', needle: 'qqqzzz' },
+  ]
+
+  // The discriminating case: a strict substring longer than one trigram, drawn
+  // from the interior. Fails the moment a whole-needle token enters the operand.
+  if (value.length >= 6) {
+    needles.splice(1, 0, {
+      label: 'a strict interior substring longer than one trigram',
+      needle: value.slice(2, Math.min(value.length - 1, 8)),
+    })
+  }
+
+  return needles
 }
 
 /** A representative operand for a rejected operation — the value never reaches the DB. */
@@ -250,8 +298,9 @@ export function runFamilySuite(
         }
 
         if (positive.has('contains')) {
-          const needle = needleFrom(values)
-          it('contains matches the rows whose plaintext contains the needle', async () => {
+          it.each(needlesFrom(values))('contains: $label', async ({
+            needle,
+          }) => {
             await expectRows(
               { kind: 'contains', column: slug, needle },
               keysWhere((v) => containsPlain(v, needle)),
