@@ -39,13 +39,26 @@ function distinctValues(spec: DomainSpec, rowKeys: readonly string[]): Plain[] {
 }
 
 /**
- * A needle guaranteed to be answerable: the first three characters of the
- * value, downcased. `token_length` is 3, so a shorter needle blooms to nothing
- * and the adapters reject it — see `requireAnswerableNeedle`.
+ * A needle guaranteed to be answerable: the first three characters of the first
+ * sample long enough to produce one, downcased. `token_length` is 3, so a
+ * shorter needle blooms to nothing and the adapters reject it — see
+ * `requireAnswerableNeedle`.
+ *
+ * THROWS rather than skipping when no sample qualifies. It previously derived
+ * the needle from the domain's MINIMUM value, which for the text samples is the
+ * empty string — so `text_match`, the only match-only domain, silently skipped
+ * the only test that exercises its one capability. A `freeTextSearch` domain
+ * whose catalog row cannot produce a needle is a catalog bug, and must be loud.
  */
-function needleFor(value: Plain): string | null {
-  const text = String(value)
-  return text.length >= 3 ? text.slice(0, 3).toLowerCase() : null
+function needleFrom(values: readonly Plain[]): string {
+  for (const value of values) {
+    const text = String(value)
+    if (text.length >= 3) return text.slice(0, 3).toLowerCase()
+  }
+  throw new Error(
+    'No sample is long enough to build an answerable needle (>= token_length 3). ' +
+      'A freeTextSearch domain must carry at least one such sample in the catalog.',
+  )
 }
 
 /** A representative operand for a rejected operation — the value never reaches the DB. */
@@ -62,7 +75,14 @@ function sampleOpFor(
     case 'notBetween':
       return { kind, column, lo: value, hi: value }
     case 'contains':
-      return { kind, column, needle: needleFor(value) ?? 'abc' }
+      return {
+        kind,
+        column,
+        needle:
+          String(value).length >= 3
+            ? String(value).slice(0, 3).toLowerCase()
+            : 'abc',
+      }
     case 'order':
       return { kind, column, direction: 'asc' }
     case 'isNull':
@@ -230,16 +250,13 @@ export function runFamilySuite(
         }
 
         if (positive.has('contains')) {
-          const needle = needleFor(min)
-          it.runIf(needle !== null)(
-            'contains matches the rows whose plaintext contains the needle',
-            async () => {
-              await expectRows(
-                { kind: 'contains', column: slug, needle: needle as string },
-                keysWhere((v) => containsPlain(v, needle as string)),
-              )
-            },
-          )
+          const needle = needleFrom(values)
+          it('contains matches the rows whose plaintext contains the needle', async () => {
+            await expectRows(
+              { kind: 'contains', column: slug, needle },
+              keysWhere((v) => containsPlain(v, needle)),
+            )
+          })
         }
 
         // Structural, never capability-gated: a NULL plaintext is a SQL NULL on
