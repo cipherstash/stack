@@ -362,7 +362,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(error).toBeNull()
     // The jsonb path, not a bare column: `ORDER BY created_at` would sort the
     // ciphertext envelope through jsonb's default opclass.
-    expect(supabase.callsFor('order')[0].args[0]).toBe('created_at->>op')
+    expect(supabase.callsFor('order')[0].args[0]).toBe('created_at->op')
   })
 
   it('rejects order() on an equality-only encrypted column', async () => {

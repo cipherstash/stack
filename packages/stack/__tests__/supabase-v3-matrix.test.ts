@@ -172,7 +172,7 @@ describe('supabase v3 wire encoding, every domain', () => {
 
         expect(error).toBeNull()
         const [order] = supabase.callsFor('order')
-        expect(order.args[0]).toBe(`${name}->>op`)
+        expect(order.args[0]).toBe(`${name}->op`)
       })
     } else {
       it('rejects order() even though gte() is supported', async () => {

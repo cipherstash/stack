@@ -281,10 +281,24 @@ export class EncryptedQueryBuilderV3Impl<
   /**
    * Encrypted ordering columns sort by their `op` term, not by the envelope.
    *
-   * `order=col->>op` is the one ordering expression PostgREST can emit that
+   * `order=col->op` is the one ordering expression PostgREST can emit that
    * reaches the OPE term. It must NOT leak into filters — those compare whole
    * envelopes through the `eql_v3.*` operators — which is why this is its own
    * seam rather than a change to `filterColumnName`.
+   *
+   * The canonical EQL form is `ORDER BY eql_v3.ord_term(col)`, which returns
+   * `eql_v3_internal.ope_cllw` — a domain over `bytea`, ordered by the native
+   * btree. PostgREST cannot call a function, so it orders the `op` term where it
+   * sits, inside the envelope. The two agree because the term is what
+   * `ord_term()` returns.
+   *
+   * `->` (jsonb) rather than `->>` (text) keeps the comparison on the typed
+   * value. Note this does NOT avoid the database collation: Postgres compares
+   * jsonb strings with `varstr_cmp` under the default collation, exactly as it
+   * does text. What makes the ordering collation-independent is the term itself
+   * — fixed-width lowercase hex (`[0-9a-f]`, 130 chars for `integer_ord`, 82 for
+   * `text_search`) — and every collation orders digits before letters and hex
+   * letters among themselves. `match-bloom`'s sibling assertion pins that shape.
    *
    * `validateTransforms` has already rejected every encrypted column that lacks
    * an `ope` index, so reaching the jsonb path here implies the term exists.
@@ -295,7 +309,7 @@ export class EncryptedQueryBuilderV3Impl<
     if (!encrypted) return dbName as DbName
 
     return (
-      this.columnSchemas[dbName]?.indexes?.ope ? `${dbName}->>op` : dbName
+      this.columnSchemas[dbName]?.indexes?.ope ? `${dbName}->op` : dbName
     ) as DbName
   }
 
