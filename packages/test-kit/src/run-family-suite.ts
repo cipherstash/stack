@@ -95,7 +95,10 @@ function needlesFrom(values: readonly Plain[]): Needle[] {
 
   // The discriminating case: a strict substring longer than one trigram, drawn
   // from the interior. Fails the moment a whole-needle token enters the operand.
-  if (value.length >= 6) {
+  // Requires length >= 7: at 6 the interior slice `slice(2, 5)` is itself a
+  // single trigram, so the needle would be no more discriminating than the
+  // degenerate one above and the guard would be toothless.
+  if (value.length >= 7) {
     needles.splice(1, 0, {
       label: 'a strict interior substring longer than one trigram',
       needle: value.slice(2, Math.min(value.length - 1, 8)),
@@ -172,7 +175,6 @@ export function runFamilySuite(
     afterAll(async () => {
       await adapter.teardown()
     })
-
 
     for (const domain of domains) {
       describe(domain.bare, () => {

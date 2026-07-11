@@ -24,7 +24,9 @@ import {
   databaseUrl,
   type EqlV3TypeName,
   isCovered,
+  plainValue as plainValueFor,
   eqlTypeSlug as slug,
+  sortedKeysFor as sortedKeysForKit,
   typedEntries,
   V3_MATRIX,
 } from '@cipherstash/test-kit'
@@ -169,56 +171,14 @@ const matrixColumn = (eqlType: EqlV3TypeName): SQLWrapper =>
 const scoped = (cond: SQL | undefined): SQL | undefined =>
   cond ? and(drizzleEq(matrixTable.testRunId, RUN), cond) : cond
 
+// The plaintext oracle (`plainValue`, `comparePlain`, `sortedKeysFor`) lives in
+// `@cipherstash/test-kit`, so the bytewise-ordering rules have a single home.
+// These wrappers just bind this suite's fixed `ROWS` set.
 const plainValue = (spec: DomainSpec, rowKey: RowKey): PlainValue =>
-  spec.samples[Math.min(ROWS.indexOf(rowKey), spec.samples.length - 1)]
+  plainValueFor(spec, ROWS, rowKey)
 
-function comparePlain(left: PlainValue, right: PlainValue): number {
-  if (left instanceof Date && right instanceof Date) {
-    return left.getTime() - right.getTime()
-  }
-  if (typeof left === 'number' && typeof right === 'number') {
-    return left - right
-  }
-  // bigint order domains (`bigint_ord`/`bigint_ord_ore`) carry i64 samples
-  // beyond Number.MAX_SAFE_INTEGER, so they must be compared as bigints — the
-  // subtraction is narrowed to -1/0/1 because callers expect a `number`.
-  if (typeof left === 'bigint' && typeof right === 'bigint') {
-    return left < right ? -1 : left > right ? 1 : 0
-  }
-  if (typeof left === 'string' && typeof right === 'string') {
-    // eql_v3 text ordering (ORE) is BYTEWISE, not locale-collated: the oracle
-    // must model codepoint order, not `localeCompare` (which folds case,
-    // reorders punctuation vs letters, and is locale-dependent). Text samples
-    // must stay ASCII/unambiguous so UTF-16 code-unit order == the byte order
-    // the DB actually sorts by.
-    return left < right ? -1 : left > right ? 1 : 0
-  }
-  throw new Error(
-    `Unsupported ordered values: ${String(left)}, ${String(right)}`,
-  )
-}
-
-function expectedKeysFor(
-  spec: DomainSpec,
-  predicate: (value: PlainValue) => boolean,
-): RowKey[] {
-  return ROWS.filter((rowKey) => predicate(plainValue(spec, rowKey)))
-}
-
-/**
- * Oracle for the encrypted ORDER BY. Domains with only two samples give ROW_B
- * and ROW_C equal values, so the comparison alone does not determine the row
- * order — ties break on `rowKey` ascending, which the query mirrors with a
- * secondary `ORDER BY row_key`. Without that both sides would be arbitrary and
- * the test would flake rather than prove ordering.
- */
-function sortedKeysFor(spec: DomainSpec, direction: 'asc' | 'desc'): RowKey[] {
-  return [...ROWS].sort((left, right) => {
-    const cmp = comparePlain(plainValue(spec, left), plainValue(spec, right))
-    if (cmp !== 0) return direction === 'asc' ? cmp : -cmp
-    return left < right ? -1 : left > right ? 1 : 0
-  })
-}
+const sortedKeysFor = (spec: DomainSpec, direction: 'asc' | 'desc'): string[] =>
+  sortedKeysForKit(spec, ROWS, direction)
 
 async function selectRowKeys(condition: SQL | undefined): Promise<string[]> {
   if (!condition) throw new Error('Expected query condition')

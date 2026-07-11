@@ -209,7 +209,7 @@ export type NonOrderableV3Keys<Table extends AnyV3Table> = {
  * btree opclass on any domain, so the sort resolves through jsonb's default
  * `jsonb_cmp` and compares the random ciphertext first. But the builder does not
  * emit a bare `ORDER BY`: for an encrypted ordering column it emits the jsonb
- * path `col->>op`, which selects the OPE term, and OPE is order-preserving. See
+ * path `col->op`, which selects the OPE term, and OPE is order-preserving. See
  * `EncryptedQueryBuilderV3Impl.orderColumnName`.
  *
  * ORE-backed (`*_ord_ore`) columns are `orderAndRange`-capable and so pass this

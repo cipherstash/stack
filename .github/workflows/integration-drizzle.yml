@@ -81,13 +81,13 @@ jobs:
       # Inferring it from `PGRST_URL` reported `postgres` for this job's Supabase
       # cell and silently skipped the grants.
       CS_IT_DB_VARIANT: ${{ matrix.db }}
-      # Scoped to the Drizzle suites plus the adapter-agnostic ones. The Supabase
-      # adapter suites are not run here; they have their own job.
+      # Scoped by directory, never by named file, so a renamed suite cannot
+      # silently drop from CI. `integration/shared/` holds the adapter-agnostic
+      # suites (harness, bloom, ope-term); the Supabase adapter suites are not
+      # run here — they have their own job.
       CS_IT_SUITE: >-
-        integration/drizzle-v3/**/*.integration.test.ts,
-        integration/harness.integration.test.ts,
-        integration/ope-term.integration.test.ts,
-        integration/match-bloom.integration.test.ts
+        integration/shared/**/*.integration.test.ts,
+        integration/drizzle-v3/**/*.integration.test.ts
 
     steps:
       - uses: actions/checkout@v6

@@ -13,17 +13,22 @@ export interface IntegrationAdapter {
   readonly name: 'drizzle' | 'supabase'
 
   /**
-   * Operations this adapter can express at all, independent of any domain.
-   * Supabase omits `order`: PostgREST cannot emit `ORDER BY eql_v3.ord_term(col)`,
-   * and a bare `ORDER BY` would sort the raw ciphertext envelope.
+   * Operations this adapter can express at all, independent of any domain. Both
+   * adapters currently cover the full `QueryOpKind` union, `order` included:
+   * Drizzle emits `ORDER BY eql_v3.ord_term(col)`, and Supabase emits the jsonb
+   * path `col->op`, which selects the same order-preserving OPE term. (Ordering
+   * columns that lack an `ope` term are rejected by the capability matrix, not
+   * by this set.)
    */
   readonly supportedOps: ReadonlySet<QueryOpKind>
 
   /**
-   * Operations this adapter refuses on ANY encrypted column, whatever its
-   * capabilities. Supabase: `{'order'}`. This is the half of the contract the
-   * capability matrix cannot derive — an ORE-capable column still cannot be
-   * ordered through PostgREST — so it is stated once, here, and pinned by a test.
+   * Operations this adapter refuses on ANY encrypted column, regardless of its
+   * capabilities — the half of the contract the capability matrix cannot derive.
+   * Both adapters currently leave this empty: Supabase's one former entry,
+   * `order`, is now allowed on OPE columns and rejected on ORE/none by the
+   * ordering-flavour guard, which the capability matrix already drives. Kept as
+   * the seam for a future adapter with a genuinely unconditional refusal.
    */
   readonly alwaysRejectedOps: ReadonlySet<QueryOpKind>
 

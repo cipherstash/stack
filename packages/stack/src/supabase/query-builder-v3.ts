@@ -238,13 +238,13 @@ export class EncryptedQueryBuilderV3Impl<
    * returns the domain's `op` term, and OPE is order-preserving by construction:
    * ordering by the term reproduces the plaintext order. PostgREST cannot emit
    * `ORDER BY eql_v3.ord_term(col)`, but it CAN emit a jsonb path —
-   * `order=col->>op.asc` — which selects exactly that term. Measured against a
-   * live PostgREST: `order=amount->>op.asc` and `.desc` both reproduce the
+   * `order=col->op.asc` — which selects exactly that term. Measured against a
+   * live PostgREST: `order=amount->op.asc` and `.desc` both reproduce the
    * plaintext order for `integer_ord` and `text_search`, over 10 rows.
    *
    * So the guard is on the ordering FLAVOUR, not on encryption:
    *
-   * - `ope` present → order by `col->>op`. Every plain `_ord` domain, plus
+   * - `ope` present → order by `col->op`. Every plain `_ord` domain, plus
    *   `text_ord` and `text_search`.
    * - `ore` present → reject. The `ob` term is an array of ORE blocks whose
    *   comparison needs the superuser-only opclass; a jsonb-path sort over it is

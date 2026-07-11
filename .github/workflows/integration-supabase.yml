@@ -64,13 +64,14 @@ jobs:
       PGRST_URL: http://localhost:55430
       # EXPLICIT, never inferred from `PGRST_URL` — see `dbVariant()`.
       CS_IT_DB_VARIANT: ${{ matrix.db }}
-      # Scoped to the suites this database serves. The Drizzle suites talk to
-      # plain Postgres and get their own job; the harness and bloom suites are
-      # adapter-agnostic and run here because a database is already up.
+      # Scoped by directory, never by named file, so a renamed suite cannot
+      # silently drop from CI. `integration/shared/` holds the adapter-agnostic
+      # suites (harness, bloom, and the ope-term tripwire for THIS job's
+      # `col->op` ordering path); the Drizzle suites talk to plain Postgres and
+      # get their own job.
       CS_IT_SUITE: >-
-        integration/supabase/**/*.integration.test.ts,
-        integration/harness.integration.test.ts,
-        integration/match-bloom.integration.test.ts
+        integration/shared/**/*.integration.test.ts,
+        integration/supabase/**/*.integration.test.ts
 
     steps:
       - uses: actions/checkout@v6

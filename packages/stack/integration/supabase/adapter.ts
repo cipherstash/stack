@@ -25,7 +25,7 @@ import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
 
 /**
  * `order` is supported. The builder rewrites an encrypted ordering column to the
- * jsonb path `col->>op`, which selects the OPE term; OPE is order-preserving, so
+ * jsonb path `col->op`, which selects the OPE term; OPE is order-preserving, so
  * PostgREST reproduces the plaintext order. Columns with no ordering term are
  * rejected by the capability matrix, exactly like `gt`/`lt`.
  */
