@@ -73,10 +73,13 @@ jobs:
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       # The identity suites federate a freshly-minted Clerk M2M JWT into a CTS
-      # token. Only they read this; the other suites ignore it. If it is unset
-      # they fail loudly (throw, never skip) rather than taking the whole job
-      # down, so it is NOT part of the require-cs-secrets preflight.
+      # token. Only they read these; the other suites ignore them. If one is
+      # unset the relevant suite fails loudly (throw, never skip) rather than
+      # taking the whole job down, so they are NOT in the require-cs-secrets
+      # preflight. `_B` is a SECOND machine (a distinct `sub`) in the same Clerk
+      # instance, used only by the cross-identity test.
       CLERK_MACHINE_TOKEN: ${{ secrets.CLERK_MACHINE_TOKEN }}
+      CLERK_MACHINE_TOKEN_B: ${{ secrets.CLERK_MACHINE_TOKEN_B }}
       # Job-level env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
       DATABASE_URL: ${{ matrix.database-url }}

@@ -12,7 +12,7 @@ import { join } from 'node:path'
  * to fix it.
  */
 
-export type Requirement = 'cipherstash' | 'database' | 'pgrest' | 'clerk'
+export type Requirement = 'cipherstash' | 'database' | 'pgrest'
 
 /** Every variable protect-ffi's `AutoStrategy` needs to authenticate from the environment. */
 const CS_VARS = [
@@ -87,16 +87,6 @@ const HINTS: Record<Requirement, () => string | null> = {
       : 'PGRST_URL. The Supabase adapter speaks PostgREST, not Postgres:\n' +
         '      docker compose -f local/docker-compose.supabase.yml up -d --wait\n' +
         '      export PGRST_URL=http://localhost:55430',
-
-  clerk: () =>
-    process.env['CLERK_MACHINE_TOKEN']
-      ? null
-      : 'CLERK_MACHINE_TOKEN. The identity / lock-context suites federate a\n' +
-        '    freshly-minted Clerk machine (M2M) JWT into a CTS token, so they need\n' +
-        "    the machine's secret key (ak_...):\n" +
-        '      export CLERK_MACHINE_TOKEN=ak_...\n' +
-        '    The CS_WORKSPACE_CRN workspace must have that Clerk instance registered\n' +
-        '    on its OIDC-providers page.',
 }
 
 /**

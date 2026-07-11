@@ -1,4 +1,3 @@
-import { requireIntegrationEnv } from '@cipherstash/test-kit'
 import { createClerkClient } from '@clerk/backend'
 
 /**
@@ -11,17 +10,27 @@ import { createClerkClient } from '@clerk/backend'
  * in an env var or a CI secret. The only secret is `CLERK_MACHINE_TOKEN`, a
  * rotatable machine key.
  *
- * The federated identity is the Clerk machine (`CTS|CS|mch_…`), which is stable
- * across encrypt and decrypt — enough for the symmetric round-trip and the
- * no-context negative path. The cross-identity test needs a SECOND machine
- * token (a distinct `sub`) and remains a follow-up.
+ * The federated identity is the Clerk machine (`CTS|CS|mch_…`), stable across
+ * encrypt and decrypt. Pass a different `tokenEnvVar` (e.g. a second machine's
+ * `CLERK_MACHINE_TOKEN_B`) to federate as a DISTINCT identity — that is what the
+ * cross-identity test uses to prove a row sealed under one machine does not
+ * decrypt under another.
  *
  * The workspace named by `CS_WORKSPACE_CRN` must have this Clerk instance
  * registered on its OIDC-providers page, or `/api/authorise` rejects the token.
  */
-export function clerkJwtProvider(): () => Promise<string> {
-  requireIntegrationEnv(['clerk'])
-  const machineSecretKey = process.env['CLERK_MACHINE_TOKEN'] as string
+export function clerkJwtProvider(
+  tokenEnvVar = 'CLERK_MACHINE_TOKEN',
+): () => Promise<string> {
+  const machineSecretKey = process.env[tokenEnvVar]
+  if (!machineSecretKey) {
+    throw new Error(
+      `Integration suite cannot run — missing ${tokenEnvVar} (a Clerk machine ` +
+        'secret key, ak_...). Its Clerk instance must be registered on the ' +
+        'CS_WORKSPACE_CRN workspace OIDC-providers page. This suite FAILS rather ' +
+        'than skips: a green skip would hide a real regression.',
+    )
+  }
 
   // `createToken` authenticates with `machineSecretKey`; `createClerkClient`
   // still wants a `secretKey` string at construction that this path never uses.

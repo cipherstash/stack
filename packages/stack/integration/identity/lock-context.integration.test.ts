@@ -27,9 +27,10 @@
  * insufficient: they drop the context identically on both sides, so they stay
  * green even if it were ignored entirely.
  *
- * A cross-identity non-match (sealed under A, queried under B) still needs a
- * second JWT with a different `sub` — a lock context only names the claim while
- * ZeroKMS resolves its value from the authenticating token. Tracked separately.
+ * The cross-identity non-match (sealed under A, decrypted under B) is covered by
+ * the final test: it federates a SECOND Clerk machine (`CLERK_MACHINE_TOKEN_B`,
+ * a distinct `sub`) and asserts B cannot read A's row, with A reading it as the
+ * control.
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
 import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
@@ -240,11 +241,11 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
   // assumed they were and asserted `[]`; this is corrected to the OBSERVED
   // behaviour, with the real boundary proven by the decryption test.
   //
-  // A true CROSS-identity proof (sealed under A, queried under B) needs a
+  // The true CROSS-identity proof (sealed under A, decrypted under B) needs a
   // SECOND machine identity with a different `sub`; the lock context only names
   // the claim (`['sub']`) while ZeroKMS resolves its value from the
-  // authenticating token. Only one Clerk machine token is wired up, so that
-  // remains a follow-up.
+  // authenticating token. That is the final test in this suite, federating
+  // `CLERK_MACHINE_TOKEN_B`.
   it('an eq matches the same row with or without a lock context (search is not identity-bound)', async () => {
     const bound = await ops.eq(secretTable.secret, SECRET_A, {
       lockContext: IDENTITY_CLAIM as never,
@@ -299,5 +300,55 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
     expect(denied).toBe(true)
     expect(message).toMatch(IDENTITY_DENIAL)
     expect(message).not.toMatch(INFRA_FAULT)
+  }, 30000)
+
+  // The true cross-identity proof: same `['sub']` claim, a DIFFERENT
+  // authenticating machine. Everything above uses one identity, so it cannot
+  // tell "bound to A" from "bound to nothing" — this can. Machine B must be a
+  // distinct machine (its own `sub`) in the same Clerk instance registered on
+  // the workspace; `clerkJwtProvider('CLERK_MACHINE_TOKEN_B')` throws if that
+  // token is unset, so this fails loudly rather than skipping.
+  it('a row sealed under identity A does not decrypt under a different identity (B)', async () => {
+    const crn = process.env.CS_WORKSPACE_CRN as string
+    const federationB = OidcFederationStrategy.create(
+      crn,
+      clerkJwtProvider('CLERK_MACHINE_TOKEN_B'),
+    )
+    if (federationB.failure) {
+      throw new Error(`[federation B]: ${federationB.failure.message}`)
+    }
+    const clientB = await EncryptionV3({
+      schemas: [schema],
+      config: { authStrategy: federationB.data },
+    })
+
+    const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
+      `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
+         WHERE test_run_id = $1 AND row_key = $2`,
+      [RUN, ROW_A],
+    )
+    expect(row).toBeDefined()
+
+    // Control: identity A reads its own row. If this is denied, A's federation
+    // or the fixture is broken and the cross-identity assertion below would
+    // "pass" for the wrong reason.
+    const asA = await decryptOutcome(() =>
+      client.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
+    )
+    expect(
+      asA.denied,
+      `identity A must read its own row (got: ${asA.message})`,
+    ).toBe(false)
+
+    // Cross-identity: B names the same `['sub']` claim, but its value is B's
+    // machine, so ZeroKMS cannot reproduce A's key.
+    const asB = await decryptOutcome(() =>
+      clientB.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
+    )
+    expect(asB.denied, 'identity B must NOT decrypt a row sealed under A').toBe(
+      true,
+    )
+    expect(asB.message).toMatch(IDENTITY_DENIAL)
+    expect(asB.message).not.toMatch(INFRA_FAULT)
   }, 30000)
 })
