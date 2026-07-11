@@ -14,10 +14,13 @@
  * `OidcFederationStrategy` and binds the key to the `sub` claim with a plain
  * `.withLockContext({ identityClaim })`.
  *
- * Gated twice: `describeLivePg` (needs `DATABASE_URL` + CS creds) and an inner
- * `USER_JWT` guard (soft-skip, matching the existing identity/lock-context
- * suites). Whether the searchable index terms are themselves identity-bound is
- * decided inside `@cipherstash/protect-ffi`, not this repo.
+ * Lives under `integration/identity/`: like every integration suite it THROWS
+ * rather than skips when unconfigured, and additionally requires `USER_JWT`
+ * (asserted in `beforeAll` via `requireIntegrationEnv(['userjwt'])`). That
+ * directory is not yet in any CI job's suite globs — the `USER_JWT` repo secret
+ * is unprovisioned (#530) — so these run locally with a token today and join CI
+ * once the secret lands. Whether the searchable index terms are themselves
+ * identity-bound is decided inside `@cipherstash/protect-ffi`, not this repo.
  *
  * We assert the symmetric behaviour (same lock context on seed + query matches
  * and decrypts) AND the negative path — an identity-bound row must not match a
@@ -29,27 +32,25 @@
  * second JWT with a different `sub` — a lock context only names the claim while
  * ZeroKMS resolves its value from the authenticating token. Tracked separately.
  */
-import 'dotenv/config'
 import { OidcFederationStrategy } from '@cipherstash/auth'
+import {
+  databaseUrl,
+  requireIntegrationEnv,
+  V3_MATRIX,
+} from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3 } from '@/encryption/v3'
 import {
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
 } from '@/eql/v3/drizzle'
 import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
-import { installEqlV3IfNeeded } from '../helpers/eql-v3'
-import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
-import { V3_MATRIX } from '../v3-matrix/catalog'
 
-const url = process.env.DATABASE_URL
-const sqlClient = LIVE_EQL_V3_PG_ENABLED
-  ? postgres(url as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sqlClient = postgres(databaseUrl(), { prepare: false })
 
 const TABLE_NAME = 'protect_ci_v3_drizzle_lock_context'
 const RUN = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -148,15 +149,14 @@ async function selectRowKeys(condition: SQL): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-  userJwt = process.env.USER_JWT
-  if (!userJwt) return
+  requireIntegrationEnv(['userjwt'])
+  userJwt = process.env.USER_JWT as string
 
   const crn = process.env.CS_WORKSPACE_CRN
   if (!crn)
     throw new Error('CS_WORKSPACE_CRN must be set for lock-context tests')
 
-  await installEqlV3IfNeeded(sqlClient)
+  // EQL v3 is installed once per run by `global-setup.ts`.
   client = await EncryptionV3({
     schemas: [schema],
     config: {
@@ -193,24 +193,12 @@ beforeAll(async () => {
 }, 120000)
 
 afterAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-  if (userJwt) {
-    await sqlClient`DELETE FROM ${sqlClient(TABLE_NAME)} WHERE test_run_id = ${RUN}`
-  }
+  await sqlClient`DELETE FROM ${sqlClient(TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient.end()
 }, 30000)
 
-describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
-  const skipUnlessJwt = (): boolean => {
-    if (!userJwt) {
-      console.log('Skipping lock-context operator test - no USER_JWT provided')
-      return true
-    }
-    return false
-  }
-
+describe('v3 drizzle operators with lock context (live pg)', () => {
   it('eq with a matching lock context selects the exact row', async () => {
-    if (skipUnlessJwt()) return
     const condition = await ops.eq(secretTable.secret, SECRET_A, {
       // Runtime accepts a plain { identityClaim } (forwarded to
       // withLockContext); the operator opts type is narrowed to LockContext.
@@ -220,7 +208,6 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
   }, 30000)
 
   it('a lock-context-bound row decrypts with the same lock context', async () => {
-    if (skipUnlessJwt()) return
     const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
       `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
          WHERE test_run_id = $1 AND row_key = $2`,
@@ -235,7 +222,6 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
   }, 30000)
 
   it('eq threads an audit config alongside the lock context', async () => {
-    if (skipUnlessJwt()) return
     const condition = await ops.eq(secretTable.secret, SECRET_B, {
       lockContext: IDENTITY_CLAIM as never,
       audit: { metadata: { sub: 'toby@cipherstash.com', type: 'query' } },
@@ -255,8 +241,6 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
   // (`['sub']`) while ZeroKMS resolves its value from the authenticating token.
   // No `USER_JWT_B` exists, so that remains a follow-up.
   it('an identity-bound row does not match an eq issued with no lock context', async () => {
-    if (skipUnlessJwt()) return
-
     // The control, in this test rather than a sibling one. `[]` is what a held
     // identity boundary and an unseeded fixture both look like, so the empty
     // assertion below proves nothing on its own — it only means something
@@ -271,7 +255,6 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
   }, 30000)
 
   it('an identity-bound row does not decrypt without its lock context', async () => {
-    if (skipUnlessJwt()) return
     const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
       `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
          WHERE test_run_id = $1 AND row_key = $2`,
@@ -296,7 +279,6 @@ describeLivePg('v3 drizzle operators with lock context (live pg)', () => {
   }, 30000)
 
   it('an identity-bound row does not decrypt under a different identity claim', async () => {
-    if (skipUnlessJwt()) return
     const [row] = await sqlClient.unsafe<Array<{ value: unknown }>>(
       `SELECT secret::jsonb AS value FROM ${TABLE_NAME}
          WHERE test_run_id = $1 AND row_key = $2`,

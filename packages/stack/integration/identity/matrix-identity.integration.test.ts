@@ -6,30 +6,25 @@
  * soft-skip when credentials (and, for lock context, `USER_JWT`) are absent,
  * mirroring the v2 `audit.test.ts` / lock-context pattern.
  */
-import 'dotenv/config'
+import { requireIntegrationEnv, unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
 import { LockContext } from '@/identity'
-import { unwrapResult } from '../fixtures'
-import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const users = encryptedTable('v3_identity_live_users', {
   email: types.TextEq('email'),
 })
 
-describeLive('v3 typed client identity-aware operations (live)', () => {
+describe('v3 typed client identity-aware operations (live)', () => {
   let client: Awaited<ReturnType<typeof EncryptionV3<[typeof users]>>>
 
   beforeAll(async () => {
+    requireIntegrationEnv(['userjwt'])
     client = await EncryptionV3({ schemas: [users] })
   }, 30000)
 
   it('round-trips a model with a lock context (encrypt + decrypt bound to identity)', async () => {
-    const userJwt = process.env.USER_JWT
-    if (!userJwt) {
-      console.log('Skipping lock context test - no USER_JWT provided')
-      return
-    }
+    const userJwt = process.env.USER_JWT as string
 
     const lc = new LockContext()
     const lockContext = await lc.identify(userJwt)

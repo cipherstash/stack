@@ -66,9 +66,13 @@ jobs:
       CS_IT_DB_VARIANT: ${{ matrix.db }}
       # Scoped by directory, never by named file, so a renamed suite cannot
       # silently drop from CI. `integration/shared/` holds the adapter-agnostic
-      # suites (harness, bloom, and the ope-term tripwire for THIS job's
-      # `col->op` ordering path); the Drizzle suites talk to plain Postgres and
-      # get their own job.
+      # suites (harness, bloom, the ope-term tripwire for THIS job's `col->op`
+      # ordering path, and the crypto/SQL matrices); the Drizzle suites talk to
+      # plain Postgres and get their own job.
+      #
+      # `integration/identity/` is DELIBERATELY absent: those suites require a
+      # `USER_JWT` that CI does not yet provision (#530). They throw rather than
+      # skip when run without it, and join this list once the secret lands.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
         integration/supabase/**/*.integration.test.ts

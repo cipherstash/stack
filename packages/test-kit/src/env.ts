@@ -12,7 +12,7 @@ import { join } from 'node:path'
  * to fix it.
  */
 
-export type Requirement = 'cipherstash' | 'database' | 'pgrest'
+export type Requirement = 'cipherstash' | 'database' | 'pgrest' | 'userjwt'
 
 /** Every variable protect-ffi's `AutoStrategy` needs to authenticate from the environment. */
 const CS_VARS = [
@@ -87,6 +87,13 @@ const HINTS: Record<Requirement, () => string | null> = {
       : 'PGRST_URL. The Supabase adapter speaks PostgREST, not Postgres:\n' +
         '      docker compose -f local/docker-compose.supabase.yml up -d --wait\n' +
         '      export PGRST_URL=http://localhost:55430',
+
+  userjwt: () =>
+    process.env['USER_JWT']
+      ? null
+      : 'USER_JWT. The identity / lock-context suites bind a data key to an\n' +
+        '    end-user JWT claim, so they need a real token:\n' +
+        '      export USER_JWT=<a JWT for the workspace>',
 }
 
 /**
