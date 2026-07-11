@@ -1,47 +1,61 @@
 /**
- * Live identity-aware coverage for the v3 typed client: lock-context round-trips
- * and audit metadata. Kept separate from `matrix-lock-context.test.ts` because
- * that file mocks `@cipherstash/protect-ffi` file-wide — a mock would neutralize
- * a "live" assertion. No mock here: these hit a real CipherStash workspace and
- * soft-skip when credentials (and, for lock context, `USER_JWT`) are absent,
- * mirroring the v2 `audit.test.ts` / lock-context pattern.
+ * Live identity-aware coverage for the v3 typed client: a lock-context
+ * encrypt→decrypt round-trip through the MODEL path, plus audit metadata.
+ *
+ * Kept separate from `matrix-lock-context.test.ts`, which mocks
+ * `@cipherstash/protect-ffi` file-wide — a mock would neutralize a "live"
+ * assertion. No mock here: it federates a freshly-minted Clerk M2M JWT into a
+ * CTS token via `OidcFederationStrategy` and binds the lock context to `sub`
+ * (resolved by ZeroKMS from the token — here, the Clerk machine identity).
+ *
+ * Lives under `integration/identity/`, which is not yet in the CI suite globs
+ * (see the integration workflows): it THROWS rather than skips without
+ * `CLERK_MACHINE_TOKEN`, and joins CI once that workspace/secret is wired up.
  */
-import { requireIntegrationEnv, unwrapResult } from '@cipherstash/test-kit'
+import { OidcFederationStrategy } from '@cipherstash/auth'
+import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
-import { LockContext } from '@/identity'
+import { clerkJwtProvider } from '../helpers/clerk'
 
 const users = encryptedTable('v3_identity_live_users', {
   email: types.TextEq('email'),
 })
 
+const LOCK = { identityClaim: ['sub'] }
+
 describe('v3 typed client identity-aware operations (live)', () => {
   let client: Awaited<ReturnType<typeof EncryptionV3<[typeof users]>>>
 
   beforeAll(async () => {
-    requireIntegrationEnv(['userjwt'])
-    client = await EncryptionV3({ schemas: [users] })
+    const crn = process.env.CS_WORKSPACE_CRN
+    if (!crn) {
+      throw new Error('CS_WORKSPACE_CRN must be set for identity tests')
+    }
+    // `create()` returns a `Result`; unwrap to the strategy `config.strategy`
+    // expects. `clerkJwtProvider()` asserts CLERK_MACHINE_TOKEN and re-mints on
+    // every re-federation.
+    const federation = OidcFederationStrategy.create(crn, clerkJwtProvider())
+    if (federation.failure) {
+      throw new Error(`[federation]: ${federation.failure.message}`)
+    }
+    client = await EncryptionV3({
+      schemas: [users],
+      config: { strategy: federation.data },
+    })
   }, 30000)
 
   it('round-trips a model with a lock context (encrypt + decrypt bound to identity)', async () => {
-    const userJwt = process.env.USER_JWT as string
-
-    const lc = new LockContext()
-    const lockContext = await lc.identify(userJwt)
-    if (lockContext.failure) {
-      throw new Error(`[protect]: ${lockContext.failure.message}`)
-    }
-
     const encrypted = unwrapResult(
       await client
         .encryptModel({ email: 'ada@example.com' }, users)
-        .withLockContext(lockContext.data),
+        .withLockContext(LOCK),
     )
     expect(encrypted.email).toHaveProperty('c')
 
     // decryptModel takes the lock context as a positional 3rd arg.
     const decrypted = unwrapResult(
-      await client.decryptModel(encrypted, users, lockContext.data),
+      await client.decryptModel(encrypted, users, LOCK as never),
     )
     expect(decrypted.email).toBe('ada@example.com')
   }, 30000)

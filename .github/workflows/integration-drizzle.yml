@@ -72,6 +72,11 @@ jobs:
       CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      # The identity suites federate a freshly-minted Clerk M2M JWT into a CTS
+      # token. Only they read this; the other suites ignore it. If it is unset
+      # they fail loudly (throw, never skip) rather than taking the whole job
+      # down, so it is NOT part of the require-cs-secrets preflight.
+      CLERK_MACHINE_TOKEN: ${{ secrets.CLERK_MACHINE_TOKEN }}
       # Job-level env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
       DATABASE_URL: ${{ matrix.database-url }}
@@ -83,15 +88,15 @@ jobs:
       CS_IT_DB_VARIANT: ${{ matrix.db }}
       # Scoped by directory, never by named file, so a renamed suite cannot
       # silently drop from CI. `integration/shared/` holds the adapter-agnostic
-      # suites (harness, bloom, ope-term, the crypto/SQL matrices); the Supabase
-      # adapter suites are not run here — they have their own job.
-      #
-      # `integration/identity/` is DELIBERATELY absent: those suites require a
-      # `USER_JWT` that CI does not yet provision (#530). They throw rather than
-      # skip when run without it, and join this list once the secret lands.
+      # suites (harness, bloom, ope-term, the crypto/SQL matrices);
+      # `integration/identity/` holds the Clerk-federated lock-context suites
+      # (they need CLERK_MACHINE_TOKEN + a workspace with the Clerk issuer
+      # registered); the Supabase adapter suites are not run here — they have
+      # their own job.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
-        integration/drizzle-v3/**/*.integration.test.ts
+        integration/drizzle-v3/**/*.integration.test.ts,
+        integration/identity/**/*.integration.test.ts
 
     steps:
       - uses: actions/checkout@v6

@@ -9,17 +9,14 @@
  * { lockContext })` against a real database and assert the encrypted term
  * actually matches the stored row and decrypts.
  *
- * Wiring mirrors `lock-context.test.ts` (the current, non-deprecated
- * strategy-based flow): the client authenticates as the end user via
- * `OidcFederationStrategy` and binds the key to the `sub` claim with a plain
- * `.withLockContext({ identityClaim })`.
+ * The client authenticates via `OidcFederationStrategy`, federating a
+ * freshly-minted Clerk M2M JWT (`clerkJwtProvider()`) into a CTS token, and
+ * binds the key to the `sub` claim — resolved by ZeroKMS from the token, here
+ * the Clerk machine identity — with a plain `.withLockContext({ identityClaim })`.
  *
  * Lives under `integration/identity/`: like every integration suite it THROWS
- * rather than skips when unconfigured, and additionally requires `USER_JWT`
- * (asserted in `beforeAll` via `requireIntegrationEnv(['userjwt'])`). That
- * directory is not yet in any CI job's suite globs — the `USER_JWT` repo secret
- * is unprovisioned (#530) — so these run locally with a token today and join CI
- * once the secret lands. Whether the searchable index terms are themselves
+ * rather than skips when unconfigured (`clerkJwtProvider()` asserts
+ * `CLERK_MACHINE_TOKEN`). Whether the searchable index terms are themselves
  * identity-bound is decided inside `@cipherstash/protect-ffi`, not this repo.
  *
  * We assert the symmetric behaviour (same lock context on seed + query matches
@@ -33,11 +30,7 @@
  * ZeroKMS resolves its value from the authenticating token. Tracked separately.
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
-import {
-  databaseUrl,
-  requireIntegrationEnv,
-  V3_MATRIX,
-} from '@cipherstash/test-kit'
+import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -49,6 +42,7 @@ import {
   extractEncryptionSchemaV3,
 } from '@/eql/v3/drizzle'
 import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
+import { clerkJwtProvider } from '../helpers/clerk'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -77,7 +71,6 @@ type SelectRow = { rowKey: string }
 let client: Awaited<ReturnType<typeof EncryptionV3>>
 let ops: ReturnType<typeof createEncryptionOperatorsV3>
 let db: ReturnType<typeof drizzle>
-let userJwt: string | undefined
 
 function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
   if (result.failure) throw new Error(result.failure.message)
@@ -128,8 +121,8 @@ const KEY_DENIAL = /^Failed to retrieve key/
  *
  * What must NOT pass is an infrastructure fault masquerading as a denial, so
  * that is excluded separately. Kept loose rather than pinned to `KEY_DENIAL`
- * because no CI run exercises this path — `USER_JWT` is unset in CI (#530) —
- * and a wrong message-shape guess would only surface once that secret lands.
+ * because which of the two denials surfaces is a ZeroKMS server-side detail,
+ * and the Clerk machine token may or may not carry an `email` claim.
  */
 const IDENTITY_DENIAL =
   /failed to retrieve key|unauthoriz|unauthoris|forbidden|denied|not authorized|not authorised/i
@@ -149,21 +142,24 @@ async function selectRowKeys(condition: SQL): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  requireIntegrationEnv(['userjwt'])
-  userJwt = process.env.USER_JWT as string
-
   const crn = process.env.CS_WORKSPACE_CRN
   if (!crn)
     throw new Error('CS_WORKSPACE_CRN must be set for lock-context tests')
 
-  // EQL v3 is installed once per run by `global-setup.ts`.
+  // A freshly-minted Clerk M2M JWT federates into a CTS token; the strategy
+  // re-mints via this callback on expiry. `clerkJwtProvider()` asserts
+  // CLERK_MACHINE_TOKEN (throws if absent). EQL v3 is installed once per run by
+  // `global-setup.ts`.
+  //
+  // `create()` returns a `Result` — unwrap to the strategy itself, which is what
+  // `config.strategy` expects (it calls `.getToken()` on it).
+  const federation = OidcFederationStrategy.create(crn, clerkJwtProvider())
+  if (federation.failure) {
+    throw new Error(`[federation]: ${federation.failure.message}`)
+  }
   client = await EncryptionV3({
     schemas: [schema],
-    config: {
-      strategy: OidcFederationStrategy.create(crn, () =>
-        Promise.resolve(userJwt as string),
-      ),
-    },
+    config: { strategy: federation.data },
   })
   ops = createEncryptionOperatorsV3(client)
   db = drizzle({ client: sqlClient })
@@ -237,9 +233,10 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
   // context — the property the suite exists to protect.
   //
   // A true CROSS-identity proof (sealed under A, queried under B) needs a
-  // second JWT with a different `sub`; the lock context only names the claim
-  // (`['sub']`) while ZeroKMS resolves its value from the authenticating token.
-  // No `USER_JWT_B` exists, so that remains a follow-up.
+  // SECOND machine identity with a different `sub`; the lock context only names
+  // the claim (`['sub']`) while ZeroKMS resolves its value from the
+  // authenticating token. Only one Clerk machine token is wired up, so that
+  // remains a follow-up.
   it('an identity-bound row does not match an eq issued with no lock context', async () => {
     // The control, in this test rather than a sibling one. `[]` is what a held
     // identity boundary and an unseeded fixture both look like, so the empty

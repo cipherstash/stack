@@ -70,9 +70,8 @@ jobs:
       # ordering path, and the crypto/SQL matrices); the Drizzle suites talk to
       # plain Postgres and get their own job.
       #
-      # `integration/identity/` is DELIBERATELY absent: those suites require a
-      # `USER_JWT` that CI does not yet provision (#530). They throw rather than
-      # skip when run without it, and join this list once the secret lands.
+      # `integration/identity/` runs on the Drizzle job (it needs Postgres +
+      # Drizzle, not PostgREST), so it is intentionally not listed here.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
         integration/supabase/**/*.integration.test.ts
