@@ -32,7 +32,7 @@ describe('v3 typed client identity-aware operations (live)', () => {
     if (!crn) {
       throw new Error('CS_WORKSPACE_CRN must be set for identity tests')
     }
-    // `create()` returns a `Result`; unwrap to the strategy `config.strategy`
+    // `create()` returns a `Result`; unwrap to the strategy `config.authStrategy`
     // expects. `clerkJwtProvider()` asserts CLERK_MACHINE_TOKEN and re-mints on
     // every re-federation.
     const federation = OidcFederationStrategy.create(crn, clerkJwtProvider())
@@ -41,7 +41,7 @@ describe('v3 typed client identity-aware operations (live)', () => {
     }
     client = await EncryptionV3({
       schemas: [users],
-      config: { strategy: federation.data },
+      config: { authStrategy: federation.data },
     })
   }, 30000)
 

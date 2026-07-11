@@ -154,14 +154,14 @@ beforeAll(async () => {
   // `global-setup.ts`.
   //
   // `create()` returns a `Result` — unwrap to the strategy itself, which is what
-  // `config.strategy` expects (it calls `.getToken()` on it).
+  // `config.authStrategy` expects (it calls `.getToken()` on it).
   const federation = OidcFederationStrategy.create(crn, clerkJwtProvider())
   if (federation.failure) {
     throw new Error(`[federation]: ${federation.failure.message}`)
   }
   client = await EncryptionV3({
     schemas: [schema],
-    config: { strategy: federation.data },
+    config: { authStrategy: federation.data },
   })
   ops = createEncryptionOperatorsV3(client)
   db = drizzle({ client: sqlClient })
