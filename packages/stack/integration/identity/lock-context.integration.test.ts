@@ -20,10 +20,12 @@
  * identity-bound is decided inside `@cipherstash/protect-ffi`, not this repo.
  *
  * We assert the symmetric behaviour (same lock context on seed + query matches
- * and decrypts) AND the negative path — an identity-bound row must not match a
- * query issued with no lock context, and must not decrypt without it. The
- * symmetric tests alone are insufficient: they drop the context identically on
- * both sides, so they stay green even if it were ignored entirely.
+ * and decrypts) AND the negative path. The boundary is at DECRYPTION: an
+ * identity-bound row must not decrypt without its context. Search is NOT the
+ * boundary — the equality term is workspace-scoped, so a no-context query still
+ * matches (see the negative-path tests). The symmetric tests alone are
+ * insufficient: they drop the context identically on both sides, so they stay
+ * green even if it were ignored entirely.
  *
  * A cross-identity non-match (sealed under A, queried under B) still needs a
  * second JWT with a different `sub` — a lock context only names the claim while
@@ -225,30 +227,34 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
     expect(await selectRowKeys(condition)).toEqual([ROW_B])
   }, 30000)
 
-  // NEGATIVE PATH. The three tests above all supply the SAME lock context on
-  // seed and on query, so they cannot distinguish "lock context applied" from
-  // "lock context silently ignored": a regression that dropped the context from
-  // the index term would drop it identically on both sides and still match.
-  // These assert that an identity-bound row is NOT reachable without its
-  // context — the property the suite exists to protect.
+  // NEGATIVE PATH. The identity boundary is enforced at DECRYPTION, not at
+  // search. The equality term (`hm`/`eq_term` HMAC) is workspace-scoped: a query
+  // WITHOUT the lock context produces the same term and matches the same row —
+  // but the value still cannot be decrypted without the context (second test
+  // below). To run the no-context query at all you must already know the
+  // plaintext to build the term, and you can confirm a match but never read the
+  // row.
+  //
+  // Whether search terms SHOULD be identity-bound is a CipherStash design
+  // question, raised with the team. An earlier version of the first test
+  // assumed they were and asserted `[]`; this is corrected to the OBSERVED
+  // behaviour, with the real boundary proven by the decryption test.
   //
   // A true CROSS-identity proof (sealed under A, queried under B) needs a
   // SECOND machine identity with a different `sub`; the lock context only names
   // the claim (`['sub']`) while ZeroKMS resolves its value from the
   // authenticating token. Only one Clerk machine token is wired up, so that
   // remains a follow-up.
-  it('an identity-bound row does not match an eq issued with no lock context', async () => {
-    // The control, in this test rather than a sibling one. `[]` is what a held
-    // identity boundary and an unseeded fixture both look like, so the empty
-    // assertion below proves nothing on its own — it only means something
-    // against a demonstration that the row IS reachable with the context.
+  it('an eq matches the same row with or without a lock context (search is not identity-bound)', async () => {
     const bound = await ops.eq(secretTable.secret, SECRET_A, {
       lockContext: IDENTITY_CLAIM as never,
     })
     expect(await selectRowKeys(bound)).toEqual([ROW_A])
 
+    // Same HMAC term, no context — still matches. Decryption, not search, is
+    // the identity boundary (proven by the next test).
     const unbound = await ops.eq(secretTable.secret, SECRET_A)
-    expect(await selectRowKeys(unbound)).toEqual([])
+    expect(await selectRowKeys(unbound)).toEqual([ROW_A])
   }, 30000)
 
   it('an identity-bound row does not decrypt without its lock context', async () => {
