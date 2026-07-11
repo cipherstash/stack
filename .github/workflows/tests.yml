@@ -64,8 +64,8 @@ jobs:
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
-          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
-          client-id: ${{ secrets.CS_CLIENT_ID }}
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
@@ -97,8 +97,8 @@ jobs:
       - name: Create .env file in ./packages/protect/
         run: |
           touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
@@ -106,8 +106,8 @@ jobs:
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
@@ -115,16 +115,16 @@ jobs:
       - name: Create .env file in ./packages/protect-dynamodb/
         run: |
           touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
       - name: Create .env file in ./packages/drizzle/
         run: |
           touch ./packages/drizzle/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env
@@ -147,8 +147,8 @@ jobs:
     # are set. We expose them at the job level so the wizard subprocess
     # picks them up via `process.env`.
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       CS_ZEROKMS_HOST: https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net
@@ -183,8 +183,8 @@ jobs:
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
-          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
-          client-id: ${{ secrets.CS_CLIENT_ID }}
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
@@ -211,8 +211,8 @@ jobs:
     # identity and region — the stack /wasm-inline config requires it and
     # derives the AccessKeyStrategy region from it.
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
@@ -262,8 +262,8 @@ jobs:
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
-          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
-          client-id: ${{ secrets.CS_CLIENT_ID }}
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
@@ -317,8 +317,8 @@ jobs:
       - name: Create .env file in ./packages/protect/
         run: |
           touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
@@ -326,8 +326,8 @@ jobs:
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
@@ -335,16 +335,16 @@ jobs:
       - name: Create .env file in ./packages/protect-dynamodb/
         run: |
           touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
       - name: Create .env file in ./packages/drizzle/
         run: |
           touch ./packages/drizzle/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env

@@ -8,10 +8,10 @@ description: >-
 
 inputs:
   workspace-crn:
-    description: secrets.CS_WORKSPACE_CRN
+    description: vars.CS_WORKSPACE_CRN
     required: true
   client-id:
-    description: secrets.CS_CLIENT_ID
+    description: vars.CS_CLIENT_ID
     required: true
   client-key:
     description: secrets.CS_CLIENT_KEY
