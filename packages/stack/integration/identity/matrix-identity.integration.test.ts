@@ -8,9 +8,9 @@
  * CTS token via `OidcFederationStrategy` and binds the lock context to `sub`
  * (resolved by ZeroKMS from the token — here, the Clerk machine identity).
  *
- * Lives under `integration/identity/`, which is not yet in the CI suite globs
- * (see the integration workflows): it THROWS rather than skips without
- * `CLERK_MACHINE_TOKEN`, and joins CI once that workspace/secret is wired up.
+ * Runs in CI on the Drizzle integration job — `integration/identity/**` is in
+ * its `CS_IT_SUITE` globs. Like every integration suite it THROWS rather than
+ * skips when unconfigured: `clerkJwtProvider()` requires `CLERK_MACHINE_TOKEN`.
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
 import { unwrapResult } from '@cipherstash/test-kit'
@@ -53,9 +53,10 @@ describe('v3 typed client identity-aware operations (live)', () => {
     )
     expect(encrypted.email).toHaveProperty('c')
 
-    // decryptModel takes the lock context as a positional 3rd arg.
+    // decryptModel takes the lock context as a positional 3rd arg
+    // (`LockContextInput` = `LockContext | { identityClaim }`).
     const decrypted = unwrapResult(
-      await client.decryptModel(encrypted, users, LOCK as never),
+      await client.decryptModel(encrypted, users, LOCK),
     )
     expect(decrypted.email).toBe('ada@example.com')
   }, 30000)
