@@ -58,9 +58,7 @@ export type EncryptedSupabaseV3Options<
    * Declaring a `text_search` column does NOT change its match behaviour: a
    * declared and a synthesized `text_search` column build byte-identically, and
    * neither `types.TextSearch` nor `EncryptedTextSearchColumn` accepts match
-   * options. `include_original: true` is therefore always in force, so a
-   * substring `contains` matches nothing on either. See the `contains` note on
-   * `EncryptedQueryBuilderV3Impl`.
+   * options. See the `contains` note on `EncryptedQueryBuilderV3Impl`.
    */
   schemas?: S
 }

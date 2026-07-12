@@ -219,7 +219,7 @@ const MATCH_BLOCK: NonNullable<Indexes>['match'] = {
   token_filters: [{ kind: 'downcase' }],
   k: 6,
   m: 2048,
-  include_original: true,
+  include_original: false,
 }
 const MATCH_IDX: Indexes = { match: MATCH_BLOCK }
 const TEXT_SEARCH_IDX: Indexes = {

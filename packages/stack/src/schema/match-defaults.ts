@@ -20,9 +20,18 @@ export type BuiltMatchIndexOpts = {
 
 /**
  * Default match-index parameters — the single source of truth shared by the
- * v2 `freeTextSearch()` builder and the v3 domain builders (note
- * `include_original: true`, which is the v2 builder default rather than the
- * zod-schema default of `false`).
+ * v2 `freeTextSearch()` builder and the v3 domain builders.
+ *
+ * `include_original: true` is the v2 builder's historical default rather than
+ * the zod-schema default of `false`. It is INERT: protect-ffi accepts the flag
+ * and ignores it (measured across 0.24 and 0.29, EQL v2 and v3 — the emitted
+ * bloom is trigram-only either way). It is kept here only so the v2 emitted
+ * config does not move. The v3 domain builders override it to `false`, the
+ * value a substring-search domain wants if ffi ever starts honouring it.
+ *
+ * In particular it does NOT let a value shorter than the tokenizer's
+ * `token_length` be matched: such a value blooms to nothing under either
+ * setting, which is exactly the fail-open {@link matchNeedleError} guards.
  *
  * This is a FACTORY (not a shared `const`) so every caller gets fresh, unaliased
  * nested objects (`tokenizer`, `token_filters` and the `{ kind: 'downcase' }`

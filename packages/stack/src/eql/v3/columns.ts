@@ -339,7 +339,8 @@ export const DOUBLE_ORD = {
  *   operator), so those emit no `hm`. Text order domains emit BOTH `unique`
  *   and the ordering index.
  * - `match` (the `bf` bloom-filter index) for free-text search, deep-cloned from
- *   the per-call defaults so no nested object is ever shared across columns.
+ *   the per-call defaults so no nested object is ever shared across columns, and
+ *   emitted with `include_original: false` (see below).
  */
 function indexesForCapabilities(
   capabilities: QueryCapabilities,
@@ -365,7 +366,15 @@ function indexesForCapabilities(
   if (capabilities.freeTextSearch) {
     // The factory returns fresh, unaliased nested objects per call, so no
     // column's emitted match block ever shares state with another's.
-    indexes.match = defaultMatchOpts()
+    //
+    // `include_original` is overridden off the v2 builder's `true`. protect-ffi
+    // ignores the flag entirely (measured across 0.24 and 0.29, EQL v2 and v3:
+    // the emitted bloom is trigram-only either way, and a value shorter than
+    // `token_length` blooms to nothing regardless), so this is inert today. It
+    // is set to the value a substring-search domain actually wants — matching
+    // the zod schema's own default — so that a protect-ffi release which starts
+    // honouring the flag cannot silently break `contains`.
+    indexes.match = { ...defaultMatchOpts(), include_original: false }
   }
 
   if (capabilities.searchableJson) {

@@ -67,11 +67,26 @@ const COLUMN_TERMS: Record<
   active: {}, // boolean — storage only
 }
 
-/** Deterministic 3-gram token set, plus the whole value as one extra token —
- * emulating the default `include_original: true`. That is precisely why a
- * SUBSTRING `like` does not match: the pattern's bloom carries the whole
- * pattern as a token the stored value's bloom lacks (see the class doc on
- * `query-builder-v3.ts`). */
+/**
+ * Deterministic stand-in for protect-ffi's match tokenizer: `ngram`
+ * (`token_length: 3`) + `downcase`, hashed into the bloom's bit domain.
+ *
+ * TRIGRAMS ONLY, deliberately. This suite has no CipherStash credentials and
+ * mints its own envelopes, so this function IS the bloom oracle for both the
+ * seeded rows and the query needles — anything it invents, the tests below will
+ * dutifully confirm. It previously prepended the whole value as an extra token
+ * to emulate `include_original: true`, which made a substring `contains` fail
+ * and pinned that failure as expected behaviour.
+ *
+ * protect-ffi does no such thing: `include_original` is accepted and ignored
+ * (measured across 0.24 and 0.29, EQL v2 and v3 — the emitted bloom is
+ * trigram-only under either setting). Substring `contains` works, as
+ * `drizzle-v3/operators-live-pg.test.ts` proves against real ffi and real
+ * Postgres.
+ *
+ * A value shorter than `token_length` yields NO tokens, matching real ffi's
+ * empty bloom — the fail-open `matchNeedleError` exists to reject.
+ */
 function bloomTokens(value: string): number[] {
   const hash = (s: string) => {
     let h = 2166136261
@@ -80,7 +95,7 @@ function bloomTokens(value: string): number[] {
     return h % 2048
   }
   const lower = value.toLowerCase()
-  const tokens = [hash(lower)] // include_original
+  const tokens: number[] = []
   for (let i = 0; i + 3 <= lower.length; i++)
     tokens.push(hash(lower.slice(i, i + 3)))
   return tokens
@@ -324,13 +339,11 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   // whose body is `match_term(a) @> match_term(b::public.eql_v3_text_search)` — a
   // smallint[] containment of the two BLOOM FILTERS. It is NOT the built-in
   // `jsonb @> jsonb`, which would compare whole envelopes and so could only ever
-  // match on an identical ciphertext. The three tests below discriminate: a
-  // 3-char needle matches while a 7-char one does not, and neither shares the
-  // stored `c`. Only bloom containment explains that.
+  // match on an identical ciphertext.
   //
-  // With the default `include_original: true` the needle's bloom carries the
-  // WHOLE needle as an extra token, so only an exact-value needle matches.
-  // Asserts the DOCUMENTED semantics, not the intuitive ones.
+  // The four tests below discriminate: substrings that share no `c` with the
+  // stored row match, and a trigram present in no row does not. Only bloom
+  // containment explains both.
   it('resolves contains() through cs containment for an exact value', async () => {
     const { data, error } = await from()
       .select('row_key')
@@ -340,28 +353,39 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
   })
 
-  // A needle LONGER than the tokenizer's 3-gram window contributes an
-  // `include_original` token no stored trigram can supply, so containment
-  // fails. (A needle of exactly 3 characters is the degenerate case: its
-  // whole-value token IS a trigram, so `contains('email','ada')` DOES match.)
-  // This is the KNOWN-BROKEN substring defect, shared with v3 Drizzle's
-  // `contains` and tracked upstream in EQL. Pinned so a fix is a visible change.
-  it('does not match a longer substring under include_original', async () => {
+  // The needle blooms to its own trigrams — `exa,xam,amp,mpl,ple` — every one of
+  // which is a trigram of `ada@example.com`, so containment holds. This once
+  // asserted the opposite, on the strength of an `include_original` token that
+  // protect-ffi never emits; `bloomTokens` above no longer invents one.
+  it('matches a longer substring through bloom containment', async () => {
     const { data, error } = await from()
       .select('row_key')
       .contains('email', 'example')
 
     expect(error).toBeNull()
-    expect(data).toEqual([])
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
   })
 
-  it('matches a 3-character substring, the degenerate include_original case', async () => {
+  it('matches a substring exactly one trigram long', async () => {
     const { data, error } = await from()
       .select('row_key')
       .contains('email', 'ada')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // The discriminator. Every assertion above is satisfied by a `contains` that
+  // matches EVERYTHING — an empty needle bloom, a broken `@>`, a fail-open. A
+  // trigram held by no stored row must come back empty. (`drizzle-v3`'s live
+  // suite pins the same guarantee against real ffi with `'qqqzzz'`.)
+  it('does not match a trigram absent from every stored value', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .contains('email', 'zzz')
+
+    expect(error).toBeNull()
+    expect(data).toEqual([])
   })
 
   // The reason `like` is gone: `~~` is not defined on public.eql_v3_text_search, so

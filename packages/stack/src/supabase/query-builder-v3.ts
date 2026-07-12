@@ -123,12 +123,11 @@ function assertNoPropertyDbNameCollision(
  *   we. The typed builder has no `like`; the runtime methods throw on an
  *   encrypted column and pass through on a plaintext one.
  *
- *   KNOWN BROKEN for real substrings, and not fixable from this file. The
- *   operand is a storage payload, so its bloom carries the whole needle as an
- *   extra `include_original` token, which the haystack's bloom cannot contain
- *   unless the needle equals the stored value or is exactly `token_length` (3)
- *   characters. v3 Drizzle's `contains` has the same defect for the same
- *   reason. Tracked in EQL; do not paper over it here.
+ *   Substrings DO match: the needle blooms to its own trigrams, and containment
+ *   holds whenever every one of them is present in the stored value's bloom —
+ *   i.e. for any substring of at least `token_length` (3) characters. Shorter
+ *   needles bloom to nothing (`bf @> '{}'` is true for every row) and are
+ *   rejected up front by `matchNeedleError`, not answered.
  *
  * Decrypted rows additionally get `Date` reconstruction from the
  * encrypt-config `cast_as`, mirroring the typed v3 client.
