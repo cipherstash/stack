@@ -116,9 +116,7 @@ describe('cipherstash operator lowering — equality extensions', () => {
       `"SELECT "user"."id" AS "id" FROM "user" WHERE NOT eql_v2.eq("user"."email", $1::eql_v2_encrypted)"`,
     )
     expect(lowered.params).toHaveLength(1)
-    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(
-      EncryptedString,
-    )
+    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(EncryptedString)
   })
 
   it('lowers cipherstashInArray with a single element to a one-term OR', () => {

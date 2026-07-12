@@ -119,20 +119,14 @@ export default async function setup(): Promise<() => Promise<void>> {
   // is for the `pnpm start` demo loop).
   process.env['DATABASE_URL'] = HARNESS_DATABASE_URL
 
-  const apply = spawnSync(
-    'pnpm',
-    ['exec', 'prisma-next', 'migrate', '--yes'],
-    {
-      cwd: exampleDir,
-      stdio: 'pipe',
-      env: process.env,
-      timeout: MIGRATION_APPLY_TIMEOUT_MS,
-    },
-  )
+  const apply = spawnSync('pnpm', ['exec', 'prisma-next', 'migrate', '--yes'], {
+    cwd: exampleDir,
+    stdio: 'pipe',
+    env: process.env,
+    timeout: MIGRATION_APPLY_TIMEOUT_MS,
+  })
   if (apply.error || apply.signal || apply.status !== 0) {
-    throw new Error(
-      describeSpawnFailure('`prisma-next migrate`', apply),
-    )
+    throw new Error(describeSpawnFailure('`prisma-next migrate`', apply))
   }
 
   // Clean slate for the suite. The `users` table is the only data-bearing

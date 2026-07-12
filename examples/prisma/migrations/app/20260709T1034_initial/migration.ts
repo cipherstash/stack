@@ -1,13 +1,18 @@
 #!/usr/bin/env -S node
-import { cipherstashAddSearchConfig } from '@prisma-next/extension-cipherstash/migration';
-import { Migration, MigrationCLI, col, primaryKey } from '@prisma-next/postgres/migration';
+import { cipherstashAddSearchConfig } from '@prisma-next/extension-cipherstash/migration'
+import {
+  col,
+  Migration,
+  MigrationCLI,
+  primaryKey,
+} from '@prisma-next/postgres/migration'
 
 export default class M extends Migration {
   override describe() {
     return {
       from: null,
       to: 'sha256:b8c4febc9397cf1b68293cdb3b2afe9f568db6967f428e3f207e32575a2bc2fa',
-    };
+    }
   }
 
   override get operations() {
@@ -34,17 +39,30 @@ export default class M extends Migration {
             notNull: true,
             codecRef: {
               codecId: 'cipherstash/string@1',
-              typeParams: { equality: true, freeTextSearch: true, orderAndRange: true },
+              typeParams: {
+                equality: true,
+                freeTextSearch: true,
+                orderAndRange: true,
+              },
             },
           }),
           col('emailverified', 'eql_v2_encrypted', {
             notNull: true,
-            codecRef: { codecId: 'cipherstash/boolean@1', typeParams: { equality: true } },
+            codecRef: {
+              codecId: 'cipherstash/boolean@1',
+              typeParams: { equality: true },
+            },
           }),
-          col('id', 'text', { notNull: true, codecRef: { codecId: 'pg/text@1' } }),
+          col('id', 'text', {
+            notNull: true,
+            codecRef: { codecId: 'pg/text@1' },
+          }),
           col('preferences', 'eql_v2_encrypted', {
             notNull: true,
-            codecRef: { codecId: 'cipherstash/json@1', typeParams: { searchableJson: true } },
+            codecRef: {
+              codecId: 'cipherstash/json@1',
+              typeParams: { searchableJson: true },
+            },
           }),
           col('salary', 'eql_v2_encrypted', {
             notNull: true,
@@ -80,9 +98,21 @@ export default class M extends Migration {
         index: 'ore',
         castAs: 'date',
       }),
-      cipherstashAddSearchConfig({ table: 'users', column: 'email', index: 'unique' }),
-      cipherstashAddSearchConfig({ table: 'users', column: 'email', index: 'match' }),
-      cipherstashAddSearchConfig({ table: 'users', column: 'email', index: 'ore' }),
+      cipherstashAddSearchConfig({
+        table: 'users',
+        column: 'email',
+        index: 'unique',
+      }),
+      cipherstashAddSearchConfig({
+        table: 'users',
+        column: 'email',
+        index: 'match',
+      }),
+      cipherstashAddSearchConfig({
+        table: 'users',
+        column: 'email',
+        index: 'ore',
+      }),
       cipherstashAddSearchConfig({
         table: 'users',
         column: 'emailverified',
@@ -107,8 +137,8 @@ export default class M extends Migration {
         index: 'ore',
         castAs: 'double',
       }),
-    ];
+    ]
   }
 }
 
-MigrationCLI.run(import.meta.url, M);
+MigrationCLI.run(import.meta.url, M)
