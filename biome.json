@@ -30,5 +30,19 @@
         "noThenProperty": "off"
       }
     }
-  }
+  },
+  "plugins": ["./biome-plugins/no-type-erasing-assertions.grit"],
+  "overrides": [
+    {
+      "includes": [
+        "**/__tests__/**",
+        "**/*.test.ts",
+        "**/*.test-d.ts",
+        "**/integration/**",
+        "**/tests/**",
+        "**/*.spec.ts"
+      ],
+      "plugins": []
+    }
+  ]
 }

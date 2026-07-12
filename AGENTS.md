@@ -177,6 +177,12 @@ Three rules to remember when editing CI or pnpm config:
 pnpm run code:fix
 ```
 
+  A Biome GritQL plugin (`biome-plugins/no-type-erasing-assertions.grit`) warns
+  on `as any` / `as never` / `as unknown` in `src` — type-erasing assertions that
+  silence the checker instead of narrowing. Fix the type or use a specific
+  assertion; suppress a deliberate case with `// biome-ignore lint/plugin:
+  <reason>`. Test/integration files are exempt (see `overrides` in `biome.json`).
+
 - **Build**: `pnpm run build` (Turborepo + tsup per package)
 - **Test**: `pnpm --filter <pkg> test` for targeted iterations
 - **Releases**: Use Changesets

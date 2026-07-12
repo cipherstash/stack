@@ -1,0 +1,26 @@
+// Flags type-erasing assertions: `x as any`, `x as never`, `x as unknown`
+// (the last also catches the inner half of `x as unknown as T` double-casts).
+//
+// These punch a hole through the type system rather than narrowing a value, so
+// a real type mismatch can hide behind them (e.g. passing the wrong shape to a
+// function whose signature you've silenced). Prefer fixing the underlying type,
+// narrowing with a guard, or a precise `as SpecificType`.
+//
+// NOT flagged: `as const` (a widening-freeze, not an erasure), a plain
+// `as SpecificType`, or `never` used as a *type annotation* (e.g. a contravariant
+// `param: never`) — those are legitimate.
+//
+// Warning, not error: the repo has a large existing backlog, and this is a
+// ratchet to keep NEW erasures visible. Intentional cases take a
+// `// biome-ignore lint/plugin: <reason>` suppression.
+or {
+  `$e as any`,
+  `$e as never`,
+  `$e as unknown`
+} where {
+  register_diagnostic(
+    span = $e,
+    message = "Avoid type-erasing assertions (`as any` / `as never` / `as unknown`) — they silence the checker instead of narrowing. Fix the underlying type, use a type guard, or assert a specific type. Suppress an intentional case with `// biome-ignore lint/plugin: <reason>`.",
+    severity = "warn"
+  )
+}
