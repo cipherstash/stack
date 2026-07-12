@@ -1,5 +1,5 @@
 ---
-'@cipherstash/stack': patch
+'@cipherstash/stack': minor
 ---
 
 Restore the EQL v3 envelope and `Result` types the adapters were erasing.
@@ -23,6 +23,16 @@ resolves `Result<T, EncryptionError>`. The Supabase divergence the erasure hid i
 now explicit: the v2 path yields `encryptQuery` composite literals and the v3
 path yields `JSON.stringify`'d envelope strings, and both are `EncryptedQueryResult`.
 
-No runtime change. The un-erasure has teeth: a `{ encrypt }` double returning
-`unknown` no longer satisfies `createEncryptionOperatorsV3`, pinned in
-`operators.test-d.ts`.
+Bumped `minor`, not `patch`: `createEncryptionOperatorsV3` is a public export
+(`@cipherstash/stack/eql/v3/drizzle`), and tightening its client contract from
+`unknown` to a typed operation surface is a compile-time breaking change — a
+downstream consumer passing a loosely-typed (`unknown`-returning) client double
+will now fail `tsc`. That tightening has teeth: `operators.test-d.ts` pins it
+with a negative type-test asserting an `unknown`-returning `{ encrypt }` double
+is rejected (a positive "correctly-typed double is accepted" assertion cannot
+catch a re-erasure, since a correct value is assignable to `unknown`).
+
+Behaviour is otherwise unchanged, with one addition: the Supabase v3 bulk path
+now rejects a `null` envelope returned by `bulkEncrypt` (the restored
+`Encrypted | null` type makes that arm reachable, and a `null` would otherwise
+be `JSON.stringify`'d to the literal `"null"` and sent as a filter operand).

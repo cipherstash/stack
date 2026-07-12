@@ -1533,7 +1533,11 @@ type TermMapping =
     }
 
 type EncryptedFilterState = {
-  encryptedValues: unknown[]
+  // `EncryptedQueryResult[]`, not `unknown[]` — `encryptCollectedTerms` returns
+  // that type, and typing the field to match is what lets the restored envelope
+  // type reach the use site (`encryptedValues[i]`) instead of widening back to
+  // `unknown` at this boundary.
+  encryptedValues: EncryptedQueryResult[]
   termMap: TermMapping[]
 }
 

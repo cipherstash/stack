@@ -516,7 +516,19 @@ export class EncryptedQueryBuilderV3Impl<
         `bulk encryption returned ${encrypted.length} terms for ${values.length} values on column "${column.getName()}".`,
       )
     }
-    return encrypted.map((term) => term.data)
+    return encrypted.map((term, i) => {
+      // `BulkEncryptedData` types the element as `Encrypted | null`. A `null`
+      // envelope here would be `JSON.stringify`'d to the literal string `"null"`
+      // and sent as the filter operand — silently matching whatever `"null"`
+      // encodes to rather than failing. A query term should never encrypt to a
+      // null envelope, so treat it as a contract violation, not a value.
+      if (term.data === null) {
+        this.encryptionFailure(
+          `bulk encryption returned a null envelope at position ${i} for column "${column.getName()}".`,
+        )
+      }
+      return term.data
+    })
   }
 
   /** Fallback for a client that predates `bulkEncrypt`. */

@@ -47,4 +47,19 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
     }
     expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith(double)
   })
+
+  it('rejects a { encrypt } double that returns `unknown` (the erasure regression)', () => {
+    // The complement of the test above, and the one with teeth: `toBeCallableWith`
+    // a correctly-typed double keeps passing even if the client contract
+    // regressed to `unknown` (a correct value is assignable to `unknown`), so it
+    // cannot catch re-erasure. This can. `encrypt` returning `unknown` must NOT
+    // satisfy the factory, whose contract is `ChainableOperation<Encrypted>`; if
+    // the erasure ever comes back, the `@ts-expect-error` goes unused and fails.
+    const erased = {
+      encrypt: (_plaintext: never, _opts: never): unknown => ({}),
+    }
+    // @ts-expect-error — `encrypt` returning `unknown` does not satisfy the
+    // factory's `ChainableOperation<Encrypted>` client contract.
+    createEncryptionOperatorsV3(erased)
+  })
 })
