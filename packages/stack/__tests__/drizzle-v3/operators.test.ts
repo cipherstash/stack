@@ -50,13 +50,21 @@ function setup(
   }),
 ) {
   const encrypt = vi.fn((...args: unknown[]) => chainable(encryptImpl(...args)))
+  // `encryptQuery` backs JSON containment: it returns a narrowed `query_jsonb`
+  // term (no ciphertext). The double returns a recognisable ste_vec-shaped term
+  // so a rendered `@>` query can be asserted.
+  const encryptQuery = vi.fn(() =>
+    chainable(
+      Promise.resolve({ data: { sv: [{ s: 'sel', hm: 'h' }] } }) as never,
+    ),
+  )
   // The factory's `client` parameter is the structural `{ encrypt }` surface,
   // so this hand-rolled double satisfies it with no cast (M1).
-  const client = { encrypt }
+  const client = { encrypt, encryptQuery }
   const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
   const dialect = new PgDialect()
   const render = (s: unknown) => dialect.sqlToQuery(s as SQL)
-  return { ops, encrypt, render }
+  return { ops, encrypt, encryptQuery, render }
 }
 
 type BulkPayload = Array<{ id?: string; plaintext: unknown }>
@@ -113,6 +121,13 @@ const storageDomains = matrixEntries.filter(
     !spec.indexes.ore &&
     !spec.indexes.ope &&
     !spec.indexes.match,
+)
+// Storage-only domains that also lack an ste_vec index: these reject `contains`
+// outright. A json (`ste_vec`) column is storage-only for eq/order but DOES
+// answer `contains` via `@>`, so it is excluded from the containment-rejection
+// group and covered by its own positive assertion below.
+const noContainmentDomains = storageDomains.filter(
+  ([, spec]) => !spec.indexes.ste_vec,
 )
 
 const users = pgTable('users', {
@@ -393,6 +408,51 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
   })
 })
 
+describe('createEncryptionOperatorsV3 - JSON containment', () => {
+  const JSON_TYPE = 'public.eql_v3_json'
+
+  // json has no `eql_v3.contains` overload: containment is the `@>` operator,
+  // and the needle is a narrowed `query_jsonb` term from `encryptQuery` (no
+  // ciphertext), cast to `eql_v3.query_jsonb`.
+  it('contains emits the @> operator with a query_jsonb needle', async () => {
+    const { ops, encryptQuery, render } = setup()
+    const q = render(
+      await ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
+    )
+
+    expect(q.sql.toLowerCase()).toContain(
+      `"matrix_users"."${slug(JSON_TYPE)}" operator(public.@>) $1::eql_v3.query_jsonb`,
+    )
+    expect(q.sql).not.toContain('eql_v3.contains')
+    // The needle is the encryptQuery result, not a full storage envelope.
+    expect(q.params).toEqual([JSON.stringify({ sv: [{ s: 'sel', hm: 'h' }] })])
+    expect(encryptQuery).toHaveBeenCalledTimes(1)
+    expect(encryptQuery.mock.calls[0]?.[1]).toMatchObject({
+      queryType: 'searchableJson',
+    })
+  })
+
+  it('contains surfaces an encryptQuery failure as an EncryptionOperatorError', async () => {
+    const { ops, encryptQuery } = setup()
+    encryptQuery.mockReturnValueOnce(
+      chainable(
+        Promise.resolve({ failure: { message: 'boom' } }) as never,
+      ) as never,
+    )
+    await expect(
+      ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+  })
+
+  it('contains rejects a null operand before calling encryptQuery', async () => {
+    const { ops, encryptQuery } = setup()
+    await expect(
+      ops.contains(matrixColumn(JSON_TYPE), null),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+    expect(encryptQuery).not.toHaveBeenCalled()
+  })
+})
+
 describe('createEncryptionOperatorsV3 - storage-only domains', () => {
   it.each(storageDomains)('%s eq throws', async (eqlType, spec) => {
     const { ops } = setup()
@@ -401,7 +461,7 @@ describe('createEncryptionOperatorsV3 - storage-only domains', () => {
     ).rejects.toBeInstanceOf(EncryptionOperatorError)
   })
 
-  it.each(storageDomains)('%s contains throws', async (eqlType, spec) => {
+  it.each(noContainmentDomains)('%s contains throws', async (eqlType, spec) => {
     const { ops } = setup()
     await expect(
       ops.contains(matrixColumn(eqlType), sampleFor(spec)),

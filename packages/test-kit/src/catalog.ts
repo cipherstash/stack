@@ -684,7 +684,11 @@ export const V3_MATRIX = {
       searchableJson: true,
     },
     indexes: {
-      ste_vec: { prefix: 'enabled', array_index_mode: 'all', mode: 'compat' },
+      ste_vec: {
+        prefix: 'enabled',
+        array_index_mode: { item: true, wildcard: true, position: false },
+        mode: 'compat',
+      },
     },
     samples: [
       { user: 'ada@example.com', roles: ['admin', 'eng'], active: true },

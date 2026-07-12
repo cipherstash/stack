@@ -372,7 +372,14 @@ function indexesForCapabilities(
     // Encrypted-JSONB (ste_vec) index. `prefix: 'enabled'` is a sentinel the
     // table's `build()` rewrites to `${tableName}/${columnName}` — the same
     // scheme v2 `searchableJson` uses — so each document's selectors are scoped
-    // to their column. `array_index_mode: 'all'` indexes every array element.
+    // to their column.
+    //
+    // `array_index_mode` indexes array elements by identity (`item`) and enables
+    // `$[*]` wildcard selectors, but deliberately drops `position`: `@>`
+    // containment must be a subset test (jsonb `@>` semantics), so `{roles:['x']}`
+    // matches any document whose `roles` array contains `x` REGARDLESS of index.
+    // With positional terms emitted (v2 `searchableJson`'s `'all'`), the needle
+    // for `x`-at-index-0 would miss a document holding `x` at index 1.
     //
     // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json` orders
     // ste_vec entries by the CLLW-OPE `op` term, so the index must emit `op`
@@ -380,7 +387,7 @@ function indexesForCapabilities(
     // domain rejects at encrypt time.
     indexes.ste_vec = {
       prefix: 'enabled',
-      array_index_mode: 'all',
+      array_index_mode: { item: true, wildcard: true, position: false },
       mode: 'compat',
     }
   }
