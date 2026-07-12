@@ -55,14 +55,12 @@ type OperandEncryptionClient = {
     plaintexts: never,
     opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
   ): unknown
-  encryptQuery?(
-    value: never,
-    opts: {
-      table: AnyV3Table
-      column: AnyEncryptedV3Column
-      queryType: 'searchableJson'
-    },
-  ): unknown
+  // `never` operands, like `encrypt` above: the real client's `encryptQuery` is
+  // generic (`queryType` is constrained to the column's own query types), which a
+  // concrete signature here cannot match. `never` params keep the structural
+  // surface satisfiable by that generic method AND by a test double. The call
+  // site casts its real operands.
+  encryptQuery?(value: never, opts: never): unknown
 }
 
 /**
@@ -467,11 +465,14 @@ export function createEncryptionOperatorsV3(
         'this client does not support encryptQuery, which JSON containment requires',
       )
     }
-    const result = (await encryptQuery(value as never, {
-      table: ctx.table,
-      column: ctx.builder,
-      queryType: 'searchableJson',
-    })) as { failure?: { message: string }; data?: unknown }
+    const result = (await encryptQuery(
+      value as never,
+      {
+        table: ctx.table,
+        column: ctx.builder,
+        queryType: 'searchableJson',
+      } as never,
+    )) as { failure?: { message: string }; data?: unknown }
     if (result.failure) {
       throw operandFailure(ctx, operator, result.failure.message)
     }

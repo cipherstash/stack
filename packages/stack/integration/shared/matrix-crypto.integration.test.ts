@@ -87,9 +87,17 @@ describe('v3 matrix live round-trip (all domains × samples)', () => {
   it.each(
     roundTripCases,
   )('%s round-trips through the model path', (_label, col, sample, i) => {
-    // Guard against a false pass: the field must be a real ciphertext (`c`),
-    // not a plaintext value that slipped through un-encrypted.
-    expect(encrypted[i][col]).toHaveProperty('c')
+    // Guard against a false pass: the field must be a real ciphertext, not a
+    // plaintext value that slipped through un-encrypted. Scalar domains carry it
+    // at a top-level `c`; a JSON (`eql_v3_json`) document is an ste_vec payload
+    // (`{ k: 'sv', sv: [...] }`) with NO top-level `c`, so it is guarded by the
+    // presence of its `sv` array instead.
+    const payload = encrypted[i][col] as { k?: unknown; sv?: unknown }
+    if (payload?.k === 'sv') {
+      expect(Array.isArray(payload.sv)).toBe(true)
+    } else {
+      expect(payload).toHaveProperty('c')
+    }
 
     const actual = decrypted[i][col]
     if (sample instanceof Date) {
