@@ -457,6 +457,22 @@ export function createEncryptionOperatorsV3(
     operator: string,
   ): Promise<SQL> {
     requireNonNullOperand(ctx, value, operator)
+    // Reject the empty-object needle. `doc @> '{}'` holds for EVERY document
+    // (jsonb `{} ⊆ anything`), so `contains(col, {})` would silently return the
+    // whole table — the same whole-table footgun the bloom path guards against
+    // with `requireAnswerableNeedle`. An accidental empty filter is a bug, not a
+    // match-all request; callers wanting every row should omit the predicate.
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === 0
+    ) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot take an empty object needle on column "${ctx.columnName}": it matches every row. Pass a non-empty sub-object, or omit the predicate to select all rows.`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
     const encryptQuery = client.encryptQuery?.bind(client)
     if (!encryptQuery) {
       throw operandFailure(

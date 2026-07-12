@@ -707,7 +707,7 @@ export type EncryptedV3TableColumn = {
   [key: string]: AnyEncryptedV3Column
 }
 
-/** A JSON value — the plaintext a `public.eql_v3_json` column reconstructs to. */
+/** A JSON value at any depth. Used for the values NESTED inside a document. */
 export type JsonValue =
   | string
   | number
@@ -715,6 +715,16 @@ export type JsonValue =
   | null
   | JsonValue[]
   | { [key: string]: JsonValue }
+
+/**
+ * The plaintext a `public.eql_v3_json` column encrypts and reconstructs: a JSON
+ * DOCUMENT — an object, an array, or `null`. NOT a bare top-level scalar:
+ * protect-ffi's `json` cast rejects a top-level string/number/boolean
+ * ("Cannot convert … to Json"), because a scalar belongs in a scalar domain
+ * (`types.TextEq`, `types.IntegerEq`, …). Nested scalars are ordinary
+ * {@link JsonValue}s and are fully supported.
+ */
+export type JsonDocument = null | JsonValue[] | { [key: string]: JsonValue }
 
 /** Map a domain's {@link PlaintextKind} to its TypeScript plaintext type. */
 type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
@@ -728,7 +738,7 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
         : K extends DateLikeCast
           ? Date
           : K extends 'json'
-            ? JsonValue
+            ? JsonDocument
             : never
 
 /**

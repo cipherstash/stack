@@ -12,6 +12,7 @@ export type {
   AnyEncryptedV3Column,
   EncryptedV3TableColumn,
   EqlTypeForColumn,
+  JsonDocument,
   JsonValue,
   PlaintextForColumn,
   QueryCapabilities,

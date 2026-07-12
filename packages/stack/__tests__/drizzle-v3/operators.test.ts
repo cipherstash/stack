@@ -451,6 +451,30 @@ describe('createEncryptionOperatorsV3 - JSON containment', () => {
     ).rejects.toBeInstanceOf(EncryptionOperatorError)
     expect(encryptQuery).not.toHaveBeenCalled()
   })
+
+  // `doc @> '{}'` holds for every row (jsonb `{} ⊆ anything`); an empty-object
+  // needle would silently return the whole table, so it is refused before
+  // encrypting — the same whole-table guard the bloom path applies.
+  it('contains rejects an empty-object needle before calling encryptQuery', async () => {
+    const { ops, encryptQuery } = setup()
+    await expect(ops.contains(matrixColumn(JSON_TYPE), {})).rejects.toThrow(
+      /matches every row/,
+    )
+    expect(encryptQuery).not.toHaveBeenCalled()
+  })
+
+  // `encryptQuery` is OPTIONAL on the operand client (see OperandEncryptionClient):
+  // a `{ encrypt }`-only client is structurally valid but cannot build the
+  // `query_jsonb` needle JSON containment needs. Without this guard the call would
+  // be a raw `TypeError: encryptQuery is not a function`; the guard turns it into a
+  // typed EncryptionOperatorError. Exercises the branch the real double can't.
+  it('contains throws a typed error when the client lacks encryptQuery', async () => {
+    const encrypt = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
+    const ops = createEncryptionOperatorsV3({ encrypt })
+    await expect(
+      ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+  })
 })
 
 describe('createEncryptionOperatorsV3 - storage-only domains', () => {

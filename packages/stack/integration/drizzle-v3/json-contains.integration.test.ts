@@ -1,10 +1,11 @@
 /**
  * Live JSON containment for the v3 `types.Json()` column through the Drizzle
  * operators. Seeds encrypted JSONB documents and queries them with
- * `ops.contains(col, subObject)` — the same operator text search uses, dispatched
- * to `eql_v3.contains` over the ste_vec document — asserting it returns exactly
- * the rows whose document contains the sub-object (jsonb `@>` semantics), and
- * excludes the rest.
+ * `ops.contains(col, subObject)` — the same operator text search uses, but on a
+ * `json` column it emits the `@>` operator over the ste_vec document (json has
+ * no `eql_v3.contains` overload) with a `query_jsonb` needle from
+ * `encryptQuery` — asserting it returns exactly the rows whose document contains
+ * the sub-object (jsonb `@>` semantics), and excludes the rest.
  */
 import { databaseUrl, unwrapResult } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
@@ -108,5 +109,15 @@ describe('v3 drizzle JSON containment (live pg)', () => {
   it('returns nothing for a sub-object no document contains', async () => {
     const condition = await ops.contains(docTable.doc, { roles: ['nope'] })
     expect(await matching(condition)).toEqual([])
+  }, 30000)
+
+  // `doc @> '{}'` holds for every row (jsonb `{} ⊆ anything`), so an empty-object
+  // needle would silently return the whole table — the same whole-table footgun
+  // the bloom path rejects. The operator must refuse it before querying, rather
+  // than leak every row.
+  it('rejects an empty-object needle before querying', async () => {
+    await expect(ops.contains(docTable.doc, {})).rejects.toThrow(
+      /matches every row/,
+    )
   }, 30000)
 })

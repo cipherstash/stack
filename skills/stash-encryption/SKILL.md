@@ -644,7 +644,7 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Timestamp` | base, `Eq`, `Ord`, `OrdOre` | `Date` (time-of-day preserved) |
 | `Text` | base, `Eq`, `Match`, `Ord`, `OrdOre`, `Search` | `string` |
 | `Boolean` | base only | `boolean` |
-| `Json` | `Json` only | a JSON value (`JsonValue`: object, array, string, number, boolean, or null) |
+| `Json` | `Json` only | a JSON *document* (`JsonDocument`: object, array, or null — NOT a top-level scalar; nested values are any `JsonValue`) |
 
 Examples: `types.Text("notes")` (storage only), `types.TextEq("username")`, `types.BigintOrd("balance")`, `types.TimestampOrdOre("created_at")`, `types.Boolean("active")`, `types.Json("metadata")`.
 
