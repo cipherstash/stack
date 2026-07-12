@@ -105,6 +105,20 @@ describe('v3 typed client identity-aware operations (live)', () => {
     expect(message).toMatch(KEY_DENIAL)
     expect(message).not.toMatch(INFRA_FAULT)
   }, 30000)
+})
+
+// The `.audit({ metadata })` path is identity-AGNOSTIC — it attaches audit
+// metadata to an encrypt, with no lock context and no `sub` binding. It needs
+// only CS credentials, so it gets its own suite with a plain (non-federated)
+// client. Coupling it to the Clerk federation `beforeAll` above would fail this
+// test on a Clerk outage or a rotated `CLERK_MACHINE_TOKEN` — for behaviour it
+// never exercises.
+describe('v3 typed client audit metadata (live)', () => {
+  let client: Awaited<ReturnType<typeof EncryptionV3<[typeof users]>>>
+
+  beforeAll(async () => {
+    client = await EncryptionV3({ schemas: [users] })
+  }, 30000)
 
   it('accepts .audit({ metadata }) on the encrypt path and still round-trips', async () => {
     const encrypted = unwrapResult(

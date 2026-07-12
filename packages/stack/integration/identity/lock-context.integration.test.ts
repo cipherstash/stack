@@ -33,7 +33,7 @@
  * control.
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
-import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
+import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -74,11 +74,6 @@ type SelectRow = { rowKey: string }
 let client: Awaited<ReturnType<typeof EncryptionV3>>
 let ops: ReturnType<typeof createEncryptionOperatorsV3>
 let db: ReturnType<typeof drizzle>
-
-function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
-  if (result.failure) throw new Error(result.failure.message)
-  return result.data as T
-}
 
 /**
  * The outcome of a decrypt attempt that is EXPECTED to be denied. `decrypt`
@@ -177,7 +172,7 @@ beforeAll(async () => {
   `)
 
   // Seed BOTH rows bound to the same lock context.
-  const encryptedRows = unwrap<Array<Record<string, unknown>>>(
+  const encryptedRows = unwrapResult<Array<Record<string, unknown>>>(
     await client
       .bulkEncryptModels(
         [
@@ -214,7 +209,7 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
     )
     expect(row).toBeDefined()
 
-    const decrypted = unwrap(
+    const decrypted = unwrapResult(
       await client.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
     )
     expect(decrypted).toBe(SECRET_A)

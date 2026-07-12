@@ -28,6 +28,7 @@ import {
   eqlTypeSlug as slug,
   sortedKeysFor as sortedKeysForKit,
   typedEntries,
+  unwrapResult,
   V3_MATRIX,
 } from '@cipherstash/test-kit'
 import {
@@ -190,11 +191,6 @@ async function selectRowKeys(condition: SQL | undefined): Promise<string[]> {
   return rows.map((row) => row.rowKey)
 }
 
-function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
-  if (result.failure) throw new Error(result.failure.message)
-  return result.data as T
-}
-
 function encryptedInsertRows(): MatrixPlainRow[] {
   return ROWS.map((rowKey) => {
     const row: MatrixPlainRow = {
@@ -260,7 +256,7 @@ beforeAll(async () => {
     )
   `)
 
-  const encryptedRows = unwrap(
+  const encryptedRows = unwrapResult(
     await client.bulkEncryptModels(encryptedInsertRows(), schema),
   )
   await db.insert(matrixTable).values(encryptedRows)
@@ -276,7 +272,7 @@ beforeAll(async () => {
   // ROW_B exists so the filter proofs below have a row they must EXCLUDE. On a
   // one-row table `gt(balance, 0n)` returning every row is indistinguishable
   // from it returning the right row.
-  const bigintRows = unwrap(
+  const bigintRows = unwrapResult(
     await client.bulkEncryptModels(
       [
         {
@@ -578,7 +574,7 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
       )
     expect(encrypted).toHaveLength(1)
 
-    const decrypted = unwrap(
+    const decrypted = unwrapResult(
       await client.decryptModel(encrypted[0], bigintSchema),
     )
     expect(decrypted.balance).toBe(BIGINT_BALANCE)
