@@ -20,6 +20,7 @@
 import type {
   AnyEncryptedV3Column,
   EqlTypeForColumn,
+  JsonValue,
   QueryCapabilities,
 } from '@cipherstash/stack/eql/v3'
 import {
@@ -40,6 +41,7 @@ import {
   EncryptedIntegerEqColumn,
   EncryptedIntegerOrdColumn,
   EncryptedIntegerOrdOreColumn,
+  EncryptedJsonColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
@@ -103,7 +105,7 @@ export type DomainSpec = Readonly<{
    * tell `integer` from `double`, and a fractional value on an int-named domain is
    * untested territory (it would truncate against a real narrow PG column).
    */
-  samples: ReadonlyArray<string | number | bigint | boolean | Date>
+  samples: ReadonlyArray<string | number | bigint | boolean | Date | JsonValue>
   /**
    * Values that MUST fail encryption. Number domains reject `NaN`/`±Infinity`
    * and `bigint` domains reject values outside the signed 64-bit (`int8`) range
@@ -664,5 +666,32 @@ export const V3_MATRIX = {
     indexes: OPE_IDX,
     samples: DOUBLE_S,
     errorSamples: NUM_ERR,
+  },
+
+  // Encrypted JSONB document (ste_vec). DEFERRED from the scalar family driver:
+  // it is queried by containment/selector, not the eq/ord/match ops the oracle
+  // models, so it is covered by a dedicated json integration suite. The row
+  // still pins the built shape (`cast_as: 'json'` + the ste_vec index) and
+  // carries representative document samples.
+  'public.eql_v3_json': {
+    builder: types.Json,
+    ColumnClass: EncryptedJsonColumn,
+    castAs: 'json',
+    capabilities: {
+      equality: false,
+      orderAndRange: false,
+      freeTextSearch: false,
+      searchableJson: true,
+    },
+    indexes: {
+      ste_vec: { prefix: 'enabled', array_index_mode: 'all', mode: 'compat' },
+    },
+    samples: [
+      { user: 'ada@example.com', roles: ['admin', 'eng'], active: true },
+      { user: 'grace@example.com', roles: ['eng'] },
+    ],
+    deferred:
+      'json is queried by ste_vec containment/selector, not the scalar op ' +
+      'matrix — covered by a dedicated json integration suite',
   },
 } as const satisfies Record<EqlV3TypeName, DomainSpec>

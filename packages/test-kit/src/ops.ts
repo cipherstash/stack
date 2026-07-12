@@ -57,6 +57,11 @@ const OPS_BY_CAPABILITY = {
   equality: ['eq', 'ne', 'in', 'notIn'],
   orderAndRange: ['gt', 'gte', 'lt', 'lte', 'between', 'notBetween', 'order'],
   freeTextSearch: ['contains'],
+  // Encrypted-JSONB containment surfaces as `contains` too (doc @> subset), but
+  // json domains are `deferred` from this driver (ste_vec doesn't fit the scalar
+  // oracle) and covered by a dedicated suite, so this entry exists to satisfy
+  // the capability-keyed type rather than to gate a run.
+  searchableJson: ['contains'],
 } as const satisfies Record<keyof QueryCapabilities, readonly QueryOpKind[]>
 
 /**

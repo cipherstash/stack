@@ -10,11 +10,15 @@ import { defaultMatchOpts } from '@/schema/match-defaults'
  * - `equality`: exact-match lookups (EQL `hm`, or comparison via `ob`).
  * - `orderAndRange`: comparison / range lookups (EQL `op`, or `ob` on `_ord_ore` domains).
  * - `freeTextSearch`: tokenised substring match (EQL `bf`).
+ * - `searchableJson`: encrypted-JSONB containment / selector lookups (EQL
+ *   `ste_vec`). Optional and mutually exclusive with the scalar flags — a
+ *   `public.eql_v3_json` document is queried by structure, not by scalar term.
  */
 export type QueryCapabilities = Readonly<{
   equality: boolean
   orderAndRange: boolean
   freeTextSearch: boolean
+  searchableJson?: boolean
 }>
 
 /**
@@ -35,7 +39,13 @@ export type DateLikeCast = (typeof DATE_LIKE_CASTS)[number]
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'bigint' | 'boolean' | DateLikeCast
+type PlaintextKind =
+  | 'string'
+  | 'number'
+  | 'bigint'
+  | 'boolean'
+  | 'json'
+  | DateLikeCast
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -57,6 +67,7 @@ type QueryableFlag<D extends V3DomainDefinition> = D['capabilities'] extends {
   equality: false
   orderAndRange: false
   freeTextSearch: false
+  searchableJson?: false | undefined
 }
   ? false
   : true
@@ -357,6 +368,23 @@ function indexesForCapabilities(
     indexes.match = defaultMatchOpts()
   }
 
+  if (capabilities.searchableJson) {
+    // Encrypted-JSONB (ste_vec) index. `prefix: 'enabled'` is a sentinel the
+    // table's `build()` rewrites to `${tableName}/${columnName}` — the same
+    // scheme v2 `searchableJson` uses — so each document's selectors are scoped
+    // to their column. `array_index_mode: 'all'` indexes every array element.
+    //
+    // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json` orders
+    // ste_vec entries by the CLLW-OPE `op` term, so the index must emit `op`
+    // (compat) terms. `'standard'` emits v2's CLLW-ORE `oc` terms, which the v3
+    // domain rejects at encrypt time.
+    indexes.ste_vec = {
+      prefix: 'enabled',
+      array_index_mode: 'all',
+      mode: 'compat',
+    }
+  }
+
   return indexes
 }
 
@@ -374,7 +402,8 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
   return (
     capabilities.equality ||
     capabilities.orderAndRange ||
-    capabilities.freeTextSearch
+    capabilities.freeTextSearch ||
+    (capabilities.searchableJson ?? false)
   )
 }
 
@@ -584,6 +613,30 @@ export class EncryptedDoubleOrdColumn extends EncryptedV3Column<
   typeof DOUBLE_ORD
 > {}
 
+// json
+const JSON_DOMAIN = {
+  eqlType: 'public.eql_v3_json',
+  castAs: 'json',
+  capabilities: {
+    equality: false,
+    orderAndRange: false,
+    freeTextSearch: false,
+    searchableJson: true,
+  },
+} as const
+
+/**
+ * Builder for a `public.eql_v3_json` column — an encrypted JSONB document,
+ * stored as an ste_vec `SteVecDocument` and queried by containment. The document
+ * (any {@link JsonValue}) round-trips through `encrypt`/`decrypt`; structural
+ * queries use the ste_vec index emitted by `build()`.
+ */
+export class EncryptedJsonColumn extends EncryptedV3Column<typeof JSON_DOMAIN> {
+  constructor(columnName: string) {
+    super(columnName, JSON_DOMAIN)
+  }
+}
+
 /**
  * Union of every v3 concrete column type. Used as the value type for v3 table
  * columns so a table may mix any generated domains.
@@ -628,6 +681,7 @@ export type AnyEncryptedV3Column =
   | EncryptedDoubleEqColumn
   | EncryptedDoubleOrdOreColumn
   | EncryptedDoubleOrdColumn
+  | EncryptedJsonColumn
 
 /**
  * A factory that builds a concrete v3 column for a given DB column name.
@@ -646,6 +700,15 @@ export type EncryptedV3TableColumn = {
   [key: string]: AnyEncryptedV3Column
 }
 
+/** A JSON value — the plaintext a `public.eql_v3_json` column reconstructs to. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
 /** Map a domain's {@link PlaintextKind} to its TypeScript plaintext type. */
 type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
@@ -657,7 +720,9 @@ type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
         ? boolean
         : K extends DateLikeCast
           ? Date
-          : never
+          : K extends 'json'
+            ? JsonValue
+            : never
 
 /**
  * The plaintext type for a single v3 column, read from the literal domain

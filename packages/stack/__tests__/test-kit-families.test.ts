@@ -55,7 +55,7 @@ describe('test-kit families partition the v3 catalog', () => {
     expect([...covered, ...deferred].sort()).toEqual([...allBare].sort())
   })
 
-  it('defers exactly the block-ORE domains, each with a reason', () => {
+  it('defers the block-ORE domains and json, each with a reason', () => {
     const deferred = FAMILY_NAMES.flatMap((f) => deferredForFamily(f))
 
     expect(deferred.map((d) => d.bare).sort()).toEqual([
@@ -63,13 +63,18 @@ describe('test-kit families partition the v3 catalog', () => {
       'date_ord_ore',
       'double_ord_ore',
       'integer_ord_ore',
+      'json',
       'numeric_ord_ore',
       'real_ord_ore',
       'smallint_ord_ore',
       'text_ord_ore',
       'timestamp_ord_ore',
     ])
-    for (const { reason } of deferred) expect(reason).toMatch(/superuser-only/)
+    // ORE domains defer for the superuser-only opclass; json defers because
+    // ste_vec containment isn't in the scalar op matrix.
+    for (const { bare, reason } of deferred) {
+      expect(reason).toMatch(bare === 'json' ? /ste_vec/ : /superuser-only/)
+    }
   })
 
   it('never hands a family a domain from a neighbouring prefix', () => {

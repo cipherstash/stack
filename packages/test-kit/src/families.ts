@@ -26,6 +26,7 @@ export type FamilyName =
   | 'timestamp'
   | 'text'
   | 'boolean'
+  | 'json'
 
 /**
  * The bare-domain prefixes each family owns. `real-double` pairs two prefixes
@@ -46,6 +47,11 @@ const FAMILY_PREFIXES: Readonly<Record<FamilyName, readonly string[]>> = {
   timestamp: ['timestamp'],
   text: ['text'],
   boolean: ['boolean'],
+  // The json family's only domain (`eql_v3_json`) is `deferred`: ste_vec
+  // containment doesn't fit the scalar oracle, so it's covered by a dedicated
+  // suite, not `runFamilySuite`. The prefix still owns it for coverage
+  // accounting.
+  json: ['json'],
 }
 
 export const FAMILY_NAMES = Object.keys(FAMILY_PREFIXES) as FamilyName[]
