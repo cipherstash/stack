@@ -1,11 +1,9 @@
-import 'dotenv/config'
+import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { typedClient } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
-import { unwrapResult } from './fixtures'
-import { describeLive, LIVE_CIPHERSTASH_ENABLED } from './helpers/live-gate'
 
 const users = encryptedTable('schema_v3_client_users', {
   email: types.TextSearch('email'),
@@ -21,7 +19,7 @@ const users = encryptedTable('schema_v3_client_users', {
   occurredAt: types.Timestamp('occurred_at'),
 })
 
-describeLive('eql_v3 client integration', () => {
+describe('eql_v3 client integration', () => {
   let protectClient: EncryptionClient
 
   beforeAll(async () => {

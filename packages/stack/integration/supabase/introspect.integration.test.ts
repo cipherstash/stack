@@ -1,24 +1,18 @@
-import 'dotenv/config'
+import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { factoryForDomain } from '@/eql/v3/domain-registry'
 import { introspect } from '@/supabase/introspect'
 import { synthesizeTables } from '@/supabase/schema-builder'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
-import { describeLivePgOnly, LIVE_PG_ENABLED } from './helpers/live-gate'
 
-const databaseUrl = process.env.DATABASE_URL
-const sql = LIVE_PG_ENABLED
-  ? postgres(databaseUrl as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sql = postgres(databaseUrl(), { prepare: false })
 
 const MODELLED = 'protect_ci_v3_introspect'
 const UNMODELLED = 'protect_ci_v3_unmodelled'
 const USER_DOMAIN = 'protect_ci_v3_user_json'
 
 beforeAll(async () => {
-  if (!LIVE_PG_ENABLED) return
-  await installEqlV3IfNeeded(sql)
+  // EQL v3 is installed once per run by `global-setup.ts`.
   await sql.unsafe(`DROP TABLE IF EXISTS ${MODELLED}`)
   await sql.unsafe(`DROP TABLE IF EXISTS ${UNMODELLED}`)
   await sql.unsafe(`
@@ -46,16 +40,15 @@ beforeAll(async () => {
 }, 30000)
 
 afterAll(async () => {
-  if (!LIVE_PG_ENABLED) return
   await sql.unsafe(`DROP TABLE IF EXISTS ${MODELLED}`)
   await sql.unsafe(`DROP TABLE IF EXISTS ${UNMODELLED}`)
   await sql.unsafe(`DROP DOMAIN IF EXISTS public.${USER_DOMAIN}`)
   await sql.end()
 }, 30000)
 
-describeLivePgOnly('eql_v3 supabase introspection', () => {
+describe('eql_v3 supabase introspection', () => {
   it('detects EQL v3 domains and classifies plaintext columns', async () => {
-    const { tables } = await introspect(databaseUrl as string)
+    const { tables } = await introspect(databaseUrl())
     const table = tables.find((t) => t.tableName === MODELLED)
     expect(table).toBeDefined()
     const domains = Object.fromEntries(
@@ -70,7 +63,7 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
   }, 30000)
 
   it('round-trips the domain → builder mapping via synthesizeTables', async () => {
-    const { tables } = await introspect(databaseUrl as string)
+    const { tables } = await introspect(databaseUrl())
 
     const { tables: synth, allColumns } = synthesizeTables(tables)
     const table = synth.get(MODELLED)
@@ -97,7 +90,7 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
   // `UNMODELLED_COLUMNS_QUERY`: EQL-by-COMMENT, and not in `DOMAIN_REGISTRY`.
   // These prove it against a real catalog — nothing else does.
   it('reports unmodelled EQL columns, keyed by table', async () => {
-    const { unmodelled } = await introspect(databaseUrl as string)
+    const { unmodelled } = await introspect(databaseUrl())
 
     // Sanity: these really are EQL domains with no types factory.
     expect(factoryForDomain('integer_ord_ope')).toBeUndefined()
@@ -112,12 +105,12 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
   }, 30000)
 
   it('does not report a fully-modelled table', async () => {
-    const { unmodelled } = await introspect(databaseUrl as string)
+    const { unmodelled } = await introspect(databaseUrl())
     expect(unmodelled.has(MODELLED)).toBe(false)
   }, 30000)
 
   it("does not report a user's own jsonb domain as unmodelled", async () => {
-    const { unmodelled } = await introspect(databaseUrl as string)
+    const { unmodelled } = await introspect(databaseUrl())
     // `own` carries a public domain with NO EQL comment → plaintext, not a leak.
     const offenders = unmodelled.get(UNMODELLED) ?? []
     expect(offenders.map((c) => c.columnName)).not.toContain('own')
@@ -127,7 +120,7 @@ describeLivePgOnly('eql_v3 supabase introspection', () => {
   // column is silently dropped from the encrypt config, yet stays in
   // `allColumns` — so `select('*')` would select it and return raw ciphertext.
   it('synthesizeTables drops an unmodelled column but allColumns keeps it', async () => {
-    const { tables } = await introspect(databaseUrl as string)
+    const { tables } = await introspect(databaseUrl())
     const { tables: synth, allColumns } = synthesizeTables(tables)
 
     expect(Object.keys(synth.get(UNMODELLED)!.columnBuilders)).toEqual([])

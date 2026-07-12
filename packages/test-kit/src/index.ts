@@ -56,6 +56,7 @@ export {
   plainValue,
   sortedKeysFor,
 } from './oracle.ts'
+export { unwrapResult } from './results.ts'
 export {
   NULL_ROW_KEY,
   type PlainRow,

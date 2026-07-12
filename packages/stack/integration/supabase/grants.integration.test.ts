@@ -29,20 +29,15 @@
  * `DATABASE_URL`-only gate, alongside `supabase-v3-introspect-pg`.
  */
 
-import 'dotenv/config'
+import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   SUPABASE_PERMISSIONS_SQL_V3,
   supabaseInternalPermissionsSql,
-} from '../../cli/src/installer/grants'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
-import { describeLivePgOnly, LIVE_PG_ENABLED } from './helpers/live-gate'
+} from '../../../cli/src/installer/grants'
 
-const databaseUrl = process.env.DATABASE_URL
-const sql = LIVE_PG_ENABLED
-  ? postgres(databaseUrl as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sql = postgres(databaseUrl(), { prepare: false })
 
 const INTERNAL_SCHEMA = 'eql_v3_internal'
 
@@ -79,8 +74,9 @@ async function probeAsAnon(): Promise<string> {
 }
 
 beforeAll(async () => {
-  if (!LIVE_PG_ENABLED) return
-  await installEqlV3IfNeeded(sql)
+  // EQL v3 (and its `--supabase` grants) is installed once per run by
+  // `global-setup.ts`; this suite then revokes and re-applies the grant SQL in
+  // isolation to prove that SQL, so it needs the schema to already exist.
 
   // `CREATE ROLE IF NOT EXISTS` does not exist; a shared CI database may
   // already carry these from an earlier run.
@@ -111,11 +107,10 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(async () => {
-  if (!LIVE_PG_ENABLED) return
   await sql.end()
 })
 
-describeLivePgOnly('supabase v3 grants against real Postgres', () => {
+describe('supabase v3 grants against real Postgres', () => {
   it('grants anon USAGE on eql_v3_internal', async () => {
     const [row] = await sql<{ usage: boolean }[]>`
       SELECT has_schema_privilege('anon', ${INTERNAL_SCHEMA}, 'USAGE') AS usage

@@ -3,12 +3,11 @@
  * The invalid-UUID case is deterministic — validation happens before any network
  * — so it runs in CI without credentials; the round-trip case is live soft-skip.
  */
-import 'dotenv/config'
+
 import { ensureKeyset } from '@cipherstash/protect-ffi'
+import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
-import { unwrapResult } from '../fixtures'
-import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const users = encryptedTable('v3_keyset_users', {
   email: types.TextEq('email'),
@@ -27,7 +26,7 @@ describe('EncryptionV3 keyset config (deterministic)', () => {
   })
 })
 
-describeLive('EncryptionV3 keyset config (live)', () => {
+describe('EncryptionV3 keyset config (live)', () => {
   let keysetId: string
 
   beforeAll(async () => {

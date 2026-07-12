@@ -200,7 +200,7 @@ describe('mergeDeclaredTables', () => {
 
 // The three-way classification (plaintext / modelled / unmodelled) moved into
 // `UNMODELLED_COLUMNS_QUERY`'s predicate, so it is proven against live Postgres
-// in `supabase-v3-introspect-pg.test.ts`, not here. What remains client-side is
+// in `integration/supabase/introspect.integration.test.ts`, not here. What remains client-side is
 // the grouping — and, load-bearing, the fact that `synthesizeTables` treats an
 // unmodelled column as plaintext (covered above): that is exactly why the
 // `from()` guard must be unconditional.

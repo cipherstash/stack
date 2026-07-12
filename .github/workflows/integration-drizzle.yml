@@ -80,10 +80,18 @@ jobs:
             pgrest-url: http://localhost:55430
 
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      # The identity suites federate a freshly-minted Clerk M2M JWT into a CTS
+      # token. Only they read these; the other suites ignore them. If one is
+      # unset the relevant suite fails loudly (throw, never skip) rather than
+      # taking the whole job down, so they are NOT in the require-cs-secrets
+      # preflight. `_B` is a SECOND machine (a distinct `sub`) in the same Clerk
+      # instance, used only by the cross-identity test.
+      CLERK_MACHINE_TOKEN: ${{ secrets.CLERK_MACHINE_TOKEN }}
+      CLERK_MACHINE_TOKEN_B: ${{ secrets.CLERK_MACHINE_TOKEN_B }}
       # Job-level env, not a `.env` file: `dotenv/config` does not override an
       # already-set `process.env`, so these win and no secret is written to disk.
       DATABASE_URL: ${{ matrix.database-url }}
@@ -95,11 +103,15 @@ jobs:
       CS_IT_DB_VARIANT: ${{ matrix.db }}
       # Scoped by directory, never by named file, so a renamed suite cannot
       # silently drop from CI. `integration/shared/` holds the adapter-agnostic
-      # suites (harness, bloom, ope-term); the Supabase adapter suites are not
-      # run here — they have their own job.
+      # suites (harness, bloom, ope-term, the crypto/SQL matrices);
+      # `integration/identity/` holds the Clerk-federated lock-context suites
+      # (they need CLERK_MACHINE_TOKEN + a workspace with the Clerk issuer
+      # registered); the Supabase adapter suites are not run here — they have
+      # their own job.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
-        integration/drizzle-v3/**/*.integration.test.ts
+        integration/drizzle-v3/**/*.integration.test.ts,
+        integration/identity/**/*.integration.test.ts
 
     steps:
       - uses: actions/checkout@v6
@@ -111,8 +123,8 @@ jobs:
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
-          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
-          client-id: ${{ secrets.CS_CLIENT_ID }}
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
