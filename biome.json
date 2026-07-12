@@ -7,7 +7,15 @@
       "!**/.turbo/",
       "!**/dist",
       "!**/nix/store",
-      "!**/*.grit"
+      "!**/*.grit",
+      "!**/*.generated.ts",
+      "!**/contract.json",
+      "!**/contract.d.ts",
+      "!**/end-contract.json",
+      "!**/end-contract.d.ts",
+      "!**/migrations/**/migration.json",
+      "!**/migrations/**/ops.json",
+      "!**/migrations/**/refs"
     ]
   },
   "formatter": {

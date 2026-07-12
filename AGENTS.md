@@ -174,14 +174,21 @@ Three rules to remember when editing CI or pnpm config:
 - **Formatting/Linting**: Use Biome
 
 ```bash
-pnpm run code:fix
+pnpm run code:fix    # format + lint, auto-fixing what it can
+pnpm run code:check  # read-only; this is what CI runs
 ```
+
+  CI runs `code:check` (in `tests.yml`) and gates on **errors** — warnings are
+  allowed (tracked for tightening). So `code:fix` must leave the tree
+  error-free before you push.
 
   A Biome GritQL plugin (`biome-plugins/no-type-erasing-assertions.grit`) warns
   on `as any` / `as never` / `as unknown` in `src` — type-erasing assertions that
   silence the checker instead of narrowing. Fix the type or use a specific
   assertion; suppress a deliberate case with `// biome-ignore lint/plugin:
-  <reason>`. Test/integration files are exempt (see `overrides` in `biome.json`).
+  <reason>`. The plugin is scoped to source via an `overrides` entry in
+  `biome.json` (test/integration files excluded) — see the plugin file's header
+  for why it must be scoped-in rather than globally-enabled-and-exempted.
 
 - **Build**: `pnpm run build` (Turborepo + tsup per package)
 - **Test**: `pnpm --filter <pkg> test` for targeted iterations

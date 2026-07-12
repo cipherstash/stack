@@ -56,7 +56,8 @@ describe('CLI init providers — package-manager-aware Next Steps', () => {
     {
       label: 'drizzle',
       create: createDrizzleProvider,
-      firstStep: (r) => `Set up your database: ${r} stash eql install --drizzle`,
+      firstStep: (r) =>
+        `Set up your database: ${r} stash eql install --drizzle`,
     },
     {
       label: 'supabase',

@@ -65,6 +65,13 @@ jobs:
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
+      # Biome format + lint. Gates on ERRORS only (warnings are allowed) — the
+      # `no-type-erasing-assertions` plugin runs at `warn`, so it surfaces new
+      # `as any`/`never`/`unknown` without blocking. Tightening to fail on
+      # warnings is tracked as a follow-up.
+      - name: Lint — Biome (format + lint)
+        run: pnpm run code:check
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
