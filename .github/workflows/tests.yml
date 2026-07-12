@@ -76,7 +76,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.8
+      - uses: pnpm/action-setup@v6.0.9
         name: Install pnpm
         with:
           run_install: false
@@ -195,7 +195,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.8
+      - uses: pnpm/action-setup@v6.0.9
         name: Install pnpm
         with:
           run_install: false
@@ -259,7 +259,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v6.0.8
+      - uses: pnpm/action-setup@v6.0.9
         name: Install pnpm
         with:
           run_install: false
@@ -280,7 +280,7 @@ jobs:
         run: npm install -g node-gyp
 
       - name: Install Deno
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@v2.0.4
         with:
           deno-version: v2.x
 
@@ -334,7 +334,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - uses: pnpm/action-setup@v6.0.8
+      - uses: pnpm/action-setup@v6.0.9
         name: Install pnpm
         with:
           run_install: false

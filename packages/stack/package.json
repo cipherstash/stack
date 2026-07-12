@@ -232,7 +232,7 @@
 		"@clack/prompts": "^1.4.0",
 		"@clerk/backend": "3.4.9",
 		"@supabase/postgrest-js": "2.105.4",
-		"@supabase/supabase-js": "^2.105.4",
+		"@supabase/supabase-js": "^2.110.0",
 		"@types/pg": "^8.20.0",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
