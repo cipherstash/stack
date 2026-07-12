@@ -8,11 +8,13 @@ import type {
 } from '@/schema'
 import type {
   BuildableQueryColumn,
+  Encrypted,
+  EncryptedQueryResult,
   QueryTypeName,
   ScalarQueryTerm,
 } from '@/types'
 import { logger } from '@/utils/logger'
-import { addJsonbCastsV3 } from './helpers'
+import { addJsonbCastsV3, selectKeyToDbV3 } from './helpers'
 import {
   EncryptedQueryBuilderImpl,
   EncryptionFailedError,
@@ -212,28 +214,39 @@ export class EncryptedQueryBuilderV3Impl<
   }
 
   /**
-   * Ordering by ANY encrypted v3 column is rejected — including the ORE-capable
-   * ones, which is the non-obvious half.
+   * `ORDER BY` on an OPE-backed column is supported; on every other encrypted
+   * column it is rejected.
    *
-   * The `*_ord` domains are `CREATE DOMAIN … AS jsonb`, and the bundle declares
-   * NO btree operator class on any domain — it actively lints against one
-   * (`domain_opclass`), because an opclass on a domain bypasses operator
-   * resolution. So `ORDER BY col` does not reach `eql_v3`'s ORE comparisons at
-   * all: it resolves through jsonb's DEFAULT btree opclass, `jsonb_cmp`, and
-   * sorts by the envelope's byte structure — keys compare alphabetically, so the
-   * sort is effectively on the `bf` bloom array. No error, no warning, and a
-   * stable, plausible-looking, meaningless row order.
+   * A bare `ORDER BY col` IS wrong. The `*_ord` domains are
+   * `CREATE DOMAIN … AS jsonb`, and the bundle declares no btree operator class
+   * on any domain — it actively lints against one (`domain_opclass`), because an
+   * opclass on a domain bypasses operator resolution. So the sort resolves
+   * through jsonb's default `jsonb_cmp` and compares the envelope's keys in
+   * storage order, starting at the random ciphertext `c`. No error, and a
+   * stable, meaningless row order. (Measured: over 10 rows it returns
+   * `r00,r04,r08,r01,…` where the plaintext order is `r00..r09`.)
    *
-   * Correct ordering is `ORDER BY eql_v3.ord_term(col)`, which PostgREST's
-   * `order=` parameter cannot express. The v3 Drizzle integration emits exactly
-   * that (`sql-dialect.ts` `orderBy`), and proves it against live Postgres.
+   * But the correct sort key is reachable without a function call. `eql_v3.ord_term`
+   * returns the domain's `op` term, and OPE is order-preserving by construction:
+   * ordering by the term reproduces the plaintext order. PostgREST cannot emit
+   * `ORDER BY eql_v3.ord_term(col)`, but it CAN emit a jsonb path —
+   * `order=col->op.asc` — which selects exactly that term. Measured against a
+   * live PostgREST: `order=amount->op.asc` and `.desc` both reproduce the
+   * plaintext order for `integer_ord` and `text_search`, over 10 rows.
    *
-   * The `>=`/`<=` operators ARE declared on the ord domains, so `gte`/`lte`
-   * filters remain correct. Filtering and sorting resolve through different
-   * machinery; only sorting is broken.
+   * So the guard is on the ordering FLAVOUR, not on encryption:
    *
-   * A column absent from {@link v3Columns} is a plaintext passthrough, and
-   * orders normally. This runtime guard is the only protection the untyped
+   * - `ope` present → order by `col->op`. Every plain `_ord` domain, plus
+   *   `text_ord` and `text_search`.
+   * - `ore` present → reject. The `ob` term is an array of ORE blocks whose
+   *   comparison needs the superuser-only opclass; a jsonb-path sort over it is
+   *   meaningless. (Such a column cannot hold data on managed Postgres at all:
+   *   its domain CHECK raises `ore_domain_unavailable`.)
+   * - neither → reject. Storage-only, equality-only and match-only columns
+   *   carry no ordering term to sort by.
+   *
+   * A column absent from {@link v3Columns} is a plaintext passthrough and orders
+   * normally. This runtime guard is the only protection the untyped
    * (no-`schemas`) surface has.
    */
   protected override validateTransforms(): void {
@@ -241,10 +254,60 @@ export class EncryptedQueryBuilderV3Impl<
       if (t.kind !== 'order') continue
       const column = this.v3Columns[t.column]
       if (!column) continue
+
+      const indexes = this.columnSchemas[column.getName()]?.indexes
+      if (indexes?.ope) continue
+
+      const reason = indexes?.ore
+        ? 'its ORE ordering term (`ob`) needs the superuser-only ORE operator class, which PostgREST cannot reach through a jsonb path'
+        : 'it carries no ordering term to sort by'
+
       throw new Error(
-        `[supabase v3]: cannot order by encrypted column "${column.getName()}" (${column.getEqlType()}) — PostgREST cannot emit \`ORDER BY eql_v3.ord_term("${column.getName()}")\`, and a bare \`ORDER BY\` sorts the raw ciphertext envelope, not the plaintext. Order by a plaintext column, expose \`eql_v3.ord_term()\` as a generated column or view and order by that, or use the EQL v3 Drizzle integration.`,
+        `[supabase v3]: cannot order by encrypted column "${column.getName()}" (${column.getEqlType()}) — ${reason}. ` +
+          'Order by a plaintext column, or use an OPE-backed ordering domain ' +
+          '(`*_ord`, `text_ord`, `text_search`), or use the EQL v3 Drizzle integration.',
       )
     }
+  }
+
+  /**
+   * Encrypted ordering columns sort by their `op` term, not by the envelope.
+   *
+   * `order=col->op` is the one ordering expression PostgREST can emit that
+   * reaches the OPE term. It must NOT leak into filters — those compare whole
+   * envelopes through the `eql_v3.*` operators — which is why this is its own
+   * seam rather than a change to `filterColumnName`.
+   *
+   * The canonical EQL form is `ORDER BY eql_v3.ord_term(col)`, which returns
+   * `eql_v3_internal.ope_cllw` — a domain over `bytea`, ordered by the native
+   * btree. PostgREST cannot call a function, so it orders the `op` term where it
+   * sits, inside the envelope. The two agree because the term is what
+   * `ord_term()` returns.
+   *
+   * `->` (jsonb) rather than `->>` (text) keeps the comparison on the typed
+   * value. Note this does NOT avoid the database collation: Postgres compares
+   * jsonb strings with `varstr_cmp` under the default collation, exactly as it
+   * does text. What makes the ordering collation-independent is the term itself
+   * — fixed-width lowercase hex (`[0-9a-f]`, 130 chars for `integer_ord`, 82 for
+   * `text_search`) — and every collation orders digits before letters and hex
+   * letters among themselves. `match-bloom`'s sibling assertion pins that shape.
+   *
+   * This runs at column-name-mapping time (`transformToDbSpace`), BEFORE
+   * `buildAndExecuteQuery` calls `validateTransforms`. For an encrypted column
+   * with no `ope` index it therefore returns a bare `dbName` here — a name that
+   * would sort by `jsonb_cmp` over the ciphertext if it reached PostgREST — but
+   * it never does: `validateTransforms` throws (with a domain-specific reason)
+   * before the query executes, so the bare name is only ever an intermediate
+   * value on a request that is about to be rejected.
+   */
+  protected override orderColumnName(column: string): DbName {
+    const dbName = this.dbNameFor(column)
+    const encrypted = this.v3Columns[column]
+    if (!encrypted) return dbName as DbName
+
+    return (
+      this.columnSchemas[dbName]?.indexes?.ope ? `${dbName}->op` : dbName
+    ) as DbName
   }
 
   /**
@@ -381,7 +444,7 @@ export class EncryptedQueryBuilderV3Impl<
    */
   protected override async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
-  ): Promise<unknown[]> {
+  ): Promise<EncryptedQueryResult[]> {
     const groups = new Map<
       V3ColumnLike,
       { indices: number[]; values: ScalarQueryTerm['value'][] }
@@ -397,7 +460,11 @@ export class EncryptedQueryBuilderV3Impl<
     const bulkEncrypt = this.encryptionClient.bulkEncrypt?.bind(
       this.encryptionClient,
     )
-    const results = new Array<unknown>(terms.length)
+    // Each term becomes the `JSON.stringify`'d storage envelope — a `string`,
+    // which is one arm of `EncryptedQueryResult`. PostgREST cannot cast a filter
+    // value to the `eql_v3.query_<name>` twins, so v3 sends full envelopes where
+    // v2 sends `encryptQuery` composite literals; both are `EncryptedQueryResult`.
+    const results = new Array<EncryptedQueryResult>(terms.length)
 
     await Promise.all(
       Array.from(groups, async ([column, { indices, values }]) => {
@@ -419,7 +486,7 @@ export class EncryptedQueryBuilderV3Impl<
     bulkEncrypt: NonNullable<EncryptionClient['bulkEncrypt']>,
     column: V3ColumnLike,
     values: ScalarQueryTerm['value'][],
-  ): Promise<unknown[]> {
+  ): Promise<Array<Encrypted | null>> {
     const baseOp = bulkEncrypt(
       values.map((plaintext) => ({ plaintext })) as never,
       { column, table: this.v3Table } as never,
@@ -435,21 +502,34 @@ export class EncryptedQueryBuilderV3Impl<
 
     // `bulkEncrypt` is position-stable, so a length mismatch means the contract
     // was violated. Truncating instead would silently widen an `in` predicate
-    // (or narrow a `not.in`) to whatever came back.
-    const encrypted = result.data as Array<{ data: unknown }> | undefined
-    if (!Array.isArray(encrypted) || encrypted.length !== values.length) {
+    // (or narrow a `not.in`) to whatever came back. `result.data` is now
+    // `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]` — not `unknown`.
+    const encrypted = result.data
+    if (encrypted.length !== values.length) {
       this.encryptionFailure(
-        `bulk encryption returned ${Array.isArray(encrypted) ? encrypted.length : 0} terms for ${values.length} values on column "${column.getName()}".`,
+        `bulk encryption returned ${encrypted.length} terms for ${values.length} values on column "${column.getName()}".`,
       )
     }
-    return encrypted.map((term) => term.data)
+    return encrypted.map((term, i) => {
+      // `BulkEncryptedData` types the element as `Encrypted | null`. A `null`
+      // envelope here would be `JSON.stringify`'d to the literal string `"null"`
+      // and sent as the filter operand — silently matching whatever `"null"`
+      // encodes to rather than failing. A query term should never encrypt to a
+      // null envelope, so treat it as a contract violation, not a value.
+      if (term.data === null) {
+        this.encryptionFailure(
+          `bulk encryption returned a null envelope at position ${i} for column "${column.getName()}".`,
+        )
+      }
+      return term.data
+    })
   }
 
   /** Fallback for a client that predates `bulkEncrypt`. */
   private async encryptGroupPerTerm(
     column: V3ColumnLike,
     values: ScalarQueryTerm['value'][],
-  ): Promise<unknown[]> {
+  ): Promise<Encrypted[]> {
     return Promise.all(
       values.map(async (value) => {
         const baseOp = this.encryptionClient.encrypt(value, {
@@ -533,18 +613,31 @@ export class EncryptedQueryBuilderV3Impl<
   protected override postprocessDecryptedRow(
     row: Record<string, unknown>,
   ): Record<string, unknown> {
-    const out: Record<string, unknown> = { ...row }
+    // Every key an encrypted column can appear under: the keys this select
+    // actually produces (including caller-chosen aliases like `ts:createdAt`),
+    // plus the static property and DB names as a fallback for paths that record
+    // no select. Aliases win. Derived here from `this.selectColumns` (the row in
+    // hand) rather than cached from `buildSelectString`, so a reused builder can
+    // never postprocess a row with a previous operation's stale select map.
+    const keyToDb: Record<string, string> = Object.assign(
+      Object.create(null),
+      this.selectColumns === null
+        ? undefined
+        : selectKeyToDbV3(this.selectColumns, this.propToDb),
+    )
     for (const [property, dbName] of Object.entries(this.propToDb)) {
+      keyToDb[property] ??= dbName
+      keyToDb[dbName] ??= dbName
+    }
+
+    const out: Record<string, unknown> = { ...row }
+    for (const [key, dbName] of Object.entries(keyToDb)) {
       const castAs = this.columnSchemas[dbName]?.cast_as
       if (!DATE_LIKE_CAST_SET.has(castAs as string)) continue
-      // Rows are keyed by property name when selected via the aliasing cast
-      // helper, but a caller selecting by raw DB name gets DB-name keys.
-      for (const key of property === dbName ? [property] : [property, dbName]) {
-        const value = out[key]
-        if (value == null || value instanceof Date) continue
-        if (typeof value === 'string' || typeof value === 'number') {
-          out[key] = new Date(value)
-        }
+      const value = out[key]
+      if (value == null || value instanceof Date) continue
+      if (typeof value === 'string' || typeof value === 'number') {
+        out[key] = new Date(value)
       }
     }
     return out

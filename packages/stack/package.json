@@ -224,11 +224,13 @@
 		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
-		"release": "tsup"
+		"release": "tsup",
+		"test:integration": "vitest run --config integration/vitest.config.ts"
 	},
 	"devDependencies": {
 		"@cipherstash/eql": "3.0.0",
 		"@clack/prompts": "^1.4.0",
+		"@clerk/backend": "3.4.9",
 		"@supabase/postgrest-js": "2.105.4",
 		"@supabase/supabase-js": "^2.105.4",
 		"@types/pg": "^8.20.0",

@@ -10,6 +10,7 @@ import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import { EncryptedColumn } from '@/schema'
 import type {
   BuildableQueryColumn,
+  EncryptedQueryResult,
   QueryTypeName,
   ScalarQueryTerm,
 } from '@/types'
@@ -690,9 +691,31 @@ export class EncryptedQueryBuilderImpl<
     for (let i = 0; i < dbSpace.rawFilters.length; i++) {
       const rf = dbSpace.rawFilters[i]
       if (!isEncryptedColumn(rf.column, this.encryptedColumnNames)) continue
-      if (!isEncryptableTerm(rf.operator, rf.value)) continue
       const column = tableColumns[rf.column]
       if (!column) continue
+
+      if (rf.operator === 'in') {
+        // Same contract as the `not(…, 'in', …)` path: a PostgREST list literal
+        // (`'("a","b")'`) cannot be encrypted element-wise, and encrypting it
+        // whole matches nothing. Refuse it rather than emit a filter that
+        // silently returns no rows.
+        if (!Array.isArray(rf.value)) {
+          throw new Error(
+            `filter("${rf.column}", "in", …) on an encrypted column requires an array of values, ` +
+              `not a PostgREST list literal — each element must be encrypted separately`,
+          )
+        }
+        collectInListTerms(
+          'in',
+          rf.value,
+          column,
+          this.queryTypeForRawOp(rf.operator),
+          (inIndex) => ({ source: 'raw', rawIndex: i, inIndex }),
+        )
+        continue
+      }
+
+      if (!isEncryptableTerm(rf.operator, rf.value)) continue
 
       pushTerm(
         rf.value as JsPlaintext,
@@ -719,7 +742,7 @@ export class EncryptedQueryBuilderImpl<
    */
   protected async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
-  ): Promise<unknown[]> {
+  ): Promise<EncryptedQueryResult[]> {
     // Batch encrypt all terms in one call
     const baseOp = this.encryptionClient.encryptQuery(terms)
     const op = this.lockContext
@@ -809,10 +832,19 @@ export class EncryptedQueryBuilderImpl<
     return { kind: 'structured', conditions: of_.conditions.map(toDbCondition) }
   }
 
+  /**
+   * The column expression `order()` sends to PostgREST. Its own seam, separate
+   * from {@link filterColumnName}: v3 orders an encrypted column by a jsonb path
+   * into its ordering term, which must not leak into filters.
+   */
+  protected orderColumnName(column: string): DbName {
+    return this.filterColumnName(column)
+  }
+
   private transformToDbSpace(t: TransformOp): DbTransformOp {
     switch (t.kind) {
       case 'order':
-        return { ...t, column: this.filterColumnName(t.column) }
+        return { ...t, column: this.orderColumnName(t.column) }
       // `returns` is in the union but never pushed (`returns()` is a cast).
       case 'limit':
       case 'range':
@@ -945,6 +977,7 @@ export class EncryptedQueryBuilderImpl<
     const notValueMap = new Map<number, unknown>()
     const notInMap = new Map<string, unknown>() // "notIndex:inIndex" -> value
     const rawValueMap = new Map<number, unknown>()
+    const rawInMap = new Map<string, unknown>() // "rawIndex:inIndex" -> value
     const orStringConditionMap = new Map<string, unknown>() // "orIndex:condIndex" -> value
     const orStructuredConditionMap = new Map<string, unknown>()
 
@@ -974,7 +1007,11 @@ export class EncryptedQueryBuilderImpl<
           }
           break
         case 'raw':
-          rawValueMap.set(mapping.rawIndex, encValue)
+          if (mapping.inIndex !== undefined) {
+            rawInMap.set(`${mapping.rawIndex}:${mapping.inIndex}`, encValue)
+          } else {
+            rawValueMap.set(mapping.rawIndex, encValue)
+          }
           break
         // `inIndex` widens the key to address one element of an `in` list, so a
         // whole-condition value and a per-element value never collide.
@@ -1145,6 +1182,22 @@ export class EncryptedQueryBuilderImpl<
     // Apply raw filters
     for (let i = 0; i < dbSpace.rawFilters.length; i++) {
       const rf = dbSpace.rawFilters[i]
+
+      // An encrypted `in` list was encrypted element-wise; reassemble it into
+      // the quoted PostgREST list literal, exactly as the `not` path does. A
+      // plaintext column keeps its operand untouched.
+      if (
+        rf.operator === 'in' &&
+        Array.isArray(rf.value) &&
+        isEncryptedColumn(rf.column, this.encryptedColumnNames)
+      ) {
+        const values = rf.value.map((v, j) =>
+          rawInMap.has(`${i}:${j}`) ? rawInMap.get(`${i}:${j}`) : v,
+        )
+        q = q.filter(rf.column, rf.operator, formatInListOperand(values))
+        continue
+      }
+
       const value = rawValueMap.has(i) ? rawValueMap.get(i) : rf.value
       q = q.filter(rf.column, rf.operator, value)
     }
@@ -1465,7 +1518,7 @@ type TermMapping =
   | { source: 'filter'; filterIndex: number; inIndex?: number }
   | { source: 'match'; matchIndex: number; column: string }
   | { source: 'not'; notIndex: number; inIndex?: number }
-  | { source: 'raw'; rawIndex: number }
+  | { source: 'raw'; rawIndex: number; inIndex?: number }
   | {
       source: 'or-string'
       orIndex: number
@@ -1480,7 +1533,11 @@ type TermMapping =
     }
 
 type EncryptedFilterState = {
-  encryptedValues: unknown[]
+  // `EncryptedQueryResult[]`, not `unknown[]` — `encryptCollectedTerms` returns
+  // that type, and typing the field to match is what lets the restored envelope
+  // type reach the use site (`encryptedValues[i]`) instead of widening back to
+  // `unknown` at this boundary.
+  encryptedValues: EncryptedQueryResult[]
   termMap: TermMapping[]
 }
 

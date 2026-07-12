@@ -1,8 +1,7 @@
 import 'dotenv/config'
 import { encrypt, newClient } from '@cipherstash/protect-ffi'
-import { beforeAll, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { defaultMatchOpts } from '@/schema/match-defaults'
-import { describeLive } from './helpers/live-gate'
 
 /**
  * Pins what protect-ffi's match index ACTUALLY emits, against real ffi.
@@ -39,7 +38,7 @@ const encryptConfigWith = (includeOriginal: boolean) => ({
 
 type Client = Awaited<ReturnType<typeof newClient>>
 
-describeLive('protect-ffi match bloom', () => {
+describe('protect-ffi match bloom', () => {
   let withOriginal: Client
   let withoutOriginal: Client
 

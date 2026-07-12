@@ -1,6 +1,11 @@
 import type { EncryptionClient } from '@/encryption'
 import type { AuditConfig } from '@/encryption/operations/base-operation'
-import type { AnyV3Table, InferPlaintext, QueryTypesForColumn } from '@/eql/v3'
+import type {
+  AnyV3Table,
+  EqlTypeForColumn,
+  InferPlaintext,
+  QueryTypesForColumn,
+} from '@/eql/v3'
 import type { EncryptionError } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
@@ -186,13 +191,57 @@ export type V3ContainsValue<
   : string
 
 /**
- * Row keys a v3 builder accepts in `order()`: every row key that is NOT an
- * encrypted v3 column. `ORDER BY` on an EQL v3 domain sorts the raw ciphertext
- * envelope — the bundle declares no btree operator class on any domain, so the
- * sort resolves through jsonb's default `jsonb_cmp`. Correct ordering needs
- * `eql_v3.ord_term(col)`, which PostgREST cannot emit.
+ * JS property names of a v3 table's columns that `order()` cannot sort by. Two
+ * cases:
+ *
+ * 1. Columns with NO `orderAndRange` capability — storage-only, equality-only
+ *    and match-only domains hold no ordering term.
+ * 2. ORE-backed (`*_ord_ore`) columns. They ARE `orderAndRange`-capable, but the
+ *    builder sorts encrypted columns through a jsonb path (`col->op`), and the
+ *    OPE term that path selects does not exist on an ORE domain — its `ob` term
+ *    needs the superuser-only ORE opclass no jsonb path can reach. So they are
+ *    excluded here to match the runtime rejection in `validateTransforms`,
+ *    rather than type-checking clean and throwing at execute time.
+ */
+export type NonOrderableV3Keys<Table extends AnyV3Table> = {
+  [K in Extract<
+    keyof V3ColumnsOfTable<Table>,
+    string
+  >]: 'orderAndRange' extends QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>
+    ? EqlTypeForColumn<V3ColumnsOfTable<Table>[K]> extends `${string}_ord_ore`
+      ? K
+      : never
+    : K
+}[Extract<keyof V3ColumnsOfTable<Table>, string>]
+
+/**
+ * Row keys a v3 builder accepts in `order()`: every plaintext row key, plus the
+ * encrypted columns that carry an ordering term.
+ *
+ * A bare `ORDER BY col` on an EQL v3 domain IS wrong — the bundle declares no
+ * btree opclass on any domain, so the sort resolves through jsonb's default
+ * `jsonb_cmp` and compares the random ciphertext first. But the builder does not
+ * emit a bare `ORDER BY`: for an encrypted ordering column it emits the jsonb
+ * path `col->op`, which selects the OPE term, and OPE is order-preserving. See
+ * `EncryptedQueryBuilderV3Impl.orderColumnName`.
+ *
+ * ORE-backed (`*_ord_ore`) columns are excluded at compile time by
+ * {@link NonOrderableV3Keys} — the builder sorts through a jsonb path that
+ * cannot reach their superuser-only ORE opclass, so `.order()` on one is a type
+ * error, matching the runtime rejection in `validateTransforms` (defense in
+ * depth for the untyped `.order(someString)` path).
  */
 export type V3OrderableKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = Exclude<Extract<keyof Row, string>, NonOrderableV3Keys<Table>>
+
+/**
+ * Row keys that are NOT encrypted v3 columns. Used where a method's operand is a
+ * SQL value rather than a ciphertext envelope — `is(col, true)` in particular,
+ * since an encrypted column holds jsonb and can never be `IS TRUE`.
+ */
+export type V3PlaintextKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > = Exclude<
@@ -218,10 +267,12 @@ export interface EncryptedQueryBuilderV3<
     V3FilterableKeys<Table, Row> & StringKeyOf<Row>,
     EncryptedQueryBuilderV3<Table, Row>,
     V3OrderableKeys<Table, Row> & StringKeyOf<Row>,
-    // `is(col, true)` is legal only on a plaintext column. That is exactly the
-    // orderable set today — every encrypted column is excluded from both — but
-    // the two are threaded separately so they can diverge.
-    V3OrderableKeys<Table, Row> & StringKeyOf<Row>
+    // `is(col, true)` is legal only on a PLAINTEXT column: an encrypted column
+    // holds a jsonb envelope, never a SQL boolean. The two axes were threaded
+    // separately "so they can diverge", and now they have — `order()` admits
+    // encrypted ordering columns (sorted by their `op` term), `is(col, true)`
+    // still admits none.
+    V3PlaintextKeys<Table, Row> & StringKeyOf<Row>
   > {
   contains<K extends V3FreeTextSearchableKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,

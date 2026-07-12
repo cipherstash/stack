@@ -1,9 +1,14 @@
 import { resolve } from 'node:path'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
+import { sharedAlias } from '../../vitest.shared'
 
 export default defineConfig({
   resolve: {
     alias: {
+      // `@cipherstash/test-kit` + the stack subpaths its catalog imports, all
+      // resolved to source. Must precede `@/` only in spirit — the keys do not
+      // overlap — but keep it first so the shared block is obvious.
+      ...sharedAlias,
       '@/': resolve(__dirname, './src') + '/',
       // The installed `@cipherstash/{protect-ffi,auth}` only export `.`; their
       // `/wasm-inline` subpaths (imported by `src/wasm-inline.ts`) are not
@@ -21,6 +26,11 @@ export default defineConfig({
     },
   },
   test: {
+    // Integration suites live in `integration/` and require credentials, a
+    // database and PostgREST. They THROW rather than skip when unconfigured, so
+    // they must never be picked up by `pnpm test` — that is the whole reason
+    // they are a separate config and a separate CI job.
+    exclude: [...configDefaults.exclude, 'integration/**'],
     // Live suites make real ZeroKMS / CTS network round-trips. The vast
     // majority of these tests already pass an explicit `, 30000)` per-test
     // timeout (300+ call sites); a handful were written without one and so
