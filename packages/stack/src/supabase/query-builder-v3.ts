@@ -8,6 +8,8 @@ import type {
 } from '@/schema'
 import type {
   BuildableQueryColumn,
+  Encrypted,
+  EncryptedQueryResult,
   QueryTypeName,
   ScalarQueryTerm,
 } from '@/types'
@@ -443,7 +445,7 @@ export class EncryptedQueryBuilderV3Impl<
    */
   protected override async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
-  ): Promise<unknown[]> {
+  ): Promise<EncryptedQueryResult[]> {
     const groups = new Map<
       V3ColumnLike,
       { indices: number[]; values: ScalarQueryTerm['value'][] }
@@ -459,7 +461,11 @@ export class EncryptedQueryBuilderV3Impl<
     const bulkEncrypt = this.encryptionClient.bulkEncrypt?.bind(
       this.encryptionClient,
     )
-    const results = new Array<unknown>(terms.length)
+    // Each term becomes the `JSON.stringify`'d storage envelope — a `string`,
+    // which is one arm of `EncryptedQueryResult`. PostgREST cannot cast a filter
+    // value to the `eql_v3.query_<name>` twins, so v3 sends full envelopes where
+    // v2 sends `encryptQuery` composite literals; both are `EncryptedQueryResult`.
+    const results = new Array<EncryptedQueryResult>(terms.length)
 
     await Promise.all(
       Array.from(groups, async ([column, { indices, values }]) => {
@@ -481,7 +487,7 @@ export class EncryptedQueryBuilderV3Impl<
     bulkEncrypt: NonNullable<EncryptionClient['bulkEncrypt']>,
     column: V3ColumnLike,
     values: ScalarQueryTerm['value'][],
-  ): Promise<unknown[]> {
+  ): Promise<Array<Encrypted | null>> {
     const baseOp = bulkEncrypt(
       values.map((plaintext) => ({ plaintext })) as never,
       { column, table: this.v3Table } as never,
@@ -497,21 +503,34 @@ export class EncryptedQueryBuilderV3Impl<
 
     // `bulkEncrypt` is position-stable, so a length mismatch means the contract
     // was violated. Truncating instead would silently widen an `in` predicate
-    // (or narrow a `not.in`) to whatever came back.
-    const encrypted = result.data as Array<{ data: unknown }> | undefined
-    if (!Array.isArray(encrypted) || encrypted.length !== values.length) {
+    // (or narrow a `not.in`) to whatever came back. `result.data` is now
+    // `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]` — not `unknown`.
+    const encrypted = result.data
+    if (encrypted.length !== values.length) {
       this.encryptionFailure(
-        `bulk encryption returned ${Array.isArray(encrypted) ? encrypted.length : 0} terms for ${values.length} values on column "${column.getName()}".`,
+        `bulk encryption returned ${encrypted.length} terms for ${values.length} values on column "${column.getName()}".`,
       )
     }
-    return encrypted.map((term) => term.data)
+    return encrypted.map((term, i) => {
+      // `BulkEncryptedData` types the element as `Encrypted | null`. A `null`
+      // envelope here would be `JSON.stringify`'d to the literal string `"null"`
+      // and sent as the filter operand — silently matching whatever `"null"`
+      // encodes to rather than failing. A query term should never encrypt to a
+      // null envelope, so treat it as a contract violation, not a value.
+      if (term.data === null) {
+        this.encryptionFailure(
+          `bulk encryption returned a null envelope at position ${i} for column "${column.getName()}".`,
+        )
+      }
+      return term.data
+    })
   }
 
   /** Fallback for a client that predates `bulkEncrypt`. */
   private async encryptGroupPerTerm(
     column: V3ColumnLike,
     values: ScalarQueryTerm['value'][],
-  ): Promise<unknown[]> {
+  ): Promise<Encrypted[]> {
     return Promise.all(
       values.map(async (value) => {
         const baseOp = this.encryptionClient.encrypt(value, {
