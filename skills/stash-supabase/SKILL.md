@@ -395,7 +395,7 @@ full storage path. The call shape is unchanged.
 > the column's index terms, and PostgREST filters travel in GET query strings — so
 > these envelopes can land in URL logs, intermediate proxies, and Supabase request
 > logs. The remaining gap is PostgREST operand casting; an adapter-side fix is
-> tracked.
+> tracked in [issue #622](https://github.com/cipherstash/stack/issues/622).
 
 ## Response Type
 
@@ -414,9 +414,10 @@ Errors can come from Supabase (API errors) or from encryption operations.
 > **Don't branch on `error.encryptionError` — it is currently always `undefined`.**
 > The builder's catch block hardcodes `encryptionError: undefined` when
 > constructing the error, so the populated value is discarded even for a genuine
-> encryption failure. Until that is fixed, distinguish encryption failures by
-> `status === 500 && statusText === 'Encryption Error'`, or use `.throwOnError()`
-> and catch `EncryptionFailedError`.
+> encryption failure. Until that is fixed
+> ([issue #626](https://github.com/cipherstash/stack/issues/626)), distinguish
+> encryption failures by `status === 500 && statusText === 'Encryption Error'`, or
+> use `.throwOnError()` and catch `EncryptionFailedError`.
 
 ## Complete Example (v3)
 
