@@ -341,14 +341,22 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
     ).toBe(false)
 
     // Cross-identity: B names the same `['sub']` claim, but its value is B's
-    // machine, so ZeroKMS cannot reproduce A's key.
+    // machine, so ZeroKMS derives a DIFFERENT key and refuses — a genuine
+    // key-derivation denial (`Failed to retrieve key`). Pin to KEY_DENIAL, NOT
+    // the broad IDENTITY_DENIAL: B is a valid, registered machine, so it
+    // authenticates fine and the denial must surface at key derivation. Were B
+    // instead rejected at the authorization layer (e.g. its machine not
+    // registered on the workspace), that "unauthorized" message would satisfy
+    // IDENTITY_DENIAL and the test would pass GREEN without ever exercising the
+    // identity boundary — proving "B can't authenticate", not "B can't reproduce
+    // A's key".
     const asB = await decryptOutcome(() =>
       clientB.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
     )
     expect(asB.denied, 'identity B must NOT decrypt a row sealed under A').toBe(
       true,
     )
-    expect(asB.message).toMatch(IDENTITY_DENIAL)
+    expect(asB.message).toMatch(KEY_DENIAL)
     expect(asB.message).not.toMatch(INFRA_FAULT)
   }, 30000)
 })
