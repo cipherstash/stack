@@ -13,6 +13,13 @@
 // Warning, not error: the repo has a large existing backlog, and this is a
 // ratchet to keep NEW erasures visible. Intentional cases take a
 // `// biome-ignore lint/plugin: <reason>` suppression.
+//
+// Wiring note: this plugin is enabled via an `overrides` entry in biome.json
+// that INCLUDES source globs and negates test globs — it is NOT enabled at the
+// top level. Biome applies top-level `plugins` to every file, and
+// `overrides[].plugins: []` does NOT disable them, so "enable globally + exempt
+// tests" silently lints tests too. Scoping the plugin in via the override is the
+// only way to exempt test doubles (which legitimately force-cast).
 or {
   `$e as any`,
   `$e as never`,

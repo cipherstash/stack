@@ -6,7 +6,8 @@
       "!**/package.json",
       "!**/.turbo/",
       "!**/dist",
-      "!**/nix/store"
+      "!**/nix/store",
+      "!**/*.grit"
     ]
   },
   "formatter": {
@@ -31,18 +32,19 @@
       }
     }
   },
-  "plugins": ["./biome-plugins/no-type-erasing-assertions.grit"],
   "overrides": [
     {
       "includes": [
-        "**/__tests__/**",
-        "**/*.test.ts",
-        "**/*.test-d.ts",
-        "**/integration/**",
-        "**/tests/**",
-        "**/*.spec.ts"
+        "**/src/**",
+        "examples/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test-d.ts",
+        "!**/*.spec.ts",
+        "!**/integration/**",
+        "!**/tests/**"
       ],
-      "plugins": []
+      "plugins": ["./biome-plugins/no-type-erasing-assertions.grit"]
     }
   ]
 }
