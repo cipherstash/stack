@@ -39,6 +39,9 @@
 			"errors": [
 				"./dist/errors/index.d.ts"
 			],
+			"adapter-kit": [
+				"./dist/adapter-kit.d.ts"
+			],
 			"client": [
 				"./dist/client.d.ts"
 			],
@@ -206,6 +209,16 @@
 			"require": {
 				"types": "./dist/errors/index.d.cts",
 				"default": "./dist/errors/index.cjs"
+			}
+		},
+		"./adapter-kit": {
+			"import": {
+				"types": "./dist/adapter-kit.d.ts",
+				"default": "./dist/adapter-kit.js"
+			},
+			"require": {
+				"types": "./dist/adapter-kit.d.cts",
+				"default": "./dist/adapter-kit.cjs"
 			}
 		},
 		"./wasm-inline": {

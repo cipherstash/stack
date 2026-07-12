@@ -22,6 +22,7 @@ export default defineConfig([
       'src/encryption/index.ts',
       'src/encryption/v3.ts',
       'src/errors/index.ts',
+      'src/adapter-kit.ts',
     ],
     format: ['cjs', 'esm'],
     sourcemap: true,
