@@ -29,7 +29,10 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          # Node 22 is the supply-chain hardening baseline every pnpm-using job
+          # must pin (enforced by e2e/tests/supply-chain.e2e.test.ts). Lint is
+          # runtime-agnostic, so a single pinned version is fine.
+          node-version: 22
           cache: 'pnpm'
 
       # node-pty's install hook falls back to `node-gyp rebuild` when no
