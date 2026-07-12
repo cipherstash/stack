@@ -14,6 +14,12 @@ on:
     paths:
       - 'packages/stack/src/supabase/**'
       - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/supabase) can produce wrong wire output or rows, so
+      # trigger the live suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -26,6 +32,12 @@ on:
     paths:
       - 'packages/stack/src/supabase/**'
       - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/supabase) can produce wrong wire output or rows, so
+      # trigger the live suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'

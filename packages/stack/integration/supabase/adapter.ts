@@ -205,26 +205,27 @@ export function makeSupabaseAdapter(): IntegrationAdapter {
     },
 
     async expectRejected(_table: TableSpec, op: QueryOp) {
-      // The guards fire in two places: capability checks throw synchronously at
-      // call time, while a term that reaches `execute` surfaces as a Result
-      // error. Accept either; the point is that the query never runs.
+      // The rejection fires in one of two places: a capability check throws
+      // synchronously while collecting terms (marked `[supabase v3]`), or a term
+      // that reaches `execute` comes back as a Result error. Accept either — but
+      // NOT an arbitrary throw. A `TypeError` while assembling the term, or a
+      // network failure, is not the refusal this test asserts; counting it would
+      // let the test pass for the wrong reason if the real capability guard were
+      // removed. The `try` wraps only `applyOp`, and the "not rejected" error is
+      // thrown OUTSIDE it, so it can never be swallowed as a rejection.
+      let error: { message: string } | null
       try {
-        const { error } = await applyOp(op)
-        if (!error) {
-          throw new Error(
-            `Expected ${op.kind}("${op.column}") to be rejected, but it succeeded`,
-          )
-        }
+        ;({ error } = await applyOp(op))
       } catch (cause) {
-        if (
-          cause instanceof Error &&
-          cause.message.startsWith('Expected ') &&
-          cause.message.includes('to be rejected')
-        ) {
-          throw cause
+        if (cause instanceof Error && cause.message.includes('[supabase v3]')) {
+          return // a modeled capability rejection
         }
-        // A thrown guard is a rejection.
+        throw cause // an unexpected error — fail loudly
       }
+      if (error) return // an execute-time DB refusal (e.g. a PostgREST error)
+      throw new Error(
+        `Expected ${op.kind}("${op.column}") to be rejected, but it succeeded`,
+      )
     },
   }
 }

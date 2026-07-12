@@ -26,7 +26,9 @@ The guard is now on the ordering FLAVOUR, not on encryption:
 - **`ore` present → rejected.** The `ob` term is an array of ORE blocks whose
   comparison needs the superuser-only operator class, which no jsonb path can
   reach. (Such a column cannot hold data on managed Postgres anyway: its domain
-  CHECK raises `ore_domain_unavailable`.)
+  CHECK raises `ore_domain_unavailable`.) ORE columns are now excluded from
+  `order()` at COMPILE time too, not only at runtime — `.order(oreColumn)` is a
+  type error, matching the rejection.
 - **neither → rejected.** Storage-only, equality-only and match-only columns
   carry no ordering term.
 
@@ -38,6 +40,8 @@ numeric and date domains, and per-character (16 hex chars each) for text, so
 lexicographic order reproduces plaintext order including the prefix case
 (`ada` < `adam`). `ope-term.integration.test.ts` pins that shape.
 
-`V3OrderableKeys` widens to match, so `order()` on an ordering column
-typechecks. `is(col, true)` is unaffected — it stays plaintext-only, and now has
-its own `V3PlaintextKeys` rather than borrowing the orderable set.
+`V3OrderableKeys` widens to admit OPE-backed ordering columns (`*_ord`,
+`text_ord`, `text_search`) while still excluding ORE (`*_ord_ore`) columns, so
+`order()` typechecks exactly where it works. `is(col, true)` is unaffected — it
+stays plaintext-only, and now has its own `V3PlaintextKeys` rather than
+borrowing the orderable set.

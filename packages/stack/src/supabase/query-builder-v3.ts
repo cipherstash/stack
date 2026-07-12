@@ -146,15 +146,6 @@ export class EncryptedQueryBuilderV3Impl<
   private columnSchemas: Record<string, ColumnSchema>
   /** Column builders keyed by BOTH property name and DB name. */
   private v3Columns: Record<string, V3ColumnLike>
-  /**
-   * Result-row key → DB column name for the columns the current select
-   * produces, including caller-chosen PostgREST aliases (`ts:createdAt` keys
-   * rows by `ts`). Populated by {@link buildSelectString}; consumed by
-   * {@link postprocessDecryptedRow} so aliased date columns still get `Date`
-   * reconstruction. Empty on paths with no recorded select (an insert or update
-   * that returns rows), which fall back to the static property/DB names.
-   */
-  private selectKeyToDb: Record<string, string> = Object.create(null)
 
   constructor(
     tableName: string,
@@ -300,8 +291,13 @@ export class EncryptedQueryBuilderV3Impl<
    * `text_search`) — and every collation orders digits before letters and hex
    * letters among themselves. `match-bloom`'s sibling assertion pins that shape.
    *
-   * `validateTransforms` has already rejected every encrypted column that lacks
-   * an `ope` index, so reaching the jsonb path here implies the term exists.
+   * This runs at column-name-mapping time (`transformToDbSpace`), BEFORE
+   * `buildAndExecuteQuery` calls `validateTransforms`. For an encrypted column
+   * with no `ope` index it therefore returns a bare `dbName` here — a name that
+   * would sort by `jsonb_cmp` over the ciphertext if it reached PostgREST — but
+   * it never does: `validateTransforms` throws (with a domain-specific reason)
+   * before the query executes, so the bare name is only ever an intermediate
+   * value on a request that is about to be rejected.
    */
   protected override orderColumnName(column: string): DbName {
     const dbName = this.dbNameFor(column)
@@ -348,7 +344,6 @@ export class EncryptedQueryBuilderV3Impl<
 
   protected override buildSelectString(): DbSelect | null {
     if (this.selectColumns === null) return null
-    this.selectKeyToDb = selectKeyToDbV3(this.selectColumns, this.propToDb)
     return addJsonbCastsV3(this.selectColumns, this.propToDb)
   }
 
@@ -603,10 +598,14 @@ export class EncryptedQueryBuilderV3Impl<
     // Every key an encrypted column can appear under: the keys this select
     // actually produces (including caller-chosen aliases like `ts:createdAt`),
     // plus the static property and DB names as a fallback for paths that record
-    // no select. Aliases win — `selectKeyToDb` describes the row in hand.
+    // no select. Aliases win. Derived here from `this.selectColumns` (the row in
+    // hand) rather than cached from `buildSelectString`, so a reused builder can
+    // never postprocess a row with a previous operation's stale select map.
     const keyToDb: Record<string, string> = Object.assign(
       Object.create(null),
-      this.selectKeyToDb,
+      this.selectColumns === null
+        ? undefined
+        : selectKeyToDbV3(this.selectColumns, this.propToDb),
     )
     for (const [property, dbName] of Object.entries(this.propToDb)) {
       keyToDb[property] ??= dbName
