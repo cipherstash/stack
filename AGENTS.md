@@ -72,7 +72,7 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/eql/v3/drizzle`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
 - `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
   - `src/index.ts`: Public API (`Encryption`, exports)
   - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`
@@ -174,8 +174,21 @@ Three rules to remember when editing CI or pnpm config:
 - **Formatting/Linting**: Use Biome
 
 ```bash
-pnpm run code:fix
+pnpm run code:fix    # format + lint, auto-fixing what it can
+pnpm run code:check  # read-only; this is what CI runs
 ```
+
+  CI runs `code:check` (in `tests.yml`) and gates on **errors** — warnings are
+  allowed (tracked for tightening). So `code:fix` must leave the tree
+  error-free before you push.
+
+  A Biome GritQL plugin (`biome-plugins/no-type-erasing-assertions.grit`) warns
+  on `as any` / `as never` / `as unknown` in `src` — type-erasing assertions that
+  silence the checker instead of narrowing. Fix the type or use a specific
+  assertion; suppress a deliberate case with `// biome-ignore lint/plugin:
+  <reason>`. The plugin is scoped to source via an `overrides` entry in
+  `biome.json` (test/integration files excluded) — see the plugin file's header
+  for why it must be scoped-in rather than globally-enabled-and-exempted.
 
 - **Build**: `pnpm run build` (Turborepo + tsup per package)
 - **Test**: `pnpm --filter <pkg> test` for targeted iterations

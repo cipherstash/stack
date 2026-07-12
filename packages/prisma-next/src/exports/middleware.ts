@@ -6,10 +6,11 @@
  * encrypted in batches before encode runs:
  *
  * ```ts
+ * import { PostgresRuntimeImpl } from '@prisma-next/postgres/runtime';
  * import { createCipherstashRuntimeDescriptor } from '@prisma-next/extension-cipherstash/runtime';
  * import { bulkEncryptMiddleware } from '@prisma-next/extension-cipherstash/middleware';
  *
- * const runtime = createRuntime({
+ * const runtime = new PostgresRuntimeImpl({
  *   extensionPacks: [createCipherstashRuntimeDescriptor({ sdk })],
  *   middleware: [bulkEncryptMiddleware(sdk)],
  * });

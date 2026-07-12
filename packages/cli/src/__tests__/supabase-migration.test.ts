@@ -255,7 +255,7 @@ describe('validateInstallFlags', () => {
     expect(validateInstallFlags({ eqlVersion: '4' })).toMatch(/--eql-version/)
   })
 
-  it('rejects --eql-version 3 with --drizzle, --migration, or --latest', () => {
+  it('rejects --eql-version 3 with --drizzle, --migration, --latest, or --migrations-dir', () => {
     expect(validateInstallFlags({ eqlVersion: '3', drizzle: true })).toMatch(
       /--drizzle/,
     )

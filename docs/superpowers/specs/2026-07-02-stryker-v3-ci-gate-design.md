@@ -147,8 +147,10 @@ Implementation therefore includes a **baseline step**:
    locally.
 2. Record the reported mutation score for `eql/v3`.
 3. Set `thresholds.break` just **below** the measured score (a small buffer, the
-   way FTA sets `--score-cap 72` against a current 71.08). This ensures the
-   current state passes while any regression that lowers the score fails the gate.
+   way FTA sets `--score-cap 69` against a current worst-file score of 68.00 —
+   re-baselined from the pre-split monolith's 71.08/72 after `eql/v3` was split
+   into per-file modules). This ensures the current state passes while any
+   regression that lowers the score fails the gate.
 4. Set `high`/`low` to reasonable display bands (do not affect pass/fail).
 
 If the measured baseline is very low (tests are weak), surface that to the user

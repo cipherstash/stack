@@ -20,7 +20,7 @@ The harness's Vitest global setup (`global-setup.ts`):
 
 1. `docker compose up -d` and waits for `pg_isready`.
 2. Sets `DATABASE_URL` to the harness's local Postgres URL.
-3. Runs `prisma-next migration apply` against the example app (installs the cipherstash baseline migration + the `users` table).
+3. Runs `prisma-next migrate` against the example app (installs the cipherstash baseline migration + the `users` table).
 4. Skips cleanly (logging the missing env var) when `CS_WORKSPACE_CRN` / `CS_CLIENT_ID` / `CS_CLIENT_KEY` / `CS_DEFAULT_KEY_ID` are unset, so PRs without secrets configured don't fail the suite.
 
 `vitest.config.ts` wires the global setup, scopes the run to `*.e2e.test.ts`, and pins `pool: 'threads'` + `maxWorkers: 1` + `isolate: false` + `fileParallelism: false` so every test file shares one Postgres connection and one CipherStash SDK encryption client (and the SDK isn't asked to run encrypts across files concurrently). Each test file truncates `users` in its `beforeAll` for clean-slate isolation.

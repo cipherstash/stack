@@ -25,16 +25,16 @@
 
 import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime'
 import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
-import { emptyCodecLookup } from '@prisma-next/framework-components/codec'
 import type {
   RuntimeExtensionDescriptor,
   RuntimeTargetDescriptor,
 } from '@prisma-next/framework-components/execution'
-import { validateContract } from '@prisma-next/sql-contract/validate'
+import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
 import type { SqlOperationDescriptor } from '@prisma-next/sql-operations'
 import {
   type AnyExpression,
   ColumnRef,
+  type LoweredParam,
   ProjectionItem,
   SelectAst,
   TableSource,
@@ -67,67 +67,75 @@ export function emptySdk(): CipherstashSdk {
 export const TABLE = 'user'
 export const COLUMN = 'email'
 
-export const contract = validateContract<PostgresContract>(
-  {
-    target: 'postgres',
-    targetFamily: 'sql',
-    profileHash: 'sha256:cipherstash-operator-lowering-test',
-    roots: {},
-    capabilities: {},
-    extensionPacks: {},
-    meta: {},
-    storage: {
-      storageHash: 'sha256:cipherstash-operator-lowering-test-storage',
-      tables: {
-        [TABLE]: {
-          columns: {
-            id: { codecId: 'pg/text@1', nativeType: 'text', nullable: false },
-            [COLUMN]: {
-              codecId: CIPHERSTASH_STRING_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            // Per-codec columns so the trait-dispatched operators
-            // can be exercised against each column type (the
-            // postgres renderer reads `nativeType` from the codec
-            // descriptor at lower time; the column is what gives
-            // the renderer the codec id to look up).
-            score: {
-              codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            amount: {
-              codecId: CIPHERSTASH_BIGINT_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            birthday: {
-              codecId: CIPHERSTASH_DATE_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            enabled: {
-              codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            payload: {
-              codecId: CIPHERSTASH_JSON_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
+export const contract = validateSqlContractFully<PostgresContract>({
+  target: 'postgres',
+  targetFamily: 'sql',
+  profileHash: 'sha256:cipherstash-operator-lowering-test',
+  roots: {},
+  capabilities: {},
+  extensionPacks: {},
+  meta: {},
+  storage: {
+    storageHash: 'sha256:cipherstash-operator-lowering-test-storage',
+    namespaces: {
+      __unbound__: {
+        id: '__unbound__',
+        entries: {
+          table: {
+            [TABLE]: {
+              columns: {
+                id: {
+                  codecId: 'pg/text@1',
+                  nativeType: 'text',
+                  nullable: false,
+                },
+                [COLUMN]: {
+                  codecId: CIPHERSTASH_STRING_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                // Per-codec columns so the trait-dispatched operators
+                // can be exercised against each column type (the
+                // postgres renderer reads `nativeType` from the codec
+                // descriptor at lower time; the column is what gives
+                // the renderer the codec id to look up).
+                score: {
+                  codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                amount: {
+                  codecId: CIPHERSTASH_BIGINT_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                birthday: {
+                  codecId: CIPHERSTASH_DATE_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                enabled: {
+                  codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                payload: {
+                  codecId: CIPHERSTASH_JSON_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+              },
+              uniques: [],
+              indexes: [],
+              foreignKeys: [],
             },
           },
-          uniques: [],
-          indexes: [],
-          foreignKeys: [],
         },
       },
     },
-    models: {},
   },
-  emptyCodecLookup,
-)
+  domain: { namespaces: { __unbound__: { models: {} } } },
+})
 
 // Stub runtime target — the Postgres adapter only consults `familyId` /
 // `targetId` on the target during `create`. Replicates the helper at
@@ -220,4 +228,20 @@ export function selectWithWhere(whereExpr: AnyExpression) {
   return SelectAst.from(TableSource.named(TABLE))
     .withProjection([ProjectionItem.of('id', ColumnRef.of(TABLE, 'id'))])
     .withWhere(whereExpr)
+}
+
+/**
+ * Unwrap the value carried by a lowered `literal` param. Since 0.9 the
+ * adapter's `lower` emits structured `LoweredParam` entries
+ * (`{ kind: 'literal', value } | { kind: 'bind', name }`) instead of raw
+ * values; the operator-lowering assertions all target the literal
+ * payload (the cipherstash envelope).
+ */
+export function literalParamValue(param: LoweredParam): unknown {
+  if (param.kind !== 'literal') {
+    throw new Error(
+      `expected a literal lowered param, got kind '${param.kind}'`,
+    )
+  }
+  return param.value
 }

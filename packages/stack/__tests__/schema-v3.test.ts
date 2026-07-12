@@ -11,74 +11,57 @@ import { encryptConfigSchema, encryptedColumn } from '@/schema'
 import { type DomainSpec, typedEntries, V3_MATRIX } from './v3-matrix/catalog'
 
 describe('eql_v3 text_search column', () => {
-  it('LOAD-BEARING: default build() deep-equals the v2 equality+order+match column', () => {
+  it('LOAD-BEARING: default build() matches the v2 equality+order+match column modulo the ordering index and include_original', () => {
+    // eql-3.0.0 pins text_search's ordering to CLLW-OPE (`ope`/`op` term); the
+    // v2 fluent builder keeps block-ORE (`ore`/`ob`) — its wire format must not
+    // change. Everything else (unique, match, cast_as) stays byte-identical.
     const v3 = types.TextSearch('email').build()
     const v2 = encryptedColumn('email')
       .equality()
       .orderAndRange()
       .freeTextSearch()
       .build()
-    // toStrictEqual: byte-identical, no extra/undefined keys on either side.
-    expect(v3).toStrictEqual(v2)
-  })
+    expect(v3.indexes.ope).toEqual({})
+    expect(v3.indexes.ore).toBeUndefined()
+    expect(v2.indexes.ore).toEqual({})
+    expect(v2.indexes.ope).toBeUndefined()
 
-  it('.freeTextSearch(opts) overrides each provided key and keeps the rest as defaults', () => {
-    const built = types
-      .TextSearch('email')
-      .freeTextSearch({
-        tokenizer: { kind: 'ngram', token_length: 4 },
-        k: 8,
-        m: 4096,
-        include_original: false,
-      })
-      .build()
-    expect(built.indexes.match).toEqual({
-      tokenizer: { kind: 'ngram', token_length: 4 },
-      // omitted -> default downcase filter retained
-      token_filters: [{ kind: 'downcase' }],
-      k: 8,
-      m: 4096,
-      include_original: false,
+    // The second deliberate divergence. protect-ffi ignores `include_original`
+    // (`match-bloom-live.test.ts` pins that against real ffi), so v3 emits the
+    // value a substring-search domain wants while v2 holds its historical
+    // `true` — no v2 wire movement. Asserted on BOTH sides, then excluded from
+    // the byte-identity check below, so neither can drift unnoticed.
+    expect(v3.indexes.match?.include_original).toBe(false)
+    expect(v2.indexes.match?.include_original).toBe(true)
+
+    const { ope: _v3Ord, match: v3Match, ...v3Rest } = v3.indexes
+    const { ore: _v2Ord, match: v2Match, ...v2Rest } = v2.indexes
+    const withoutIncludeOriginal = (match: typeof v3Match) => {
+      if (!match) return match
+      const { include_original: _drop, ...rest } = match
+      return rest
+    }
+    // toStrictEqual: byte-identical, no extra/undefined keys on either side.
+    expect({
+      ...v3,
+      indexes: { ...v3Rest, match: withoutIncludeOriginal(v3Match) },
+    }).toStrictEqual({
+      ...v2,
+      indexes: { ...v2Rest, match: withoutIncludeOriginal(v2Match) },
     })
   })
 
-  it('.freeTextSearch({ token_filters: [] }) overrides the downcase default with an empty array', () => {
-    // LOAD-BEARING: `[] ?? default` evaluates to `[]` (an empty array is not
-    // nullish), so an explicit empty array must OVERRIDE the downcase default,
-    // not fall back to it. Mirrors v2 (schema-builders.test.ts).
-    const built = types
-      .TextSearch('email')
-      .freeTextSearch({ token_filters: [] })
-      .build()
-    expect(built.indexes.match.token_filters).toEqual([])
-  })
-
-  it('repeated .freeTextSearch() calls are last-call-wins-fully (each re-merges against defaults, not prior state)', () => {
-    // Each call re-merges against a fresh defaultMatchOpts(), not the
-    // accumulated matchOpts — so the second call resets k back to its default
-    // of 6. This is intentional: it mirrors v2 exactly. Pinned here so a future
-    // "merge against current state" change can't silently slip in.
-    const built = types
-      .TextSearch('email')
-      .freeTextSearch({ k: 8 })
-      .freeTextSearch({ m: 4096 })
-      .build()
-    expect(built.indexes.match.k).toBe(6)
-    expect(built.indexes.match.m).toBe(4096)
-  })
-
-  it('.freeTextSearch() with no argument is a no-op: build() equals the default build()', () => {
-    // Pins the opts === undefined branch: every `opts?.x ?? default` falls
-    // through, so a bare call must emit exactly the default match block.
-    expect(types.TextSearch('email').freeTextSearch().build()).toStrictEqual(
-      types.TextSearch('email').build(),
-    )
-  })
-
-  it('.freeTextSearch() is tuning-only: unique and ore indexes stay present', () => {
-    const built = types.TextSearch('email').freeTextSearch({ k: 8 }).build()
+  it('default build() emits the unique, ope, and match indexes', () => {
+    const built = types.TextSearch('email').build()
     expect(built.indexes.unique).toEqual({ token_filters: [] })
-    expect(built.indexes.ore).toEqual({})
+    expect(built.indexes.ope).toEqual({})
+    expect(built.indexes.match).toEqual({
+      tokenizer: { kind: 'ngram', token_length: 3 },
+      token_filters: [{ kind: 'downcase' }],
+      k: 6,
+      m: 2048,
+      include_original: false,
+    })
   })
 
   it('built columns share no mutable state: mutating one build() output does not affect another', () => {
@@ -103,29 +86,6 @@ describe('eql_v3 text_search column', () => {
     const c = types.TextSearch('c').build()
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
-  })
-
-  it('clones caller opts on freeTextSearch(): mutating them before build() does not leak', () => {
-    // build() deep-clones at build time, but if freeTextSearch stored the
-    // caller's nested tokenizer / token_filters by reference, a caller mutating
-    // their own opts object between freeTextSearch(opts) and build() would leak
-    // the mutation into the emitted config. freeTextSearch must clone on write.
-    const opts = {
-      tokenizer: { kind: 'ngram' as const, token_length: 3 },
-      token_filters: [{ kind: 'downcase' as const }],
-    }
-    const col = types.TextSearch('email').freeTextSearch(opts)
-
-    // Mutate the caller's own opts AFTER freeTextSearch but BEFORE build().
-    opts.tokenizer.token_length = 999
-    opts.token_filters.push({ kind: 'downcase' as const })
-
-    const built = col.build()
-    expect(built.indexes.match.tokenizer).toEqual({
-      kind: 'ngram',
-      token_length: 3,
-    })
-    expect(built.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
   })
 })
 
@@ -153,6 +113,47 @@ describe('eql_v3 text_match column', () => {
     const c = types.TextMatch('c').build()
     expect(c.indexes.match.k).toBe(6)
     expect(c.indexes.match.token_filters).toEqual([{ kind: 'downcase' }])
+  })
+})
+
+describe('eql_v3 concrete type names', () => {
+  it('preserves public factory names while exposing concrete Postgres domain names', () => {
+    expect(types.Integer('n').getEqlType()).toBe('public.eql_v3_integer')
+    expect(types.IntegerEq('n').getEqlType()).toBe('public.eql_v3_integer_eq')
+    expect(types.IntegerOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_integer_ord_ore',
+    )
+    expect(types.IntegerOrd('n').getEqlType()).toBe('public.eql_v3_integer_ord')
+
+    expect(types.Smallint('n').getEqlType()).toBe('public.eql_v3_smallint')
+    expect(types.SmallintEq('n').getEqlType()).toBe('public.eql_v3_smallint_eq')
+    expect(types.SmallintOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_smallint_ord_ore',
+    )
+    expect(types.SmallintOrd('n').getEqlType()).toBe(
+      'public.eql_v3_smallint_ord',
+    )
+
+    expect(types.Bigint('n').getEqlType()).toBe('public.eql_v3_bigint')
+    expect(types.BigintEq('n').getEqlType()).toBe('public.eql_v3_bigint_eq')
+    expect(types.BigintOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_bigint_ord_ore',
+    )
+    expect(types.BigintOrd('n').getEqlType()).toBe('public.eql_v3_bigint_ord')
+
+    expect(types.Boolean('b').getEqlType()).toBe('public.eql_v3_boolean')
+    expect(types.Real('n').getEqlType()).toBe('public.eql_v3_real')
+    expect(types.RealEq('n').getEqlType()).toBe('public.eql_v3_real_eq')
+    expect(types.RealOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_real_ord_ore',
+    )
+    expect(types.RealOrd('n').getEqlType()).toBe('public.eql_v3_real_ord')
+    expect(types.Double('n').getEqlType()).toBe('public.eql_v3_double')
+    expect(types.DoubleEq('n').getEqlType()).toBe('public.eql_v3_double_eq')
+    expect(types.DoubleOrdOre('n').getEqlType()).toBe(
+      'public.eql_v3_double_ord_ore',
+    )
+    expect(types.DoubleOrd('n').getEqlType()).toBe('public.eql_v3_double_ord')
   })
 })
 
@@ -198,18 +199,22 @@ describe('eql_v3 encryptedTable', () => {
     })
     const built = users.build()
     expect(built.tableName).toBe('users')
-    expect(built.columns).toStrictEqual({
+    // Spread to a plain object: `columns` is null-prototype (a DB column named
+    // `__proto__` must land as an own key), and `toStrictEqual` compares
+    // prototypes. The contract under test is the column configs, not the
+    // prototype — which `supabase-schema-builder.test.ts` pins directly.
+    expect({ ...built.columns }).toStrictEqual({
       email: {
         cast_as: 'string',
         indexes: {
           unique: { token_filters: [] },
-          ore: {},
+          ope: {},
           match: {
             tokenizer: { kind: 'ngram', token_length: 3 },
             token_filters: [{ kind: 'downcase' }],
             k: 6,
             m: 2048,
-            include_original: true,
+            include_original: false,
           },
         },
       },
@@ -334,16 +339,17 @@ const SCALAR_QUERY_TYPES = [
 
 // The ground-truth for whether `resolveIndexType` accepts a (domain, queryType)
 // pair: does the domain carry the index that query resolves to? Derived from the
-// catalog's `indexes` data, AMENDED for the equality-via-ORE rule — an
-// order-capable column answers equality via its `ore` index, not `unique`. This
-// mirrors `resolveIndexType`'s real logic, so it needs no live FFI.
+// catalog's `indexes` data, AMENDED for the equality-via-ordering rule — an
+// order-capable column answers equality via its ordering index (`ope` on `_ord`
+// domains, `ore` on `_ord_ore`), not `unique`. This mirrors
+// `resolveIndexType`'s real logic, so it needs no live FFI.
 function queryTypeAllowed(
   indexes: DomainSpec['indexes'],
   queryType: (typeof SCALAR_QUERY_TYPES)[number],
 ): boolean {
   const idx = indexes ?? {}
-  if (queryType === 'equality') return Boolean(idx.unique || idx.ore)
-  if (queryType === 'orderAndRange') return Boolean(idx.ore)
+  if (queryType === 'equality') return Boolean(idx.unique || idx.ore || idx.ope)
+  if (queryType === 'orderAndRange') return Boolean(idx.ore || idx.ope)
   return Boolean(idx.match) // freeTextSearch
 }
 
@@ -394,20 +400,24 @@ describe('eql_v3 catalog-driven query capability sweep', () => {
   })
 })
 
-describe('eql_v3 equality via ORE on order-capable columns (regression)', () => {
-  // The capability contract documents equality as answerable "via `ob`", so a
-  // numeric/date order-capable column (which has NO `hm`) resolves equality to
-  // its `ore` index (same term as orderAndRange, distinguished by the SQL `=`
-  // operator) instead of throwing on the absent `unique` index. (Text order
-  // domains DO carry `hm` and resolve equality to `unique` instead — see the
-  // text-order regression below.)
+describe('eql_v3 equality via the ordering index on order-capable columns (regression)', () => {
+  // The capability contract documents equality as answerable via the ordering
+  // term, so a numeric/date order-capable column (which has NO `hm`) resolves
+  // equality to its ordering index (same term as orderAndRange, distinguished
+  // by the SQL `=` operator) instead of throwing on the absent `unique` index.
+  // `_ord` domains are OPE-backed (eql-3.0.0), `_ord_ore` keep block-ORE.
+  // (Text order domains DO carry `hm` and resolve equality to `unique`
+  // instead — see the text-order regression below.)
+  // Keep these labels aligned with the checked-in EQL build; a mismatch here
+  // means the stack package is out of sync with the underlying domain surface.
   it.each([
-    ['integer_ord', types.IntegerOrd],
-    ['date_ord', types.DateOrd],
-    ['numeric_ord', types.NumericOrd],
-  ] as const)('%s resolves equality to the ore index', (_name, builder) => {
+    ['IntegerOrd', types.IntegerOrd, 'ope'],
+    ['date_ord', types.DateOrd, 'ope'],
+    ['numeric_ord', types.NumericOrd, 'ope'],
+    ['IntegerOrdOre', types.IntegerOrdOre, 'ore'],
+  ] as const)('%s resolves equality to its ordering index (%s)', (_name, builder, ordering) => {
     expect(resolveIndexType(builder('value'), 'equality')).toEqual({
-      indexType: 'ore',
+      indexType: ordering,
     })
   })
 
@@ -422,29 +432,30 @@ describe('eql_v3 equality via ORE on order-capable columns (regression)', () => 
 })
 
 describe('eql_v3 text order domains carry the hm (unique) index (regression)', () => {
-  // The `eql_v3.text_ord` and `eql_v3.text_ord_ore` SQL domains require BOTH
+  // The `public.eql_v3_text_ord` and `public.eql_v3_text_ord_ore` SQL domains require BOTH
   // `hm` (HMAC) and `ob` (ORE) in the stored ciphertext: text equality is
   // HMAC-based (their `eql_v3.eq_term` extracts `hm`), unlike numeric/date order
   // domains which answer equality via `ob` and need only ORE. So text order
   // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
-  // fails with `value for domain eql_v3.text_ord_ore violates check constraint`.
+  // fails with `value for domain public.eql_v3_text_ord_ore violates check constraint`.
   it.each([
-    ['text_ord_ore', types.TextOrdOre],
-    ['text_ord', types.TextOrd],
-  ] as const)('%s emits both unique (hm) and ore (ob)', (_name, builder) => {
-    expect(builder('c').build().indexes).toStrictEqual({
-      unique: { token_filters: [] },
-      ore: {},
-    })
+    [
+      'text_ord_ore',
+      types.TextOrdOre,
+      { unique: { token_filters: [] }, ore: {} },
+    ],
+    ['text_ord', types.TextOrd, { unique: { token_filters: [] }, ope: {} }],
+  ] as const)('%s emits both unique (hm) and its ordering index', (_name, builder, expected) => {
+    expect(builder('c').build().indexes).toStrictEqual(expected)
   })
 
   it.each([
-    ['integer_ord_ore', types.IntegerOrdOre],
-    ['integer_ord', types.IntegerOrd],
-    ['date_ord_ore', types.DateOrdOre],
-    ['numeric_ord', types.NumericOrd],
-  ] as const)('%s (numeric/date order) emits ore only — no unique', (_name, builder) => {
-    expect(builder('c').build().indexes).toStrictEqual({ ore: {} })
+    ['IntegerOrdOre', types.IntegerOrdOre, { ore: {} }],
+    ['IntegerOrd', types.IntegerOrd, { ope: {} }],
+    ['date_ord_ore', types.DateOrdOre, { ore: {} }],
+    ['numeric_ord', types.NumericOrd, { ope: {} }],
+  ] as const)('%s (numeric/date order) emits its ordering index only — no unique', (_name, builder, expected) => {
+    expect(builder('c').build().indexes).toStrictEqual(expected)
   })
 
   // With `unique` present, text order equality resolves to the hm index (not
@@ -456,5 +467,24 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
     expect(resolveIndexType(builder('value'), 'equality')).toEqual({
       indexType: 'unique',
     })
+  })
+})
+
+describe('eql_v3 timestamp domains emit cast_as "timestamp" (time-of-day preserved)', () => {
+  // The FFI has a distinct `timestamp` cast (full date+time) separate from
+  // `date` (calendar-date only). Every timestamp domain must emit
+  // `cast_as: 'timestamp'` so the native layer keeps the time-of-day instead of
+  // truncating to midnight (see schema-v3-client occurredAt round-trip).
+  it.each([
+    ['timestamp', types.Timestamp],
+    ['timestamp_eq', types.TimestampEq],
+    ['timestamp_ord_ore', types.TimestampOrdOre],
+    ['timestamp_ord', types.TimestampOrd],
+  ] as const)('%s emits cast_as "timestamp"', (_name, builder) => {
+    expect(builder('c').build().cast_as).toBe('timestamp')
+  })
+
+  it('the plain date domain still emits cast_as "date"', () => {
+    expect(types.Date('c').build().cast_as).toBe('date')
   })
 })

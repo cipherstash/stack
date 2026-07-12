@@ -10,6 +10,7 @@ config({ path: '.env.development.local', quiet: true })
 config({ path: '.env.development', quiet: true })
 config({ path: '.env', quiet: true })
 
+import { releaseManifest } from '@cipherstash/eql/sql'
 import postgres from 'postgres'
 import { installEqlV3IfNeeded } from '../__tests__/helpers/eql-v3'
 
@@ -21,7 +22,7 @@ const sql = postgres(process.env.DATABASE_URL, { prepare: false })
 
 try {
   await installEqlV3IfNeeded(sql)
-  console.log('eql_v3.text_search is installed')
+  console.log(`eql_v3 ${releaseManifest.eqlVersion} is installed`)
 } finally {
   await sql.end()
 }

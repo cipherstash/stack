@@ -49,11 +49,11 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
   it('round-trips an EncryptedDate through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
     const byId = new Map(rows.map((r) => [r.id, r] as const))
@@ -72,14 +72,14 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashGt filters dates after the cutoff', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.birthday.cipherstashGt(new Date('1995-01-01')),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-date-2', 'e2e-date-3'])
   })
 
   it('cipherstashBetween filters a closed date interval', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.birthday.cipherstashBetween(
         new Date('1985-01-01'),
         new Date('2005-12-31'),
@@ -89,7 +89,7 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashAsc orders by calendar date (bare-column ORDER BY)', async () => {
-    const rows = await db.orm.User.orderBy((u) =>
+    const rows = await db.orm.public.User.orderBy((u) =>
       cipherstashAsc(u.birthday),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
@@ -101,7 +101,7 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashDesc reverses the date order', async () => {
-    const rows = await db.orm.User.orderBy((u) =>
+    const rows = await db.orm.public.User.orderBy((u) =>
       cipherstashDesc(u.birthday),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([

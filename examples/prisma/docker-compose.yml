@@ -5,9 +5,9 @@
 #   docker compose down -v      # stop + delete volume (fresh state)
 #
 # The DATABASE_URL in .env.example matches the values below:
-#   postgres://postgres:postgres@localhost:5544/cipherstash_prisma_example
+#   postgres://postgres:postgres@localhost:54338/cipherstash_prisma_example
 #
-# Port 5544 (not 5432) is used to avoid colliding with any host-side
+# Port 54338 (not 5432) is used to avoid colliding with any host-side
 # Postgres / other example containers.
 
 services:
@@ -20,7 +20,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: cipherstash_prisma_example
     ports:
-      - "5544:5432"
+      - "54338:5432"
     volumes:
       - cipherstash-prisma-example-pg-data:/var/lib/postgresql/data
     healthcheck:

@@ -1,6 +1,7 @@
 import { describe, expectTypeOf, it } from 'vitest'
 import { Encryption, type EncryptionClient } from '@/encryption'
 import type {
+  EncryptedBigintColumn,
   EncryptedTextSearchColumn,
   InferEncrypted,
   InferPlaintext,
@@ -19,6 +20,11 @@ describe('eql_v3 schema type inference', () => {
   it('types.TextSearch returns an EncryptedTextSearchColumn', () => {
     const col = types.TextSearch('email')
     expectTypeOf(col).toEqualTypeOf<EncryptedTextSearchColumn>()
+  })
+
+  it('types.Bigint returns an EncryptedBigintColumn (native bigint round-trip on protect-ffi 0.28)', () => {
+    const col = types.Bigint('large')
+    expectTypeOf(col).toEqualTypeOf<EncryptedBigintColumn>()
   })
 
   it('encryptedTable exposes column builders as typed properties', () => {
@@ -60,6 +66,7 @@ describe('eql_v3 schema type inference', () => {
       active: types.Boolean('active'),
       createdAt: types.Timestamp('created_at'),
       score: types.Double('score'),
+      balance: types.BigintOrd('balance'),
     })
 
     type Plaintext = InferPlaintext<typeof metrics>
@@ -70,6 +77,7 @@ describe('eql_v3 schema type inference', () => {
       active: boolean
       createdAt: Date
       score: number
+      balance: bigint
     }>()
   })
 
@@ -97,6 +105,20 @@ describe('eql_v3 client integration (type-level acceptance)', () => {
   it('encrypt accepts a v3 table + column', () => {
     const client = {} as EncryptionClient
     expectTypeOf(client.encrypt).toBeCallableWith('alice@example.com', {
+      table: v3users,
+      column: v3users.email,
+    })
+  })
+
+  it('encrypt and encryptQuery accept bigint plaintext (native round-tripping landed in protect-ffi 0.28)', () => {
+    const client = {} as EncryptionClient
+
+    expectTypeOf(client.encrypt).toBeCallableWith(1n, {
+      table: v3users,
+      column: v3users.email,
+    })
+
+    expectTypeOf(client.encryptQuery).toBeCallableWith(1n, {
       table: v3users,
       column: v3users.email,
     })

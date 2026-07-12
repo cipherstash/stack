@@ -67,6 +67,7 @@ const arrayIndexModeSchema = z.union([
 const steVecIndexOptsSchema = z.object({
   prefix: z.string(),
   array_index_mode: arrayIndexModeSchema.optional(),
+  mode: z.enum(['compat', 'standard']).optional(),
 })
 
 const indexesSchema = z
@@ -232,7 +233,17 @@ export class ProtectColumn {
    */
   searchableJson() {
     this.castAsValue = 'json'
-    this.indexesValue.ste_vec = { prefix: 'enabled', array_index_mode: 'all' }
+    // `mode: 'standard'` pins the per-entry ordering term to CLLW-ORE (`oc`),
+    // the only encoding the eql_v2 SQL compares. protect-ffi 0.29 flipped the
+    // library default to `compat` (CLLW-OPE, `op`) for EQL v3; without the pin
+    // every v2 containment query silently matches nothing — and existing v2
+    // rows encrypted under `standard` are not cross-comparable with `compat`
+    // anyway, so this also keeps the v2 wire format byte-stable.
+    this.indexesValue.ste_vec = {
+      prefix: 'enabled',
+      array_index_mode: 'all',
+      mode: 'standard',
+    }
     return this
   }
 

@@ -11,6 +11,10 @@ services:
       POSTGRES_PASSWORD: password
     ports:
       - 5432:5432
+    volumes:
+      # Creates anon / authenticated / service_role / postgres / authenticator
+      # before PostgREST first connects. See the file for why.
+      - ./postgrest-roles.sql:/docker-entrypoint-initdb.d/00-postgrest-roles.sql:ro
     deploy:
       resources:
         limits:
@@ -22,3 +26,22 @@ services:
       interval: 1s
       timeout: 5s
       retries: 10
+
+  postgrest:
+    # Pinned, matching the discipline the postgres service already follows.
+    image: postgrest/postgrest:v12.2.12
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Connect as `authenticator`, then SET ROLE to `anon` for unauthenticated
+      # requests. Running as the DB OWNER instead would make every grant check
+      # pass vacuously — the suite exists to prove the Supabase grants work.
+      PGRST_DB_URI: "postgres://authenticator:authpass@postgres:5432/cipherstash"
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      # Lets `NOTIFY pgrst, 'reload schema'` reach the server.
+      PGRST_DB_CHANNEL_ENABLED: "true"
+    ports:
+      - 3000:3000
+    restart: always

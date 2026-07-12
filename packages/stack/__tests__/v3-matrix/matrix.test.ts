@@ -33,4 +33,35 @@ describe('eql_v3 type-driven domain matrix (runtime)', () => {
       indexes: spec.indexes,
     })
   })
+
+  it.each([
+    'public.eql_v3_text_ord_ore',
+    'public.eql_v3_text_ord',
+    'public.eql_v3_text_search',
+  ] as const)('%s uses non-empty positive samples for live Postgres inserts', (eqlType) => {
+    expect(V3_MATRIX[eqlType].samples[0]).not.toBe('')
+  })
+
+  // `timestamp` domains set `cast_as: 'timestamp'` (not `'date'`) precisely to
+  // preserve the time-of-day. The live matrix can only PROVE that preservation
+  // if its samples actually carry a non-zero time-of-day: a regression back to
+  // `'date'` truncation collapses the instant to midnight, so midnight-only
+  // samples (`DATE_S`) would survive truncation and pass silently. This guards
+  // the live suite's truncation-detection power at build time — flip the
+  // timestamp rows back to `DATE_S` and this fails.
+  it.each([
+    'public.eql_v3_timestamp',
+    'public.eql_v3_timestamp_eq',
+    'public.eql_v3_timestamp_ord_ore',
+    'public.eql_v3_timestamp_ord',
+  ] as const)('%s carries a sample with a non-zero time-of-day', (eqlType) => {
+    const samples = V3_MATRIX[eqlType].samples as readonly Date[]
+    const hasTimeOfDay = (d: Date) =>
+      d.getUTCHours() +
+        d.getUTCMinutes() +
+        d.getUTCSeconds() +
+        d.getUTCMilliseconds() >
+      0
+    expect(samples.some(hasTimeOfDay)).toBe(true)
+  })
 })

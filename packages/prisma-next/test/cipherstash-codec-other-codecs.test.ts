@@ -32,6 +32,7 @@ const FIELD = 'email'
 describe('cipherstashDateCodecHooks — cast_as=date', () => {
   it("emits add_search_config(unique) with cast_as='date' when equality flips on", () => {
     const ctxArg = {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       newField: {
@@ -55,6 +56,7 @@ describe('cipherstashDateCodecHooks — cast_as=date', () => {
 describe('cipherstashBooleanCodecHooks — equality-only, cast_as=boolean', () => {
   it('emits a single add_search_config(unique) with cast_as=boolean when equality flips on', () => {
     const ctxArg = {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       newField: {
@@ -74,6 +76,7 @@ describe('cipherstashBooleanCodecHooks — equality-only, cast_as=boolean', () =
 
   it('does not emit ore ops — booleans have no orderAndRange flag', () => {
     const ctxArg = {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       newField: {
@@ -94,6 +97,7 @@ describe('cipherstashBooleanCodecHooks — equality-only, cast_as=boolean', () =
 describe('cipherstashJsonCodecHooks — searchableJson → ste_vec, cast_as=jsonb', () => {
   it('emits add_search_config(ste_vec) with cast_as=jsonb when searchableJson flips on', () => {
     const ctxArg = {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       newField: {
@@ -113,6 +117,7 @@ describe('cipherstashJsonCodecHooks — searchableJson → ste_vec, cast_as=json
 
   it('emits remove_search_config(ste_vec) on drop when searchableJson was previously enabled', () => {
     const ctxArg = {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       priorField: {

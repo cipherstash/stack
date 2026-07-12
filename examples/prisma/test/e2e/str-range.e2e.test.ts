@@ -51,11 +51,11 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
-    await Promise.all(SEED.map((s) => db.orm.User.create(seedRow(s))))
+    await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
   it('round-trips an EncryptedString through bulkEncrypt + bulkDecrypt', async () => {
-    const rows = await db.orm.User.all()
+    const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
     const byId = new Map(rows.map((r) => [r.id, r] as const))
@@ -67,14 +67,16 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashGt filters lexicographically', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.email.cipherstashGt('m'),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-str-2', 'e2e-str-3'])
   })
 
   it('cipherstashAsc orders alphabetically (bare-column ORDER BY on string)', async () => {
-    const rows = await db.orm.User.orderBy((u) => cipherstashAsc(u.email)).all()
+    const rows = await db.orm.public.User.orderBy((u) =>
+      cipherstashAsc(u.email),
+    ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-str-0',
       'e2e-str-1',
@@ -84,7 +86,7 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashDesc reverses the alphabetical order', async () => {
-    const rows = await db.orm.User.orderBy((u) =>
+    const rows = await db.orm.public.User.orderBy((u) =>
       cipherstashDesc(u.email),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
@@ -96,7 +98,7 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashIlike coexists with order-and-range on the same column', async () => {
-    const rows = await db.orm.User.where((u) =>
+    const rows = await db.orm.public.User.where((u) =>
       u.email.cipherstashIlike('%@example.com'),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([

@@ -1,6 +1,6 @@
 ---
 name: stash-drizzle
-description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack/drizzle. Covers the encryptedType column type, encrypted query operators (eq, like, ilike, gt/gte/lt/lte, between, inArray, asc/desc), schema extraction, batched and/or conditions, EQL migration generation, and the complete Drizzle integration workflow. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
+description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack/drizzle. Covers the encryptedType column type, encrypted query operators (eq, like, ilike, gt/gte/lt/lte, between, inArray, asc/desc), schema extraction, batched and/or conditions, EQL migration generation, the EQL v3 integration (@cipherstash/stack/eql/v3/drizzle), and the complete Drizzle integration workflow. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
 ---
 
 # CipherStash Stack - Drizzle ORM Integration
@@ -15,6 +15,7 @@ Guide for integrating CipherStash field-level encryption with Drizzle ORM using 
 - Sorting and filtering on encrypted columns
 - Generating EQL database migrations
 - Building Express/Hono/Next.js APIs with encrypted Drizzle queries
+- Using EQL v3 typed-schema columns in Drizzle (see "EQL v3 Integration" below)
 
 ## Installation
 
@@ -737,3 +738,80 @@ class EncryptionConfigError extends Error {
 ```
 
 Encryption client operations return `Result` objects with `data` or `failure`.
+
+## EQL v3 Integration (`@cipherstash/stack/eql/v3/drizzle`)
+
+Everything above covers the v2 integration (`@cipherstash/stack/drizzle`). The **EQL v3** typed schema has its own Drizzle integration on the `@cipherstash/stack/eql/v3/drizzle` subpath. In v3 every encrypted column is a concrete Postgres domain (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type — there is no `equality: true` / `freeTextSearch: true` config object. See the `stash-encryption` skill's "EQL v3 Typed Schema" section for the full `types` catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`).
+
+Exports: `types` (Drizzle-native column factories mirroring the `@cipherstash/stack/eql/v3` namespace), `makeEqlV3Column`, `getEqlV3Column`, `isEqlV3Column`, `extractEncryptionSchemaV3`, `createEncryptionOperatorsV3`, `EncryptionOperatorError`, and the codec helpers `v3ToDriver` / `v3FromDriver` / `EqlV3CodecError`.
+
+### Schema, Client, and Operators
+
+```typescript
+import { pgTable, integer } from "drizzle-orm/pg-core"
+import { EncryptionV3 } from "@cipherstash/stack/v3"
+import {
+  types,
+  extractEncryptionSchemaV3,
+  createEncryptionOperatorsV3,
+} from "@cipherstash/stack/eql/v3/drizzle"
+
+const users = pgTable("users", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  email: types.TextSearch("email"),   // equality + order/range + free-text
+  age: types.IntegerOrd("age"),       // equality + order/range
+})
+
+const usersSchema = extractEncryptionSchemaV3(users)
+const client = await EncryptionV3({ schemas: [usersSchema] })
+const ops = createEncryptionOperatorsV3(client)
+```
+
+Each `types.*` factory emits its domain as the column's SQL type, so `drizzle-kit generate` produces `ADD COLUMN email public.eql_v3_text_search` etc. Install the EQL v3 SQL first with `stash eql install --eql-version 3` (direct install only for v3 — the v2 `generate-eql-migration` Drizzle path is not supported yet).
+
+`makeEqlV3Column(builder)` wraps a column builder from `@cipherstash/stack/eql/v3` (e.g. `makeEqlV3Column(v3types.TextEq("email"))`) — `types.TextEq("email")` from the drizzle subpath is shorthand for the same thing.
+
+### Insert, Query, Decrypt
+
+The Drizzle column stores the encrypted EQL envelope, so encrypt models before insert and decrypt after select — passing the extracted schema table:
+
+```typescript
+// Insert
+const enc = await client.bulkEncryptModels(
+  [{ email: "alice@example.com", age: 30 }],
+  usersSchema,
+)
+if (!enc.failure) await db.insert(users).values(enc.data)
+
+// Query — operators auto-encrypt their plaintext operands
+const rows = await db.select().from(users)
+  .where(await ops.and(
+    ops.contains(users.email, "alice"),   // free-text containment
+    ops.between(users.age, 18, 65),
+  ))
+  .orderBy(ops.asc(users.age))
+
+// Decrypt — v3 decryptModel/bulkDecryptModels take the schema table
+const dec = await client.bulkDecryptModels(rows, usersSchema)
+```
+
+### Operators
+
+| Operator | Required capability (domain suffix) |
+|---|---|
+| `eq`, `ne`, `inArray`, `notInArray` | equality (`Eq`, `Ord`, `OrdOre`, `TextSearch`) |
+| `gt`, `gte`, `lt`, `lte`, `between`, `notBetween`, `asc`, `desc` | order/range (`Ord`, `OrdOre`, `TextSearch`) |
+| `contains` | free-text (`TextMatch`, `TextSearch`) **or** encrypted-JSONB containment (`Json`) |
+| `and`, `or` | combinators — accept lazy (un-awaited) operators and `undefined`, resolve concurrently |
+| `isNull`, `isNotNull`, `not`, `exists`, `notExists` | Drizzle passthroughs, no encryption |
+
+Differences from the v2 operators to know about:
+
+- **`like` / `ilike` do not exist — by design.** v3 free-text search is tokenised containment, not SQL pattern matching; `contains(col, needle)` is the free-text operator. Don't pass `%` wildcards.
+- **`contains` on a `types.Json` column** answers encrypted-JSONB containment instead of free-text: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle — a `Json` column carries no `eq` / ordering, so those operators throw on it.
+- **No plaintext-column fallback.** Every v3 operator requires an encrypted v3 column and throws `EncryptionOperatorError` otherwise. Use regular Drizzle operators for non-encrypted columns.
+- A `null` operand throws — use `isNull()` / `isNotNull()` for NULL checks.
+- `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `bulkEncrypt` crossing when the client exposes one.
+- `contains` rejects a needle shorter than the match tokenizer's token length (it would otherwise silently match every row).
+- Operators gate on the column's capabilities and throw `EncryptionOperatorError` (with `context.columnName` / `tableName` / `operator`) when the domain can't answer the operator. This `EncryptionOperatorError` is exported from `@cipherstash/stack/eql/v3/drizzle` and is deliberately separate from the v2 class of the same name; there is no `EncryptionConfigError` on the v3 path.
+- Every operator takes an optional trailing `{ lockContext, audit }` argument; `createEncryptionOperatorsV3(client, { lockContext, audit })` sets defaults applied to every operand encryption.

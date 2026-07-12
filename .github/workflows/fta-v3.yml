@@ -12,6 +12,10 @@ on:
       - 'main'
     paths:
       - 'packages/stack/src/eql/v3/**'
+      # Shared match-index defaults live outside src/eql/v3 but shape every
+      # emitted v3 match block (load-bearing `k`/`m` ciphertext params), so edits
+      # here must trigger the v3 gate too.
+      - 'packages/stack/src/schema/match-defaults.ts'
       - 'packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
   pull_request:
@@ -19,6 +23,7 @@ on:
       - "**"
     paths:
       - 'packages/stack/src/eql/v3/**'
+      - 'packages/stack/src/schema/match-defaults.ts'
       - 'packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
 

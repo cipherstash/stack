@@ -1,0 +1,142 @@
+name: Integration — Drizzle (EQL v3)
+
+# Real ZeroKMS ciphertext against a real Postgres, on BOTH database variants.
+#
+# The Drizzle adapter talks straight to the database, so it does not need
+# PostgREST — but it does need to work on managed Postgres, where the `postgres`
+# role is not a superuser, the EQL install takes its self-skipping path, and the
+# ORE domains cannot hold data. The Supabase compose file brings up PostgREST
+# too; this job simply ignores it, and leaves `PGRST_URL` unset so a Supabase
+# suite scoped here would throw rather than silently skip.
+#
+# Separate from `tests.yml` on purpose: these suites need CipherStash credentials
+# and a database, and they THROW rather than skip when unconfigured. Keeping them
+# out of the unit job is what lets `pnpm test` stay runnable with neither.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/eql/v3) can produce wrong rows, so trigger the live
+      # suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
+      - 'packages/stack/integration/**'
+      - 'packages/test-kit/**'
+      - 'packages/cli/src/installer/**'
+      - 'local/docker-compose.postgres.yml'
+      - 'local/docker-compose.supabase.yml'
+      - 'local/supabase-init.sql'
+      - '.github/workflows/integration-drizzle.yml'
+      - '.github/actions/integration-setup/**'
+  pull_request:
+    branches: ['**']
+    # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
+    paths:
+      - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/eql/v3) can produce wrong rows, so trigger the live
+      # suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
+      - 'packages/stack/integration/**'
+      - 'packages/test-kit/**'
+      - 'packages/cli/src/installer/**'
+      - 'local/docker-compose.postgres.yml'
+      - 'local/docker-compose.supabase.yml'
+      - 'local/supabase-init.sql'
+      - '.github/workflows/integration-drizzle.yml'
+      - '.github/actions/integration-setup/**'
+
+jobs:
+  integration:
+    name: Drizzle v3 integration (db=${{ matrix.db }})
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Fork PRs have no secrets. Skip cleanly rather than fail on something the
+    # contributor cannot fix — `tests.yml` still gives them a green signal.
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    strategy:
+      fail-fast: false
+      # Drizzle talks straight to Postgres, so it runs against BOTH databases.
+      # The Supabase variant is not a formality: its `postgres` role is not a
+      # superuser, so the EQL install takes its self-skipping path and the ORE
+      # domains become unusable. A suite that passes on a superuser database can
+      # still fail there.
+      matrix:
+        include:
+          - db: postgres
+            database-url: postgres://cipherstash:password@localhost:55432/cipherstash
+            pgrest-url: ''
+          - db: supabase
+            database-url: postgres://postgres:password@localhost:55433/postgres
+            # The supabase compose file starts PostgREST anyway. Drizzle does not
+            # use it, but supplying the URL lets the harness assert the `anon`
+            # path on the database it is actually running against.
+            pgrest-url: http://localhost:55430
+
+    env:
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      # The identity suites federate a freshly-minted Clerk M2M JWT into a CTS
+      # token. Only they read these; the other suites ignore them. If one is
+      # unset the relevant suite fails loudly (throw, never skip) rather than
+      # taking the whole job down, so they are NOT in the require-cs-secrets
+      # preflight. `_B` is a SECOND machine (a distinct `sub`) in the same Clerk
+      # instance, used only by the cross-identity test.
+      CLERK_MACHINE_TOKEN: ${{ secrets.CLERK_MACHINE_TOKEN }}
+      CLERK_MACHINE_TOKEN_B: ${{ secrets.CLERK_MACHINE_TOKEN_B }}
+      # Job-level env, not a `.env` file: `dotenv/config` does not override an
+      # already-set `process.env`, so these win and no secret is written to disk.
+      DATABASE_URL: ${{ matrix.database-url }}
+      PGRST_URL: ${{ matrix.pgrest-url }}
+      # EXPLICIT, never inferred. The variant decides whether EQL is installed
+      # with `--supabase` (and therefore whether the role grants are applied).
+      # Inferring it from `PGRST_URL` reported `postgres` for this job's Supabase
+      # cell and silently skipped the grants.
+      CS_IT_DB_VARIANT: ${{ matrix.db }}
+      # Scoped by directory, never by named file, so a renamed suite cannot
+      # silently drop from CI. `integration/shared/` holds the adapter-agnostic
+      # suites (harness, bloom, ope-term, the crypto/SQL matrices);
+      # `integration/identity/` holds the Clerk-federated lock-context suites
+      # (they need CLERK_MACHINE_TOKEN + a workspace with the Clerk issuer
+      # registered); the Supabase adapter suites are not run here — they have
+      # their own job.
+      CS_IT_SUITE: >-
+        integration/shared/**/*.integration.test.ts,
+        integration/drizzle-v3/**/*.integration.test.ts,
+        integration/identity/**/*.integration.test.ts
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/integration-setup
+
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before the docker pull. The in-test `requireIntegrationEnv` is the
+      # correctness guarantee; this is the cheap one.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      - name: Start ${{ matrix.db }}
+        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml up -d --wait
+
+      # `globalSetup` installs EQL v3 by shelling out to the real
+      # `stash eql install --eql-version 3`, so an installer regression fails
+      # here rather than hiding behind a test-only SQL apply.
+      - name: Drizzle v3 integration suites
+        run: pnpm --filter @cipherstash/stack run test:integration
+
+      - name: Stop ${{ matrix.db }}
+        if: always()
+        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v
