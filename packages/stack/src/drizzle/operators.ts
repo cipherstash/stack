@@ -238,11 +238,20 @@ function getColumnInfo(
 /**
  * Helper to convert a value to plaintext format
  */
-function toPlaintext(value: unknown): string | number {
+function toPlaintext(value: unknown): string | number | bigint {
   if (typeof value === 'boolean') {
     return value ? 1 : 0
   }
-  if (typeof value === 'string' || typeof value === 'number') {
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    // `bigint` (int8 columns) must pass through as a native bigint, NOT via the
+    // `String(value)` fallthrough below — a stringified bigint would be
+    // encrypted as text and silently mismatch the column's bigint domain. The
+    // downstream `encryptQuery` term type is `Plaintext`, which carries bigint,
+    // and protect-ffi 0.28 i64-bounds-checks it at the boundary.
+    typeof value === 'bigint'
+  ) {
     return value
   }
   if (value instanceof Date) {
@@ -255,7 +264,7 @@ function toPlaintext(value: unknown): string | number {
  * Value to encrypt with its associated column
  */
 interface ValueToEncrypt {
-  readonly value: string | number
+  readonly value: string | number | bigint
   readonly column: SQLWrapper
   readonly columnInfo: ColumnInfo
   readonly queryType?: QueryTypeName
@@ -320,7 +329,7 @@ async function encryptValues(
       table: EncryptedTable<EncryptedTableColumn>
       columnName: string
       values: Array<{
-        value: string | number
+        value: string | number | bigint
         index: number
         queryType?: QueryTypeName
       }>

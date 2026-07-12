@@ -1,9 +1,5 @@
-import type { ColumnSchema, MatchIndexOpts } from '@/schema'
-import {
-  type BuiltMatchIndexOpts,
-  cloneMatchOpts,
-  defaultMatchOpts,
-} from '@/schema/match-defaults'
+import type { ColumnSchema } from '@/schema'
+import { defaultMatchOpts } from '@/schema/match-defaults'
 
 /**
  * The query capabilities a v3 concrete domain exposes. These are SDK-facing
@@ -12,18 +8,44 @@ import {
  * `build()`.
  *
  * - `equality`: exact-match lookups (EQL `hm`, or comparison via `ob`).
- * - `orderAndRange`: comparison / range lookups (EQL `ob`).
+ * - `orderAndRange`: comparison / range lookups (EQL `op`, or `ob` on `_ord_ore` domains).
  * - `freeTextSearch`: tokenised substring match (EQL `bf`).
+ * - `searchableJson`: encrypted-JSONB containment / selector lookups (EQL
+ *   `ste_vec`). Optional and mutually exclusive with the scalar flags — a
+ *   `public.eql_v3_json` document is queried by structure, not by scalar term.
  */
 export type QueryCapabilities = Readonly<{
   equality: boolean
   orderAndRange: boolean
   freeTextSearch: boolean
+  searchableJson?: boolean
 }>
+
+/**
+ * The `cast_as` kinds whose decrypted plaintext reconstructs to a JS `Date`.
+ *
+ * SINGLE SOURCE OF TRUTH for the date-like set. Both the type-level
+ * {@link PlaintextFromKind} and the runtime `rowReconstructor` (encryption/v3.ts)
+ * derive their "reconstructs to `Date`" decision from this array, so the next
+ * `Date`-backed cast is added in exactly one place — never hand-synced across a
+ * type and a runtime guard that could silently drift.
+ *
+ * (`timestamp` reconstructs to `Date` just like `date`, but its `cast_as` tells
+ * the FFI not to truncate the time-of-day.)
+ */
+export const DATE_LIKE_CASTS = ['date', 'timestamp'] as const
+/** A `cast_as` kind that reconstructs to `Date` — see {@link DATE_LIKE_CASTS}. */
+export type DateLikeCast = (typeof DATE_LIKE_CASTS)[number]
 
 /** The plaintext (TypeScript) kind a v3 domain decrypts to. A subset of the
  * SDK `CastAs` enum, restricted to the scalar kinds v3 domains actually use. */
-type PlaintextKind = 'string' | 'number' | 'boolean' | 'date' | 'timestamp'
+type PlaintextKind =
+  | 'string'
+  | 'number'
+  | 'bigint'
+  | 'boolean'
+  | 'json'
+  | DateLikeCast
 
 /**
  * The full, literal definition of a v3 domain. This is the LOAD-BEARING type:
@@ -34,7 +56,7 @@ type PlaintextKind = 'string' | 'number' | 'boolean' | 'date' | 'timestamp'
  * a storage-only `date` column and plaintext inference would collapse.
  */
 type V3DomainDefinition = Readonly<{
-  eqlType: `eql_v3.${string}`
+  eqlType: `public.${string}`
   castAs: PlaintextKind
   capabilities: QueryCapabilities
 }>
@@ -45,6 +67,7 @@ type QueryableFlag<D extends V3DomainDefinition> = D['capabilities'] extends {
   equality: false
   orderAndRange: false
   freeTextSearch: false
+  searchableJson?: false | undefined
 }
   ? false
   : true
@@ -84,7 +107,7 @@ const TEXT_SEARCH = {
  * Recorded as metadata for future DDL / query-dialect increments; it is
  * intentionally absent from the emitted encrypt config.
  */
-export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
+export const TEXT_SEARCH_EQL_TYPE = 'public.eql_v3_text_search'
 
 // Per-domain literal definitions. Each concrete column subclass is parameterised
 // by `typeof <CONST>`; the literal `eqlType`/`castAs`/`capabilities` on each is
@@ -94,218 +117,241 @@ export const TEXT_SEARCH_EQL_TYPE = 'eql_v3.text_search'
 // Exported for the `types` namespace factory (see ./types); they are internal
 // building blocks and are intentionally NOT re-exported from the public barrel.
 export const INTEGER = {
-  eqlType: 'eql_v3.integer',
+  eqlType: 'public.eql_v3_integer',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const INTEGER_EQ = {
-  eqlType: 'eql_v3.integer_eq',
+  eqlType: 'public.eql_v3_integer_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const INTEGER_ORD_ORE = {
-  eqlType: 'eql_v3.integer_ord_ore',
+  eqlType: 'public.eql_v3_integer_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const INTEGER_ORD = {
-  eqlType: 'eql_v3.integer_ord',
+  eqlType: 'public.eql_v3_integer_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const SMALLINT = {
-  eqlType: 'eql_v3.smallint',
+  eqlType: 'public.eql_v3_smallint',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const SMALLINT_EQ = {
-  eqlType: 'eql_v3.smallint_eq',
+  eqlType: 'public.eql_v3_smallint_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const SMALLINT_ORD_ORE = {
-  eqlType: 'eql_v3.smallint_ord_ore',
+  eqlType: 'public.eql_v3_smallint_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const SMALLINT_ORD = {
-  eqlType: 'eql_v3.smallint_ord',
+  eqlType: 'public.eql_v3_smallint_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-// NOTE: bigint (int8) domains are intentionally NOT defined yet. The native
-// protect-ffi build cannot round-trip a 64-bit int losslessly: a JS `bigint`
-// fails JSON serialization, and a `string` is rejected for a `big_int` column
-// ("Cannot convert String to BigInt"), while `number` loses precision above
-// 2^53. Re-add BIGINT/BIGINT_EQ/BIGINT_ORD_ORE/BIGINT_ORD and their builders once the
-// FFI accepts a lossless bigint on input and returns it on decrypt.
+// bigint (int8) domains. Plaintext is a JS `bigint` (always decrypts to
+// `bigint`); bounds are the full i64 range. protect-ffi round-trips an in-range
+// native bigint losslessly, and values outside the signed 64-bit range are
+// rejected client-side by `assertValidNumericValue` before they reach the FFI
+// (`*_ord_ope` variants are out of scope — CIP-3403.)
+export const BIGINT = {
+  eqlType: 'public.eql_v3_bigint',
+  castAs: 'bigint',
+  capabilities: STORAGE_ONLY,
+} as const
+export const BIGINT_EQ = {
+  eqlType: 'public.eql_v3_bigint_eq',
+  castAs: 'bigint',
+  capabilities: EQUALITY_ONLY,
+} as const
+export const BIGINT_ORD_ORE = {
+  eqlType: 'public.eql_v3_bigint_ord_ore',
+  castAs: 'bigint',
+  capabilities: ORDER_AND_RANGE,
+} as const
+export const BIGINT_ORD = {
+  eqlType: 'public.eql_v3_bigint_ord',
+  castAs: 'bigint',
+  capabilities: ORDER_AND_RANGE,
+} as const
 
 export const DATE = {
-  eqlType: 'eql_v3.date',
+  eqlType: 'public.eql_v3_date',
   castAs: 'date',
   capabilities: STORAGE_ONLY,
 } as const
 export const DATE_EQ = {
-  eqlType: 'eql_v3.date_eq',
+  eqlType: 'public.eql_v3_date_eq',
   castAs: 'date',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DATE_ORD_ORE = {
-  eqlType: 'eql_v3.date_ord_ore',
+  eqlType: 'public.eql_v3_date_ord_ore',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DATE_ORD = {
-  eqlType: 'eql_v3.date_ord',
+  eqlType: 'public.eql_v3_date_ord',
   castAs: 'date',
   capabilities: ORDER_AND_RANGE,
 } as const
 
-// Timestamp domains cast as 'timestamp' (not 'date') so decrypt preserves the
-// time-of-day component — the FFI's 'date' variant truncates to midnight.
-// Both kinds decrypt to a JS `Date`.
 export const TIMESTAMP = {
-  eqlType: 'eql_v3.timestamp',
+  eqlType: 'public.eql_v3_timestamp',
   castAs: 'timestamp',
   capabilities: STORAGE_ONLY,
 } as const
 export const TIMESTAMP_EQ = {
-  eqlType: 'eql_v3.timestamp_eq',
+  eqlType: 'public.eql_v3_timestamp_eq',
   castAs: 'timestamp',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TIMESTAMP_ORD_ORE = {
-  eqlType: 'eql_v3.timestamp_ord_ore',
+  eqlType: 'public.eql_v3_timestamp_ord_ore',
   castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TIMESTAMP_ORD = {
-  eqlType: 'eql_v3.timestamp_ord',
+  eqlType: 'public.eql_v3_timestamp_ord',
   castAs: 'timestamp',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const NUMERIC = {
-  eqlType: 'eql_v3.numeric',
+  eqlType: 'public.eql_v3_numeric',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const NUMERIC_EQ = {
-  eqlType: 'eql_v3.numeric_eq',
+  eqlType: 'public.eql_v3_numeric_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const NUMERIC_ORD_ORE = {
-  eqlType: 'eql_v3.numeric_ord_ore',
+  eqlType: 'public.eql_v3_numeric_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const NUMERIC_ORD = {
-  eqlType: 'eql_v3.numeric_ord',
+  eqlType: 'public.eql_v3_numeric_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const TEXT = {
-  eqlType: 'eql_v3.text',
+  eqlType: 'public.eql_v3_text',
   castAs: 'string',
   capabilities: STORAGE_ONLY,
 } as const
 export const TEXT_EQ = {
-  eqlType: 'eql_v3.text_eq',
+  eqlType: 'public.eql_v3_text_eq',
   castAs: 'string',
   capabilities: EQUALITY_ONLY,
 } as const
 export const TEXT_MATCH = {
-  eqlType: 'eql_v3.text_match',
+  eqlType: 'public.eql_v3_text_match',
   castAs: 'string',
   capabilities: MATCH_ONLY,
 } as const
 export const TEXT_ORD_ORE = {
-  eqlType: 'eql_v3.text_ord_ore',
+  eqlType: 'public.eql_v3_text_ord_ore',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const TEXT_ORD = {
-  eqlType: 'eql_v3.text_ord',
+  eqlType: 'public.eql_v3_text_ord',
   castAs: 'string',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const BOOLEAN = {
-  eqlType: 'eql_v3.boolean',
+  eqlType: 'public.eql_v3_boolean',
   castAs: 'boolean',
   capabilities: STORAGE_ONLY,
 } as const
 
 export const REAL = {
-  eqlType: 'eql_v3.real',
+  eqlType: 'public.eql_v3_real',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const REAL_EQ = {
-  eqlType: 'eql_v3.real_eq',
+  eqlType: 'public.eql_v3_real_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const REAL_ORD_ORE = {
-  eqlType: 'eql_v3.real_ord_ore',
+  eqlType: 'public.eql_v3_real_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const REAL_ORD = {
-  eqlType: 'eql_v3.real_ord',
+  eqlType: 'public.eql_v3_real_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 export const DOUBLE = {
-  eqlType: 'eql_v3.double',
+  eqlType: 'public.eql_v3_double',
   castAs: 'number',
   capabilities: STORAGE_ONLY,
 } as const
 export const DOUBLE_EQ = {
-  eqlType: 'eql_v3.double_eq',
+  eqlType: 'public.eql_v3_double_eq',
   castAs: 'number',
   capabilities: EQUALITY_ONLY,
 } as const
 export const DOUBLE_ORD_ORE = {
-  eqlType: 'eql_v3.double_ord_ore',
+  eqlType: 'public.eql_v3_double_ord_ore',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 export const DOUBLE_ORD = {
-  eqlType: 'eql_v3.double_ord',
+  eqlType: 'public.eql_v3_double_ord',
   castAs: 'number',
   capabilities: ORDER_AND_RANGE,
 } as const
 
 /**
  * Translate a domain's semantic {@link QueryCapabilities} (plus its plaintext
- * `castAs`, which decides how equality is answered) into the concrete EQL index
- * block emitted by `build()`.
+ * `castAs`, which decides how equality is answered, and its ordering flavour)
+ * into the concrete EQL index block emitted by `build()`.
  *
  * - `unique` (the `hm` HMAC index) whenever equality is answered via HMAC:
  *   equality-only domains of ANY type, AND text order domains. Text equality is
- *   HMAC-based — the `eql_v3.text_ord` / `eql_v3.text_ord_ore` SQL domains
+ *   HMAC-based — the `public.eql_v3_text_ord` / `public.eql_v3_text_ord_ore` SQL domains
  *   REQUIRE `hm` in the stored ciphertext (their `eql_v3.eq_term` extracts it).
- * - `ore` for any order/range domain (the `ob` term). For numeric/date order
- *   domains `ob` also answers equality (via the SQL `=` operator), so those emit
- *   `ore` ONLY — no `hm`. Text order domains emit BOTH `unique` and `ore`.
+ * - ONE ordering index for any order/range domain, selected by the domain's
+ *   name (eql-3.0.0): plain `_ord` domains (and `text_search`) are OPE-backed —
+ *   `ope`, the `op` CLLW-OPE term — while `_ord_ore` domains keep block-ORE —
+ *   `ore`, the `ob` term. The two terms are not cross-comparable, and each
+ *   domain's SQL CHECK requires exactly its own. For numeric/date order
+ *   domains the ordering term also answers equality (via the SQL `=`
+ *   operator), so those emit no `hm`. Text order domains emit BOTH `unique`
+ *   and the ordering index.
  * - `match` (the `bf` bloom-filter index) for free-text search, deep-cloned from
- *   the per-call defaults so no nested object is ever shared across columns.
+ *   the per-call defaults so no nested object is ever shared across columns, and
+ *   emitted with `include_original: false` (see below).
  */
 function indexesForCapabilities(
   capabilities: QueryCapabilities,
   castAs: PlaintextKind,
+  ordering: 'ope' | 'ore',
 ): ColumnSchema['indexes'] {
   const indexes: ColumnSchema['indexes'] = {}
 
   // Text equality is always HMAC-based, so a text order domain (`string` +
   // order/range) still needs `unique`; numeric/date order domains answer
-  // equality via `ob` and must NOT emit `unique`.
+  // equality via their ordering term and must NOT emit `unique`.
   if (
     capabilities.equality &&
     (!capabilities.orderAndRange || castAs === 'string')
@@ -314,16 +360,57 @@ function indexesForCapabilities(
   }
 
   if (capabilities.orderAndRange) {
-    indexes.ore = {}
+    indexes[ordering] = {}
   }
 
   if (capabilities.freeTextSearch) {
     // The factory returns fresh, unaliased nested objects per call, so no
     // column's emitted match block ever shares state with another's.
-    indexes.match = defaultMatchOpts()
+    //
+    // `include_original` is overridden off the v2 builder's `true`. protect-ffi
+    // ignores the flag entirely (measured across 0.24 and 0.29, EQL v2 and v3:
+    // the emitted bloom is trigram-only either way, and a value shorter than
+    // `token_length` blooms to nothing regardless), so this is inert today. It
+    // is set to the value a substring-search domain actually wants — matching
+    // the zod schema's own default — so that a protect-ffi release which starts
+    // honouring the flag cannot silently break `contains`.
+    indexes.match = { ...defaultMatchOpts(), include_original: false }
+  }
+
+  if (capabilities.searchableJson) {
+    // Encrypted-JSONB index (the protect-ffi config kind is named `ste_vec`).
+    // `prefix: 'enabled'` is a sentinel the table's `build()` rewrites to
+    // `${tableName}/${columnName}` — the same scheme v2 `searchableJson` uses —
+    // so each document's selectors are scoped to their column.
+    //
+    // `array_index_mode` indexes array elements by identity (`item`) and enables
+    // `$[*]` wildcard selectors, but deliberately drops `position`: `@>`
+    // containment must be a subset test (jsonb `@>` semantics), so `{roles:['x']}`
+    // matches any document whose `roles` array contains `x` REGARDLESS of index.
+    // With positional terms emitted (v2 `searchableJson`'s `'all'`), the needle
+    // for `x`-at-index-0 would miss a document holding `x` at index 1.
+    //
+    // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json` orders the
+    // document's entries by the CLLW-OPE `op` term, so the index must emit `op`
+    // (compat) terms. `'standard'` emits v2's CLLW-ORE `oc` terms, which the v3
+    // domain rejects at encrypt time.
+    indexes.ste_vec = {
+      prefix: 'enabled',
+      array_index_mode: { item: true, wildcard: true, position: false },
+      mode: 'compat',
+    }
   }
 
   return indexes
+}
+
+/**
+ * The ordering flavour a domain's name pins (eql-3.0.0): `_ord_ore` domains
+ * are block-ORE (`ore` index, `ob` term); every other ordering domain —
+ * `_ord` and `text_search` — is CLLW-OPE (`ope` index, `op` term).
+ */
+function orderingForEqlType(eqlType: string): 'ope' | 'ore' {
+  return eqlType.endsWith('_ord_ore') ? 'ore' : 'ope'
 }
 
 /** Whether a domain's capabilities make it queryable at all (any flag set). */
@@ -331,7 +418,8 @@ function isQueryableCapabilities(capabilities: QueryCapabilities): boolean {
   return (
     capabilities.equality ||
     capabilities.orderAndRange ||
-    capabilities.freeTextSearch
+    capabilities.freeTextSearch ||
+    (capabilities.searchableJson ?? false)
   )
 }
 
@@ -377,6 +465,7 @@ export class EncryptedV3Column<D extends V3DomainDefinition> {
       indexes: indexesForCapabilities(
         this.definition.capabilities,
         this.definition.castAs,
+        orderingForEqlType(this.definition.eqlType),
       ),
     }
   }
@@ -389,15 +478,15 @@ const TEXT_SEARCH_DOMAIN = {
 } as const
 
 /**
- * Builder for an `eql_v3.text_search` column.
+ * Builder for a `public.eql_v3_text_search` column.
  *
  * The concrete type inherently enables equality + order/range + free-text
- * match — there are no capability-enabling methods. `.freeTextSearch(opts?)`
- * tunes the match index only.
+ * match — there are no capability-enabling or tuning methods. The match index
+ * is always emitted with the default configuration.
  *
  * NOTE — querying: a `text_search` column emits all three indexes (`unique`,
- * `ore`, `match`), and the shared index-inference picks them by fixed priority
- * `unique > match > ore`. So `encryptQuery(value, { column, table })` with NO
+ * `ope`, `match`), and the shared index-inference picks them by fixed priority
+ * `unique > match > ordering`. So `encryptQuery(value, { column, table })` with NO
  * explicit `queryType` builds an EQUALITY term (via `unique`), NOT a free-text
  * match — a substring like `'joh'` then matches nothing. To run a free-text
  * match query you MUST pass `queryType: 'freeTextSearch'`:
@@ -412,49 +501,8 @@ const TEXT_SEARCH_DOMAIN = {
 export class EncryptedTextSearchColumn extends EncryptedV3Column<
   typeof TEXT_SEARCH_DOMAIN
 > {
-  private matchOpts: BuiltMatchIndexOpts
-
   constructor(columnName: string) {
     super(columnName, TEXT_SEARCH_DOMAIN)
-    this.matchOpts = defaultMatchOpts()
-  }
-
-  /**
-   * Tune the match index. Each provided key replaces its default; omitted
-   * keys keep the default. This NEVER enables a capability — match is always
-   * on for this type. Merge semantics mirror v2's `opts?.x ?? default`.
-   */
-  freeTextSearch(opts?: MatchIndexOpts): this {
-    // A fresh defaults object per call supplies the `?? ` fallbacks, so no
-    // nested default object is ever shared into `this.matchOpts` by reference.
-    const defaults = defaultMatchOpts()
-    // Clone-on-write: deep-copy the nested tokenizer / token_filters when
-    // storing them so a caller mutating their own opts object between
-    // freeTextSearch(opts) and build() cannot leak into the emitted config.
-    this.matchOpts = cloneMatchOpts({
-      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
-      token_filters: opts?.token_filters ?? defaults.token_filters,
-      k: opts?.k ?? defaults.k,
-      m: opts?.m ?? defaults.m,
-      include_original: opts?.include_original ?? defaults.include_original,
-    })
-    return this
-  }
-
-  /** Emit the encrypt-config column. Byte-identical to a v2 equality+order+match column. */
-  override build(): ColumnSchema {
-    // Deep-clone the match block so the returned config NEVER aliases this
-    // builder's internal `matchOpts` (or any caller-supplied opts merged into
-    // it). A caller mutating the returned object cannot corrupt this builder's
-    // state or another column's defaults.
-    return {
-      cast_as: 'string',
-      indexes: {
-        unique: { token_filters: [] },
-        ore: {},
-        match: cloneMatchOpts(this.matchOpts),
-      },
-    }
   }
 }
 
@@ -494,9 +542,18 @@ export class EncryptedSmallintOrdColumn extends EncryptedV3Column<
   typeof SMALLINT_ORD
 > {}
 
-// bigint (int8) domain builders are intentionally omitted pending FFI support
-// for lossless bigint round-tripping — see the note by the INTEGER/DATE domain
-// definitions above.
+// bigint (int8) — plaintext is a JS `bigint`, round-tripped losslessly by the
+// native protect-ffi boundary (see the BIGINT domain definitions above).
+export class EncryptedBigintColumn extends EncryptedV3Column<typeof BIGINT> {}
+export class EncryptedBigintEqColumn extends EncryptedV3Column<
+  typeof BIGINT_EQ
+> {}
+export class EncryptedBigintOrdOreColumn extends EncryptedV3Column<
+  typeof BIGINT_ORD_ORE
+> {}
+export class EncryptedBigintOrdColumn extends EncryptedV3Column<
+  typeof BIGINT_ORD
+> {}
 
 // date
 export class EncryptedDateColumn extends EncryptedV3Column<typeof DATE> {}
@@ -572,6 +629,31 @@ export class EncryptedDoubleOrdColumn extends EncryptedV3Column<
   typeof DOUBLE_ORD
 > {}
 
+// json
+const JSON_DOMAIN = {
+  eqlType: 'public.eql_v3_json',
+  castAs: 'json',
+  capabilities: {
+    equality: false,
+    orderAndRange: false,
+    freeTextSearch: false,
+    searchableJson: true,
+  },
+} as const
+
+/**
+ * Builder for a `public.eql_v3_json` column — an encrypted JSONB document
+ * (a {@link JsonDocument}: object, array, or null). It round-trips through
+ * `encrypt`/`decrypt`, and containment queries use the encrypted-JSONB index
+ * emitted by `build()`. (The stored payload is protect-ffi's `SteVecDocument`,
+ * and the config index kind is `ste_vec` — both protect-ffi names.)
+ */
+export class EncryptedJsonColumn extends EncryptedV3Column<typeof JSON_DOMAIN> {
+  constructor(columnName: string) {
+    super(columnName, JSON_DOMAIN)
+  }
+}
+
 /**
  * Union of every v3 concrete column type. Used as the value type for v3 table
  * columns so a table may mix any generated domains.
@@ -585,6 +667,10 @@ export type AnyEncryptedV3Column =
   | EncryptedSmallintEqColumn
   | EncryptedSmallintOrdOreColumn
   | EncryptedSmallintOrdColumn
+  | EncryptedBigintColumn
+  | EncryptedBigintEqColumn
+  | EncryptedBigintOrdOreColumn
+  | EncryptedBigintOrdColumn
   | EncryptedDateColumn
   | EncryptedDateEqColumn
   | EncryptedDateOrdOreColumn
@@ -612,6 +698,16 @@ export type AnyEncryptedV3Column =
   | EncryptedDoubleEqColumn
   | EncryptedDoubleOrdOreColumn
   | EncryptedDoubleOrdColumn
+  | EncryptedJsonColumn
+
+/**
+ * A factory that builds a concrete v3 column for a given DB column name.
+ *
+ * Declared here rather than beside `DOMAIN_REGISTRY` so that `./types` can
+ * constrain its own export against it without importing from `./domain-registry`,
+ * which imports `./types` back as a value.
+ */
+export type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
 
 /**
  * Shape of v3 table columns: every value is a v3 concrete column builder.
@@ -621,16 +717,39 @@ export type EncryptedV3TableColumn = {
   [key: string]: AnyEncryptedV3Column
 }
 
+/** A JSON value at any depth. Used for the values NESTED inside a document. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue }
+
+/**
+ * The plaintext a `public.eql_v3_json` column encrypts and reconstructs: a JSON
+ * DOCUMENT — an object, an array, or `null`. NOT a bare top-level scalar:
+ * protect-ffi's `json` cast rejects a top-level string/number/boolean
+ * ("Cannot convert … to Json"), because a scalar belongs in a scalar domain
+ * (`types.TextEq`, `types.IntegerEq`, …). Nested scalars are ordinary
+ * {@link JsonValue}s and are fully supported.
+ */
+export type JsonDocument = null | JsonValue[] | { [key: string]: JsonValue }
+
 /** Map a domain's {@link PlaintextKind} to its TypeScript plaintext type. */
 type PlaintextFromKind<K extends PlaintextKind> = K extends 'string'
   ? string
   : K extends 'number'
     ? number
-    : K extends 'boolean'
-      ? boolean
-      : K extends 'date' | 'timestamp'
-        ? Date
-        : never
+    : K extends 'bigint'
+      ? bigint
+      : K extends 'boolean'
+        ? boolean
+        : K extends DateLikeCast
+          ? Date
+          : K extends 'json'
+            ? JsonDocument
+            : never
 
 /**
  * The plaintext type for a single v3 column, read from the literal domain

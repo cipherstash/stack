@@ -123,12 +123,26 @@ describe('identity-bound encryption via OidcFederationStrategy + lock context', 
     }
 
     // Decrypting without the identity claim cannot reproduce the key tag.
+    //
+    // `decryptModel` REPORTS failure as a `Result` rather than throwing, so the
+    // previous `try/catch` here ran zero assertions on the happy path and would
+    // also have passed had the decryption wrongly SUCCEEDED. Accept denial via
+    // either channel, but require that it is denied.
+    let denied = false
+    let message = ''
     try {
-      await protectClient.decryptModel(encryptedModel.data)
+      const result = await protectClient.decryptModel(encryptedModel.data)
+      if (result.failure) {
+        denied = true
+        message = result.failure.message
+      }
     } catch (error) {
-      const e = error as Error
-      expect(e.message.startsWith('Failed to retrieve key')).toEqual(true)
+      denied = true
+      message = (error as Error).message
     }
+
+    expect(denied).toBe(true)
+    expect(message).toMatch(/^Failed to retrieve key/)
   }, 30000)
 
   it('should bulk encrypt and decrypt models bound to the user identity', async () => {

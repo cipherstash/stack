@@ -12,12 +12,18 @@ export type {
   AnyEncryptedV3Column,
   EncryptedV3TableColumn,
   EqlTypeForColumn,
+  JsonDocument,
+  JsonValue,
   PlaintextForColumn,
   QueryCapabilities,
   QueryTypesForColumn,
 } from './columns'
 
 export {
+  EncryptedBigintColumn,
+  EncryptedBigintEqColumn,
+  EncryptedBigintOrdColumn,
+  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
@@ -31,6 +37,7 @@ export {
   EncryptedIntegerEqColumn,
   EncryptedIntegerOrdColumn,
   EncryptedIntegerOrdOreColumn,
+  EncryptedJsonColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,

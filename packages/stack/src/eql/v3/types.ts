@@ -1,4 +1,8 @@
 import {
+  BIGINT,
+  BIGINT_EQ,
+  BIGINT_ORD,
+  BIGINT_ORD_ORE,
   BOOLEAN,
   DATE,
   DATE_EQ,
@@ -8,6 +12,10 @@ import {
   DOUBLE_EQ,
   DOUBLE_ORD,
   DOUBLE_ORD_ORE,
+  EncryptedBigintColumn,
+  EncryptedBigintEqColumn,
+  EncryptedBigintOrdColumn,
+  EncryptedBigintOrdOreColumn,
   EncryptedBooleanColumn,
   EncryptedDateColumn,
   EncryptedDateEqColumn,
@@ -21,6 +29,7 @@ import {
   EncryptedIntegerEqColumn,
   EncryptedIntegerOrdColumn,
   EncryptedIntegerOrdOreColumn,
+  EncryptedJsonColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
@@ -68,14 +77,19 @@ import {
   TIMESTAMP_EQ,
   TIMESTAMP_ORD,
   TIMESTAMP_ORD_ORE,
+  type V3ColumnFactory,
 } from './columns'
 
 /**
- * The v3 column-type namespace. Each member is a factory that builds a concrete
- * EQL v3 column; the member name mirrors the underlying `eql_v3.<name>` domain
- * (strip the `eql_v3.` prefix, PascalCase each `_`-separated segment). So
- * `types.TextEq('actor')` builds an `eql_v3.text_eq` column, `types.IntegerOrd`
- * an `eql_v3.integer_ord`, `types.Timestamp` an `eql_v3.timestamp`, and so on.
+ * The v3 column-type namespace. Each member is a public, semantic factory name
+ * for a concrete EQL v3 column. Most members mirror the underlying domain name;
+ * JS-friendly scalar names map to Postgres concrete domains, e.g.
+ * `types.IntegerOrd` builds a `public.eql_v3_integer_ord` column and `types.Boolean`
+ * builds a `public.eql_v3_boolean` column.
+ *
+ * If these factory names stop matching the emitted capability/domain surface,
+ * the stack package is out of sync with the underlying EQL build. That is a
+ * version mismatch, not a harmless naming drift.
  *
  * Each factory returns the CONCRETE column class instance (never the widened
  * `AnyEncryptedV3Column`) so per-column plaintext / query-capability inference
@@ -91,10 +105,10 @@ import {
  * })
  * ```
  *
- * `types.TextSearch` keeps the chainable `.freeTextSearch(opts)` tuner (the
- * only capability-bearing chain — every other domain is fully described by its
- * type). bigint domains are intentionally absent pending lossless FFI
- * round-tripping (see ./columns).
+ * `types.TextSearch` is fully described by its type — like every other domain,
+ * it has no capability-bearing or tuning chain. Its match index is always
+ * emitted with the default configuration; run a free-text query by passing
+ * `queryType: 'freeTextSearch'` to `encryptQuery`.
  */
 export const types = {
   // integer
@@ -113,6 +127,14 @@ export const types = {
     new EncryptedSmallintOrdOreColumn(name, SMALLINT_ORD_ORE),
   SmallintOrd: (name: string) =>
     new EncryptedSmallintOrdColumn(name, SMALLINT_ORD),
+
+  // bigint (int8) — plaintext is a JS `bigint`, round-tripped losslessly by
+  // the native protect-ffi boundary (see ./columns)
+  Bigint: (name: string) => new EncryptedBigintColumn(name, BIGINT),
+  BigintEq: (name: string) => new EncryptedBigintEqColumn(name, BIGINT_EQ),
+  BigintOrdOre: (name: string) =>
+    new EncryptedBigintOrdOreColumn(name, BIGINT_ORD_ORE),
+  BigintOrd: (name: string) => new EncryptedBigintOrdColumn(name, BIGINT_ORD),
 
   // date
   Date: (name: string) => new EncryptedDateColumn(name, DATE),
@@ -163,4 +185,12 @@ export const types = {
   DoubleOrdOre: (name: string) =>
     new EncryptedDoubleOrdOreColumn(name, DOUBLE_ORD_ORE),
   DoubleOrd: (name: string) => new EncryptedDoubleOrdColumn(name, DOUBLE_ORD),
-} as const
+
+  // json (encrypted JSONB document, ste_vec containment)
+  Json: (name: string) => new EncryptedJsonColumn(name),
+  // `satisfies` is load-bearing, not decoration: `DOMAIN_REGISTRY` derives itself
+  // by calling every value here at module load. A non-factory export would throw
+  // during module evaluation and take the supabase introspect/schema-build/verify
+  // path down with it. This turns that into a compile error at the offending line.
+  // `as const` applies first, so literal key inference is preserved.
+} as const satisfies Record<string, V3ColumnFactory>

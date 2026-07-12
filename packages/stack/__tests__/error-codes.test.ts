@@ -5,6 +5,7 @@ import type { EncryptionClient } from '@/encryption'
 import { EncryptionErrorTypes } from '@/errors'
 import { Encryption } from '@/index'
 import { encryptedColumn, encryptedTable } from '@/schema'
+import type { BulkDecryptPayload } from '@/types'
 
 /** FFI tests require longer timeout due to client initialization */
 const FFI_TEST_TIMEOUT = 30_000
@@ -246,29 +247,29 @@ describe('FFI Error Code Preservation', () => {
 
   describe('bulkDecrypt error codes', () => {
     it(
-      'returns per-item errors for malformed ciphertexts (fallible FFI decrypt)',
+      'returns per-item errors for malformed ciphertexts',
       async () => {
-        // bulkDecrypt uses the "fallible" FFI API (decryptBulkFallible):
-        // - Succeeds at the operation level
-        // - Returns per-item results with either { data } or { error }
-        //
-        // protect-ffi < 0.27 threw a top-level pre-FFI parsing error for
-        // malformed ciphertexts; 0.27 moved ciphertext parsing INTO the
-        // fallible API (structured as INVALID_CIPHERTEXT), so the operation
-        // now succeeds and each bad item carries its own { error } result.
+        // bulkDecrypt uses the fallible FFI API, so malformed items are
+        // reported per item instead of failing the whole operation.
         const invalidCiphertexts = [
           { data: { i: { t: 'test_table', c: 'email' }, v: 2, c: 'invalid1' } },
           { data: { i: { t: 'test_table', c: 'email' }, v: 2, c: 'invalid2' } },
-        ]
+        ] as unknown as BulkDecryptPayload
 
         const result = await protectClient.bulkDecrypt(invalidCiphertexts)
 
-        expect(result.failure).toBeUndefined()
-        if (result.failure) throw new Error('unreachable: asserted above')
+        if (result.failure) {
+          throw new Error(
+            `Expected per-item errors, got ${result.failure.type}`,
+          )
+        }
+
         expect(result.data).toHaveLength(2)
+        expect(result.data.every((item) => 'error' in item)).toBe(true)
+
         for (const item of result.data) {
-          expect(item).toHaveProperty('error')
-          expect((item as { error?: unknown }).error).toBeTruthy()
+          expect(item.error).toBeDefined()
+          expect('code' in item).toBe(false)
         }
       },
       FFI_TEST_TIMEOUT,

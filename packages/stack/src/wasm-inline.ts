@@ -125,12 +125,18 @@ export function isEncrypted(value: unknown): boolean {
 /**
  * The plaintext shape accepted by `encrypt` and returned by `decrypt`.
  * Mirrors protect-ffi's `JsPlaintext` (recursive: arrays of any of
- * these are valid). Re-defined here so the wasm-inline `.d.ts` doesn't
- * pull in the Node-only protect-ffi types.
+ * these are valid), plus `bigint` for `int8` columns. Re-defined here so
+ * the wasm-inline `.d.ts` doesn't pull in the Node-only protect-ffi types.
+ *
+ * `bigint` is carried natively across the wasm boundary by protect-ffi
+ * 0.28's Rust `encode_plaintext` (which i64-bounds-checks on encrypt and
+ * builds a `js_sys::BigInt` on decrypt), so widening the type here is all
+ * the SDK needs to accept/return `bigint` on the wasm entry point.
  */
 export type WasmPlaintext =
   | string
   | number
+  | bigint
   | boolean
   | null
   | Record<string, unknown>

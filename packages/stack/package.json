@@ -54,6 +54,9 @@
 			"eql/v3": [
 				"./dist/eql/v3/index.d.ts"
 			],
+			"eql/v3/drizzle": [
+				"./dist/eql/v3/drizzle/index.d.ts"
+			],
 			"v3": [
 				"./dist/encryption/v3.d.ts"
 			],
@@ -123,6 +126,16 @@
 			"require": {
 				"types": "./dist/eql/v3/index.d.cts",
 				"default": "./dist/eql/v3/index.cjs"
+			}
+		},
+		"./eql/v3/drizzle": {
+			"import": {
+				"types": "./dist/eql/v3/drizzle/index.d.ts",
+				"default": "./dist/eql/v3/drizzle/index.js"
+			},
+			"require": {
+				"types": "./dist/eql/v3/drizzle/index.d.cts",
+				"default": "./dist/eql/v3/drizzle/index.cjs"
 			}
 		},
 		"./v3": {
@@ -207,21 +220,28 @@
 		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
 		"build": "tsup",
 		"dev": "tsup --watch",
-		"analyze:complexity": "fta src/eql/v3 --score-cap 72",
+		"analyze:complexity": "fta src/eql/v3 --score-cap 69",
 		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
-		"release": "tsup"
+		"release": "tsup",
+		"test:integration": "vitest run --config integration/vitest.config.ts"
 	},
 	"devDependencies": {
+		"@cipherstash/eql": "3.0.0",
 		"@clack/prompts": "^1.4.0",
+		"@clerk/backend": "3.4.9",
+		"@supabase/postgrest-js": "2.105.4",
 		"@supabase/supabase-js": "^2.105.4",
+		"@types/pg": "^8.20.0",
 		"@types/uuid": "^11.0.0",
 		"dotenv": "17.4.2",
 		"drizzle-orm": "^0.45.2",
 		"execa": "^9.5.2",
+		"fast-check": "^4.8.0",
 		"fta-cli": "3.0.0",
 		"json-schema-to-typescript": "^15.0.2",
+		"pg": "8.20.0",
 		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
 		"tsx": "catalog:repo",
@@ -234,7 +254,7 @@
 	"dependencies": {
 		"@byteslice/result": "0.2.0",
 		"@cipherstash/auth": "catalog:repo",
-		"@cipherstash/protect-ffi": "0.28.0",
+		"@cipherstash/protect-ffi": "0.29.0",
 		"evlog": "1.11.0",
 		"uuid": "14.0.0",
 		"zod": "3.25.76"
@@ -250,13 +270,17 @@
 	},
 	"peerDependencies": {
 		"@supabase/supabase-js": ">=2",
-		"drizzle-orm": ">=0.33"
+		"drizzle-orm": ">=0.33",
+		"pg": ">=8"
 	},
 	"peerDependenciesMeta": {
 		"drizzle-orm": {
 			"optional": true
 		},
 		"@supabase/supabase-js": {
+			"optional": true
+		},
+		"pg": {
 			"optional": true
 		}
 	},
