@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { encrypt, newClient } from '@cipherstash/protect-ffi'
+import { encrypt, encryptQuery, newClient } from '@cipherstash/protect-ffi'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { defaultMatchOpts } from '@/schema/match-defaults'
 
@@ -62,6 +62,21 @@ describe('protect-ffi match bloom', () => {
     return (payload as { bf?: number[] }).bf ?? []
   }
 
+  // The bloom of a QUERY term, produced the way a `contains` query actually
+  // produces its needle — `encryptQuery` with the `match` index type, not
+  // `encrypt`. This is the operand `eql_v3.contains` binds on the right of `@>`,
+  // so a subset test against a stored `bloomOf` value is the real query path,
+  // not a same-function artefact comparing `encrypt` to itself.
+  const queryBloomOf = async (client: Client, plaintext: string) => {
+    const term = await encryptQuery(client, {
+      plaintext,
+      table: TABLE,
+      column: COLUMN,
+      indexType: 'match',
+    })
+    return (term as { bf?: number[] }).bf ?? []
+  }
+
   /**
    * ffi emits the bloom's bits in a nondeterministic ORDER — two encrypts of the
    * same plaintext on the same client differ in sequence while carrying the same
@@ -101,22 +116,25 @@ describe('protect-ffi match bloom', () => {
     expect(bloom).toEqual([])
   })
 
-  // The needle's bloom is a strict subset of the haystack's — which is exactly
-  // what `eql_v3.contains` (`match_term(a) @> match_term(b)`) tests. This is the
-  // substring case CIP-3483 reported as broken, proven at the bloom layer;
+  // The query needle's bloom is a subset of the STORED value's bloom — which is
+  // exactly what `eql_v3.contains` (`match_term(stored) @> query_term(needle)`)
+  // tests. The haystack is a stored `encrypt` value; each needle is an
+  // `encryptQuery` `match` term, the real operand the containment query binds —
+  // so this exercises the query path, not `encrypt` compared to itself. This is
+  // the substring case CIP-3483 reported as broken, proven at the bloom layer;
   // `drizzle-v3/operators-live-pg.test.ts` proves the same thing through SQL.
-  it('blooms a substring needle into a subset of the stored value bloom', async () => {
+  it('blooms a substring query needle into a subset of the stored value bloom', async () => {
     const haystack = new Set(await bloomOf(withOriginal, 'ada@example.com'))
 
     for (const needle of ['ada', 'example', 'ada@example.com']) {
-      const bits = await bloomOf(withOriginal, needle)
+      const bits = await queryBloomOf(withOriginal, needle)
       expect(bits.length).toBeGreaterThan(0)
       expect(bits.filter((bit) => !haystack.has(bit))).toEqual([])
     }
 
     // A needle sharing no trigram must NOT be a subset, or the assertion above
     // would hold for anything.
-    const absent = await bloomOf(withOriginal, 'zzz')
+    const absent = await queryBloomOf(withOriginal, 'zzz')
     expect(absent.some((bit) => !haystack.has(bit))).toBe(true)
   })
 })
