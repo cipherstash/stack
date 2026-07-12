@@ -28,7 +28,10 @@ beforeAll(async () => {
   // as unmodelled — it is an ordinary plaintext passthrough.
   await sql.unsafe(`DROP DOMAIN IF EXISTS public.${USER_DOMAIN}`)
   await sql.unsafe(`CREATE DOMAIN public.${USER_DOMAIN} AS jsonb`)
-  // Columns typed with EQL domains that have NO types factory.
+  // Mixed EQL columns: `score` is typed with an EQL domain the SDK has NO types
+  // factory for (unmodelled → reported); `doc` is `eql_v3_json`, which `types.Json`
+  // DOES model (so it must be synthesized, not reported); `own` is a user's plain
+  // jsonb domain (plaintext passthrough, never reported).
   await sql.unsafe(`
     CREATE TABLE ${UNMODELLED} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
@@ -92,13 +95,16 @@ describe('eql_v3 supabase introspection', () => {
   it('reports unmodelled EQL columns, keyed by table', async () => {
     const { unmodelled } = await introspect(databaseUrl())
 
-    // Sanity: these really are EQL domains with no types factory.
-    expect(factoryForDomain('integer_ord_ope')).toBeUndefined()
-    expect(factoryForDomain('json')).toBeUndefined()
+    // Sanity, keyed exactly as the registry keys and the introspection query do
+    // (the full `eql_v3_*` domain name): `eql_v3_integer_ord_ope` has no types
+    // factory (unmodelled → reported), whereas `eql_v3_json` now HAS one
+    // (`types.Json` → modelled → NOT reported).
+    expect(factoryForDomain('eql_v3_integer_ord_ope')).toBeUndefined()
+    expect(factoryForDomain('eql_v3_json')).toBeDefined()
 
     const offenders = unmodelled.get(UNMODELLED)
     expect(offenders).toBeDefined()
-    expect(offenders?.map((c) => c.columnName).sort()).toEqual(['doc', 'score'])
+    expect(offenders?.map((c) => c.columnName).sort()).toEqual(['score'])
     expect(offenders?.find((c) => c.columnName === 'score')?.domainName).toBe(
       'eql_v3_integer_ord_ope',
     )
@@ -119,11 +125,13 @@ describe('eql_v3 supabase introspection', () => {
   // The precondition that makes the `from()` guard load-bearing: an unmodelled
   // column is silently dropped from the encrypt config, yet stays in
   // `allColumns` — so `select('*')` would select it and return raw ciphertext.
+  // `doc` (modelled json) gets a builder; `score` (unmodelled) is dropped from
+  // the config but retained in `allColumns`.
   it('synthesizeTables drops an unmodelled column but allColumns keeps it', async () => {
     const { tables } = await introspect(databaseUrl())
     const { tables: synth, allColumns } = synthesizeTables(tables)
 
-    expect(Object.keys(synth.get(UNMODELLED)!.columnBuilders)).toEqual([])
+    expect(Object.keys(synth.get(UNMODELLED)!.columnBuilders)).toEqual(['doc'])
     expect(allColumns.get(UNMODELLED)).toContain('score')
     expect(allColumns.get(UNMODELLED)).toContain('doc')
   }, 30000)
