@@ -51,24 +51,8 @@ export const LIVE_PG_ENABLED = Boolean(process.env.DATABASE_URL)
 
 export const describeLivePgOnly = LIVE_PG_ENABLED ? describe : describe.skip
 
-/**
- * True when a real PostgREST is reachable AND a `DATABASE_URL` is configured.
- *
- * The supabase v3 adapter talks to PostgREST, not to Postgres — the aliasing
- * `prop:db_name::jsonb` casts, the `cs` containment mapping, the quoted
- * envelopes inside `or=(…)`, and the full storage envelope every `public.*`
- * domain CHECK must accept are all things only a real server can execute.
- * Everything else in the repo asserts them as strings against a mock.
- *
- * NO CipherStash creds: the suite builds structurally-valid envelopes itself
- * (the domain CHECKs are structural — `v`/`i`/`c` plus the domain's index
- * terms), so it can run wherever the DB-only suites run. It proves the WIRE and
- * the GRANTS. Cryptographic round-tripping is `drizzle-v3/operators-live-pg`'s
- * job and needs the credentials.
- */
-export const LIVE_SUPABASE_PGREST_ENABLED =
-  Boolean(process.env.PGRST_URL) && LIVE_PG_ENABLED
-
-export const describeLiveSupabasePgrest = LIVE_SUPABASE_PGREST_ENABLED
-  ? describe
-  : describe.skip
+// The PostgREST gate (`LIVE_SUPABASE_PGREST_ENABLED` / `describeLiveSupabasePgrest`)
+// is gone. Its only consumer, `supabase-v3-pgrest-live.test.ts`, moved to
+// `integration/supabase/wire.integration.test.ts`, which THROWS on missing
+// configuration instead of skipping — so no gate, and nothing for the
+// coverage guard to assert.

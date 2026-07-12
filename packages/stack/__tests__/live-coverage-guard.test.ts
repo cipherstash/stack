@@ -57,7 +57,6 @@ import {
   LIVE_EQL_V3_PG_ENABLED,
   LIVE_LOCK_CONTEXT_ENABLED,
   LIVE_PG_ENABLED,
-  LIVE_SUPABASE_PGREST_ENABLED,
 } from './helpers/live-gate'
 
 // GitHub Actions always sets CI=true; treat any truthy CI as "must run live".
@@ -121,26 +120,6 @@ describe('live-coverage guard', () => {
           'service — so a false value here is a broken workflow, never a valid ' +
           'configuration. It makes every `describeLivePgOnly` suite (e.g. ' +
           'supabase-v3-introspect-pg) silently skip while CI stays green.',
-      ).toBe(true)
-    },
-  )
-
-  it.runIf(IN_CI)(
-    'CI must have PGRST_URL so the live supabase PostgREST suite does not silently skip',
-    () => {
-      expect(
-        LIVE_SUPABASE_PGREST_ENABLED,
-        'CI must run the live supabase PostgREST suite — ' +
-          '`LIVE_SUPABASE_PGREST_ENABLED` is false. This needs a ' +
-          '`DATABASE_URL` AND a `PGRST_URL` pointing at the pinned ' +
-          '`postgrest/postgrest` service in .github/workflows/tests.yml (no ' +
-          'CS_* creds — the domain CHECKs are structural). It is ' +
-          'the ONLY suite that executes the adapter against a real PostgREST — ' +
-          'the `prop:db_name::jsonb` aliasing selects, the `cs` containment ' +
-          'mapping, and the full-envelope filter operands that every `public.*` ' +
-          'domain CHECK must accept. Everything else asserts those as strings ' +
-          'against a mock, so a false value here means the wire encoding is ' +
-          'unproven while CI stays green.',
       ).toBe(true)
     },
   )

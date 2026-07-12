@@ -27,6 +27,24 @@ rendered as `not.in.(…)`. Passing a PostgREST list literal (`'(a,b)'`) for an
 encrypted column now throws instead of silently matching nothing — pass an
 array.
 
+**`filter(col, 'in', […])` encrypted the whole list as a single ciphertext.**
+The raw `.filter()` path reached `in` with none of the element-splitting the
+`in()`, `not(…, 'in', …)` and `.or()` paths perform, so the entire list operand
+was encrypted as one equality term. The two wire formats then failed
+differently, which is why this went unnoticed: **v2**'s `("json")` composite
+literal is already parenthesized, so PostgREST parsed it as a one-element list
+and answered `200 []` — a filter that silently matched nothing. **v3**'s bare
+`{…}` envelope is not, so PostgREST rejected the request outright with
+`PGRST100 (failed to parse filter)`.
+
+Each element is now encrypted separately and the operand rendered as a quoted
+PostgREST list literal. As on the `not` path, passing a list literal
+(`'(a,b)'`) for an encrypted column now throws instead — pass an array.
+
+Plaintext columns are unaffected, including the pre-existing quirk that
+postgrest-js renders `.filter(col, 'in', [array])` as an unparenthesized
+`in.a,b` that PostgREST rejects; pass a list literal there, or use `.in()`.
+
 **`is(col, null)` is now allowed on every column**, including storage-only
 encrypted ones (`types.Boolean`, `types.Integer`, …). `is` is never encrypted
 and a NULL plaintext is stored as a SQL NULL, so `IS NULL` is not merely legal

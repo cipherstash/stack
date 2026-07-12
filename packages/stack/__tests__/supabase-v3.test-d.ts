@@ -18,6 +18,7 @@ const users = encryptedTable('users', {
   active: types.Boolean('active'),
   nickname: types.TextEq('nickname'),
   bio: types.TextMatch('bio'),
+  score: types.IntegerOrdOre('score'),
 })
 
 type UserRow = InferPlaintext<typeof users>
@@ -105,20 +106,36 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.is('email', null)
   })
 
-  it('rejects order() on every encrypted column at the type level', async () => {
+  it('allows order() on encrypted columns that carry an ordering term', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient, {
       schemas: { users },
     })
     const builder = supabase.from('users')
-    // No btree opclass exists on any EQL v3 domain, so `ORDER BY col` sorts the
-    // ciphertext envelope. This holds for the ORE-capable domains too — which is
-    // the whole point: those are the ones where the wrongness is silent.
-    // @ts-expect-error — timestamp_ord: ORDER BY sorts ciphertext
+    // The builder does not emit a bare `ORDER BY col` — that would sort the
+    // ciphertext envelope through jsonb's default opclass. It emits the jsonb
+    // path `col->>op`, which selects the OPE term, and OPE is order-preserving.
     builder.order('createdAt')
-    // @ts-expect-error — integer_ord: ORDER BY sorts ciphertext
     builder.order('amount', { ascending: false })
+    // `text_search` carries `ope` alongside its match and equality terms.
+    builder.order('email')
+  })
+
+  it('rejects order() on encrypted columns with no ordering term', async () => {
+    const supabase = await encryptedSupabaseV3(supabaseClient, {
+      schemas: { users },
+    })
+    const builder = supabase.from('users')
     // @ts-expect-error — active is public.eql_v3_boolean: storage only
     builder.order('active')
+    // @ts-expect-error — nickname is public.eql_v3_text_eq: equality only
+    builder.order('nickname')
+    // @ts-expect-error — bio is public.eql_v3_text_match: match only
+    builder.order('bio')
+    // @ts-expect-error — score is public.eql_v3_integer_ord_ore: ORE-backed, so
+    // orderAndRange-capable but NOT sortable through a jsonb path (its `ob` term
+    // needs the superuser-only ORE opclass). Excluded at compile time to match
+    // the runtime rejection.
+    builder.order('score')
   })
 
   it('still allows order() on a plaintext row key', async () => {

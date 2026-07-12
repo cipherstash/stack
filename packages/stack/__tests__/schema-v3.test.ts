@@ -422,7 +422,11 @@ describe('eql_v3 text order domains carry the hm (unique) index (regression)', (
   // columns must emit `unique` (hm) IN ADDITION to `ore` (ob), or a real INSERT
   // fails with `value for domain public.eql_v3_text_ord_ore violates check constraint`.
   it.each([
-    ['text_ord_ore', types.TextOrdOre, { unique: { token_filters: [] }, ore: {} }],
+    [
+      'text_ord_ore',
+      types.TextOrdOre,
+      { unique: { token_filters: [] }, ore: {} },
+    ],
     ['text_ord', types.TextOrd, { unique: { token_filters: [] }, ope: {} }],
   ] as const)('%s emits both unique (hm) and its ordering index', (_name, builder, expected) => {
     expect(builder('c').build().indexes).toStrictEqual(expected)

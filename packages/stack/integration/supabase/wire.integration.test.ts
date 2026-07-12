@@ -28,26 +28,21 @@
  * `permission denied for schema eql_v3_internal` (see `supabase-v3-grants-pg`).
  */
 
-import 'dotenv/config'
+import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
-import { SUPABASE_PERMISSIONS_SQL_V3 } from '../../cli/src/installer/grants'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
 import {
-  describeLiveSupabasePgrest,
-  LIVE_SUPABASE_PGREST_ENABLED,
-} from './helpers/live-gate'
-import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
-import { narrowedQueryTerm, storageEnvelope } from './helpers/v3-envelope'
+  narrowedQueryTerm,
+  storageEnvelope,
+} from '../../__tests__/helpers/v3-envelope'
+import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
 
 const TABLE = 'protect_ci_v3_pgrest'
 
-const sql = LIVE_SUPABASE_PGREST_ENABLED
-  ? postgres(process.env.DATABASE_URL as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sql = postgres(databaseUrl(), { prepare: false })
 
 // A DECLARED table: `createdAt → created_at` is the rename the aliasing
 // `prop:db_name::jsonb` select exists for, and a synthesized table (property ==
@@ -211,12 +206,9 @@ function from(): any {
 const ADA_CREATED = new Date('2026-01-02T03:04:05.000Z')
 
 beforeAll(async () => {
-  if (!LIVE_SUPABASE_PGREST_ENABLED) return
-  await installEqlV3IfNeeded(sql)
-
-  // The shipped Supabase grants — the thing under test, not a hand-rolled
-  // approximation. Re-applied after install because the bundle DROPs eql_v3.
-  await sql.unsafe(SUPABASE_PERMISSIONS_SQL_V3)
+  // EQL v3 and the Supabase grants are installed once per run by `globalSetup`,
+  // which shells out to the real `stash eql install --eql-version 3 --supabase`.
+  // Re-applying them here would only test a hand-rolled approximation.
   await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE}`)
   await sql.unsafe(`
     CREATE TABLE ${TABLE} (
@@ -245,12 +237,11 @@ beforeAll(async () => {
 }, 180_000)
 
 afterAll(async () => {
-  if (!LIVE_SUPABASE_PGREST_ENABLED) return
   await sql.unsafe(`DROP TABLE IF EXISTS ${TABLE}`)
   await sql.end()
 })
 
-describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
+describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   it('inserts raw envelopes that clear every domain CHECK, as anon', async () => {
     const { error, status } = await from().insert({
       row_key: 'ada',
@@ -507,6 +498,94 @@ describeLiveSupabasePgrest('supabase v3 adapter over real PostgREST', () => {
 
     expect(error).toBeNull()
     expect(data).toEqual([])
+  })
+
+  // The `in()` method path, executed for the first time against a real server.
+  // Each element is its own quote-dense envelope, so the operand is the densest
+  // list PostgREST has to parse outside an or-tree.
+  it('matches an encrypted in-list through the in() method', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .in('nickname', ['ada', 'nobody'])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // The RAW filter path reached `in` with no element-split: the whole list was
+  // encrypted as one equality term, so the request parsed and returned zero
+  // rows. A mock records the emitted operand and cannot tell that apart from a
+  // correct one — only a real server proves the predicate selects `ada`.
+  it('matches an encrypted in-list through the raw filter() path', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .filter('nickname', 'in', ['ada', 'nobody'])
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // The same call must still EXCLUDE a row whose value is absent from the list.
+  // Without this, a filter that matched everything would pass the test above.
+  it('excludes a row whose value is absent from a raw in-list', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .filter('nickname', 'in', ['nobody', 'someone'])
+
+    expect(error).toBeNull()
+    expect(data).toEqual([])
+  })
+
+  // A PostgREST list literal cannot be encrypted element-wise; the adapter
+  // refuses it rather than emit a filter that silently matches nothing.
+  it('rejects a raw in-list passed as a PostgREST list literal', async () => {
+    const { error } = await from()
+      .select('row_key')
+      .filter('nickname', 'in', '("ada","nobody")')
+
+    expect(error?.message).toMatch(/requires an array of values/)
+  })
+
+  // A plaintext column keeps postgrest-js's own encoding, untouched. Passing a
+  // list LITERAL is the only form its raw `.filter()` renders correctly.
+  it('leaves a raw in-list literal on a plaintext column to postgrest-js', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .filter('row_key', 'in', '("ada","nobody")')
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // Pins what we did NOT change. postgrest-js renders `.filter(col,'in',[…])`
+  // as an unparenthesized `in.ada,nobody`, which PostgREST rejects with
+  // PGRST100 — true of every plaintext column, before this change and after.
+  // The encrypted path cannot inherit that: it must take an array (nothing else
+  // can be encrypted element-wise) and so builds the literal itself. Asserting
+  // the asymmetry keeps a future "helpfully format plaintext arrays too" from
+  // landing unnoticed as a behaviour change.
+  it('does not rescue a raw in-list ARRAY on a plaintext column', async () => {
+    const { error } = await from()
+      .select('row_key')
+      .filter('row_key', 'in', ['ada', 'nobody'])
+
+    expect(error?.code).toBe('PGRST100')
+    expect(error?.details).toContain('expecting "("')
+  })
+
+  // A caller-chosen alias keys the row by neither the property nor the DB name.
+  // PostgREST has to parse `ts:created_at::jsonb` and key the row `ts`, and the
+  // adapter has to follow that alias back to the column's `cast_as` to rebuild
+  // the `Date`. Both halves are only observable against a real server.
+  it('reconstructs a Date under a caller-chosen select alias', async () => {
+    const { data, error } = await from()
+      .select('row_key, ts:createdAt')
+      .eq('row_key', 'ada')
+
+    expect(error).toBeNull()
+    expect(data).toHaveLength(1)
+    expect(data[0].ts).toBeInstanceOf(Date)
+    expect((data[0].ts as Date).toISOString()).toBe(ADA_CREATED.toISOString())
   })
 
   it('updates and deletes through encrypted WHERE operands', async () => {

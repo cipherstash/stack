@@ -157,21 +157,35 @@ describe('supabase v3 wire encoding, every domain', () => {
       expect(JSON.parse(gte.args[1] as string).c).toBeDefined()
     })
 
-    // `gte` works — the `>=` operators ARE declared on the ord domains — but
-    // `order()` does not: no btree OPERATOR CLASS exists on any domain, so
-    // `ORDER BY col` falls through to jsonb's default opclass and sorts the
-    // ciphertext envelope. Filtering and sorting resolve through different
-    // machinery, and only sorting is broken.
-    it('rejects order() even though gte() is supported', async () => {
-      const { q, supabase, name } = instanceFor(eqlType, spec)
+    // A bare `ORDER BY col` WOULD be wrong — no btree operator class exists on
+    // any EQL v3 domain, so it falls through to jsonb's default opclass and
+    // sorts the ciphertext envelope. The builder never emits one. For an
+    // OPE-backed column it emits the jsonb path `col->>op`, which selects the
+    // order-preserving term. For an ORE-backed column there is no such path —
+    // `ob` is an array of blocks needing the superuser-only comparator — so it
+    // is refused.
+    if (spec.indexes.ope) {
+      it('orders by the OPE term, not by the envelope', async () => {
+        const { q, supabase, name } = instanceFor(eqlType, spec)
 
-      const { error, status } = await q.select(`id, ${name}`).order(name)
+        const { error } = await q.select(`id, ${name}`).order(name)
 
-      expect(status).toBe(500)
-      expect(error?.message).toContain('cannot order by encrypted column')
-      expect(error?.message).toContain('ord_term')
-      expect(supabase.callsFor('order')).toHaveLength(0)
-    })
+        expect(error).toBeNull()
+        const [order] = supabase.callsFor('order')
+        expect(order.args[0]).toBe(`${name}->op`)
+      })
+    } else {
+      it('rejects order() even though gte() is supported', async () => {
+        const { q, supabase, name } = instanceFor(eqlType, spec)
+
+        const { error, status } = await q.select(`id, ${name}`).order(name)
+
+        expect(status).toBe(500)
+        expect(error?.message).toContain('cannot order by encrypted column')
+        expect(error?.message).toContain('ORE ordering term')
+        expect(supabase.callsFor('order')).toHaveLength(0)
+      })
+    }
   })
 
   describe.each(matchDomains)('%s (freeTextSearch)', (eqlType, spec) => {
