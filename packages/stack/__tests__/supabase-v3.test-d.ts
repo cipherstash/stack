@@ -18,6 +18,7 @@ const users = encryptedTable('users', {
   active: types.Boolean('active'),
   nickname: types.TextEq('nickname'),
   bio: types.TextMatch('bio'),
+  score: types.IntegerOrdOre('score'),
 })
 
 type UserRow = InferPlaintext<typeof users>
@@ -130,6 +131,11 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.order('nickname')
     // @ts-expect-error — bio is public.eql_v3_text_match: match only
     builder.order('bio')
+    // @ts-expect-error — score is public.eql_v3_integer_ord_ore: ORE-backed, so
+    // orderAndRange-capable but NOT sortable through a jsonb path (its `ob` term
+    // needs the superuser-only ORE opclass). Excluded at compile time to match
+    // the runtime rejection.
+    builder.order('score')
   })
 
   it('still allows order() on a plaintext row key', async () => {

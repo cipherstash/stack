@@ -1,3 +1,4 @@
+import type { Result } from '@byteslice/result'
 import {
   and,
   asc,
@@ -17,9 +18,11 @@ import {
 import type { PgTable } from 'drizzle-orm/pg-core'
 import type { AuditConfig } from '@/encryption/operations/base-operation'
 import type { AnyEncryptedV3Column, AnyV3Table } from '@/eql/v3'
+import type { EncryptionError } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { ColumnSchema } from '@/schema'
 import { matchNeedleError } from '@/schema/match-defaults'
+import type { BulkEncryptedData, Encrypted } from '@/types'
 import { getEqlV3Column } from './column.js'
 import {
   extractEncryptionSchemaV3,
@@ -53,11 +56,11 @@ type OperandEncryptionClient = {
   encrypt(
     plaintext: never,
     opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
-  ): unknown
+  ): ChainableOperation<Encrypted>
   bulkEncrypt?(
     plaintexts: never,
     opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
-  ): unknown
+  ): ChainableOperation<BulkEncryptedData>
   // `never` operands, like `encrypt` above: the real client's `encryptQuery` is
   // generic (`queryType` is constrained to the column's own query types), which a
   // concrete signature here cannot match. `never` params keep the structural
@@ -102,13 +105,33 @@ export type EncryptionOperatorCallOpts = {
   audit?: AuditConfig
 }
 
-type ChainableOperation = {
-  withLockContext(lockContext: LockContext): ChainableOperation
-  audit(config: AuditConfig): ChainableOperation
-  then: PromiseLike<{
-    data?: unknown
-    failure?: { message: string }
-  }>['then']
+/**
+ * An SDK encryption operation after its lock context has been applied: still
+ * auditable and awaitable, but not re-lockable. `withLockContext` returns this,
+ * not the full {@link ChainableOperation}, mirroring the real
+ * `EncryptOperationWithLockContext`, which drops `withLockContext` (you cannot
+ * lock-context twice). Modelling that is what lets the real client type satisfy
+ * the structural surface with no cast.
+ */
+type AuditableOperation<T> = {
+  audit(config: AuditConfig): AuditableOperation<T>
+  then: PromiseLike<Result<T, EncryptionError>>['then']
+}
+
+/**
+ * The subset of an SDK encryption operation this factory drives: the fluent
+ * `withLockContext`/`audit` chain, and a `then` that resolves the operation's
+ * `Result`. Generic over the resolved payload `T` so `encrypt` carries an
+ * `Encrypted` envelope and `bulkEncrypt` a `BulkEncryptedData`, rather than the
+ * `unknown` this erased to before.
+ *
+ * Structural, not the concrete `EncryptOperation` class, because the client is
+ * passed in and the factory must accept any implementation with this surface.
+ */
+type ChainableOperation<T> = {
+  withLockContext(lockContext: LockContext): AuditableOperation<T>
+  audit(config: AuditConfig): AuditableOperation<T>
+  then: PromiseLike<Result<T, EncryptionError>>['then']
 }
 
 async function mapWithConcurrency<T, R>(
@@ -242,10 +265,10 @@ export function createEncryptionOperatorsV3(
   // by index kind.
   const CONTAINMENT_INDEXES = ['match', 'ste_vec'] as const
 
-  function applyOperationOptions(
-    op: ChainableOperation,
+  function applyOperationOptions<T>(
+    op: ChainableOperation<T>,
     opts?: EncryptionOperatorCallOpts,
-  ): ChainableOperation {
+  ): AuditableOperation<T> {
     const lockContext = opts?.lockContext ?? defaults.lockContext
     const audit = opts?.audit ?? defaults.audit
     const withLock = lockContext ? op.withLockContext(lockContext) : op
@@ -315,12 +338,13 @@ export function createEncryptionOperatorsV3(
       client.encrypt(value as never, {
         table: ctx.table,
         column: ctx.builder,
-      }) as unknown as ChainableOperation,
+      }),
       opts,
     )
     if (result.failure) {
       throw operandFailure(ctx, operator, result.failure.message)
     }
+    // `result.data` is now `Encrypted` — the storage envelope — not `unknown`.
     return sql`${JSON.stringify(result.data)}`
   }
 
@@ -353,19 +377,22 @@ export function createEncryptionOperatorsV3(
       bulkEncrypt(values.map((plaintext) => ({ plaintext })) as never, {
         table: ctx.table,
         column: ctx.builder,
-      }) as unknown as ChainableOperation,
+      }),
       opts,
     )
     if (result.failure) {
       throw operandFailure(ctx, operator, result.failure.message)
     }
 
-    const encrypted = result.data as Array<{ data: unknown }> | undefined
-    if (!Array.isArray(encrypted) || encrypted.length !== values.length) {
+    // `result.data` is `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]`
+    // — not `unknown`. The length check stays: a position-stable contract
+    // violation must not silently truncate the predicate.
+    const encrypted = result.data
+    if (encrypted.length !== values.length) {
       throw operandFailure(
         ctx,
         operator,
-        `bulk encryption returned ${Array.isArray(encrypted) ? encrypted.length : 0} terms for ${values.length} values.`,
+        `bulk encryption returned ${encrypted.length} terms for ${values.length} values.`,
       )
     }
     return encrypted.map((term) => sql`${JSON.stringify(term.data)}`)

@@ -33,7 +33,7 @@
  * control.
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
-import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
+import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
@@ -74,11 +74,6 @@ type SelectRow = { rowKey: string }
 let client: Awaited<ReturnType<typeof EncryptionV3>>
 let ops: ReturnType<typeof createEncryptionOperatorsV3>
 let db: ReturnType<typeof drizzle>
-
-function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
-  if (result.failure) throw new Error(result.failure.message)
-  return result.data as T
-}
 
 /**
  * The outcome of a decrypt attempt that is EXPECTED to be denied. `decrypt`
@@ -177,7 +172,7 @@ beforeAll(async () => {
   `)
 
   // Seed BOTH rows bound to the same lock context.
-  const encryptedRows = unwrap<Array<Record<string, unknown>>>(
+  const encryptedRows = unwrapResult<Array<Record<string, unknown>>>(
     await client
       .bulkEncryptModels(
         [
@@ -214,7 +209,7 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
     )
     expect(row).toBeDefined()
 
-    const decrypted = unwrap(
+    const decrypted = unwrapResult(
       await client.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
     )
     expect(decrypted).toBe(SECRET_A)
@@ -341,14 +336,22 @@ describe('v3 drizzle operators with lock context (live pg)', () => {
     ).toBe(false)
 
     // Cross-identity: B names the same `['sub']` claim, but its value is B's
-    // machine, so ZeroKMS cannot reproduce A's key.
+    // machine, so ZeroKMS derives a DIFFERENT key and refuses — a genuine
+    // key-derivation denial (`Failed to retrieve key`). Pin to KEY_DENIAL, NOT
+    // the broad IDENTITY_DENIAL: B is a valid, registered machine, so it
+    // authenticates fine and the denial must surface at key derivation. Were B
+    // instead rejected at the authorization layer (e.g. its machine not
+    // registered on the workspace), that "unauthorized" message would satisfy
+    // IDENTITY_DENIAL and the test would pass GREEN without ever exercising the
+    // identity boundary — proving "B can't authenticate", not "B can't reproduce
+    // A's key".
     const asB = await decryptOutcome(() =>
       clientB.decrypt(row.value as never).withLockContext(IDENTITY_CLAIM),
     )
     expect(asB.denied, 'identity B must NOT decrypt a row sealed under A').toBe(
       true,
     )
-    expect(asB.message).toMatch(IDENTITY_DENIAL)
+    expect(asB.message).toMatch(KEY_DENIAL)
     expect(asB.message).not.toMatch(INFRA_FAULT)
   }, 30000)
 })

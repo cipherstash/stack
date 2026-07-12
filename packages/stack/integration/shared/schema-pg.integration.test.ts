@@ -280,16 +280,22 @@ describe('eql_v3 text_search postgres integration', () => {
       ON protect_ci_v3_text_search USING btree (eql_v3.ord_term(email))
     `
 
-    // No `schemaname` filter: the table is created unqualified, so it lands in
+    // Scope to the schema THIS run's table actually landed in, rather than
+    // hardcoding `public`. The table is created unqualified, so it lands in
     // whatever `search_path` puts first — `public` on a fresh CI database, but
     // the owning role's own schema (`cipherstash`) on a database whose
-    // search_path is `"$user", public`. The unique index names identify the
-    // indexes on their own; pinning `schemaname = 'public'` made the assertion
-    // environment-dependent.
+    // search_path is `"$user", public`; a hardcoded `schemaname = 'public'` made
+    // the assertion environment-dependent. Deriving the schema from `pg_tables`
+    // keeps it environment-independent AND avoids a false pass from a same-named
+    // index left in another schema by an earlier run on a shared/persistent DB.
     const indexes = await sql<{ indexname: string; indexdef: string }[]>`
       SELECT indexname, indexdef
       FROM pg_indexes
       WHERE tablename = 'protect_ci_v3_text_search'
+        AND schemaname = (
+          SELECT schemaname FROM pg_tables
+          WHERE tablename = 'protect_ci_v3_text_search'
+        )
         AND indexname IN (
           'protect_ci_v3_text_search_email_eq_idx',
           'protect_ci_v3_text_search_email_match_idx',

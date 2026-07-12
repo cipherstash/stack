@@ -18,6 +18,12 @@ on:
     branches: [main]
     paths:
       - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/eql/v3) can produce wrong rows, so trigger the live
+      # suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -31,6 +37,12 @@ on:
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
       - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/eql/v3) can produce wrong rows, so trigger the live
+      # suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'

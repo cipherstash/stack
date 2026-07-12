@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
 import { sharedAlias } from '../../../vitest.shared'
@@ -19,12 +20,45 @@ import { sharedAlias } from '../../../vitest.shared'
  * Scoping matters: the Drizzle suites talk straight to Postgres and the Supabase
  * suites need PostgREST, so a job running both would have to provision both.
  */
+const ROOT = resolve(__dirname, '..')
+
 const SUITE_GLOBS = (
   process.env['CS_IT_SUITE'] ?? 'integration/**/*.integration.test.ts'
 )
   .split(',')
   .map((glob) => glob.trim())
   .filter(Boolean)
+
+/**
+ * Guard against a glob that resolves to nothing — the silent-zero-coverage hole
+ * the deleted `live-coverage-guard.test.ts` used to backstop. A directory
+ * renamed/moved (or a typo) while the workflow's `CS_IT_SUITE` still points at
+ * the old path makes vitest collect the OTHER globs, pass, and drop those suites
+ * with no signal — `passWithNoTests` only catches the all-empty case, and the
+ * no-skips reporter only sees files that were collected.
+ *
+ * The literal directory prefix of each glob (everything before the first glob
+ * metacharacter) must exist. This catches the whole-directory rename directly;
+ * `passWithNoTests: false` (below) still covers a fully-empty run.
+ */
+for (const glob of SUITE_GLOBS) {
+  const literalPrefix = glob
+    .split('/')
+    .slice(
+      0,
+      glob.split('/').findIndex((seg) => /[*?{}[\]]/.test(seg)),
+    )
+    .join('/')
+  // No metacharacter at all → the glob is a literal file path; check it whole.
+  const target = /[*?{}[\]]/.test(glob) ? literalPrefix : glob
+  if (target && !existsSync(resolve(ROOT, target))) {
+    throw new Error(
+      `CS_IT_SUITE glob "${glob}" points at "${target}", which does not exist. ` +
+        'A renamed/moved integration directory would otherwise drop its suites ' +
+        'from CI silently. Fix the glob (or the directory) so the suites run.',
+    )
+  }
+}
 
 export default defineConfig({
   resolve: {
@@ -80,6 +114,10 @@ export default defineConfig({
      * only place to do it without changing product logging behaviour.
      */
     silent: 'passed-only',
+
+    // A fully-empty run is a failure, not a pass: paired with the per-glob
+    // directory guard above, a mistyped/renamed suite path can never go green.
+    passWithNoTests: false,
 
     // Fail the run if anything is skipped. A skipped test reads exactly like a
     // passing one, and every silent hole this suite has found took that shape.
