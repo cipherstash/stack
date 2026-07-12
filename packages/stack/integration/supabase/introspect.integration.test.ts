@@ -28,10 +28,13 @@ beforeAll(async () => {
   // as unmodelled — it is an ordinary plaintext passthrough.
   await sql.unsafe(`DROP DOMAIN IF EXISTS public.${USER_DOMAIN}`)
   await sql.unsafe(`CREATE DOMAIN public.${USER_DOMAIN} AS jsonb`)
-  // Mixed EQL columns: `score` is typed with an EQL domain the SDK has NO types
-  // factory for (unmodelled → reported); `doc` is `eql_v3_json`, which `types.Json`
-  // DOES model (so it must be synthesized, not reported); `own` is a user's plain
-  // jsonb domain (plaintext passthrough, never reported).
+  // This table exercises all three cases the introspector must tell apart:
+  //   score → EQL domain (eql_v3_integer_ord_ope) the SDK has no factory for
+  //           → "unmodelled", MUST be reported so the caller knows it can't query it
+  //   doc   → EQL domain (eql_v3_json) the SDK models via types.Json
+  //           → modelled, MUST be synthesized and NOT reported
+  //   own   → a user's own plain jsonb domain with no EQL marker
+  //           → plaintext passthrough, MUST never be reported
   await sql.unsafe(`
     CREATE TABLE ${UNMODELLED} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,

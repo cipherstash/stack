@@ -115,18 +115,21 @@ const orderDomains = matrixEntries.filter(
   ([, spec]) => spec.indexes.ore || spec.indexes.ope,
 )
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
-const storageDomains = matrixEntries.filter(
+// Domains with NO scalar query index (unique/ore/ope/match), so `eq`/`ne`/
+// ordering all throw. This is the truly storage-only scalar domains PLUS
+// `eql_v3_json` — json is a QUERYABLE domain (containment), it just answers no
+// scalar op, so it lands here for the eq/order rejection checks.
+const nonScalarQueryDomains = matrixEntries.filter(
   ([, spec]) =>
     !spec.indexes.unique &&
     !spec.indexes.ore &&
     !spec.indexes.ope &&
     !spec.indexes.match,
 )
-// Storage-only domains that also lack an ste_vec index: these reject `contains`
-// outright. A json (`ste_vec`) column is storage-only for eq/order but DOES
-// answer `contains` via `@>`, so it is excluded from the containment-rejection
-// group and covered by its own positive assertion below.
-const noContainmentDomains = storageDomains.filter(
+// Of those, the ones that also reject `contains` — i.e. everything except json.
+// json answers `contains` via `@>`, so it is excluded here and gets its own
+// positive assertion in the JSON containment describe above.
+const noContainmentDomains = nonScalarQueryDomains.filter(
   ([, spec]) => !spec.indexes.ste_vec,
 )
 
@@ -477,8 +480,8 @@ describe('createEncryptionOperatorsV3 - JSON containment', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - storage-only domains', () => {
-  it.each(storageDomains)('%s eq throws', async (eqlType, spec) => {
+describe('createEncryptionOperatorsV3 - domains with no scalar query', () => {
+  it.each(nonScalarQueryDomains)('%s eq throws', async (eqlType, spec) => {
     const { ops } = setup()
     await expect(
       ops.eq(matrixColumn(eqlType), sampleFor(spec)),
@@ -492,7 +495,7 @@ describe('createEncryptionOperatorsV3 - storage-only domains', () => {
     ).rejects.toBeInstanceOf(EncryptionOperatorError)
   })
 
-  it.each(storageDomains)('%s asc throws synchronously', (eqlType) => {
+  it.each(nonScalarQueryDomains)('%s asc throws synchronously', (eqlType) => {
     const { ops } = setup()
     expect(() => ops.asc(matrixColumn(eqlType))).toThrow(
       EncryptionOperatorError,

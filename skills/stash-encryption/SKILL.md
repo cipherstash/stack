@@ -632,7 +632,7 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Ord` / `OrdOre` | Equality + ordering/range | `'equality'`, `'orderAndRange'` |
 | `Match` (text only) | Free-text containment only | `'freeTextSearch'` |
 | `Search` (text only) | Equality + ordering/range + free-text | all three |
-| `Json` (no suffix) | Encrypted-JSONB path + containment queries | `'searchableJson'` |
+| `Json` (no suffix) | Encrypted-JSONB containment queries (JSONPath selector: not yet, see #623) | `'searchableJson'` |
 
 **Domain families and plaintext types:**
 
@@ -668,15 +668,15 @@ await client.encryptQuery("joh", {
 
 ### Encrypted-JSONB Queries on `types.Json`
 
-A `types.Json("metadata")` column encrypts a whole JSON document to a
-`public.eql_v3_json` value and supports two query shapes via `encryptQuery` with
-`queryType: 'searchableJson'` (auto-inferred from the plaintext):
+A `types.Json("metadata")` column encrypts a whole JSON document (a
+`JsonDocument`: object, array, or null — not a top-level scalar) to a
+`public.eql_v3_json` value.
 
-- **Containment** — pass an object/array/scalar; matches documents that contain
-  it (jsonb `@>` semantics). Array containment is a subset test regardless of
-  element position: `{ roles: ['admin'] }` matches any document whose `roles`
-  array includes `admin`.
-- **JSONPath selector** — pass a `'$.path'` string to query into the document.
+**Containment** is the supported query today. Pass a sub-object or sub-array to
+`encryptQuery` with `queryType: 'searchableJson'`; it matches documents that
+contain the needle (jsonb `@>` semantics). Array containment is a subset test
+regardless of element position — `{ roles: ['admin'] }` matches any document
+whose `roles` array includes `admin`.
 
 ```typescript
 const events = encryptedTable("events", { metadata: types.Json("metadata") })
@@ -688,6 +688,12 @@ await client.encryptQuery({ roles: ["admin"] }, { column: events.metadata, table
 Through the Drizzle v3 integration this is `ops.contains(col, subObject)` — see
 the `stash-drizzle` skill. `types.Json` carries no equality or ordering, so
 `eq` / `gt` / `asc` on it throw.
+
+> **Not yet implemented:** JSONPath selector-with-constraint queries
+> (`metadata->'plan' = $1`, `metadata->'age' > $1`) — a distinct third pattern
+> the `eql_v3_json` domain supports at the SQL level (`->` / `->>`). Neither the
+> query operator nor the selector-string needle typing is wired up yet; tracked
+> in [#623](https://github.com/cipherstash/stack/issues/623).
 
 ### Strongly-Typed Client: `EncryptionV3`
 

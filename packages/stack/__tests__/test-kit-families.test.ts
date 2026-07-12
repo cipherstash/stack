@@ -70,10 +70,11 @@ describe('test-kit families partition the v3 catalog', () => {
       'text_ord_ore',
       'timestamp_ord_ore',
     ])
-    // ORE domains defer for the superuser-only opclass; json defers because
-    // ste_vec containment isn't in the scalar op matrix.
+    // ORE domains defer for the superuser-only opclass; json defers because it
+    // is queried by containment, not the scalar op-matrix (covered by dedicated
+    // suites — see catalog reason).
     for (const { bare, reason } of deferred) {
-      expect(reason).toMatch(bare === 'json' ? /ste_vec/ : /superuser-only/)
+      expect(reason).toMatch(bare === 'json' ? /containment/ : /superuser-only/)
     }
   })
 

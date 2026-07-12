@@ -668,11 +668,13 @@ export const V3_MATRIX = {
     errorSamples: NUM_ERR,
   },
 
-  // Encrypted JSONB document (ste_vec). DEFERRED from the scalar family driver:
-  // it is queried by containment/selector, not the eq/ord/match ops the oracle
-  // models, so it is covered by a dedicated json integration suite. The row
-  // still pins the built shape (`cast_as: 'json'` + the ste_vec index) and
-  // carries representative document samples.
+  // Encrypted JSONB document. Excluded from the SCALAR family driver (that is
+  // what `deferred` marks here) — NOT unimplemented: JSON is fully covered by
+  // its own live suites (`json-crypto`, `json-contains`). It is queried by
+  // containment (the `@>` operator), not the eq/ord/match ops the scalar oracle
+  // models, so `runFamilySuite` cannot exercise it. The row still pins the built
+  // shape (`cast_as: 'json'` + the encrypted-JSONB index) and carries
+  // representative document samples.
   'public.eql_v3_json': {
     builder: types.Json,
     ColumnClass: EncryptedJsonColumn,
@@ -695,7 +697,7 @@ export const V3_MATRIX = {
       { user: 'grace@example.com', roles: ['eng'] },
     ],
     deferred:
-      'json is queried by ste_vec containment/selector, not the scalar op ' +
-      'matrix — covered by a dedicated json integration suite',
+      'json is covered by dedicated live suites (json-crypto, json-contains), ' +
+      'not the scalar op-matrix: it is queried by containment, not eq/ord/match',
   },
 } as const satisfies Record<EqlV3TypeName, DomainSpec>

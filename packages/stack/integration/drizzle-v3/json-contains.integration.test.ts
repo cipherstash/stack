@@ -2,23 +2,24 @@
  * Live JSON containment for the v3 `types.Json()` column through the Drizzle
  * operators. Seeds encrypted JSONB documents and queries them with
  * `ops.contains(col, subObject)` — the same operator text search uses, but on a
- * `json` column it emits the `@>` operator over the ste_vec document (json has
- * no `eql_v3.contains` overload) with a `query_jsonb` needle from
+ * `json` column it emits the `@>` operator over the encrypted JSONB document
+ * (json has no `eql_v3.contains` overload) with a `query_jsonb` needle from
  * `encryptQuery` — asserting it returns exactly the rows whose document contains
  * the sub-object (jsonb `@>` semantics), and excludes the rest.
  */
 import { databaseUrl, unwrapResult } from '@cipherstash/test-kit'
-import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
+import { and, asc, eq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3, types } from '@/encryption/v3'
+import { EncryptionV3 } from '@/encryption/v3'
+import type { JsonDocument } from '@/eql/v3'
 import {
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
+  types,
 } from '@/eql/v3/drizzle'
-import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -29,13 +30,13 @@ const docTable = pgTable(TABLE_NAME, {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
   rowKey: text('row_key').notNull(),
   testRunId: text('test_run_id').notNull(),
-  doc: makeEqlV3Column(types.Json('doc')),
-} as never)
+  doc: types.Json('doc'),
+})
 
 const schema = extractEncryptionSchemaV3(docTable)
 
 // Distinct documents so each containment query has a definite expected set.
-const DOCS: Record<string, Record<string, unknown>> = {
+const DOCS: Record<string, JsonDocument> = {
   ada: { user: 'ada@example.com', roles: ['admin', 'eng'], active: true },
   grace: { user: 'grace@example.com', roles: ['eng'] },
   zoe: { user: 'zoe@example.com', roles: ['ops'], active: false },
@@ -50,8 +51,8 @@ async function matching(condition: SQL): Promise<string[]> {
   const rows = (await db
     .select({ rowKey: docTable.rowKey })
     .from(docTable)
-    .where(and(drizzleEq(docTable.testRunId, RUN), condition))
-    .orderBy(drizzleAsc(docTable.rowKey))) as SelectRow[]
+    .where(and(eq(docTable.testRunId, RUN), condition))
+    .orderBy(asc(docTable.rowKey))) as SelectRow[]
   return rows.map((row) => row.rowKey)
 }
 
@@ -77,7 +78,7 @@ beforeAll(async () => {
     doc,
   }))
   const encrypted = unwrapResult(
-    await client.bulkEncryptModels(rows as never, schema),
+    await client.bulkEncryptModels(rows, schema),
   ) as Array<Record<string, unknown>>
   await db.insert(docTable).values(encrypted as never)
 }, 120000)

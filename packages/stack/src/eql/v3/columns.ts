@@ -369,10 +369,10 @@ function indexesForCapabilities(
   }
 
   if (capabilities.searchableJson) {
-    // Encrypted-JSONB (ste_vec) index. `prefix: 'enabled'` is a sentinel the
-    // table's `build()` rewrites to `${tableName}/${columnName}` — the same
-    // scheme v2 `searchableJson` uses — so each document's selectors are scoped
-    // to their column.
+    // Encrypted-JSONB index (the protect-ffi config kind is named `ste_vec`).
+    // `prefix: 'enabled'` is a sentinel the table's `build()` rewrites to
+    // `${tableName}/${columnName}` — the same scheme v2 `searchableJson` uses —
+    // so each document's selectors are scoped to their column.
     //
     // `array_index_mode` indexes array elements by identity (`item`) and enables
     // `$[*]` wildcard selectors, but deliberately drops `position`: `@>`
@@ -381,8 +381,8 @@ function indexesForCapabilities(
     // With positional terms emitted (v2 `searchableJson`'s `'all'`), the needle
     // for `x`-at-index-0 would miss a document holding `x` at index 1.
     //
-    // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json` orders
-    // ste_vec entries by the CLLW-OPE `op` term, so the index must emit `op`
+    // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json` orders the
+    // document's entries by the CLLW-OPE `op` term, so the index must emit `op`
     // (compat) terms. `'standard'` emits v2's CLLW-ORE `oc` terms, which the v3
     // domain rejects at encrypt time.
     indexes.ste_vec = {
@@ -633,10 +633,11 @@ const JSON_DOMAIN = {
 } as const
 
 /**
- * Builder for a `public.eql_v3_json` column — an encrypted JSONB document,
- * stored as an ste_vec `SteVecDocument` and queried by containment. The document
- * (any {@link JsonValue}) round-trips through `encrypt`/`decrypt`; structural
- * queries use the ste_vec index emitted by `build()`.
+ * Builder for a `public.eql_v3_json` column — an encrypted JSONB document
+ * (a {@link JsonDocument}: object, array, or null). It round-trips through
+ * `encrypt`/`decrypt`, and containment queries use the encrypted-JSONB index
+ * emitted by `build()`. (The stored payload is protect-ffi's `SteVecDocument`,
+ * and the config index kind is `ste_vec` — both protect-ffi names.)
  */
 export class EncryptedJsonColumn extends EncryptedV3Column<typeof JSON_DOMAIN> {
   constructor(columnName: string) {

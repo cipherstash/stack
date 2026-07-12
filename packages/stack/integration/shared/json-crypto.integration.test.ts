@@ -1,8 +1,9 @@
 /**
  * Live round-trip for the v3 `types.Json()` column — an encrypted JSONB document
- * stored as an ste_vec `SteVecDocument`. Proves the new json column model
- * encrypts and decrypts a real document through protect-ffi (no DB query here;
- * containment is exercised by the Drizzle json suite).
+ * (`public.eql_v3_json`). Proves the new json column model encrypts and decrypts
+ * a real document through protect-ffi (no DB query here; containment is exercised
+ * by the Drizzle json suite). The stored payload is protect-ffi's
+ * `SteVecDocument`, carrying an `sv` array rather than a scalar `c` ciphertext.
  */
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -12,7 +13,7 @@ const docs = encryptedTable('v3_json_docs', {
   profile: types.Json('profile'),
 })
 
-describe('v3 typed client — JSON (ste_vec) round-trip', () => {
+describe('v3 typed client — encrypted JSONB round-trip', () => {
   let client: Awaited<ReturnType<typeof EncryptionV3<[typeof docs]>>>
 
   beforeAll(async () => {
@@ -30,7 +31,8 @@ describe('v3 typed client — JSON (ste_vec) round-trip', () => {
     const encrypted = unwrapResult(
       await client.encrypt(value, { table: docs, column: docs.profile }),
     )
-    // An ste_vec document carries an `sv` array, not a scalar `c` ciphertext.
+    // An encrypted JSONB document carries an `sv` array, not a scalar `c`
+    // ciphertext (the stored shape is protect-ffi's `SteVecDocument`).
     expect(Array.isArray((encrypted as { sv?: unknown }).sv)).toBe(true)
 
     const decrypted = unwrapResult(await client.decrypt(encrypted))
@@ -46,7 +48,7 @@ describe('v3 typed client — JSON (ste_vec) round-trip', () => {
 
   // A JSON document is not only an object: `types.Json` (and the `JsonDocument`
   // plaintext type) also admit a top-level array and `null`. Pin both so a
-  // regression in ste_vec encoding of non-object roots turns a test red.
+  // regression in encrypted-JSONB encoding of non-object roots turns a test red.
   it.each([
     ['array root', [1, 'two', { three: 3 }]],
     ['null root', null],

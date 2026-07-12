@@ -151,14 +151,13 @@ export function runFamilySuite(
   const adapter = makeAdapter()
   const domains = domainsForFamily(family)
 
-  // A family whose every domain is deferred (e.g. `json`: ste_vec containment
-  // and selector queries don't fit the scalar oracle this driver runs). It
-  // carries no op-matrix coverage here — its real coverage lives in dedicated
-  // suites (`json-crypto`, `json-contains`). Emit one assertion documenting the
-  // deferral so the family stays visible and is not a silent skip, rather than
-  // letting `planTable` throw on an empty column set. A family with NO domains
-  // at all (covered or deferred) is a wiring bug and still falls through to that
-  // throw.
+  // A family whose every domain is deferred (e.g. `json`: containment queries
+  // don't fit the scalar oracle this driver runs). It carries no op-matrix
+  // coverage here — its real coverage lives in dedicated suites (`json-crypto`,
+  // `json-contains`). Emit one assertion documenting the deferral so the family
+  // stays visible and is not a silent skip, rather than letting `planTable` throw
+  // on an empty column set. A family with NO domains at all (covered or deferred)
+  // is a wiring bug and still falls through to that throw.
   if (domains.length === 0) {
     const deferred = deferredForFamily(family)
     if (deferred.length > 0) {

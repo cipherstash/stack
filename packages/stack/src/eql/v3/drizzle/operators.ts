@@ -43,8 +43,11 @@ const MAX_IN_ARRAY_CONCURRENCY = 4
  *
  * `bulkEncrypt` is optional so a `{ encrypt }`-only client stays valid; the
  * list operators fall back to bounded-concurrency single encryption without it.
- * `encryptQuery` is likewise optional — only JSON containment (`@>`) needs it,
- * to build a `query_jsonb` needle; the `contains()` branch guards its absence.
+ * `encryptQuery` is optional only because today it is used by a single operator
+ * — JSON containment (`@>`), which needs a ciphertext-free `query_jsonb` needle;
+ * the `contains()` branch guards its absence. Every OTHER operator still encrypts
+ * its operand with `encrypt` (a full storage envelope). Unifying all operands
+ * onto `encryptQuery` — after which it stops being optional — is tracked in #622.
  */
 type OperandEncryptionClient = {
   encrypt(
@@ -233,9 +236,10 @@ export function createEncryptionOperatorsV3(
   const ORDERING_INDEXES = ['ore', 'ope'] as const
   // `contains` answers two shapes: bloom free-text (`match`, a `text_search`/
   // `text_match` column), which emits `eql_v3.contains(col, operand)`, and
-  // encrypted-JSONB containment (`ste_vec`, a `json` column), which emits the
-  // `@>` operator instead — json has no `eql_v3.contains` overload. The branch
-  // in `contains()` picks the right SQL by index kind.
+  // encrypted-JSONB containment (an `eql_v3_json` column, whose config carries
+  // the `ste_vec` index kind), which emits the `@>` operator instead — json has
+  // no `eql_v3.contains` overload. The branch in `contains()` picks the right SQL
+  // by index kind.
   const CONTAINMENT_INDEXES = ['match', 'ste_vec'] as const
 
   function applyOperationOptions(
@@ -448,7 +452,7 @@ export function createEncryptionOperatorsV3(
 
   /**
    * Build a `query_jsonb` containment needle for a `json` column. Uses
-   * `encryptQuery` (not `encrypt`): the ste_vec query term carries no ciphertext
+   * `encryptQuery` (not `encrypt`): the JSON query term carries no ciphertext
    * and satisfies the `eql_v3.query_jsonb` CHECK the `@>` overload needs.
    */
   async function encryptJsonContainmentTerm(
