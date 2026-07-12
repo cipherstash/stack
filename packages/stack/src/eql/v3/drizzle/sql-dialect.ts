@@ -41,6 +41,19 @@ export const v3Dialect = {
     return sql`${fn('contains')}(${left}, ${enc}::jsonb)`
   },
 
+  /**
+   * Encrypted-JSONB containment (`eql_v3_json @> sub-document`). Unlike text,
+   * json has NO `eql_v3.contains` overload — containment is the `@>` operator,
+   * whose `(eql_v3_json, eql_v3.query_jsonb)` form takes a `query_jsonb` needle
+   * (from `encryptQuery`, no ciphertext). The needle is cast to
+   * `eql_v3.query_jsonb` EXPLICITLY: `eql_v3_json @> ?` has four RHS overloads
+   * (`eql_v3_json`, `eql_v3_jsonb_entry`, `jsonb`, `query_jsonb`), so a bare
+   * `::jsonb` is ambiguous ("operator is not unique", 42725).
+   */
+  containsJson(left: SQL, enc: SQL): SQL {
+    return sql`${left} OPERATOR(public.@>) ${enc}::eql_v3.query_jsonb`
+  },
+
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {
     // eql-3.0.0 splits the ordering extractor by term flavour: `ord_term`
     // takes the OPE-backed `_ord` domains (returns eql_v3_internal.ope_cllw),

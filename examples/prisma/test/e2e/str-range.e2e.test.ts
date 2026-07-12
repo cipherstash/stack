@@ -74,7 +74,9 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
   })
 
   it('cipherstashAsc orders alphabetically (bare-column ORDER BY on string)', async () => {
-    const rows = await db.orm.public.User.orderBy((u) => cipherstashAsc(u.email)).all()
+    const rows = await db.orm.public.User.orderBy((u) =>
+      cipherstashAsc(u.email),
+    ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-str-0',
       'e2e-str-1',

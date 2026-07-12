@@ -1,6 +1,11 @@
 import type { EncryptionClient } from '@/encryption'
 import type { AuditConfig } from '@/encryption/operations/base-operation'
-import type { AnyV3Table, InferPlaintext, QueryTypesForColumn } from '@/eql/v3'
+import type {
+  AnyV3Table,
+  EqlTypeForColumn,
+  InferPlaintext,
+  QueryTypesForColumn,
+} from '@/eql/v3'
 import type { EncryptionError } from '@/errors'
 import type { LockContext } from '@/identity'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
@@ -53,9 +58,7 @@ export type EncryptedSupabaseV3Options<
    * Declaring a `text_search` column does NOT change its match behaviour: a
    * declared and a synthesized `text_search` column build byte-identically, and
    * neither `types.TextSearch` nor `EncryptedTextSearchColumn` accepts match
-   * options. `include_original: true` is therefore always in force, so a
-   * substring `contains` matches nothing on either. See the `contains` note on
-   * `EncryptedQueryBuilderV3Impl`.
+   * options. See the `contains` note on `EncryptedQueryBuilderV3Impl`.
    */
   schemas?: S
 }
@@ -188,16 +191,26 @@ export type V3ContainsValue<
   : string
 
 /**
- * JS property names of a v3 table's columns that carry NO `orderAndRange`
- * capability — storage-only, equality-only and match-only domains. They hold no
- * ordering term, so there is nothing for `order()` to sort by.
+ * JS property names of a v3 table's columns that `order()` cannot sort by. Two
+ * cases:
+ *
+ * 1. Columns with NO `orderAndRange` capability — storage-only, equality-only
+ *    and match-only domains hold no ordering term.
+ * 2. ORE-backed (`*_ord_ore`) columns. They ARE `orderAndRange`-capable, but the
+ *    builder sorts encrypted columns through a jsonb path (`col->op`), and the
+ *    OPE term that path selects does not exist on an ORE domain — its `ob` term
+ *    needs the superuser-only ORE opclass no jsonb path can reach. So they are
+ *    excluded here to match the runtime rejection in `validateTransforms`,
+ *    rather than type-checking clean and throwing at execute time.
  */
 export type NonOrderableV3Keys<Table extends AnyV3Table> = {
   [K in Extract<
     keyof V3ColumnsOfTable<Table>,
     string
   >]: 'orderAndRange' extends QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>
-    ? never
+    ? EqlTypeForColumn<V3ColumnsOfTable<Table>[K]> extends `${string}_ord_ore`
+      ? K
+      : never
     : K
 }[Extract<keyof V3ColumnsOfTable<Table>, string>]
 
@@ -212,12 +225,11 @@ export type NonOrderableV3Keys<Table extends AnyV3Table> = {
  * path `col->op`, which selects the OPE term, and OPE is order-preserving. See
  * `EncryptedQueryBuilderV3Impl.orderColumnName`.
  *
- * ORE-backed (`*_ord_ore`) columns are `orderAndRange`-capable and so pass this
- * type, but are rejected at runtime: their `ob` term needs the superuser-only
- * ORE opclass, which no jsonb path can reach. Encoding the ordering FLAVOUR in
- * the type system would mean threading it through `QueryTypesForColumn`, and
- * such a column cannot hold data on managed Postgres anyway (its domain CHECK
- * raises `ore_domain_unavailable`), so the runtime guard is where it belongs.
+ * ORE-backed (`*_ord_ore`) columns are excluded at compile time by
+ * {@link NonOrderableV3Keys} — the builder sorts through a jsonb path that
+ * cannot reach their superuser-only ORE opclass, so `.order()` on one is a type
+ * error, matching the runtime rejection in `validateTransforms` (defense in
+ * depth for the untyped `.order(someString)` path).
  */
 export type V3OrderableKeys<
   Table extends AnyV3Table,

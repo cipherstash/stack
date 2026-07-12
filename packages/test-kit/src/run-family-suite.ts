@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { IntegrationAdapter } from './adapter.ts'
 import type { DomainSpec } from './catalog.ts'
-import { domainsForFamily, type FamilyName } from './families.ts'
+import {
+  deferredForFamily,
+  domainsForFamily,
+  type FamilyName,
+} from './families.ts'
 import { negativeOps, type Plain, positiveOps, type QueryOp } from './ops.ts'
 import {
   comparePlain,
@@ -146,6 +150,25 @@ export function runFamilySuite(
 ): void {
   const adapter = makeAdapter()
   const domains = domainsForFamily(family)
+
+  // A family whose every domain is deferred (e.g. `json`: containment queries
+  // don't fit the scalar oracle this driver runs). It carries no op-matrix
+  // coverage here — its real coverage lives in dedicated suites (`json-crypto`,
+  // `json-contains`). Emit one assertion documenting the deferral so the family
+  // stays visible and is not a silent skip, rather than letting `planTable` throw
+  // on an empty column set. A family with NO domains at all (covered or deferred)
+  // is a wiring bug and still falls through to that throw.
+  if (domains.length === 0) {
+    const deferred = deferredForFamily(family)
+    if (deferred.length > 0) {
+      describe(`v3 ${adapter.name} — ${family}`, () => {
+        it('is fully deferred from the op-matrix; covered by dedicated suites', () => {
+          for (const { reason } of deferred) expect(reason).not.toBe('')
+        })
+      })
+      return
+    }
+  }
 
   // Unique per run so a crashed run never leaves a table that shadows the next.
   const runId = Math.random().toString(36).slice(2, 8)

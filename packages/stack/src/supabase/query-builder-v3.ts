@@ -8,6 +8,8 @@ import type {
 } from '@/schema'
 import type {
   BuildableQueryColumn,
+  Encrypted,
+  EncryptedQueryResult,
   QueryTypeName,
   ScalarQueryTerm,
 } from '@/types'
@@ -121,12 +123,11 @@ function assertNoPropertyDbNameCollision(
  *   we. The typed builder has no `like`; the runtime methods throw on an
  *   encrypted column and pass through on a plaintext one.
  *
- *   KNOWN BROKEN for real substrings, and not fixable from this file. The
- *   operand is a storage payload, so its bloom carries the whole needle as an
- *   extra `include_original` token, which the haystack's bloom cannot contain
- *   unless the needle equals the stored value or is exactly `token_length` (3)
- *   characters. v3 Drizzle's `contains` has the same defect for the same
- *   reason. Tracked in EQL; do not paper over it here.
+ *   Substrings DO match: the needle blooms to its own trigrams, and containment
+ *   holds whenever every one of them is present in the stored value's bloom —
+ *   i.e. for any substring of at least `token_length` (3) characters. Shorter
+ *   needles bloom to nothing (`bf @> '{}'` is true for every row) and are
+ *   rejected up front by `matchNeedleError`, not answered.
  *
  * Decrypted rows additionally get `Date` reconstruction from the
  * encrypt-config `cast_as`, mirroring the typed v3 client.
@@ -146,15 +147,6 @@ export class EncryptedQueryBuilderV3Impl<
   private columnSchemas: Record<string, ColumnSchema>
   /** Column builders keyed by BOTH property name and DB name. */
   private v3Columns: Record<string, V3ColumnLike>
-  /**
-   * Result-row key → DB column name for the columns the current select
-   * produces, including caller-chosen PostgREST aliases (`ts:createdAt` keys
-   * rows by `ts`). Populated by {@link buildSelectString}; consumed by
-   * {@link postprocessDecryptedRow} so aliased date columns still get `Date`
-   * reconstruction. Empty on paths with no recorded select (an insert or update
-   * that returns rows), which fall back to the static property/DB names.
-   */
-  private selectKeyToDb: Record<string, string> = Object.create(null)
 
   constructor(
     tableName: string,
@@ -300,8 +292,13 @@ export class EncryptedQueryBuilderV3Impl<
    * `text_search`) — and every collation orders digits before letters and hex
    * letters among themselves. `match-bloom`'s sibling assertion pins that shape.
    *
-   * `validateTransforms` has already rejected every encrypted column that lacks
-   * an `ope` index, so reaching the jsonb path here implies the term exists.
+   * This runs at column-name-mapping time (`transformToDbSpace`), BEFORE
+   * `buildAndExecuteQuery` calls `validateTransforms`. For an encrypted column
+   * with no `ope` index it therefore returns a bare `dbName` here — a name that
+   * would sort by `jsonb_cmp` over the ciphertext if it reached PostgREST — but
+   * it never does: `validateTransforms` throws (with a domain-specific reason)
+   * before the query executes, so the bare name is only ever an intermediate
+   * value on a request that is about to be rejected.
    */
   protected override orderColumnName(column: string): DbName {
     const dbName = this.dbNameFor(column)
@@ -348,7 +345,6 @@ export class EncryptedQueryBuilderV3Impl<
 
   protected override buildSelectString(): DbSelect | null {
     if (this.selectColumns === null) return null
-    this.selectKeyToDb = selectKeyToDbV3(this.selectColumns, this.propToDb)
     return addJsonbCastsV3(this.selectColumns, this.propToDb)
   }
 
@@ -448,7 +444,7 @@ export class EncryptedQueryBuilderV3Impl<
    */
   protected override async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
-  ): Promise<unknown[]> {
+  ): Promise<EncryptedQueryResult[]> {
     const groups = new Map<
       V3ColumnLike,
       { indices: number[]; values: ScalarQueryTerm['value'][] }
@@ -464,7 +460,11 @@ export class EncryptedQueryBuilderV3Impl<
     const bulkEncrypt = this.encryptionClient.bulkEncrypt?.bind(
       this.encryptionClient,
     )
-    const results = new Array<unknown>(terms.length)
+    // Each term becomes the `JSON.stringify`'d storage envelope — a `string`,
+    // which is one arm of `EncryptedQueryResult`. PostgREST cannot cast a filter
+    // value to the `eql_v3.query_<name>` twins, so v3 sends full envelopes where
+    // v2 sends `encryptQuery` composite literals; both are `EncryptedQueryResult`.
+    const results = new Array<EncryptedQueryResult>(terms.length)
 
     await Promise.all(
       Array.from(groups, async ([column, { indices, values }]) => {
@@ -486,7 +486,7 @@ export class EncryptedQueryBuilderV3Impl<
     bulkEncrypt: NonNullable<EncryptionClient['bulkEncrypt']>,
     column: V3ColumnLike,
     values: ScalarQueryTerm['value'][],
-  ): Promise<unknown[]> {
+  ): Promise<Array<Encrypted | null>> {
     const baseOp = bulkEncrypt(
       values.map((plaintext) => ({ plaintext })) as never,
       { column, table: this.v3Table } as never,
@@ -502,21 +502,34 @@ export class EncryptedQueryBuilderV3Impl<
 
     // `bulkEncrypt` is position-stable, so a length mismatch means the contract
     // was violated. Truncating instead would silently widen an `in` predicate
-    // (or narrow a `not.in`) to whatever came back.
-    const encrypted = result.data as Array<{ data: unknown }> | undefined
-    if (!Array.isArray(encrypted) || encrypted.length !== values.length) {
+    // (or narrow a `not.in`) to whatever came back. `result.data` is now
+    // `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]` — not `unknown`.
+    const encrypted = result.data
+    if (encrypted.length !== values.length) {
       this.encryptionFailure(
-        `bulk encryption returned ${Array.isArray(encrypted) ? encrypted.length : 0} terms for ${values.length} values on column "${column.getName()}".`,
+        `bulk encryption returned ${encrypted.length} terms for ${values.length} values on column "${column.getName()}".`,
       )
     }
-    return encrypted.map((term) => term.data)
+    return encrypted.map((term, i) => {
+      // `BulkEncryptedData` types the element as `Encrypted | null`. A `null`
+      // envelope here would be `JSON.stringify`'d to the literal string `"null"`
+      // and sent as the filter operand — silently matching whatever `"null"`
+      // encodes to rather than failing. A query term should never encrypt to a
+      // null envelope, so treat it as a contract violation, not a value.
+      if (term.data === null) {
+        this.encryptionFailure(
+          `bulk encryption returned a null envelope at position ${i} for column "${column.getName()}".`,
+        )
+      }
+      return term.data
+    })
   }
 
   /** Fallback for a client that predates `bulkEncrypt`. */
   private async encryptGroupPerTerm(
     column: V3ColumnLike,
     values: ScalarQueryTerm['value'][],
-  ): Promise<unknown[]> {
+  ): Promise<Encrypted[]> {
     return Promise.all(
       values.map(async (value) => {
         const baseOp = this.encryptionClient.encrypt(value, {
@@ -603,10 +616,14 @@ export class EncryptedQueryBuilderV3Impl<
     // Every key an encrypted column can appear under: the keys this select
     // actually produces (including caller-chosen aliases like `ts:createdAt`),
     // plus the static property and DB names as a fallback for paths that record
-    // no select. Aliases win — `selectKeyToDb` describes the row in hand.
+    // no select. Aliases win. Derived here from `this.selectColumns` (the row in
+    // hand) rather than cached from `buildSelectString`, so a reused builder can
+    // never postprocess a row with a previous operation's stale select map.
     const keyToDb: Record<string, string> = Object.assign(
       Object.create(null),
-      this.selectKeyToDb,
+      this.selectColumns === null
+        ? undefined
+        : selectKeyToDbV3(this.selectColumns, this.propToDb),
     )
     for (const [property, dbName] of Object.entries(this.propToDb)) {
       keyToDb[property] ??= dbName

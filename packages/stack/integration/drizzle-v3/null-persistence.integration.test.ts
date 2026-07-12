@@ -12,26 +12,20 @@
  * the NULL row, `isNotNull` selects the present row, the NULL cell reads back
  * as SQL NULL, and the present cell still decrypts to its plaintext.
  */
-import 'dotenv/config'
+import { databaseUrl, V3_MATRIX } from '@cipherstash/test-kit'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3 } from '@/encryption/v3'
 import {
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
 } from '@/eql/v3/drizzle'
 import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
-import { installEqlV3IfNeeded } from '../helpers/eql-v3'
-import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
-import { V3_MATRIX } from '../v3-matrix/catalog'
 
-const url = process.env.DATABASE_URL
-const sqlClient = LIVE_EQL_V3_PG_ENABLED
-  ? postgres(url as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sqlClient = postgres(databaseUrl(), { prepare: false })
 
 const TABLE_NAME = 'protect_ci_v3_drizzle_nullable'
 const RUN = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -111,8 +105,7 @@ async function selectRowKeys(condition: SQL): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-  await installEqlV3IfNeeded(sqlClient)
+  // EQL v3 is installed once per run by `global-setup.ts`.
   client = await EncryptionV3({ schemas: [schema] })
   ops = createEncryptionOperatorsV3(client)
   db = drizzle({ client: sqlClient })
@@ -142,12 +135,11 @@ beforeAll(async () => {
 }, 120000)
 
 afterAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
   await sqlClient`DELETE FROM ${sqlClient(TABLE_NAME)} WHERE test_run_id = ${RUN}`
   await sqlClient.end()
 }, 30000)
 
-describeLivePg('v3 drizzle NULL persistence across tiers (live pg)', () => {
+describe('v3 drizzle NULL persistence across tiers (live pg)', () => {
   it.each(TIERS)('$domain isNull selects the NULL row', async (tier) => {
     expect(await selectRowKeys(ops.isNull(columnFor(tier.key)))).toEqual([
       ROW_A,

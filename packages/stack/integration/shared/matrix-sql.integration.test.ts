@@ -14,7 +14,8 @@
  * each kind of v3 domain in SQL — useful reference for engineers and agents
  * writing new domain-consuming code.
  *
- * ONE mega table (all 39 domains, one column each, like `matrix-live.test.ts`),
+ * ONE mega table (every covered domain, one column each — ORE domains excluded,
+ * see the `domains` filter below),
  * two seeded rows (`samples[0]` / `samples[1]` from the catalog — every domain
  * has at least two), and per domain one proof per query permutation its indexes
  * support — proving each selects the expected row and not the other. Beyond the
@@ -54,34 +55,28 @@
  * operator (NOT `ORDER BY eql_v3.ord_term(col)`) is used deliberately: it is
  * ORE-correct on both superuser (CI) and non-superuser (local) Postgres.
  */
-import 'dotenv/config'
-import postgres from 'postgres'
-import { afterAll, beforeAll, expect, it } from 'vitest'
-import { EncryptionV3, encryptedTable } from '@/encryption/v3'
-import { unwrapResult } from '../fixtures'
-import { installEqlV3IfNeeded } from '../helpers/eql-v3'
-import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from '../helpers/live-gate'
 import {
   type DomainSpec,
+  databaseUrl,
   type EqlV3TypeName,
+  isCovered,
   eqlTypeSlug as slug,
   typedEntries,
+  unwrapResult,
   V3_MATRIX,
-} from './catalog'
+} from '@cipherstash/test-kit'
+import postgres from 'postgres'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 
 // Previously force-skipped (CI run 28569708268, PR #540): `beforeAll` crashed
 // with `PostgresError: invalid input syntax for type json` on the dynamic
 // 35-column INSERT. Root cause was a postgres.js serialization gap — a bare
 // ciphertext object stringified to `"[object Object]"` — now fixed by wrapping
 // every INSERT param in `sql.json(...)` (see `beforeAll`; the fix landed right
-// after the skip and the skip was simply left stale). Re-enabled here as an
-// ordinary credential-gated suite: it runs in CI (which supplies DATABASE_URL +
-// CS_* creds) and self-skips locally when they are absent.
+// after the skip and the skip was simply left stale).
 
-const databaseUrl = process.env.DATABASE_URL
-const sql = LIVE_EQL_V3_PG_ENABLED
-  ? postgres(databaseUrl as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sql = postgres(databaseUrl(), { prepare: false })
 
 const TABLE_NAME = 'v3_matrix_live_pg'
 const TEST_RUN_ID = `matrix-live-pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -99,7 +94,13 @@ const expectDecryptedStorageValue = (
   expect(decrypted).toBe(expected)
 }
 
-const domains = typedEntries(V3_MATRIX)
+// Covered domains only. The nine `_ord_ore` (block-ORE) domains are `deferred`:
+// their columns cannot hold data on non-superuser Postgres (the domain CHECK
+// raises `ore_domain_unavailable`), so a mega-table built from every row would
+// fail to seed on the `supabase/postgres` variant this suite also runs against.
+// ORE SQL-operator coverage is a superuser-only follow-up, matching the split
+// `relational.integration.test.ts` already makes.
+const domains = typedEntries(V3_MATRIX).filter(([, spec]) => isCovered(spec))
 
 const columns = Object.fromEntries(
   domains.map(([t, spec]) => [slug(t), spec.builder(slug(t))]),
@@ -228,9 +229,7 @@ const containedByTerms: Record<string, unknown> = {}
 const orderOperands: Record<string, unknown[]> = {}
 
 beforeAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-
-  await installEqlV3IfNeeded(sql)
+  // EQL v3 is installed once per run by `global-setup.ts`.
   client = await EncryptionV3({ schemas: [table] as never })
 
   const columnDefs = domains
@@ -346,14 +345,13 @@ beforeAll(async () => {
 }, 120000)
 
 afterAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
   await sql.unsafe(`DELETE FROM ${TABLE_NAME} WHERE test_run_id = ANY($1)`, [
     [TEST_RUN_ID, ORDER_RUN_ID],
   ])
   await sql.end()
 }, 30000)
 
-describeLivePg('v3 matrix live Postgres coverage (all 39 domains)', () => {
+describe('v3 matrix live Postgres coverage (all covered domains)', () => {
   it.each(
     eqDomains,
   )('%s: eql_v3.eq(col, operand) selects the exact row', async (eqlType) => {

@@ -20,6 +20,7 @@
 import type {
   AnyEncryptedV3Column,
   EqlTypeForColumn,
+  JsonValue,
   QueryCapabilities,
 } from '@cipherstash/stack/eql/v3'
 import {
@@ -40,6 +41,7 @@ import {
   EncryptedIntegerEqColumn,
   EncryptedIntegerOrdColumn,
   EncryptedIntegerOrdOreColumn,
+  EncryptedJsonColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
@@ -103,7 +105,7 @@ export type DomainSpec = Readonly<{
    * tell `integer` from `double`, and a fractional value on an int-named domain is
    * untested territory (it would truncate against a real narrow PG column).
    */
-  samples: ReadonlyArray<string | number | bigint | boolean | Date>
+  samples: ReadonlyArray<string | number | bigint | boolean | Date | JsonValue>
   /**
    * Values that MUST fail encryption. Number domains reject `NaN`/`±Infinity`
    * and `bigint` domains reject values outside the signed 64-bit (`int8`) range
@@ -217,7 +219,7 @@ const MATCH_BLOCK: NonNullable<Indexes>['match'] = {
   token_filters: [{ kind: 'downcase' }],
   k: 6,
   m: 2048,
-  include_original: true,
+  include_original: false,
 }
 const MATCH_IDX: Indexes = { match: MATCH_BLOCK }
 const TEXT_SEARCH_IDX: Indexes = {
@@ -664,5 +666,38 @@ export const V3_MATRIX = {
     indexes: OPE_IDX,
     samples: DOUBLE_S,
     errorSamples: NUM_ERR,
+  },
+
+  // Encrypted JSONB document. Excluded from the SCALAR family driver (that is
+  // what `deferred` marks here) — NOT unimplemented: JSON is fully covered by
+  // its own live suites (`json-crypto`, `json-contains`). It is queried by
+  // containment (the `@>` operator), not the eq/ord/match ops the scalar oracle
+  // models, so `runFamilySuite` cannot exercise it. The row still pins the built
+  // shape (`cast_as: 'json'` + the encrypted-JSONB index) and carries
+  // representative document samples.
+  'public.eql_v3_json': {
+    builder: types.Json,
+    ColumnClass: EncryptedJsonColumn,
+    castAs: 'json',
+    capabilities: {
+      equality: false,
+      orderAndRange: false,
+      freeTextSearch: false,
+      searchableJson: true,
+    },
+    indexes: {
+      ste_vec: {
+        prefix: 'enabled',
+        array_index_mode: { item: true, wildcard: true, position: false },
+        mode: 'compat',
+      },
+    },
+    samples: [
+      { user: 'ada@example.com', roles: ['admin', 'eng'], active: true },
+      { user: 'grace@example.com', roles: ['eng'] },
+    ],
+    deferred:
+      'json is covered by dedicated live suites (json-crypto, json-contains), ' +
+      'not the scalar op-matrix: it is queried by containment, not eq/ord/match',
   },
 } as const satisfies Record<EqlV3TypeName, DomainSpec>

@@ -565,12 +565,11 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   other character, so a `like` pattern is a category error. Calling `like` or
   `ilike` on an encrypted column throws an error pointing at `contains()`;
   on plaintext columns both pass through unchanged.
-- **`contains()` matches exact values, not general substrings.** The match
-  index always uses its default configuration, in which the query's bloom
-  filter carries the whole search term as an extra token — so `contains()`
-  matches when the term equals the stored value (or is exactly one token,
-  3 characters, long); longer substrings do not match. This is a known
-  limitation tracked upstream in EQL.
+- **`contains()` matches substrings.** The search term blooms to its own
+  trigrams, and a row matches when the stored value's bloom contains all of
+  them — so any substring of at least 3 characters (the tokenizer's
+  `token_length`) matches. Shorter terms bloom to nothing and would match every
+  row, so they are rejected with an error rather than answered.
 - **INTERIM — filter operands are full storage envelopes.** EQL ships
   term-only query domains (`eql_v3.query_<name>`, which accept envelopes with
   no ciphertext) and the encryption client can mint those narrowed terms, but

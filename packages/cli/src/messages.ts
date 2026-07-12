@@ -60,9 +60,6 @@ export const messages = {
   eql: {
     unknownSubcommand: 'Unknown eql subcommand',
   },
-  eql: {
-    unknownSubcommand: 'Unknown eql subcommand',
-  },
   db: {
     unknownSubcommand: 'Unknown db subcommand',
     /** Warning shown when a deprecated `db <sub>` alias for `eql <sub>` is used. */

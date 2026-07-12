@@ -17,18 +17,16 @@
  * samples (NaN/±Infinity) use the single-value path — the guard throws
  * client-side before any network — and so stay cheap even one at a time.
  */
-import 'dotenv/config'
-import { beforeAll, expect, it } from 'vitest'
-import { EncryptionV3, encryptedTable } from '@/encryption/v3'
-import { unwrapResult } from '../fixtures'
-import { describeLive } from '../helpers/live-gate'
 import {
   type DomainSpec,
   type EqlV3TypeName,
   eqlTypeSlug as slug,
   typedEntries,
+  unwrapResult,
   V3_MATRIX,
-} from './catalog'
+} from '@cipherstash/test-kit'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { EncryptionV3, encryptedTable } from '@/encryption/v3'
 
 // `as const satisfies Record<...>` gives `V3_MATRIX` a narrower type than
 // `Record<EqlV3TypeName, DomainSpec>` (rows that omit the optional
@@ -71,7 +69,7 @@ const errorCases = domains.flatMap(([t, spec]) =>
   ),
 )
 
-describeLive('v3 matrix live round-trip (all domains × samples)', () => {
+describe('v3 matrix live round-trip (all domains × samples)', () => {
   let client: Awaited<ReturnType<typeof EncryptionV3>>
   let encrypted: Array<Record<string, unknown>>
   let decrypted: Array<Record<string, unknown>>
@@ -89,9 +87,17 @@ describeLive('v3 matrix live round-trip (all domains × samples)', () => {
   it.each(
     roundTripCases,
   )('%s round-trips through the model path', (_label, col, sample, i) => {
-    // Guard against a false pass: the field must be a real ciphertext (`c`),
-    // not a plaintext value that slipped through un-encrypted.
-    expect(encrypted[i][col]).toHaveProperty('c')
+    // Guard against a false pass: the field must be a real ciphertext, not a
+    // plaintext value that slipped through un-encrypted. Scalar domains carry it
+    // at a top-level `c`; a JSON (`eql_v3_json`) document is an ste_vec payload
+    // (`{ k: 'sv', sv: [...] }`) with NO top-level `c`, so it is guarded by the
+    // presence of its `sv` array instead.
+    const payload = encrypted[i][col] as { k?: unknown; sv?: unknown }
+    if (payload?.k === 'sv') {
+      expect(Array.isArray(payload.sv)).toBe(true)
+    } else {
+      expect(payload).toHaveProperty('c')
+    }
 
     const actual = decrypted[i][col]
     if (sample instanceof Date) {

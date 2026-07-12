@@ -50,13 +50,21 @@ function setup(
   }),
 ) {
   const encrypt = vi.fn((...args: unknown[]) => chainable(encryptImpl(...args)))
+  // `encryptQuery` backs JSON containment: it returns a narrowed `query_jsonb`
+  // term (no ciphertext). The double returns a recognisable ste_vec-shaped term
+  // so a rendered `@>` query can be asserted.
+  const encryptQuery = vi.fn(() =>
+    chainable(
+      Promise.resolve({ data: { sv: [{ s: 'sel', hm: 'h' }] } }) as never,
+    ),
+  )
   // The factory's `client` parameter is the structural `{ encrypt }` surface,
   // so this hand-rolled double satisfies it with no cast (M1).
-  const client = { encrypt }
+  const client = { encrypt, encryptQuery }
   const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
   const dialect = new PgDialect()
   const render = (s: unknown) => dialect.sqlToQuery(s as SQL)
-  return { ops, encrypt, render }
+  return { ops, encrypt, encryptQuery, render }
 }
 
 type BulkPayload = Array<{ id?: string; plaintext: unknown }>
@@ -107,12 +115,22 @@ const orderDomains = matrixEntries.filter(
   ([, spec]) => spec.indexes.ore || spec.indexes.ope,
 )
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
-const storageDomains = matrixEntries.filter(
+// Domains with NO scalar query index (unique/ore/ope/match), so `eq`/`ne`/
+// ordering all throw. This is the truly storage-only scalar domains PLUS
+// `eql_v3_json` — json is a QUERYABLE domain (containment), it just answers no
+// scalar op, so it lands here for the eq/order rejection checks.
+const nonScalarQueryDomains = matrixEntries.filter(
   ([, spec]) =>
     !spec.indexes.unique &&
     !spec.indexes.ore &&
     !spec.indexes.ope &&
     !spec.indexes.match,
+)
+// Of those, the ones that also reject `contains` — i.e. everything except json.
+// json answers `contains` via `@>`, so it is excluded here and gets its own
+// positive assertion in the JSON containment describe above.
+const noContainmentDomains = nonScalarQueryDomains.filter(
+  ([, spec]) => !spec.indexes.ste_vec,
 )
 
 const users = pgTable('users', {
@@ -393,22 +411,91 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - storage-only domains', () => {
-  it.each(storageDomains)('%s eq throws', async (eqlType, spec) => {
+describe('createEncryptionOperatorsV3 - JSON containment', () => {
+  const JSON_TYPE = 'public.eql_v3_json'
+
+  // json has no `eql_v3.contains` overload: containment is the `@>` operator,
+  // and the needle is a narrowed `query_jsonb` term from `encryptQuery` (no
+  // ciphertext), cast to `eql_v3.query_jsonb`.
+  it('contains emits the @> operator with a query_jsonb needle', async () => {
+    const { ops, encryptQuery, render } = setup()
+    const q = render(
+      await ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
+    )
+
+    expect(q.sql.toLowerCase()).toContain(
+      `"matrix_users"."${slug(JSON_TYPE)}" operator(public.@>) $1::eql_v3.query_jsonb`,
+    )
+    expect(q.sql).not.toContain('eql_v3.contains')
+    // The needle is the encryptQuery result, not a full storage envelope.
+    expect(q.params).toEqual([JSON.stringify({ sv: [{ s: 'sel', hm: 'h' }] })])
+    expect(encryptQuery).toHaveBeenCalledTimes(1)
+    expect(encryptQuery.mock.calls[0]?.[1]).toMatchObject({
+      queryType: 'searchableJson',
+    })
+  })
+
+  it('contains surfaces an encryptQuery failure as an EncryptionOperatorError', async () => {
+    const { ops, encryptQuery } = setup()
+    encryptQuery.mockReturnValueOnce(
+      chainable(
+        Promise.resolve({ failure: { message: 'boom' } }) as never,
+      ) as never,
+    )
+    await expect(
+      ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+  })
+
+  it('contains rejects a null operand before calling encryptQuery', async () => {
+    const { ops, encryptQuery } = setup()
+    await expect(
+      ops.contains(matrixColumn(JSON_TYPE), null),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+    expect(encryptQuery).not.toHaveBeenCalled()
+  })
+
+  // `doc @> '{}'` holds for every row (jsonb `{} ⊆ anything`); an empty-object
+  // needle would silently return the whole table, so it is refused before
+  // encrypting — the same whole-table guard the bloom path applies.
+  it('contains rejects an empty-object needle before calling encryptQuery', async () => {
+    const { ops, encryptQuery } = setup()
+    await expect(ops.contains(matrixColumn(JSON_TYPE), {})).rejects.toThrow(
+      /matches every row/,
+    )
+    expect(encryptQuery).not.toHaveBeenCalled()
+  })
+
+  // `encryptQuery` is OPTIONAL on the operand client (see OperandEncryptionClient):
+  // a `{ encrypt }`-only client is structurally valid but cannot build the
+  // `query_jsonb` needle JSON containment needs. Without this guard the call would
+  // be a raw `TypeError: encryptQuery is not a function`; the guard turns it into a
+  // typed EncryptionOperatorError. Exercises the branch the real double can't.
+  it('contains throws a typed error when the client lacks encryptQuery', async () => {
+    const encrypt = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
+    const ops = createEncryptionOperatorsV3({ encrypt })
+    await expect(
+      ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
+    ).rejects.toBeInstanceOf(EncryptionOperatorError)
+  })
+})
+
+describe('createEncryptionOperatorsV3 - domains with no scalar query', () => {
+  it.each(nonScalarQueryDomains)('%s eq throws', async (eqlType, spec) => {
     const { ops } = setup()
     await expect(
       ops.eq(matrixColumn(eqlType), sampleFor(spec)),
     ).rejects.toBeInstanceOf(EncryptionOperatorError)
   })
 
-  it.each(storageDomains)('%s contains throws', async (eqlType, spec) => {
+  it.each(noContainmentDomains)('%s contains throws', async (eqlType, spec) => {
     const { ops } = setup()
     await expect(
       ops.contains(matrixColumn(eqlType), sampleFor(spec)),
     ).rejects.toBeInstanceOf(EncryptionOperatorError)
   })
 
-  it.each(storageDomains)('%s asc throws synchronously', (eqlType) => {
+  it.each(nonScalarQueryDomains)('%s asc throws synchronously', (eqlType) => {
     const { ops } = setup()
     expect(() => ops.asc(matrixColumn(eqlType))).toThrow(
       EncryptionOperatorError,

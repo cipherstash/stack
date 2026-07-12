@@ -1,18 +1,12 @@
-import 'dotenv/config'
+import { databaseUrl, unwrapResult } from '@cipherstash/test-kit'
 import postgres from 'postgres'
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 import type { Encrypted } from '@/types'
-import { unwrapResult } from './fixtures'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
-import { describeLivePg, LIVE_EQL_V3_PG_ENABLED } from './helpers/live-gate'
 
-const databaseUrl = process.env.DATABASE_URL
-const sql = LIVE_EQL_V3_PG_ENABLED
-  ? postgres(databaseUrl as string, { prepare: false })
-  : (undefined as unknown as postgres.Sql)
+const sql = postgres(databaseUrl(), { prepare: false })
 
 const table = encryptedTable('protect_ci_v3_text_search', {
   email: types.TextSearch('email'),
@@ -93,9 +87,7 @@ async function seedRows(): Promise<Record<string, number>> {
 }
 
 beforeAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-
-  await installEqlV3IfNeeded(sql)
+  // EQL v3 is installed once per run by `global-setup.ts`.
   // `eqlVersion: 3` is required for v3 concrete-type schemas: protect-ffi's
   // newClient defaults to v2, and a v2-mode client cannot encrypt these columns
   // (it throws "Cannot convert undefined or null to object"). EncryptionV3 sets
@@ -133,8 +125,6 @@ beforeAll(async () => {
 }, 30000)
 
 beforeEach(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-
   await sql`
     DELETE FROM protect_ci_v3_text_search
     WHERE test_run_id = ${TEST_RUN_ID}
@@ -146,8 +136,6 @@ beforeEach(async () => {
 }, 30000)
 
 afterAll(async () => {
-  if (!LIVE_EQL_V3_PG_ENABLED) return
-
   await sql`
     DELETE FROM protect_ci_v3_text_search
     WHERE test_run_id = ${TEST_RUN_ID}
@@ -159,7 +147,7 @@ afterAll(async () => {
   await sql.end()
 }, 30000)
 
-describeLivePg('eql_v3 text_search postgres integration', () => {
+describe('eql_v3 text_search postgres integration', () => {
   it('round-trips an encrypted value through an public.eql_v3_text_search column', async () => {
     const id = await insertRow('roundtrip', 'roundtrip@example.com')
 
@@ -292,11 +280,22 @@ describeLivePg('eql_v3 text_search postgres integration', () => {
       ON protect_ci_v3_text_search USING btree (eql_v3.ord_term(email))
     `
 
+    // Scope to the schema THIS run's table actually landed in, rather than
+    // hardcoding `public`. The table is created unqualified, so it lands in
+    // whatever `search_path` puts first — `public` on a fresh CI database, but
+    // the owning role's own schema (`cipherstash`) on a database whose
+    // search_path is `"$user", public`; a hardcoded `schemaname = 'public'` made
+    // the assertion environment-dependent. Deriving the schema from `pg_tables`
+    // keeps it environment-independent AND avoids a false pass from a same-named
+    // index left in another schema by an earlier run on a shared/persistent DB.
     const indexes = await sql<{ indexname: string; indexdef: string }[]>`
       SELECT indexname, indexdef
       FROM pg_indexes
-      WHERE schemaname = 'public'
-        AND tablename = 'protect_ci_v3_text_search'
+      WHERE tablename = 'protect_ci_v3_text_search'
+        AND schemaname = (
+          SELECT schemaname FROM pg_tables
+          WHERE tablename = 'protect_ci_v3_text_search'
+        )
         AND indexname IN (
           'protect_ci_v3_text_search_email_eq_idx',
           'protect_ci_v3_text_search_email_match_idx',

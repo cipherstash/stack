@@ -46,4 +46,10 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/stack/src/supabase/index.ts',
   ),
+  // Bare entry LAST: it is a prefix of every subpath above, and Vite matches in
+  // order, so the subpaths must win first. Both sibling tsconfigs map bare
+  // `@cipherstash/stack` → `src/index.ts`; without the runtime match here a
+  // consumer importing the bare specifier would fall through to
+  // `packages/stack/dist`, re-coupling `pnpm test` to a prior `pnpm build`.
+  '@cipherstash/stack': resolve(repoRoot, 'packages/stack/src/index.ts'),
 }

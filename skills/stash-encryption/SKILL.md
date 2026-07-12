@@ -632,6 +632,7 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Ord` / `OrdOre` | Equality + ordering/range | `'equality'`, `'orderAndRange'` |
 | `Match` (text only) | Free-text containment only | `'freeTextSearch'` |
 | `Search` (text only) | Equality + ordering/range + free-text | all three |
+| `Json` (no suffix) | Encrypted-JSONB containment queries (JSONPath selector: not yet, see #623) | `'searchableJson'` |
 
 **Domain families and plaintext types:**
 
@@ -643,8 +644,9 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Timestamp` | base, `Eq`, `Ord`, `OrdOre` | `Date` (time-of-day preserved) |
 | `Text` | base, `Eq`, `Match`, `Ord`, `OrdOre`, `Search` | `string` |
 | `Boolean` | base only | `boolean` |
+| `Json` | `Json` only | a JSON *document* (`JsonDocument`: object, array, or null — NOT a top-level scalar; nested values are any `JsonValue`) |
 
-Examples: `types.Text("notes")` (storage only), `types.TextEq("username")`, `types.BigintOrd("balance")`, `types.TimestampOrdOre("created_at")`, `types.Boolean("active")`.
+Examples: `types.Text("notes")` (storage only), `types.TextEq("username")`, `types.BigintOrd("balance")`, `types.TimestampOrdOre("created_at")`, `types.Boolean("active")`, `types.Json("metadata")`.
 
 The match index on `Match`/`Search` columns is always emitted with the default configuration — there is no per-column tuning in v3.
 
@@ -663,6 +665,35 @@ await client.encryptQuery("joh", {
   queryType: "freeTextSearch",
 })
 ```
+
+### Encrypted-JSONB Queries on `types.Json`
+
+A `types.Json("metadata")` column encrypts a whole JSON document (a
+`JsonDocument`: object, array, or null — not a top-level scalar) to a
+`public.eql_v3_json` value.
+
+**Containment** is the supported query today. Pass a sub-object or sub-array to
+`encryptQuery` with `queryType: 'searchableJson'`; it matches documents that
+contain the needle (jsonb `@>` semantics). Array containment is a subset test
+regardless of element position — `{ roles: ['admin'] }` matches any document
+whose `roles` array includes `admin`.
+
+```typescript
+const events = encryptedTable("events", { metadata: types.Json("metadata") })
+
+// containment: object needle
+await client.encryptQuery({ roles: ["admin"] }, { column: events.metadata, table: events })
+```
+
+Through the Drizzle v3 integration this is `ops.contains(col, subObject)` — see
+the `stash-drizzle` skill. `types.Json` carries no equality or ordering, so
+`eq` / `gt` / `asc` on it throw.
+
+> **Not yet implemented:** JSONPath selector-with-constraint queries
+> (`metadata->'plan' = $1`, `metadata->'age' > $1`) — a distinct third pattern
+> the `eql_v3_json` domain supports at the SQL level (`->` / `->>`). Neither the
+> query operator nor the selector-string needle typing is wired up yet; tracked
+> in [#623](https://github.com/cipherstash/stack/issues/623).
 
 ### Strongly-Typed Client: `EncryptionV3`
 

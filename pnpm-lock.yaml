@@ -602,6 +602,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.4.0
         version: 1.4.0
+      '@clerk/backend':
+        specifier: 3.4.9
+        version: 3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@supabase/postgrest-js':
         specifier: 2.105.4
         version: 2.105.4

@@ -76,21 +76,22 @@ describe('wizardCanUseTool', () => {
     // The doctrine tells the agent to add placeholder keys to `.env.example`.
     // The guard covers Edit and Write as well as Read, so a blanket `.env.`
     // rule made the file the agent is told to write unreachable.
-    it.each(['.env.example', '.env.sample', '.env.template'])(
-      'allows Read/Edit/Write/Glob on %s',
-      (name) => {
-        expect(wizardCanUseTool('Read', { file_path: `/project/${name}` })).toBe(
-          true,
-        )
-        expect(wizardCanUseTool('Edit', { file_path: `/project/${name}` })).toBe(
-          true,
-        )
-        expect(
-          wizardCanUseTool('Write', { file_path: `/project/${name}` }),
-        ).toBe(true)
-        expect(wizardCanUseTool('Glob', { pattern: name })).toBe(true)
-      },
-    )
+    it.each([
+      '.env.example',
+      '.env.sample',
+      '.env.template',
+    ])('allows Read/Edit/Write/Glob on %s', (name) => {
+      expect(wizardCanUseTool('Read', { file_path: `/project/${name}` })).toBe(
+        true,
+      )
+      expect(wizardCanUseTool('Edit', { file_path: `/project/${name}` })).toBe(
+        true,
+      )
+      expect(wizardCanUseTool('Write', { file_path: `/project/${name}` })).toBe(
+        true,
+      )
+      expect(wizardCanUseTool('Glob', { pattern: name })).toBe(true)
+    })
 
     it('still blocks value-bearing files that only start with a template name', () => {
       expect(

@@ -28,6 +28,7 @@ import {
   eqlTypeSlug as slug,
   sortedKeysFor as sortedKeysForKit,
   typedEntries,
+  unwrapResult,
   V3_MATRIX,
 } from '@cipherstash/test-kit'
 import {
@@ -52,9 +53,15 @@ import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
-const TABLE_NAME = 'protect_ci_v3_drizzle_matrix'
-const ACCOUNT_TABLE_NAME = 'protect_ci_v3_drizzle_matrix_accounts'
-const RUN = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+// Per-run table suffix so two runs sharing a database (a persistent/reused CI
+// database, a developer's local DB, or re-enabled file parallelism) never
+// operate on the same physical table — one run's `beforeAll` DROP would
+// otherwise blow away a table another run is mid-query on. Mirrors the family
+// suites' run-scoped naming (`rows.ts` `planTable`).
+const RID = Math.random().toString(36).slice(2, 8)
+const TABLE_NAME = `protect_ci_v3_drizzle_matrix_${RID}`
+const ACCOUNT_TABLE_NAME = `protect_ci_v3_drizzle_matrix_accounts_${RID}`
+const RUN = `run-${Date.now()}-${RID}`
 const ROW_A = 'row-a'
 const ROW_B = 'row-b'
 // A third row. With only two rows every predicate can return just [A], [B],
@@ -103,7 +110,7 @@ const accountsTable = pgTable(ACCOUNT_TABLE_NAME, {
 // known at compile time, so it exercises A3 end-to-end with ZERO casts: the
 // insert takes envelope rows and the select yields `Encrypted` values ready for
 // decrypt.
-const BIGINT_TABLE_NAME = 'protect_ci_v3_drizzle_bigint'
+const BIGINT_TABLE_NAME = `protect_ci_v3_drizzle_bigint_${RID}`
 const bigintTable = pgTable(BIGINT_TABLE_NAME, {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
   rowKey: text('row_key').notNull(),
@@ -190,11 +197,6 @@ async function selectRowKeys(condition: SQL | undefined): Promise<string[]> {
   return rows.map((row) => row.rowKey)
 }
 
-function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
-  if (result.failure) throw new Error(result.failure.message)
-  return result.data as T
-}
-
 function encryptedInsertRows(): MatrixPlainRow[] {
   return ROWS.map((rowKey) => {
     const row: MatrixPlainRow = {
@@ -218,12 +220,13 @@ beforeAll(async () => {
     .map(([eqlType]) => `"${slug(eqlType)}" ${eqlType} NOT NULL`)
     .join(',\n      ')
 
-  // DROP, not `CREATE TABLE IF NOT EXISTS`. A table left by an earlier run keeps
-  // its old columns, so a change to the catalog silently reuses the stale schema.
-  // That bit: after the `_ord_ore` domains were filtered out of `matrixEntries`,
-  // the leftover table still carried its nine ORE columns, and on managed
-  // Postgres every INSERT raised `ore_domain_unavailable` — even leaving those
-  // columns NULL, because the domain CHECK calls a function that RAISEs.
+  // Table names are run-scoped (see RID), so DROP IF EXISTS is normally a no-op;
+  // it stays as a belt-and-braces guard against an id collision. Recreating from
+  // scratch each run also means a catalog change can never silently reuse a
+  // stale schema — the bug that bit once when the `_ord_ore` domains were
+  // filtered out of `matrixEntries` but a leftover fixed-name table kept its nine
+  // ORE columns, making every INSERT raise `ore_domain_unavailable` on managed
+  // Postgres (the domain CHECK RAISEs even for a NULL value).
   await sqlClient.unsafe(`
     DROP TABLE IF EXISTS ${TABLE_NAME}
   `)
@@ -260,7 +263,7 @@ beforeAll(async () => {
     )
   `)
 
-  const encryptedRows = unwrap(
+  const encryptedRows = unwrapResult(
     await client.bulkEncryptModels(encryptedInsertRows(), schema),
   )
   await db.insert(matrixTable).values(encryptedRows)
@@ -276,7 +279,7 @@ beforeAll(async () => {
   // ROW_B exists so the filter proofs below have a row they must EXCLUDE. On a
   // one-row table `gt(balance, 0n)` returning every row is indistinguishable
   // from it returning the right row.
-  const bigintRows = unwrap(
+  const bigintRows = unwrapResult(
     await client.bulkEncryptModels(
       [
         {
@@ -299,9 +302,11 @@ beforeAll(async () => {
 }, 120000)
 
 afterAll(async () => {
-  await sqlClient`DELETE FROM ${sqlClient(TABLE_NAME)} WHERE test_run_id = ${RUN}`
-  await sqlClient`DELETE FROM ${sqlClient(ACCOUNT_TABLE_NAME)} WHERE test_run_id = ${RUN}`
-  await sqlClient`DELETE FROM ${sqlClient(BIGINT_TABLE_NAME)} WHERE test_run_id = ${RUN}`
+  // Tables are run-scoped, so drop them outright rather than DELETE-ing rows —
+  // no other run shares them, and this leaves nothing behind on a persistent DB.
+  await sqlClient.unsafe(`DROP TABLE IF EXISTS ${TABLE_NAME}`)
+  await sqlClient.unsafe(`DROP TABLE IF EXISTS ${ACCOUNT_TABLE_NAME}`)
+  await sqlClient.unsafe(`DROP TABLE IF EXISTS ${BIGINT_TABLE_NAME}`)
   await sqlClient.end()
 }, 30000)
 
@@ -449,6 +454,25 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
     expect(rows).toEqual([ROW_B, ROW_C])
   }, 30000)
 
+  it('not(between()) negates the whole range, not just the lower bound', async () => {
+    // integer_ord: ROW_A=0, ROW_B=-42, ROW_C=2147483647. `not(between(0, 0))`
+    // must return every row whose value != 0 → ROW_B and ROW_C.
+    //
+    // `between` emits a TWO-clause conjunction, and Drizzle's passthrough `not`
+    // renders a bare `NOT <cond>`. Postgres binds NOT tighter than AND, so this
+    // only works because `v3Dialect.range` already parenthesises `(gte AND lte)`.
+    // Without those parens, `NOT gte(0) AND lte(0)` parses as
+    // `value < 0 AND value <= 0` = `value < 0` = ROW_B alone, silently dropping
+    // ROW_C. Asserting ROW_C is present is what discriminates the two — a
+    // single-bound complement would satisfy the buggy form too.
+    const rows = await selectRowKeys(
+      ops.not(
+        await ops.between(matrixColumn('public.eql_v3_integer_ord'), 0, 0),
+      ),
+    )
+    expect(rows).toEqual([ROW_B, ROW_C])
+  }, 30000)
+
   it('isNull and isNotNull work on nullable encrypted columns', async () => {
     expect(await selectRowKeys(ops.isNull(matrixTable.nullableTextEq))).toEqual(
       [ROW_A],
@@ -578,7 +602,7 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
       )
     expect(encrypted).toHaveLength(1)
 
-    const decrypted = unwrap(
+    const decrypted = unwrapResult(
       await client.decryptModel(encrypted[0], bigintSchema),
     )
     expect(decrypted.balance).toBe(BIGINT_BALANCE)

@@ -1901,4 +1901,29 @@ describe('v3 in-list term encryption batches by column', () => {
     expect(status).toBe(500)
     expect(error?.message).toMatch(/1 term(s)? for 2 value(s)?/)
   })
+
+  it('rejects a bulk response with a null envelope rather than sending "null"', async () => {
+    const supabase = createMockSupabase()
+    const encryption = createMockEncryptionClient()
+    // A length-matched response, but position 0 is a null envelope. Without the
+    // guard, `JSON.stringify(null)` would send the literal `"null"` as the `in`
+    // operand — matching whatever `"null"` encodes to instead of failing.
+    ;(
+      encryption as unknown as { bulkEncrypt: (...a: unknown[]) => unknown }
+    ).bulkEncrypt = () =>
+      operation([{ data: null }, { data: fakeEnvelope('grace', 'nickname') }])
+
+    const { error, status } = await new EncryptedQueryBuilderV3Impl(
+      'users',
+      users,
+      encryption,
+      supabase.client,
+      USERS_ALL_COLUMNS,
+    )
+      .select('id')
+      .in('nickname', ['ada', 'grace'])
+
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/null envelope at position 0/)
+  })
 })

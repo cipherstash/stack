@@ -25,7 +25,10 @@ export function plainValue(
   if (sample === undefined) {
     throw new Error(`Domain has no samples for row ${rowKey}`)
   }
-  return sample
+  // Samples widened to include `JsonValue` for the (deferred) json domain; the
+  // scalar oracle is only ever called on covered scalar domains, so this narrows
+  // safely.
+  return sample as Plain
 }
 
 export function comparePlain(left: Plain, right: Plain): number {

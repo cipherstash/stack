@@ -14,6 +14,12 @@ on:
     paths:
       - 'packages/stack/src/supabase/**'
       - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/supabase) can produce wrong wire output or rows, so
+      # trigger the live suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -26,6 +32,12 @@ on:
     paths:
       - 'packages/stack/src/supabase/**'
       - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/supabase) can produce wrong wire output or rows, so
+      # trigger the live suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -50,8 +62,8 @@ jobs:
         db: [supabase]
 
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       # Job-level env, not a `.env` file: `dotenv/config` does not override an
@@ -66,9 +78,12 @@ jobs:
       CS_IT_DB_VARIANT: ${{ matrix.db }}
       # Scoped by directory, never by named file, so a renamed suite cannot
       # silently drop from CI. `integration/shared/` holds the adapter-agnostic
-      # suites (harness, bloom, and the ope-term tripwire for THIS job's
-      # `col->op` ordering path); the Drizzle suites talk to plain Postgres and
-      # get their own job.
+      # suites (harness, bloom, the ope-term tripwire for THIS job's `col->op`
+      # ordering path, and the crypto/SQL matrices); the Drizzle suites talk to
+      # plain Postgres and get their own job.
+      #
+      # `integration/identity/` runs on the Drizzle job (it needs Postgres +
+      # Drizzle, not PostgREST), so it is intentionally not listed here.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
         integration/supabase/**/*.integration.test.ts
@@ -83,8 +98,8 @@ jobs:
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:
-          workspace-crn: ${{ secrets.CS_WORKSPACE_CRN }}
-          client-id: ${{ secrets.CS_CLIENT_ID }}
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 

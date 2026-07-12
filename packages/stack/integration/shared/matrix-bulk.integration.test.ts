@@ -5,18 +5,16 @@
  * `bulkDecryptModels` against real FFI, exercising v3 model reconstruction at
  * scale. Live soft-skip.
  */
-import 'dotenv/config'
+import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
-import { unwrapResult } from '../fixtures'
-import { describeLive, LIVE_CIPHERSTASH_ENABLED } from '../helpers/live-gate'
 
 const people = encryptedTable('v3_bulk_people', {
   nickname: types.TextEq('nickname'),
   age: types.IntegerOrd('age'),
 })
 
-describeLive('v3 typed client bulk-at-scale (live)', () => {
+describe('v3 typed client bulk-at-scale (live)', () => {
   let client: Awaited<ReturnType<typeof EncryptionV3<[typeof people]>>>
 
   beforeAll(async () => {

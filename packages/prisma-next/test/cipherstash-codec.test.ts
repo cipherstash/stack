@@ -124,7 +124,10 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       storage: new SqlStorage({
         storageHash: 'sha256:test' as StorageHashBase<string>,
         namespaces: {
-          __unbound__: buildSqlNamespace({ id: '__unbound__', entries: { table: tables } }),
+          __unbound__: buildSqlNamespace({
+            id: '__unbound__',
+            entries: { table: tables },
+          }),
         },
       }),
       domain: { namespaces: { __unbound__: { models: {} } } },
