@@ -46,6 +46,11 @@ const MAX_IN_ARRAY_CONCURRENCY = 4
  *
  * `bulkEncrypt` is optional so a `{ encrypt }`-only client stays valid; the
  * list operators fall back to bounded-concurrency single encryption without it.
+ * `encryptQuery` is optional only because today it is used by a single operator
+ * — JSON containment (`@>`), which needs a ciphertext-free `query_jsonb` needle;
+ * the `contains()` branch guards its absence. Every OTHER operator still encrypts
+ * its operand with `encrypt` (a full storage envelope). Unifying all operands
+ * onto `encryptQuery` — after which it stops being optional — is tracked in #622.
  */
 type OperandEncryptionClient = {
   encrypt(
@@ -56,6 +61,12 @@ type OperandEncryptionClient = {
     plaintexts: never,
     opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
   ): ChainableOperation<BulkEncryptedData>
+  // `never` operands, like `encrypt` above: the real client's `encryptQuery` is
+  // generic (`queryType` is constrained to the column's own query types), which a
+  // concrete signature here cannot match. `never` params keep the structural
+  // surface satisfiable by that generic method AND by a test double. The call
+  // site casts its real operands.
+  encryptQuery?(value: never, opts: never): unknown
 }
 
 /**
@@ -228,7 +239,7 @@ export function createEncryptionOperatorsV3(
    */
   function requireIndex(
     ctx: ColumnContext,
-    indexes: readonly ('unique' | 'ore' | 'ope' | 'match')[],
+    indexes: readonly ('unique' | 'ore' | 'ope' | 'match' | 'ste_vec')[],
     operator: string,
     capability: string,
   ): void {
@@ -246,7 +257,13 @@ export function createEncryptionOperatorsV3(
   // order-capable column answers equality via its ordering term too.
   const EQUALITY_INDEXES = ['unique', 'ore', 'ope'] as const
   const ORDERING_INDEXES = ['ore', 'ope'] as const
-  const MATCH_INDEXES = ['match'] as const
+  // `contains` answers two shapes: bloom free-text (`match`, a `text_search`/
+  // `text_match` column), which emits `eql_v3.contains(col, operand)`, and
+  // encrypted-JSONB containment (an `eql_v3_json` column, whose config carries
+  // the `ste_vec` index kind), which emits the `@>` operator instead — json has
+  // no `eql_v3.contains` overload. The branch in `contains()` picks the right SQL
+  // by index kind.
+  const CONTAINMENT_INDEXES = ['match', 'ste_vec'] as const
 
   function applyOperationOptions<T>(
     op: ChainableOperation<T>,
@@ -436,10 +453,77 @@ export function createEncryptionOperatorsV3(
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
-    requireIndex(ctx, MATCH_INDEXES, operator, 'free-text search')
+    requireIndex(
+      ctx,
+      CONTAINMENT_INDEXES,
+      operator,
+      'free-text search or JSON containment',
+    )
+
+    // JSON containment. `eql_v3_json` has no `eql_v3.contains` overload — its
+    // containment is the `@>` operator, whose `(eql_v3_json, eql_v3.query_jsonb)`
+    // form takes a NARROWED query term from `encryptQuery` (searchableJson → no
+    // ciphertext), not the full storage envelope. The dialect casts it to
+    // `eql_v3.query_jsonb` and emits `@>`.
+    if (ctx.indexes.ste_vec) {
+      const needle = await encryptJsonContainmentTerm(ctx, right, operator)
+      return v3Dialect.containsJson(colSql(left), needle)
+    }
+
+    // Bloom free-text (text_search / text_match): the answerable-needle rule
+    // applies, and the full-envelope operand disambiguates its own overload.
     requireAnswerableNeedle(ctx, right, operator)
     const enc = await encryptOperand(ctx, right, operator, opts)
     return v3Dialect.contains(colSql(left), enc)
+  }
+
+  /**
+   * Build a `query_jsonb` containment needle for a `json` column. Uses
+   * `encryptQuery` (not `encrypt`): the JSON query term carries no ciphertext
+   * and satisfies the `eql_v3.query_jsonb` CHECK the `@>` overload needs.
+   */
+  async function encryptJsonContainmentTerm(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+  ): Promise<SQL> {
+    requireNonNullOperand(ctx, value, operator)
+    // Reject the empty-object needle. `doc @> '{}'` holds for EVERY document
+    // (jsonb `{} ⊆ anything`), so `contains(col, {})` would silently return the
+    // whole table — the same whole-table footgun the bloom path guards against
+    // with `requireAnswerableNeedle`. An accidental empty filter is a bug, not a
+    // match-all request; callers wanting every row should omit the predicate.
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === 0
+    ) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot take an empty object needle on column "${ctx.columnName}": it matches every row. Pass a non-empty sub-object, or omit the predicate to select all rows.`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+    const encryptQuery = client.encryptQuery?.bind(client)
+    if (!encryptQuery) {
+      throw operandFailure(
+        ctx,
+        operator,
+        'this client does not support encryptQuery, which JSON containment requires',
+      )
+    }
+    const result = (await encryptQuery(
+      value as never,
+      {
+        table: ctx.table,
+        column: ctx.builder,
+        queryType: 'searchableJson',
+      } as never,
+    )) as { failure?: { message: string }; data?: unknown }
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+    return sql`${JSON.stringify(result.data)}`
   }
 
   async function inArrayOp(

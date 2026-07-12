@@ -26,6 +26,7 @@ export type FamilyName =
   | 'timestamp'
   | 'text'
   | 'boolean'
+  | 'json'
 
 /**
  * The bare-domain prefixes each family owns. `real-double` pairs two prefixes
@@ -46,6 +47,13 @@ const FAMILY_PREFIXES: Readonly<Record<FamilyName, readonly string[]>> = {
   timestamp: ['timestamp'],
   text: ['text'],
   boolean: ['boolean'],
+  // `json` is here only for coverage accounting — its one domain (`eql_v3_json`)
+  // is marked `deferred`, meaning "not run by the scalar op-matrix", because JSON
+  // is queried by containment (`@>`), not the eq/ord/match ops the oracle models.
+  // It is NOT unimplemented: dedicated live suites (`json-crypto`, `json-contains`)
+  // cover it. (Contrast the ORE domains, also `deferred` but because their opclass
+  // is superuser-only and cannot run on managed Postgres.)
+  json: ['json'],
 }
 
 export const FAMILY_NAMES = Object.keys(FAMILY_PREFIXES) as FamilyName[]

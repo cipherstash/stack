@@ -29,6 +29,7 @@ import {
   EncryptedIntegerEqColumn,
   EncryptedIntegerOrdColumn,
   EncryptedIntegerOrdOreColumn,
+  EncryptedJsonColumn,
   EncryptedNumericColumn,
   EncryptedNumericEqColumn,
   EncryptedNumericOrdColumn,
@@ -184,6 +185,9 @@ export const types = {
   DoubleOrdOre: (name: string) =>
     new EncryptedDoubleOrdOreColumn(name, DOUBLE_ORD_ORE),
   DoubleOrd: (name: string) => new EncryptedDoubleOrdColumn(name, DOUBLE_ORD),
+
+  // json (encrypted JSONB document, ste_vec containment)
+  Json: (name: string) => new EncryptedJsonColumn(name),
   // `satisfies` is load-bearing, not decoration: `DOMAIN_REGISTRY` derives itself
   // by calling every value here at module load. A non-factory export would throw
   // during module evaluation and take the supabase introspect/schema-build/verify

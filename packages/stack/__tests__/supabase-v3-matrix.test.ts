@@ -101,12 +101,15 @@ function firstSample(spec: DomainSpec): unknown {
 describe('supabase v3 wire encoding, every domain', () => {
   // Guards the tier arithmetic itself. A domain silently dropping out of a
   // tier would otherwise just shrink an `it.each` with no test turning red.
-  it('tiers all 39 domains', () => {
-    expect(matrixEntries).toHaveLength(39)
+  it('tiers all 40 domains', () => {
+    expect(matrixEntries).toHaveLength(40)
     expect(equalityDomains).toHaveLength(28)
     expect(orderDomains).toHaveLength(19)
     expect(matchDomains).toHaveLength(2)
-    expect(storageOnlyDomains).toHaveLength(10)
+    // +1: `eql_v3_json` carries only an `ste_vec` index, so from this scalar
+    // tiering it reads as storage-only — the Supabase adapter has no JSON
+    // containment path (PostgREST can't cast/call), so it rejects scalar ops.
+    expect(storageOnlyDomains).toHaveLength(11)
   })
 
   describe.each(matrixEntries)('%s', (eqlType, spec) => {
