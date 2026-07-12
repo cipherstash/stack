@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/stash.svg?style=for-the-badge&labelColor=000000)](https://www.npmjs.com/package/stash)
 [![License: MIT](https://img.shields.io/npm/l/stash.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 
-The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), schema building, and encrypted secrets management. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
+The single CLI for CipherStash. It handles authentication, project initialization, EQL database lifecycle (install, upgrade, validate, push, migrate), and schema building. Install it as a devDependency alongside the runtime SDK `@cipherstash/stack`.
 
 ---
 
@@ -12,19 +12,23 @@ The single CLI for CipherStash. It handles authentication, project initializatio
 ```bash
 npm install -D stash
 npx stash auth login    # authenticate with CipherStash
-npx stash init          # scaffold, introspect, install EQL, hand off to your agent
+npx stash init          # scaffold, introspect, install EQL
 ```
 
-`stash init` runs the whole setup as one flow: authenticate, resolve `DATABASE_URL`, introspect your database and let you pick which columns to encrypt, install dependencies, install the EQL extension, and finish by handing off to your local coding agent. At the end it presents a four-option menu:
+`stash init` does the scaffold-once work as one flow: authenticate, resolve `DATABASE_URL`, choose Proxy or direct SDK access, introspect your database and scaffold an encryption client, install dependencies, install the EQL extension, and write `.cipherstash/context.json`. It stops there, at a clean save-point, and offers to continue into `stash plan`.
+
+The agent handoff belongs to the next two commands — `stash plan` drafts a reviewable `.cipherstash/plan.md`, and `stash impl` executes it. Both present the same four targets:
 
 - **Hand off to Claude Code** — copies the per-integration set of skills (`stash-encryption`, `stash-<integration>`, `stash-cli`) into `.claude/skills/`, writes `.cipherstash/context.json` and `setup-prompt.md`, then launches `claude` interactively.
 - **Hand off to Codex** — copies the same skills into `.codex/skills/`, writes a sentinel-managed `AGENTS.md` (durable doctrine), plus `.cipherstash/` context files, then launches `codex`.
 - **Use the CipherStash Agent** — runs the in-house wizard (`@cipherstash/wizard`).
 - **Write AGENTS.md** — for editor agents (Cursor / Windsurf / Cline) that don't auto-load skill directories. Writes a single `AGENTS.md` with the doctrine *plus* the relevant skill content inlined under a sentinel block, and stops.
 
-A project-specific action plan is written to `.cipherstash/setup-prompt.md` regardless of which option you pick — it tells the agent exactly what's already done and what's left, with the right commands for your package manager and ORM. The matching context (selected columns, env keys, paths, versions) is at `.cipherstash/context.json`.
+Pass `--target <claude-code|codex|agents-md|wizard>` to skip the picker. **It is required when running `plan` or `impl` non-interactively** (CI, pipes, an agent's shell) — the picker reads from `/dev/tty`, so without it the command prints a hint and exits without handing off.
 
-If neither `claude` nor `codex` is on PATH, init still writes the rules files and prints install instructions — your progress is never wasted.
+A project-specific action plan is written to `.cipherstash/setup-prompt.md` regardless of which target you pick — it tells the agent exactly what's already done and what's left, with the right commands for your package manager and ORM. The matching context (selected columns, env keys, paths, versions) is at `.cipherstash/context.json`.
+
+If neither `claude` nor `codex` is on PATH, the handoff still writes the rules files and prints install instructions — your progress is never wasted.
 
 ---
 
@@ -32,12 +36,15 @@ If neither `claude` nor `codex` is on PATH, init still writes the rules files an
 
 ```
 npx stash auth login
-    └── npx stash init     ← introspects DB, installs EQL, hands off to your agent
-            └── Agent edits schema files / generates migrations
-                    └── npx stash db push     ← when ready to roll out further changes
+    └── npx stash init      ← introspects DB, installs EQL, writes context.json
+            └── npx stash plan   ← drafts .cipherstash/plan.md for review
+                    └── npx stash impl   ← agent edits schema files / generates migrations
+                            └── npx stash status   ← where am I?
 ```
 
-`stash` covers authentication, initialization, EQL install/upgrade/validate/push/migrate, schema introspection, and a `stash wizard` subcommand that thin-wraps [`@cipherstash/wizard`](https://www.npmjs.com/package/@cipherstash/wizard). The wizard package itself is a separate npm install — kept out of the `stash` bundle so the agent SDK doesn't bloat the CLI.
+`stash` covers authentication, initialization, EQL install/upgrade/status, schema introspection, the encryption rollout and cutover commands, and a `stash wizard` subcommand that thin-wraps [`@cipherstash/wizard`](https://www.npmjs.com/package/@cipherstash/wizard). The wizard package itself is a separate npm install — kept out of the `stash` bundle so the agent SDK doesn't bloat the CLI.
+
+> `stash db push` is **not** part of the default flow. It registers the encryption config in `public.eql_v2_configuration`, which only [CipherStash Proxy](https://github.com/cipherstash/proxy) reads. SDK users (Drizzle, Supabase, plain PostgreSQL) keep that config in application code and can skip it.
 
 ---
 
@@ -166,43 +173,6 @@ npx stash wizard [...flags]
 ```
 
 Any flags after `wizard` are forwarded verbatim to the wizard package. On the first run the package manager downloads the wizard (~5s); subsequent runs are instant.
-
----
-
-### `npx stash secrets`
-
-Manage end-to-end encrypted secrets.
-
-```bash
-npx stash secrets <subcommand> [options]
-```
-
-| Subcommand | Description |
-|------------|-------------|
-| `set` | Store an encrypted secret |
-| `get` | Retrieve and decrypt a secret |
-| `get-many` | Retrieve and decrypt multiple secrets (2–100) |
-| `list` | List all secrets in an environment |
-| `delete` | Delete a secret |
-
-**Flags:**
-
-| Flag | Alias | Description |
-|------|-------|-------------|
-| `--name` | `-n` | Secret name (comma-separated for `get-many`) |
-| `--value` | `-V` | Secret value (`set` only) |
-| `--environment` | `-e` | Environment name |
-| `--yes` | `-y` | Skip confirmation (`delete` only) |
-
-**Examples:**
-
-```bash
-npx stash secrets set -n DATABASE_URL -V "postgres://..." -e production
-npx stash secrets get -n DATABASE_URL -e production
-npx stash secrets get-many -n DATABASE_URL,API_KEY -e production
-npx stash secrets list -e production
-npx stash secrets delete -n DATABASE_URL -e production -y
-```
 
 ---
 

@@ -1,0 +1,83 @@
+# Supabase-flavoured Postgres + PostgREST for the Supabase v3 integration suite.
+#
+# `supabase/postgres` rather than the plain `postgres-eql` image, because the
+# thing under test is what a managed Supabase project actually does: the
+# `postgres` role is NOT a superuser there (verified: `pg_roles.rolsuper = f`),
+# and the EQL v3 install, the `ALTER DEFAULT PRIVILEGES FOR ROLE postgres` in the
+# grants block, and the ORE opclass self-skip all behave differently under that
+# constraint. A plain Postgres would make every privilege check pass vacuously.
+#
+# NOT the full `supabase start` stack: no Kong, GoTrue, Studio or Storage. The
+# adapter speaks PostgREST, and PostgREST is what we run.
+#
+# Images are pinned by DIGEST, not tag — Supabase re-pushes tags.
+#
+# Ports are deliberately NOT the defaults. A developer running this very likely
+# also has `local/docker-compose.yml`, a `supabase start` stack, or their own
+# Postgres bound to 5432/3000. Binding those here would either fail to start or,
+# worse, silently shadow the database they think they are talking to.
+#
+# Connect DIRECT to the database, never through a pooler: `SET ROLE` and session
+# advisory locks (both used by the EQL installer) are unstable over PgBouncer in
+# transaction mode.
+name: cs-integration-supabase
+
+services:
+  db:
+    image: supabase/postgres:17.4.1.048@sha256:68f90b9a227f56b583d2c1aef2fc683c4dc693a3c5ebf5191903e966318d87ee
+    environment:
+      POSTGRES_PASSWORD: password
+    ports:
+      - "55433:5432"
+    volumes:
+      # Supplies the one thing the image omits: a password for `authenticator`.
+      #
+      # The `zz-` prefix is load-bearing. The Postgres entrypoint runs
+      # `/docker-entrypoint-initdb.d/*` in ASCII order, and this image creates
+      # its roles from `migrate.sh` in that same directory. A `99-` prefix sorts
+      # BEFORE `migrate.sh` (`'9' < 'm'`), so the script would run against a
+      # database where `authenticator` does not exist yet and abort the boot.
+      - ./supabase-init.sql:/docker-entrypoint-initdb.d/zz-cipherstash-authenticator.sql:ro
+    # No volume for PGDATA: every run starts clean, so a stale EQL generation can
+    # never make a suite pass for the wrong reason.
+    #
+    # `pg_isready` is NOT a sufficient readiness check here. This image boots a
+    # temporary server to run `migrate.sh`, then restarts it; `pg_isready`
+    # succeeds against the temporary one, so `up --wait` returns while the real
+    # server is still coming up and the next connection dies with "Connection
+    # terminated unexpectedly" (observed: the EQL install failed exactly there).
+    #
+    # Probe the LAST thing init does instead — the `authenticator` password set
+    # by our `zz-` script. It is true only once every init step has run.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - psql -U postgres -d postgres -tAc "SELECT 1 FROM pg_authid WHERE rolname='authenticator' AND rolpassword IS NOT NULL" | grep -q 1
+      interval: 2s
+      timeout: 5s
+      start_period: 10s
+      retries: 60
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.12@sha256:be3b6ab31a94e3e89f08edad40be0234ae0951e3297f2043d797c219165f5afa
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Connect as `authenticator`, then SET ROLE to `anon` for unauthenticated
+      # requests. Pointing PostgREST at the owner instead would make every grant
+      # check pass vacuously — proving the Supabase grants work is half the point.
+      PGRST_DB_URI: "postgres://authenticator:authpass@db:5432/postgres"
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      # Lets `NOTIFY pgrst, 'reload schema'` reach the server, so a table created
+      # after boot becomes visible without a restart.
+      PGRST_DB_CHANNEL_ENABLED: "true"
+    ports:
+      - "55430:3000"
+    # No healthcheck: the postgrest image is distroless — it has no shell, no
+    # wget, no curl, so every in-container probe fails with "executable file not
+    # found" and `docker compose up --wait` reports the service unhealthy while
+    # it is in fact serving. Readiness is asserted from the harness instead, by
+    # polling the root endpoint until the table under test appears in the OpenAPI
+    # output — which is what actually has to be true before a suite can run.

@@ -20,8 +20,9 @@
  * pgvector's `runtime.ts` precedent. The bulk-encrypt middleware ships
  * separately at `@prisma-next/extension-cipherstash/middleware` because
  * `SqlRuntimeExtensionDescriptor` does not own a middleware slot;
- * consumers register it via `createRuntime({ middleware:
- * [bulkEncryptMiddleware(sdk)] })`.
+ * consumers register it via `new PostgresRuntimeImpl({ middleware:
+ * [bulkEncryptMiddleware(sdk)] })` (or their target facade's
+ * `middleware` option).
  */
 
 import type { SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime'

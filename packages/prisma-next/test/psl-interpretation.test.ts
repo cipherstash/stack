@@ -28,6 +28,7 @@
  *     (`EncryptedDate`, `EncryptedBoolean`, `EncryptedJson`)
  */
 
+import type { Contract } from '@prisma-next/contract/types'
 import { parsePslDocument } from '@prisma-next/psl-parser'
 import { interpretPslDocumentToSqlContract } from '@prisma-next/sql-contract-psl'
 import { describe, expect, it } from 'vitest'
@@ -38,6 +39,7 @@ const postgresTarget = {
   kind: 'target' as const,
   familyId: 'sql' as const,
   targetId: 'postgres' as const,
+  defaultNamespaceId: 'public',
   id: 'postgres',
   version: '0.0.1',
   capabilities: {},
@@ -55,6 +57,12 @@ function interpret(schema: string) {
     target: postgresTarget,
     scalarTypeDescriptors: postgresScalarTypeDescriptors,
     composedExtensionPacks: [cipherstashControl.id],
+    composedExtensionContracts: new Map([
+      [
+        cipherstashControl.id,
+        cipherstashControl.contractSpace!.contractJson as unknown as Contract,
+      ],
+    ]),
     authoringContributions: { type: cipherstashPack.authoring.type, field: {} },
   })
 }
@@ -72,7 +80,26 @@ type StorageView = {
   >
   readonly types?: Record<string, Record<string, unknown>>
 }
-const asStorage = (storage: unknown): StorageView => storage as StorageView
+// Since 0.10 the storage IR is namespace-enveloped: tables live under
+// `storage.namespaces.<ns>` (the target-owned default namespace —
+// `public` for Postgres since 0.12), while `types` stays at the root.
+const asStorage = (storage: unknown): StorageView => {
+  const s = storage as {
+    readonly namespaces?: Record<
+      string,
+      { entries?: { table?: StorageView['tables'] } }
+    >
+    readonly types?: StorageView['types']
+  }
+  const tables: StorageView['tables'] = {}
+  for (const ns of Object.values(s.namespaces ?? {})) {
+    Object.assign(tables, ns.entries?.table)
+  }
+  return {
+    tables,
+    ...(s.types !== undefined ? { types: s.types } : {}),
+  }
+}
 
 describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('lowers full args to a column with codecId, nativeType, typeParams', () => {
@@ -315,8 +342,11 @@ model User {
     // The named type's storage descriptor and the inline column's
     // codec/nativeType/typeParams must agree byte-for-byte; the inline
     // column carries `nullable` (and may carry `default`/etc.) which the
-    // named-type descriptor does not.
+    // named-type descriptor does not, while the named-type entry is
+    // stamped with the `kind` discriminator for the polymorphic
+    // `storage.types` slot.
     expect(aliasNamedType).toEqual({
+      kind: 'codec-instance',
       codecId: inlineCol['codecId'],
       nativeType: inlineCol['nativeType'],
       typeParams: inlineCol['typeParams'],

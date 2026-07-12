@@ -1,0 +1,47 @@
+name: Integration test setup
+description: >-
+  Checkout, pnpm, Node, dependencies, and a built `stash` CLI — the common
+  preamble for every integration workflow. The CLI build is required, not
+  incidental: the integration harness installs EQL v3 by shelling out to
+  `stash eql install --eql-version 3`, so an installer regression fails the job
+  rather than hiding behind a test-only SQL apply.
+
+inputs:
+  node-version:
+    description: Node major to run the suites on.
+    required: false
+    # The newest major `tests.yml` exercises, and what the repo develops on.
+    # `engines` is `>=22`; the unit job still covers 22 in its matrix.
+    default: '24'
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v6
+
+    - uses: pnpm/action-setup@v6.0.8
+      name: Install pnpm
+      with:
+        run_install: false
+
+    - name: Install Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'pnpm'
+
+    # node-pty's install hook falls back to `node-gyp rebuild` when no
+    # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships node-gyp
+    # on PATH, so install it explicitly.
+    - name: Install node-gyp
+      shell: bash
+      run: npm install -g node-gyp
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Build the stash CLI (used to install EQL v3)
+      shell: bash
+      run: pnpm exec turbo run build --filter stash

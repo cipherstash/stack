@@ -20,9 +20,18 @@ export type BuiltMatchIndexOpts = {
 
 /**
  * Default match-index parameters — the single source of truth shared by the
- * v2 `freeTextSearch()` builder and the v3 domain builders (note
- * `include_original: true`, which is the v2 builder default rather than the
- * zod-schema default of `false`).
+ * v2 `freeTextSearch()` builder and the v3 domain builders.
+ *
+ * `include_original: true` is the v2 builder's historical default rather than
+ * the zod-schema default of `false`. It is INERT: protect-ffi accepts the flag
+ * and ignores it (measured across 0.24 and 0.29, EQL v2 and v3 — the emitted
+ * bloom is trigram-only either way). It is kept here only so the v2 emitted
+ * config does not move. The v3 domain builders override it to `false`, the
+ * value a substring-search domain wants if ffi ever starts honouring it.
+ *
+ * In particular it does NOT let a value shorter than the tokenizer's
+ * `token_length` be matched: such a value blooms to nothing under either
+ * setting, which is exactly the fail-open {@link matchNeedleError} guards.
  *
  * This is a FACTORY (not a shared `const`) so every caller gets fresh, unaliased
  * nested objects (`tokenizer`, `token_filters` and the `{ kind: 'downcase' }`
@@ -51,4 +60,87 @@ export function cloneMatchOpts(opts: BuiltMatchIndexOpts): BuiltMatchIndexOpts {
     tokenizer: { ...opts.tokenizer },
     token_filters: opts.token_filters.map((f) => ({ ...f })),
   }
+}
+
+/**
+ * Resolve user-supplied `freeTextSearch(opts)` input into a fully-built match
+ * block: each provided key replaces its default, omitted keys keep the default
+ * (`opts?.x ?? default.x`). The single source of truth for that five-field merge
+ * shared by the v2 `freeTextSearch()` builder and the v3 domain builders.
+ *
+ * The result is deep-cloned ({@link cloneMatchOpts}) so a caller mutating their
+ * own `opts` object (or its nested `tokenizer`/`token_filters`) after this call
+ * can never leak into the stored builder state or the emitted config — clone-on-
+ * write for both builders, not just v3.
+ */
+export function resolveMatchOpts(opts?: MatchIndexOpts): BuiltMatchIndexOpts {
+  const defaults = defaultMatchOpts()
+  return cloneMatchOpts({
+    tokenizer: opts?.tokenizer ?? defaults.tokenizer,
+    token_filters: opts?.token_filters ?? defaults.token_filters,
+    k: opts?.k ?? defaults.k,
+    m: opts?.m ?? defaults.m,
+    include_original: opts?.include_original ?? defaults.include_original,
+  })
+}
+
+/**
+ * The shortest needle a match index can answer, or `undefined` when its
+ * tokenizer imposes no floor (`standard` splits on word boundaries, so any
+ * non-empty needle yields at least one token).
+ *
+ * Accepts the loose {@link MatchIndexOpts} because a `ColumnSchema`'s built
+ * `indexes.match` is typed from the zod schema, where `tokenizer` is optional.
+ * An absent tokenizer resolves to the same default the schema itself applies
+ * (`ngram`, `token_length: 3`) rather than skipping the floor — skipping would
+ * reintroduce the fail-open this guard exists to close.
+ */
+export function matchNeedleMinLength(opts: MatchIndexOpts): number | undefined {
+  const tokenizer = opts.tokenizer ?? defaultMatchOpts().tokenizer
+  return tokenizer.kind === 'ngram' ? tokenizer.token_length : undefined
+}
+
+/**
+ * Why a needle cannot be answered by this match index, or `undefined` when it
+ * can. Callers throw their own error type with this as the reason.
+ *
+ * A needle that tokenizes to NOTHING has an empty bloom filter, and
+ * `stored_bf @> '{}'` is true for every row ("contains nothing, contained by
+ * everything"). Such a query is unanswerable rather than merely unmatched, so
+ * it must fail loudly instead of silently returning the whole table. Two ways
+ * to tokenize to nothing:
+ *
+ *  - the empty needle, under ANY tokenizer;
+ *  - a needle shorter than the ngram tokenizer's `token_length`.
+ *
+ * The ngram floor counts Unicode CODEPOINTS, because that is what the tokenizer
+ * counts. `needle.length` would count UTF-16 code units and wave through an
+ * astral-plane needle: `'👍👍'` is 4 code units but only 2 codepoints, yields no
+ * trigram, and (measured live) matched every row. Graphemes are the wrong unit
+ * in the other direction — NFD `'éé'` is 4 codepoints but 2 grapheme clusters,
+ * and does yield trigrams.
+ *
+ * Currently wired ONLY into the v3 Drizzle adapter (`eql/v3/drizzle/operators`).
+ * It lives here, beside the shared match defaults, because v2 builds the same
+ * bloom filters and needs the same floor — but v2's `like`/`ilike` path remains
+ * unguarded and still fails open. Do not reuse this for v2 without first
+ * measuring what its tokenizer actually receives: v2 needles carry SQL wildcards
+ * (`'%ada%'`), so the floor may have to apply to the unwrapped term rather than
+ * to the string the caller passed.
+ */
+export function matchNeedleError(
+  needle: unknown,
+  opts: MatchIndexOpts,
+): string | undefined {
+  if (typeof needle !== 'string') return undefined
+
+  // Codepoints, not UTF-16 code units — see above.
+  const length = [...needle].length
+  const min = matchNeedleMinLength(opts)
+
+  if (length === 0) {
+    return `free-text search needs a non-empty search term; an empty term produces no tokens and would match every row.`
+  }
+  if (min === undefined || length >= min) return undefined
+  return `free-text search needs at least ${min} characters (the index tokenizer's token_length), but the search term ${JSON.stringify(needle)} has ${length}. A shorter term produces no tokens and would match every row.`
 }

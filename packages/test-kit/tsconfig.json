@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "esModuleInterop": true,
+
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Mirrors `packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
+    // conditional exports, and bundler resolution omits `node` by default.
+    "customConditions": ["node"],
+
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    // Resolve stack to SOURCE, not `dist`. Without this the kit — and every
+    // unit suite that imports the catalog through it — would only typecheck
+    // after `pnpm build`, coupling `pnpm test` to a build step. The matching
+    // runtime aliases live in `vitest.shared.ts`.
+    "baseUrl": ".",
+    "paths": {
+      "@cipherstash/stack": ["../stack/src/index.ts"],
+      "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
+      "@cipherstash/stack/schema": ["../stack/src/schema/index.ts"],
+      "@cipherstash/stack/v3": ["../stack/src/encryption/v3.ts"],
+      "@cipherstash/stack/supabase": ["../stack/src/supabase/index.ts"],
+
+      // Resolving stack to source means we also inherit stack's OWN internal
+      // alias: `src/eql/v3/columns.ts` imports `@/schema`. Without this the
+      // kit's typecheck fails inside stack's sources rather than in the kit.
+      "@/*": ["../stack/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

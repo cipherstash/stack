@@ -74,6 +74,7 @@
 		}
 	},
 	"devDependencies": {
+		"@cipherstash/eql": "3.0.0",
 		"@cipherstash/stack": "workspace:*",
 		"@types/pg": "^8.20.0",
 		"node-pty": "^1.1.0",

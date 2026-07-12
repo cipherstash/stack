@@ -71,13 +71,13 @@ npx prisma-next migration apply           # installs EQL bundle + your schema
 ```typescript
 import { EncryptedString, decryptAll } from "@cipherstash/prisma-next/runtime"
 
-await db.orm.User.create({
+await db.orm.public.User.create({
   id: "user-0",
   email: EncryptedString.from("alice@example.com"),
   // ...
 })
 
-const rows = await db.orm.User
+const rows = await db.orm.public.User
   .where((u) => u.email.cipherstashIlike("%@example.com"))
   .all()
 

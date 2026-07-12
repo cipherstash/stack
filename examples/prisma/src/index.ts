@@ -118,7 +118,9 @@ async function main() {
 }
 
 async function clearUsers(): Promise<void> {
-  const removed = await db.orm.User.where((u) => u.id.isNotNull()).deleteCount()
+  const removed = await db.orm.public.User.where((u) =>
+    u.id.isNotNull(),
+  ).deleteCount()
   if (removed > 0) {
     console.log(`--- Cleanup ---\nRemoved ${removed} existing user row(s).\n`)
   }
@@ -128,7 +130,7 @@ async function insertUsers(): Promise<void> {
   console.log('--- Insert (mixed-codec round-trip) ---')
   await Promise.all(
     SEED_USERS.map((seed) =>
-      db.orm.User.create({
+      db.orm.public.User.create({
         id: seed.id,
         email: EncryptedString.from(seed.email),
         salary: EncryptedDouble.from(seed.salary),
@@ -146,7 +148,7 @@ async function insertUsers(): Promise<void> {
 
 async function searchByEq(): Promise<void> {
   console.log('\n--- cipherstashEq (string equality) ---')
-  const rows = await db.orm.User.where((u) =>
+  const rows = await db.orm.public.User.where((u) =>
     u.email.cipherstashEq('alice@example.com'),
   ).all()
   console.log(`Found ${rows.length} row(s) for alice@example.com.`)
@@ -158,7 +160,7 @@ async function searchByEq(): Promise<void> {
 
 async function searchByIlikeAndDecrypt(): Promise<void> {
   console.log('\n--- cipherstashIlike (string free-text-search) ---')
-  const rows = await db.orm.User.where((u) =>
+  const rows = await db.orm.public.User.where((u) =>
     u.email.cipherstashIlike('%@example.com'),
   ).all()
   console.log(`Found ${rows.length} row(s) matching %@example.com.`)
@@ -170,7 +172,7 @@ async function searchByIlikeAndDecrypt(): Promise<void> {
 
 async function rangeQueryOnSalary(): Promise<void> {
   console.log('\n--- cipherstashGt (double order-and-range) ---')
-  const rows = await db.orm.User.where((u) =>
+  const rows = await db.orm.public.User.where((u) =>
     u.salary.cipherstashGt(100_000),
   ).all()
   console.log(`Found ${rows.length} user(s) with salary > 100,000.`)
@@ -184,7 +186,7 @@ async function betweenQueryOnBirthday(): Promise<void> {
   console.log('\n--- cipherstashBetween (date order-and-range) ---')
   const lower = new Date('1985-01-01')
   const upper = new Date('1995-12-31')
-  const rows = await db.orm.User.where((u) =>
+  const rows = await db.orm.public.User.where((u) =>
     u.birthday.cipherstashBetween(lower, upper),
   ).all()
   console.log(`Found ${rows.length} user(s) born between 1985 and 1995.`)
@@ -192,7 +194,7 @@ async function betweenQueryOnBirthday(): Promise<void> {
 
 async function inArrayQueryOnAccountId(): Promise<void> {
   console.log('\n--- cipherstashInArray (bigint equality) ---')
-  const rows = await db.orm.User.where((u) =>
+  const rows = await db.orm.public.User.where((u) =>
     u.accountId.cipherstashInArray([100_000_000_001n, 100_000_000_004n]),
   ).all()
   console.log(
@@ -204,7 +206,7 @@ async function equalityQueryOnEmailVerified(): Promise<void> {
   console.log('\n--- cipherstashInArray (boolean equality-only) ---')
   // Booleans surface only the equality-trait operators; a single-element
   // array is the canonical equality form on non-string codecs.
-  const rows = await db.orm.User.where((u) =>
+  const rows = await db.orm.public.User.where((u) =>
     u.emailVerified.cipherstashInArray([true]),
   ).all()
   console.log(`Found ${rows.length} user(s) with emailVerified = true.`)
@@ -212,7 +214,9 @@ async function equalityQueryOnEmailVerified(): Promise<void> {
 
 async function sortByEmailAsc(): Promise<void> {
   console.log('\n--- cipherstashAsc (bare-column ORDER BY) ---')
-  const rows = await db.orm.User.orderBy((u) => cipherstashAsc(u.email)).all()
+  const rows = await db.orm.public.User.orderBy((u) =>
+    cipherstashAsc(u.email),
+  ).all()
   await decryptAll(rows)
   for (const row of rows) {
     console.log(`  ${row.id}: email=${await row.email.decrypt()}`)

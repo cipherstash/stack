@@ -31,6 +31,7 @@ describe('cipherstashDoubleCodecHooks — flag → index mapping', () => {
     next?: Partial<StorageColumn> | undefined
     codecId: string
   }): {
+    readonly namespaceId: string
     readonly tableName: string
     readonly fieldName: string
     readonly priorField?: StorageColumn
@@ -42,6 +43,7 @@ describe('cipherstashDoubleCodecHooks — flag → index mapping', () => {
       nullable: false,
     }
     return {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       ...(args.prior !== undefined
@@ -124,6 +126,7 @@ describe('cipherstashDoubleCodecHooks — flag → index mapping', () => {
 describe('cipherstashBigIntCodecHooks — cast_as=big_int', () => {
   it("emits add_search_config(unique) with cast_as='big_int' when equality flips on", () => {
     const ctxArg = {
+      namespaceId: '__unbound__',
       tableName: TABLE,
       fieldName: FIELD,
       newField: {

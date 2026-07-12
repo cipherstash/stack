@@ -72,13 +72,13 @@ If these variables are missing, tests that require live encryption will fail or 
 ## Repository Layout
 
 - `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
-  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/secrets`, `@cipherstash/stack/schema`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
+  - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/client`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/eql/v3/drizzle`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/drizzle`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/supabase`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/wasm-inline`
 - `packages/protect`: Core encryption library (internal, re-exported via `@cipherstash/stack`)
   - `src/index.ts`: Public API (`Encryption`, exports)
   - `src/ffi/index.ts`: `EncryptionClient` implementation, bridges to `@cipherstash/protect-ffi`
   - `src/ffi/operations/*`: Encrypt/decrypt/model/bulk/query operations (thenable pattern with optional `.withLockContext()`)
   - `__tests__/*`: End-to-end and API contract tests (Vitest)
-- `packages/cli`: The `stash` CLI — auth, init, encryption schema, database setup (`stash eql install`), and secrets. Has its own `AGENTS.md`.
+- `packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
 - `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
 - `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
 - `packages/prisma-next`: Prisma Next integration (`@cipherstash/prisma-next`) — searchable field-level encryption for Postgres
@@ -91,7 +91,47 @@ If these variables are missing, tests that require live encryption will fail or 
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-secrets`, `stash-supabase`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-supply-chain-security`)
+
+## Agent Skills — these ship to customers
+
+`skills/*/SKILL.md` are **published artifacts, not internal notes.** Treat a wrong
+sentence in one of them the way you'd treat a wrong line of code:
+
+- `packages/cli/tsup.config.ts` copies `skills/` into `dist/skills/`, so they ship
+  inside the `stash` npm tarball (and the `@cipherstash/wizard` one).
+- `installSkills()` (`packages/cli/src/commands/init/lib/install-skills.ts`) copies the
+  per-integration set into the user's `.claude/skills/` or `.codex/skills/` at handoff time.
+- `readBundledSkill()` inlines a skill's body into the user's `AGENTS.md` for editor
+  agents (Cursor / Windsurf / Cline). Only `SKILL.md` is inlined — content split into
+  sibling files is silently dropped on that path, so keep each `SKILL.md` self-sufficient.
+
+**Every change to a package's public API, the CLI command surface, or a user-facing
+workflow must check the affected skills in the same PR.** These skills drift silently:
+nothing type-checks them, and the damage lands in a customer's repo, not ours.
+
+| If you change… | Check |
+|---|---|
+| `packages/cli` commands, flags, or prompts | `skills/stash-cli` |
+| `packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
+| Drizzle / Supabase / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-dynamodb` |
+| The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
+| pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
+| The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
+
+For CLI changes there is a mechanical check — the command registry is the source of
+truth, so diff the skill against it rather than proofreading:
+
+```bash
+pnpm --filter stash build
+node packages/cli/dist/bin/stash.js manifest --json
+```
+
+Every command and flag named in `skills/stash-cli/SKILL.md` must resolve against that
+manifest (the deprecated `db install` / `db upgrade` / `db status` aliases excepted —
+they're intentionally absent from the registry).
+
+Skills must not contain Linear issue IDs; they're public. GitHub issue numbers are fine.
 
 ## Supply Chain Security
 
@@ -120,7 +160,6 @@ Three rules to remember when editing CI or pnpm config:
   - **Drizzle ORM**: `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack/drizzle`
   - **Supabase**: `encryptedSupabase` from `@cipherstash/stack/supabase`
   - **DynamoDB**: `encryptedDynamoDB` from `@cipherstash/stack/dynamodb`
-- **Secrets management**: `Secrets` class from `@cipherstash/stack/secrets` for encrypted secret storage and retrieval.
 
 ## Critical Gotchas (read before coding)
 
@@ -135,8 +174,21 @@ Three rules to remember when editing CI or pnpm config:
 - **Formatting/Linting**: Use Biome
 
 ```bash
-pnpm run code:fix
+pnpm run code:fix    # format + lint, auto-fixing what it can
+pnpm run code:check  # read-only; this is what CI runs
 ```
+
+  CI runs `code:check` (in `tests.yml`) and gates on **errors** — warnings are
+  allowed (tracked for tightening). So `code:fix` must leave the tree
+  error-free before you push.
+
+  A Biome GritQL plugin (`biome-plugins/no-type-erasing-assertions.grit`) warns
+  on `as any` / `as never` / `as unknown` in `src` — type-erasing assertions that
+  silence the checker instead of narrowing. Fix the type or use a specific
+  assertion; suppress a deliberate case with `// biome-ignore lint/plugin:
+  <reason>`. The plugin is scoped to source via an `overrides` entry in
+  `biome.json` (test/integration files excluded) — see the plugin file's header
+  for why it must be scoped-in rather than globally-enabled-and-exempted.
 
 - **Build**: `pnpm run build` (Turborepo + tsup per package)
 - **Test**: `pnpm --filter <pkg> test` for targeted iterations
@@ -185,7 +237,15 @@ pnpm changeset:publish
    Layout in this file and the package list in `SECURITY.md` in the
    same PR. These files have drifted badly before; don't let them.
 
-8. **Add a changeset before opening or finalising the PR** when the
+8. **Check the skills.** If you changed a package's public API, the CLI
+   command surface, or a user-facing workflow, open the affected
+   `skills/*/SKILL.md` and fix anything your change made wrong — in the
+   same PR. Skills ship inside the `stash` tarball and are copied into
+   customer repos, so drift here becomes wrong guidance in someone
+   else's codebase. See "Agent Skills — these ship to customers" above
+   for the package→skill map and the `stash manifest --json` check.
+
+9. **Add a changeset before opening or finalising the PR** when the
    change affects a published package's public behaviour or surface
    (new feature, bug fix, breaking change, UX-visible tweak). Run
    `pnpm changeset` (interactive) or hand-write a markdown file under
@@ -206,6 +266,9 @@ pnpm changeset:publish
    one — releases use Changesets to drive version bumps and
    `CHANGELOG.md` entries, so a missing changeset means the change
    ships invisibly.
+
+   A skills-only change is **not** internal: `skills/` ships inside the
+   `stash` tarball, so it needs a `stash` patch changeset.
 
 ## Useful Links
 

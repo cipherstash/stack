@@ -28,17 +28,26 @@ function makeContract(
 ) {
   return {
     storage: {
-      tables: Object.fromEntries(
-        Object.entries(tables).map(([name, cols]) => [
-          name,
-          {
-            columns: cols as Record<
-              string,
-              { codecId: string; typeParams?: Record<string, unknown> | null }
-            >,
+      namespaces: {
+        __unbound__: {
+          entries: {
+            table: Object.fromEntries(
+              Object.entries(tables).map(([name, cols]) => [
+                name,
+                {
+                  columns: cols as Record<
+                    string,
+                    {
+                      codecId: string
+                      typeParams?: Record<string, unknown> | null
+                    }
+                  >,
+                },
+              ]),
+            ),
           },
-        ]),
-      ),
+        },
+      },
     },
   }
 }
@@ -47,7 +56,12 @@ describe('deriveStackSchemas', () => {
   it('returns an empty array when contract has no storage tables', () => {
     expect(deriveStackSchemas({})).toEqual([])
     expect(deriveStackSchemas({ storage: {} })).toEqual([])
-    expect(deriveStackSchemas({ storage: { tables: {} } })).toEqual([])
+    expect(deriveStackSchemas({ storage: { namespaces: {} } })).toEqual([])
+    expect(
+      deriveStackSchemas({
+        storage: { namespaces: { __unbound__: { entries: { table: {} } } } },
+      }),
+    ).toEqual([])
   })
 
   it('skips tables with no cipherstash columns', () => {

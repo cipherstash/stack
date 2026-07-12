@@ -1,100 +1,57 @@
 #!/usr/bin/env node
 /**
- * Vendor the EQL v3 SQL bundles into packages/cli/src/sql/.
+ * Vendor the EQL v3 SQL bundle into packages/cli/src/sql/.
  *
- * Source of truth: the `cipherstash-encrypt.sql` artifact of the upstream
- * `eql-3.0.0-alpha.2` release (cipherstash/encrypt-query-language), vendored
- * byte-for-byte at
- * packages/stack/__tests__/fixtures/eql-v3/cipherstash-encrypt-v3.sql.
- * To re-vendor: download the release asset, replace the fixture, re-run this
- * script, and record the new release tag here.
+ * Source of truth: the `cipherstash-encrypt.sql` artifact shipped inside the
+ * pinned `@cipherstash/eql` npm package (a byte-for-byte copy of the matching
+ * GitHub release asset — the package records the artifact's sha256 in its
+ * `releaseManifest`, which this script verifies). Bump the `@cipherstash/eql`
+ * devDependency and re-run this script to re-vendor.
  *
- * Outputs:
- *   - cipherstash-encrypt-v3.sql           — full bundle, byte-identical copy
- *   - cipherstash-encrypt-v3-supabase.sql  — Supabase variant with the
- *     `CREATE OPERATOR CLASS`/`FAMILY` chunks removed (they need superuser,
- *     which Supabase does not grant)
+ * Output:
+ *   - cipherstash-encrypt-v3.sql — full bundle, byte-identical copy
  *
- * The Supabase variant is still derived locally because upstream ships no
- * Supabase variant for v3 yet. The strip mirrors the upstream build's
- * `**\/*operator_class.sql` exclusion glob: the monolith annotates every
- * constituent file with a `--! @file <path>` marker, so the variant drops each
- * `--! @file .../operator_class.sql` chunk up to the next `--! @file` marker.
+ * There is deliberately NO Supabase / no-operator-family variant for v3.
+ * Since eql-3.0.0 the bundle installs everywhere with one artifact: its only
+ * superuser-requiring statements (the ore_block_256 operator class/family)
+ * run inside a DO block that catches `insufficient_privilege` and skips, and
+ * a follow-up section disables the ORE-backed encrypted domains when the
+ * operator class is absent (CIP-3468). Stripping anything client-side would
+ * only defeat that self-adaptation.
  *
  * Usage: node packages/cli/scripts/build-eql-v3-sql.mjs
  */
+import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const source = resolve(
-  here,
-  '../../stack/__tests__/fixtures/eql-v3/cipherstash-encrypt-v3.sql',
-)
-const outDir = resolve(here, '../src/sql')
+const require = createRequire(resolve(here, '../package.json'))
 
-const FILE_MARKER = /^--! @file (.+)$/
-const EXCLUDE = /operator_class\.sql$/
+const manifest = require('@cipherstash/eql/package.json')
+const sqlEntry = require.resolve('@cipherstash/eql/sql/cipherstash-encrypt.sql')
+const sql = readFileSync(sqlEntry, 'utf8')
 
-function stripOperatorClassChunks(sql) {
-  // \r?\n: a CRLF-checked-out source would otherwise defeat the `$`-anchored
-  // EXCLUDE match (belt-and-braces — the removedChunks assertion below would
-  // still catch it loudly).
-  const lines = sql.split(/\r?\n/)
-  const out = []
-  let skipping = false
-  let removedChunks = 0
-
-  for (const line of lines) {
-    const marker = line.match(FILE_MARKER)
-    if (marker) {
-      skipping = EXCLUDE.test(marker[1])
-      if (skipping) removedChunks++
-    }
-    if (!skipping) out.push(line)
-  }
-
-  // Verified against eql-3.0.0-alpha.2: exactly 2 `--! @file .../operator_class.sql`
-  // chunks (v3/sem/ore_cllw and v3/sem/ore_block_256), together carrying all
-  // 4 CREATE OPERATOR CLASS/FAMILY statements in the bundle. The OPE path
-  // (ope_cllw) ships no opclass. Hard-coded so layout drift fails loudly.
-  if (removedChunks !== 2) {
-    throw new Error(
-      `Expected to remove exactly 2 operator_class chunks, removed ${removedChunks} — the bundle layout changed; review the strip logic.`,
-    )
-  }
-
-  const stripped = out.join('\n')
-  if (/CREATE OPERATOR (CLASS|FAMILY)/.test(stripped)) {
-    throw new Error(
-      'Stripped bundle still contains CREATE OPERATOR CLASS/FAMILY statements.',
-    )
-  }
-
-  return stripped
-}
-
-const sql = readFileSync(source, 'utf8')
-
-// Companion drift check: the full bundle must carry exactly the 4
-// CREATE OPERATOR CLASS/FAMILY statements the 2 stripped chunks account for
-// (verified against eql-3.0.0-alpha.2). An opclass appearing outside an
-// operator_class.sql chunk would otherwise slip into the Supabase variant
-// (the post-strip scan below also guards that; this pins the source shape).
-const opclassStatements = sql.match(/CREATE OPERATOR (CLASS|FAMILY)/g) ?? []
-if (opclassStatements.length !== 4) {
+// Integrity: the package's sql module records the artifact's sha256; verify
+// the copy we are about to vendor is exactly that artifact.
+const { releaseManifest } = await import('@cipherstash/eql/sql')
+const sha = createHash('sha256').update(sql).digest('hex')
+if (sha !== releaseManifest.installSqlSha256) {
   throw new Error(
-    `Expected the source bundle to contain exactly 4 CREATE OPERATOR CLASS/FAMILY statements, found ${opclassStatements.length} — the bundle layout changed; review the strip logic.`,
+    `@cipherstash/eql install SQL sha mismatch: expected ${releaseManifest.installSqlSha256}, got ${sha}`,
+  )
+}
+if (manifest.version !== releaseManifest.eqlVersion) {
+  throw new Error(
+    `@cipherstash/eql package/manifest version mismatch: ${manifest.version} vs ${releaseManifest.eqlVersion}`,
   )
 }
 
+const outDir = resolve(here, '../src/sql')
 writeFileSync(resolve(outDir, 'cipherstash-encrypt-v3.sql'), sql)
-writeFileSync(
-  resolve(outDir, 'cipherstash-encrypt-v3-supabase.sql'),
-  stripOperatorClassChunks(sql),
-)
 
 console.log(
-  'Wrote cipherstash-encrypt-v3.sql and cipherstash-encrypt-v3-supabase.sql',
+  `Vendored cipherstash-encrypt-v3.sql from @cipherstash/eql@${manifest.version} (sha256 ${sha})`,
 )

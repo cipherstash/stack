@@ -26,7 +26,11 @@ import {
   planFieldEventOperations,
 } from '@prisma-next/family-sql/control'
 import type { TargetBoundComponentDescriptor } from '@prisma-next/framework-components/components'
-import type { SqlStorage, StorageTable } from '@prisma-next/sql-contract/types'
+import {
+  buildSqlNamespace,
+  SqlStorage,
+  type StorageTable,
+} from '@prisma-next/sql-contract/types'
 import { ifDefined } from '@prisma-next/utils/defined'
 import { describe, expect, it } from 'vitest'
 import cipherstashExtensionDescriptor from '../src/exports/control'
@@ -117,11 +121,16 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       target: 'postgres',
       targetFamily: 'sql',
       profileHash: profileHash('sha256:test'),
-      storage: {
+      storage: new SqlStorage({
         storageHash: 'sha256:test' as StorageHashBase<string>,
-        tables,
-      },
-      models: {},
+        namespaces: {
+          __unbound__: buildSqlNamespace({
+            id: '__unbound__',
+            entries: { table: tables },
+          }),
+        },
+      }),
+      domain: { namespaces: { __unbound__: { models: {} } } },
       roots: {},
       capabilities: {},
       extensionPacks: {},
@@ -136,7 +145,7 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
     >,
   ])
 
-  it('inlines per-flag add ops on first emit (priorContract null) when flags are enabled', () => {
+  it('inlines per-flag add ops on first emit (priorContract null) when flags are enabled', async () => {
     const ops = planFieldEventOperations({
       priorContract: null,
       newContract: build({
@@ -145,14 +154,15 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       codecHooks,
     })
     expect(ops).toHaveLength(2)
-    const ids = ops.map((c) => c.toOp().invariantId).sort()
+    const lowered = await Promise.all(ops.map((c) => c.toOp()))
+    const ids = lowered.map((op) => op.invariantId).sort()
     expect(ids).toEqual([
       'cipherstash-codec:User.email:add-search-config:match@v1',
       'cipherstash-codec:User.email:add-search-config:unique@v1',
     ])
   })
 
-  it('inlines per-flag remove ops when previously-flagged column is dropped', () => {
+  it('inlines per-flag remove ops when previously-flagged column is dropped', async () => {
     const prior = build({
       User: userTable({ equality: true, freeTextSearch: true }),
     })
@@ -165,7 +175,8 @@ describe('planFieldEventOperations driving the cipherstash hook', () => {
       codecHooks,
     })
     expect(ops).toHaveLength(2)
-    const ids = ops.map((c) => c.toOp().invariantId).sort()
+    const lowered = await Promise.all(ops.map((c) => c.toOp()))
+    const ids = lowered.map((op) => op.invariantId).sort()
     expect(ids).toEqual([
       'cipherstash-codec:User.email:remove-search-config:match@v1',
       'cipherstash-codec:User.email:remove-search-config:unique@v1',

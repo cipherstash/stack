@@ -1,0 +1,44 @@
+# Plain Postgres for the Drizzle v3 integration suite.
+#
+# Drizzle talks straight to Postgres, so there is no PostgREST here and no
+# anon/authenticated role surface — that is the Supabase variant's job.
+#
+# Ports are deliberately NOT the defaults. A developer running this is very
+# likely also running `local/docker-compose.yml`, a `supabase start` stack, or
+# their own Postgres on 5432. Binding 5432 here would either fail to start or,
+# worse, shadow the database they think they are talking to.
+#
+# Connect DIRECT to the database, never through a pooler: `SET ROLE` and session
+# advisory locks (both used by the EQL installer) are unstable over PgBouncer in
+# transaction mode.
+name: cs-integration-postgres
+
+services:
+  postgres:
+    # Ships EQL v2 preinstalled; EQL v3 is installed by the harness via
+    # `stash eql install --eql-version 3`, which is the point — the integration
+    # suites exercise the installer customers actually run.
+    image: ghcr.io/cipherstash/postgres-eql:17-2.3.1
+    environment:
+      PGPORT: 5432
+      POSTGRES_DB: cipherstash
+      POSTGRES_USER: cipherstash
+      PGUSER: cipherstash
+      POSTGRES_PASSWORD: password
+    ports:
+      - "55432:5432"
+    # No volume: every run starts from a clean database, so a stale EQL
+    # generation can never make a suite pass for the wrong reason.
+    #
+    # `-h 127.0.0.1` is load-bearing. During init the entrypoint runs a TEMPORARY
+    # server that listens on the unix socket ONLY; a socket-based `pg_isready`
+    # succeeds against it, so `up --wait` returns while the real server is still
+    # restarting and the next connection dies with "Connection terminated
+    # unexpectedly" (observed: the EQL install failed exactly there). TCP is not
+    # published until the final server is up, so probing it is the honest check.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U cipherstash -d cipherstash"]
+      interval: 1s
+      timeout: 5s
+      start_period: 5s
+      retries: 30

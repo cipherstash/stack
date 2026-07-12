@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { isInteractive } from '../../../config/tty.js'
 import { installCommand } from '../../db/install.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
@@ -44,11 +45,19 @@ export const installEqlStep: InitStep = {
     const supabase = integration === 'supabase' || provider.name === 'supabase'
     const drizzle = integration === 'drizzle' || provider.name === 'drizzle'
 
-    const proceed = await p.confirm({
-      message:
-        'Install the EQL extension into your database now? (required for encryption)',
-      initialValue: true,
-    })
+    // Non-interactive (CI, agents, pipes): there's no TTY to answer the prompt,
+    // so take the default (install) and continue rather than hang or abort. This
+    // is what makes `stash init` honour its documented non-interactive contract.
+    if (!isInteractive()) {
+      p.log.info('Installing the EQL extension (non-interactive).')
+    }
+    const proceed = isInteractive()
+      ? await p.confirm({
+          message:
+            'Install the EQL extension into your database now? (required for encryption)',
+          initialValue: true,
+        })
+      : true
 
     if (p.isCancel(proceed)) throw new CancelledError()
 

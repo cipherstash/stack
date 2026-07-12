@@ -14,6 +14,8 @@ schema-added → dual-writing → backfilling → backfilled → cut-over → dr
 
 State is tracked in an append-only `cipherstash.cs_migrations` table installed by `stash eql install`. The EQL intent (which indexes, which cast_as) continues to live in `eql_v2_configuration` so Proxy continues to work against the same database.
 
+> **This package targets EQL v2.** The lifecycle above wraps `eql_v2.*` functions and reads and writes `eql_v2_configuration`. `stash eql install` installs v2 by default; EQL v3 is opt-in via `stash eql install --eql-version 3`, installs via the direct path only, and encodes its configuration in each column's domain type rather than in a configuration table. Columns installed under v3 are not covered by this package's migration lifecycle.
+
 ## API
 
 ```ts

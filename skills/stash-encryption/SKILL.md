@@ -1,6 +1,6 @@
 ---
 name: stash-encryption
-description: Implement field-level encryption with @cipherstash/stack. Covers schema definition, encrypt/decrypt operations, searchable encryption (equality, free-text, range, JSON), bulk operations, model operations, identity-aware encryption with LockContext, multi-tenant keysets, and the full TypeScript type system. Use when adding encryption to a project, defining encrypted schemas, or working with the CipherStash Encryption API.
+description: Implement field-level encryption with @cipherstash/stack. Covers schema definition, encrypt/decrypt operations, searchable encryption (equality, free-text, range, JSON), bulk operations, model operations, identity-aware encryption with LockContext, multi-tenant keysets, the EQL v3 typed schema (concrete Postgres domain columns and the strongly-typed EncryptionV3 client), and the full TypeScript type system. Use when adding encryption to a project, defining encrypted schemas, or working with the CipherStash Encryption API.
 ---
 
 # CipherStash Stack - Encryption
@@ -16,6 +16,7 @@ Comprehensive guide for implementing field-level encryption with `@cipherstash/s
 - Bulk encrypting/decrypting large datasets
 - Implementing identity-aware encryption with JWT-based lock contexts
 - Setting up multi-tenant encryption with keysets
+- Using the EQL v3 typed schema (`@cipherstash/stack/eql/v3`) — concrete Postgres domain columns with a strongly-typed client (see "EQL v3 Typed Schema" below)
 - Migrating from `@cipherstash/protect` to `@cipherstash/stack`
 
 ## Installation
@@ -114,10 +115,9 @@ The SDK never logs plaintext data.
 
 | Import Path | Provides |
 |---|---|
-| `@cipherstash/stack` | `Encryption` function, `Secrets` class, `encryptedTable`, `encryptedColumn`, `encryptedField` (convenience re-exports) |
+| `@cipherstash/stack` | `Encryption` function, `encryptedTable`, `encryptedColumn`, `encryptedField` (convenience re-exports) |
 | `@cipherstash/stack/schema` | `encryptedTable`, `encryptedColumn`, `encryptedField`, schema types |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
-| `@cipherstash/stack/secrets` | `Secrets` class and secrets types |
 | `@cipherstash/stack/drizzle` | `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` for Drizzle ORM |
 | `@cipherstash/stack/supabase` | `encryptedSupabase` wrapper for Supabase |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` helper for DynamoDB |
@@ -125,6 +125,9 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/errors` | `EncryptionErrorTypes`, `StackError`, error subtypes, `getErrorMessage` |
 | `@cipherstash/stack/client` | Client-safe exports: schema builders, schema types, `EncryptionClient` type (no native FFI) |
 | `@cipherstash/stack/types` | All TypeScript types |
+| `@cipherstash/stack/eql/v3` | EQL v3 typed schema: `encryptedTable`, `types` namespace, `buildEncryptConfig`, inference types (see "EQL v3 Typed Schema" below) |
+| `@cipherstash/stack/v3` | `EncryptionV3` factory, `typedClient`, `TypedEncryptionClient` — plus re-exports of everything in `@cipherstash/stack/eql/v3` |
+| `@cipherstash/stack/eql/v3/drizzle` | Drizzle ORM integration for EQL v3 schemas (see the `stash-drizzle` skill) |
 
 ## Schema Definition
 
@@ -584,6 +587,196 @@ CREATE TABLE users (
   email jsonb NOT NULL
 );
 ```
+
+## EQL v3 Typed Schema
+
+EQL v3 is a newer schema surface where every encrypted column is a **concrete Postgres domain** (`public.eql_v3_<name>`) and its query capabilities are fixed by the column type you pick. There is **no chainable capability tuner** — no `.equality()`, `.freeTextSearch()`, or `.orderAndRange()` — every domain is fully described by its type. The v2 surface documented above (`encryptedColumn` from `@cipherstash/stack/schema`) continues to work unchanged; v3 lives on its own subpaths.
+
+### Quick Start
+
+```typescript
+import { Encryption } from "@cipherstash/stack"
+import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
+
+const users = encryptedTable("users", {
+  email: types.TextSearch("email"),
+})
+
+const client = await Encryption({ schemas: [users] })
+
+const encryptResult = await client.encrypt("secret@example.com", {
+  column: users.email,
+  table: users,
+})
+if (encryptResult.failure) {
+  // handle encryptResult.failure.message
+}
+
+const decryptResult = await client.decrypt(encryptResult.data)
+```
+
+`Encryption({ schemas })` auto-detects v3 tables and sets the EQL v3 wire format. **v2 and v3 tables cannot be mixed in one client** — a mixed schema set throws at init. Create separate clients if you need both.
+
+The v3 `encryptedTable` intentionally shares its name with the v2 builder — the import path picks the model. The returned table is also a column accessor (`users.email`). The JS property name and the DB column name may differ: `createdOn: types.Timestamp("created_at")` reads/writes the `createdOn` property on models but targets the `created_at` column in the database.
+
+### The `types` Namespace
+
+Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name>`. The naming rule: strip the `eql_v3_` prefix and PascalCase each underscore-separated segment. So `types.TextSearch` builds a `public.eql_v3_text_search` column, `types.IntegerOrd` builds `public.eql_v3_integer_ord`, and `types.Timestamp` builds `public.eql_v3_timestamp`.
+
+**Capability suffixes:**
+
+| Suffix | Capabilities | Query types |
+|---|---|---|
+| _(none)_ | Storage only — encrypt/decrypt, no queries | — |
+| `Eq` | Equality | `'equality'` |
+| `Ord` / `OrdOre` | Equality + ordering/range | `'equality'`, `'orderAndRange'` |
+| `Match` (text only) | Free-text containment only | `'freeTextSearch'` |
+| `Search` (text only) | Equality + ordering/range + free-text | all three |
+| `Json` (no suffix) | Encrypted-JSONB containment queries (JSONPath selector: not yet, see #623) | `'searchableJson'` |
+
+**Domain families and plaintext types:**
+
+| Family | Factories | Plaintext (TypeScript) type |
+|---|---|---|
+| `Integer`, `Smallint`, `Numeric`, `Real`, `Double` | base, `Eq`, `Ord`, `OrdOre` | `number` |
+| `Bigint` | base, `Eq`, `Ord`, `OrdOre` | `bigint` (native JS bigint; full i64 range, out-of-range values rejected client-side before the FFI) |
+| `Date` | base, `Eq`, `Ord`, `OrdOre` | `Date` (calendar date; time-of-day is truncated) |
+| `Timestamp` | base, `Eq`, `Ord`, `OrdOre` | `Date` (time-of-day preserved) |
+| `Text` | base, `Eq`, `Match`, `Ord`, `OrdOre`, `Search` | `string` |
+| `Boolean` | base only | `boolean` |
+| `Json` | `Json` only | a JSON *document* (`JsonDocument`: object, array, or null — NOT a top-level scalar; nested values are any `JsonValue`) |
+
+Examples: `types.Text("notes")` (storage only), `types.TextEq("username")`, `types.BigintOrd("balance")`, `types.TimestampOrdOre("created_at")`, `types.Boolean("active")`, `types.Json("metadata")`.
+
+The match index on `Match`/`Search` columns is always emitted with the default configuration — there is no per-column tuning in v3.
+
+### Free-Text Queries on `types.TextSearch`
+
+A `TextSearch` column carries all three indexes, and `encryptQuery` with **no explicit `queryType` builds an equality term, not a free-text match** (index inference priority: unique > match > ore). A substring like `"joh"` then matches nothing. Pass `queryType: 'freeTextSearch'` explicitly for substring/token search:
+
+```typescript
+// equality (default): exact value only
+await client.encryptQuery("john@example.com", { column: users.email, table: users })
+
+// free-text match: substring/token search
+await client.encryptQuery("joh", {
+  column: users.email,
+  table: users,
+  queryType: "freeTextSearch",
+})
+```
+
+### Encrypted-JSONB Queries on `types.Json`
+
+A `types.Json("metadata")` column encrypts a whole JSON document (a
+`JsonDocument`: object, array, or null — not a top-level scalar) to a
+`public.eql_v3_json` value.
+
+**Containment** is the supported query today. Pass a sub-object or sub-array to
+`encryptQuery` with `queryType: 'searchableJson'`; it matches documents that
+contain the needle (jsonb `@>` semantics). Array containment is a subset test
+regardless of element position — `{ roles: ['admin'] }` matches any document
+whose `roles` array includes `admin`.
+
+```typescript
+const events = encryptedTable("events", { metadata: types.Json("metadata") })
+
+// containment: object needle
+await client.encryptQuery({ roles: ["admin"] }, { column: events.metadata, table: events })
+```
+
+Through the Drizzle v3 integration this is `ops.contains(col, subObject)` — see
+the `stash-drizzle` skill. `types.Json` carries no equality or ordering, so
+`eq` / `gt` / `asc` on it throw.
+
+> **Not yet implemented:** JSONPath selector-with-constraint queries
+> (`metadata->'plan' = $1`, `metadata->'age' > $1`) — a distinct third pattern
+> the `eql_v3_json` domain supports at the SQL level (`->` / `->>`). Neither the
+> query operator nor the selector-string needle typing is wired up yet; tracked
+> in [#623](https://github.com/cipherstash/stack/issues/623).
+
+### Strongly-Typed Client: `EncryptionV3`
+
+`EncryptionV3` from `@cipherstash/stack/v3` returns a `TypedEncryptionClient` whose method signatures are derived from your schemas — wrong-typed plaintext is rejected at compile time, and query methods only accept queryable columns with `queryType` constrained to the column's capabilities:
+
+```typescript
+import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
+
+const users = encryptedTable("users", {
+  email: types.TextSearch("email"),
+  lastLogin: types.TimestampOrd("last_login"),
+  balance: types.BigintEq("balance"),
+})
+
+const client = await EncryptionV3({ schemas: [users] })
+
+// Plaintext is pinned to the column's domain type:
+await client.encrypt("alice@example.com", { table: users, column: users.email })  // string ✓
+await client.encrypt(new Date(), { table: users, column: users.lastLogin })       // Date ✓
+// client.encrypt(42, { table: users, column: users.email })  // ✗ compile error
+
+const enc = await client.encryptModel(
+  { id: "u1", email: "alice@example.com", lastLogin: new Date(), balance: 100n },
+  users,
+)
+if (!enc.failure) {
+  const dec = await client.decryptModel(enc.data, users)
+  if (!dec.failure) {
+    dec.data.email     // string
+    dec.data.lastLogin // Date — reconstructed on decrypt
+    dec.data.balance   // bigint
+    dec.data.id        // string — non-schema fields pass through
+  }
+}
+```
+
+Typed-client notes:
+
+- The wire format is pinned to EQL v3 (`eqlVersion: 3`); you don't set it yourself.
+- Methods: `encrypt`, `encryptQuery`, `encryptModel`, `bulkEncryptModels`, `decrypt`, `decryptModel`, `bulkDecryptModels`, plus `bulkEncrypt`/`bulkDecrypt` passthroughs and `getEncryptConfig`.
+- `decryptModel` / `bulkDecryptModels` take the **table as a second argument** and return a plain `Promise<Result<...>>` (not a chainable operation) — pass a lock context as the optional third argument instead of chaining `.withLockContext()`. `Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`.
+- `decrypt` of a single value cannot be strongly typed — a lone ciphertext carries no column identity.
+- `encryptQuery` rejects storage-only columns outright at compile time.
+- `typedClient(client, ...schemas)` (also exported from `@cipherstash/stack/v3`) wraps an already-built `EncryptionClient` in the typed surface.
+
+### Database Setup
+
+Install the EQL v3 SQL with the stash CLI:
+
+```bash
+stash eql install --eql-version 3
+```
+
+EQL v3 ships one SQL bundle for every target, including Supabase — no separate Supabase or no-operator-family variants. v3 currently installs via the direct path only (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are not supported for v3 yet).
+
+In migrations, declare each encrypted column as its domain type:
+
+```sql
+CREATE TABLE users (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  email public.eql_v3_text_search,
+  last_login public.eql_v3_timestamp_ord,
+  balance public.eql_v3_bigint_eq
+);
+```
+
+### Type Inference
+
+```typescript
+import type { InferPlaintext, InferEncrypted } from "@cipherstash/stack/eql/v3"
+
+type UserPlaintext = InferPlaintext<typeof users>
+// { email: string; lastLogin: Date; balance: bigint }
+
+type UserEncrypted = InferEncrypted<typeof users>
+// { email: Encrypted; lastLogin: Encrypted; balance: Encrypted }
+```
+
+`V3ModelInput`, `V3EncryptedModel`, and `V3DecryptedModel` (same subpath) are the model-shape helpers the typed client uses: schema-column keys are pinned to the column's plaintext type (nullable fields stay nullable), non-schema keys pass through unchanged.
+
+### Drizzle ORM
+
+`@cipherstash/stack/eql/v3/drizzle` provides Drizzle-native v3 column factories, schema extraction, and auto-encrypting query operators. See the `stash-drizzle` skill for the full guide.
 
 ## Rolling Encryption Out to Production
 

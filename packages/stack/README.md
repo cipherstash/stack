@@ -17,7 +17,6 @@ The all-in-one TypeScript SDK for the CipherStash data security stack.
 - [Encryption and Decryption](#encryption-and-decryption)
 - [Searchable Encryption](#searchable-encryption)
 - [Identity-Aware Encryption](#identity-aware-encryption)
-- [Secrets Management](#secrets-management)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Error Handling](#error-handling)
@@ -94,8 +93,7 @@ if (decrypted.failure) {
 - **Searchable encryption** - Exact match, free-text search, order/range queries, and encrypted JSONB queries in PostgreSQL.
 - **Bulk operations** - Encrypt or decrypt thousands of values in a single ZeroKMS call (`bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`).
 - **Identity-aware encryption** - Tie encryption to a user's JWT via `LockContext`, so only that user can decrypt.
-- **Secrets management** - Store, retrieve, list, and delete encrypted secrets with the `Secrets` class.
-- **CLI (`stash`)** - Initialize projects, manage secrets, and set up encryption from the terminal.
+- **CLI (`stash`)** - Initialize projects and set up encryption from the terminal.
 - **TypeScript-first** - Strongly typed schemas, results, and model operations with full generics support.
 
 ## Schema Definition
@@ -366,6 +364,87 @@ For columns with `searchableJson: true`, three JSONB operators are available:
 
 These operators encrypt the JSON path selector using the `steVecSelector` query type and cast it to `eql_v2_encrypted` for use with the EQL PostgreSQL functions.
 
+### EQL v3 Concrete-Type Columns (Drizzle)
+
+The `@cipherstash/stack/eql/v3/drizzle` module targets EQL v3, where each encrypted column is a **concrete Postgres domain type** (`eql_v3.text_eq`, `eql_v3.integer_ord`, …). Instead of toggling capability flags, you pick a concrete type from the `types` namespace and its query capabilities are fixed by that choice. The v2 `@cipherstash/stack/drizzle` module above is unchanged — this is an additive export.
+
+Declare a Drizzle table using the `types` factories. The suffix encodes the capability: `*Eq` (equality), `*Ord` (order + range, which also covers equality), `*Match` / `TextSearch` (free-text search), and the bare name (e.g. `Text`, `Bigint`) is storage-only.
+
+```ts
+import { pgTable, integer } from "drizzle-orm/pg-core"
+import { drizzle } from "drizzle-orm/postgres-js"
+import {
+  types,
+  createEncryptionOperatorsV3,
+  extractEncryptionSchemaV3,
+} from "@cipherstash/stack/eql/v3/drizzle"
+import { EncryptionV3 } from "@cipherstash/stack/v3"
+
+// Capabilities come from the concrete type — no flags to configure.
+const users = pgTable("users", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  email: types.TextEq("email"),      // equality: eq / ne / inArray
+  age: types.IntegerOrd("age"),      // order + range: gt/gte/lt/lte, between, asc/desc
+  bio: types.TextMatch("bio"),       // free-text search: contains
+  balance: types.Bigint("balance"),  // storage only (no query capability)
+})
+```
+
+Derive the v3 schema from the table, build the typed client, and create the capability-checked operators:
+
+```ts
+const usersSchema = extractEncryptionSchemaV3(users)
+const client = await EncryptionV3({ schemas: [usersSchema] })
+const ops = createEncryptionOperatorsV3(client)
+
+const db = drizzle({ client: sqlClient })
+```
+
+The operators auto-encrypt their operands and validate them against the column's concrete type. Applying an operator the type doesn't support throws `EncryptionOperatorError`:
+
+```ts
+// Equality — email is TextEq
+const exact = await db.select().from(users)
+  .where(await ops.eq(users.email, "alice@example.com"))
+
+// Range + ordering — age is IntegerOrd
+const adults = await db.select().from(users)
+  .where(await ops.gte(users.age, 18))
+  .orderBy(ops.asc(users.age))
+
+const midBand = await db.select().from(users)
+  .where(await ops.between(users.age, 25, 40))
+
+// Set membership — built on equality
+const listed = await db.select().from(users)
+  .where(await ops.inArray(users.email, ["alice@example.com", "bob@example.com"]))
+
+// Free-text token containment — bio is TextMatch
+const coffee = await db.select().from(users)
+  .where(await ops.contains(users.bio, "coffee"))
+```
+
+Rows are **pre-encrypted** with `client.bulkEncryptModels(...)` before they reach `db.insert(...).values(...)` — Drizzle never sees plaintext. `Bigint` columns take a native JS `bigint`:
+
+```ts
+const rows = await client.bulkEncryptModels(
+  [
+    { email: "alice@example.com", age: 30, bio: "climbing and coffee", balance: 100_000n },
+    { email: "bob@example.com", age: 41, bio: "cycling and coffee", balance: 250_000n },
+  ],
+  usersSchema,
+)
+if (rows.failure) throw new Error(rows.failure.message)
+
+await db.insert(users).values(rows.data)
+```
+
+Notes:
+
+- **Free-text search uses `ops.contains`** (token containment on a `match` index), not SQL `like` / `ilike`. It matches whole indexed tokens, so `contains(users.bio, "coffee")` finds rows whose `bio` contains the token `coffee`.
+- **The concrete type defines the legal operators.** `TextEq` supports `eq` / `ne` / `inArray` / `notInArray`; `*Ord` types add `gt` / `gte` / `lt` / `lte` / `between` / `notBetween` and `asc` / `desc`; `*Match` and `TextSearch` add `contains`; a bare `Text` / `Integer` / `Bigint` column is storage-only. Using an unsupported operator throws `EncryptionOperatorError`.
+- Combine conditions with `ops.and` / `ops.or`, and do NULL checks with `ops.isNull` / `ops.isNotNull` (the where-clause operators are `async` and must be `await`ed; `ops.asc` / `ops.desc` are synchronous).
+
 ## Identity-Aware Encryption
 
 Lock encryption to a specific user by requiring a valid JWT for decryption.
@@ -397,44 +476,6 @@ const decrypted = await client
 ```
 
 Lock contexts work with all operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncryptModels`, `bulkDecryptModels`, `bulkEncrypt`, `bulkDecrypt`.
-
-## Secrets Management
-
-The `Secrets` class provides end-to-end encrypted secret storage. Values are encrypted locally before being sent to the CipherStash API.
-
-```typescript
-import { Secrets } from "@cipherstash/stack/secrets"
-
-const secrets = new Secrets({
-  workspaceCRN: process.env.CS_WORKSPACE_CRN!,
-  clientId: process.env.CS_CLIENT_ID!,
-  clientKey: process.env.CS_CLIENT_KEY!,
-  apiKey: process.env.CS_CLIENT_ACCESS_KEY!,
-  environment: "production",
-})
-
-// Store a secret
-await secrets.set("DATABASE_URL", "postgres://user:pass@host:5432/db")
-
-// Retrieve and decrypt a single secret
-const result = await secrets.get("DATABASE_URL")
-if (!result.failure) {
-  console.log(result.data) // "postgres://user:pass@host:5432/db"
-}
-
-// Retrieve multiple secrets in one call
-const many = await secrets.getMany(["DATABASE_URL", "API_KEY"])
-if (!many.failure) {
-  console.log(many.data.DATABASE_URL)
-  console.log(many.data.API_KEY)
-}
-
-// List secret names (values stay encrypted)
-const list = await secrets.list()
-
-// Delete a secret
-await secrets.delete("DATABASE_URL")
-```
 
 ## CLI Reference
 
@@ -471,24 +512,6 @@ After init, run `npx stash db setup` to configure your database.
 | Flag | Description |
 |------|-------------|
 | `--supabase` | Use Supabase-specific setup flow |
-
-### `npx stash secrets`
-
-Manage encrypted secrets from the terminal.
-
-```bash
-npx stash secrets set  -name DATABASE_URL -value "postgres://..." -environment production
-npx stash secrets get  -name DATABASE_URL -environment production
-npx stash secrets list -environment production
-npx stash secrets delete -name DATABASE_URL -environment production
-```
-
-| Command | Flags | Aliases | Description |
-|-----|----|-----|-------|
-| `npx stash secrets set` | `-name`, `-value`, `-environment` | `-n`, `-V`, `-e` | Encrypt and store a secret |
-| `npx stash secrets get` | `-name`, `-environment` | `-n`, `-e` | Retrieve and decrypt a secret |
-| `npx stash secrets list` | `-environment` | `-e` | List all secret names in an environment |
-| `npx stash secrets delete` | `-name`, `-environment`, `-yes` | `-n`, `-e`, `-y` | Delete a secret (prompts for confirmation unless `-yes`) |
 
 ## Configuration
 
@@ -552,7 +575,7 @@ const client2 = await Encryption({
 
 ### Logging
 
-The SDK uses structured logging across all interfaces (Encryption, Secrets, Supabase, DynamoDB). Each operation emits a single wide event with context such as the operation type, table, column, lock context status, and duration.
+The SDK uses structured logging across all interfaces (Encryption, Supabase, DynamoDB). Each operation emits a single wide event with context such as the operation type, table, column, lock context status, and duration.
 
 Configure the log level with the `STASH_STACK_LOG` environment variable:
 
@@ -631,19 +654,6 @@ const lc = new LockContext(options?)
 const result = await lc.identify(jwtToken)
 ```
 
-### `Secrets`
-
-```typescript
-import { Secrets } from "@cipherstash/stack/secrets"
-
-const secrets = new Secrets(config)
-await secrets.set(name, value)
-await secrets.get(name)
-await secrets.getMany(names)
-await secrets.list()
-await secrets.delete(name)
-```
-
 ### Schema Builders
 
 ```typescript
@@ -661,9 +671,10 @@ csValue(valueName)                 // returns ProtectValue (for nested values)
 | `@cipherstash/stack` | `Encryption` function (main entry point) |
 | `@cipherstash/stack/schema` | `encryptedTable`, `encryptedColumn`, `csValue`, schema types |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
-| `@cipherstash/stack/secrets` | `Secrets` class and secrets types |
 | `@cipherstash/stack/client` | Client-safe exports (schema builders and types only - no native FFI) |
 | `@cipherstash/stack/types` | All TypeScript types (`Encrypted`, `Decrypted`, `ClientConfig`, `EncryptionClientConfig`, query types, etc.) |
+| `@cipherstash/stack/v3` | `EncryptionV3` typed client plus the EQL v3 authoring DSL (`encryptedTable`, `types`, v3 type helpers) |
+| `@cipherstash/stack/eql/v3/drizzle` | EQL v3 Drizzle integration: `types` column factories, `createEncryptionOperatorsV3`, `extractEncryptionSchemaV3`, `makeEqlV3Column`, `EncryptionOperatorError` |
 
 ## Migration from @cipherstash/protect
 
@@ -675,7 +686,6 @@ If you are migrating from `@cipherstash/protect`, the following table maps the o
 | `csTable(name, cols)` | `encryptedTable(name, cols)` | `@cipherstash/stack/schema` |
 | `csColumn(name)` | `encryptedColumn(name)` | `@cipherstash/stack/schema` |
 | `import { LockContext } from "@cipherstash/protect/identify"` | `import { LockContext } from "@cipherstash/stack/identity"` | `@cipherstash/stack/identity` |
-| N/A | `Secrets` class | `@cipherstash/stack/secrets` |
 | N/A | CLI | `npx stash` |
 
 All method signatures on the encryption client (`encrypt`, `decrypt`, `encryptModel`, etc.) remain the same. The `Result` pattern (`data` / `failure`) is unchanged.

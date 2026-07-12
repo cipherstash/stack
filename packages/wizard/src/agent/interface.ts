@@ -114,7 +114,17 @@ const ALLOWED_WRITE_PATHS = [
 
 /** Sensitive file patterns the agent must not read directly. */
 const SENSITIVE_FILE_PATTERNS = [
-  /\.env($|\.)/, // .env, .env.local, .env.production, etc.
+  // `.env`, `.env.local`, `.env.production`, … but not the committed templates
+  // `.env.example` / `.env.sample` / `.env.template`. Those carry placeholder
+  // key names rather than values, and the agent doctrine
+  // (`packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md`, invariant 3)
+  // instructs the agent to create and edit them — a blanket `.env.` rule made
+  // that impossible, since this guard also covers Edit and Write.
+  //
+  // The negative lookahead is anchored, so a value-bearing file that merely
+  // starts with a template name (`.env.example.bak`, `.env.example.local`)
+  // stays blocked.
+  /\.env($|\.(?!(example|sample|template)$))/,
   /auth\.json$/, // ~/.cipherstash/auth.json
   /secretkey\.json$/, // ~/.cipherstash/secretkey.json
   /credentials/i, // Various credential files
@@ -178,7 +188,9 @@ export function wizardCanUseTool(
       return 'Multi-line commands are not allowed for security reasons.'
     }
 
-    // Block direct .env access via Bash
+    // Block direct .env access via Bash. Deliberately stricter than the
+    // file-path guard above: `.env.example` is reachable through Read/Edit/Write,
+    // so there is no reason for the agent to touch any env file from a shell.
     if (/\.(env|env\.local)/.test(command)) {
       return 'Direct .env file access via Bash is blocked. Use the wizard-tools MCP server instead.'
     }

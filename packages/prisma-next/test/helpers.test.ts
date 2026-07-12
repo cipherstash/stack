@@ -24,12 +24,11 @@
 
 import postgresRuntimeAdapter from '@prisma-next/adapter-postgres/runtime'
 import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
-import { emptyCodecLookup } from '@prisma-next/framework-components/codec'
 import type {
   RuntimeExtensionDescriptor,
   RuntimeTargetDescriptor,
 } from '@prisma-next/framework-components/execution'
-import { validateContract } from '@prisma-next/sql-contract/validate'
+import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
 import {
   type AnyExpression,
   ColumnRef,
@@ -71,67 +70,75 @@ function emptySdk(): CipherstashSdk {
 
 const TABLE = 'user'
 
-const contract = validateContract<PostgresContract>(
-  {
-    target: 'postgres',
-    targetFamily: 'sql',
-    profileHash: 'sha256:cipherstash-helpers-test',
-    roots: {},
-    capabilities: {},
-    extensionPacks: {},
-    meta: {},
-    storage: {
-      storageHash: 'sha256:cipherstash-helpers-test-storage',
-      tables: {
-        [TABLE]: {
-          columns: {
-            id: { codecId: 'pg/text@1', nativeType: 'text', nullable: false },
-            email: {
-              codecId: CIPHERSTASH_STRING_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            score: {
-              codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            amount: {
-              codecId: CIPHERSTASH_BIGINT_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            birthday: {
-              codecId: CIPHERSTASH_DATE_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            enabled: {
-              codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            payload: {
-              codecId: CIPHERSTASH_JSON_CODEC_ID,
-              nativeType: EQL_V2_ENCRYPTED_TYPE,
-              nullable: true,
-            },
-            plain: {
-              codecId: 'pg/text@1',
-              nativeType: 'text',
-              nullable: false,
+const contract = validateSqlContractFully<PostgresContract>({
+  target: 'postgres',
+  targetFamily: 'sql',
+  profileHash: 'sha256:cipherstash-helpers-test',
+  roots: {},
+  capabilities: {},
+  extensionPacks: {},
+  meta: {},
+  storage: {
+    storageHash: 'sha256:cipherstash-helpers-test-storage',
+    namespaces: {
+      __unbound__: {
+        id: '__unbound__',
+        entries: {
+          table: {
+            [TABLE]: {
+              columns: {
+                id: {
+                  codecId: 'pg/text@1',
+                  nativeType: 'text',
+                  nullable: false,
+                },
+                email: {
+                  codecId: CIPHERSTASH_STRING_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                score: {
+                  codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                amount: {
+                  codecId: CIPHERSTASH_BIGINT_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                birthday: {
+                  codecId: CIPHERSTASH_DATE_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                enabled: {
+                  codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                payload: {
+                  codecId: CIPHERSTASH_JSON_CODEC_ID,
+                  nativeType: EQL_V2_ENCRYPTED_TYPE,
+                  nullable: true,
+                },
+                plain: {
+                  codecId: 'pg/text@1',
+                  nativeType: 'text',
+                  nullable: false,
+                },
+              },
+              uniques: [],
+              indexes: [],
+              foreignKeys: [],
             },
           },
-          uniques: [],
-          indexes: [],
-          foreignKeys: [],
         },
       },
     },
-    models: {},
   },
-  emptyCodecLookup,
-)
+  domain: { namespaces: { __unbound__: { models: {} } } },
+})
 
 const stubRuntimeTarget: RuntimeTargetDescriptor<'sql', 'postgres'> = {
   kind: 'target',
@@ -279,7 +286,7 @@ describe('cipherstashJsonbPathQueryFirst — AST shape and SQL snapshot', () => 
     expect(lowered.sql).toMatchInlineSnapshot(
       `"SELECT eql_v2.jsonb_path_query_first("user"."payload", $1) AS "first_email" FROM "user""`,
     )
-    expect(lowered.params).toEqual(['$.user.email'])
+    expect(lowered.params).toEqual([{ kind: 'literal', value: '$.user.email' }])
   })
 })
 
@@ -301,7 +308,7 @@ describe('cipherstashJsonbGet — AST shape and SQL snapshot', () => {
     expect(lowered.sql).toMatchInlineSnapshot(
       `"SELECT eql_v2."->"("user"."payload", $1) AS "email_field" FROM "user""`,
     )
-    expect(lowered.params).toEqual(['email'])
+    expect(lowered.params).toEqual([{ kind: 'literal', value: 'email' }])
   })
 })
 

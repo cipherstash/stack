@@ -71,6 +71,7 @@ import {
   contract,
   emptySdk,
   getOperator,
+  literalParamValue,
   makeAdapter,
   selectWithWhere,
   TABLE,
@@ -130,7 +131,7 @@ describe('cipherstash operator lowering — per-codec envelope dispatch', () => 
       contract,
     })
     expect(lowered.params).toHaveLength(1)
-    const envelope = lowered.params[0]
+    const envelope = literalParamValue(lowered.params[0])
     expect(envelope).toBeInstanceOf(EncryptedDouble)
   })
 
@@ -144,7 +145,7 @@ describe('cipherstash operator lowering — per-codec envelope dispatch', () => 
     const lowered = makeAdapter().lower(selectWithWhere(predicate), {
       contract,
     })
-    expect(lowered.params[0]).toBeInstanceOf(EncryptedBigInt)
+    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(EncryptedBigInt)
   })
 
   it('cipherstashGt on a date column wraps the value in EncryptedDate', () => {
@@ -157,7 +158,7 @@ describe('cipherstash operator lowering — per-codec envelope dispatch', () => 
     const lowered = makeAdapter().lower(selectWithWhere(predicate), {
       contract,
     })
-    expect(lowered.params[0]).toBeInstanceOf(EncryptedDate)
+    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(EncryptedDate)
   })
 
   it('cipherstashNe on a boolean column wraps the value in EncryptedBoolean', () => {
@@ -170,7 +171,9 @@ describe('cipherstash operator lowering — per-codec envelope dispatch', () => 
     const lowered = makeAdapter().lower(selectWithWhere(predicate), {
       contract,
     })
-    expect(lowered.params[0]).toBeInstanceOf(EncryptedBoolean)
+    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(
+      EncryptedBoolean,
+    )
   })
 
   it('cipherstashGt rejects a non-matching plaintext type for the column codec', () => {
@@ -202,7 +205,7 @@ describe('cipherstash operator lowering — JSON path predicate', () => {
       `"SELECT "user"."id" AS "id" FROM "user" WHERE eql_v2.jsonb_path_exists("user"."payload", $1)"`,
     )
     // Path is a plain text bind — no envelope wrapping.
-    expect(lowered.params).toEqual(['$.k'])
+    expect(lowered.params.map(literalParamValue)).toEqual(['$.k'])
   })
 
   it('cipherstashJsonbPathExists rejects non-string path arguments', () => {

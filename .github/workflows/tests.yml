@@ -9,6 +9,43 @@ on:
       - "**"
 
 jobs:
+  # Biome format + lint. Its own job (no DB, no credentials, node-agnostic) so it
+  # surfaces as a distinct check and runs once rather than per Node matrix leg.
+  # Gates on ERRORS only — warnings are allowed, so the `no-type-erasing-assertions`
+  # plugin (at `warn`) surfaces new `as any`/`never`/`unknown` without blocking.
+  # Tightening to fail on warnings is tracked in #625.
+  lint:
+    name: Lint (Biome)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6.0.8
+        name: Install pnpm
+        with:
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          # Node 22 is the supply-chain hardening baseline every pnpm-using job
+          # must pin (enforced by e2e/tests/supply-chain.e2e.test.ts). Lint is
+          # runtime-agnostic, so a single pinned version is fine.
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches; pnpm/action-setup v6 no longer ships it.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Biome check (format + lint)
+        run: pnpm run code:check
+
   run-tests:
     name: Run Tests (Node ${{ matrix.node-version }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -59,8 +96,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Fail loudly if any live-test credential is missing, so the v3 live
+      # matrix (and every other `describeLive` suite) can't silently skip.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       - name: Type tests (stack)
         run: pnpm --filter @cipherstash/stack run test:types
+
+      # The v3 domain catalog lives in the test kit, and its
+      # `satisfies Record<EqlV3TypeName, DomainSpec>` is what forces a new SDK
+      # domain to be covered. That check only fires under `tsc`, so without this
+      # step a domain added to stack would slip through untested.
+      - name: Type tests (test-kit — enforces v3 domain coverage)
+        run: pnpm --filter @cipherstash/test-kit run test:types
 
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
@@ -68,19 +122,20 @@ jobs:
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
-      # The EQL v3 bundles in packages/cli/src/sql are vendored (derived from
-      # the stack fixture monolith by gen:eql-v3-sql). Regenerate and fail on
-      # any diff so the fixture and the shipped bundles cannot drift silently.
-      - name: Check — vendored EQL v3 SQL bundles are in sync
+      # The EQL v3 bundle in packages/cli/src/sql is vendored from the pinned
+      # @cipherstash/eql package (sha256-verified by gen:eql-v3-sql).
+      # Regenerate and fail on any diff so the pin and the shipped bundle
+      # cannot drift silently.
+      - name: Check — vendored EQL v3 SQL bundle is in sync
         run: |
           pnpm --filter stash run gen:eql-v3-sql
-          git diff --exit-code -- packages/cli/src/sql/cipherstash-encrypt-v3.sql packages/cli/src/sql/cipherstash-encrypt-v3-supabase.sql
+          git diff --exit-code -- packages/cli/src/sql/cipherstash-encrypt-v3.sql
 
       - name: Create .env file in ./packages/protect/
         run: |
           touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
@@ -88,8 +143,8 @@ jobs:
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
@@ -97,16 +152,16 @@ jobs:
       - name: Create .env file in ./packages/protect-dynamodb/
         run: |
           touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
       - name: Create .env file in ./packages/drizzle/
         run: |
           touch ./packages/drizzle/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env
@@ -129,8 +184,8 @@ jobs:
     # are set. We expose them at the job level so the wizard subprocess
     # picks them up via `process.env`.
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       CS_ZEROKMS_HOST: https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net
@@ -160,6 +215,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Auth-dependent `e2e/` suites skip themselves without these vars — a
+      # silent skip would hide regressions behind a green job. Fail loudly.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
       # E2E (`packages/cli/tests/e2e/**`) is covered by the `run-tests`
@@ -183,8 +248,8 @@ jobs:
     # identity and region — the stack /wasm-inline config requires it and
     # derives the AccessKeyStrategy region from it.
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
@@ -227,19 +292,17 @@ jobs:
       - name: Build stack
         run: pnpm exec turbo run build --filter @cipherstash/stack
 
-      # roundtrip.test.ts skips itself (Deno.test.ignore) when any of
-      # the four CS_* env vars is missing — that's the right behaviour
-      # for local runs, but in CI a silent skip would mean a rotated /
-      # cleared secret hides a real WASM regression behind a green job.
-      # Fail loudly instead.
-      - name: Assert CS_* secrets are present
-        run: |
-          for v in CS_WORKSPACE_CRN CS_CLIENT_ID CS_CLIENT_KEY CS_CLIENT_ACCESS_KEY; do
-            if [ -z "${!v}" ]; then
-              echo "::error::Required secret $v is not set on this runner — the WASM smoke test would silently skip."
-              exit 1
-            fi
-          done
+      # roundtrip.test.ts skips itself (Deno.test.ignore) when any of the four
+      # CS_* env vars is missing — fine locally, but in CI a silent skip would
+      # let a rotated / cleared secret hide a real WASM regression behind a
+      # green job. Fail loudly instead.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       - name: Run Deno WASM smoke test
         working-directory: e2e/wasm
@@ -291,8 +354,8 @@ jobs:
       - name: Create .env file in ./packages/protect/
         run: |
           touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
@@ -300,8 +363,8 @@ jobs:
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
@@ -309,16 +372,16 @@ jobs:
       - name: Create .env file in ./packages/protect-dynamodb/
         run: |
           touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
       - name: Create .env file in ./packages/drizzle/
         run: |
           touch ./packages/drizzle/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env

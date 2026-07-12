@@ -77,21 +77,21 @@ export type EncryptedQuery =
  * Plaintext values the SDK accepts for encryption.
  *
  * Widens the FFI's `JsPlaintext` (`string | number | boolean |
- * Record<string, unknown> | JsPlaintext[]`) with `Date`. `Date` is a supported
- * cast target that is omitted from the FFI's `JsPlaintext` INPUT union, but it
- * serializes at the boundary via `toJSON` (ISO string), so it is accepted on the
- * way in.
+ * Record<string, unknown> | JsPlaintext[]`) with `Date` and `bigint`. `Date`
+ * is a supported cast target that is omitted from the FFI's `JsPlaintext` INPUT
+ * union, but it serializes at the boundary via `toJSON` (ISO string), so it is
+ * accepted on the way in.
  *
- * `bigint` is intentionally NOT included: the native `@cipherstash/protect-ffi`
- * build cannot marshal a JS `bigint` (V8 throws "Do not know how to serialize a
- * BigInt") and rejects a `string` for a `big_int` column. The v3 int8 domains
- * are therefore omitted from the SDK entirely (see `eql/v3`) until the FFI
- * supports lossless bigint I/O; `bigint` returns here alongside them.
+ * `bigint` is the plaintext for the v3 int8/bigint domains (see `eql/v3`),
+ * which always decrypt to a JS `bigint`. protect-ffi 0.28 marshals a native
+ * `bigint` across the Neon boundary losslessly. i64 bounds
+ * (`-2^63 … 2^63 - 1`) are enforced at the protect-ffi boundary, not here —
+ * out-of-range values surface as encryption errors from the FFI.
  *
- * When the upstream FFI `JsPlaintext` is corrected to include `Date`, the `Date`
- * arm can collapse back into `JsPlaintext`.
+ * When the upstream FFI `JsPlaintext` includes `Date` and `bigint`, both extra
+ * arms can collapse back into `JsPlaintext`.
  */
-export type Plaintext = JsPlaintext | Date
+export type Plaintext = JsPlaintext | Date | bigint
 
 // ---------------------------------------------------------------------------
 // Client configuration
@@ -191,9 +191,10 @@ export type ClientConfig = {
    * `decrypt` accepts BOTH formats regardless of this setting, so v2 and
    * v3 data can coexist during a migration.
    *
-   * v3 limitation (protect-ffi 0.27): `encryptQuery` supports only JSON
-   * containment queries — scalar-index and selector queries throw
-   * `EQL_V3_QUERY_UNSUPPORTED` until a v3 scalar query wire shape exists.
+   * Under `3`, `encryptQuery` returns EQL v3 query operands (protect-ffi
+   * 0.29+): term-only scalar operands for the `eql_v3.query_<name>` twins,
+   * the `eql_v3.query_jsonb` containment needle, and bare selector-hash
+   * strings for JSON path queries.
    */
   eqlVersion?: 2 | 3
 }
@@ -434,7 +435,7 @@ export type QueryTypeName =
   | 'searchableJson'
 
 /** @internal */
-export type FfiIndexTypeName = 'ore' | 'match' | 'unique' | 'ste_vec'
+export type FfiIndexTypeName = 'ore' | 'ope' | 'match' | 'unique' | 'ste_vec'
 
 export const queryTypes = {
   orderAndRange: 'orderAndRange',
@@ -447,6 +448,8 @@ export const queryTypes = {
 
 /** @internal */
 export const queryTypeToFfi: Record<QueryTypeName, FfiIndexTypeName> = {
+  // v3 `_ord` domains carry `ope` instead — `resolveIndexType` swaps this
+  // static default for the ordering index the column actually configures.
   orderAndRange: 'ore',
   freeTextSearch: 'match',
   equality: 'unique',
