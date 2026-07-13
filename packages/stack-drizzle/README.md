@@ -19,15 +19,15 @@ object. Install the domains once with `stash eql install --eql-version 3`.
 import { pgTable, integer } from 'drizzle-orm/pg-core'
 import { EncryptionV3 } from '@cipherstash/stack/v3'
 import {
-  types,
+  types as encryptedTypes,
   extractEncryptionSchemaV3,
   createEncryptionOperatorsV3,
 } from '@cipherstash/stack-drizzle/v3'
 
 const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-  email: types.TextSearch('email'), // equality + order/range + free-text
-  age: types.IntegerOrd('age'),     // equality + order/range
+  email: encryptedTypes.TextSearch('email'), // equality + order/range + free-text
+  age: encryptedTypes.IntegerOrd('age'),     // equality + order/range
 })
 
 const schema = extractEncryptionSchemaV3(users)
