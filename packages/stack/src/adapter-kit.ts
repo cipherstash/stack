@@ -18,8 +18,11 @@
  * The full member list is small on purpose; every addition is an audit decision.
  */
 
-// Shared structured logger (adapters log rejections through the same instance).
-export { logger } from './utils/logger/index.js'
+// Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path.
+export {
+  bulkModelsToEncryptedPgComposites,
+  modelToEncryptedPgComposites,
+} from './encryption/helpers/index.js'
 
 // Audit config carried by chainable operations.
 export type { AuditConfig } from './encryption/operations/base-operation.js'
@@ -42,9 +45,5 @@ export {
 
 // Shared match-index guard (short-needle rejection), reused by both adapters.
 export { matchNeedleError } from './schema/match-defaults.js'
-
-// Model → encrypted-PG-composite helpers used by the v2 Supabase mutation path.
-export {
-  bulkModelsToEncryptedPgComposites,
-  modelToEncryptedPgComposites,
-} from './encryption/helpers/index.js'
+// Shared structured logger (adapters log rejections through the same instance).
+export { logger } from './utils/logger/index.js'
