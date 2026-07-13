@@ -10,13 +10,16 @@
  *
  * Use this import path: `@cipherstash/stack/wasm-inline`
  *
+ * This entry is EQL v3: author schemas with the `types` DSL / `encryptedTable`
+ * re-exported here (the same authoring surface as `@cipherstash/stack/eql/v3`).
+ *
  * @example
  * ```ts
  * import {
- *   Encryption, encryptedTable, encryptedColumn,
+ *   Encryption, encryptedTable, types,
  * } from "@cipherstash/stack/wasm-inline"
  *
- * const users = encryptedTable("users", { email: encryptedColumn("email") })
+ * const users = encryptedTable("users", { email: types.TextSearch("email") })
  *
  * const client = await Encryption({
  *   schemas: [users],
@@ -67,12 +70,10 @@ import {
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
+import { type AnyV3Table, buildEncryptConfig } from '@/eql/v3'
 import {
-  buildEncryptConfig,
   type CastAs,
   type EncryptConfig,
-  type EncryptedTable,
-  type EncryptedTableColumn,
   encryptConfigSchema,
   toEqlCastAs,
 } from '@/schema'
@@ -91,19 +92,13 @@ export {
   AccessKeyStrategy,
   OidcFederationStrategy,
 } from '@cipherstash/auth/wasm-inline'
-export type {
-  EncryptedColumn,
-  EncryptedField,
-  EncryptedTable,
-  EncryptedTableColumn,
-  InferEncrypted,
-  InferPlaintext,
-} from '@/schema'
-export {
-  encryptedColumn,
-  encryptedField,
-  encryptedTable,
-} from '@/schema'
+// The WASM entry is EQL v3. Its authoring surface — `types`, `encryptedTable`,
+// the column classes, `buildEncryptConfig`, and the inference helpers — is the
+// v3 one, re-exported wholesale so an edge consumer authors v3 schemas from this
+// single import. The v2 builders are intentionally NOT exported here: the WASM
+// path was never announced or documented for v2, and the edge targets v3. EQL v2
+// remains fully available on the native `@cipherstash/stack` entry.
+export * from '@/eql/v3'
 export type { Encrypted } from '@/types'
 
 /** Re-exported convenience predicate — same as the raw protect-ffi one. */
@@ -229,10 +224,9 @@ export type WasmClientConfig = {
 export type WasmAuthStrategy = AccessKeyStrategy | OidcFederationStrategy
 
 export type WasmEncryptionConfig = {
-  schemas: [
-    EncryptedTable<EncryptedTableColumn>,
-    ...EncryptedTable<EncryptedTableColumn>[],
-  ]
+  /** One or more EQL v3 tables, authored with `types` / `encryptedTable` from
+   *  this entry. The WASM entry is EQL v3 only. */
+  schemas: [AnyV3Table, ...AnyV3Table[]]
   config: WasmClientConfig
 }
 
@@ -321,20 +315,38 @@ export async function Encryption(
     )
   }
 
+  // The WASM entry is EQL v3 only. The types enforce v3 tables, but a plain-JS
+  // caller can bypass that — reject a non-v3 table (one lacking the v3
+  // `buildColumnKeyMap` marker) with a clear message rather than pinning the
+  // client to v3 wire against a v2 schema and failing opaquely inside the FFI.
+  for (const table of schemas) {
+    const isV3 =
+      typeof (table as { buildColumnKeyMap?: unknown }).buildColumnKeyMap ===
+      'function'
+    if (!isV3) {
+      throw new Error(
+        '[encryption]: `@cipherstash/stack/wasm-inline` is EQL v3 only — author schemas with `types` / `encryptedTable` from this entry. (EQL v2 is available on the native `@cipherstash/stack` entry.)',
+      )
+    }
+  }
+
   const encryptConfig: EncryptConfig = encryptConfigSchema.parse(
     buildEncryptConfig(...schemas),
   )
 
   const strategy = resolveStrategy(clientConfig)
 
-  // protect-ffi 0.25 takes a single options object with the strategy
-  // nested under `strategy` (0.24 passed the strategy as a separate
-  // first argument).
+  // protect-ffi 0.25 takes a single options object with the strategy nested
+  // under `strategy` (0.24 passed the strategy as a separate first argument).
+  // `eqlVersion: 3` pins the EQL v3 wire format — this entry is v3 only, so
+  // every encrypt/query emits v3 (a v2-mode client cannot resolve the concrete
+  // `eql_v3_*` domains and would fail every encrypt).
   const client = await wasmNewClient({
     strategy,
     encryptConfig: normalizeCastAs(encryptConfig),
     clientId: clientConfig.clientId,
     clientKey: clientConfig.clientKey,
+    eqlVersion: 3,
   } as never)
 
   // `INTERNAL_CONSTRUCT` is module-scoped, so this factory is the only
