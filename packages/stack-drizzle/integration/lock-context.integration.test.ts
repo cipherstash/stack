@@ -32,7 +32,7 @@
  * a distinct `sub`) and asserts B cannot read A's row, with A reading it as the
  * control.
  */
-import { OidcFederationStrategy } from '@cipherstash/auth'
+import { OidcFederationStrategy } from '@cipherstash/stack'
 import { EncryptionV3 } from '@cipherstash/stack/v3'
 import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
 import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
