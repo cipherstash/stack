@@ -16,9 +16,9 @@
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
 import { unwrapResult } from '@cipherstash/test-kit'
+import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { EncryptionV3, encryptedTable, types } from '@/encryption/v3'
-import { clerkJwtProvider } from '../helpers/clerk'
 
 const users = encryptedTable('v3_identity_live_users', {
   email: types.TextEq('email'),

@@ -5,6 +5,7 @@
 	"description": "Shared EQL v3 test harness: the domain catalog, the plaintext oracle, and the integration-suite driver. Consumed as TypeScript source \u2014 no build step.",
 	"type": "module",
 	"exports": {
+		"./integration-clerk": "./src/integration/clerk.ts",
 		".": "./src/index.ts",
 		"./catalog": "./src/catalog.ts",
 		"./suite": "./src/run-family-suite.ts"
@@ -16,6 +17,7 @@
 		"@cipherstash/stack": "workspace:*"
 	},
 	"devDependencies": {
+		"@clerk/backend": "3.4.9",
 		"typescript": "catalog:repo",
 		"vitest": "catalog:repo"
 	}

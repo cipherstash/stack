@@ -19,6 +19,7 @@
  * `stash eql install`. This suite throws rather than skips when unconfigured.
  */
 
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 import {
   type DomainSpec,
   databaseUrl,
@@ -42,14 +43,13 @@ import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3 } from '@/encryption/v3'
+import { makeEqlV3Column } from '../src/v3/column'
 import {
   createEncryptionOperatorsV3,
   EncryptionOperatorError,
   extractEncryptionSchemaV3,
   types as v3drizzle,
-} from '@/eql/v3/drizzle'
-import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
+} from '../src/v3/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 

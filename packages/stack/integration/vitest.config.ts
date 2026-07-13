@@ -78,7 +78,9 @@ export default defineConfig({
   test: {
     root: resolve(__dirname, '..'),
     include: SUITE_GLOBS,
-    globalSetup: [resolve(__dirname, 'global-setup.ts')],
+    globalSetup: [
+      resolve(__dirname, '../../test-kit/src/integration/global-setup.ts'),
+    ],
     server: {
       deps: {
         // `@cipherstash/test-kit` resolves to source in ANOTHER package, i.e.
@@ -121,6 +123,9 @@ export default defineConfig({
 
     // Fail the run if anything is skipped. A skipped test reads exactly like a
     // passing one, and every silent hole this suite has found took that shape.
-    reporters: ['default', resolve(__dirname, 'no-skips-reporter.ts')],
+    reporters: [
+      'default',
+      resolve(__dirname, '../../test-kit/src/integration/no-skips-reporter.ts'),
+    ],
   },
 })

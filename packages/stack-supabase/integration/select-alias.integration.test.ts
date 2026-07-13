@@ -1,9 +1,9 @@
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { encryptedTable, types } from '@/eql/v3'
-import { encryptedSupabaseV3 } from '@/supabase'
-import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
+import { encryptedSupabaseV3 } from '../src/index.js'
+import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
 
 /**
  * `Date` reconstruction across every way PostgREST can key a result row.

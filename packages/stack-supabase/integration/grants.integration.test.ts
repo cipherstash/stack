@@ -35,7 +35,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   SUPABASE_PERMISSIONS_SQL_V3,
   supabaseInternalPermissionsSql,
-} from '../../../cli/src/installer/grants'
+} from '../../cli/src/installer/grants'
 
 const sql = postgres(databaseUrl(), { prepare: false })
 

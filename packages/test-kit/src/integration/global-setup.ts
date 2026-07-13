@@ -4,7 +4,7 @@ import {
   installEqlV3,
   type Requirement,
   requireIntegrationEnv,
-} from '@cipherstash/test-kit'
+} from '../index.ts'
 
 /**
  * Fail fast, before a single container second is spent, and install EQL v3 once

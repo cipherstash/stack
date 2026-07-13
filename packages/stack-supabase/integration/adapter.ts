@@ -1,3 +1,4 @@
+import { encryptedTable } from '@cipherstash/stack/eql/v3'
 import {
   databaseUrl,
   type IntegrationAdapter,
@@ -7,9 +8,8 @@ import {
   type TableSpec,
 } from '@cipherstash/test-kit'
 import postgres from 'postgres'
-import { encryptedTable } from '@/eql/v3'
-import { encryptedSupabaseV3 } from '@/supabase'
-import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
+import { encryptedSupabaseV3 } from '../src/index.js'
+import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
 
 /**
  * The Supabase v3 adapter under real ZeroKMS ciphertext.

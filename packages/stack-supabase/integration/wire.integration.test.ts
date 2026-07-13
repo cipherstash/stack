@@ -28,17 +28,14 @@
  * `permission denied for schema eql_v3_internal` (see `supabase-v3-grants-pg`).
  */
 
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
-import { encryptedTable, types } from '@/eql/v3'
-import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
-import {
-  narrowedQueryTerm,
-  storageEnvelope,
-} from '../../__tests__/helpers/v3-envelope'
-import { makePostgrestClient, reloadSchemaCache } from '../helpers/pgrest'
+import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
+import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
+import { narrowedQueryTerm, storageEnvelope } from './helpers/v3-envelope'
 
 const TABLE = 'protect_ci_v3_pgrest'
 

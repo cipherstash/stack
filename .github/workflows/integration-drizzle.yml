@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - 'packages/stack/src/eql/v3/**'
+      - 'packages/stack-drizzle/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/eql/v3) can produce wrong rows, so trigger the live
       # suite that would catch it.
@@ -37,6 +38,7 @@ on:
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
       - 'packages/stack/src/eql/v3/**'
+      - 'packages/stack-drizzle/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/eql/v3) can produce wrong rows, so trigger the live
       # suite that would catch it.
@@ -108,9 +110,13 @@ jobs:
       # (they need CLERK_MACHINE_TOKEN + a workspace with the Clerk issuer
       # registered); the Supabase adapter suites are not run here — they have
       # their own job.
+      # The Drizzle adapter suites (incl. the Clerk-federated lock-context one)
+      # now live in @cipherstash/stack-drizzle (run below via its own
+      # test:integration). This glob scopes what still lives in @cipherstash/stack:
+      # the adapter-agnostic `shared/` core suites and the model-path
+      # `identity/matrix-identity` suite.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
-        integration/drizzle-v3/**/*.integration.test.ts,
         integration/identity/**/*.integration.test.ts
 
     steps:
@@ -135,6 +141,9 @@ jobs:
       # `stash eql install --eql-version 3`, so an installer regression fails
       # here rather than hiding behind a test-only SQL apply.
       - name: Drizzle v3 integration suites
+        run: pnpm --filter @cipherstash/stack-drizzle run test:integration
+
+      - name: Shared core + identity integration suites
         run: pnpm --filter @cipherstash/stack run test:integration
 
       - name: Stop ${{ matrix.db }}

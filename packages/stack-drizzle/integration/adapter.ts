@@ -1,3 +1,4 @@
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 import {
   databaseUrl,
   type IntegrationAdapter,
@@ -10,12 +11,11 @@ import { asc, type SQL } from 'drizzle-orm'
 import { type PgTable, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { EncryptionV3 } from '@/encryption/v3'
+import { makeEqlV3Column } from '../src/v3/column'
 import {
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
-} from '@/eql/v3/drizzle'
-import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
+} from '../src/v3/index.js'
 
 /**
  * The Drizzle v3 adapter under real ZeroKMS ciphertext.

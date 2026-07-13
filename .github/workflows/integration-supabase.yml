@@ -12,7 +12,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/stack/src/supabase/**'
+      - 'packages/stack-supabase/**'
       - 'packages/stack/src/eql/v3/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/supabase) can produce wrong wire output or rows, so
@@ -30,7 +30,7 @@ on:
   pull_request:
     branches: ['**']
     paths:
-      - 'packages/stack/src/supabase/**'
+      - 'packages/stack-supabase/**'
       - 'packages/stack/src/eql/v3/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/supabase) can produce wrong wire output or rows, so
@@ -84,9 +84,12 @@ jobs:
       #
       # `integration/identity/` runs on the Drizzle job (it needs Postgres +
       # Drizzle, not PostgREST), so it is intentionally not listed here.
+      # The Supabase adapter suites now live in @cipherstash/stack-supabase (run
+      # below via its own test:integration). This glob scopes the adapter-agnostic
+      # `shared/` core suites that still live in @cipherstash/stack and run against
+      # this job's Postgres too.
       CS_IT_SUITE: >-
-        integration/shared/**/*.integration.test.ts,
-        integration/supabase/**/*.integration.test.ts
+        integration/shared/**/*.integration.test.ts
 
     steps:
       - uses: actions/checkout@v6
@@ -110,6 +113,9 @@ jobs:
       # `stash eql install --eql-version 3 --supabase --direct`, so an installer
       # regression fails here rather than hiding behind a test-only SQL apply.
       - name: Supabase v3 integration suites
+        run: pnpm --filter @cipherstash/stack-supabase run test:integration
+
+      - name: Shared core integration suites (against Supabase Postgres)
         run: pnpm --filter @cipherstash/stack run test:integration
 
       - name: Stop ${{ matrix.db }}

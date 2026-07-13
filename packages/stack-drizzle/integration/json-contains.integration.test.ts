@@ -7,19 +7,20 @@
  * `encryptQuery` — asserting it returns exactly the rows whose document contains
  * the sub-object (jsonb `@>` semantics), and excludes the rest.
  */
+
+import type { JsonDocument } from '@cipherstash/stack/eql/v3'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 import { databaseUrl, unwrapResult } from '@cipherstash/test-kit'
 import { and, asc, eq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3 } from '@/encryption/v3'
-import type { JsonDocument } from '@/eql/v3'
 import {
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
   types,
-} from '@/eql/v3/drizzle'
+} from '../src/v3/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 

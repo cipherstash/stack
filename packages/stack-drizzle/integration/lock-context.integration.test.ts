@@ -33,19 +33,19 @@
  * control.
  */
 import { OidcFederationStrategy } from '@cipherstash/auth'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 import { databaseUrl, unwrapResult, V3_MATRIX } from '@cipherstash/test-kit'
+import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
 import { and, asc as drizzleAsc, eq as drizzleEq, type SQL } from 'drizzle-orm'
 import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptionV3 } from '@/encryption/v3'
+import { makeEqlV3Column } from '../src/v3/column'
 import {
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
-} from '@/eql/v3/drizzle'
-import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
-import { clerkJwtProvider } from '../helpers/clerk'
+} from '../src/v3/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 

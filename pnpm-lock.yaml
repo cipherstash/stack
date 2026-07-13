@@ -759,6 +759,9 @@ importers:
         specifier: workspace:*
         version: link:../stack
     devDependencies:
+      '@clerk/backend':
+        specifier: 3.4.9
+        version: 3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       typescript:
         specifier: catalog:repo
         version: 5.9.3

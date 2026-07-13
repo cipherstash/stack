@@ -1,9 +1,9 @@
+import { factoryForDomain } from '@cipherstash/stack/adapter-kit'
 import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { factoryForDomain } from '@/eql/v3/domain-registry'
-import { introspect } from '@/supabase/introspect'
-import { synthesizeTables } from '@/supabase/schema-builder'
+import { introspect } from '../src/introspect'
+import { synthesizeTables } from '../src/schema-builder'
 
 const sql = postgres(databaseUrl(), { prepare: false })
 
