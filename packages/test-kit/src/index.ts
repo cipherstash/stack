@@ -52,8 +52,8 @@ export {
 } from './ops.ts'
 export {
   comparePlain,
-  containsPlain,
   expectedKeysFor,
+  matchesPlain,
   plainValue,
   sortedKeysFor,
 } from './oracle.ts'

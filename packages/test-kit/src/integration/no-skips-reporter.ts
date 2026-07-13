@@ -4,7 +4,7 @@ import type { Reporter, TestModule } from 'vitest/node'
  * Fail the integration run if any test was skipped.
  *
  * A skipped test reads exactly like a passing one. Every silent hole this suite
- * has found took that shape: `contains` never ran on `text_match` because its
+ * has found took that shape: `matches` never ran on `text_match` because its
  * needle was `''`; the non-ASCII ORE needle test had zero cases after the OPE
  * re-pin; the Supabase grants check quietly did not run for the Drizzle job
  * because `dbVariant()` mis-inferred the database. In each case a green run

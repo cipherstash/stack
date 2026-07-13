@@ -12,7 +12,7 @@ export type QueryOpKind =
   | 'lte'
   | 'between'
   | 'notBetween'
-  | 'contains'
+  | 'matches'
   | 'order'
   | 'isNull'
   | 'isNotNull'
@@ -38,7 +38,7 @@ export type QueryOp =
       asRawFilter?: boolean
     }
   | { kind: 'between' | 'notBetween'; column: string; lo: Plain; hi: Plain }
-  | { kind: 'contains'; column: string; needle: string }
+  | { kind: 'matches'; column: string; needle: string }
   | { kind: 'order'; column: string; direction: 'asc' | 'desc' }
   | { kind: 'isNull' | 'isNotNull'; column: string }
 
@@ -56,12 +56,12 @@ export type QueryOp =
 const OPS_BY_CAPABILITY = {
   equality: ['eq', 'ne', 'in', 'notIn'],
   orderAndRange: ['gt', 'gte', 'lt', 'lte', 'between', 'notBetween', 'order'],
-  freeTextSearch: ['contains'],
-  // Encrypted-JSONB containment surfaces as `contains` too (doc @> subset), but
+  freeTextSearch: ['matches'],
   // json domains are `deferred` from this driver (ste_vec doesn't fit the scalar
-  // oracle) and covered by a dedicated suite, so this entry exists to satisfy
-  // the capability-keyed type rather than to gate a run.
-  searchableJson: ['contains'],
+  // oracle) and covered by a dedicated suite (`json-contains`, which calls the
+  // adapter's exact `contains()` directly), so this entry only satisfies the
+  // capability-keyed type — it gates no matrix run. `matches` is a placeholder.
+  searchableJson: ['matches'],
 } as const satisfies Record<keyof QueryCapabilities, readonly QueryOpKind[]>
 
 /**
