@@ -9,7 +9,56 @@ Depends on `@cipherstash/stack`; install both:
 npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 ```
 
-## EQL v2 (package root)
+## EQL v3 (`/v3` subpath)
+
+Each encrypted column is a concrete `public.eql_v3_*` Postgres domain whose query
+capabilities are fixed by the `types.*` factory you choose — no per-column config
+object. Install the domains once with `stash eql install --eql-version 3`.
+
+```ts
+import { pgTable, integer } from 'drizzle-orm/pg-core'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
+import {
+  types,
+  extractEncryptionSchemaV3,
+  createEncryptionOperatorsV3,
+} from '@cipherstash/stack-drizzle/v3'
+
+const users = pgTable('users', {
+  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+  email: types.TextSearch('email'), // equality + order/range + free-text
+  age: types.IntegerOrd('age'),     // equality + order/range
+})
+
+const schema = extractEncryptionSchemaV3(users)
+const client = await EncryptionV3({ schemas: [schema] })
+const ops = createEncryptionOperatorsV3(client)
+
+// Insert — encrypt models first
+const enc = await client.bulkEncryptModels(
+  [{ email: 'alice@example.com', age: 30 }],
+  schema,
+)
+if (!enc.failure) await db.insert(users).values(enc.data)
+
+// Query — operators auto-encrypt their plaintext operands
+const rows = await db
+  .select()
+  .from(users)
+  .where(await ops.and(
+    ops.contains(users.email, 'alice'), // free-text containment over ciphertext
+    ops.between(users.age, 18, 65),
+  ))
+  .orderBy(ops.asc(users.age))
+
+// Decrypt after select
+const dec = await client.bulkDecryptModels(rows, schema)
+```
+
+## EQL v2 (package root) — legacy
+
+The v2 integration predates the typed v3 domains and is kept for existing
+projects. New projects should use v3 above.
 
 ```ts
 import { encryptedType, extractEncryptionSchema, createEncryptionOperators } from '@cipherstash/stack-drizzle'
@@ -20,15 +69,9 @@ import { Encryption } from '@cipherstash/stack'
 returns query operators (`eq`, `like`, `gt`, `inArray`, …) that transparently
 encrypt search values.
 
-## EQL v3 (`/v3` subpath)
+## Docs
 
-```ts
-import { types, createEncryptionOperatorsV3, extractEncryptionSchemaV3, makeEqlV3Column } from '@cipherstash/stack-drizzle/v3'
-```
-
-Each encrypted column is a concrete `public.eql_v3_*` Postgres domain; query
-capabilities are fixed by the chosen `types.*` factory.
-
-See the `stash-drizzle` agent skill and https://cipherstash.com/docs for the full guide.
+Full guide: https://cipherstash.com/docs/integrations/drizzle — see also the
+bundled `stash-drizzle` agent skill.
 
 > Not to be confused with `@cipherstash/drizzle`, the older `@cipherstash/protect`-based package.
