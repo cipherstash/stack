@@ -358,9 +358,9 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
 describe('createEncryptionOperatorsV3 - free-text match', () => {
   it.each(
     matchDomains,
-  )('%s contains emits latest eql_v3.contains with a query-term operand', async (eqlType, spec) => {
+  )('%s matches emits latest eql_v3.contains with a query-term operand', async (eqlType, spec) => {
     const { ops, encryptQuery, render } = setup()
-    const q = render(await ops.contains(matrixColumn(eqlType), needleFor(spec)))
+    const q = render(await ops.matches(matrixColumn(eqlType), needleFor(spec)))
 
     expect(q.sql).toContain(
       `eql_v3.contains("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
@@ -377,20 +377,20 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
   // throw rather than silently return the whole table.
   it.each(
     matchDomains,
-  )('%s contains rejects a needle shorter than token_length before encrypting', async (eqlType) => {
+  )('%s matches rejects a needle shorter than token_length before encrypting', async (eqlType) => {
     const { ops, encryptQuery } = setup()
-    await expect(ops.contains(matrixColumn(eqlType), 'ad')).rejects.toThrow(
+    await expect(ops.matches(matrixColumn(eqlType), 'ad')).rejects.toThrow(
       /at least 3 characters/,
     )
-    await expect(ops.contains(matrixColumn(eqlType), '')).rejects.toThrow(
+    await expect(ops.matches(matrixColumn(eqlType), '')).rejects.toThrow(
       EncryptionOperatorError,
     )
     expect(encryptQuery).not.toHaveBeenCalled()
   })
 
-  it('contains accepts a needle exactly at token_length', async () => {
+  it('matches accepts a needle exactly at token_length', async () => {
     const { ops, render } = setup()
-    const q = render(await ops.contains(users.email, 'ada'))
+    const q = render(await ops.matches(users.email, 'ada'))
     expect(q.sql).toContain(
       'eql_v3.contains("users"."email", $1::eql_v3.query_text_search)',
     )
@@ -398,7 +398,7 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
 
   it('negation is expressed through the passthrough Drizzle not operator', async () => {
     const { ops, render } = setup()
-    const q = render(ops.not(await ops.contains(users.email, 'example.com')))
+    const q = render(ops.not(await ops.matches(users.email, 'example.com')))
     expect(q.sql).toMatch(/^not /i)
     expect(q.sql).toContain(
       'eql_v3.contains("users"."email", $1::eql_v3.query_text_search)',
@@ -714,17 +714,24 @@ describe('createEncryptionOperatorsV3 - gating errors', () => {
     )
   })
 
-  it('contains on a column without match throws', async () => {
+  it('matches on a column without a match index throws', async () => {
     const { ops } = setup()
-    await expect(ops.contains(users.nickname, 'ada')).rejects.toBeInstanceOf(
-      EncryptionOperatorError,
+    await expect(ops.matches(users.nickname, 'ada')).rejects.toThrow(
+      /free-text search/,
+    )
+  })
+
+  it('contains on a column without JSON containment throws', async () => {
+    const { ops } = setup()
+    await expect(ops.contains(users.nickname, 'ada')).rejects.toThrow(
+      /JSON containment/,
     )
   })
 
   it('null operands throw and point callers to null checks', async () => {
     const { ops } = setup()
     await expect(ops.eq(users.nickname, null)).rejects.toThrow(/isNull/)
-    await expect(ops.contains(users.email, undefined)).rejects.toThrow(/isNull/)
+    await expect(ops.matches(users.email, undefined)).rejects.toThrow(/isNull/)
   })
 
   it('eq on a storage-only column throws', async () => {

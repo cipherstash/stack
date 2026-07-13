@@ -55,8 +55,10 @@ The builder surface is shared across v2 and v3:
 transforms (`.order/.limit/.range/.single/.maybeSingle/.csv/.abortSignal/.throwOnError`),
 plus `.withLockContext(lockContext)` and `.audit(config)` — with one fork:
 free-text search. v2 exposes `.like/.ilike` (SQL wildcard matching); v3
-exposes `.contains()` (token containment) and rejects `like`/`ilike` on
-encrypted columns (see "v3 encoding details" below).
+exposes `.matches()` (fuzzy bloom token search) on encrypted columns, keeps
+`.contains()` for native (exact) containment on plaintext columns, and treats
+`like`/`ilike` on an encrypted column as an approximate shim that delegates to
+`.matches()` (see "v3 encoding details" below).
 
 ### Typing (v3)
 
@@ -84,7 +86,7 @@ const es = await encryptedSupabaseV3(
 shape (schema columns get their domain plaintext types — `types.IntegerOrd` →
 `number`, `types.TimestampOrd` → `Date`, …). Storage-only columns (e.g.
 `types.Boolean`) are excluded from every filter method — including `.match()` —
-at the type level, `contains()` is narrowed to match-indexed columns, and
+at the type level, `matches()` is narrowed to match-indexed columns, and
 `order()` to plaintext columns; filtering a storage-only column is always a
 clear runtime error. Undeclared tables behave exactly as with no `schemas` at
 all: `from<Row>(tableName)` returns the untyped v3 builder, with `Row`
@@ -205,14 +207,23 @@ These are internal to the adapter but explain observable behaviour. Envelopes
   proxies, and Supabase request logs. The remaining gap is PostgREST operand
   casting; until the adapter can reach the query domains (CIP-3402), operands
   keep carrying ciphertext.
-- **Free-text search is `contains()`; `like`/`ilike` are rejected** on
-  encrypted columns with an error naming `contains()`. The v3 domains define
-  no LIKE operator — free-text search is bloom-filter token containment
-  (`contains()` → PostgREST `cs` → `@>`), where match is tokenized +
-  downcased and `%` is tokenized like any other character, so a `like`
-  pattern is a category error. On plaintext columns `like`/`ilike` (and
-  native `contains`) pass through unchanged.
-- **`contains()` matches substrings.** The search term blooms to its own
+- **Free-text search is `matches()`; `contains()` on an encrypted column is
+  rejected** with an error naming `matches()`. The v3 domains define no LIKE
+  operator — encrypted free-text search is fuzzy bloom-filter token matching
+  (`matches()` → PostgREST `cs` → `@>`), one-sided (a match may be a false
+  positive, a non-match never is) and order-/multiplicity-insensitive, where
+  match is tokenized + downcased and `%` is tokenized like any other character.
+  `contains()` is reserved for native (exact) jsonb/array containment on
+  plaintext columns, which pass through unchanged.
+- **`like`/`ilike` on an encrypted column are an approximate compatibility
+  shim** that delegates to `matches()`: leading/trailing `%` are stripped and
+  the residual term is fuzzy-matched (emitting the same `cs` wire, with a
+  one-time warning). Because the match is case-insensitive, one-sided, and
+  anchoring is not honored, the result is APPROXIMATE. A pattern with an
+  internal `%` or any `_` cannot be approximated and throws; call `matches()`
+  directly to make the fuzzy intent explicit. On plaintext columns `like`/`ilike`
+  pass through unchanged as real SQL LIKE.
+- **`matches()` matches substrings.** The search term blooms to its own
   trigrams, and a row matches when the stored value's bloom contains all of
   them — so any substring of at least 3 characters (the tokenizer's
   `token_length`) matches. Shorter terms bloom to nothing and would match every

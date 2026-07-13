@@ -192,10 +192,10 @@ describe('supabase v3 wire encoding, every domain', () => {
   })
 
   describe.each(matchDomains)('%s (freeTextSearch)', (eqlType, spec) => {
-    it('emits contains() as a cs containment filter', async () => {
+    it('emits matches() as a cs containment filter', async () => {
       const { q, supabase, name } = instanceFor(eqlType, spec)
 
-      await q.select(`id, ${name}`).contains(name, firstSample(spec))
+      await q.select(`id, ${name}`).matches(name, firstSample(spec))
 
       const [filter] = supabase.callsFor('filter')
       expect(filter.args[0]).toBe(name)
@@ -205,12 +205,27 @@ describe('supabase v3 wire encoding, every domain', () => {
       expect(supabase.callsFor('like')).toHaveLength(0)
     })
 
-    it('refuses like(), directing the caller to contains()', async () => {
+    it('refuses contains(), directing the caller to matches()', async () => {
       const { q, name } = instanceFor(eqlType, spec)
 
-      expect(() => q.like(name, firstSample(spec) as string)).toThrow(
-        /Use contains\(\)/,
+      expect(() => q.contains(name, firstSample(spec))).toThrow(
+        /Use matches\(\)/,
       )
+    })
+
+    // like/ilike on an encrypted free-text column are an approximate shim that
+    // DELEGATES to matches: a wildcard-free sample is fuzzy-matched, emitting the
+    // same `cs` wire as matches() (#617). (These matrix samples carry no `%`/`_`.)
+    it('delegates like() to matches, emitting the same cs filter', async () => {
+      const { q, supabase, name } = instanceFor(eqlType, spec)
+
+      await q.select(`id, ${name}`).like(name, firstSample(spec) as string)
+
+      const [filter] = supabase.callsFor('filter')
+      expect(filter.args[0]).toBe(name)
+      expect(filter.args[1]).toBe('cs')
+      expect(JSON.parse(filter.args[2] as string).c).toBeDefined()
+      expect(supabase.callsFor('like')).toHaveLength(0)
     })
   })
 

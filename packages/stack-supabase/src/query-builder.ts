@@ -244,6 +244,17 @@ export class EncryptedQueryBuilderImpl<
     return this
   }
 
+  /**
+   * Encrypted free-text token match (v3 encrypted columns). Emits the same
+   * `cs`/`@>` wire operator as `contains`, but on a match-indexed encrypted
+   * column it is fuzzy bloom-filter token matching, not containment — see the v3
+   * builder. The v3 dialect encrypts the operand as a free-text query term.
+   */
+  matches(column: string, value: unknown): this {
+    this.filters.push({ op: 'matches', column, value })
+    return this
+  }
+
   is(column: string, value: null | boolean): this {
     this.filters.push({ op: 'is', column, value })
     return this
@@ -1077,7 +1088,11 @@ export class EncryptedQueryBuilderImpl<
         case 'ilike':
           q = this.applyPatternFilter(q, column, f.op, value, wasEncrypted)
           break
+        // `matches` (encrypted free-text) and `contains` (plaintext / encrypted
+        // JSON) share the `cs`/`@>` wire operator; the operand encoding is the
+        // same, so both emit through the one containment applier.
         case 'contains':
+        case 'matches':
           q = this.applyContainsFilter(q, column, value, wasEncrypted)
           break
         case 'is':
@@ -1133,7 +1148,7 @@ export class EncryptedQueryBuilderImpl<
       // containment literal ourselves and emit the `cs` token, exactly as the
       // `.or()` path does. A scalar (including the encrypted envelope, already
       // serialized) yields `null` and is forwarded untouched.
-      if (nf.op === 'contains') {
+      if (nf.op === 'contains' || nf.op === 'matches') {
         const literal = formatContainmentOperand(value)
         q = q.not(nf.column, 'cs', literal ?? value)
         continue
