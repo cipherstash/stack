@@ -74,7 +74,6 @@
 		"@byteslice/result": "0.2.0"
 	},
 	"peerDependencies": {
-		"@cipherstash/protect-ffi": "0.29.0",
 		"drizzle-orm": ">=0.33"
 	},
 	"devDependencies": {

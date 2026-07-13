@@ -27,7 +27,6 @@ export default defineConfig([
     clean: false,
     target: 'es2022',
     tsconfig: './tsconfig.json',
-    external: ['drizzle-orm', '@supabase/supabase-js', 'pg'],
     // zod + @byteslice/result are bundled so dist/wasm-inline.js carries
     // no bare-specifier transitive imports — important for Deno / Edge /
     // browser consumers whose runtime won't resolve npm names without an
@@ -49,7 +48,6 @@ export default defineConfig([
     clean: false,
     target: 'es2022',
     tsconfig: './tsconfig.json',
-    external: ['drizzle-orm', '@supabase/supabase-js', 'pg'],
     noExternal: ['evlog', 'uuid', 'zod', '@byteslice/result'],
   },
 ])

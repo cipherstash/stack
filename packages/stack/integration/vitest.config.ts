@@ -1,7 +1,11 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
-import { sharedAlias } from '../../../vitest.shared'
+import { sharedAlias, stackSourceAlias } from '../../../vitest.shared'
+import {
+  integrationHarness,
+  integrationTestDefaults,
+} from '../../test-kit/src/integration/config'
 
 /**
  * Integration suites: real ZeroKMS, real Postgres, real PostgREST.
@@ -61,71 +65,13 @@ for (const glob of SUITE_GLOBS) {
 }
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      ...sharedAlias,
-      '@/': resolve(__dirname, '../src') + '/',
-      '@cipherstash/protect-ffi/wasm-inline': resolve(
-        __dirname,
-        '../__tests__/helpers/stub-protect-ffi-wasm-inline.ts',
-      ),
-      '@cipherstash/auth/wasm-inline': resolve(
-        __dirname,
-        '../__tests__/helpers/stub-auth-wasm-inline.ts',
-      ),
-    },
-  },
+  resolve: { alias: { ...sharedAlias, ...stackSourceAlias } },
   test: {
     root: resolve(__dirname, '..'),
+    // Unlike the adapter packages (fixed glob), stack's integration job scopes to
+    // its shared/ + identity/ suites via CS_IT_SUITE — hence the guard above.
     include: SUITE_GLOBS,
-    globalSetup: [
-      resolve(__dirname, '../../test-kit/src/integration/global-setup.ts'),
-    ],
-    server: {
-      deps: {
-        // `@cipherstash/test-kit` resolves to source in ANOTHER package, i.e.
-        // outside this config's root, so Vitest externalizes it and loads it
-        // through Node rather than the transform pipeline. Its driver imports
-        // `vitest`, and a `vitest` imported outside a worker cannot reach the
-        // runner's state: "Vitest failed to access its internal state".
-        inline: [/packages\/test-kit/],
-      },
-    },
-    // Real crypto round-trips over the network. The unit config uses 30s for the
-    // same reason; seeding a family table encrypts every sample, so hooks need
-    // more headroom than tests do.
-    testTimeout: 60_000,
-    hookTimeout: 180_000,
-    // One database, shared tables. File-level parallelism would have two family
-    // suites installing EQL and reloading the PostgREST schema cache at once.
-    fileParallelism: false,
-
-    /**
-     * Show console output only for tests that FAIL.
-     *
-     * The capability-rejection tests are the bulk of the suite, and each one
-     * makes the adapter refuse an operation. `EncryptedQueryBuilderImpl.execute`
-     * logs `logger.error(...)` before returning its `Result` error, so every
-     * passing rejection emits an ERROR block with a stack trace. A CI run
-     * printed 213 of them — all from passing tests — which is enough noise to
-     * bury a real failure and enough to make a green job look broken.
-     *
-     * `'passed-only'` suppresses those and keeps the logs of any test that
-     * actually fails, which is when they are worth reading. The stack logger has
-     * no silent level (`STASH_STACK_LOG` bottoms out at `error`), so this is the
-     * only place to do it without changing product logging behaviour.
-     */
-    silent: 'passed-only',
-
-    // A fully-empty run is a failure, not a pass: paired with the per-glob
-    // directory guard above, a mistyped/renamed suite path can never go green.
-    passWithNoTests: false,
-
-    // Fail the run if anything is skipped. A skipped test reads exactly like a
-    // passing one, and every silent hole this suite has found took that shape.
-    reporters: [
-      'default',
-      resolve(__dirname, '../../test-kit/src/integration/no-skips-reporter.ts'),
-    ],
+    ...integrationHarness,
+    ...integrationTestDefaults,
   },
 })

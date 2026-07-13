@@ -1,5 +1,12 @@
-// Import directly from stack's schema helper (not `@cipherstash/stack/adapter-kit`)
-// so test-kit's strict `tsc` graph does not pull in the encryption/helpers chain.
+// test-kit is an internal, source-only package that consumes stack through the
+// `@/` alias (like `catalog.ts` does) — not through the published adapter seam.
+// So we import `matchNeedleError` straight from `@/schema/match-defaults` rather
+// than `@cipherstash/stack/adapter-kit`: the adapter-kit BARREL also re-exports
+// `bulkModelsToEncryptedPgComposites` from `encryption/helpers`, and importing
+// anything from that barrel drags the whole encryption/helpers → jsonb chain into
+// test-kit's strict `tsc` graph (whose stricter options flag pre-existing loose
+// types there). The published adapter packages, which have no `@/` alias, use the
+// adapter-kit seam as intended; test-kit does not need it.
 import { matchNeedleError } from '@/schema/match-defaults'
 import type { V3_MATRIX } from './catalog'
 

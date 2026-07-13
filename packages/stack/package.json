@@ -242,22 +242,6 @@
 		"@cipherstash/auth-linux-x64-musl": "catalog:repo",
 		"@cipherstash/auth-win32-x64-msvc": "catalog:repo"
 	},
-	"peerDependencies": {
-		"@supabase/supabase-js": ">=2",
-		"drizzle-orm": ">=0.33",
-		"pg": ">=8"
-	},
-	"peerDependenciesMeta": {
-		"drizzle-orm": {
-			"optional": true
-		},
-		"@supabase/supabase-js": {
-			"optional": true
-		},
-		"pg": {
-			"optional": true
-		}
-	},
 	"engines": {
 		"node": ">=22"
 	}

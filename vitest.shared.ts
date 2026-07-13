@@ -90,3 +90,25 @@ export const sharedAlias: Record<string, string> = {
   // `packages/stack/dist`, re-coupling `pnpm test` to a prior `pnpm build`.
   '@cipherstash/stack': resolve(repoRoot, 'packages/stack/src/index.ts'),
 }
+
+/**
+ * The aliases needed to load stack's SOURCE (not just its public subpaths) from a
+ * vitest config: stack's own internal `@/` alias — which its source uses and which
+ * therefore leaks into any package that source-resolves it — plus the wasm-inline
+ * stubs for the two `/wasm-inline` subpaths Vitest cannot resolve. All resolve to
+ * fixed locations under `packages/stack`, so they are shared here rather than
+ * copy-pasted into every package's vitest config.
+ *
+ * Spread AFTER `sharedAlias`: `resolve: { alias: { ...sharedAlias, ...stackSourceAlias } }`.
+ */
+export const stackSourceAlias: Record<string, string> = {
+  '@/': `${resolve(repoRoot, 'packages/stack/src')}/`,
+  '@cipherstash/protect-ffi/wasm-inline': resolve(
+    repoRoot,
+    'packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts',
+  ),
+  '@cipherstash/auth/wasm-inline': resolve(
+    repoRoot,
+    'packages/stack/__tests__/helpers/stub-auth-wasm-inline.ts',
+  ),
+}

@@ -12,7 +12,7 @@
 
 import { PostgrestClient } from '@supabase/postgrest-js'
 import type postgres from 'postgres'
-import type { SupabaseClientLike } from '@/supabase/types'
+import type { SupabaseClientLike } from '../../src/types'
 
 export function makePostgrestClient(): SupabaseClientLike {
   const url = process.env.PGRST_URL

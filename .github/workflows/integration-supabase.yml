@@ -115,6 +115,10 @@ jobs:
       - name: Supabase v3 integration suites
         run: pnpm --filter @cipherstash/stack-supabase run test:integration
 
+      # A second vitest invocation (stack's shared/ suites live in a different
+      # package now). Its globalSetup calls the same EQL v3 install, but
+      # `isInstalled` short-circuits against the DB the first invocation already
+      # provisioned — so this is a fast no-op check, not a second schema apply.
       - name: Shared core integration suites (against Supabase Postgres)
         run: pnpm --filter @cipherstash/stack run test:integration
 

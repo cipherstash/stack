@@ -143,6 +143,10 @@ jobs:
       - name: Drizzle v3 integration suites
         run: pnpm --filter @cipherstash/stack-drizzle run test:integration
 
+      # A second vitest invocation (stack's shared/ + identity suites live in a
+      # different package now). Its globalSetup calls the same EQL v3 install, but
+      # `isInstalled` short-circuits against the DB the first invocation already
+      # provisioned — a fast no-op check, not a second schema apply.
       - name: Shared core + identity integration suites
         run: pnpm --filter @cipherstash/stack run test:integration
 

@@ -168,7 +168,25 @@ export async function encryptedSupabaseV3(
     const url = clientOrUrl
     const key = keyOrOptions as string
     options = maybeOptions ?? {}
-    const { createClient } = await import('@supabase/supabase-js')
+    // `@supabase/supabase-js` is an optional peer: the url+key overload needs it
+    // to construct a client, but the (client) overload does not. Remap a missing
+    // install to an actionable message, matching `loadPg`. Guard on `err.code`
+    // (CJS `MODULE_NOT_FOUND`, ESM `ERR_MODULE_NOT_FOUND`), not message text.
+    let createClient: (url: string, key: string) => unknown
+    try {
+      ;({ createClient } = await import('@supabase/supabase-js'))
+    } catch (err) {
+      const code = (err as { code?: string }).code
+      if (code !== 'MODULE_NOT_FOUND' && code !== 'ERR_MODULE_NOT_FOUND')
+        throw err
+      throw new Error(
+        "[supabase v3]: encryptedSupabaseV3(url, key) needs '@supabase/supabase-js' " +
+          'to build the client, but that optional peer dependency is not installed. ' +
+          'Install it (`npm install @supabase/supabase-js`), or pass an existing ' +
+          'client: encryptedSupabaseV3(supabaseClient, options).',
+        { cause: err },
+      )
+    }
     supabaseClient = createClient(url, key) as unknown as SupabaseClientLike
   } else {
     supabaseClient = clientOrUrl

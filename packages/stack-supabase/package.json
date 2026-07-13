@@ -55,7 +55,6 @@
 		"@cipherstash/stack": "workspace:*"
 	},
 	"peerDependencies": {
-		"@cipherstash/protect-ffi": "0.29.0",
 		"@supabase/supabase-js": ">=2",
 		"pg": ">=8"
 	},
