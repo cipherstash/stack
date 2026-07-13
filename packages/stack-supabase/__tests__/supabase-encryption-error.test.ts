@@ -20,9 +20,10 @@ import {
  * `encryptionError: undefined`, so the typed `EncryptedSupabaseError.encryptionError`
  * field was dead. The v2 tests pin that a genuine encryption failure now threads its
  * `EncryptionError` through the shared base `execute()` catch, while a plain
- * (non-encryption) throw leaves it unset. The v3 test covers the dialect's own
- * `encryptionFailure` path, which synthesizes an `EncryptionError` for a
- * query-term contract violation (no operation failure to wrap).
+ * (non-encryption) throw leaves it unset. The v3 tests cover the dialect's own
+ * `encryptionFailure` path, which synthesizes an `EncryptionError` for its two
+ * query-term contract-violation cases (length mismatch, null envelope) that have
+ * no operation failure to wrap.
  */
 
 const usersV2 = encryptedTableV2('users', {
@@ -129,6 +130,36 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
     )
     expect(error?.encryptionError?.message).toMatch(
       /1 term(s)? for 2 value(s)?/,
+    )
+  })
+
+  it('v3: synthesizes an EncryptionError for a null-envelope contract violation', async () => {
+    // The other no-cause `encryptionFailure` path: a length-matched bulk response
+    // whose position 0 is a null envelope. Same synthesized-EncryptionError branch
+    // as the length-mismatch case above, reached from a different call site.
+    const encryptionClient = createMockEncryptionClient() as unknown as {
+      bulkEncrypt: (...args: unknown[]) => unknown
+    }
+    encryptionClient.bulkEncrypt = () =>
+      operation([{ data: null }, { data: fakeEnvelope('grace', 'email') }])
+
+    const { client: supabase } = createMockSupabase()
+    const { error, status } = await new EncryptedQueryBuilderV3Impl(
+      'users',
+      usersV3,
+      encryptionClient as unknown as EncryptionClient,
+      supabase,
+      ['id', 'email'],
+    )
+      .select('id')
+      .in('email', ['ada@example.com', 'grace@example.com'])
+
+    expect(status).toBe(500)
+    expect(error?.encryptionError?.type).toBe(
+      EncryptionErrorTypes.EncryptionError,
+    )
+    expect(error?.encryptionError?.message).toMatch(
+      /null envelope at position 0/,
     )
   })
 })
