@@ -1,7 +1,8 @@
-name: "FTA Complexity (EQL v3)"
+name: "FTA Complexity"
 
-# Blocking complexity gate for the EQL v3 text-search schema. Runs the Fast
-# TypeScript Analyzer (fta-cli) against the v3 source directory only and fails
+# Blocking complexity gate for the EQL v3 core (stack) and the split adapter
+# packages (stack-drizzle, stack-supabase). Runs the Fast TypeScript Analyzer
+# (fta-cli) against each package's source and fails
 # the check when any file exceeds the score cap (`--score-cap` in the
 # `analyze:complexity` script). FTA is pure static source analysis, so this job
 # needs no build step, database, or credentials.
@@ -12,6 +13,8 @@ on:
       - 'main'
     paths:
       - 'packages/stack/src/eql/v3/**'
+      - 'packages/stack-drizzle/**'
+      - 'packages/stack-supabase/**'
       # Shared match-index defaults live outside src/eql/v3 but shape every
       # emitted v3 match block (load-bearing `k`/`m` ciphertext params), so edits
       # here must trigger the v3 gate too.
@@ -23,6 +26,8 @@ on:
       - "**"
     paths:
       - 'packages/stack/src/eql/v3/**'
+      - 'packages/stack-drizzle/**'
+      - 'packages/stack-supabase/**'
       - 'packages/stack/src/schema/match-defaults.ts'
       - 'packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
@@ -61,5 +66,17 @@ jobs:
 
       # Non-zero exit (score above the cap) fails the check — this is the
       # blocking gate. No `continue-on-error`.
-      - name: Analyze v3 complexity
+      # One step per package so a failure names the offending package. Each caps
+      # at its current worst file (a ratchet, not an aspiration): stack src/eql/v3
+      # at 69, and the split adapter packages at their monolith maxima — drizzle
+      # 89 (operators.ts), supabase 91 (query-builder.ts). Lower a cap whenever a
+      # file is refactored below the next threshold; the v2 query-builder/operators
+      # monoliths are the debt to whittle down toward stack's 69.
+      - name: Analyze stack (eql/v3) complexity
         run: pnpm --filter @cipherstash/stack run analyze:complexity
+
+      - name: Analyze stack-drizzle complexity
+        run: pnpm --filter @cipherstash/stack-drizzle run analyze:complexity
+
+      - name: Analyze stack-supabase complexity
+        run: pnpm --filter @cipherstash/stack-supabase run analyze:complexity

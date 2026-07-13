@@ -697,6 +697,9 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
+      fta-cli:
+        specifier: 3.0.0
+        version: 3.0.0
       postgres:
         specifier: ^3.4.8
         version: 3.4.9
@@ -737,6 +740,9 @@ importers:
       fast-check:
         specifier: ^4.8.0
         version: 4.8.0
+      fta-cli:
+        specifier: 3.0.0
+        version: 3.0.0
       pg:
         specifier: 8.20.0
         version: 8.20.0

@@ -66,7 +66,8 @@
 		"dev": "tsup --watch",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
-		"test:integration": "vitest run --config integration/vitest.config.ts"
+		"test:integration": "vitest run --config integration/vitest.config.ts",
+		"analyze:complexity": "fta src --score-cap 89"
 	},
 	"dependencies": {
 		"@cipherstash/stack": "workspace:*",
@@ -79,6 +80,7 @@
 	"devDependencies": {
 		"@cipherstash/protect-ffi": "0.29.0",
 		"@cipherstash/test-kit": "workspace:*",
+		"fta-cli": "3.0.0",
 		"dotenv": "17.4.2",
 		"drizzle-orm": "^0.45.2",
 		"postgres": "^3.4.8",
