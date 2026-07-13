@@ -214,20 +214,40 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     },
   }
 
+  // Overloaded so the implementation is checked against BOTH forms directly —
+  // no whole-value cast. The two public signatures mirror the interface member;
+  // the hidden implementation signature is broad and forwards to the nominal
+  // client (which routes to the batch operation when no `opts` are supplied).
+  // Only the forwarded args are `as never`, exactly as the sibling wrappers
+  // below: one forwarding body cannot re-derive the nominal client's per-column
+  // signatures.
+  function encryptQuery<
+    Table extends S[number],
+    Col extends QueryableColumnsOf<Table>,
+    QT extends QueryTypesForColumn<Col> = QueryTypesForColumn<Col>,
+  >(
+    plaintext: PlaintextForColumn<Col>,
+    opts: {
+      table: Table
+      column: Col
+      queryType?: QT
+      returnType?: EncryptedReturnType
+    },
+  ): EncryptQueryOperation
+  function encryptQuery(
+    terms: readonly ScalarQueryTerm[],
+  ): BatchEncryptQueryOperation
+  function encryptQuery(
+    plaintextOrTerms: unknown,
+    opts?: unknown,
+  ): EncryptQueryOperation | BatchEncryptQueryOperation {
+    return client.encryptQuery(plaintextOrTerms as never, opts as never)
+  }
+
   return {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
-    // Forwards both forms to the nominal client, which routes to the batch
-    // operation when no `opts` are supplied. A single implementation signature
-    // cannot satisfy the two-overload interface member (their return types
-    // differ: single → EncryptQueryOperation, batch → BatchEncryptQueryOperation)
-    // and TS will not structurally reconcile them for an object-literal method,
-    // so bridge with a cast; the runtime forward is uniform.
-    encryptQuery: ((plaintextOrTerms: never, opts?: never) =>
-      client.encryptQuery(
-        plaintextOrTerms,
-        opts as never,
-      )) as unknown as TypedEncryptionClient<S>['encryptQuery'],
+    encryptQuery,
     encryptModel: (input, table) =>
       client.encryptModel(input as never, table as never) as never,
     bulkEncryptModels: (input, table) =>
