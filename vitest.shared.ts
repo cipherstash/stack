@@ -29,6 +29,10 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/test-kit/src/catalog.ts',
   ),
+  '@cipherstash/test-kit/integration-clerk': resolve(
+    repoRoot,
+    'packages/test-kit/src/integration/clerk.ts',
+  ),
   '@cipherstash/test-kit': resolve(repoRoot, 'packages/test-kit/src/index.ts'),
   '@cipherstash/stack/eql/v3': resolve(
     repoRoot,
@@ -43,10 +47,6 @@ export const sharedAlias: Record<string, string> = {
     'packages/stack/src/encryption/v3.ts',
   ),
   // The core↔adapter seam, consumed by the split adapter packages.
-  '@cipherstash/test-kit/integration-clerk': resolve(
-    repoRoot,
-    'packages/test-kit/src/integration/clerk.ts',
-  ),
   '@cipherstash/stack/adapter-kit': resolve(
     repoRoot,
     'packages/stack/src/adapter-kit.ts',
