@@ -292,17 +292,27 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(supabase.callsFor('like')[0].args[0]).toBe('constructor')
   })
 
-  it('maps not(contains) on encrypted columns to not(cs)', async () => {
+  it('maps not(matches) on encrypted columns to not(cs)', async () => {
     const { es, supabase } = v3Instance()
 
     await es
       .from('users', users)
       .select('id, email')
-      .not('email', 'contains', 'a@b')
+      .not('email', 'matches', 'a@b')
 
     const [not] = supabase.callsFor('not')
     expect(not.args[0]).toBe('email')
     expect(not.args[1]).toBe('cs')
+  })
+
+  // `not(col, 'contains', …)` on an encrypted column would negate a fuzzy bloom
+  // match under the `contains` name — the confusion #617 removes. It is rejected;
+  // use the honest `matches` spelling (above) or the raw `cs` operator.
+  it('rejects not(contains) on an encrypted column, steering to matches', () => {
+    const { es } = v3Instance()
+    expect(() =>
+      es.from('users', users).select('id').not('email', 'contains', 'a@b'),
+    ).toThrow(/not apply to encrypted column .* Use not\(.*'matches'/)
   })
 
   // An encrypted in-list is emitted through `filter()` as a pre-formatted
@@ -1053,7 +1063,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     it('sends a full envelope as the not(cs) operand', async () => {
       const { es, supabase } = v3Instance()
 
-      await es.from('users', users).select('id').not('email', 'contains', 'a@b')
+      await es.from('users', users).select('id').not('email', 'matches', 'a@b')
 
       const [not] = supabase.callsFor('not')
       expect(not.args[0]).toBe('email')

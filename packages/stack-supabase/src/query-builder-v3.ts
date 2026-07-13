@@ -602,6 +602,23 @@ export class EncryptedQueryBuilderV3Impl<
   }
 
   /**
+   * `not(col, 'contains', …)` on an encrypted column would negate a fuzzy bloom
+   * match under the `contains` name — the exact confusion #617 removes — because
+   * the base `not()` path rewrites the `contains` spelling to the `cs` wire
+   * operator. Reject it and steer to the `matches` spelling (or the raw `cs`
+   * operator, which is honest about the wire op). Plaintext columns keep native
+   * negated containment, and every other operator is delegated unchanged.
+   */
+  override not(column: string, operator: string, value: unknown): this {
+    if (operator === 'contains' && this.isEncryptedV3Column(column)) {
+      throw new Error(
+        `[supabase v3]: not("${column}", 'contains', …) does not apply to encrypted column "${column}" — that is fuzzy free-text matching, not containment. Use not("${column}", 'matches', …) or the raw 'cs' operator.`,
+      )
+    }
+    return super.not(column, operator, value)
+  }
+
+  /**
    * `like`/`ilike` on an ENCRYPTED column are a best-effort compatibility shim,
    * delegated to `matches`. EQL v3 free-text search is fuzzy bloom token
    * matching, not SQL pattern matching, so the result is APPROXIMATE — matching

@@ -331,10 +331,12 @@ export interface EncryptedQueryBuilderV3Untyped<
     StringKeyOf<Row>,
     EncryptedQueryBuilderV3Untyped<Row>
   > {
-  /** Fuzzy free-text token match on an encrypted match/search column. */
+  /** Fuzzy free-text token match on an encrypted match/search column. The
+   * operand is always the string term to tokenize (never an array/object), even
+   * on the untyped surface where the column kind is unknown. */
   matches<K extends StringKeyOf<Row>>(
     column: K,
-    value: NativeContainsValue,
+    value: string,
   ): EncryptedQueryBuilderV3Untyped<Row>
   /** Native jsonb/array containment on a plaintext column (PostgREST `cs`). */
   contains<K extends StringKeyOf<Row>>(
