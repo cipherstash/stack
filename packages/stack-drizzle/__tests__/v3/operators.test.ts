@@ -25,17 +25,25 @@ import {
 import { extractEncryptionSchemaV3 } from '../../src/v3/schema-extraction'
 import { types } from '../../src/v3/types'
 
-const TERM = { c: 'ct', v: 1 }
+// A query TERM (from `encryptQuery`), not a storage envelope: it carries index
+// terms but NO ciphertext `c` — that is the whole point of the encrypt →
+// encryptQuery move. The operator layer casts it to the column's query domain.
+const TERM = { hm: 'h', v: 3 }
 const TERM_JSON = JSON.stringify(TERM)
 const lockContext = { identityClaim: 'user-123' }
 const audit = { metadata: { actor: 'test' } }
 
-type EncryptResult = Promise<
-  { data: typeof TERM } | { failure: { message: string } }
->
+// The `eql_v3.query_<domain>` type an operand for a matrix column casts to.
+// `slug('public.eql_v3_text_eq')` → `eql_v3_text_eq`; stripping the `eql_v3_`
+// prefix yields the domain suffix the query type is named for (`text_eq` →
+// `eql_v3.query_text_eq`).
+const qcast = (eqlType: string): string =>
+  `eql_v3.query_${slug(eqlType).replace(/^eql_v3_/, '')}`
 
-function chainable(result: EncryptResult) {
-  const op = result as EncryptResult & {
+type TermResult = { data: unknown } | { failure: { message: string } }
+
+function chainable(result: Promise<TermResult>) {
+  const op = result as Promise<TermResult> & {
     withLockContext: ReturnType<typeof vi.fn>
     audit: ReturnType<typeof vi.fn>
   }
@@ -44,53 +52,33 @@ function chainable(result: EncryptResult) {
   return op
 }
 
-function setup(
-  encryptImpl: (...args: unknown[]) => EncryptResult = async () => ({
-    data: TERM,
-  }),
-) {
-  const encrypt = vi.fn((...args: unknown[]) => chainable(encryptImpl(...args)))
-  // `encryptQuery` backs JSON containment: it returns a narrowed `query_jsonb`
-  // term (no ciphertext). The double returns a recognisable ste_vec-shaped term
-  // so a rendered `@>` query can be asserted.
-  const encryptQuery = vi.fn(() =>
-    chainable(
-      Promise.resolve({ data: { sv: [{ s: 'sel', hm: 'h' }] } }) as never,
-    ),
-  )
-  // The factory's `client` parameter is the structural `{ encrypt }` surface,
-  // so this hand-rolled double satisfies it with no cast (M1).
-  const client = { encrypt, encryptQuery }
+// The double now models `encryptQuery` in BOTH its forms: the single
+// `(value, opts)` form used by scalar/JSON operands, and the batch `(terms[])`
+// form used by inArray/notInArray. `termImpl` maps a plaintext value to the
+// query term the crossing would return (defaulting to a constant `TERM`); the
+// batch form applies it position-for-position so callers can pin ordering.
+function setup(termImpl: (value?: unknown) => unknown = () => TERM) {
+  const encryptQuery = vi.fn((valueOrTerms: unknown, opts?: unknown) => {
+    // Route exactly as the real client does (packages/stack/src/encryption/
+    // index.ts): batch ONLY when no opts are supplied AND the arg is a term
+    // array. An array-valued single query WITH opts (e.g. a searchableJson
+    // array needle) must take the single path here too, or the double would
+    // diverge from production for that shape.
+    if (opts === undefined && Array.isArray(valueOrTerms)) {
+      const terms = valueOrTerms as Array<{ value: unknown }>
+      return chainable(
+        Promise.resolve({ data: terms.map((t) => termImpl(t.value)) }),
+      )
+    }
+    return chainable(Promise.resolve({ data: termImpl(valueOrTerms) }))
+  })
+  // The factory's `client` parameter is the structural `{ encryptQuery }`
+  // surface, so this hand-rolled double satisfies it with no cast.
+  const client = { encryptQuery }
   const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
   const dialect = new PgDialect()
   const render = (s: unknown) => dialect.sqlToQuery(s as SQL)
-  return { ops, encrypt, encryptQuery, render }
-}
-
-type BulkPayload = Array<{ id?: string; plaintext: unknown }>
-type BulkResult = Promise<
-  { data: Array<{ data: typeof TERM }> } | { failure: { message: string } }
->
-
-/**
- * A double for the fuller client surface — one that also exposes `bulkEncrypt`,
- * as the real `TypedEncryptionClient` does. `inArray`/`notInArray` should
- * prefer it over N single `encrypt` crossings.
- */
-function setupBulk(
-  bulkImpl: (payloads: BulkPayload) => BulkResult = async (payloads) => ({
-    data: payloads.map(() => ({ data: TERM })),
-  }),
-) {
-  const encrypt = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
-  const bulkEncrypt = vi.fn((payloads: BulkPayload, ..._rest: unknown[]) =>
-    chainable(bulkImpl(payloads) as never),
-  )
-  const client = { encrypt, bulkEncrypt }
-  const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
-  const dialect = new PgDialect()
-  const render = (s: unknown) => dialect.sqlToQuery(s as SQL)
-  return { ops, encrypt, bulkEncrypt, render }
+  return { ops, encryptQuery, render }
 }
 
 const matrixEntries = typedEntries(V3_MATRIX)
@@ -153,26 +141,32 @@ const users = pgTable('users', {
 describe('createEncryptionOperatorsV3 - equality', () => {
   it.each(
     equalityDomains,
-  )('%s eq emits the latest two-arg eql_v3.eq with a full-envelope operand', async (eqlType, spec) => {
-    const { ops, encrypt, render } = setup()
+  )('%s eq emits the latest two-arg eql_v3.eq with a query-term operand', async (eqlType, spec) => {
+    const { ops, encryptQuery, render } = setup()
     const q = render(await ops.eq(matrixColumn(eqlType), sampleFor(spec)))
 
     expect(q.sql).toContain(
-      `eql_v3.eq("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
+      `eql_v3.eq("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
     )
     expect(q.params).toEqual([TERM_JSON])
-    expect(encrypt.mock.calls[0]?.[1]?.column.getName()).toBe(slug(eqlType))
+    expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
+      slug(eqlType),
+    )
+    expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('equality')
   })
 
   it.each(equalityDomains)('%s ne emits eql_v3.neq', async (eqlType, spec) => {
-    const { ops, encrypt, render } = setup()
+    const { ops, encryptQuery, render } = setup()
     const q = render(await ops.ne(matrixColumn(eqlType), sampleFor(spec)))
 
     expect(q.sql).toContain(
-      `eql_v3.neq("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
+      `eql_v3.neq("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
     )
     expect(q.params).toEqual([TERM_JSON])
-    expect(encrypt.mock.calls[0]?.[1]?.column.getName()).toBe(slug(eqlType))
+    expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
+      slug(eqlType),
+    )
+    expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('equality')
   })
 
   it('same-named columns on different tables use their own equality capability', async () => {
@@ -186,7 +180,9 @@ describe('createEncryptionOperatorsV3 - equality', () => {
 
     const q = render(await ops.eq(accounts.email, 'ada@example.com'))
 
-    expect(q.sql).toContain('eql_v3.eq("accounts"."email", $1::jsonb)')
+    expect(q.sql).toContain(
+      'eql_v3.eq("accounts"."email", $1::eql_v3.query_text_eq)',
+    )
   })
 
   it('does not reuse a cached extracted schema across distinct pgTable objects with the same SQL name', async () => {
@@ -196,26 +192,26 @@ describe('createEncryptionOperatorsV3 - equality', () => {
     const second = pgTable('shared', {
       age: types.IntegerOrd('age'),
     })
-    const { ops, encrypt } = setup()
+    const { ops, encryptQuery } = setup()
 
     await ops.eq(first.email, 'ada@example.com')
     await ops.eq(second.age, 37)
 
-    expect(encrypt.mock.calls[1]?.[1]?.table.build()).toEqual(
+    expect(encryptQuery.mock.calls[1]?.[1]?.table.build()).toEqual(
       extractEncryptionSchemaV3(second).build(),
     )
   })
 
   it('passes default lock context and audit to operand encryption', async () => {
-    const { ops, encrypt } = setup()
+    const { ops, encryptQuery } = setup()
     await ops.eq(users.nickname, 'ada')
-    const op = encrypt.mock.results[0]?.value
+    const op = encryptQuery.mock.results[0]?.value
     expect(op.withLockContext).toHaveBeenCalledWith(lockContext)
     expect(op.audit).toHaveBeenCalledWith(audit)
   })
 
   it('per-call lock context and audit override constructor defaults', async () => {
-    const { ops, encrypt } = setup()
+    const { ops, encryptQuery } = setup()
     const callLockContext = { identityClaim: 'user-456' }
     const callAudit = { metadata: { actor: 'override' } }
 
@@ -224,7 +220,7 @@ describe('createEncryptionOperatorsV3 - equality', () => {
       audit: callAudit,
     })
 
-    const op = encrypt.mock.results[0]?.value
+    const op = encryptQuery.mock.results[0]?.value
     expect(op.withLockContext).toHaveBeenCalledWith(callLockContext)
     expect(op.withLockContext).not.toHaveBeenCalledWith(lockContext)
     expect(op.audit).toHaveBeenCalledWith(callAudit)
@@ -240,29 +236,32 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     ['lte', 'eql_v3.lte'],
   ] as const)('%s emits %s for every ORE domain', async (op, fn) => {
     for (const [eqlType, spec] of orderDomains) {
-      const { ops, encrypt, render } = setup()
+      const { ops, encryptQuery, render } = setup()
       const q = render(await ops[op](matrixColumn(eqlType), sampleFor(spec)))
 
       expect(q.sql).toContain(
-        `${fn}("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
+        `${fn}("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
       )
       expect(q.params).toEqual([TERM_JSON])
-      expect(encrypt.mock.calls[0]?.[1]?.column.getName()).toBe(slug(eqlType))
+      expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
+        slug(eqlType),
+      )
+      expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('orderAndRange')
     }
   })
 
   it.each(
     orderDomains,
-  )('%s between emits a bounded range with two full-envelope operands', async (eqlType, spec) => {
+  )('%s between emits a bounded range with two query-term operands', async (eqlType, spec) => {
     const { ops, render } = setup()
     const value = sampleFor(spec)
     const q = render(await ops.between(matrixColumn(eqlType), value, value))
 
     expect(q.sql).toContain(
-      `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
+      `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
     )
     expect(q.sql).toContain(
-      `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::jsonb)`,
+      `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::${qcast(eqlType)})`,
     )
     expect(q.params).toEqual([TERM_JSON, TERM_JSON])
   })
@@ -276,10 +275,10 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
 
     expect(q.sql).toMatch(/^not \(/i)
     expect(q.sql).toContain(
-      `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
+      `eql_v3.gte("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
     )
     expect(q.sql).toContain(
-      `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::jsonb)`,
+      `eql_v3.lte("matrix_users"."${slug(eqlType)}", $2::${qcast(eqlType)})`,
     )
     expect(q.params).toEqual([TERM_JSON, TERM_JSON])
   })
@@ -289,22 +288,18 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
   // transposition inside `range` is invisible. Echo the plaintext through the
   // stub instead, and pin that `gte` binds `min` and `lte` binds `max`.
   it('between binds min to gte and max to lte, in that order', async () => {
-    const { ops, render } = setup(async (value) => ({
-      data: { p: value } as never,
-    }))
+    const { ops, render } = setup((value) => ({ p: value }))
 
     const q = render(await ops.between(users.age, -128, 127))
 
     expect(q.sql).toBe(
-      '(eql_v3.gte("users"."age", $1::jsonb) AND eql_v3.lte("users"."age", $2::jsonb))',
+      '(eql_v3.gte("users"."age", $1::eql_v3.query_integer_ord) AND eql_v3.lte("users"."age", $2::eql_v3.query_integer_ord))',
     )
     expect(q.params).toEqual(['{"p":-128}', '{"p":127}'])
   })
 
   it('notBetween binds min to gte and max to lte, in that order', async () => {
-    const { ops, render } = setup(async (value) => ({
-      data: { p: value } as never,
-    }))
+    const { ops, render } = setup((value) => ({ p: value }))
 
     const q = render(await ops.notBetween(users.age, -128, 127))
 
@@ -320,7 +315,7 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     // lte` in Postgres — every row under the lower bound, none of the intended
     // complement. The range must arrive pre-parenthesised.
     expect(q.sql).toBe(
-      'not (eql_v3.gte("users"."age", $1::jsonb) AND eql_v3.lte("users"."age", $2::jsonb))',
+      'not (eql_v3.gte("users"."age", $1::eql_v3.query_integer_ord) AND eql_v3.lte("users"."age", $2::eql_v3.query_integer_ord))',
     )
   })
 
@@ -335,7 +330,7 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
     )
 
     expect(q.sql).toContain(
-      '(eql_v3.gte("users"."age", $1::jsonb) AND eql_v3.lte("users"."age", $2::jsonb))',
+      '(eql_v3.gte("users"."age", $1::eql_v3.query_integer_ord) AND eql_v3.lte("users"."age", $2::eql_v3.query_integer_ord))',
     )
   })
 
@@ -363,15 +358,18 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
 describe('createEncryptionOperatorsV3 - free-text match', () => {
   it.each(
     matchDomains,
-  )('%s contains emits latest eql_v3.contains with a full-envelope operand', async (eqlType, spec) => {
-    const { ops, encrypt, render } = setup()
+  )('%s contains emits latest eql_v3.contains with a query-term operand', async (eqlType, spec) => {
+    const { ops, encryptQuery, render } = setup()
     const q = render(await ops.contains(matrixColumn(eqlType), needleFor(spec)))
 
     expect(q.sql).toContain(
-      `eql_v3.contains("matrix_users"."${slug(eqlType)}", $1::jsonb)`,
+      `eql_v3.contains("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
     )
     expect(q.params).toEqual([TERM_JSON])
-    expect(encrypt.mock.calls[0]?.[1]?.column.getName()).toBe(slug(eqlType))
+    expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
+      slug(eqlType),
+    )
+    expect(encryptQuery.mock.calls[0]?.[1]?.queryType).toBe('freeTextSearch')
   })
 
   // A needle shorter than the tokenizer's `token_length` produces an empty
@@ -380,27 +378,31 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
   it.each(
     matchDomains,
   )('%s contains rejects a needle shorter than token_length before encrypting', async (eqlType) => {
-    const { ops, encrypt } = setup()
+    const { ops, encryptQuery } = setup()
     await expect(ops.contains(matrixColumn(eqlType), 'ad')).rejects.toThrow(
       /at least 3 characters/,
     )
     await expect(ops.contains(matrixColumn(eqlType), '')).rejects.toThrow(
       EncryptionOperatorError,
     )
-    expect(encrypt).not.toHaveBeenCalled()
+    expect(encryptQuery).not.toHaveBeenCalled()
   })
 
   it('contains accepts a needle exactly at token_length', async () => {
     const { ops, render } = setup()
     const q = render(await ops.contains(users.email, 'ada'))
-    expect(q.sql).toContain('eql_v3.contains("users"."email", $1::jsonb)')
+    expect(q.sql).toContain(
+      'eql_v3.contains("users"."email", $1::eql_v3.query_text_search)',
+    )
   })
 
   it('negation is expressed through the passthrough Drizzle not operator', async () => {
     const { ops, render } = setup()
     const q = render(ops.not(await ops.contains(users.email, 'example.com')))
     expect(q.sql).toMatch(/^not /i)
-    expect(q.sql).toContain('eql_v3.contains("users"."email", $1::jsonb)')
+    expect(q.sql).toContain(
+      'eql_v3.contains("users"."email", $1::eql_v3.query_text_search)',
+    )
   })
 
   it('does not expose obsolete like/ilike helpers', () => {
@@ -428,19 +430,26 @@ describe('createEncryptionOperatorsV3 - JSON containment', () => {
     )
     expect(q.sql).not.toContain('eql_v3.contains')
     // The needle is the encryptQuery result, not a full storage envelope.
-    expect(q.params).toEqual([JSON.stringify({ sv: [{ s: 'sel', hm: 'h' }] })])
+    expect(q.params).toEqual([TERM_JSON])
     expect(encryptQuery).toHaveBeenCalledTimes(1)
+    expect(encryptQuery.mock.calls[0]?.[0]).toEqual({ roles: ['eng'] })
     expect(encryptQuery.mock.calls[0]?.[1]).toMatchObject({
       queryType: 'searchableJson',
     })
   })
 
+  it('JSON containment carries the default lock context and audit config', async () => {
+    const { ops, encryptQuery } = setup()
+    await ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] })
+    const op = encryptQuery.mock.results[0]?.value
+    expect(op.withLockContext).toHaveBeenCalledWith(lockContext)
+    expect(op.audit).toHaveBeenCalledWith(audit)
+  })
+
   it('contains surfaces an encryptQuery failure as an EncryptionOperatorError', async () => {
     const { ops, encryptQuery } = setup()
     encryptQuery.mockReturnValueOnce(
-      chainable(
-        Promise.resolve({ failure: { message: 'boom' } }) as never,
-      ) as never,
+      chainable(Promise.resolve({ failure: { message: 'boom' } })),
     )
     await expect(
       ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
@@ -464,19 +473,6 @@ describe('createEncryptionOperatorsV3 - JSON containment', () => {
       /matches every row/,
     )
     expect(encryptQuery).not.toHaveBeenCalled()
-  })
-
-  // `encryptQuery` is OPTIONAL on the operand client (see OperandEncryptionClient):
-  // a `{ encrypt }`-only client is structurally valid but cannot build the
-  // `query_jsonb` needle JSON containment needs. Without this guard the call would
-  // be a raw `TypeError: encryptQuery is not a function`; the guard turns it into a
-  // typed EncryptionOperatorError. Exercises the branch the real double can't.
-  it('contains throws a typed error when the client lacks encryptQuery', async () => {
-    const encrypt = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
-    const ops = createEncryptionOperatorsV3({ encrypt })
-    await expect(
-      ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
-    ).rejects.toBeInstanceOf(EncryptionOperatorError)
   })
 })
 
@@ -512,8 +508,8 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
     await expect(ops.inArray(users.nickname, [])).rejects.toThrow(/non-empty/)
   })
 
-  it('inArray fans out more than MAX_IN_ARRAY_CONCURRENCY values exactly once', async () => {
-    const { ops, encrypt, render } = setup()
+  it('inArray encrypts every value in one batch crossing, ORing one eq term each', async () => {
+    const { ops, encryptQuery, render } = setup()
     const values = [
       'ada',
       'grace',
@@ -528,10 +524,14 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
 
     expect((q.sql.match(/eql_v3\.eq/g) ?? []).length).toBe(values.length)
     expect(q.params).toEqual(values.map(() => TERM_JSON))
-    expect(encrypt).toHaveBeenCalledTimes(values.length)
-    expect(encrypt.mock.calls.map(([value]) => value).sort()).toEqual(
-      [...values].sort(),
-    )
+    // No fan-out anymore: the whole list crosses in a single batch call.
+    expect(encryptQuery).toHaveBeenCalledTimes(1)
+    const terms = encryptQuery.mock.calls[0]?.[0] as Array<{
+      value: unknown
+      column: { getName(): string }
+    }>
+    expect(terms.map((c) => c.value)).toEqual(values)
+    expect(terms.every((c) => c.column.getName() === 'nickname')).toBe(true)
   })
 
   it('inArray on an ORE column uses ORE equality for each term', async () => {
@@ -557,65 +557,61 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
     expect((q.sql.match(/eql_v3\.neq/g) ?? []).length).toBe(2)
   })
 
-  it('inArray encrypts the whole list in a single bulkEncrypt crossing', async () => {
-    const { ops, encrypt, bulkEncrypt, render } = setupBulk()
+  it('inArray encrypts the whole list in a single encryptQuery batch crossing', async () => {
+    const { ops, encryptQuery, render } = setup()
     const values = ['ada', 'grace', 'alan', 'katherine', 'dorothy']
 
     const q = render(await ops.inArray(users.nickname, values))
 
-    expect(bulkEncrypt).toHaveBeenCalledTimes(1)
-    expect(encrypt).not.toHaveBeenCalled()
-    expect(bulkEncrypt.mock.calls[0]?.[0]).toEqual(
-      values.map((plaintext) => ({ plaintext })),
-    )
-    const opts = bulkEncrypt.mock.calls[0]?.[1] as {
+    expect(encryptQuery).toHaveBeenCalledTimes(1)
+    const terms = encryptQuery.mock.calls[0]?.[0] as Array<{
+      value: unknown
       column: { getName(): string }
-    }
-    expect(opts.column.getName()).toBe('nickname')
+    }>
+    expect(terms.map((c) => c.value)).toEqual(values)
+    expect(terms.every((c) => c.column.getName() === 'nickname')).toBe(true)
     expect((q.sql.match(/eql_v3\.eq/g) ?? []).length).toBe(values.length)
     expect(q.params).toEqual(values.map(() => TERM_JSON))
   })
 
-  it('notInArray bulk-encrypts once and ANDs one ne term per value', async () => {
-    const { ops, bulkEncrypt, render } = setupBulk()
+  it('notInArray batch-encrypts once and ANDs one ne term per value', async () => {
+    const { ops, encryptQuery, render } = setup()
 
     const q = render(await ops.notInArray(users.nickname, ['ada', 'grace']))
 
-    expect(bulkEncrypt).toHaveBeenCalledTimes(1)
+    expect(encryptQuery).toHaveBeenCalledTimes(1)
     expect((q.sql.match(/eql_v3\.neq/g) ?? []).length).toBe(2)
     expect(q.sql).toContain(' and ')
   })
 
-  it('bulk operand encryption carries the lock context and audit config', async () => {
-    const { ops, bulkEncrypt } = setupBulk()
+  it('batch operand encryption carries the lock context and audit config', async () => {
+    const { ops, encryptQuery } = setup()
 
     await ops.inArray(users.nickname, ['ada', 'grace'])
 
-    const op = bulkEncrypt.mock.results[0]?.value
+    const op = encryptQuery.mock.results[0]?.value
     expect(op.withLockContext).toHaveBeenCalledWith(lockContext)
     expect(op.audit).toHaveBeenCalledWith(audit)
   })
 
-  it('bulk terms keep their positions so each eq term matches its value', async () => {
-    const terms = [{ c: 'ada' }, { c: 'grace' }] as unknown as Array<{
-      data: typeof TERM
-    }>
-    const { ops, render } = setupBulk(async () => ({
-      data: [{ data: terms[0] as never }, { data: terms[1] as never }],
-    }))
+  it('batch terms keep their positions so each eq term matches its value', async () => {
+    // Echo each value through the batch so a re-ordering inside `encryptOperands`
+    // would surface as a mismatched param, not be masked by a constant term.
+    const { ops, render } = setup((value) => ({ c: value }))
 
     const q = render(await ops.inArray(users.nickname, ['ada', 'grace']))
 
     expect(q.params).toEqual([
-      JSON.stringify(terms[0]),
-      JSON.stringify(terms[1]),
+      JSON.stringify({ c: 'ada' }),
+      JSON.stringify({ c: 'grace' }),
     ])
   })
 
-  it('a bulk encryption failure is wrapped with operator context', async () => {
-    const { ops } = setupBulk(async () => ({
-      failure: { message: 'bad query term' },
-    }))
+  it('a batch encryption failure is wrapped with operator context', async () => {
+    const { ops, encryptQuery } = setup()
+    encryptQuery.mockReturnValueOnce(
+      chainable(Promise.resolve({ failure: { message: 'bad query term' } })),
+    )
 
     await expect(
       ops.inArray(users.nickname, ['ada', 'grace']),
@@ -626,21 +622,23 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
   })
 
   it('a null value in the list throws before any encryption crossing', async () => {
-    const { ops, bulkEncrypt } = setupBulk()
+    const { ops, encryptQuery } = setup()
 
     await expect(ops.inArray(users.nickname, ['ada', null])).rejects.toThrow(
       /isNull/,
     )
-    expect(bulkEncrypt).not.toHaveBeenCalled()
+    expect(encryptQuery).not.toHaveBeenCalled()
   })
 
-  it('a bulk response of the wrong length is rejected rather than silently truncated', async () => {
-    const { ops } = setupBulk(async () => ({ data: [{ data: TERM }] }))
+  it('a batch response of the wrong length is rejected rather than silently truncated', async () => {
+    const { ops, encryptQuery } = setup()
+    // One term for two values — the batch contract is violated.
+    encryptQuery.mockReturnValue(chainable(Promise.resolve({ data: [TERM] })))
 
     // Pin the counts: an off-by-one guard, or a rejection thrown for some
     // unrelated reason, must not pass as "handled".
     await expect(ops.inArray(users.nickname, ['ada', 'grace'])).rejects.toThrow(
-      /bulk encryption returned 1 terms for 2 values/,
+      /batch query encryption returned 1 terms for 2 values/,
     )
     await expect(
       ops.inArray(users.nickname, ['ada', 'grace']),
@@ -648,12 +646,12 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
   })
 
   it('inArray gates on the column capability before encrypting anything', async () => {
-    const { ops, bulkEncrypt } = setupBulk()
+    const { ops, encryptQuery } = setup()
 
     await expect(ops.inArray(users.flag, [true])).rejects.toBeInstanceOf(
       EncryptionOperatorError,
     )
-    expect(bulkEncrypt).not.toHaveBeenCalled()
+    expect(encryptQuery).not.toHaveBeenCalled()
   })
 
   it('and ignores undefined conditions and keeps the encrypted predicates', async () => {
@@ -699,9 +697,10 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
 
 describe('createEncryptionOperatorsV3 - gating errors', () => {
   it('wraps encryption failures with operator context', async () => {
-    const { ops } = setup(async () => ({
-      failure: { message: 'bad query term' },
-    }))
+    const { ops, encryptQuery } = setup()
+    encryptQuery.mockReturnValueOnce(
+      chainable(Promise.resolve({ failure: { message: 'bad query term' } })),
+    )
 
     await expect(ops.eq(users.nickname, 'ada')).rejects.toMatchObject({
       name: 'EncryptionOperatorError',

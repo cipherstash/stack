@@ -13,13 +13,23 @@ export const EQL_V3_FN_SCHEMA = 'eql_v3'
 
 const fn = (name: string): SQL => sql.raw(`${EQL_V3_FN_SCHEMA}.${name}`)
 
+/**
+ * Emit the EQL v3 comparison/containment SQL. Every operand `enc` arrives ALREADY
+ * cast to its `eql_v3.query_<domain>` type by the operator layer (see
+ * `operators.ts` — the term comes from `encryptQuery`, so it is ciphertext-free
+ * and matches the `query_<domain>` CHECK). The dialect therefore adds no cast of
+ * its own; it only places the pre-cast operand into the right function/operator.
+ * This reaches the `(domain, query_<domain>)` overloads the bundle defines for
+ * narrowed query terms, rather than the `(domain, jsonb)` overload that coerces
+ * to the storage domain and demands the ciphertext `c`.
+ */
 export const v3Dialect = {
   equality(op: EqualityOp, left: SQL, enc: SQL): SQL {
-    return sql`${fn(op === 'eq' ? 'eq' : 'neq')}(${left}, ${enc}::jsonb)`
+    return sql`${fn(op === 'eq' ? 'eq' : 'neq')}(${left}, ${enc})`
   },
 
   comparison(op: ComparisonOp, left: SQL, enc: SQL): SQL {
-    return sql`${fn(op)}(${left}, ${enc}::jsonb)`
+    return sql`${fn(op)}(${left}, ${enc})`
   },
 
   /**
@@ -34,24 +44,24 @@ export const v3Dialect = {
    * composition safe instead of asking each caller to remember.
    */
   range(left: SQL, min: SQL, max: SQL): SQL {
-    return sql`(${fn('gte')}(${left}, ${min}::jsonb) AND ${fn('lte')}(${left}, ${max}::jsonb))`
+    return sql`(${fn('gte')}(${left}, ${min}) AND ${fn('lte')}(${left}, ${max}))`
   },
 
   contains(left: SQL, enc: SQL): SQL {
-    return sql`${fn('contains')}(${left}, ${enc}::jsonb)`
+    return sql`${fn('contains')}(${left}, ${enc})`
   },
 
   /**
    * Encrypted-JSONB containment (`eql_v3_json @> sub-document`). Unlike text,
    * json has NO `eql_v3.contains` overload — containment is the `@>` operator,
-   * whose `(eql_v3_json, eql_v3.query_jsonb)` form takes a `query_jsonb` needle
-   * (from `encryptQuery`, no ciphertext). The needle is cast to
-   * `eql_v3.query_jsonb` EXPLICITLY: `eql_v3_json @> ?` has four RHS overloads
-   * (`eql_v3_json`, `eql_v3_jsonb_entry`, `jsonb`, `query_jsonb`), so a bare
-   * `::jsonb` is ambiguous ("operator is not unique", 42725).
+   * whose `(eql_v3_json, eql_v3.query_jsonb)` form takes the `query_jsonb` needle
+   * the operator layer produced. The four `eql_v3_json @> ?` RHS overloads mean a
+   * bare operand would be ambiguous ("operator is not unique", 42725), so the
+   * needle is pre-cast to `eql_v3.query_jsonb` upstream (see
+   * `encryptJsonContainmentTerm`).
    */
   containsJson(left: SQL, enc: SQL): SQL {
-    return sql`${left} OPERATOR(public.@>) ${enc}::eql_v3.query_jsonb`
+    return sql`${left} OPERATOR(public.@>) ${enc}`
   },
 
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {

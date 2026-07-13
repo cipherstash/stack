@@ -19,8 +19,10 @@ import type {
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
+  ScalarQueryTerm,
 } from '@/types'
 import {
+  type BatchEncryptQueryOperation,
   type BulkDecryptOperation,
   type BulkEncryptModelsOperation,
   type BulkEncryptOperation,
@@ -69,6 +71,14 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
       returnType?: EncryptedReturnType
     },
   ): EncryptQueryOperation
+
+  /**
+   * Batch form: encrypt many query terms in one crossing. Mirrors the nominal
+   * {@link EncryptionClient} overload — the per-term columns are heterogeneous,
+   * so the terms are the base {@link ScalarQueryTerm} rather than a per-column
+   * narrowed type. Consumed by the Drizzle `inArray`/`notInArray` operators.
+   */
+  encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
 
   encryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: V3ModelInput<Table, T>,
@@ -204,11 +214,40 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     },
   }
 
+  // Overloaded so the implementation is checked against BOTH forms directly —
+  // no whole-value cast. The two public signatures mirror the interface member;
+  // the hidden implementation signature is broad and forwards to the nominal
+  // client (which routes to the batch operation when no `opts` are supplied).
+  // Only the forwarded args are `as never`, exactly as the sibling wrappers
+  // below: one forwarding body cannot re-derive the nominal client's per-column
+  // signatures.
+  function encryptQuery<
+    Table extends S[number],
+    Col extends QueryableColumnsOf<Table>,
+    QT extends QueryTypesForColumn<Col> = QueryTypesForColumn<Col>,
+  >(
+    plaintext: PlaintextForColumn<Col>,
+    opts: {
+      table: Table
+      column: Col
+      queryType?: QT
+      returnType?: EncryptedReturnType
+    },
+  ): EncryptQueryOperation
+  function encryptQuery(
+    terms: readonly ScalarQueryTerm[],
+  ): BatchEncryptQueryOperation
+  function encryptQuery(
+    plaintextOrTerms: unknown,
+    opts?: unknown,
+  ): EncryptQueryOperation | BatchEncryptQueryOperation {
+    return client.encryptQuery(plaintextOrTerms as never, opts as never)
+  }
+
   return {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
-    encryptQuery: (plaintext, opts) =>
-      client.encryptQuery(plaintext as never, opts as never),
+    encryptQuery,
     encryptModel: (input, table) =>
       client.encryptModel(input as never, table as never) as never,
     bulkEncryptModels: (input, table) =>

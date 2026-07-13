@@ -12,19 +12,19 @@ const enc = sql`${'{"v":"t"}'}`
 describe('v3Dialect', () => {
   it('equality via HMAC', () => {
     expect(render(v3Dialect.equality('eq', col, enc))).toBe(
-      'eql_v3.eq("users"."x", $1::jsonb)',
+      'eql_v3.eq("users"."x", $1)',
     )
   })
 
   it('inequality via HMAC', () => {
     expect(render(v3Dialect.equality('ne', col, enc))).toBe(
-      'eql_v3.neq("users"."x", $1::jsonb)',
+      'eql_v3.neq("users"."x", $1)',
     )
   })
 
   it('comparison via ORE', () => {
     expect(render(v3Dialect.comparison('gte', col, enc))).toBe(
-      'eql_v3.gte("users"."x", $1::jsonb)',
+      'eql_v3.gte("users"."x", $1)',
     )
   })
 
@@ -32,7 +32,7 @@ describe('v3Dialect', () => {
     const lo = sql`${'{"v":"lo"}'}`
     const hi = sql`${'{"v":"hi"}'}`
     expect(render(v3Dialect.range(col, lo, hi))).toBe(
-      '(eql_v3.gte("users"."x", $1::jsonb) AND eql_v3.lte("users"."x", $2::jsonb))',
+      '(eql_v3.gte("users"."x", $1) AND eql_v3.lte("users"."x", $2))',
     )
   })
 
@@ -44,13 +44,13 @@ describe('v3Dialect', () => {
     // own. Postgres binds NOT tighter than AND, so an unparenthesised range
     // would silently become `(NOT gte) AND lte`.
     expect(render(not(v3Dialect.range(col, lo, hi)))).toBe(
-      'not (eql_v3.gte("users"."x", $1::jsonb) AND eql_v3.lte("users"."x", $2::jsonb))',
+      'not (eql_v3.gte("users"."x", $1) AND eql_v3.lte("users"."x", $2))',
     )
   })
 
   it('contains via two-arg function', () => {
     expect(render(v3Dialect.contains(col, enc))).toBe(
-      'eql_v3.contains("users"."x", $1::jsonb)',
+      'eql_v3.contains("users"."x", $1)',
     )
   })
 
@@ -75,7 +75,7 @@ describe('v3Dialect', () => {
       const query = renderFull(build())
 
       expect(query.params).toEqual([hostile])
-      expect(query.sql).toContain('$1::jsonb')
+      expect(query.sql).toContain('$1')
       // The raw value must appear nowhere in the SQL text.
       expect(query.sql).not.toContain('OR 1=1')
       expect(query.sql).not.toContain('back\\slash')
@@ -88,7 +88,7 @@ describe('v3Dialect', () => {
 
       expect(query.params).toEqual(['{"b":"min"}', '{"b":"max"}'])
       expect(query.sql).toBe(
-        '(eql_v3.gte("users"."x", $1::jsonb) AND eql_v3.lte("users"."x", $2::jsonb))',
+        '(eql_v3.gte("users"."x", $1) AND eql_v3.lte("users"."x", $2))',
       )
     })
 
@@ -97,7 +97,7 @@ describe('v3Dialect', () => {
       const query = renderFull(v3Dialect.equality('eq', col, sql`${big}`))
 
       expect(query.params).toEqual([big])
-      expect(query.sql).toBe('eql_v3.eq("users"."x", $1::jsonb)')
+      expect(query.sql).toBe('eql_v3.eq("users"."x", $1)')
     })
   })
 
