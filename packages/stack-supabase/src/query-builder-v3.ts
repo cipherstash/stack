@@ -5,6 +5,8 @@ import {
 } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
+import type { EncryptionError } from '@cipherstash/stack/errors'
+import { EncryptionErrorTypes } from '@cipherstash/stack/errors'
 import type {
   ColumnSchema,
   EncryptedTable,
@@ -417,13 +419,17 @@ export class EncryptedQueryBuilderV3Impl<
     return column
   }
 
-  private encryptionFailure(message: string, cause?: unknown): never {
+  private encryptionFailure(message: string, cause?: EncryptionError): never {
     logger.error(
       `Supabase: failed to encrypt query terms for table "${this.tableName}"`,
     )
+    // Most callers pass the operation's own `EncryptionError`; the contract-
+    // violation cases (bulk length mismatch, null envelope) have none, so
+    // synthesize one — a broken query encryption is still an encryption failure,
+    // and callers branch on `error.encryptionError` regardless.
     throw new EncryptionFailedError(
       `Failed to encrypt query terms: ${message}`,
-      cause,
+      cause ?? { type: EncryptionErrorTypes.EncryptionError, message },
     )
   }
 
