@@ -323,9 +323,9 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
       ['ad', '👍👍', ''].map((needle) => [eqlType, needle] as const),
     ),
   )(
-    '%s contains rejects the unanswerable needle %j before encrypting',
+    '%s matches rejects the unanswerable needle %j before encrypting',
     async (eqlType, needle) => {
-      const attempt = ops.contains(matrixColumn(eqlType), needle)
+      const attempt = ops.matches(matrixColumn(eqlType), needle)
       await expect(attempt).rejects.toBeInstanceOf(EncryptionOperatorError)
       // Assert the GUARD rejected it, not the encryption layer.
       // `operandFailure` also throws `EncryptionOperatorError`, so matching only
@@ -362,10 +362,10 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
       ),
     ),
   )(
-    '%s contains answers the codepoint-sufficient needle %j with no match',
+    '%s matches answers the codepoint-sufficient needle %j with no match',
     async (eqlType, needle) => {
       const rows = await selectRowKeys(
-        await ops.contains(matrixColumn(eqlType), needle),
+        await ops.matches(matrixColumn(eqlType), needle),
       )
       expect(rows).toEqual([])
 
@@ -374,7 +374,7 @@ describe('v3 drizzle — relational, needle guards, pagination', () => {
       // constant-false `contains` also returns [], and nothing above catches
       // it. Prove the same column still answers a needle that IS present.
       const present = await selectRowKeys(
-        await ops.contains(matrixColumn(eqlType), 'ada'),
+        await ops.matches(matrixColumn(eqlType), 'ada'),
       )
       expect(present.length).toBeGreaterThan(0)
     },

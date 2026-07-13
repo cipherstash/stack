@@ -94,12 +94,12 @@ export function sortedKeysFor(
 }
 
 /**
- * The `contains` oracle. The match index downcases and tokenizes into 3-grams
- * with `include_original: true`, so a needle matches iff it appears in the
- * downcased value — with the caveat that a needle longer than the tokenizer
+ * The `matches` (free-text) oracle. The match index downcases and tokenizes into
+ * 3-grams with `include_original: true`, so a needle matches iff it appears in
+ * the downcased value — with the caveat that a needle longer than the tokenizer
  * window contributes a whole-value token no stored trigram supplies. Family
  * files choose needles accordingly; this models the plaintext side only.
  */
-export function containsPlain(value: Plain, needle: string): boolean {
+export function matchesPlain(value: Plain, needle: string): boolean {
   return String(value).toLowerCase().includes(needle.toLowerCase())
 }

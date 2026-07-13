@@ -417,8 +417,10 @@ internally. Columns are stored in their native `public.eql_v3_*` domain (a
 `eql_v2_encrypted`.
 
 The query surface matches v2 — same filter methods, `withLockContext`,
-`audit` — with one deliberate fork: free-text search is `contains()`, and
-`like`/`ilike` are rejected on encrypted columns (see below).
+`audit` — with one deliberate fork: encrypted free-text search is `matches()`
+(fuzzy bloom token search); `contains()` stays native (exact) containment for
+plaintext columns; and `like`/`ilike` on an encrypted column are an approximate
+shim that delegates to `matches()` (see below).
 
 ### Setup
 
@@ -464,7 +466,7 @@ const { data } = await es.from("users").select("id, email, joined").eq("email", 
 
 A declared table gets a typed builder: rows infer each column's plaintext
 type (`types.IntegerOrd` → `number`, `types.TimestampOrd` → `Date`),
-storage-only columns are excluded from every filter method, `contains()` is
+storage-only columns are excluded from every filter method, `matches()` is
 narrowed to match-indexed columns, and `order()` to plaintext columns.
 Undeclared tables behave exactly as with no `schemas` at all. Every v3 column
 is fully described by its `types.*` factory — there are no capability or
@@ -520,13 +522,22 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
 - **`select('*')` (and bare `select()`) works on v3** — it expands to the
   introspected column list. (v2 has no column list to expand, so it still
   requires explicit columns.)
-- **Free-text search is `contains()`, not `like`/`ilike`.** The v3 domains
-  define no LIKE operator — free-text search is bloom-filter token
-  containment (PostgREST `cs` / SQL `@>`), where `%` is tokenized like any
-  other character, so a `like` pattern is a category error. Calling `like` or
-  `ilike` on an encrypted column throws an error pointing at `contains()`;
-  on plaintext columns both pass through unchanged.
-- **`contains()` matches substrings.** The search term blooms to its own
+- **Encrypted free-text search is `matches()`, not `contains()`/`like`/`ilike`.**
+  The v3 domains define no LIKE operator — encrypted free-text search is fuzzy
+  bloom-filter token matching (PostgREST `cs` / SQL `@>`): one-sided (a match
+  may be a false positive, a non-match never is) and order-/multiplicity-
+  insensitive, where `%` is tokenized like any other character. `matches(col,
+  needle)` is the operator; `contains()` on an encrypted column throws an error
+  pointing at `matches()`. `contains()` is reserved for native (exact)
+  jsonb/array containment on plaintext columns, which pass through unchanged.
+- **`like`/`ilike` on an encrypted column are an approximate compatibility
+  shim** delegating to `matches()`: leading/trailing `%` are stripped and the
+  residual term is fuzzy-matched (same `cs` wire, plus a one-time warning).
+  Results are APPROXIMATE — case-insensitive, one-sided, and anchoring is not
+  honored. A pattern with an internal `%` or any `_` cannot be approximated and
+  throws; call `matches()` directly to make the fuzzy intent explicit. On
+  plaintext columns `like`/`ilike` stay real SQL LIKE.
+- **`matches()` matches substrings.** The search term blooms to its own
   trigrams, and a row matches when the stored value's bloom contains all of
   them — so any substring of at least 3 characters (the tokenizer's
   `token_length`) matches. Shorter terms bloom to nothing and would match every

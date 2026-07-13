@@ -165,7 +165,7 @@ type ChainableOperation<T> = {
 }
 
 /**
- * Build v3-aware query operators (`eq`, `gte`, `contains`, `asc`, …) bound to an
+ * Build v3-aware query operators (`eq`, `gte`, `matches`, `contains`, `asc`, …) bound to an
  * encryption `client`. Each comparison/containment operator AUTO-ENCRYPTS its
  * plaintext operand into an EQL v3 query term before handing it to Drizzle, so
  * callers pass plaintext and the emitted SQL compares encrypted values. Every
@@ -266,13 +266,16 @@ export function createEncryptionOperatorsV3(
   // order-capable column answers equality via its ordering term too.
   const EQUALITY_INDEXES = ['unique', 'ore', 'ope'] as const
   const ORDERING_INDEXES = ['ore', 'ope'] as const
-  // `contains` answers two shapes: bloom free-text (`match`, a `text_search`/
-  // `text_match` column), which emits `eql_v3.contains(col, operand)`, and
-  // encrypted-JSONB containment (an `eql_v3_json` column, whose config carries
-  // the `ste_vec` index kind), which emits the `@>` operator instead — json has
-  // no `eql_v3.contains` overload. The branch in `contains()` picks the right SQL
-  // by index kind.
-  const CONTAINMENT_INDEXES = ['match', 'ste_vec'] as const
+  // Two DISTINCT operators, split by semantics (#617):
+  // - `matches` is bloom free-text (`match`, a `text_search`/`text_match`
+  //   column): a one-sided, order- and multiplicity-insensitive token match that
+  //   may false-positive. It emits `eql_v3.contains(col, operand)` (the SQL
+  //   function keeps its bundle name) but is NOT containment.
+  // - `contains` is encrypted-JSONB containment (an `eql_v3_json` column,
+  //   `ste_vec` index): exact jsonb `@>`, no false positives — genuine
+  //   containment, so it keeps the `contains` name.
+  const MATCH_INDEXES = ['match'] as const
+  const JSON_CONTAINMENT_INDEXES = ['ste_vec'] as const
 
   function applyOperationOptions<T>(
     op: ChainableOperation<T>,
@@ -473,37 +476,24 @@ export function createEncryptionOperatorsV3(
     return negate ? sql`NOT ${condition}` : condition
   }
 
-  async function contains(
+  /**
+   * Fuzzy free-text token match on a `text_search`/`text_match` column. NOT
+   * containment: it tests whether the needle's downcased 3-gram set is a subset
+   * of the haystack's, via a bloom filter — order- and multiplicity-insensitive
+   * and one-sided (a `true` may be a false positive, a `false` never is). Emits
+   * `eql_v3.contains(col, operand)` (the SQL function's bundle name).
+   */
+  async function matches(
     left: SQLWrapper,
     right: unknown,
     operator: string,
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     const ctx = resolveContext(left, operator)
-    requireIndex(
-      ctx,
-      CONTAINMENT_INDEXES,
-      operator,
-      'free-text search or JSON containment',
-    )
-
-    // JSON containment. `eql_v3_json` has no `eql_v3.contains` overload — its
-    // containment is the `@>` operator, whose `(eql_v3_json, eql_v3.query_jsonb)`
-    // form takes a NARROWED query term (searchableJson → no ciphertext). The
-    // needle is cast to `eql_v3.query_jsonb` (an irregular name, so it is handled
-    // here rather than by `queryCastForDomain`) and emitted with `@>`.
-    if (ctx.indexes.ste_vec) {
-      const needle = await encryptJsonContainmentTerm(
-        ctx,
-        right,
-        operator,
-        opts,
-      )
-      return v3Dialect.containsJson(colSql(left), needle)
-    }
-
-    // Bloom free-text (text_search / text_match): the answerable-needle rule
-    // applies, and the `query_<domain>` cast reaches the match overload.
+    requireIndex(ctx, MATCH_INDEXES, operator, 'free-text search')
+    // The answerable-needle rule applies (a sub-`token_length` needle blooms to
+    // nothing and would match every row); the `query_<domain>` cast reaches the
+    // match overload.
     requireAnswerableNeedle(ctx, right, operator)
     const enc = await encryptOperand(
       ctx,
@@ -513,6 +503,25 @@ export function createEncryptionOperatorsV3(
       opts,
     )
     return v3Dialect.contains(colSql(left), enc)
+  }
+
+  /**
+   * Exact encrypted-JSONB containment on an `eql_v3_json` (`ste_vec`) column:
+   * genuine jsonb `@>`, no false positives — hence it keeps the `contains` name.
+   * `eql_v3_json` has no `eql_v3.contains` overload; containment is the `@>`
+   * operator, whose `(eql_v3_json, eql_v3.query_jsonb)` form takes a NARROWED
+   * query term (searchableJson → no ciphertext), cast to `eql_v3.query_jsonb`.
+   */
+  async function containsJsonOp(
+    left: SQLWrapper,
+    right: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, operator)
+    requireIndex(ctx, JSON_CONTAINMENT_INDEXES, operator, 'JSON containment')
+    const needle = await encryptJsonContainmentTerm(ctx, right, operator, opts)
+    return v3Dialect.containsJson(colSql(left), needle)
   }
 
   /**
@@ -654,10 +663,17 @@ export function createEncryptionOperatorsV3(
       max: unknown,
       opts?: EncryptionOperatorCallOpts,
     ) => range(l, min, max, true, 'notBetween', opts),
-    /** Free-text containment: emits `eql_v3.contains` over the encrypted match
-     * term. Encrypts `r`. Requires a `match` (free-text search) index. */
+    /** Fuzzy free-text token match — the needle's 3-gram set is (bloom-)tested
+     * as a subset of the column's. NOT containment: order/multiplicity-
+     * insensitive and one-sided (a `true` may be a false positive). Encrypts
+     * `r`. Requires a `match` (free-text search) index. */
+    matches: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      matches(l, r, 'matches', opts),
+    /** Exact encrypted-JSONB containment (`@>`): matches rows whose document
+     * contains the given sub-object. No false positives. Encrypts `r`. Requires
+     * a `ste_vec` index (a `types.Json` column). */
     contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
-      contains(l, r, 'contains', opts),
+      containsJsonOp(l, r, 'contains', opts),
     /** Membership: ORs one encrypted `eq` term per value. The whole list is
      * encrypted in one `encryptQuery` batch crossing. Rejects an empty list;
      * requires a `unique` or `ore` index. */

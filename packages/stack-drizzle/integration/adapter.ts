@@ -42,7 +42,7 @@ const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
   'lte',
   'between',
   'notBetween',
-  'contains',
+  'matches',
   'order',
   'isNull',
   'isNotNull',
@@ -90,8 +90,8 @@ export function makeDrizzleAdapter(): IntegrationAdapter {
         return ops.between(col, op.lo as never, op.hi as never)
       case 'notBetween':
         return ops.notBetween(col, op.lo as never, op.hi as never)
-      case 'contains':
-        return ops.contains(col, op.needle as never)
+      case 'matches':
+        return ops.matches(col, op.needle as never)
       case 'isNull':
         return ops.isNull(col)
       case 'isNotNull':

@@ -154,71 +154,74 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
     builder.order('note')
   })
 
-  it('narrows contains() to freeTextSearch-capable columns', async () => {
+  it('narrows matches() to freeTextSearch-capable columns', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient, {
       schemas: { users },
     })
     const builder = supabase.from('users')
     // public.eql_v3_text_search — equality + orderAndRange + freeTextSearch
-    builder.contains('email', 'ada')
+    builder.matches('email', 'ada')
     // public.eql_v3_text_match — freeTextSearch only
-    builder.contains('bio', 'ada')
+    builder.matches('bio', 'ada')
     // @ts-expect-error — nickname is public.eql_v3_text_eq: no match index
-    builder.contains('nickname', 'ada')
+    builder.matches('nickname', 'ada')
     // @ts-expect-error — amount is public.eql_v3_integer_ord: no match index
-    builder.contains('amount', 'ada')
+    builder.matches('amount', 'ada')
     // @ts-expect-error — active is public.eql_v3_boolean (storage only)
-    builder.contains('active', 'ada')
+    builder.matches('active', 'ada')
   })
 
-  // `V3FreeTextSearchableKeys` deliberately admits plaintext row keys so that
-  // `contains()` reaches PostgREST's NATIVE jsonb/array containment — which the
-  // runtime already does, forwarding a non-encrypted operand straight to
-  // `q.contains`. A blanket `value: string` made that unreachable from
-  // TypeScript: the operand type must follow the column.
-  it('accepts native containment operands on a plaintext key', () => {
-    mixedBuilder.contains('tags', ['vip'])
-    mixedBuilder.contains('meta', { plan: 'pro' })
-    mixedBuilder.contains('tags', 'vip')
-  })
-
-  it('still pins an encrypted text-search operand to string', () => {
-    mixedBuilder.contains('email', 'ada')
+  // `matches()` is encrypted free-text ONLY: its operand is the string to
+  // tokenize, and a plaintext key is a compile error (use `contains()`).
+  it('pins the matches() operand to a string on encrypted columns', () => {
+    mixedBuilder.matches('email', 'ada')
+    mixedBuilder.matches('bio', 'ada')
     // @ts-expect-error — email is public.eql_v3_text_search: the match term is a string
-    mixedBuilder.contains('email', ['ada'])
+    mixedBuilder.matches('email', ['ada'])
     // @ts-expect-error — bio is public.eql_v3_text_match: the match term is a string
-    mixedBuilder.contains('bio', { a: 1 })
+    mixedBuilder.matches('bio', { a: 1 })
   })
 
-  // A union column key is only as permissive as its STRICTEST member. If any
-  // member is a declared encrypted column the operand must be the string term:
-  // that member's runtime path hands the operand to `encrypt()`, which has no
-  // plaintext-type guard, so an array reaches protect-ffi as the plaintext for a
-  // `cast_as: text` column.
-  it('pins a mixed union key to the encrypted string operand', () => {
-    mixedBuilder.contains(mixedKey, 'ada')
-    // @ts-expect-error — the union includes email (public.eql_v3_text_search)
-    mixedBuilder.contains(mixedKey, ['vip'])
-    // @ts-expect-error — the union includes email (public.eql_v3_text_search)
-    mixedBuilder.contains(mixedKey, { plan: 'pro' })
+  it('rejects matches() on plaintext keys — use contains()', () => {
+    // @ts-expect-error — tags is plaintext; matches() is encrypted free-text only
+    mixedBuilder.matches('tags', 'vip')
+    // @ts-expect-error — meta is plaintext; matches() is encrypted free-text only
+    mixedBuilder.matches('meta', 'vip')
+    // @ts-expect-error — a union with a plaintext member is not free-text-only
+    mixedBuilder.matches(plaintextKey, 'vip')
+    // @ts-expect-error — a mixed union (encrypted + plaintext) is not free-text-only
+    mixedBuilder.matches(mixedKey, 'ada')
   })
 
-  it('leaves a union of plaintext keys on the native operand', () => {
+  // `contains()` is native (exact) containment on PLAINTEXT columns; the operand
+  // follows the column shape (`@>` is array/jsonb only). An encrypted key is a
+  // compile error (use `matches()`).
+  it('accepts native containment operand shapes via contains()', () => {
+    mixedBuilder.contains('tags', ['vip'])
+    mixedBuilder.contains('tags', 'vip')
+    mixedBuilder.contains('meta', { plan: 'pro' })
     mixedBuilder.contains(plaintextKey, ['vip'])
     mixedBuilder.contains(plaintextKey, { plan: 'pro' })
   })
 
-  // `@>` is defined on arrays and jsonb, not on a scalar. Postgres answers a
-  // containment query against a plaintext `text` column with 42883
-  // (operator does not exist), so the operand type must follow the column's own
-  // shape rather than admitting every native containment value on every
-  // plaintext key.
-  it('rejects containment on a plaintext scalar column', () => {
+  it('rejects contains() on encrypted keys — use matches()', () => {
+    // @ts-expect-error — email is encrypted; contains() is native (plaintext) only
+    mixedBuilder.contains('email', 'ada')
+    // @ts-expect-error — bio is encrypted; contains() is native (plaintext) only
+    mixedBuilder.contains('bio', 'ada')
+    // @ts-expect-error — a mixed union includes the encrypted email
+    mixedBuilder.contains(mixedKey, ['vip'])
+  })
+
+  // `@>` is defined on arrays and jsonb, not on a scalar, so the operand type
+  // must follow the column's own shape rather than admitting every native
+  // containment value on every plaintext key.
+  it('rejects a container operand on a plaintext scalar column', () => {
     // @ts-expect-error — note is plaintext text: `text @> text[]` does not exist
     mixedBuilder.contains('note', ['vip'])
     // @ts-expect-error — note is plaintext text: `text @> jsonb` does not exist
     mixedBuilder.contains('note', { a: 1 })
-    // @ts-expect-error — a scalar column supports no containment operand at all
+    // @ts-expect-error — a scalar column supports no container operand at all
     mixedBuilder.contains('note', 'vip')
   })
 
@@ -227,15 +230,15 @@ describe('encryptedSupabaseV3 typed surface (with schemas)', () => {
       schemas: { users },
     })
     const builder = supabase.from('users')
-    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    // @ts-expect-error — v3 free-text search is token containment: use matches()
     builder.like('email', '%ada%')
-    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    // @ts-expect-error — v3 free-text search is token containment: use matches()
     builder.ilike('email', '%ada%')
     // The chain must not launder the removal back in via a widened return type.
-    // @ts-expect-error — use contains()
+    // @ts-expect-error — use matches()
     builder.select('id').eq('email', 'a@b.com').like('email', '%ada%')
-    // contains() survives the chain.
-    builder.select('id').eq('email', 'a@b.com').contains('email', 'ada')
+    // matches() survives the chain.
+    builder.select('id').eq('email', 'a@b.com').matches('email', 'ada')
   })
 
   it('accepts plaintext model values on insert', async () => {
@@ -301,16 +304,19 @@ describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
     builder.eq('missing', 1)
   })
 
-  it('exposes contains and not like/ilike, exactly as the typed surface does', async () => {
-    // Without `schemas` there is no capability information, so `contains` cannot
-    // be narrowed — but the DIALECT is still v3, so `like`/`ilike` must be gone.
-    // Otherwise the untyped surface silently hands back the v2 builder type.
+  it('exposes matches and contains, but not like/ilike', async () => {
+    // Without `schemas` there is no capability information, so neither `matches`
+    // nor `contains` can be narrowed — but the DIALECT is still v3, so
+    // `like`/`ilike` must be gone. Otherwise the untyped surface silently hands
+    // back the v2 builder type. The untyped v3 builder exposes BOTH the encrypted
+    // free-text `matches` and the native `contains`.
     const supabase = await encryptedSupabaseV3(supabaseClient)
     const builder = supabase.from<{ id: number; email: string }>('users')
+    builder.matches('email', 'ada')
     builder.contains('email', 'ada')
-    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    // @ts-expect-error — v3 free-text search is token containment: use matches()
     builder.like('email', '%ada%')
-    // @ts-expect-error — v3 free-text search is token containment: use contains()
+    // @ts-expect-error — v3 free-text search is token containment: use matches()
     builder.ilike('email', '%ada%')
   })
 

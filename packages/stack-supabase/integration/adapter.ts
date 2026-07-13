@@ -40,7 +40,7 @@ const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
   'lte',
   'between',
   'notBetween',
-  'contains',
+  'matches',
   'isNull',
   'isNotNull',
   'order',
@@ -102,8 +102,8 @@ export function makeSupabaseAdapter(): IntegrationAdapter {
           { column: op.column, op: 'lt', value: op.lo },
           { column: op.column, op: 'gt', value: op.hi },
         ])
-      case 'contains':
-        return q.contains(op.column, op.needle)
+      case 'matches':
+        return q.matches(op.column, op.needle)
       case 'isNull':
         return q.is(op.column, null)
       case 'isNotNull':

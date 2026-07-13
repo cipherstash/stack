@@ -118,17 +118,19 @@ function assertNoPropertyDbNameCollision(
  *   The full envelope satisfies the storage-domain CHECK by construction, and
  *   the operators extract the term they need (`eq_term`/`ord_term`/
  *   `match_term`).
- * - **`contains`, not `like`/`ilike`** — the v3 domains define no LIKE operator.
- *   Free-text search is TOKEN CONTAINMENT: the bundle declares `@>` on each
- *   match domain (`CREATE OPERATOR @> … FUNCTION = eql_v3.contains`), whose body
- *   is `match_term(a) @> match_term(b)` — `smallint[]` containment of the two
- *   bloom filters. PostgREST reaches it as `cs`.
+ * - **`matches`, not `like`/`ilike`/`contains`** — encrypted free-text search is
+ *   FUZZY BLOOM TOKEN MATCHING, not containment: the bundle declares `@>` on each
+ *   match domain (`CREATE OPERATOR @> … FUNCTION = eql_v3.contains`, the SQL
+ *   function's name), whose body is `match_term(a) @> match_term(b)` — `smallint[]`
+ *   containment of the two bloom filters. It is order- and multiplicity-
+ *   insensitive and one-sided (a `true` may be a false positive). PostgREST
+ *   reaches it as `cs`. The operator is named `matches` to signal that; `contains`
+ *   is reserved for exact (native) containment on plaintext columns.
  *
- *   Match is tokenized + downcased, so `%` is NOT a wildcard — it is tokenized
- *   like any other character, and a `like` pattern is a category error. v3
- *   Drizzle omits `like`/`ilike` for this reason and exposes `contains`; so do
- *   we. The typed builder has no `like`; the runtime methods throw on an
- *   encrypted column and pass through on a plaintext one.
+ *   Match is tokenized + downcased, so `%` is NOT a wildcard. `like`/`ilike` on an
+ *   encrypted column are delegated to `matches` as an APPROXIMATE compatibility
+ *   shim (surrounding `%` stripped, internal `%`/`_` rejected, one warning) and
+ *   pass through as real SQL LIKE on a plaintext column.
  *
  *   Substrings DO match: the needle blooms to its own trigrams, and containment
  *   holds whenever every one of them is present in the stored value's bloom —
@@ -561,39 +563,113 @@ export class EncryptedQueryBuilderV3Impl<
     )
   }
 
-  /**
-   * `like`/`ilike` do not exist on the v3 surface (see the class doc). The
-   * typed builder omits them, but an untyped JS caller can still reach them —
-   * refuse loudly rather than emit a `~~` the domain has no operator for.
-   *
-   * A plaintext column is a genuine PostgREST text column, so `like` there is
-   * exactly what the caller means; let it through.
-   */
-  private assertNotEncryptedPattern(column: string, op: string): void {
-    if (!this.v3Columns[column]) return
-    throw new Error(
-      `[supabase v3]: "${op}" is not supported on encrypted column "${column}" — EQL v3 free-text search is token containment, not SQL wildcard matching ("%" is tokenized like any other character). Use contains().`,
-    )
+  /** Warn once per (op, column) that a `like`/`ilike` was delegated to `matches`. */
+  private static readonly warnedLikeDelegation = new Set<string>()
+
+  /** True when `column` is one of this table's encrypted v3 columns. */
+  private isEncryptedV3Column(column: string): boolean {
+    return Boolean(this.v3Columns[column])
   }
 
+  /**
+   * `contains` on the v3 surface is EXACT containment only — native jsonb/array
+   * `@>` on a plaintext column. On an encrypted match/search column containment
+   * is not the operation (that is the fuzzy `matches`), so refuse loudly rather
+   * than silently emit a bloom match under a name that promises exactness.
+   */
+  override contains(column: string, value: unknown): this {
+    if (this.isEncryptedV3Column(column)) {
+      throw new Error(
+        `[supabase v3]: contains() is native (exact) containment and does not apply to encrypted column "${column}". Use matches() for encrypted free-text search.`,
+      )
+    }
+    return super.contains(column, value)
+  }
+
+  /**
+   * `matches` is the encrypted free-text operator: fuzzy bloom-filter token
+   * matching, one-sided (may false-positive), NOT containment. It requires an
+   * encrypted match/search column; on a plaintext column, `contains` (native
+   * `@>`) is what the caller means.
+   */
+  override matches(column: string, value: unknown): this {
+    if (!this.isEncryptedV3Column(column)) {
+      throw new Error(
+        `[supabase v3]: matches() is encrypted free-text search and requires an encrypted column; "${column}" is not one. Use contains() for native containment.`,
+      )
+    }
+    return super.matches(column, value)
+  }
+
+  /**
+   * `not(col, 'contains', …)` on an encrypted column would negate a fuzzy bloom
+   * match under the `contains` name — the exact confusion #617 removes — because
+   * the base `not()` path rewrites the `contains` spelling to the `cs` wire
+   * operator. Reject it and steer to the `matches` spelling (or the raw `cs`
+   * operator, which is honest about the wire op). Plaintext columns keep native
+   * negated containment, and every other operator is delegated unchanged.
+   */
+  override not(column: string, operator: string, value: unknown): this {
+    if (operator === 'contains' && this.isEncryptedV3Column(column)) {
+      throw new Error(
+        `[supabase v3]: not("${column}", 'contains', …) does not apply to encrypted column "${column}" — that is fuzzy free-text matching, not containment. Use not("${column}", 'matches', …) or the raw 'cs' operator.`,
+      )
+    }
+    return super.not(column, operator, value)
+  }
+
+  /**
+   * `like`/`ilike` on an ENCRYPTED column are a best-effort compatibility shim,
+   * delegated to `matches`. EQL v3 free-text search is fuzzy bloom token
+   * matching, not SQL pattern matching, so the result is APPROXIMATE — matching
+   * is case-insensitive and one-sided (may false-positive), and anchoring is
+   * lost. Leading/trailing `%` are stripped; an internal `%` or any `_` cannot be
+   * approximated by trigram matching and throws. A plaintext column keeps real
+   * SQL LIKE.
+   */
   override like(column: string, pattern: string): this {
-    this.assertNotEncryptedPattern(column, 'like')
-    return super.like(column, pattern)
+    if (!this.isEncryptedV3Column(column)) return super.like(column, pattern)
+    return this.matches(column, this.likeNeedle(column, 'like', pattern))
   }
 
   override ilike(column: string, pattern: string): this {
-    this.assertNotEncryptedPattern(column, 'ilike')
-    return super.ilike(column, pattern)
+    if (!this.isEncryptedV3Column(column)) return super.ilike(column, pattern)
+    return this.matches(column, this.likeNeedle(column, 'ilike', pattern))
   }
 
   /**
-   * Encrypted `contains` goes through the bloom-filter `@>`, which the bundle
+   * Reduce a SQL LIKE pattern to a fuzzy-match needle, or throw when it cannot be
+   * approximated. Strips surrounding `%` (prefix/suffix wildcards, which fuzzy
+   * matching subsumes); an internal `%` or any `_` is unapproximable. Warns once
+   * per (op, column) that the delegation is approximate.
+   */
+  private likeNeedle(column: string, op: string, pattern: string): string {
+    const needle = pattern.replace(/^%+/, '').replace(/%+$/, '')
+    if (needle.includes('%') || pattern.includes('_')) {
+      throw new Error(
+        `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an internal "%" or any "_"). Use matches("${column}", term) with a literal search term.`,
+      )
+    }
+    const key = `${op}:${column}`
+    if (!EncryptedQueryBuilderV3Impl.warnedLikeDelegation.has(key)) {
+      EncryptedQueryBuilderV3Impl.warnedLikeDelegation.add(key)
+      logger.warn(
+        `[supabase v3]: "${op}" on encrypted column "${column}" is delegated to matches() (fuzzy bloom token search). Results are APPROXIMATE — case-insensitive, one-sided (may false-positive), and wildcards/anchoring are not honored. Call matches() directly to make this explicit.`,
+      )
+    }
+    return needle
+  }
+
+  /**
+   * Encrypted `matches` goes through the bloom-filter `@>`, which the bundle
    * declares on the domain as PostgREST's `cs`. The operand is the full storage
-   * envelope; `eql_v3.contains` extracts the `bf` array from both sides.
+   * envelope; `eql_v3.contains` (the SQL function) extracts the `bf` array from
+   * both sides.
    *
    * Emitted via `filter(col, 'cs', json)` rather than `q.contains(col, json)`:
    * postgrest-js's `contains` re-serializes a non-string operand, and our
-   * operand is already `JSON.stringify`d.
+   * operand is already `JSON.stringify`d. Plaintext `contains` (not encrypted)
+   * falls through to the base's native path.
    */
   protected override applyContainsFilter(
     q: SupabaseQueryBuilder,
@@ -612,10 +688,11 @@ export class EncryptedQueryBuilderV3Impl<
    * condition arrives as `cs` — not a {@link FilterOp}. Resolve it through the
    * same table the raw `.filter()` path uses, so `.or('amount.cs.5')` on an
    * `integer_ord` column is rejected by the capability guard rather than
-   * silently encrypted as an equality term.
+   * silently encrypted as an equality term. A structured `{ op: 'matches' }`
+   * condition maps to free-text directly.
    */
   protected override queryTypeForOrOp(op: FilterOp): QueryTypeName {
-    if (op === 'contains') return 'freeTextSearch'
+    if (op === 'matches') return 'freeTextSearch'
     return this.queryTypeForRawOp(op)
   }
 

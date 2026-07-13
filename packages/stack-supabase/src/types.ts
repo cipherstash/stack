@@ -127,6 +127,25 @@ export type V3FreeTextSearchableKeys<
 > = Exclude<Extract<keyof Row, string>, NonFreeTextSearchV3Keys<Table>>
 
 /**
+ * Row keys `matches()` accepts: ONLY the table's ENCRYPTED columns that carry a
+ * `freeTextSearch` capability (`public.eql_v3_text_match` / `text_search`).
+ *
+ * Unlike {@link V3FreeTextSearchableKeys} (which additionally lets plaintext keys
+ * through, because the old `contains` also served native containment), this
+ * excludes plaintext columns entirely — `matches()` is encrypted free-text only,
+ * so calling it on a plaintext column is a compile error, not a runtime throw.
+ * Derived from the encrypted-column keys minus the non-free-text ones.
+ */
+export type V3EncryptedFreeTextKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = Exclude<
+  Extract<keyof V3ColumnsOfTable<Table>, string>,
+  NonFreeTextSearchV3Keys<Table>
+> &
+  Extract<keyof Row, string>
+
+/**
  * The operand `contains()` accepts on a PLAINTEXT column, mirroring
  * postgrest-js's own untyped `contains` overload: a jsonb literal, an array, or
  * the raw string form.
@@ -257,10 +276,10 @@ export type V3PlaintextKeys<
  * filter methods narrowed to {@link V3FilterableKeys} and `order()` to
  * {@link V3OrderableKeys}.
  *
- * `like`/`ilike` are absent by construction. EQL v3 free-text search is token
- * containment over a bloom filter (`@>`), not SQL wildcard matching — `%` is
+ * `like`/`ilike` are absent by construction. EQL v3 free-text search is fuzzy
+ * bloom-filter token matching (`@>`), not SQL wildcard matching — `%` is
  * tokenized like any other character, so a `like` pattern is a category error.
- * The v3 dialect of Drizzle omits them for the same reason. Use `contains`.
+ * The v3 dialect of Drizzle omits them for the same reason. Use `matches`.
  */
 export interface EncryptedQueryBuilderV3<
   Table extends AnyV3Table,
@@ -277,9 +296,19 @@ export interface EncryptedQueryBuilderV3<
     // still admits none.
     V3PlaintextKeys<Table, Row> & StringKeyOf<Row>
   > {
-  contains<K extends V3FreeTextSearchableKeys<Table, Row> & StringKeyOf<Row>>(
+  /** Encrypted free-text token match. Encrypted match/search columns only —
+   * plaintext columns are a compile error (use {@link contains}). The operand is
+   * the string to tokenize into a bloom-filter query term. */
+  matches<K extends V3EncryptedFreeTextKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
-    value: V3ContainsValue<Table, Row, K>,
+    value: string,
+  ): EncryptedQueryBuilderV3<Table, Row>
+  /** Native (exact) jsonb/array containment (`@>`). Plaintext columns only — an
+   * encrypted column is a compile error (use {@link matches}). A scalar plaintext
+   * column resolves its operand to `never` (`@>` is array/jsonb only). */
+  contains<K extends V3PlaintextKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    value: PlaintextContainsValue<Row[K]>,
   ): EncryptedQueryBuilderV3<Table, Row>
 }
 
@@ -291,9 +320,9 @@ export interface EncryptedQueryBuilderV3<
  * {@link EncryptedQueryBuilder} would hand back the v2 surface.
  *
  * For the same reason nothing here can tell an encrypted match column from a
- * plaintext jsonb one, so `contains` accepts the full native operand union
- * (which subsumes the encrypted column's `string`); the runtime resolves the
- * column and picks the encoding.
+ * plaintext jsonb one, so `matches`/`contains` accept the full native operand
+ * union (which subsumes the encrypted column's `string`); the runtime resolves
+ * the column and picks the encoding (and rejects the wrong-column-kind pairing).
  */
 export interface EncryptedQueryBuilderV3Untyped<
   Row extends Record<string, unknown>,
@@ -302,6 +331,14 @@ export interface EncryptedQueryBuilderV3Untyped<
     StringKeyOf<Row>,
     EncryptedQueryBuilderV3Untyped<Row>
   > {
+  /** Fuzzy free-text token match on an encrypted match/search column. The
+   * operand is always the string term to tokenize (never an array/object), even
+   * on the untyped surface where the column kind is unknown. */
+  matches<K extends StringKeyOf<Row>>(
+    column: K,
+    value: string,
+  ): EncryptedQueryBuilderV3Untyped<Row>
+  /** Native jsonb/array containment on a plaintext column (PostgREST `cs`). */
   contains<K extends StringKeyOf<Row>>(
     column: K,
     value: NativeContainsValue,
@@ -368,9 +405,12 @@ export type FilterOp =
   | 'neq'
   | 'like'
   | 'ilike'
-  /** Token containment. v3-only on encrypted columns; on a plaintext column it
-   * is PostgREST's native jsonb/array `cs`. */
+  /** Native jsonb/array containment (PostgREST `cs` → `@>`). Plaintext columns
+   * on the v3 surface; also the encrypted-JSON path where applicable. */
   | 'contains'
+  /** Encrypted free-text token match (bloom `@>`). v3 encrypted match/search
+   * columns only. Same `cs` wire operator as `contains`, different semantics. */
+  | 'matches'
   | 'in'
   | 'gt'
   | 'gte'

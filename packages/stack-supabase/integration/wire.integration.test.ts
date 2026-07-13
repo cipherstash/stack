@@ -341,10 +341,10 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   // The four tests below discriminate: substrings that share no `c` with the
   // stored row match, and a trigram present in no row does not. Only bloom
   // containment explains both.
-  it('resolves contains() through cs containment for an exact value', async () => {
+  it('resolves matches() through cs containment for an exact value', async () => {
     const { data, error } = await from()
       .select('row_key')
-      .contains('email', 'ada@example.com')
+      .matches('email', 'ada@example.com')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
@@ -357,7 +357,7 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   it('matches a longer substring through bloom containment', async () => {
     const { data, error } = await from()
       .select('row_key')
-      .contains('email', 'example')
+      .matches('email', 'example')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
@@ -366,7 +366,7 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   it('matches a substring exactly one trigram long', async () => {
     const { data, error } = await from()
       .select('row_key')
-      .contains('email', 'ada')
+      .matches('email', 'ada')
 
     expect(error).toBeNull()
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
@@ -379,18 +379,34 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
   it('does not match a trigram absent from every stored value', async () => {
     const { data, error } = await from()
       .select('row_key')
-      .contains('email', 'zzz')
+      .matches('email', 'zzz')
 
     expect(error).toBeNull()
     expect(data).toEqual([])
   })
 
-  // The reason `like` is gone: `~~` is not defined on public.eql_v3_text_search, so
-  // had the adapter emitted it, PostgREST/Postgres would answer 42883. The
-  // client-side guard turns that into an actionable error before the round-trip.
-  it('refuses like() on an encrypted column rather than emitting an undefined operator', async () => {
-    expect(() => from().select('row_key').like('email', 'ada')).toThrow(
-      /Use contains\(\)/,
+  // `like`/`ilike` on an encrypted column are a compatibility shim: they delegate
+  // to `matches` (fuzzy bloom token search), NOT SQL `~~` (undefined on
+  // public.eql_v3_text_search — 42883). Surrounding `%` are stripped, so
+  // `like('email', '%ada%')` searches the term `ada` and returns the same row as
+  // `matches('email', 'ada')`.
+  it('delegates like() on an encrypted column to matches (fuzzy)', async () => {
+    const { data, error } = await from()
+      .select('row_key')
+      .like('email', '%ada%')
+
+    expect(error).toBeNull()
+    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
+  })
+
+  // A pattern fuzzy matching cannot approximate (internal `%` / any `_`) is
+  // refused client-side before the round-trip.
+  it('rejects an unapproximable like() pattern on an encrypted column', () => {
+    expect(() => from().select('row_key').like('email', 'a%b')).toThrow(
+      /cannot honor/,
+    )
+    expect(() => from().select('row_key').ilike('email', 'f_o')).toThrow(
+      /cannot honor/,
     )
   })
 

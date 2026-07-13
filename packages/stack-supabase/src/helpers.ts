@@ -237,7 +237,11 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
       return 'equality'
     case 'like':
     case 'ilike':
+    // `matches` is the encrypted free-text (bloom) operator. `contains` remains
+    // for completeness/v2 but is plaintext-only on the v3 surface, so it never
+    // reaches term encryption there (a plaintext operand is not encrypted).
     case 'contains':
+    case 'matches':
       return 'freeTextSearch'
     case 'gt':
     case 'gte':
@@ -314,7 +318,7 @@ export function parseOrString(orString: string): PendingOrCondition[] {
  * `contains` is supabase-js's METHOD name for this operator; string-form `.or()`
  * callers write PostgREST's `cs` directly. Both reach here.
  */
-const CONTAINMENT_OPS = new Set(['contains', 'cs'])
+const CONTAINMENT_OPS = new Set(['contains', 'matches', 'cs'])
 
 /**
  * The PostgREST operator token for a {@link FilterOp}.
@@ -332,7 +336,7 @@ const CONTAINMENT_OPS = new Set(['contains', 'cs'])
  * containment broken while the encrypted path worked.
  */
 function orOperatorToken(op: string): string {
-  return op === 'contains' ? 'cs' : op
+  return op === 'contains' || op === 'matches' ? 'cs' : op
 }
 
 /**

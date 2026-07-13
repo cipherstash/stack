@@ -9,8 +9,8 @@ import {
 import { negativeOps, type Plain, positiveOps, type QueryOp } from './ops.ts'
 import {
   comparePlain,
-  containsPlain,
   expectedKeysFor,
+  matchesPlain,
   plainValue,
   sortedKeysFor,
 } from './oracle.ts'
@@ -125,7 +125,7 @@ function sampleOpFor(
     case 'between':
     case 'notBetween':
       return { kind, column, lo: value, hi: value }
-    case 'contains':
+    case 'matches':
       return {
         kind,
         column,
@@ -314,13 +314,13 @@ export function runFamilySuite(
           })
         }
 
-        if (positive.has('contains')) {
-          it.each(needlesFrom(values))('contains: $label', async ({
+        if (positive.has('matches')) {
+          it.each(needlesFrom(values))('matches: $label', async ({
             needle,
           }) => {
             await expectRows(
-              { kind: 'contains', column: slug, needle },
-              keysWhere((v) => containsPlain(v, needle)),
+              { kind: 'matches', column: slug, needle },
+              keysWhere((v) => matchesPlain(v, needle)),
             )
           })
         }

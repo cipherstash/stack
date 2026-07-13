@@ -13,7 +13,7 @@ import type { V3_MATRIX } from './catalog'
 type MatrixSpec = (typeof V3_MATRIX)[keyof typeof V3_MATRIX]
 
 /**
- * Pick a sample from a match domain that can actually be used as a `contains`
+ * Pick a sample from a match domain that can actually be used as a `matches`
  * needle. `sampleFor` is no good here — `TEXT_S[0]` is the empty string, which
  * tokenizes to nothing and is rejected as unanswerable.
  *

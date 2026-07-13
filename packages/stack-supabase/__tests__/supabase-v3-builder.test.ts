@@ -203,10 +203,10 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(JSON.parse(gte.args[1] as string).c).toBeDefined()
   })
 
-  it('emits encrypted contains as PostgREST cs (bloom-filter containment)', async () => {
+  it('emits encrypted matches as PostgREST cs (bloom-filter containment)', async () => {
     const { es, supabase } = v3Instance()
 
-    await es.from('users', users).select('id, email').contains('email', 'a@b')
+    await es.from('users', users).select('id, email').matches('email', 'a@b')
 
     const filterCalls = supabase.callsFor('filter')
     expect(filterCalls).toHaveLength(1)
@@ -219,16 +219,44 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(supabase.callsFor('contains')).toHaveLength(0)
   })
 
-  it('refuses like/ilike on an encrypted column, naming contains', async () => {
+  it('refuses contains() on an encrypted column, naming matches', async () => {
     const { es } = v3Instance()
 
-    // The typed builder omits like/ilike, but an untyped JS caller reaches them.
     expect(() =>
-      es.from('users', users).select('id').like('email', '%a@b%'),
-    ).toThrow(/token containment.*Use contains\(\)/s)
+      es.from('users', users).select('id').contains('email', 'a@b'),
+    ).toThrow(/Use matches\(\)/)
+  })
+
+  // like/ilike on an ENCRYPTED column are an approximate compatibility shim that
+  // DELEGATES to matches: surrounding `%` are stripped and the residual term is
+  // fuzzy-matched, emitting the same `cs` wire as matches() (#617).
+  it('delegates like/ilike on an encrypted column to matches (cs)', async () => {
+    for (const op of ['like', 'ilike'] as const) {
+      const { es, supabase } = v3Instance()
+
+      await es.from('users', users).select('id, email')[op]('email', '%a@b%')
+
+      const filterCalls = supabase.callsFor('filter')
+      expect(filterCalls).toHaveLength(1)
+      expect(filterCalls[0].args[0]).toBe('email')
+      expect(filterCalls[0].args[1]).toBe('cs')
+      expect(JSON.parse(filterCalls[0].args[2] as string).c).toBeDefined()
+      // The stripped `%a@b%` needle reaches the SAME cs wire as matches('a@b').
+      expect(JSON.parse(filterCalls[0].args[2] as string).pt).toBe('a@b')
+    }
+  })
+
+  // An internal `%` or any `_` cannot be approximated by trigram matching, so the
+  // shim throws rather than silently dropping the wildcard.
+  it('rejects a like/ilike pattern with an internal % or _ on an encrypted column', async () => {
+    const { es } = v3Instance()
+
     expect(() =>
-      es.from('users', users).select('id').ilike('email', '%a@b%'),
-    ).toThrow(/token containment.*Use contains\(\)/s)
+      es.from('users', users).select('id').like('email', 'a%b'),
+    ).toThrow(/cannot honor/)
+    expect(() =>
+      es.from('users', users).select('id').ilike('email', 'f_o'),
+    ).toThrow(/cannot honor/)
   })
 
   it('passes contains through to native cs on a plaintext column', async () => {
@@ -264,17 +292,27 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(supabase.callsFor('like')[0].args[0]).toBe('constructor')
   })
 
-  it('maps not(contains) on encrypted columns to not(cs)', async () => {
+  it('maps not(matches) on encrypted columns to not(cs)', async () => {
     const { es, supabase } = v3Instance()
 
     await es
       .from('users', users)
       .select('id, email')
-      .not('email', 'contains', 'a@b')
+      .not('email', 'matches', 'a@b')
 
     const [not] = supabase.callsFor('not')
     expect(not.args[0]).toBe('email')
     expect(not.args[1]).toBe('cs')
+  })
+
+  // `not(col, 'contains', …)` on an encrypted column would negate a fuzzy bloom
+  // match under the `contains` name — the confusion #617 removes. It is rejected;
+  // use the honest `matches` spelling (above) or the raw `cs` operator.
+  it('rejects not(contains) on an encrypted column, steering to matches', () => {
+    const { es } = v3Instance()
+    expect(() =>
+      es.from('users', users).select('id').not('email', 'contains', 'a@b'),
+    ).toThrow(/not apply to encrypted column .* Use not\(.*'matches'/)
   })
 
   // An encrypted in-list is emitted through `filter()` as a pre-formatted
@@ -797,13 +835,13 @@ describe('encryptedSupabaseV3 wire encoding', () => {
       expect(plain).not.toContain('"pt":["ada","grace"]')
     })
 
-    it('rewrites an encrypted contains in a structured or() to cs', async () => {
+    it('rewrites an encrypted matches in a structured or() to cs', async () => {
       const { es, supabase } = v3Instance()
 
       await es
         .from('users', users)
         .select('id')
-        .or([{ column: 'email', op: 'contains', value: 'ada' }])
+        .or([{ column: 'email', op: 'matches', value: 'ada' }])
 
       expect(supabase.callsFor('or')[0].args[0] as string).toMatch(
         /^email\.cs\."/,
@@ -1025,7 +1063,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     it('sends a full envelope as the not(cs) operand', async () => {
       const { es, supabase } = v3Instance()
 
-      await es.from('users', users).select('id').not('email', 'contains', 'a@b')
+      await es.from('users', users).select('id').not('email', 'matches', 'a@b')
 
       const [not] = supabase.callsFor('not')
       expect(not.args[0]).toBe('email')

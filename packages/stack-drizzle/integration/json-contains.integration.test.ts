@@ -1,11 +1,12 @@
 /**
  * Live JSON containment for the v3 `types.Json()` column through the Drizzle
  * operators. Seeds encrypted JSONB documents and queries them with
- * `ops.contains(col, subObject)` — the same operator text search uses, but on a
- * `json` column it emits the `@>` operator over the encrypted JSONB document
- * (json has no `eql_v3.contains` overload) with a `query_jsonb` needle from
- * `encryptQuery` — asserting it returns exactly the rows whose document contains
- * the sub-object (jsonb `@>` semantics), and excludes the rest.
+ * `ops.contains(col, subObject)` — EXACT containment (distinct from the fuzzy
+ * `ops.matches` used for text search). On a `json` column it emits the `@>`
+ * operator over the encrypted JSONB document (json has no `eql_v3.contains`
+ * overload) with a `query_jsonb` needle from `encryptQuery` — asserting it
+ * returns exactly the rows whose document contains the sub-object (jsonb `@>`
+ * semantics), and excludes the rest.
  */
 
 import type { JsonDocument } from '@cipherstash/stack/eql/v3'

@@ -762,7 +762,7 @@ if (!enc.failure) await db.insert(users).values(enc.data)
 // Query — operators auto-encrypt their plaintext operands
 const rows = await db.select().from(users)
   .where(await ops.and(
-    ops.contains(users.email, "alice"),   // free-text containment
+    ops.matches(users.email, "alice"),    // fuzzy free-text token match
     ops.between(users.age, 18, 65),
   ))
   .orderBy(ops.asc(users.age))
@@ -777,17 +777,19 @@ const dec = await client.bulkDecryptModels(rows, usersSchema)
 |---|---|
 | `eq`, `ne`, `inArray`, `notInArray` | equality (`Eq`, `Ord`, `OrdOre`, `TextSearch`) |
 | `gt`, `gte`, `lt`, `lte`, `between`, `notBetween`, `asc`, `desc` | order/range (`Ord`, `OrdOre`, `TextSearch`) |
-| `contains` | free-text (`TextMatch`, `TextSearch`) **or** encrypted-JSONB containment (`Json`) |
+| `matches` | fuzzy free-text token match (`TextMatch`, `TextSearch`) |
+| `contains` | exact encrypted-JSONB containment (`Json`) |
 | `and`, `or` | combinators — accept lazy (un-awaited) operators and `undefined`, resolve concurrently |
 | `isNull`, `isNotNull`, `not`, `exists`, `notExists` | Drizzle passthroughs, no encryption |
 
 Differences from the v2 operators to know about:
 
-- **`like` / `ilike` do not exist — by design.** v3 free-text search is tokenised containment, not SQL pattern matching; `contains(col, needle)` is the free-text operator. Don't pass `%` wildcards.
-- **`contains` on a `types.Json` column** answers encrypted-JSONB containment instead of free-text: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle — a `Json` column carries no `eq` / ordering, so those operators throw on it.
+- **`like` / `ilike` do not exist — by design.** v3 free-text search is tokenised bloom matching, not SQL pattern matching; `matches(col, needle)` is the free-text operator. It is fuzzy (order- and multiplicity-insensitive) and one-sided (a match may be a false positive, a non-match never is). Don't pass `%` wildcards.
+- **`matches` is fuzzy free-text, `contains` is exact JSON containment — two distinct operators (#617).** `matches(col, needle)` requires a `TextMatch` / `TextSearch` column and throws `EncryptionOperatorError` (`requires free-text search`) otherwise. `contains(col, subdoc)` requires a `types.Json` column and throws (`requires JSON containment`) otherwise.
+- **`contains` on a `types.Json` column** answers exact encrypted-JSONB containment: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics, no false positives; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle — a `Json` column carries no `eq` / ordering, so those operators throw on it.
 - **No plaintext-column fallback.** Every v3 operator requires an encrypted v3 column and throws `EncryptionOperatorError` otherwise. Use regular Drizzle operators for non-encrypted columns.
 - A `null` operand throws — use `isNull()` / `isNotNull()` for NULL checks.
 - `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `encryptQuery` batch crossing.
-- `contains` rejects a needle shorter than the match tokenizer's token length (it would otherwise silently match every row).
+- `matches` rejects a needle shorter than the match tokenizer's token length, and `contains` rejects an empty-object needle (either would otherwise silently match every row).
 - Operators gate on the column's capabilities and throw `EncryptionOperatorError` (with `context.columnName` / `tableName` / `operator`) when the domain can't answer the operator. This `EncryptionOperatorError` is exported from `@cipherstash/stack-drizzle/v3` and is deliberately separate from the v2 class of the same name; there is no `EncryptionConfigError` on the v3 path.
 - Every operator takes an optional trailing `{ lockContext, audit }` argument; `createEncryptionOperatorsV3(client, { lockContext, audit })` sets defaults applied to every operand encryption.
