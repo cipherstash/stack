@@ -15,8 +15,6 @@ export default defineConfig([
       'src/identity/index.ts',
       'src/schema/index.ts',
       'src/eql/v3/index.ts',
-      'src/eql/v3/drizzle/index.ts',
-      'src/drizzle/index.ts',
       'src/dynamodb/index.ts',
       'src/encryption/index.ts',
       'src/encryption/v3.ts',

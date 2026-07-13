@@ -1,18 +1,18 @@
-import { pgTable } from 'drizzle-orm/pg-core'
-import { describe, expect, it } from 'vitest'
-import { types as v3Types } from '@/eql/v3'
-import {
-  EQL_V3_DOMAINS,
-  getEqlV3Column,
-  isEqlV3Column,
-  makeEqlV3Column,
-} from '@/eql/v3/drizzle/column'
+import { types as v3Types } from '@cipherstash/stack/eql/v3'
 import {
   EQL_V3_DOMAIN_SCHEMA,
   eqlTypeSlug as slug,
   typedEntries,
   V3_MATRIX,
-} from '../v3-matrix/catalog'
+} from '@cipherstash/test-kit/catalog'
+import { pgTable } from 'drizzle-orm/pg-core'
+import { describe, expect, it } from 'vitest'
+import {
+  EQL_V3_DOMAINS,
+  getEqlV3Column,
+  isEqlV3Column,
+  makeEqlV3Column,
+} from '../../src/v3/column'
 
 describe('makeEqlV3Column', () => {
   it('sets dataType() to the concrete eql_v3 domain', () => {

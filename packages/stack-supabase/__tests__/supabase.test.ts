@@ -1,10 +1,10 @@
 import 'dotenv/config'
 
+import { Encryption } from '@cipherstash/stack'
+import { encryptedColumn, encryptedTable } from '@cipherstash/stack/schema'
 import { createClient } from '@supabase/supabase-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { Encryption } from '@cipherstash/stack'
-import { encryptedColumn, encryptedTable } from '@cipherstash/stack/schema'
 import { encryptedSupabase } from '../src/index.js'
 
 // supabase.test.ts needs a live Supabase project, so the suite is skipped

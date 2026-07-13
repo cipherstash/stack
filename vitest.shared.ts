@@ -51,11 +51,33 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/stack/src/encryption/index.ts',
   ),
+  '@cipherstash/stack/types': resolve(
+    repoRoot,
+    'packages/stack/src/types-public.ts',
+  ),
+  '@cipherstash/stack/errors': resolve(
+    repoRoot,
+    'packages/stack/src/errors/index.ts',
+  ),
+  '@cipherstash/stack/identity': resolve(
+    repoRoot,
+    'packages/stack/src/identity/index.ts',
+  ),
   // The Supabase adapter now lives in its own package (was
   // `@cipherstash/stack/supabase`); resolve it to source too.
   '@cipherstash/stack-supabase': resolve(
     repoRoot,
     'packages/stack-supabase/src/index.ts',
+  ),
+  // The Drizzle adapter package (was `@cipherstash/stack/drizzle` +
+  // `@cipherstash/stack/eql/v3/drizzle`). `/v3` first — longest prefix wins.
+  '@cipherstash/stack-drizzle/v3': resolve(
+    repoRoot,
+    'packages/stack-drizzle/src/v3/index.ts',
+  ),
+  '@cipherstash/stack-drizzle': resolve(
+    repoRoot,
+    'packages/stack-drizzle/src/index.ts',
   ),
   // Bare entry LAST: it is a prefix of every subpath above, and Vite matches in
   // order, so the subpaths must win first. Both sibling tsconfigs map bare

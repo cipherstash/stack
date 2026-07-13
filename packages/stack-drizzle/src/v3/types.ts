@@ -1,4 +1,4 @@
-import { types as v3Types } from '@/eql/v3'
+import { types as v3Types } from '@cipherstash/stack/eql/v3'
 import { makeEqlV3Column } from './column.js'
 
 type V3Types = typeof v3Types

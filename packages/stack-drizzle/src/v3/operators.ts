@@ -1,4 +1,14 @@
 import type { Result } from '@byteslice/result'
+import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
+import { matchNeedleError } from '@cipherstash/stack/adapter-kit'
+import type {
+  AnyEncryptedV3Column,
+  AnyV3Table,
+} from '@cipherstash/stack/eql/v3'
+import type { EncryptionError } from '@cipherstash/stack/errors'
+import type { LockContext } from '@cipherstash/stack/identity'
+import type { ColumnSchema } from '@cipherstash/stack/schema'
+import type { BulkEncryptedData, Encrypted } from '@cipherstash/stack/types'
 import {
   and,
   asc,
@@ -16,13 +26,6 @@ import {
   sql,
 } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import type { AuditConfig } from '@/encryption/operations/base-operation'
-import type { AnyEncryptedV3Column, AnyV3Table } from '@/eql/v3'
-import type { EncryptionError } from '@/errors'
-import type { LockContext } from '@/identity'
-import type { ColumnSchema } from '@/schema'
-import { matchNeedleError } from '@/schema/match-defaults'
-import type { BulkEncryptedData, Encrypted } from '@/types'
 import { getEqlV3Column } from './column.js'
 import {
   extractEncryptionSchemaV3,
@@ -387,7 +390,7 @@ export function createEncryptionOperatorsV3(
     // `result.data` is `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]`
     // — not `unknown`. The length check stays: a position-stable contract
     // violation must not silently truncate the predicate.
-    const encrypted = result.data
+    const encrypted: BulkEncryptedData = result.data
     if (encrypted.length !== values.length) {
       throw operandFailure(
         ctx,

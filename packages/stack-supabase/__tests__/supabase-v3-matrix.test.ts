@@ -19,15 +19,8 @@
  * proves Postgres accepts what this file pins.
  */
 
-import { describe, expect, it } from 'vitest'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
 import { encryptedTable } from '@cipherstash/stack/eql/v3'
-import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
-import {
-  createMockEncryptionClient,
-  createMockSupabase,
-  isFakeEnvelope,
-} from './helpers/supabase-mock'
 import {
   type DomainSpec,
   type EqlV3TypeName,
@@ -35,6 +28,13 @@ import {
   typedEntries,
   V3_MATRIX,
 } from '@cipherstash/test-kit/catalog'
+import { describe, expect, it } from 'vitest'
+import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
+import {
+  createMockEncryptionClient,
+  createMockSupabase,
+  isFakeEnvelope,
+} from './helpers/supabase-mock'
 
 const matrixEntries = typedEntries(V3_MATRIX)
 

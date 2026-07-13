@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  addJsonbCastsV3,
-  parseOrString,
-  rebuildOrString,
-} from '../src/helpers'
+import { addJsonbCastsV3, parseOrString, rebuildOrString } from '../src/helpers'
 import type { DbPendingOrCondition } from '../src/types'
 
 // `createdAt` is a renamed property (DB column `created_at`); `email` is a

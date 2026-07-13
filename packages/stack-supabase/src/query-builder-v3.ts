@@ -1,6 +1,10 @@
+import {
+  DATE_LIKE_CASTS,
+  EncryptedV3Column,
+  logger,
+} from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
-import { DATE_LIKE_CASTS, EncryptedV3Column } from '@cipherstash/stack/adapter-kit'
 import type {
   ColumnSchema,
   EncryptedTable,
@@ -13,7 +17,6 @@ import type {
   QueryTypeName,
   ScalarQueryTerm,
 } from '@cipherstash/stack/types'
-import { logger } from '@cipherstash/stack/adapter-kit'
 import { addJsonbCastsV3, selectKeyToDbV3 } from './helpers'
 import {
   EncryptedQueryBuilderImpl,

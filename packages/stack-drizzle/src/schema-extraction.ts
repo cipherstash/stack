@@ -1,10 +1,10 @@
-import type { PgCustomColumn, PgTable } from 'drizzle-orm/pg-core'
 import {
   type EncryptedColumn,
   type EncryptedTable,
   encryptedColumn,
   encryptedTable,
-} from '@/schema'
+} from '@cipherstash/stack/schema'
+import type { PgCustomColumn, PgTable } from 'drizzle-orm/pg-core'
 import { getEncryptedColumnConfig } from './index.js'
 
 /**

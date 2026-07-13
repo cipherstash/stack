@@ -1,8 +1,8 @@
+import { encryptedTable, types as v3Types } from '@cipherstash/stack/eql/v3'
 import { integer, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
-import { encryptedTable, types as v3Types } from '@/eql/v3'
-import { extractEncryptionSchemaV3 } from '@/eql/v3/drizzle/schema-extraction'
-import { types } from '@/eql/v3/drizzle/types'
+import { extractEncryptionSchemaV3 } from '../../src/v3/schema-extraction'
+import { types } from '../../src/v3/types'
 
 describe('extractEncryptionSchemaV3', () => {
   it('rebuilds an equivalent eql/v3 encryptedTable from every drizzle v3 factory', () => {

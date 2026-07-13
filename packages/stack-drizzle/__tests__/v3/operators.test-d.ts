@@ -1,12 +1,12 @@
 import type { Result } from '@byteslice/result'
+import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import type { EncryptionError } from '@cipherstash/stack/errors'
+import type { LockContext } from '@cipherstash/stack/identity'
+import type { Encrypted } from '@cipherstash/stack/types'
+import type { EncryptionV3 } from '@cipherstash/stack/v3'
 import { describe, expectTypeOf, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
-import type { AuditConfig } from '@/encryption/operations/base-operation'
-import type { EncryptionV3 } from '@/encryption/v3'
-import { createEncryptionOperatorsV3 } from '@/eql/v3/drizzle'
-import type { EncryptionError } from '@/errors'
-import type { LockContext } from '@/identity'
-import type { Encrypted } from '@/types'
+import { createEncryptionOperatorsV3 } from '../../src/v3/index.js'
 
 /**
  * Static regression guard for M1: `createEncryptionOperatorsV3` must accept the

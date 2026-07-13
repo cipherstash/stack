@@ -1,7 +1,7 @@
+import { types as v3Types } from '@cipherstash/stack/eql/v3'
 import { describe, expect, it } from 'vitest'
-import { types as v3Types } from '@/eql/v3'
-import { getEqlV3Column } from '@/eql/v3/drizzle/column'
-import { types } from '@/eql/v3/drizzle/types'
+import { getEqlV3Column } from '../../src/v3/column'
+import { types } from '../../src/v3/types'
 
 describe('v3 drizzle types namespace', () => {
   it('exposes the same factory names as @/eql/v3 types', () => {

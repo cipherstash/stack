@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@cipherstash/stack/schema'
+import {
+  encryptedColumn,
+  encryptedTable as encryptedTableV2,
+} from '@cipherstash/stack/schema'
+import { describe, expect, it, vi } from 'vitest'
 import { encryptedSupabase } from '../src/index.js'
 import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 import {

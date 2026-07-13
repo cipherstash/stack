@@ -8,8 +8,8 @@
  * assert the array handed to `.in()` and cannot see that.
  */
 
-import { describe, expect, it } from 'vitest'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { describe, expect, it } from 'vitest'
 import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 import { createWirePostgrest } from './helpers/postgrest-wire'
 import { createMockEncryptionClient } from './helpers/supabase-mock'

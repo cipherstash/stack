@@ -5,7 +5,7 @@
  * distinct from v2's composite-literal parser.
  */
 
-import type { Encrypted } from '@/types'
+import type { Encrypted } from '@cipherstash/stack/types'
 
 /** Thrown when a driver value cannot be read back as an EQL v3 envelope. */
 export class EqlV3CodecError extends Error {

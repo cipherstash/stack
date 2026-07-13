@@ -1,0 +1,95 @@
+{
+	"name": "@cipherstash/stack-drizzle",
+	"version": "0.1.0",
+	"description": "CipherStash Stack Drizzle ORM integration: encrypted column types and query operators for EQL v2 (./) and EQL v3 (./v3).",
+	"keywords": [
+		"encrypted",
+		"drizzle",
+		"orm",
+		"postgres",
+		"eql",
+		"cipherstash",
+		"stack"
+	],
+	"bugs": {
+		"url": "https://github.com/cipherstash/stack/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "packages/stack-drizzle"
+	},
+	"license": "MIT",
+	"author": "CipherStash <humans@cipherstash.com>",
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		},
+		"./v3": {
+			"import": {
+				"types": "./dist/v3/index.d.ts",
+				"default": "./dist/v3/index.js"
+			},
+			"require": {
+				"types": "./dist/v3/index.d.cts",
+				"default": "./dist/v3/index.cjs"
+			}
+		},
+		"./package.json": "./package.json"
+	},
+	"typesVersions": {
+		"*": {
+			"v3": [
+				"./dist/v3/index.d.ts"
+			]
+		}
+	},
+	"scripts": {
+		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"test": "vitest run",
+		"test:types": "vitest --run --typecheck.only",
+		"test:integration": "vitest run --config integration/vitest.config.ts"
+	},
+	"dependencies": {
+		"@cipherstash/stack": "workspace:*",
+		"@byteslice/result": "0.2.0"
+	},
+	"peerDependencies": {
+		"@cipherstash/protect-ffi": "0.29.0",
+		"drizzle-orm": ">=0.33"
+	},
+	"devDependencies": {
+		"@cipherstash/protect-ffi": "0.29.0",
+		"@cipherstash/test-kit": "workspace:*",
+		"dotenv": "17.4.2",
+		"drizzle-orm": "^0.45.2",
+		"postgres": "^3.4.8",
+		"tsup": "catalog:repo",
+		"typescript": "catalog:repo",
+		"vitest": "catalog:repo"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

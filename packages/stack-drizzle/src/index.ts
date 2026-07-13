@@ -1,5 +1,9 @@
+import type {
+  CastAs,
+  MatchIndexOpts,
+  TokenFilter,
+} from '@cipherstash/stack/schema'
 import { customType } from 'drizzle-orm/pg-core'
-import type { CastAs, MatchIndexOpts, TokenFilter } from '@/schema'
 
 export type { CastAs, MatchIndexOpts, TokenFilter }
 
@@ -81,7 +85,7 @@ const columnConfigMap = new Map<
  *
  * ```typescript
  * import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
- * import { encryptedType } from '@cipherstash/stack/drizzle'
+ * import { encryptedType } from '@cipherstash/stack-drizzle'
  *
  * const users = pgTable('users', {
  *   email: encryptedType('email', {

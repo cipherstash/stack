@@ -1,11 +1,11 @@
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import { PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createEncryptionOperators,
   EncryptionOperatorError,
   encryptedType,
-} from '@/drizzle'
-import type { EncryptionClient } from '@/encryption'
+} from '../src/index.js'
 
 const ENCRYPTED_VALUE = '{"v":"encrypted-value"}'
 

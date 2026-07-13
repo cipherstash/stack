@@ -1,12 +1,16 @@
 import type { JsPlaintext } from '@cipherstash/protect-ffi'
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 import {
   bulkModelsToEncryptedPgComposites,
+  logger,
   modelToEncryptedPgComposites,
 } from '@cipherstash/stack/adapter-kit'
-import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { LockContext } from '@cipherstash/stack/identity'
-import type { EncryptedTable, EncryptedTableColumn } from '@cipherstash/stack/schema'
+import type {
+  EncryptedTable,
+  EncryptedTableColumn,
+} from '@cipherstash/stack/schema'
 import { EncryptedColumn } from '@cipherstash/stack/schema'
 import type {
   BuildableQueryColumn,
@@ -14,7 +18,6 @@ import type {
   QueryTypeName,
   ScalarQueryTerm,
 } from '@cipherstash/stack/types'
-import { logger } from '@cipherstash/stack/adapter-kit'
 import {
   addJsonbCasts,
   formatContainmentOperand,

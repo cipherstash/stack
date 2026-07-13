@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SupabaseClientLike } from '../src/index.js'
 import { encryptedSupabaseV3 } from '../src/index.js'
 import type { IntrospectionData } from '../src/introspect'
@@ -23,7 +23,8 @@ vi.mock('../src/introspect', async (importActual) => {
 })
 
 vi.mock('@cipherstash/stack/encryption', async (importActual) => {
-  const actual = await importActual<typeof import('@cipherstash/stack/encryption')>()
+  const actual =
+    await importActual<typeof import('@cipherstash/stack/encryption')>()
   return { ...actual, Encryption: (cfg: unknown) => encryptionMock(cfg) }
 })
 

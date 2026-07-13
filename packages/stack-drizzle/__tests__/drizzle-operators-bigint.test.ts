@@ -1,7 +1,7 @@
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import { PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
-import { createEncryptionOperators, encryptedType } from '@/drizzle'
-import type { EncryptionClient } from '@/encryption'
+import { createEncryptionOperators, encryptedType } from '../src/index.js'
 
 // Regression coverage for the `bigint` (int8) plaintext path through the v3
 // Drizzle operators. Before the fix, `toPlaintext` fell through to

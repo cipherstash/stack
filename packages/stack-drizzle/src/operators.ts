@@ -1,3 +1,10 @@
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import type {
+  EncryptedColumn,
+  EncryptedTable,
+  EncryptedTableColumn,
+} from '@cipherstash/stack/schema'
+import { type QueryTypeName, queryTypes } from '@cipherstash/stack/types'
 import {
   and,
   arrayContained,
@@ -30,13 +37,6 @@ import {
   sql,
 } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import type { EncryptionClient } from '@/encryption/index.js'
-import type {
-  EncryptedColumn,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@/schema'
-import { type QueryTypeName, queryTypes } from '@/types'
 import type { EncryptedColumnConfig } from './index.js'
 import { getEncryptedColumnConfig } from './index.js'
 import { extractEncryptionSchema } from './schema-extraction.js'

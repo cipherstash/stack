@@ -25,6 +25,7 @@
       "@cipherstash/stack/errors": ["../stack/src/errors/index.ts"],
       "@cipherstash/stack/types": ["../stack/src/types-public.ts"],
       "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
+      "@cipherstash/stack/v3": ["../stack/src/encryption/v3.ts"],
       "@cipherstash/test-kit": ["../test-kit/src/index.ts"],
       "@cipherstash/test-kit/suite": ["../test-kit/src/run-family-suite.ts"],
       "@cipherstash/test-kit/catalog": ["../test-kit/src/catalog.ts"],

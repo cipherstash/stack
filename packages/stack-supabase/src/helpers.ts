@@ -1,4 +1,7 @@
-import type { EncryptedTable, EncryptedTableColumn } from '@cipherstash/stack/schema'
+import type {
+  EncryptedTable,
+  EncryptedTableColumn,
+} from '@cipherstash/stack/schema'
 import type { QueryTypeName } from '@cipherstash/stack/types'
 import type {
   DbFilterString,

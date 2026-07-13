@@ -1,9 +1,9 @@
-import type { PgTable } from 'drizzle-orm/pg-core'
 import {
   type AnyEncryptedV3Column,
   type AnyV3Table,
   encryptedTable,
-} from '@/eql/v3'
+} from '@cipherstash/stack/eql/v3'
+import type { PgTable } from 'drizzle-orm/pg-core'
 import { getEqlV3Column } from './column.js'
 
 /** Drizzle stashes the SQL table name on this well-known symbol key. */

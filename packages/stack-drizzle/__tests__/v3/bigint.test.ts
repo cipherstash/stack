@@ -1,12 +1,12 @@
 import { type SQL, sql } from 'drizzle-orm'
 import { integer, PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
-import { getEqlV3Column, isEqlV3Column } from '@/eql/v3/drizzle/column'
+import { getEqlV3Column, isEqlV3Column } from '../../src/v3/column'
 import {
   createEncryptionOperatorsV3,
   EncryptionOperatorError,
-} from '@/eql/v3/drizzle/operators'
-import { types } from '@/eql/v3/drizzle/types'
+} from '../../src/v3/operators'
+import { types } from '../../src/v3/types'
 
 // A representative encrypted envelope — what `client.encrypt` actually returns
 // and what a bigint column stores. Deliberately NOT a plaintext bigint.

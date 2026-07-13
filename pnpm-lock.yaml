@@ -676,6 +676,40 @@ importers:
         specifier: catalog:repo
         version: 0.41.0
 
+  packages/stack-drizzle:
+    dependencies:
+      '@byteslice/result':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cipherstash/stack':
+        specifier: workspace:*
+        version: link:../stack
+    devDependencies:
+      '@cipherstash/protect-ffi':
+        specifier: 0.29.0
+        version: 0.29.0
+      '@cipherstash/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
+      tsup:
+        specifier: catalog:repo
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+
   packages/stack-supabase:
     dependencies:
       '@cipherstash/stack':
@@ -5861,6 +5895,14 @@ snapshots:
       gel: 2.2.0
       mysql2: 3.16.0
       pg: 8.20.0
+      postgres: 3.4.9
+
+  drizzle-orm@0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9):
+    optionalDependencies:
+      '@types/pg': 8.20.0
+      gel: 2.2.0
+      mysql2: 3.16.0
+      pg: 8.21.0
       postgres: 3.4.9
 
   dunder-proto@1.0.1:

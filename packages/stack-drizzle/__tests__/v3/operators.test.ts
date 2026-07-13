@@ -1,3 +1,9 @@
+import { needleFor } from '@cipherstash/test-kit'
+import {
+  eqlTypeSlug as slug,
+  typedEntries,
+  V3_MATRIX,
+} from '@cipherstash/test-kit/catalog'
 import {
   eq as drizzleEq,
   exists,
@@ -11,19 +17,13 @@ import {
 } from 'drizzle-orm'
 import { integer, PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
-import { makeEqlV3Column } from '@/eql/v3/drizzle/column'
+import { makeEqlV3Column } from '../../src/v3/column'
 import {
   createEncryptionOperatorsV3,
   EncryptionOperatorError,
-} from '@/eql/v3/drizzle/operators'
-import { extractEncryptionSchemaV3 } from '@/eql/v3/drizzle/schema-extraction'
-import { types } from '@/eql/v3/drizzle/types'
-import {
-  eqlTypeSlug as slug,
-  typedEntries,
-  V3_MATRIX,
-} from '../v3-matrix/catalog'
-import { needleFor } from '../v3-matrix/needle-for'
+} from '../../src/v3/operators'
+import { extractEncryptionSchemaV3 } from '../../src/v3/schema-extraction'
+import { types } from '../../src/v3/types'
 
 const TERM = { c: 'ct', v: 1 }
 const TERM_JSON = JSON.stringify(TERM)

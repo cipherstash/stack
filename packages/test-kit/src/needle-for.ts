@@ -1,4 +1,4 @@
-import { matchNeedleError } from '@/schema/match-defaults'
+import { matchNeedleError } from '@cipherstash/stack/adapter-kit'
 import type { V3_MATRIX } from './catalog'
 
 type MatrixSpec = (typeof V3_MATRIX)[keyof typeof V3_MATRIX]

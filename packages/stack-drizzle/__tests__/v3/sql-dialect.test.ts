@@ -1,7 +1,7 @@
 import { not, sql } from 'drizzle-orm'
 import { PgDialect } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
-import { EQL_V3_FN_SCHEMA, v3Dialect } from '@/eql/v3/drizzle/sql-dialect'
+import { EQL_V3_FN_SCHEMA, v3Dialect } from '../../src/v3/sql-dialect'
 
 const dialect = new PgDialect()
 const render = (s: ReturnType<typeof sql>) => dialect.sqlToQuery(s).sql

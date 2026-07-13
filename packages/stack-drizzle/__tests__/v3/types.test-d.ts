@@ -1,7 +1,7 @@
+import type { types as v3Types } from '@cipherstash/stack/eql/v3'
+import type { Encrypted } from '@cipherstash/stack/types'
 import { describe, expectTypeOf, it } from 'vitest'
-import type { types as v3Types } from '@/eql/v3'
-import { types } from '@/eql/v3/drizzle/types'
-import type { Encrypted } from '@/types'
+import { types } from '../../src/v3/types'
 
 describe('v3 drizzle types - type-level', () => {
   it('exposes exactly the same factory keys as @/eql/v3 types', () => {

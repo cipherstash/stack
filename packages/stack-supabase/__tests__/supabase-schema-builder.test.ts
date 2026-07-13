@@ -1,11 +1,8 @@
-import { describe, expect, it } from 'vitest'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { describe, expect, it } from 'vitest'
 import type { IntrospectionResult } from '../src/introspect'
 import { groupUnmodelledRows } from '../src/introspect'
-import {
-  mergeDeclaredTables,
-  synthesizeTables,
-} from '../src/schema-builder'
+import { mergeDeclaredTables, synthesizeTables } from '../src/schema-builder'
 
 const introspection: IntrospectionResult = [
   {

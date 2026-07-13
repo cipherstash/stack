@@ -1,5 +1,5 @@
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type {
   AnyV3Table,
   EqlTypeForColumn,
@@ -8,7 +8,10 @@ import type {
 } from '@cipherstash/stack/eql/v3'
 import type { EncryptionError } from '@cipherstash/stack/errors'
 import type { LockContext } from '@cipherstash/stack/identity'
-import type { EncryptedTable, EncryptedTableColumn } from '@cipherstash/stack/schema'
+import type {
+  EncryptedTable,
+  EncryptedTableColumn,
+} from '@cipherstash/stack/schema'
 import type { ClientConfig } from '@cipherstash/stack/types'
 import type { V3Schemas } from './schema-builder'
 
@@ -628,8 +631,8 @@ export interface SupabaseClientLike {
 // Re-export for convenience
 // ---------------------------------------------------------------------------
 
-export type { EncryptionClient } from '@cipherstash/stack/encryption'
 export type { AuditConfig } from '@cipherstash/stack/adapter-kit'
+export type { EncryptionClient } from '@cipherstash/stack/encryption'
 export type { LockContext } from '@cipherstash/stack/identity'
 export type {
   EncryptedColumn,

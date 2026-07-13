@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import * as barrel from '@/eql/v3/drizzle'
+import * as barrel from '../../src/v3/index.js'
 
 // Exhaustive, so ADDING an export fails here too. The previous version asserted
 // only four names, leaving the codec/column re-exports unpinned and letting a

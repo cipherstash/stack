@@ -57,17 +57,11 @@
 			"eql/v3": [
 				"./dist/eql/v3/index.d.ts"
 			],
-			"eql/v3/drizzle": [
-				"./dist/eql/v3/drizzle/index.d.ts"
-			],
 			"v3": [
 				"./dist/encryption/v3.d.ts"
 			],
 			"types": [
 				"./dist/types-public.d.ts"
-			],
-			"drizzle": [
-				"./dist/drizzle/index.d.ts"
 			],
 			"dynamodb": [
 				"./dist/dynamodb/index.d.ts"
@@ -128,16 +122,6 @@
 				"default": "./dist/eql/v3/index.cjs"
 			}
 		},
-		"./eql/v3/drizzle": {
-			"import": {
-				"types": "./dist/eql/v3/drizzle/index.d.ts",
-				"default": "./dist/eql/v3/drizzle/index.js"
-			},
-			"require": {
-				"types": "./dist/eql/v3/drizzle/index.d.cts",
-				"default": "./dist/eql/v3/drizzle/index.cjs"
-			}
-		},
 		"./v3": {
 			"import": {
 				"types": "./dist/encryption/v3.d.ts",
@@ -156,16 +140,6 @@
 			"require": {
 				"types": "./dist/types-public.d.cts",
 				"default": "./dist/types-public.cjs"
-			}
-		},
-		"./drizzle": {
-			"import": {
-				"types": "./dist/drizzle/index.d.ts",
-				"default": "./dist/drizzle/index.js"
-			},
-			"require": {
-				"types": "./dist/drizzle/index.d.cts",
-				"default": "./dist/drizzle/index.cjs"
 			}
 		},
 		"./dynamodb": {

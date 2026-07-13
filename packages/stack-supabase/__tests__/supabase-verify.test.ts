@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { describe, expect, it } from 'vitest'
 import type { IntrospectionResult } from '../src/introspect'
 import { verifyDeclaredSchemas } from '../src/verify'
 

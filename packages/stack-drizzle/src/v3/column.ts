@@ -1,6 +1,9 @@
+import {
+  type AnyEncryptedV3Column,
+  types as v3Types,
+} from '@cipherstash/stack/eql/v3'
+import type { Encrypted } from '@cipherstash/stack/types'
 import { customType } from 'drizzle-orm/pg-core'
-import { type AnyEncryptedV3Column, types as v3Types } from '@/eql/v3'
-import type { Encrypted } from '@/types'
 import { v3FromDriver, v3ToDriver } from './codec.js'
 
 const buildersByDomain: ReadonlyMap<

@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { describe, expect, it } from 'vitest'
 import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 
 /**
