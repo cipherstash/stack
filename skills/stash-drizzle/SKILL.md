@@ -787,7 +787,7 @@ Differences from the v2 operators to know about:
 - **`contains` on a `types.Json` column** answers encrypted-JSONB containment instead of free-text: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle — a `Json` column carries no `eq` / ordering, so those operators throw on it.
 - **No plaintext-column fallback.** Every v3 operator requires an encrypted v3 column and throws `EncryptionOperatorError` otherwise. Use regular Drizzle operators for non-encrypted columns.
 - A `null` operand throws — use `isNull()` / `isNotNull()` for NULL checks.
-- `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `bulkEncrypt` crossing when the client exposes one.
+- `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `encryptQuery` batch crossing.
 - `contains` rejects a needle shorter than the match tokenizer's token length (it would otherwise silently match every row).
 - Operators gate on the column's capabilities and throw `EncryptionOperatorError` (with `context.columnName` / `tableName` / `operator`) when the domain can't answer the operator. This `EncryptionOperatorError` is exported from `@cipherstash/stack-drizzle/v3` and is deliberately separate from the v2 class of the same name; there is no `EncryptionConfigError` on the v3 path.
 - Every operator takes an optional trailing `{ lockContext, audit }` argument; `createEncryptionOperatorsV3(client, { lockContext, audit })` sets defaults applied to every operand encryption.

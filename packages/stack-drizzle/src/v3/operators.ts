@@ -108,10 +108,11 @@ interface ColumnContext {
 /**
  * The `eql_v3.query_<domain>` cast for a column's storage domain — e.g.
  * `public.eql_v3_text_search` → `eql_v3.query_text_search`. Uniform across the
- * queryable domains (`_eq`, `_ord*`, `_match`, `_search*`); the two irregular
- * cases are handled elsewhere: storage-only domains (`eql_v3_boolean`, the bare
- * base types) have no query domain and return `null` (they are never queried),
- * and `eql_v3_json` maps to `query_jsonb`, cast explicitly on the JSON path.
+ * queryable column domains (`_eq`, `_ord`, `_ord_ore`, `_match`, `_search`); the
+ * two irregular cases are handled elsewhere: storage-only domains
+ * (`eql_v3_boolean`, the bare base types) have no query domain and return `null`
+ * (they are never queried), and `eql_v3_json` maps to `query_jsonb`, cast
+ * explicitly on the JSON path.
  */
 function queryCastForDomain(eqlType: string): string | null {
   const bare = stripDomainSchema(eqlType) // public.eql_v3_text_search → eql_v3_text_search
@@ -119,8 +120,11 @@ function queryCastForDomain(eqlType: string): string | null {
   if (!bare.startsWith(prefix)) return null
   const suffix = bare.slice(prefix.length)
   // No index suffix (bare storage-only domain like `boolean`, `text`) → no query
-  // domain exists. These are gated out before any operand is encrypted.
-  if (!/_(eq|ord|ord_ope|ord_ore|match|search|search_ore)$/.test(suffix)) {
+  // domain exists. These are gated out before any operand is encrypted. The
+  // suffixes match the column factories in `@/eql/v3/columns` exactly: ope
+  // ordering is the `_ord` domain (not `_ord_ope`) and text search is `_search`
+  // (there is no `_search_ore` column), so those two never occur here.
+  if (!/_(eq|ord|ord_ore|match|search)$/.test(suffix)) {
     return null
   }
   return `eql_v3.query_${suffix}`
@@ -573,7 +577,7 @@ export function createEncryptionOperatorsV3(
       )
     }
     // Gate and resolve the context once for the whole list, then encrypt it in
-    // a single crossing where the client supports it.
+    // a single `encryptQuery` batch crossing.
     requireIndex(ctx, EQUALITY_INDEXES, operator, 'equality')
     const op: EqualityOp = negate ? 'ne' : 'eq'
     const encrypted = await encryptOperands(
@@ -655,18 +659,16 @@ export function createEncryptionOperatorsV3(
     contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       contains(l, r, 'contains', opts),
     /** Membership: ORs one encrypted `eq` term per value. The whole list is
-     * encrypted in one `bulkEncrypt` crossing where the client supports it,
-     * otherwise concurrency-bounded. Rejects an empty list; requires a
-     * `unique` or `ore` index. */
+     * encrypted in one `encryptQuery` batch crossing. Rejects an empty list;
+     * requires a `unique` or `ore` index. */
     inArray: (
       l: SQLWrapper,
       values: unknown[],
       opts?: EncryptionOperatorCallOpts,
     ) => inArrayOp(l, values, false, 'inArray', opts),
     /** Non-membership: ANDs one encrypted `ne` term per value. The whole list
-     * is encrypted in one `bulkEncrypt` crossing where the client supports it,
-     * otherwise concurrency-bounded. Rejects an empty list; requires a
-     * `unique` or `ore` index. */
+     * is encrypted in one `encryptQuery` batch crossing. Rejects an empty list;
+     * requires a `unique` or `ore` index. */
     notInArray: (
       l: SQLWrapper,
       values: unknown[],

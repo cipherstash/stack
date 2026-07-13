@@ -58,8 +58,13 @@ function chainable(result: Promise<TermResult>) {
 // query term the crossing would return (defaulting to a constant `TERM`); the
 // batch form applies it position-for-position so callers can pin ordering.
 function setup(termImpl: (value?: unknown) => unknown = () => TERM) {
-  const encryptQuery = vi.fn((valueOrTerms: unknown, _opts?: unknown) => {
-    if (Array.isArray(valueOrTerms)) {
+  const encryptQuery = vi.fn((valueOrTerms: unknown, opts?: unknown) => {
+    // Route exactly as the real client does (packages/stack/src/encryption/
+    // index.ts): batch ONLY when no opts are supplied AND the arg is a term
+    // array. An array-valued single query WITH opts (e.g. a searchableJson
+    // array needle) must take the single path here too, or the double would
+    // diverge from production for that shape.
+    if (opts === undefined && Array.isArray(valueOrTerms)) {
       const terms = valueOrTerms as Array<{ value: unknown }>
       return chainable(
         Promise.resolve({ data: terms.map((t) => termImpl(t.value)) }),
