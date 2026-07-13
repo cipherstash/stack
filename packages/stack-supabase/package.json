@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/stack-supabase",
-	"version": "0.1.0",
+	"version": "0.0.0",
 	"description": "CipherStash Stack Supabase integration: transparent field-level encryption for Supabase with EQL v3 (encryptedSupabaseV3, connect-time introspection) and v2 (encryptedSupabase).",
 	"keywords": [
 		"encrypted",

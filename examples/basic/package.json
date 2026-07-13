@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
+    "@cipherstash/stack-drizzle": "workspace:*",
     "@cipherstash/stack-supabase": "workspace:*",
     "dotenv": "^17.4.2",
     "pg": "8.20.0"

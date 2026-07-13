@@ -1,6 +1,6 @@
 ---
 name: stash-supabase
-description: Integrate CipherStash encryption with Supabase using @cipherstash/stack/supabase. Covers the encryptedSupabase wrapper, transparent encryption/decryption on insert/update/select, encrypted query filters (eq, like, ilike, gt/gte/lt/lte, in, or, match), identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
+description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabase wrapper, transparent encryption/decryption on insert/update/select, encrypted query filters (eq, like, ilike, gt/gte/lt/lte, in, or, match), identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
 ---
 
 # CipherStash Stack - Supabase Integration
@@ -18,8 +18,11 @@ Guide for integrating CipherStash field-level encryption with Supabase using the
 ## Installation
 
 ```bash
-npm install @cipherstash/stack @supabase/supabase-js
+npm install @cipherstash/stack @cipherstash/stack-supabase @supabase/supabase-js
 ```
+
+The Supabase integration ships as its own first-party package,
+`@cipherstash/stack-supabase`, which depends on `@cipherstash/stack`. Install both.
 
 ## Database Schema
 
@@ -70,7 +73,7 @@ const users = encryptedTable("users", {
 ```typescript
 import { createClient } from "@supabase/supabase-js"
 import { Encryption } from "@cipherstash/stack"
-import { encryptedSupabase } from "@cipherstash/stack/supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -322,7 +325,7 @@ const { data, error } = await eSupabase
 ```typescript
 import { createClient } from "@supabase/supabase-js"
 import { Encryption } from "@cipherstash/stack"
-import { encryptedSupabase } from "@cipherstash/stack/supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
 
 // Schema
@@ -394,7 +397,7 @@ type EncryptedSupabaseError = {
 
 ## Exported Types
 
-`@cipherstash/stack/supabase` also exports the following types:
+`@cipherstash/stack-supabase` also exports the following types:
 
 - `EncryptedSupabaseConfig`
 - `EncryptedSupabaseInstance`
@@ -420,7 +423,7 @@ The query surface matches v2 — same filter methods, `withLockContext`,
 ### Setup
 
 ```typescript
-import { encryptedSupabaseV3 } from "@cipherstash/stack/supabase"
+import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
 
 // Introspects the database via options.databaseUrl or DATABASE_URL
 const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
@@ -444,7 +447,7 @@ tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-import { encryptedSupabaseV3 } from "@cipherstash/stack/supabase"
+import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
 
 const users = encryptedTable("users", {
   email:  types.TextSearch("email"),      // public.eql_v3_text_search — eq + range + free-text

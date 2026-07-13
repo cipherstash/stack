@@ -120,6 +120,9 @@ importers:
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../../packages/stack
+      '@cipherstash/stack-drizzle':
+        specifier: workspace:*
+        version: link:../../packages/stack-drizzle
       '@cipherstash/stack-supabase':
         specifier: workspace:*
         version: link:../../packages/stack-supabase

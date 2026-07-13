@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/stack-drizzle",
-	"version": "0.1.0",
+	"version": "0.0.0",
 	"description": "CipherStash Stack Drizzle ORM integration: encrypted column types and query operators for EQL v2 (./) and EQL v3 (./v3).",
 	"keywords": [
 		"encrypted",
