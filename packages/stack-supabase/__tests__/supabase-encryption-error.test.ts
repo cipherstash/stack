@@ -11,14 +11,18 @@ import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 import {
   createMockEncryptionClient,
   createMockSupabase,
+  fakeEnvelope,
+  operation,
 } from './helpers/supabase-mock'
 
 /**
  * Regression coverage for #626: the query builder's catch block used to hardcode
  * `encryptionError: undefined`, so the typed `EncryptedSupabaseError.encryptionError`
- * field was dead. These tests pin that a genuine encryption failure now threads its
- * `EncryptionError` through, while a plain (non-encryption) throw leaves it unset —
- * for both the v2 and the v3 dialect, which share the base `execute()` catch.
+ * field was dead. The v2 tests pin that a genuine encryption failure now threads its
+ * `EncryptionError` through the shared base `execute()` catch, while a plain
+ * (non-encryption) throw leaves it unset. The v3 test covers the dialect's own
+ * `encryptionFailure` path, which synthesizes an `EncryptionError` for a
+ * query-term contract violation (no operation failure to wrap).
  */
 
 const usersV2 = encryptedTableV2('users', {
@@ -95,28 +99,36 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
     expect(error?.encryptionError).toBeUndefined()
   })
 
-  it('v3: threads the EncryptionError through on an encryption failure', async () => {
-    const failure = {
-      type: EncryptionErrorTypes.EncryptionError,
-      message: 'bad operand',
+  it('v3: synthesizes an EncryptionError for a query-term contract violation', async () => {
+    // The v3 dialect's own `encryptionFailure` path has no operation failure to
+    // wrap for its contract-violation cases, so it synthesizes an EncryptionError.
+    // Drive it directly: a two-element `in` list whose bulkEncrypt returns one
+    // term trips the length-mismatch check. (The base `execute()` threading is
+    // already covered by the v2 test above; overriding `encryptModel` here would
+    // only re-run that shared path, not this v3-specific branch.)
+    const encryptionClient = createMockEncryptionClient() as unknown as {
+      bulkEncrypt: (...args: unknown[]) => unknown
     }
-    const encryptionClient = createMockEncryptionClient() as unknown as Record<
-      string,
-      unknown
-    >
-    encryptionClient['encryptModel'] = () => failingOperation(failure)
+    encryptionClient.bulkEncrypt = () =>
+      operation([{ data: fakeEnvelope('ada', 'email') }])
 
     const { client: supabase } = createMockSupabase()
-    const builder = new EncryptedQueryBuilderV3Impl(
+    const { error, status } = await new EncryptedQueryBuilderV3Impl(
       'users',
       usersV3,
       encryptionClient as unknown as EncryptionClient,
       supabase,
       ['id', 'email'],
     )
+      .select('id')
+      .in('email', ['ada@example.com', 'grace@example.com'])
 
-    const { error } = await builder.insert({ email: 'ada@example.com' })
-
-    expect(error?.encryptionError).toEqual(failure)
+    expect(status).toBe(500)
+    expect(error?.encryptionError?.type).toBe(
+      EncryptionErrorTypes.EncryptionError,
+    )
+    expect(error?.encryptionError?.message).toMatch(
+      /1 term(s)? for 2 value(s)?/,
+    )
   })
 })

@@ -5,8 +5,10 @@ import {
 } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
-import type { EncryptionError } from '@cipherstash/stack/errors'
-import { EncryptionErrorTypes } from '@cipherstash/stack/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+} from '@cipherstash/stack/errors'
 import type {
   ColumnSchema,
   EncryptedTable,

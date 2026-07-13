@@ -421,8 +421,9 @@ export class EncryptedQueryBuilderImpl<
       )
 
       // A failure inside any of the encrypt/decrypt steps above is thrown as an
-      // `EncryptionFailedError` wrapping the operation's `EncryptionError`. Thread
-      // that through so callers can branch on `error.encryptionError`; a plain
+      // `EncryptionFailedError` wrapping the operation's `EncryptionError` (or, in
+      // the v3 dialect, a synthesized one for its contract-violation cases).
+      // Thread it through so callers can branch on `error.encryptionError`; a plain
       // PostgREST/API error is not an `EncryptionFailedError` and leaves it unset.
       const error: EncryptedSupabaseError = {
         message,
