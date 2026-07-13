@@ -49,8 +49,7 @@
       "@cipherstash/stack": ["./src/index.ts"],
       "@cipherstash/stack/eql/v3": ["./src/eql/v3/index.ts"],
       "@cipherstash/stack/schema": ["./src/schema/index.ts"],
-      "@cipherstash/stack/v3": ["./src/encryption/v3.ts"],
-      "@cipherstash/stack/supabase": ["./src/supabase/index.ts"]
+      "@cipherstash/stack/v3": ["./src/encryption/v3.ts"]
     }
   }
 }

@@ -72,9 +72,6 @@
 			"dynamodb": [
 				"./dist/dynamodb/index.d.ts"
 			],
-			"supabase": [
-				"./dist/supabase/index.d.ts"
-			],
 			"wasm-inline": [
 				"./dist/wasm-inline.d.ts"
 			]
@@ -179,16 +176,6 @@
 			"require": {
 				"types": "./dist/dynamodb/index.d.cts",
 				"default": "./dist/dynamodb/index.cjs"
-			}
-		},
-		"./supabase": {
-			"import": {
-				"types": "./dist/supabase/index.d.ts",
-				"default": "./dist/supabase/index.js"
-			},
-			"require": {
-				"types": "./dist/supabase/index.d.cts",
-				"default": "./dist/supabase/index.cjs"
 			}
 		},
 		"./encryption": {

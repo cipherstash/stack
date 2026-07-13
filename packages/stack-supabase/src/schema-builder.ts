@@ -1,6 +1,6 @@
-import { type AnyV3Table, EncryptedTable } from '@/eql/v3'
-import type { AnyEncryptedV3Column } from '@/eql/v3/columns'
-import { factoryForDomain } from '@/eql/v3/domain-registry'
+import { type AnyV3Table, EncryptedTable } from '@cipherstash/stack/eql/v3'
+import type { AnyEncryptedV3Column } from '@cipherstash/stack/adapter-kit'
+import { factoryForDomain } from '@cipherstash/stack/adapter-kit'
 import type { IntrospectionResult } from './introspect'
 
 /** A record of declared v3 tables, keyed by table name. */

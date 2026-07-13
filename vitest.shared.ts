@@ -42,9 +42,20 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/stack/src/encryption/v3.ts',
   ),
-  '@cipherstash/stack/supabase': resolve(
+  // The core↔adapter seam, consumed by the split adapter packages.
+  '@cipherstash/stack/adapter-kit': resolve(
     repoRoot,
-    'packages/stack/src/supabase/index.ts',
+    'packages/stack/src/adapter-kit.ts',
+  ),
+  '@cipherstash/stack/encryption': resolve(
+    repoRoot,
+    'packages/stack/src/encryption/index.ts',
+  ),
+  // The Supabase adapter now lives in its own package (was
+  // `@cipherstash/stack/supabase`); resolve it to source too.
+  '@cipherstash/stack-supabase': resolve(
+    repoRoot,
+    'packages/stack-supabase/src/index.ts',
   ),
   // Bare entry LAST: it is a prefix of every subpath above, and Vite matches in
   // order, so the subpaths must win first. Both sibling tsconfigs map bare

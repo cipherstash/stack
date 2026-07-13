@@ -1,5 +1,5 @@
-import { Encryption } from '@/encryption'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
+import { Encryption } from '@cipherstash/stack'
+import type { EncryptedTable, EncryptedTableColumn } from '@cipherstash/stack/schema'
 import type { UnmodelledColumn } from './introspect'
 import { introspect } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
@@ -29,7 +29,7 @@ import { verifyDeclaredSchemas } from './verify'
  * @example
  * ```typescript
  * import { Encryption } from '@cipherstash/stack'
- * import { encryptedSupabase } from '@cipherstash/stack/supabase'
+ * import { encryptedSupabase } from '@cipherstash/stack-supabase'
  * import { encryptedTable, encryptedColumn } from '@cipherstash/stack/schema'
  *
  * const users = encryptedTable('users', {

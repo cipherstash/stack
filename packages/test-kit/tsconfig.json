@@ -30,7 +30,6 @@
       "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
       "@cipherstash/stack/schema": ["../stack/src/schema/index.ts"],
       "@cipherstash/stack/v3": ["../stack/src/encryption/v3.ts"],
-      "@cipherstash/stack/supabase": ["../stack/src/supabase/index.ts"],
 
       // Resolving stack to source means we also inherit stack's OWN internal
       // alias: `src/eql/v3/columns.ts` imports `@/schema`. Without this the

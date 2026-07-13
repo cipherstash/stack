@@ -1,4 +1,4 @@
-import { DOMAIN_REGISTRY } from '@/eql/v3/domain-registry'
+import { DOMAIN_REGISTRY } from '@cipherstash/stack/adapter-kit'
 
 /** One introspected column: its DB name and its `public` EQL v3 domain (or `null`). */
 export interface IntrospectedColumn {

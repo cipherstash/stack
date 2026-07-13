@@ -1,4 +1,4 @@
-import { stripDomainSchema } from '@/eql/v3/domain-registry'
+import { stripDomainSchema } from '@cipherstash/stack/adapter-kit'
 import type { IntrospectionResult } from './introspect'
 import type { V3Schemas } from './schema-builder'
 
