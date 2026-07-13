@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
-import { encryptedTable, types } from '@/eql/v3'
-import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 
 /**
  * Supabase double that records the select string AND simulates the part of

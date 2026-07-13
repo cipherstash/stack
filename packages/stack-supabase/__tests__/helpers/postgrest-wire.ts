@@ -17,7 +17,7 @@
  */
 
 import { PostgrestClient } from '@supabase/postgrest-js'
-import type { SupabaseQueryBuilder } from '@/supabase/types'
+import type { SupabaseQueryBuilder } from '../../src/types'
 
 export type WirePostgrest = {
   /** Structurally a supabase client: `.from(table)` → a query builder. */

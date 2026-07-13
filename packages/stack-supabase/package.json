@@ -72,6 +72,7 @@
 		"@supabase/postgrest-js": "2.105.4",
 		"@supabase/supabase-js": "^2.110.0",
 		"@types/pg": "^8.20.0",
+		"fast-check": "^4.8.0",
 		"dotenv": "17.4.2",
 		"pg": "8.20.0",
 		"postgres": "^3.4.8",

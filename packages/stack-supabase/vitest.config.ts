@@ -14,6 +14,21 @@ export default defineConfig({
         __dirname,
         '../stack/src/adapter-kit.ts',
       ),
+      // We resolve `@cipherstash/stack` to its SOURCE (via sharedAlias), and that
+      // source uses stack's internal `@/` alias — so it must resolve here too.
+      // This package's own code never uses `@/`, so there is no collision.
+      '@/': resolve(__dirname, '../stack/src') + '/',
+      // stack's `src/wasm-inline.ts` imports the `/wasm-inline` subpaths of
+      // protect-ffi/auth, which aren't resolvable by Vitest; alias to stack's
+      // stubs so loading stack source in tests doesn't fail on them.
+      '@cipherstash/protect-ffi/wasm-inline': resolve(
+        __dirname,
+        '../stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts',
+      ),
+      '@cipherstash/auth/wasm-inline': resolve(
+        __dirname,
+        '../stack/__tests__/helpers/stub-auth-wasm-inline.ts',
+      ),
     },
   },
   test: {

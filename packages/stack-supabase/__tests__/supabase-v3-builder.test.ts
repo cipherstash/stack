@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { encryptedTable, types } from '@/eql/v3'
-import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@/schema'
-import { encryptedSupabase } from '@/supabase'
-import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import { encryptedColumn, encryptedTable as encryptedTableV2 } from '@cipherstash/stack/schema'
+import { encryptedSupabase } from '../src/index.js'
+import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 import {
   createMockEncryptionClient,
   createMockSupabase,

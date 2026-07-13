@@ -1,13 +1,13 @@
 import { describe, expectTypeOf, it } from 'vitest'
-import { encryptedTable, type InferPlaintext, types } from '@/eql/v3'
-import { encryptedColumn, encryptedTable as v2EncryptedTable } from '@/schema'
+import { encryptedTable, type InferPlaintext, types } from '@cipherstash/stack/eql/v3'
+import { encryptedColumn, encryptedTable as v2EncryptedTable } from '@cipherstash/stack/schema'
 import {
   type EncryptedQueryBuilderV3,
   type EncryptedSupabaseResponse,
   encryptedSupabase,
   encryptedSupabaseV3,
   type SupabaseClientLike,
-} from '@/supabase'
+} from '../src/index.js'
 
 declare const supabaseClient: SupabaseClientLike
 

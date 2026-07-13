@@ -3,8 +3,8 @@ import {
   addJsonbCastsV3,
   parseOrString,
   rebuildOrString,
-} from '@/supabase/helpers'
-import type { DbPendingOrCondition } from '@/supabase/types'
+} from '../src/helpers'
+import type { DbPendingOrCondition } from '../src/types'
 
 // `createdAt` is a renamed property (DB column `created_at`); `email` is a
 // property whose name already equals its DB column.

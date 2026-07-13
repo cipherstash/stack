@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { encryptedTable, types } from '@/eql/v3'
-import type { IntrospectionResult } from '@/supabase/introspect'
-import { groupUnmodelledRows } from '@/supabase/introspect'
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import type { IntrospectionResult } from '../src/introspect'
+import { groupUnmodelledRows } from '../src/introspect'
 import {
   mergeDeclaredTables,
   synthesizeTables,
-} from '@/supabase/schema-builder'
+} from '../src/schema-builder'
 
 const introspection: IntrospectionResult = [
   {

@@ -20,9 +20,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { AnyV3Table } from '@/eql/v3'
-import { encryptedTable } from '@/eql/v3'
-import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
+import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
+import { encryptedTable } from '@cipherstash/stack/eql/v3'
+import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 import {
   createMockEncryptionClient,
   createMockSupabase,
@@ -34,7 +34,7 @@ import {
   eqlTypeSlug as slug,
   typedEntries,
   V3_MATRIX,
-} from './v3-matrix/catalog'
+} from '@cipherstash/test-kit/catalog'
 
 const matrixEntries = typedEntries(V3_MATRIX)
 

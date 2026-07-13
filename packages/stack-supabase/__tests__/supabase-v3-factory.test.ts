@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { encryptedTable, types } from '@/eql/v3'
-import type { SupabaseClientLike } from '@/supabase'
-import { encryptedSupabaseV3 } from '@/supabase'
-import type { IntrospectionData } from '@/supabase/introspect'
-import { EncryptedQueryBuilderV3Impl } from '@/supabase/query-builder-v3'
+import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
+import type { SupabaseClientLike } from '../src/index.js'
+import { encryptedSupabaseV3 } from '../src/index.js'
+import type { IntrospectionData } from '../src/introspect'
+import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 
 // --- Mocks -----------------------------------------------------------------
 //
@@ -17,13 +17,13 @@ const { introspectMock, encryptionMock, createClientMock } = vi.hoisted(() => ({
   createClientMock: vi.fn(() => ({ from: () => ({}) })),
 }))
 
-vi.mock('@/supabase/introspect', async (importActual) => {
-  const actual = await importActual<typeof import('@/supabase/introspect')>()
+vi.mock('../src/introspect', async (importActual) => {
+  const actual = await importActual<typeof import('../src/introspect')>()
   return { ...actual, introspect: (url: string) => introspectMock(url) }
 })
 
-vi.mock('@/encryption', async (importActual) => {
-  const actual = await importActual<typeof import('@/encryption')>()
+vi.mock('@cipherstash/stack/encryption', async (importActual) => {
+  const actual = await importActual<typeof import('@cipherstash/stack/encryption')>()
   return { ...actual, Encryption: (cfg: unknown) => encryptionMock(cfg) }
 })
 

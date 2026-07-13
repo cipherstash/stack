@@ -13,7 +13,7 @@
  * same doubles, and a change to either mock moves both suites together.
  */
 
-import type { EncryptionClient } from '@/encryption'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 
 export type FakeEnvelope = {
   v: 2

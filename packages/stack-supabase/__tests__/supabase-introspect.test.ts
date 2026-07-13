@@ -1,6 +1,6 @@
 import fc from 'fast-check'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { groupIntrospectionRows, loadPg } from '@/supabase/introspect'
+import { groupIntrospectionRows, loadPg } from '../src/introspect'
 
 describe('groupIntrospectionRows', () => {
   it('groups rows by table, preserving row order as column order', () => {
@@ -115,7 +115,7 @@ describe('introspect happy path', () => {
       return { default: { Client } }
     })
 
-    const { introspect } = await import('@/supabase/introspect')
+    const { introspect } = await import('../src/introspect')
     const { tables, unmodelled } = await introspect('postgres://ok')
 
     expect(queries).toHaveLength(2)
@@ -158,7 +158,7 @@ describe('introspect happy path', () => {
       return { default: { Client } }
     })
 
-    const { introspect } = await import('@/supabase/introspect')
+    const { introspect } = await import('../src/introspect')
     await expect(introspect('postgres://ok')).rejects.toThrow(
       'relation does not exist',
     )
@@ -188,7 +188,7 @@ describe('introspect connection error handling', () => {
       return { default: { Client } }
     })
 
-    const { introspect } = await import('@/supabase/introspect')
+    const { introspect } = await import('../src/introspect')
     await expect(introspect('postgres://unreachable')).rejects.toThrow(
       'ECONNREFUSED',
     )
