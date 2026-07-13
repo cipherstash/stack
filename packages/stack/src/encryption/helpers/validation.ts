@@ -1,5 +1,9 @@
 import type { Result } from '@byteslice/result'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import type { FfiIndexTypeName } from '@/types'
 
 /**
@@ -16,18 +20,18 @@ export function validateNumericValue(
 ): Result<never, EncryptionError> | undefined {
   if (typeof value === 'number' && Number.isNaN(value)) {
     return {
-      failure: {
-        type: EncryptionErrorTypes.EncryptionError,
-        message: '[encryption]: Cannot encrypt NaN value',
-      },
+      failure: toEncryptionError(
+        EncryptionErrorTypes.EncryptionError,
+        new Error('[encryption]: Cannot encrypt NaN value'),
+      ),
     }
   }
   if (typeof value === 'number' && !Number.isFinite(value)) {
     return {
-      failure: {
-        type: EncryptionErrorTypes.EncryptionError,
-        message: '[encryption]: Cannot encrypt Infinity value',
-      },
+      failure: toEncryptionError(
+        EncryptionErrorTypes.EncryptionError,
+        new Error('[encryption]: Cannot encrypt Infinity value'),
+      ),
     }
   }
   return undefined
@@ -64,10 +68,12 @@ export function validateValueIndexCompatibility(
 ): Result<never, EncryptionError> | undefined {
   if (typeof value === 'number' && indexType === 'match') {
     return {
-      failure: {
-        type: EncryptionErrorTypes.EncryptionError,
-        message: `[encryption]: Cannot use 'match' index with numeric value on column "${columnName}". The 'freeTextSearch' index only supports string values. Configure the column with 'orderAndRange()' or 'equality()' for numeric queries.`,
-      },
+      failure: toEncryptionError(
+        EncryptionErrorTypes.EncryptionError,
+        new Error(
+          `[encryption]: Cannot use 'match' index with numeric value on column "${columnName}". The 'freeTextSearch' index only supports string values. Configure the column with 'orderAndRange()' or 'equality()' for numeric queries.`,
+        ),
+      ),
     }
   }
   return undefined

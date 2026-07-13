@@ -1,7 +1,11 @@
 import { type Result, withResult } from '@byteslice/result'
 import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import {
   type Context,
   type LockContextInput,
@@ -124,11 +128,11 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.EncryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()
@@ -209,11 +213,11 @@ export class BulkEncryptOperationWithLockContext extends EncryptionOperation<Bul
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.EncryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.EncryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()

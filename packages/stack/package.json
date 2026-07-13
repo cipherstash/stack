@@ -232,7 +232,7 @@
 		"access": "public"
 	},
 	"dependencies": {
-		"@byteslice/result": "0.2.0",
+		"@byteslice/result": "0.5.0",
 		"@cipherstash/auth": "catalog:repo",
 		"@cipherstash/protect-ffi": "0.28.0",
 		"evlog": "1.11.0",

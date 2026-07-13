@@ -575,8 +575,8 @@ importers:
   packages/stack:
     dependencies:
       '@byteslice/result':
-        specifier: 0.2.0
-        version: 0.2.0
+        specifier: 0.5.0
+        version: 0.5.0
       '@cipherstash/auth':
         specifier: catalog:repo
         version: 0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)
@@ -860,6 +860,9 @@ packages:
 
   '@byteslice/result@0.3.0':
     resolution: {integrity: sha512-nIVjzVJ5LEUsj5jZ196OQ+XFYDPw74JVmHrsKs0g/iX1c8llydLWKbseMKmAtcEnpRj8hdsEue5H/naz7wdC4A==}
+
+  '@byteslice/result@0.5.0':
+    resolution: {integrity: sha512-A0N1+T/VOcFKWkDPkHtge4WKP2Swd/wmpfU8KF0eXvUqsv3YSKZ7r/752RrTnGu9SB+CAhoBHh0v89g3j3O4IQ==}
 
   '@changesets/apply-release-plan@7.1.1':
     resolution: {integrity: sha512-9qPCm/rLx/xoOFXIHGB229+4GOL76S4MC+7tyOuTsR6+1jYlfFDQORdvwR5hDA6y4FL2BPt3qpbcQIS+dW85LA==}
@@ -4343,6 +4346,8 @@ snapshots:
   '@byteslice/result@0.2.0': {}
 
   '@byteslice/result@0.3.0': {}
+
+  '@byteslice/result@0.5.0': {}
 
   '@changesets/apply-release-plan@7.1.1':
     dependencies:

@@ -1,5 +1,9 @@
 import { type Result, withResult } from '@byteslice/result'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import { loadWorkSpaceId } from '@/utils/config'
 import { logger } from '@/utils/logger'
 
@@ -147,10 +151,7 @@ export class LockContext {
             oidcToken: jwtToken,
           }),
         }),
-      (error) => ({
-        type: EncryptionErrorTypes.CtsTokenError,
-        message: error.message,
-      }),
+      (error) => toEncryptionError(EncryptionErrorTypes.CtsTokenError, error),
     )
 
     if (ctsFetchResult.failure) {
@@ -170,10 +171,7 @@ export class LockContext {
         this.ctsToken = ctsToken
         return this
       },
-      (error) => ({
-        type: EncryptionErrorTypes.CtsTokenError,
-        message: error.message,
-      }),
+      (error) => toEncryptionError(EncryptionErrorTypes.CtsTokenError, error),
     )
 
     return identifiedLockContext
@@ -198,10 +196,7 @@ export class LockContext {
         // than carrying an explicit `undefined`.
         ...(this.ctsToken ? { ctsToken: this.ctsToken } : {}),
       }),
-      (error) => ({
-        type: EncryptionErrorTypes.CtsTokenError,
-        message: error.message,
-      }),
+      (error) => toEncryptionError(EncryptionErrorTypes.CtsTokenError, error),
     )
   }
 }

@@ -4,7 +4,11 @@ import {
   type JsPlaintext,
 } from '@cipherstash/protect-ffi'
 import { getErrorCode } from '@/encryption/helpers/error-code'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
 import type { Client, Encrypted } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
@@ -62,11 +66,11 @@ export class DecryptOperation extends EncryptionOperation<JsPlaintext> {
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.DecryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()
@@ -131,11 +135,11 @@ export class DecryptOperationWithLockContext extends EncryptionOperation<JsPlain
       },
       (error: unknown) => {
         log.set({ errorCode: getErrorCode(error) ?? 'unknown' })
-        return {
-          type: EncryptionErrorTypes.DecryptionError,
-          message: (error as Error).message,
-          code: getErrorCode(error),
-        }
+        return toEncryptionError(
+          EncryptionErrorTypes.DecryptionError,
+          error,
+          getErrorCode(error),
+        )
       },
     )
     log.emit()

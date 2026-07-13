@@ -1,7 +1,11 @@
 import { type Result, withResult } from '@byteslice/result'
 import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
-import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+  toEncryptionError,
+} from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
 // comments below resolve; it is erased at compile time.
 import type { LockContext } from '@/identity'
@@ -172,10 +176,8 @@ export class EncryptionClient {
         logger.debug('Successfully initialized the Encryption client.')
         return this
       },
-      (error: unknown) => ({
-        type: EncryptionErrorTypes.ClientInitError,
-        message: (error as Error).message,
-      }),
+      (error: unknown) =>
+        toEncryptionError(EncryptionErrorTypes.ClientInitError, error),
     )
   }
 
