@@ -416,45 +416,73 @@ const results = await client.encryptQuery(terms)
 
 All values in the array must be non-null.
 
-## Identity-Aware Encryption (Lock Contexts)
+## Identity-Aware Encryption
 
-Lock encryption to a specific user by requiring a valid JWT for decryption.
+Bind a data key to a claim from the end user's JWT, so only that user can decrypt.
+
+You do this in two parts: **authenticate the client as the user** with `OidcFederationStrategy`, then **name the claim** on each operation with `.withLockContext({ identityClaim })`.
 
 ```typescript
-import { LockContext } from "@cipherstash/stack/identity"
+import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-// 1. Create a lock context (defaults to the "sub" claim)
-const lc = new LockContext()
-// Or with custom claims: new LockContext({ context: { identityClaim: ["sub", "org_id"] } })
-// Or with a pre-fetched CTS token: new LockContext({ ctsToken: { accessToken: "...", expiry: 123456 } })
-
-// 2. Identify the user with their JWT
-const identifyResult = await lc.identify(userJwt)
-if (identifyResult.failure) {
-  throw new Error(identifyResult.failure.message)
+// 1. Authenticate the client as the end user. `getJwt` is re-invoked on every
+//    (re-)federation and must return the *current* third-party OIDC JWT
+//    (Clerk, Supabase, Auth0, Okta, ...).
+const strategy = OidcFederationStrategy.create(
+  process.env.CS_WORKSPACE_CRN!,
+  () => getUserJwt(),
+)
+if (strategy.failure) {
+  throw new Error(`[auth] ${strategy.failure.type}: ${strategy.failure.error.message}`)
 }
-const lockContext = identifyResult.data
 
-// 3. Encrypt with lock context
+const client = await Encryption({
+  schemas: [users],
+  config: { authStrategy: strategy.data },
+})
+
+// 2. Bind the data key to the user's `sub` claim.
+const IDENTITY = { identityClaim: ["sub"] }
+
 const encrypted = await client
   .encrypt("sensitive data", { column: users.email, table: users })
-  .withLockContext(lockContext)
+  .withLockContext(IDENTITY)
+if (encrypted.failure) {
+  throw new Error(`[encryption] ${encrypted.failure.type}: ${encrypted.failure.message}`)
+}
 
-// 4. Decrypt with the same lock context
+// 3. Decrypt with the SAME claim. Anything else cannot reproduce the key.
 const decrypted = await client
   .decrypt(encrypted.data)
-  .withLockContext(lockContext)
+  .withLockContext(IDENTITY)
+if (decrypted.failure) {
+  throw new Error(`[encryption] ${decrypted.failure.type}: ${decrypted.failure.message}`)
+}
 ```
 
-Lock contexts work with ALL operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`.
+> **Known type error (runtime is fine).** The example above works at runtime, but `authStrategy: strategy.data` does not currently typecheck. `@cipherstash/auth` 0.41 strategies declare `getToken(): Promise<Result<TokenResult, AuthFailure>>`, while `@cipherstash/protect-ffi`'s exported `AuthStrategy` type still says `getToken(): Promise<{ token: string }>`. protect-ffi 0.28 accepts **both** shapes at runtime, on the Node and WASM paths alike — only its TypeScript declaration was left behind. Until it's widened, add `as unknown as AuthStrategy` or `// @ts-expect-error`. Tracked in [issue #602](https://github.com/cipherstash/stack/issues/602).
 
-### CTS Token Service
+`OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()` at all.
 
-The lock context exchanges the JWT for a CTS (CipherStash Token Service) token. Set the endpoint:
+Every operation returns a `Result` too. Narrow on `.failure` before touching `.data`: the `Failure` branch has no `data` property, so skipping the check is a type error, not merely a runtime risk.
 
-```bash
-CS_CTS_ENDPOINT=https://ap-southeast-2.aws.auth.viturhosted.net
+`identityClaim` is an array of JWT claim *names*, not values: `["sub"]` (the default) or `["sub", "org_id"]`. ZeroKMS resolves each claim's value from the JWT the strategy federated. **The same claim must be supplied to encrypt and decrypt** — it is baked into the data key's tag, so decrypting without it fails with `Failed to retrieve key`.
+
+Lock contexts work with every operation: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`.
+
+`AccessKeyStrategy` is the service-to-service / CI path. It authenticates a *service*, not a user, so it cannot be used with a lock context.
+
+### Deprecated: `LockContext.identify()`
+
+Older code fetched a per-operation CTS token:
+
+```typescript
+const lc = new LockContext()
+const identified = await lc.identify(userJwt)   // deprecated
+await client.encrypt(...).withLockContext(identified.data)
 ```
+
+**Per-operation CTS tokens were removed in `protect-ffi` 0.25.** `LockContext`, `identify()` and `getLockContext()` still exist for backwards compatibility, but the token `identify()` fetches is no longer used by encryption — and `CS_CTS_ENDPOINT` is only read on that dead path. Authenticate with `OidcFederationStrategy` instead and pass the claim directly. `.withLockContext()` accepts either a `LockContext` instance or a plain `{ identityClaim }`.
 
 ## Multi-Tenant Encryption (Keysets)
 

@@ -447,35 +447,49 @@ Notes:
 
 ## Identity-Aware Encryption
 
-Lock encryption to a specific user by requiring a valid JWT for decryption.
+Bind a data key to a claim from the end user's JWT, so only that user can
+decrypt. Do it in two parts: **authenticate the client as the user** with
+`OidcFederationStrategy`, then **name the claim** on each operation with
+`.withLockContext({ identityClaim })`.
 
 ```typescript
-import { LockContext } from "@cipherstash/stack/identity"
+import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-// 1. Create a lock context (defaults to the "sub" claim)
-const lc = new LockContext()
+// 1. Authenticate the client as the end user. The callback returns the current
+//    third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...).
+const strategy = OidcFederationStrategy.create(
+  process.env.CS_WORKSPACE_CRN!,
+  () => getUserJwt(),
+)
+if (strategy.failure) throw new Error(strategy.failure.error.message)
 
-// 2. Identify the user with their JWT
-const identifyResult = await lc.identify(userJwt)
+const client = await Encryption({
+  schemas: [users],
+  config: { authStrategy: strategy.data },
+})
 
-if (identifyResult.failure) {
-  throw new Error(identifyResult.failure.message)
-}
+// 2. Bind the data key to the user's `sub` claim on encrypt AND decrypt.
+const IDENTITY = { identityClaim: ["sub"] }
 
-const lockContext = identifyResult.data
-
-// 3. Encrypt with lock context
 const encrypted = await client
   .encrypt("sensitive data", { column: users.email, table: users })
-  .withLockContext(lockContext)
+  .withLockContext(IDENTITY)
 
-// 4. Decrypt with the same lock context
 const decrypted = await client
   .decrypt(encrypted.data)
-  .withLockContext(lockContext)
+  .withLockContext(IDENTITY)
 ```
 
-Lock contexts work with all operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncryptModels`, `bulkDecryptModels`, `bulkEncrypt`, `bulkDecrypt`.
+`identityClaim` is an array of JWT claim *names* (`["sub"]`), not values, and the
+same claim must be supplied to encrypt and decrypt. Lock contexts work with all
+operations: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`,
+`bulkEncryptModels`, `bulkDecryptModels`, `bulkEncrypt`, `bulkDecrypt`,
+`encryptQuery`. `.withLockContext()` also accepts a `LockContext` instance.
+
+> **Deprecated: `LockContext.identify()`.** Per-operation CTS tokens were removed
+> in `protect-ffi` 0.25; the token `identify()` fetches is no longer used by
+> encryption. Authenticate with `OidcFederationStrategy` and pass the claim
+> directly, as above.
 
 ## CLI Reference
 
@@ -645,14 +659,13 @@ function Encryption(config: EncryptionClientConfig): Promise<EncryptionClient>
 
 All operations are thenable (awaitable) and support `.withLockContext(lockContext)` for identity-aware encryption.
 
-### `LockContext`
+### `LockContext` (legacy)
 
-```typescript
-import { LockContext } from "@cipherstash/stack/identity"
-
-const lc = new LockContext(options?)
-const result = await lc.identify(jwtToken)
-```
+Identity-aware encryption is done with `OidcFederationStrategy` +
+`.withLockContext({ identityClaim })` (see [Identity-Aware Encryption](#identity-aware-encryption)).
+`LockContext` / `identify()` remain for backwards compatibility only — the
+per-operation CTS token `identify()` fetches was removed in `protect-ffi` 0.25
+and is no longer used by encryption.
 
 ### Schema Builders
 

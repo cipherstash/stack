@@ -291,22 +291,44 @@ Operator family support is currently being developed in collaboration with the S
 
 ## Identity-Aware Encryption
 
-Chain `.withLockContext()` to tie encryption to a specific user's JWT:
+Bind encryption to a specific user in two parts: **authenticate the client as the
+user** with `OidcFederationStrategy` when you build it, then **name the claim** on
+each query with `.withLockContext({ identityClaim })`.
 
 ```typescript
-import { LockContext } from "@cipherstash/stack/identity"
+import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-const lc = new LockContext()
-const identified = await lc.identify(userJwt)
-if (identified.failure) throw new Error(identified.failure.message)
-const lockContext = identified.data
+// 1. Authenticate the client as the end user (getUserJwt returns the current
+//    third-party OIDC JWT — Clerk, Supabase, Auth0, ...).
+const strategy = OidcFederationStrategy.create(
+  process.env.CS_WORKSPACE_CRN!,
+  () => getUserJwt(),
+)
+if (strategy.failure) throw new Error(strategy.failure.error.message)
 
+const encryptionClient = await Encryption({
+  schemas: [users],
+  config: { authStrategy: strategy.data },
+})
+const eSupabase = encryptedSupabase({ /* ...supabase config... */, encryptionClient })
+
+// 2. Bind the data key to the user's `sub` claim on each query.
 const { data, error } = await eSupabase
   .from("users", users)
   .insert({ email: "alice@example.com", name: "Alice" })
-  .withLockContext(lockContext)
+  .withLockContext({ identityClaim: ["sub"] })
   .select("id")
 ```
+
+`identityClaim` is an array of JWT claim *names* (`["sub"]`), not values; the same
+claim must be used to encrypt and decrypt. `.withLockContext()` also accepts a
+`LockContext` instance.
+
+> **Deprecated: `LockContext.identify()`.** Older code did
+> `new LockContext().identify(userJwt)` to fetch a per-operation CTS token. Those
+> tokens were removed in `protect-ffi` 0.25 and the fetched token is no longer
+> used by encryption. Authenticate with `OidcFederationStrategy` and pass the
+> claim directly, as above.
 
 ## Audit Logging
 
