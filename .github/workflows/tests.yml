@@ -282,7 +282,7 @@ jobs:
         run: npm install -g node-gyp
 
       - name: Install Deno
-        uses: denoland/setup-deno@v2.0.4
+        uses: denoland/setup-deno@v2.0.5
         with:
           deno-version: v2.x
 
