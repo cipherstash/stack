@@ -1,4 +1,6 @@
-import { matchNeedleError } from '@cipherstash/stack/adapter-kit'
+// Import directly from stack's schema helper (not `@cipherstash/stack/adapter-kit`)
+// so test-kit's strict `tsc` graph does not pull in the encryption/helpers chain.
+import { matchNeedleError } from '@/schema/match-defaults'
 import type { V3_MATRIX } from './catalog'
 
 type MatrixSpec = (typeof V3_MATRIX)[keyof typeof V3_MATRIX]
@@ -15,7 +17,7 @@ type MatrixSpec = (typeof V3_MATRIX)[keyof typeof V3_MATRIX]
  * line. It would also ignore a domain that raises its own `token_length`.
  */
 export const needleFor = (spec: MatrixSpec): string => {
-  const match = spec.indexes.match ?? {}
+  const match = 'match' in spec.indexes ? (spec.indexes.match ?? {}) : {}
   const needle = spec.samples.find(
     (sample) => typeof sample === 'string' && !matchNeedleError(sample, match),
   )
