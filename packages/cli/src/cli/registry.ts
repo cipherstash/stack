@@ -331,12 +331,13 @@ export const registry: CommandGroup[] = [
             name: '--eql-version',
             value: '<2|3>',
             description:
-              'EQL generation to target. v3 is the native eql_v3.* domain schema (direct install only for now).',
-            default: '2',
+              'EQL generation to target. v3 (native eql_v3.* domain schema) is the default; pass `2` for the legacy composite type. --drizzle, --migration, --migrations-dir, and --latest are v2-only and require `--eql-version 2`.',
+            default: '3',
           },
           {
             name: '--latest',
-            description: 'Fetch the latest EQL from GitHub (v2 only).',
+            description:
+              'Fetch the latest EQL from GitHub (v2 only — requires --eql-version 2).',
           },
           {
             name: '--name',
@@ -363,12 +364,14 @@ export const registry: CommandGroup[] = [
           {
             name: '--eql-version',
             value: '<2|3>',
-            description: 'EQL generation to target.',
-            default: '2',
+            description:
+              'EQL generation to target. v3 is the default; pass `2` for the legacy composite type. --latest is v2-only and requires `--eql-version 2`.',
+            default: '3',
           },
           {
             name: '--latest',
-            description: 'Fetch the latest EQL from GitHub (v2 only).',
+            description:
+              'Fetch the latest EQL from GitHub (v2 only — requires --eql-version 2).',
           },
           DATABASE_URL_FLAG,
         ],

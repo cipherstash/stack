@@ -93,7 +93,7 @@ export async function statusCommand() {
 
     if (rows.length === 0) {
       p.log.info(
-        'No encrypted columns yet. Run `stash db push` to register columns with EQL, then `stash encrypt backfill --table <t> --column <c>` once your application is dual-writing.',
+        'No encrypted columns yet. Declare an encrypted column in your schema and run the migration, then `stash encrypt backfill --table <t> --column <c>` once your application is dual-writing.',
       )
       p.outro('Nothing to show.')
       return

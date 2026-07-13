@@ -108,7 +108,7 @@ describe('EQLInstaller', () => {
         databaseUrl: 'postgresql://localhost:5432/test',
       })
 
-      const result = await installer.isInstalled()
+      const result = await installer.isInstalled({ eqlVersion: 2 })
       expect(result).toBe(true)
       expect(mockQuery).toHaveBeenCalledWith(expect.any(String), [['eql_v2']])
     })
@@ -127,7 +127,7 @@ describe('EQLInstaller', () => {
         databaseUrl: 'postgresql://localhost:5432/test',
       })
 
-      await installer.install()
+      await installer.install({ eqlVersion: 2 })
 
       // Should NOT call fetch — uses bundled SQL
       expect(fetchSpy).not.toHaveBeenCalled()
@@ -160,7 +160,7 @@ describe('EQLInstaller', () => {
         databaseUrl: 'postgresql://localhost:5432/test',
       })
 
-      await installer.install({ latest: true })
+      await installer.install({ eqlVersion: 2, latest: true })
 
       expect(fetchSpy).toHaveBeenCalledWith(
         expect.stringContaining('cipherstash-encrypt.sql'),
@@ -182,7 +182,7 @@ describe('EQLInstaller', () => {
         databaseUrl: 'postgresql://localhost:5432/test',
       })
 
-      await installer.install({ supabase: true })
+      await installer.install({ eqlVersion: 2, supabase: true })
 
       // Capture every query string that isn't a transaction control verb.
       const otherCalls = mockQuery.mock.calls

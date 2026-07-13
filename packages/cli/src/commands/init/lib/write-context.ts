@@ -168,7 +168,6 @@ export function buildSetupPromptContext(
     mode: state.mode ?? 'implement',
     installedSkills,
     planStep: state.planStep,
-    usesProxy: state.usesProxy ?? false,
   }
 }
 
