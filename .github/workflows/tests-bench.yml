@@ -46,11 +46,13 @@ jobs:
         run: pnpm recursive install --frozen-lockfile
 
       # `@cipherstash/stack` ships dist/-based `exports`; bench imports
-      # from it (and `@cipherstash/stack/drizzle`) so the package needs
-      # to be built before vitest can resolve it. Going through turbo
-      # also picks up `^build` deps if any are added later.
-      - name: Build @cipherstash/stack
-        run: pnpm exec turbo run build --filter @cipherstash/stack
+      # from `@cipherstash/stack` and `@cipherstash/stack-drizzle` (the Drizzle
+      # adapter split out into its own package), so both must be built before
+      # vitest can resolve them — the drizzle bench/test files import
+      # `@cipherstash/stack-drizzle`. Going through turbo also picks up `^build`
+      # deps (stack-drizzle depends on stack).
+      - name: Build stack + adapter packages
+        run: pnpm exec turbo run build --filter @cipherstash/stack --filter @cipherstash/stack-drizzle
 
       # Starts the pinned postgres-eql container (PostgreSQL 17 + EQL
       # pre-installed) via local/docker-compose.yml; waits for healthcheck.

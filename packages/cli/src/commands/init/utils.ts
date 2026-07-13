@@ -231,7 +231,7 @@ function generateDrizzleFromSchema(schema: SchemaDef): string {
   })
 
   return `import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
-import { encryptedType, extractEncryptionSchema } from '@cipherstash/stack/drizzle'
+import { encryptedType, extractEncryptionSchema } from '@cipherstash/stack-drizzle'
 import { Encryption } from '@cipherstash/stack'
 
 export const ${varName} = pgTable('${schema.tableName}', {
@@ -330,7 +330,7 @@ const ${schemaVarName} = extractEncryptionSchema(${varName})`
   const schemaVarNames = schemas.map((s) => `${toCamelCase(s.tableName)}Schema`)
 
   return `import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
-import { encryptedType, extractEncryptionSchema } from '@cipherstash/stack/drizzle'
+import { encryptedType, extractEncryptionSchema } from '@cipherstash/stack-drizzle'
 import { Encryption } from '@cipherstash/stack'
 
 ${tableDefs.join('\n\n')}
@@ -437,7 +437,7 @@ const DRIZZLE_PLACEHOLDER = `/**
  *
  * Encrypted twin column for an existing populated column (path 3 — lifecycle):
  *
- *   import { encryptedType } from '@cipherstash/stack/drizzle'
+ *   import { encryptedType } from '@cipherstash/stack-drizzle'
  *
  *   export const users = pgTable('users', {
  *     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -457,7 +457,7 @@ const DRIZZLE_PLACEHOLDER = `/**
  *
  * Once you have encrypted tables declared, harvest them and pass to Encryption():
  *
- *   import { extractEncryptionSchema } from '@cipherstash/stack/drizzle'
+ *   import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
  *   import { users, orders } from './db/schema'
  *
  *   export const encryptionClient = await Encryption({
