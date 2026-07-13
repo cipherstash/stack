@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
 import { clerkJwtProvider } from '@cipherstash/test-kit/integration-clerk'
+import { afterEach, describe, expect, it } from 'vitest'
 
 /**
  * `clerkJwtProvider`'s "FAIL rather than skip" guard is the load-bearing half of
