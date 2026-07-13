@@ -1,6 +1,9 @@
 import type { Result } from '@byteslice/result'
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
-import { matchNeedleError } from '@cipherstash/stack/adapter-kit'
+import {
+  matchNeedleError,
+  stripDomainSchema,
+} from '@cipherstash/stack/adapter-kit'
 import type {
   AnyEncryptedV3Column,
   AnyV3Table,
@@ -8,7 +11,10 @@ import type {
 import type { EncryptionError } from '@cipherstash/stack/errors'
 import type { LockContext } from '@cipherstash/stack/identity'
 import type { ColumnSchema } from '@cipherstash/stack/schema'
-import type { BulkEncryptedData, Encrypted } from '@cipherstash/stack/types'
+import type {
+  EncryptedQueryResult,
+  QueryTypeName,
+} from '@cipherstash/stack/types'
 import {
   and,
   asc,
@@ -33,43 +39,33 @@ import {
 } from './schema-extraction.js'
 import { type ComparisonOp, type EqualityOp, v3Dialect } from './sql-dialect.js'
 
-const MAX_IN_ARRAY_CONCURRENCY = 4
-
 /**
- * The client capabilities this factory consumes: `encrypt`, and `bulkEncrypt`
- * when the client offers it. Declared structurally — with maximally-permissive
- * operands — so it is satisfied by the nominal `EncryptionClient`, by the
- * `TypedEncryptionClient` that `EncryptionV3` returns (whatever its schema
- * tuple), AND by a hand-rolled test double, none needing a cast. Typing the
- * parameter to the nominal `TypedEncryptionClient<S>` would reject a client
- * built for a narrower schema tuple (it accepts fewer tables than
- * `readonly AnyV3Table[]`); the structural surface sidesteps that variance. The
- * factory resolves the column/table at runtime and encrypts through its own
- * casts, so it relies on none of the client's per-column `encrypt` overloads.
+ * The client capability this factory consumes: `encryptQuery`, in both its
+ * single (`value, opts`) and batch (`terms[]`) forms. Declared structurally —
+ * with maximally-permissive operands — so it is satisfied by the nominal
+ * `EncryptionClient`, by the `TypedEncryptionClient` that `EncryptionV3` returns
+ * (whatever its schema tuple), AND by a hand-rolled test double, none needing a
+ * cast. Typing the parameter to the nominal `TypedEncryptionClient<S>` would
+ * reject a client built for a narrower schema tuple (it accepts fewer tables than
+ * `readonly AnyV3Table[]`); the structural surface sidesteps that variance.
  *
- * `bulkEncrypt` is optional so a `{ encrypt }`-only client stays valid; the
- * list operators fall back to bounded-concurrency single encryption without it.
- * `encryptQuery` is optional only because today it is used by a single operator
- * — JSON containment (`@>`), which needs a ciphertext-free `query_jsonb` needle;
- * the `contains()` branch guards its absence. Every OTHER operator still encrypts
- * its operand with `encrypt` (a full storage envelope). Unifying all operands
- * onto `encryptQuery` — after which it stops being optional — is tracked in #622.
+ * Every operand is a QUERY TERM, not a storage envelope: `encryptQuery` mints a
+ * ciphertext-free term (no `c`) carrying all of the column's configured index
+ * terms, which the operator layer casts to the column's `eql_v3.query_<domain>`
+ * type. This reaches the bundle's `(domain, query_<domain>)` overloads and keeps
+ * WHERE-clause payloads free of the ciphertext a query never needs (#622).
+ *
+ * `never` operands: the real client's `encryptQuery` is generic (`queryType` is
+ * constrained to the column's own query types), which a concrete signature here
+ * cannot match. `never` params keep the structural surface satisfiable by that
+ * generic method AND by a test double; the call sites cast their real operands.
  */
 type OperandEncryptionClient = {
-  encrypt(
-    plaintext: never,
-    opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
-  ): ChainableOperation<Encrypted>
-  bulkEncrypt?(
-    plaintexts: never,
-    opts: { table: AnyV3Table; column: AnyEncryptedV3Column },
-  ): ChainableOperation<BulkEncryptedData>
-  // `never` operands, like `encrypt` above: the real client's `encryptQuery` is
-  // generic (`queryType` is constrained to the column's own query types), which a
-  // concrete signature here cannot match. `never` params keep the structural
-  // surface satisfiable by that generic method AND by a test double. The call
-  // site casts its real operands.
-  encryptQuery?(value: never, opts: never): unknown
+  encryptQuery(
+    value: never,
+    opts: never,
+  ): ChainableOperation<EncryptedQueryResult>
+  encryptQuery(terms: never): ChainableOperation<EncryptedQueryResult[]>
 }
 
 /**
@@ -101,6 +97,33 @@ interface ColumnContext {
   indexes: ColumnSchema['indexes']
   columnName: string
   tableName: string
+  /** The `eql_v3.query_<domain>` type an operand for this column casts to, so
+   * `encryptQuery`'s ciphertext-free term reaches the narrowed-query overloads.
+   * `null` for storage-only columns (no query domain); those never encrypt an
+   * operand — every operator gates on a query capability first. JSON columns
+   * override this at the call site (`query_jsonb`, an irregular name). */
+  queryCast: string | null
+}
+
+/**
+ * The `eql_v3.query_<domain>` cast for a column's storage domain — e.g.
+ * `public.eql_v3_text_search` → `eql_v3.query_text_search`. Uniform across the
+ * queryable domains (`_eq`, `_ord*`, `_match`, `_search*`); the two irregular
+ * cases are handled elsewhere: storage-only domains (`eql_v3_boolean`, the bare
+ * base types) have no query domain and return `null` (they are never queried),
+ * and `eql_v3_json` maps to `query_jsonb`, cast explicitly on the JSON path.
+ */
+function queryCastForDomain(eqlType: string): string | null {
+  const bare = stripDomainSchema(eqlType) // public.eql_v3_text_search → eql_v3_text_search
+  const prefix = 'eql_v3_'
+  if (!bare.startsWith(prefix)) return null
+  const suffix = bare.slice(prefix.length)
+  // No index suffix (bare storage-only domain like `boolean`, `text`) → no query
+  // domain exists. These are gated out before any operand is encrypted.
+  if (!/_(eq|ord|ord_ope|ord_ore|match|search|search_ore)$/.test(suffix)) {
+    return null
+  }
+  return `eql_v3.query_${suffix}`
 }
 
 export type EncryptionOperatorCallOpts = {
@@ -124,40 +147,17 @@ type AuditableOperation<T> = {
 /**
  * The subset of an SDK encryption operation this factory drives: the fluent
  * `withLockContext`/`audit` chain, and a `then` that resolves the operation's
- * `Result`. Generic over the resolved payload `T` so `encrypt` carries an
- * `Encrypted` envelope and `bulkEncrypt` a `BulkEncryptedData`, rather than the
- * `unknown` this erased to before.
+ * `Result`. Generic over the resolved payload `T` so the single `encryptQuery`
+ * carries an `EncryptedQueryResult` term and the batch form an
+ * `EncryptedQueryResult[]`, rather than the `unknown` this erased to before.
  *
- * Structural, not the concrete `EncryptOperation` class, because the client is
- * passed in and the factory must accept any implementation with this surface.
+ * Structural, not the concrete `EncryptQueryOperation` class, because the client
+ * is passed in and the factory must accept any implementation with this surface.
  */
 type ChainableOperation<T> = {
   withLockContext(lockContext: LockContext): AuditableOperation<T>
   audit(config: AuditConfig): AuditableOperation<T>
   then: PromiseLike<Result<T, EncryptionError>>['then']
-}
-
-async function mapWithConcurrency<T, R>(
-  values: T[],
-  limit: number,
-  mapper: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(values.length)
-  let next = 0
-
-  async function worker(): Promise<void> {
-    while (true) {
-      const index = next
-      next += 1
-      if (index >= values.length) return
-      results[index] = await mapper(values[index])
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(limit, values.length) }, () => worker()),
-  )
-  return results
 }
 
 /**
@@ -169,8 +169,9 @@ async function mapWithConcurrency<T, R>(
  * {@link EncryptionOperatorError} when the column can't answer the operator
  * (e.g. ordering a non-`ore` column).
  *
- * @param client - anything that can `encrypt` — the nominal `EncryptionClient`
- *   or the `TypedEncryptionClient` from `EncryptionV3` (no cast needed).
+ * @param client - anything that can `encryptQuery` — the nominal
+ *   `EncryptionClient` or the `TypedEncryptionClient` from `EncryptionV3` (no
+ *   cast needed).
  * @param defaults - lock context / audit applied to every operand encryption
  *   unless a per-call override is supplied.
  *
@@ -230,6 +231,7 @@ export function createEncryptionOperatorsV3(
       indexes: builder.build().indexes,
       columnName,
       tableName,
+      queryCast: queryCastForDomain(builder.getEqlType()),
     }
     contextCache.set(column, context)
     return context
@@ -329,76 +331,94 @@ export function createEncryptionOperatorsV3(
     )
   }
 
+  /**
+   * Render a query term as a cast operand: `'<json>'::eql_v3.query_<domain>`.
+   * The cast is what reaches the bundle's `(domain, query_<domain>)` overloads —
+   * a bare `::jsonb` would hit the storage-domain overload, whose CHECK demands
+   * the ciphertext `c` a query term deliberately omits. `queryCast` is derived
+   * from the column's own domain (see `queryCastForDomain`), so `sql.raw` is safe.
+   */
+  function castOperand(
+    ctx: ColumnContext,
+    operator: string,
+    term: EncryptedQueryResult,
+  ): SQL {
+    if (ctx.queryCast === null) {
+      throw operandFailure(
+        ctx,
+        operator,
+        `column domain "${ctx.builder.getEqlType()}" has no query operand type.`,
+      )
+    }
+    return sql`${JSON.stringify(term)}::${sql.raw(ctx.queryCast)}`
+  }
+
   async function encryptOperand(
     ctx: ColumnContext,
     value: unknown,
     operator: string,
+    queryType: QueryTypeName,
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     requireNonNullOperand(ctx, value, operator)
 
     const result = await applyOperationOptions(
-      client.encrypt(value as never, {
-        table: ctx.table,
-        column: ctx.builder,
-      }),
+      client.encryptQuery(
+        value as never,
+        {
+          table: ctx.table,
+          column: ctx.builder,
+          queryType,
+        } as never,
+      ),
       opts,
     )
     if (result.failure) {
       throw operandFailure(ctx, operator, result.failure.message)
     }
-    // `result.data` is now `Encrypted` — the storage envelope — not `unknown`.
-    return sql`${JSON.stringify(result.data)}`
+    return castOperand(ctx, operator, result.data)
   }
 
   /**
-   * Encrypt a whole operand list. Prefers the client's `bulkEncrypt` — one FFI
-   * crossing for the entire list, rather than one per value — and falls back to
-   * bounded-concurrency single encryption for clients that don't expose it.
-   *
-   * `bulkEncrypt` is position-stable, so the returned terms align index-for-
-   * index with `values`; a response of a different length means the contract
-   * was violated and is rejected rather than silently truncating the predicate
-   * (which would widen an `inArray` or narrow a `notInArray`).
+   * Encrypt a whole operand list in ONE `encryptQuery` batch crossing (rather
+   * than one per value). The batch is position-stable, so the returned terms
+   * align index-for-index with `values`; a response of a different length means
+   * the contract was violated and is rejected rather than silently truncating
+   * the predicate (which would widen an `inArray` or narrow a `notInArray`).
+   * Null operands are rejected up front, so no term is filtered out of the batch.
    */
   async function encryptOperands(
     ctx: ColumnContext,
     values: unknown[],
     operator: string,
+    queryType: QueryTypeName,
     opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL[]> {
     for (const value of values) requireNonNullOperand(ctx, value, operator)
 
-    const bulkEncrypt = client.bulkEncrypt?.bind(client)
-    if (!bulkEncrypt) {
-      return mapWithConcurrency(values, MAX_IN_ARRAY_CONCURRENCY, (value) =>
-        encryptOperand(ctx, value, operator, opts),
-      )
-    }
-
+    const terms = values.map((value) => ({
+      value,
+      column: ctx.builder,
+      table: ctx.table,
+      queryType,
+    }))
     const result = await applyOperationOptions(
-      bulkEncrypt(values.map((plaintext) => ({ plaintext })) as never, {
-        table: ctx.table,
-        column: ctx.builder,
-      }),
+      client.encryptQuery(terms as never),
       opts,
     )
     if (result.failure) {
       throw operandFailure(ctx, operator, result.failure.message)
     }
 
-    // `result.data` is `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]`
-    // — not `unknown`. The length check stays: a position-stable contract
-    // violation must not silently truncate the predicate.
-    const encrypted: BulkEncryptedData = result.data
+    const encrypted = result.data as EncryptedQueryResult[]
     if (encrypted.length !== values.length) {
       throw operandFailure(
         ctx,
         operator,
-        `bulk encryption returned ${encrypted.length} terms for ${values.length} values.`,
+        `batch query encryption returned ${encrypted.length} terms for ${values.length} values.`,
       )
     }
-    return encrypted.map((term) => sql`${JSON.stringify(term.data)}`)
+    return encrypted.map((term) => castOperand(ctx, operator, term))
   }
 
   const colSql = (column: SQLWrapper): SQL => sql`${column}`
@@ -411,7 +431,7 @@ export function createEncryptionOperatorsV3(
   ): Promise<SQL> {
     const ctx = resolveContext(left, op)
     requireIndex(ctx, EQUALITY_INDEXES, op, 'equality')
-    const enc = await encryptOperand(ctx, right, op, opts)
+    const enc = await encryptOperand(ctx, right, op, 'equality', opts)
     return v3Dialect.equality(op, colSql(left), enc)
   }
 
@@ -423,7 +443,7 @@ export function createEncryptionOperatorsV3(
   ): Promise<SQL> {
     const ctx = resolveContext(left, op)
     requireIndex(ctx, ORDERING_INDEXES, op, 'order/range')
-    const enc = await encryptOperand(ctx, right, op, opts)
+    const enc = await encryptOperand(ctx, right, op, 'orderAndRange', opts)
     return v3Dialect.comparison(op, colSql(left), enc)
   }
 
@@ -440,8 +460,8 @@ export function createEncryptionOperatorsV3(
     // Independent operands — encrypt concurrently rather than paying two
     // sequential round-trips to the crypto backend.
     const [encMin, encMax] = await Promise.all([
-      encryptOperand(ctx, min, operator, opts),
-      encryptOperand(ctx, max, operator, opts),
+      encryptOperand(ctx, min, operator, 'orderAndRange', opts),
+      encryptOperand(ctx, max, operator, 'orderAndRange', opts),
     ])
     // `v3Dialect.range` is already parenthesised, so `NOT` binds to the whole
     // conjunction without a wrapper here.
@@ -465,30 +485,44 @@ export function createEncryptionOperatorsV3(
 
     // JSON containment. `eql_v3_json` has no `eql_v3.contains` overload — its
     // containment is the `@>` operator, whose `(eql_v3_json, eql_v3.query_jsonb)`
-    // form takes a NARROWED query term from `encryptQuery` (searchableJson → no
-    // ciphertext), not the full storage envelope. The dialect casts it to
-    // `eql_v3.query_jsonb` and emits `@>`.
+    // form takes a NARROWED query term (searchableJson → no ciphertext). The
+    // needle is cast to `eql_v3.query_jsonb` (an irregular name, so it is handled
+    // here rather than by `queryCastForDomain`) and emitted with `@>`.
     if (ctx.indexes.ste_vec) {
-      const needle = await encryptJsonContainmentTerm(ctx, right, operator)
+      const needle = await encryptJsonContainmentTerm(
+        ctx,
+        right,
+        operator,
+        opts,
+      )
       return v3Dialect.containsJson(colSql(left), needle)
     }
 
     // Bloom free-text (text_search / text_match): the answerable-needle rule
-    // applies, and the full-envelope operand disambiguates its own overload.
+    // applies, and the `query_<domain>` cast reaches the match overload.
     requireAnswerableNeedle(ctx, right, operator)
-    const enc = await encryptOperand(ctx, right, operator, opts)
+    const enc = await encryptOperand(
+      ctx,
+      right,
+      operator,
+      'freeTextSearch',
+      opts,
+    )
     return v3Dialect.contains(colSql(left), enc)
   }
 
   /**
-   * Build a `query_jsonb` containment needle for a `json` column. Uses
-   * `encryptQuery` (not `encrypt`): the JSON query term carries no ciphertext
-   * and satisfies the `eql_v3.query_jsonb` CHECK the `@>` overload needs.
+   * Build a `query_jsonb` containment needle for a `json` column — the JSON query
+   * term carries no ciphertext and satisfies the `eql_v3.query_jsonb` CHECK the
+   * `@>` overload needs. Cast here (not by `queryCastForDomain`): a json column's
+   * domain is `eql_v3_json` but its query operand type is the irregular
+   * `eql_v3.query_jsonb`.
    */
   async function encryptJsonContainmentTerm(
     ctx: ColumnContext,
     value: unknown,
     operator: string,
+    opts?: EncryptionOperatorCallOpts,
   ): Promise<SQL> {
     requireNonNullOperand(ctx, value, operator)
     // Reject the empty-object needle. `doc @> '{}'` holds for EVERY document
@@ -507,26 +541,21 @@ export function createEncryptionOperatorsV3(
         { columnName: ctx.columnName, tableName: ctx.tableName, operator },
       )
     }
-    const encryptQuery = client.encryptQuery?.bind(client)
-    if (!encryptQuery) {
-      throw operandFailure(
-        ctx,
-        operator,
-        'this client does not support encryptQuery, which JSON containment requires',
-      )
-    }
-    const result = (await encryptQuery(
-      value as never,
-      {
-        table: ctx.table,
-        column: ctx.builder,
-        queryType: 'searchableJson',
-      } as never,
-    )) as { failure?: { message: string }; data?: unknown }
+    const result = await applyOperationOptions(
+      client.encryptQuery(
+        value as never,
+        {
+          table: ctx.table,
+          column: ctx.builder,
+          queryType: 'searchableJson',
+        } as never,
+      ),
+      opts,
+    )
     if (result.failure) {
       throw operandFailure(ctx, operator, result.failure.message)
     }
-    return sql`${JSON.stringify(result.data)}`
+    return sql`${JSON.stringify(result.data)}::eql_v3.query_jsonb`
   }
 
   async function inArrayOp(
@@ -547,7 +576,13 @@ export function createEncryptionOperatorsV3(
     // a single crossing where the client supports it.
     requireIndex(ctx, EQUALITY_INDEXES, operator, 'equality')
     const op: EqualityOp = negate ? 'ne' : 'eq'
-    const encrypted = await encryptOperands(ctx, values, operator, opts)
+    const encrypted = await encryptOperands(
+      ctx,
+      values,
+      operator,
+      'equality',
+      opts,
+    )
     const conditions = encrypted.map((enc) =>
       v3Dialect.equality(op, colSql(left), enc),
     )

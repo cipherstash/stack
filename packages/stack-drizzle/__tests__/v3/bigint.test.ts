@@ -8,9 +8,9 @@ import {
 } from '../../src/v3/operators'
 import { types } from '../../src/v3/types'
 
-// A representative encrypted envelope — what `client.encrypt` actually returns
-// and what a bigint column stores. Deliberately NOT a plaintext bigint.
-const TERM = { c: 'ct', v: 1 }
+// A representative query TERM — what `client.encryptQuery` returns for a bigint
+// operand: a ciphertext-free term, deliberately NOT a plaintext bigint.
+const TERM = { hm: 'h', v: 3 }
 const TERM_JSON = JSON.stringify(TERM)
 
 function chainable(result: unknown) {
@@ -24,11 +24,11 @@ function chainable(result: unknown) {
 }
 
 function setup() {
-  const encrypt = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
-  const ops = createEncryptionOperatorsV3({ encrypt })
+  const encryptQuery = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
+  const ops = createEncryptionOperatorsV3({ encryptQuery })
   const dialect = new PgDialect()
   const render = (s: SQL) => dialect.sqlToQuery(s)
-  return { ops, encrypt, render }
+  return { ops, encryptQuery, render }
 }
 
 // A statically-typed table via the drizzle `types` namespace (no dynamic
@@ -61,26 +61,34 @@ describe('v3 drizzle bigint columns', () => {
   })
 
   it('encrypts a native bigint operand for eq without JSON-stringifying it', async () => {
-    const { ops, encrypt, render } = setup()
+    const { ops, encryptQuery, render } = setup()
     // A value beyond Number.MAX_SAFE_INTEGER to prove the bigint is passed
     // through untouched (a JSON.stringify of a bigint would have thrown).
     const value = 9223372036854775807n
     const q = render(await ops.eq(accounts.ledgerId, value))
 
-    expect(q.sql).toContain('eql_v3.eq("accounts"."ledger_id", $1::jsonb)')
+    expect(q.sql).toContain(
+      'eql_v3.eq("accounts"."ledger_id", $1::eql_v3.query_bigint_eq)',
+    )
     expect(q.params).toEqual([TERM_JSON])
-    expect(encrypt.mock.calls[0]?.[0]).toBe(value)
+    expect(encryptQuery.mock.calls[0]?.[0]).toBe(value)
   })
 
   it('emits ordering and range operators for a bigint_ord column', async () => {
     const { ops, render } = setup()
 
     const gt = render(await ops.gt(accounts.balance, 10n))
-    expect(gt.sql).toContain('eql_v3.gt("accounts"."balance", $1::jsonb)')
+    expect(gt.sql).toContain(
+      'eql_v3.gt("accounts"."balance", $1::eql_v3.query_bigint_ord)',
+    )
 
     const between = render(await ops.between(accounts.balance, -5n, 5n))
-    expect(between.sql).toContain('eql_v3.gte("accounts"."balance", $1::jsonb)')
-    expect(between.sql).toContain('eql_v3.lte("accounts"."balance", $2::jsonb)')
+    expect(between.sql).toContain(
+      'eql_v3.gte("accounts"."balance", $1::eql_v3.query_bigint_ord)',
+    )
+    expect(between.sql).toContain(
+      'eql_v3.lte("accounts"."balance", $2::eql_v3.query_bigint_ord)',
+    )
 
     const asc = render(ops.asc(accounts.balance))
     expect(asc.sql).toContain('eql_v3.ord_term("accounts"."balance")')

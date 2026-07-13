@@ -19,8 +19,10 @@ import type {
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
+  ScalarQueryTerm,
 } from '@/types'
 import {
+  type BatchEncryptQueryOperation,
   type BulkDecryptOperation,
   type BulkEncryptModelsOperation,
   type BulkEncryptOperation,
@@ -69,6 +71,14 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
       returnType?: EncryptedReturnType
     },
   ): EncryptQueryOperation
+
+  /**
+   * Batch form: encrypt many query terms in one crossing. Mirrors the nominal
+   * {@link EncryptionClient} overload — the per-term columns are heterogeneous,
+   * so the terms are the base {@link ScalarQueryTerm} rather than a per-column
+   * narrowed type. Consumed by the Drizzle `inArray`/`notInArray` operators.
+   */
+  encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
 
   encryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: V3ModelInput<Table, T>,
@@ -207,8 +217,17 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
   return {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
-    encryptQuery: (plaintext, opts) =>
-      client.encryptQuery(plaintext as never, opts as never),
+    // Forwards both forms to the nominal client, which routes to the batch
+    // operation when no `opts` are supplied. A single implementation signature
+    // cannot satisfy the two-overload interface member (their return types
+    // differ: single → EncryptQueryOperation, batch → BatchEncryptQueryOperation)
+    // and TS will not structurally reconcile them for an object-literal method,
+    // so bridge with a cast; the runtime forward is uniform.
+    encryptQuery: ((plaintextOrTerms: never, opts?: never) =>
+      client.encryptQuery(
+        plaintextOrTerms,
+        opts as never,
+      )) as unknown as TypedEncryptionClient<S>['encryptQuery'],
     encryptModel: (input, table) =>
       client.encryptModel(input as never, table as never) as never,
     bulkEncryptModels: (input, table) =>
