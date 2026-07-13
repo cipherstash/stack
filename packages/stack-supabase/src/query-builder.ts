@@ -6,6 +6,7 @@ import {
   modelToEncryptedPgComposites,
 } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import type { EncryptionError } from '@cipherstash/stack/errors'
 import type { LockContext } from '@cipherstash/stack/identity'
 import type {
   EncryptedTable,
@@ -419,9 +420,17 @@ export class EncryptedQueryBuilderImpl<
         `Supabase encrypted query failed on table "${this.tableName}": ${message}`,
       )
 
+      // A failure inside any of the encrypt/decrypt steps above is thrown as an
+      // `EncryptionFailedError` wrapping the operation's `EncryptionError` (or, in
+      // the v3 dialect, a synthesized one for its contract-violation cases).
+      // Thread it through so callers can branch on `error.encryptionError`; a plain
+      // PostgREST/API error is not an `EncryptionFailedError` and leaves it unset.
       const error: EncryptedSupabaseError = {
         message,
-        encryptionError: undefined,
+        encryptionError:
+          err instanceof EncryptionFailedError
+            ? err.encryptionError
+            : undefined,
       }
 
       if (this.shouldThrowOnError) {
@@ -1599,9 +1608,9 @@ type RawSupabaseResult = {
 }
 
 export class EncryptionFailedError extends Error {
-  public encryptionError: unknown
+  public encryptionError: EncryptionError
 
-  constructor(message: string, encryptionError: unknown) {
+  constructor(message: string, encryptionError: EncryptionError) {
     super(message)
     this.name = 'EncryptionFailedError'
     this.encryptionError = encryptionError
