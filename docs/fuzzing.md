@@ -2,7 +2,7 @@
 
 How the repo fuzzes its public, untrusted-input parsers, how to run a
 target locally, and how to add a new one. The short-form recipe lives in
-[`CLAUDE.md`](../CLAUDE.md); this is the longer explanation.
+[`AGENTS.md`](../AGENTS.md); this is the longer explanation.
 
 For background on cargo-fuzz itself — sanitizers, corpus management,
 structure-aware fuzzing with `arbitrary`, triaging crashes — use the
