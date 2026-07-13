@@ -307,11 +307,11 @@ Operator family support for Supabase is being developed in collaboration with th
 
 Encrypted data is stored as an [EQL](https://github.com/cipherstash/encrypt-query-language) JSON payload. Install the EQL extension in PostgreSQL to enable searchable queries, then store encrypted data in `eql_v2_encrypted` columns.
 
-The `@cipherstash/stack/drizzle` module provides `encryptedType` for defining encrypted columns and `createEncryptionOperators` for querying them:
+The `@cipherstash/stack-drizzle` module provides `encryptedType` for defining encrypted columns and `createEncryptionOperators` for querying them:
 
 ```typescript
 import { pgTable, integer, timestamp } from "drizzle-orm/pg-core"
-import { encryptedType, extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack/drizzle"
+import { encryptedType, extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack-drizzle"
 import { Encryption } from "@cipherstash/stack"
 
 // Define schema with encrypted columns
@@ -366,7 +366,7 @@ These operators encrypt the JSON path selector using the `steVecSelector` query 
 
 ### EQL v3 Concrete-Type Columns (Drizzle)
 
-The `@cipherstash/stack/eql/v3/drizzle` module targets EQL v3, where each encrypted column is a **concrete Postgres domain type** (`eql_v3.text_eq`, `eql_v3.integer_ord`, …). Instead of toggling capability flags, you pick a concrete type from the `types` namespace and its query capabilities are fixed by that choice. The v2 `@cipherstash/stack/drizzle` module above is unchanged — this is an additive export.
+The `@cipherstash/stack-drizzle/v3` module targets EQL v3, where each encrypted column is a **concrete Postgres domain type** (`eql_v3.text_eq`, `eql_v3.integer_ord`, …). Instead of toggling capability flags, you pick a concrete type from the `types` namespace and its query capabilities are fixed by that choice. It is the `/v3` subpath of the same `@cipherstash/stack-drizzle` package whose v2 surface is shown above.
 
 Declare a Drizzle table using the `types` factories. The suffix encodes the capability: `*Eq` (equality), `*Ord` (order + range, which also covers equality), `*Match` / `TextSearch` (free-text search), and the bare name (e.g. `Text`, `Bigint`) is storage-only.
 
@@ -377,7 +377,7 @@ import {
   types,
   createEncryptionOperatorsV3,
   extractEncryptionSchemaV3,
-} from "@cipherstash/stack/eql/v3/drizzle"
+} from "@cipherstash/stack-drizzle/v3"
 import { EncryptionV3 } from "@cipherstash/stack/v3"
 
 // Capabilities come from the concrete type — no flags to configure.
@@ -674,7 +674,15 @@ csValue(valueName)                 // returns ProtectValue (for nested values)
 | `@cipherstash/stack/client` | Client-safe exports (schema builders and types only - no native FFI) |
 | `@cipherstash/stack/types` | All TypeScript types (`Encrypted`, `Decrypted`, `ClientConfig`, `EncryptionClientConfig`, query types, etc.) |
 | `@cipherstash/stack/v3` | `EncryptionV3` typed client plus the EQL v3 authoring DSL (`encryptedTable`, `types`, v3 type helpers) |
-| `@cipherstash/stack/eql/v3/drizzle` | EQL v3 Drizzle integration: `types` column factories, `createEncryptionOperatorsV3`, `extractEncryptionSchemaV3`, `makeEqlV3Column`, `EncryptionOperatorError` |
+
+The Drizzle and Supabase integrations are **separate first-party packages** that
+depend on `@cipherstash/stack` (they are no longer subpaths of it):
+
+| Package | Provides |
+|-------|-----|
+| `@cipherstash/stack-drizzle` | Drizzle ORM integration (EQL v2): `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` |
+| `@cipherstash/stack-drizzle/v3` | EQL v3 Drizzle integration: `types` column factories, `createEncryptionOperatorsV3`, `extractEncryptionSchemaV3`, `makeEqlV3Column`, `EncryptionOperatorError` |
+| `@cipherstash/stack-supabase` | Supabase integration: `encryptedSupabase` (v2) and `encryptedSupabaseV3` (v3) |
 
 ## Migration from @cipherstash/protect
 

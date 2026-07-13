@@ -1,29 +1,15 @@
-import { resolve } from 'node:path'
 import { configDefaults, defineConfig } from 'vitest/config'
-import { sharedAlias } from '../../vitest.shared'
+import { sharedAlias, stackSourceAlias } from '../../vitest.shared'
 
 export default defineConfig({
   resolve: {
-    alias: {
-      // `@cipherstash/test-kit` + the stack subpaths its catalog imports, all
-      // resolved to source. Must precede `@/` only in spirit — the keys do not
-      // overlap — but keep it first so the shared block is obvious.
-      ...sharedAlias,
-      '@/': resolve(__dirname, './src') + '/',
-      // The installed `@cipherstash/{protect-ffi,auth}` only export `.`; their
-      // `/wasm-inline` subpaths (imported by `src/wasm-inline.ts`) are not
-      // resolvable by Vitest. Alias them to local stubs so unit tests that only
-      // exercise pure helpers can load the module. Tests needing real WASM
-      // behaviour mock these specifiers explicitly.
-      '@cipherstash/protect-ffi/wasm-inline': resolve(
-        __dirname,
-        './__tests__/helpers/stub-protect-ffi-wasm-inline.ts',
-      ),
-      '@cipherstash/auth/wasm-inline': resolve(
-        __dirname,
-        './__tests__/helpers/stub-auth-wasm-inline.ts',
-      ),
-    },
+    // `sharedAlias` resolves `@cipherstash/test-kit` + the stack subpaths its
+    // catalog imports to source; `stackSourceAlias` adds stack's own `@/` alias
+    // and the `/wasm-inline` stubs (`src/wasm-inline.ts` imports subpaths Vitest
+    // can't resolve; unit tests that only touch pure helpers load the stub, tests
+    // needing real WASM mock the specifiers explicitly). Both point at fixed
+    // locations under packages/stack, so they live in vitest.shared.
+    alias: { ...sharedAlias, ...stackSourceAlias },
   },
   test: {
     // Integration suites live in `integration/` and require credentials, a

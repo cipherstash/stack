@@ -39,6 +39,9 @@
 			"errors": [
 				"./dist/errors/index.d.ts"
 			],
+			"adapter-kit": [
+				"./dist/adapter-kit.d.ts"
+			],
 			"client": [
 				"./dist/client.d.ts"
 			],
@@ -54,23 +57,14 @@
 			"eql/v3": [
 				"./dist/eql/v3/index.d.ts"
 			],
-			"eql/v3/drizzle": [
-				"./dist/eql/v3/drizzle/index.d.ts"
-			],
 			"v3": [
 				"./dist/encryption/v3.d.ts"
 			],
 			"types": [
 				"./dist/types-public.d.ts"
 			],
-			"drizzle": [
-				"./dist/drizzle/index.d.ts"
-			],
 			"dynamodb": [
 				"./dist/dynamodb/index.d.ts"
-			],
-			"supabase": [
-				"./dist/supabase/index.d.ts"
 			],
 			"wasm-inline": [
 				"./dist/wasm-inline.d.ts"
@@ -128,16 +122,6 @@
 				"default": "./dist/eql/v3/index.cjs"
 			}
 		},
-		"./eql/v3/drizzle": {
-			"import": {
-				"types": "./dist/eql/v3/drizzle/index.d.ts",
-				"default": "./dist/eql/v3/drizzle/index.js"
-			},
-			"require": {
-				"types": "./dist/eql/v3/drizzle/index.d.cts",
-				"default": "./dist/eql/v3/drizzle/index.cjs"
-			}
-		},
 		"./v3": {
 			"import": {
 				"types": "./dist/encryption/v3.d.ts",
@@ -158,16 +142,6 @@
 				"default": "./dist/types-public.cjs"
 			}
 		},
-		"./drizzle": {
-			"import": {
-				"types": "./dist/drizzle/index.d.ts",
-				"default": "./dist/drizzle/index.js"
-			},
-			"require": {
-				"types": "./dist/drizzle/index.d.cts",
-				"default": "./dist/drizzle/index.cjs"
-			}
-		},
 		"./dynamodb": {
 			"import": {
 				"types": "./dist/dynamodb/index.d.ts",
@@ -176,16 +150,6 @@
 			"require": {
 				"types": "./dist/dynamodb/index.d.cts",
 				"default": "./dist/dynamodb/index.cjs"
-			}
-		},
-		"./supabase": {
-			"import": {
-				"types": "./dist/supabase/index.d.ts",
-				"default": "./dist/supabase/index.js"
-			},
-			"require": {
-				"types": "./dist/supabase/index.d.cts",
-				"default": "./dist/supabase/index.cjs"
 			}
 		},
 		"./encryption": {
@@ -206,6 +170,16 @@
 			"require": {
 				"types": "./dist/errors/index.d.cts",
 				"default": "./dist/errors/index.cjs"
+			}
+		},
+		"./adapter-kit": {
+			"import": {
+				"types": "./dist/adapter-kit.d.ts",
+				"default": "./dist/adapter-kit.js"
+			},
+			"require": {
+				"types": "./dist/adapter-kit.d.cts",
+				"default": "./dist/adapter-kit.cjs"
 			}
 		},
 		"./wasm-inline": {
@@ -267,22 +241,6 @@
 		"@cipherstash/auth-linux-x64-gnu": "catalog:repo",
 		"@cipherstash/auth-linux-x64-musl": "catalog:repo",
 		"@cipherstash/auth-win32-x64-msvc": "catalog:repo"
-	},
-	"peerDependencies": {
-		"@supabase/supabase-js": ">=2",
-		"drizzle-orm": ">=0.33",
-		"pg": ">=8"
-	},
-	"peerDependenciesMeta": {
-		"drizzle-orm": {
-			"optional": true
-		},
-		"@supabase/supabase-js": {
-			"optional": true
-		},
-		"pg": {
-			"optional": true
-		}
 	},
 	"engines": {
 		"node": ">=22"

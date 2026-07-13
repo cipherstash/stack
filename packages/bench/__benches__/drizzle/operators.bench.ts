@@ -1,4 +1,4 @@
-import { createEncryptionOperators } from '@cipherstash/stack/drizzle'
+import { createEncryptionOperators } from '@cipherstash/stack-drizzle'
 import type { SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, bench, describe } from 'vitest'
 import {

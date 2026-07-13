@@ -104,11 +104,11 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
 
   // Second pass: auto-derive EncryptedTable schemas from drizzle pgTable
   // exports so users don't have to manually export the result of
-  // extractEncryptionSchema(). Silently no-op if @cipherstash/stack/drizzle
+  // extractEncryptionSchema(). Silently no-op if @cipherstash/stack-drizzle
   // isn't installed (e.g. a Supabase-only project).
   if (drizzleCandidates.length > 0) {
     try {
-      const drizzleModule = (await import('@cipherstash/stack/drizzle')) as {
+      const drizzleModule = (await import('@cipherstash/stack-drizzle')) as {
         extractEncryptionSchema?: (t: unknown) => EncryptedTableLike
       }
       const extract = drizzleModule.extractEncryptionSchema
@@ -127,7 +127,7 @@ export async function loadEncryptionContext(): Promise<EncryptionContext> {
         }
       }
     } catch {
-      // @cipherstash/stack/drizzle not installed; skip drizzle fallback.
+      // @cipherstash/stack-drizzle not installed; skip drizzle fallback.
     }
   }
 

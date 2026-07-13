@@ -1,7 +1,7 @@
+import { needleFor } from '@cipherstash/test-kit'
 import { describe, expect, it } from 'vitest'
 import { matchNeedleError } from '@/schema/match-defaults'
 import { V3_MATRIX } from './catalog'
-import { needleFor } from './needle-for'
 
 const MATCH_BLOCK = { tokenizer: { kind: 'ngram', token_length: 3 } } as const
 

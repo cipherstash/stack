@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "customConditions": ["node"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "paths": {
+      "@cipherstash/stack": ["../stack/src/index.ts"],
+      "@cipherstash/stack/adapter-kit": ["../stack/src/adapter-kit.ts"],
+      "@cipherstash/stack/encryption": ["../stack/src/encryption/index.ts"],
+      "@cipherstash/stack/schema": ["../stack/src/schema/index.ts"],
+      "@cipherstash/stack/identity": ["../stack/src/identity/index.ts"],
+      "@cipherstash/stack/errors": ["../stack/src/errors/index.ts"],
+      "@cipherstash/stack/types": ["../stack/src/types-public.ts"],
+      "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
+      "@cipherstash/test-kit": ["../test-kit/src/index.ts"],
+      "@cipherstash/test-kit/suite": ["../test-kit/src/run-family-suite.ts"],
+      "@cipherstash/test-kit/catalog": ["../test-kit/src/catalog.ts"],
+      "@/*": ["../stack/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "__tests__/**/*.ts", "integration/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
+}

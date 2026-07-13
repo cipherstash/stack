@@ -42,6 +42,7 @@ export {
   type FamilyName,
 } from './families.ts'
 export { type DbVariant, dbVariant, installEqlV3 } from './install.ts'
+export { needleFor } from './needle-for.ts'
 export {
   negativeOps,
   type Plain,

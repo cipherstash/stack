@@ -118,8 +118,8 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack` | `Encryption` function, `encryptedTable`, `encryptedColumn`, `encryptedField` (convenience re-exports) |
 | `@cipherstash/stack/schema` | `encryptedTable`, `encryptedColumn`, `encryptedField`, schema types |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
-| `@cipherstash/stack/drizzle` | `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` for Drizzle ORM |
-| `@cipherstash/stack/supabase` | `encryptedSupabase` wrapper for Supabase |
+| `@cipherstash/stack-drizzle` | `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` for Drizzle ORM |
+| `@cipherstash/stack-supabase` | `encryptedSupabase` wrapper for Supabase |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` helper for DynamoDB |
 | `@cipherstash/stack/encryption` | `EncryptionClient` class, `Encryption` function |
 | `@cipherstash/stack/errors` | `EncryptionErrorTypes`, `StackError`, error subtypes, `getErrorMessage` |
@@ -127,7 +127,7 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/types` | All TypeScript types |
 | `@cipherstash/stack/eql/v3` | EQL v3 typed schema: `encryptedTable`, `types` namespace, `buildEncryptConfig`, inference types (see "EQL v3 Typed Schema" below) |
 | `@cipherstash/stack/v3` | `EncryptionV3` factory, `typedClient`, `TypedEncryptionClient` — plus re-exports of everything in `@cipherstash/stack/eql/v3` |
-| `@cipherstash/stack/eql/v3/drizzle` | Drizzle ORM integration for EQL v3 schemas (see the `stash-drizzle` skill) |
+| `@cipherstash/stack-drizzle/v3` | Drizzle ORM integration for EQL v3 schemas (see the `stash-drizzle` skill) |
 
 ## Schema Definition
 
@@ -776,7 +776,7 @@ type UserEncrypted = InferEncrypted<typeof users>
 
 ### Drizzle ORM
 
-`@cipherstash/stack/eql/v3/drizzle` provides Drizzle-native v3 column factories, schema extraction, and auto-encrypting query operators. See the `stash-drizzle` skill for the full guide.
+`@cipherstash/stack-drizzle/v3` provides Drizzle-native v3 column factories, schema extraction, and auto-encrypting query operators. See the `stash-drizzle` skill for the full guide.
 
 ## Rolling Encryption Out to Production
 

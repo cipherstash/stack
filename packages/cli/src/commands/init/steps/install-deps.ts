@@ -12,16 +12,41 @@ import {
 const STACK_PACKAGE = '@cipherstash/stack'
 const CLI_PACKAGE = 'stash'
 const PRISMA_NEXT_PACKAGE = '@cipherstash/prisma-next'
+const DRIZZLE_PACKAGE = '@cipherstash/stack-drizzle'
+const SUPABASE_PACKAGE = '@cipherstash/stack-supabase'
+
+/**
+ * The integration adapter is its OWN package (depends on `@cipherstash/stack`),
+ * not a subpath of it — so whichever integration the user picked, its adapter
+ * package must be installed too, or the scaffolded client code (which imports
+ * e.g. `@cipherstash/stack-drizzle`) fails to resolve.
+ */
+function integrationPackageFor(integration?: string): string | null {
+  switch (integration) {
+    case 'prisma-next':
+      return PRISMA_NEXT_PACKAGE
+    case 'drizzle':
+      return DRIZZLE_PACKAGE
+    case 'supabase':
+      return SUPABASE_PACKAGE
+    default:
+      return null
+  }
+}
 
 /**
  * Install the runtime + dev npm packages the user needs to run encryption:
  *
- * - `@cipherstash/stack` (prod) — the encryption client and per-integration
- *   helpers (drizzle, supabase, schema).
+ * - `@cipherstash/stack` (prod) — the encryption client, schema builders, and
+ *   EQL v3 typed client.
+ * - the integration adapter package (prod), if the chosen integration has one:
+ *   `@cipherstash/stack-drizzle`, `@cipherstash/stack-supabase`, or
+ *   `@cipherstash/prisma-next`. These are separate packages that depend on
+ *   `@cipherstash/stack`.
  * - `stash` (dev) — the CLI itself, so the user can run `stash eql install`,
  *   `stash wizard`, etc. as a project script without the global install.
  *
- * Skips silently when both are already present. Prompts before running the
+ * Skips silently when everything is already present. Prompts before running the
  * install commands so the user sees the package manager invocation that's
  * about to execute.
  */
@@ -29,18 +54,19 @@ export const installDepsStep: InitStep = {
   id: 'install-deps',
   name: 'Install dependencies',
   async run(state: InitState, provider: InitProvider): Promise<InitState> {
-    const wantPrismaNext =
-      state.integration === 'prisma-next' || provider.name === 'prisma-next'
+    const integrationPkg =
+      integrationPackageFor(state.integration) ??
+      integrationPackageFor(provider.name)
     const stackPresent = isPackageInstalled(STACK_PACKAGE)
     const cliPresent = isPackageInstalled(CLI_PACKAGE)
-    const prismaNextPresent = wantPrismaNext
-      ? isPackageInstalled(PRISMA_NEXT_PACKAGE)
+    const integrationPresent = integrationPkg
+      ? isPackageInstalled(integrationPkg)
       : true
 
     // Everything already there — silent success, no prompts.
-    if (stackPresent && cliPresent && prismaNextPresent) {
-      const installed = wantPrismaNext
-        ? `${STACK_PACKAGE}, ${PRISMA_NEXT_PACKAGE} and ${CLI_PACKAGE}`
+    if (stackPresent && cliPresent && integrationPresent) {
+      const installed = integrationPkg
+        ? `${STACK_PACKAGE}, ${integrationPkg} and ${CLI_PACKAGE}`
         : `${STACK_PACKAGE} and ${CLI_PACKAGE}`
       p.log.success(`${installed} are already installed.`)
       return { ...state, stackInstalled: true, cliInstalled: true }
@@ -49,8 +75,7 @@ export const installDepsStep: InitStep = {
     const pm = detectPackageManager()
     const prodPackages: string[] = []
     if (!stackPresent) prodPackages.push(STACK_PACKAGE)
-    if (wantPrismaNext && !prismaNextPresent)
-      prodPackages.push(PRISMA_NEXT_PACKAGE)
+    if (integrationPkg && !integrationPresent) prodPackages.push(integrationPkg)
     const devPackages = cliPresent ? [] : [CLI_PACKAGE]
     const commands = combinedInstallCommands(pm, prodPackages, devPackages)
 
@@ -109,12 +134,18 @@ export const installDepsStep: InitStep = {
     // per-package tracking, not a composite flag.
     const stackInstalled = isPackageInstalled(STACK_PACKAGE)
     const cliInstalled = isPackageInstalled(CLI_PACKAGE)
+    const integrationInstalled = integrationPkg
+      ? isPackageInstalled(integrationPkg)
+      : true
 
-    if (stackInstalled && cliInstalled) {
+    if (stackInstalled && cliInstalled && integrationInstalled) {
       p.log.success('Stack dependencies installed.')
     } else {
       const stillMissing = [
         ...(stackInstalled ? [] : [`${STACK_PACKAGE} (prod)`]),
+        ...(integrationPkg && !integrationInstalled
+          ? [`${integrationPkg} (prod)`]
+          : []),
         ...(cliInstalled ? [] : [`${CLI_PACKAGE} (dev)`]),
       ]
       p.log.warn(`Still missing: ${stillMissing.join(', ')}.`)

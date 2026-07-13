@@ -1,6 +1,6 @@
 # Supabase SDK reference
 
-`@cipherstash/stack/supabase` wraps a supabase-js client so encrypted columns
+`@cipherstash/stack-supabase` wraps a supabase-js client so encrypted columns
 are transparently encrypted on mutations, `::jsonb`-cast on selects, encrypted
 in filter terms, and decrypted in results.
 
@@ -27,7 +27,7 @@ client internally. Introspection needs a direct Postgres connection
 run in a Worker or the browser.
 
 ```typescript
-import { encryptedSupabaseV3 } from '@cipherstash/stack/supabase'
+import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
 
 // Introspects the database via options.databaseUrl or DATABASE_URL
 const es = await encryptedSupabaseV3(
@@ -66,7 +66,7 @@ tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
-import { encryptedSupabaseV3 } from '@cipherstash/stack/supabase'
+import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
 
 const users = encryptedTable('users', {
   email:  types.TextSearch('email'),   // public.eql_v3_text_search

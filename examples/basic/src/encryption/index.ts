@@ -2,7 +2,7 @@ import { Encryption } from '@cipherstash/stack'
 import {
   encryptedType,
   extractEncryptionSchema,
-} from '@cipherstash/stack/drizzle'
+} from '@cipherstash/stack-drizzle'
 import { integer, pgTable, timestamp } from 'drizzle-orm/pg-core'
 
 export const usersTable = pgTable('users', {

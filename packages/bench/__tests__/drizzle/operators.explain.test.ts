@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createEncryptionOperators } from '@cipherstash/stack/drizzle'
+import { createEncryptionOperators } from '@cipherstash/stack-drizzle'
 import type { SQL } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {

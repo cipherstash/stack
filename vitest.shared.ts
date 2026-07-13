@@ -29,6 +29,10 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/test-kit/src/catalog.ts',
   ),
+  '@cipherstash/test-kit/integration-clerk': resolve(
+    repoRoot,
+    'packages/test-kit/src/integration/clerk.ts',
+  ),
   '@cipherstash/test-kit': resolve(repoRoot, 'packages/test-kit/src/index.ts'),
   '@cipherstash/stack/eql/v3': resolve(
     repoRoot,
@@ -42,9 +46,42 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/stack/src/encryption/v3.ts',
   ),
-  '@cipherstash/stack/supabase': resolve(
+  // The core↔adapter seam, consumed by the split adapter packages.
+  '@cipherstash/stack/adapter-kit': resolve(
     repoRoot,
-    'packages/stack/src/supabase/index.ts',
+    'packages/stack/src/adapter-kit.ts',
+  ),
+  '@cipherstash/stack/encryption': resolve(
+    repoRoot,
+    'packages/stack/src/encryption/index.ts',
+  ),
+  '@cipherstash/stack/types': resolve(
+    repoRoot,
+    'packages/stack/src/types-public.ts',
+  ),
+  '@cipherstash/stack/errors': resolve(
+    repoRoot,
+    'packages/stack/src/errors/index.ts',
+  ),
+  '@cipherstash/stack/identity': resolve(
+    repoRoot,
+    'packages/stack/src/identity/index.ts',
+  ),
+  // The Supabase adapter now lives in its own package (was
+  // `@cipherstash/stack/supabase`); resolve it to source too.
+  '@cipherstash/stack-supabase': resolve(
+    repoRoot,
+    'packages/stack-supabase/src/index.ts',
+  ),
+  // The Drizzle adapter package (was `@cipherstash/stack/drizzle` +
+  // `@cipherstash/stack/eql/v3/drizzle`). `/v3` first — longest prefix wins.
+  '@cipherstash/stack-drizzle/v3': resolve(
+    repoRoot,
+    'packages/stack-drizzle/src/v3/index.ts',
+  ),
+  '@cipherstash/stack-drizzle': resolve(
+    repoRoot,
+    'packages/stack-drizzle/src/index.ts',
   ),
   // Bare entry LAST: it is a prefix of every subpath above, and Vite matches in
   // order, so the subpaths must win first. Both sibling tsconfigs map bare
@@ -52,4 +89,26 @@ export const sharedAlias: Record<string, string> = {
   // consumer importing the bare specifier would fall through to
   // `packages/stack/dist`, re-coupling `pnpm test` to a prior `pnpm build`.
   '@cipherstash/stack': resolve(repoRoot, 'packages/stack/src/index.ts'),
+}
+
+/**
+ * The aliases needed to load stack's SOURCE (not just its public subpaths) from a
+ * vitest config: stack's own internal `@/` alias — which its source uses and which
+ * therefore leaks into any package that source-resolves it — plus the wasm-inline
+ * stubs for the two `/wasm-inline` subpaths Vitest cannot resolve. All resolve to
+ * fixed locations under `packages/stack`, so they are shared here rather than
+ * copy-pasted into every package's vitest config.
+ *
+ * Spread AFTER `sharedAlias`: `resolve: { alias: { ...sharedAlias, ...stackSourceAlias } }`.
+ */
+export const stackSourceAlias: Record<string, string> = {
+  '@/': `${resolve(repoRoot, 'packages/stack/src')}/`,
+  '@cipherstash/protect-ffi/wasm-inline': resolve(
+    repoRoot,
+    'packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts',
+  ),
+  '@cipherstash/auth/wasm-inline': resolve(
+    repoRoot,
+    'packages/stack/__tests__/helpers/stub-auth-wasm-inline.ts',
+  ),
 }

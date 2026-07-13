@@ -1,11 +1,11 @@
 ---
 name: stash-drizzle
-description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack/drizzle. Covers the encryptedType column type, encrypted query operators (eq, like, ilike, gt/gte/lt/lte, between, inArray, asc/desc), schema extraction, batched and/or conditions, EQL migration generation, the EQL v3 integration (@cipherstash/stack/eql/v3/drizzle), and the complete Drizzle integration workflow. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
+description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle. Covers the encryptedType column type, encrypted query operators (eq, like, ilike, gt/gte/lt/lte, between, inArray, asc/desc), schema extraction, batched and/or conditions, EQL migration generation, the EQL v3 integration (@cipherstash/stack-drizzle/v3), and the complete Drizzle integration workflow. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
 ---
 
 # CipherStash Stack - Drizzle ORM Integration
 
-Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack/drizzle`. Provides a custom column type for encrypted fields and query operators that transparently encrypt search values.
+Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack-drizzle`. Provides a custom column type for encrypted fields and query operators that transparently encrypt search values.
 
 ## When to Use This Skill
 
@@ -20,10 +20,13 @@ Guide for integrating CipherStash field-level encryption with Drizzle ORM using 
 ## Installation
 
 ```bash
-npm install @cipherstash/stack drizzle-orm
+npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 ```
 
-The Drizzle integration is included in `@cipherstash/stack` and imports from `@cipherstash/stack/drizzle`.
+The Drizzle integration ships as its own first-party package,
+`@cipherstash/stack-drizzle`, which depends on `@cipherstash/stack`. Install both.
+It is distinct from the older, separate `@cipherstash/drizzle` package (which is
+`@cipherstash/protect`-based, with different symbol names).
 
 ## Database Setup
 
@@ -63,7 +66,7 @@ Use `encryptedType<T>()` to define encrypted columns in Drizzle table schemas:
 
 ```typescript
 import { pgTable, integer, timestamp, varchar } from "drizzle-orm/pg-core"
-import { encryptedType } from "@cipherstash/stack/drizzle"
+import { encryptedType } from "@cipherstash/stack-drizzle"
 
 const usersTable = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -111,7 +114,7 @@ The generic type parameter `<TData>` sets the TypeScript type for the decrypted 
 ### 1. Extract Schema from Drizzle Table
 
 ```typescript
-import { extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack/drizzle"
+import { extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack-drizzle"
 import { Encryption } from "@cipherstash/stack"
 
 // Convert Drizzle table definition to CipherStash schema
@@ -367,7 +370,7 @@ Add an `email_encrypted` column **alongside** `email`. Crucially, the encrypted 
 
 ```typescript
 // src/db/schema.ts
-import { encryptedType } from '@cipherstash/stack/drizzle'
+import { encryptedType } from '@cipherstash/stack-drizzle'
 
 export const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -384,7 +387,7 @@ Update the encryption client to harvest the encrypted columns from the table:
 ```typescript
 // src/encryption/index.ts
 import { Encryption } from '@cipherstash/stack'
-import { extractEncryptionSchema } from '@cipherstash/stack/drizzle'
+import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
 import { users } from '../db/schema'
 
 const usersEncryptionSchema = extractEncryptionSchema(users)
@@ -624,7 +627,7 @@ import { eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
 import { pgTable, integer, timestamp, varchar } from "drizzle-orm/pg-core"
-import { encryptedType, extractEncryptionSchema, createEncryptionOperators, EncryptionOperatorError, EncryptionConfigError } from "@cipherstash/stack/drizzle"
+import { encryptedType, extractEncryptionSchema, createEncryptionOperators, EncryptionOperatorError, EncryptionConfigError } from "@cipherstash/stack-drizzle"
 import { Encryption } from "@cipherstash/stack"
 
 // Schema
@@ -691,7 +694,7 @@ Individual operators (e.g., `eq()`, `gte()`, `like()`) throw errors when invoked
 - **`EncryptionConfigError`** — thrown for configuration issues (e.g., using `like` on a column without `freeTextSearch: true`).
 
 ```typescript
-import { createEncryptionOperators, EncryptionOperatorError, EncryptionConfigError } from "@cipherstash/stack/drizzle"
+import { createEncryptionOperators, EncryptionOperatorError, EncryptionConfigError } from "@cipherstash/stack-drizzle"
 
 class EncryptionOperatorError extends Error {
   context?: {
@@ -712,9 +715,9 @@ class EncryptionConfigError extends Error {
 
 Encryption client operations return `Result` objects with `data` or `failure`.
 
-## EQL v3 Integration (`@cipherstash/stack/eql/v3/drizzle`)
+## EQL v3 Integration (`@cipherstash/stack-drizzle/v3`)
 
-Everything above covers the v2 integration (`@cipherstash/stack/drizzle`). The **EQL v3** typed schema has its own Drizzle integration on the `@cipherstash/stack/eql/v3/drizzle` subpath. In v3 every encrypted column is a concrete Postgres domain (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type — there is no `equality: true` / `freeTextSearch: true` config object. See the `stash-encryption` skill's "EQL v3 Typed Schema" section for the full `types` catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`).
+Everything above covers the v2 integration (`@cipherstash/stack-drizzle`). The **EQL v3** typed schema has its own Drizzle integration on the `@cipherstash/stack-drizzle/v3` subpath. In v3 every encrypted column is a concrete Postgres domain (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type — there is no `equality: true` / `freeTextSearch: true` config object. See the `stash-encryption` skill's "EQL v3 Typed Schema" section for the full `types` catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`).
 
 Exports: `types` (Drizzle-native column factories mirroring the `@cipherstash/stack/eql/v3` namespace), `makeEqlV3Column`, `getEqlV3Column`, `isEqlV3Column`, `extractEncryptionSchemaV3`, `createEncryptionOperatorsV3`, `EncryptionOperatorError`, and the codec helpers `v3ToDriver` / `v3FromDriver` / `EqlV3CodecError`.
 
@@ -727,7 +730,7 @@ import {
   types,
   extractEncryptionSchemaV3,
   createEncryptionOperatorsV3,
-} from "@cipherstash/stack/eql/v3/drizzle"
+} from "@cipherstash/stack-drizzle/v3"
 
 const users = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -786,5 +789,5 @@ Differences from the v2 operators to know about:
 - A `null` operand throws — use `isNull()` / `isNotNull()` for NULL checks.
 - `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `bulkEncrypt` crossing when the client exposes one.
 - `contains` rejects a needle shorter than the match tokenizer's token length (it would otherwise silently match every row).
-- Operators gate on the column's capabilities and throw `EncryptionOperatorError` (with `context.columnName` / `tableName` / `operator`) when the domain can't answer the operator. This `EncryptionOperatorError` is exported from `@cipherstash/stack/eql/v3/drizzle` and is deliberately separate from the v2 class of the same name; there is no `EncryptionConfigError` on the v3 path.
+- Operators gate on the column's capabilities and throw `EncryptionOperatorError` (with `context.columnName` / `tableName` / `operator`) when the domain can't answer the operator. This `EncryptionOperatorError` is exported from `@cipherstash/stack-drizzle/v3` and is deliberately separate from the v2 class of the same name; there is no `EncryptionConfigError` on the v3 path.
 - Every operator takes an optional trailing `{ lockContext, audit }` argument; `createEncryptionOperatorsV3(client, { lockContext, audit })` sets defaults applied to every operand encryption.
