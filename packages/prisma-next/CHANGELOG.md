@@ -1,5 +1,45 @@
 # @cipherstash/prisma-next
 
+## 0.4.0-rc.0
+
+### Minor Changes
+
+- d6d23be: Upgrade to Prisma Next 0.14.0 (from 0.8.0). Every `@prisma-next/*` dependency is now pinned at 0.14.0; consuming apps must run Prisma Next 0.14 to use this release.
+
+  Highlights of the upgrade:
+
+  - The extension contract space is re-emitted in the 0.14 canonical shape: storage is namespace-enveloped (`storage.namespaces.public.entries.table`), the domain plane replaces flat `models`, and the baseline EQL-install migration is re-pinned to the new storage hash. The vendored EQL bundle SQL is unchanged byte-for-byte.
+  - `deriveStackSchemas` reads the namespace-enveloped contract shape emitted by Prisma Next 0.10+.
+  - The bulk-encrypt middleware accepts the widened insert/update AST value unions introduced through 0.9–0.11.
+  - README examples use the namespace-qualified ORM accessors (`db.orm.public.User`) required since Prisma Next 0.14.
+
+### Patch Changes
+
+- Updated dependencies [31ca318]
+- Updated dependencies [c4787c0]
+- Updated dependencies [66a0e02]
+- Updated dependencies [cfd46ee]
+- Updated dependencies [7eba32d]
+- Updated dependencies [0ebf57e]
+- Updated dependencies [d73a03c]
+- Updated dependencies [89b903f]
+- Updated dependencies [229ce59]
+- Updated dependencies [50c0a9c]
+- Updated dependencies [63ca540]
+- Updated dependencies [5d23e80]
+- Updated dependencies [1aa9a11]
+- Updated dependencies [af2d04e]
+- Updated dependencies [b8a3d20]
+- Updated dependencies [a0f3b2c]
+- Updated dependencies [f23f952]
+- Updated dependencies [7c7dbca]
+- Updated dependencies [5411a13]
+- Updated dependencies [99f8b0a]
+- Updated dependencies [fd33aad]
+- Updated dependencies [8cd485d]
+- Updated dependencies [9b65ae8]
+  - @cipherstash/stack@1.0.0-rc.0
+
 ## 0.3.2
 
 ### Patch Changes
