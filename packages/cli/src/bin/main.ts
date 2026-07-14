@@ -31,11 +31,18 @@ import {
   manifestCommand,
   planCommand,
   statusCommand,
+  telemetryCommand,
   testConnectionCommand,
   upgradeCommand,
   wizardCommand,
 } from '../commands/index.js'
 import { messages } from '../messages.js'
+import {
+  initTelemetry,
+  maybeShowFirstRunNotice,
+  shutdownTelemetry,
+  trackCommand,
+} from '../telemetry/index.js'
 
 function isModuleNotFound(err: unknown): boolean {
   return (
@@ -92,6 +99,7 @@ Commands:
   wizard               AI-guided encryption setup (reads your codebase)
   doctor               Diagnose install problems (native binaries, runtime)
   manifest             Print the structured, versioned command surface (--json for docs/agents)
+  telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
   eql upgrade          Upgrade EQL extensions to the latest version
@@ -431,6 +439,40 @@ export async function run() {
     return
   }
 
+  // Anonymous, opt-out usage analytics. The notice shows once (to stderr) and
+  // the run that shows it sends nothing; both are no-ops when telemetry is off.
+  initTelemetry(pkg.version)
+  maybeShowFirstRunNotice()
+
+  const startedAt = Date.now()
+  let succeeded = true
+  let errorType: string | undefined
+
+  try {
+    await dispatch(command, subcommand, commandArgs, flags, values)
+  } catch (err) {
+    succeeded = false
+    errorType = err instanceof Error ? err.constructor.name : 'Unknown'
+    throw err
+  } finally {
+    trackCommand({
+      command,
+      subcommand,
+      success: succeeded,
+      durationMs: Date.now() - startedAt,
+      errorType,
+    })
+    await shutdownTelemetry()
+  }
+}
+
+async function dispatch(
+  command: string,
+  subcommand: string | undefined,
+  commandArgs: string[],
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
   switch (command) {
     case 'init':
       await initCommand(flags, values)
@@ -472,6 +514,9 @@ export async function run() {
       // Pure metadata (no native code) — safe to run anywhere, including when
       // the native binary is missing.
       manifestCommand({ json: flags.json, version: pkg.version })
+      break
+    case 'telemetry':
+      await telemetryCommand(subcommand)
       break
     case 'wizard': {
       // Forward everything after `stash wizard` verbatim. The wizard package

@@ -109,4 +109,19 @@ export const messages = {
     ) =>
       `\`${pkg}\` is not installed in this project.\n\nInstall the CipherStash packages, then re-run:\n  ${installCommands}\n\nOr run \`${stash} init\` to set everything up.`,
   },
+  telemetry: {
+    /**
+     * The one-time first-run notice. Printed to stderr so it never pollutes
+     * piped or `--json` stdout. Nothing is sent on the run that shows it.
+     */
+    notice: [
+      'CipherStash collects anonymous CLI usage analytics to improve the tool.',
+      'No plaintext, schema, table/column names, or connection details are ever collected.',
+      'We honor the DO_NOT_TRACK standard. Opt out any time: stash telemetry disable',
+      'Learn more: https://cipherstash.com/docs/reference/cli',
+    ].join('\n'),
+    enabled: 'Telemetry enabled.',
+    disabled: 'Telemetry disabled.',
+    unknownSubcommand: 'Unknown telemetry command',
+  },
 } as const
