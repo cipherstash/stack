@@ -36,6 +36,7 @@ import { createCipherstashStringCodec } from '../src/execution/codec-runtime'
 import { createParameterizedCodecDescriptors } from '../src/execution/parameterized'
 import type { CipherstashSdk } from '../src/execution/sdk'
 import { cipherstashStringCodecMetadata } from '../src/extension-metadata/codec-metadata'
+import { createV3CodecDescriptors } from '../src/v3/codec-runtime-v3'
 
 function emptySdk(): CipherstashSdk {
   return {
@@ -87,6 +88,26 @@ describe('cipherstash codec: no `equality` trait', () => {
     const packMeta = cipherstashStringCodecMetadata.descriptor.traits ?? []
     expect([...runtime].sort()).toEqual([...parameterized].sort())
     expect([...runtime].sort()).toEqual([...packMeta].sort())
+  })
+})
+
+describe('cipherstash v3 codec descriptors: no framework built-in traits', () => {
+  it('every v3 descriptor advertises only cipherstash:* traits — never the framework built-in `equality`', () => {
+    // Same footgun as v2, per-domain: a framework built-in trait on a
+    // v3 codec descriptor would re-attach the built-in `eq` (SQL `=`)
+    // to encrypted columns, which silently returns zero rows against
+    // nondeterministic ciphertexts. Storage-only domains legitimately
+    // carry an EMPTY trait list (they answer no operator at all), so
+    // the invariant is subset-of-`cipherstash:*`, not non-empty.
+    const descriptors = createV3CodecDescriptors(emptySdk())
+    expect(descriptors.length).toBeGreaterThan(0)
+    for (const descriptor of descriptors) {
+      const traits: ReadonlyArray<string> = descriptor.traits ?? []
+      for (const trait of traits) {
+        expect(String(trait).startsWith('cipherstash:')).toBe(true)
+      }
+      expect(traits).not.toContain('equality')
+    }
   })
 })
 
