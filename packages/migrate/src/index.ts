@@ -67,3 +67,4 @@ export {
   type MigrationStateRow,
   progress,
 } from './state.js'
+export { detectColumnEqlVersion, type EqlVersion } from './version.js'
