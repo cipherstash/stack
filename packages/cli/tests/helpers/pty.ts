@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type IPty, spawn } from 'node-pty'
 import stripAnsi from 'strip-ansi'
+import { CI_ENV_VARS } from '../../src/config/tty.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -98,11 +99,17 @@ export function render(args: string[], opts: RenderOptions = {}): Rendered {
     // debugging a failure.
     NO_COLOR: '1',
     FORCE_COLOR: '0',
-    // Match the convention the CLI itself uses (e.g. install.ts checks
-    // `process.env.CI !== 'true'`) so test runs hit the same code paths.
-    CI: 'true',
-    ...(opts.env ?? {}),
   }
+  // isCiEnv() consults provider markers (GITHUB_ACTIONS, GITLAB_CI, …) as well as
+  // CI. Those leak in from the ambient environment (this repo's own CI), so a
+  // test that de-CIs with `env: { CI: '' }` would otherwise STILL look like CI
+  // and skip interactive prompts. Strip every CI signal so the harness default
+  // below (and per-test overrides) fully control CI detection.
+  for (const name of CI_ENV_VARS) delete env[name]
+  // Match the convention the CLI itself uses (e.g. install.ts checks
+  // `process.env.CI !== 'true'`) so test runs hit the same code paths.
+  env.CI = 'true'
+  Object.assign(env, opts.env ?? {})
 
   // Use the absolute path to the current node binary — node-pty's
   // `posix_spawnp` doesn't inherit PATH lookup reliably across all macOS /
