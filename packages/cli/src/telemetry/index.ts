@@ -1,4 +1,5 @@
 import { PostHog } from 'posthog-node'
+import { isCiEnv } from '../config/tty.js'
 import { messages } from '../messages.js'
 import { readState, type TelemetryState, writeState } from './state.js'
 
@@ -63,50 +64,34 @@ export const ALLOWED_PROP_KEYS: ReadonlySet<string> = new Set([
   'nodeVersion',
 ])
 
-/** Interpret an env var as a boolean flag: set to `1`/`true`/`yes` (any case). */
-function envFlag(name: string): boolean {
-  const raw = process.env[name]
-  return raw != null && ['1', 'true', 'yes'].includes(raw.trim().toLowerCase())
-}
-
-/** An env var is present with a meaningful (non-empty) value. */
-function present(name: string): boolean {
-  const raw = process.env[name]
-  return raw != null && raw !== ''
-}
-
-/** Best-effort CI detection — CI runs are noise and are auto-opted-out. */
-function isCI(): boolean {
-  return (
-    envFlag('CI') ||
-    present('CONTINUOUS_INTEGRATION') ||
-    present('BUILD_NUMBER') ||
-    [
-      'GITHUB_ACTIONS',
-      'GITLAB_CI',
-      'CIRCLECI',
-      'TRAVIS',
-      'BUILDKITE',
-      'JENKINS_URL',
-      'TEAMCITY_VERSION',
-    ].some(present)
-  )
+/**
+ * An opt-out env var is "set" when present and not an explicit off value. This
+ * is deliberately broad: `DO_NOT_TRACK=1`, `=true`, `=on`, or any other non-empty
+ * value opts out, matching the DO_NOT_TRACK convention that setting the variable
+ * at all signals intent. Only `''`, `'0'`, and `'false'` mean "not opted out".
+ */
+function envOptOut(name: string): boolean {
+  const raw = process.env[name]?.trim().toLowerCase()
+  return raw != null && raw !== '' && raw !== '0' && raw !== 'false'
 }
 
 /**
  * Resolve whether telemetry is on, in precedence order. Env overrides win over
  * the persisted flag, so a user can force telemetry off in a context where the
- * config file says otherwise (and never the reverse).
+ * config file says otherwise (and never the reverse). CI detection is shared
+ * with the rest of the CLI via {@link isCiEnv}.
  */
 export function resolveStatus(state: TelemetryState): TelemetryStatus {
   if (projectKey() === EMBEDDED_KEY) {
     return { enabled: false, reason: 'unconfigured' }
   }
-  if (envFlag('DO_NOT_TRACK')) return { enabled: false, reason: 'do-not-track' }
-  if (envFlag('STASH_TELEMETRY_DISABLED')) {
+  if (envOptOut('DO_NOT_TRACK')) {
+    return { enabled: false, reason: 'do-not-track' }
+  }
+  if (envOptOut('STASH_TELEMETRY_DISABLED')) {
     return { enabled: false, reason: 'stash-disabled' }
   }
-  if (isCI()) return { enabled: false, reason: 'ci' }
+  if (isCiEnv()) return { enabled: false, reason: 'ci' }
   if (state.telemetryDisabled) return { enabled: false, reason: 'config' }
   return { enabled: true }
 }
@@ -147,6 +132,11 @@ function getClient(): PostHog {
       host: POSTHOG_HOST,
       flushAt: 1,
       flushInterval: 0,
+      // Fire-and-forget: a short-lived CLI must not retry a failed send. Retries
+      // (default 3, exponential backoff) would keep internal timers pending and
+      // hang the process for seconds when the endpoint is unreachable, defeating
+      // the bounded-flush guarantee. Drop the event instead.
+      fetchRetryCount: 0,
       // Never resolve IP → geo; we don't want or store location.
       disableGeoip: true,
     })
@@ -183,8 +173,10 @@ export function trackCommand(event: CommandEvent): void {
       distinctId: state.anonymousId,
       event: 'command_invoked',
       properties: {
-        ...sanitize({ ...event }),
-        ...baseProps(),
+        // Sanitize the FULL property set (event + base) so the allowlist is the
+        // single enforced boundary — a future prop added to baseProps() can't
+        // bypass it. Only the explicit PostHog control key is added afterward.
+        ...sanitize({ ...event, ...baseProps() }),
         // Keep events anonymous: no PostHog person profiles.
         $process_person_profile: false,
       },
@@ -196,17 +188,21 @@ export function trackCommand(event: CommandEvent): void {
 
 /**
  * Show the one-time first-run notice (to stderr, so it never pollutes piped or
- * `--json` stdout), then mark it shown. No-op when telemetry is disabled or the
+ * `--json` stdout) and mark it shown. No-op when telemetry is disabled or the
  * notice was already shown. The run that shows it sends nothing (see {@link firstRun}).
+ *
+ * `noticeShownAt` is persisted ONLY when the notice was actually displayed —
+ * i.e. stderr is a TTY. A non-interactive first run therefore does not consume
+ * the freebie: telemetry stays dormant until a real run has shown the disclosure.
+ * `stashRef` is the runner-aware invocation (e.g. `npx stash`) so the opt-out
+ * hint is actionable before the CLI is on PATH.
  */
-export function maybeShowFirstRunNotice(): void {
+export function maybeShowFirstRunNotice(stashRef: string): void {
   if (!status.enabled || !firstRun) return
-  if (process.stderr.isTTY) {
-    process.stderr.write(`${messages.telemetry.notice}\n`)
-  }
+  if (!process.stderr.isTTY) return
+  process.stderr.write(`${messages.telemetry.notice(stashRef)}\n`)
   try {
-    state = writeState({ ...state, noticeShownAt: new Date().toISOString() })
-    status = resolveStatus(state)
+    writeState({ ...state, noticeShownAt: new Date().toISOString() })
   } catch {
     // A write failure just means we may show the notice again next run.
   }
@@ -221,14 +217,21 @@ export function setTelemetryDisabled(disabled: boolean): void {
 /** Flush any buffered events, bounded by {@link FLUSH_TIMEOUT_MS}. Never throws. */
 export async function shutdownTelemetry(): Promise<void> {
   if (client === null) return
+  // The timer MUST be cleared once shutdown() wins the race: an uncleared
+  // pending setTimeout keeps the Node event loop alive, so the process would
+  // hang for the full timeout after the flush already completed.
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([
       client.shutdown(),
-      new Promise((resolve) => setTimeout(resolve, FLUSH_TIMEOUT_MS)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, FLUSH_TIMEOUT_MS)
+      }),
     ])
   } catch {
     // Swallow — a failed flush must not fail the process.
   } finally {
+    if (timer !== undefined) clearTimeout(timer)
     client = null
   }
 }

@@ -26,6 +26,14 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url)
 
+    const target = env.POSTHOG_HOST // "us.i.posthog.com" now; "eu.i.posthog.com" later
+    if (!target) {
+      // Misconfiguration — fail loudly rather than forward to an invalid host.
+      return new Response('Telemetry proxy misconfigured: POSTHOG_HOST unset', {
+        status: 500,
+      })
+    }
+
     if (request.method !== 'POST' && request.method !== 'GET') {
       return new Response('Method Not Allowed', { status: 405 })
     }
@@ -33,7 +41,6 @@ export default {
       return new Response('Not Found', { status: 404 })
     }
 
-    const target = env.POSTHOG_HOST // "us.i.posthog.com" now; "eu.i.posthog.com" later
     url.hostname = target
     url.port = ''
     url.protocol = 'https:'

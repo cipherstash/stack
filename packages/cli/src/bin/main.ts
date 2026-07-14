@@ -442,7 +442,7 @@ export async function run() {
   // Anonymous, opt-out usage analytics. The notice shows once (to stderr) and
   // the run that shows it sends nothing; both are no-ops when telemetry is off.
   initTelemetry(pkg.version)
-  maybeShowFirstRunNotice()
+  maybeShowFirstRunNotice(STASH)
 
   const startedAt = Date.now()
   let succeeded = true

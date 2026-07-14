@@ -5,13 +5,20 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readState, writeState } from '../state.js'
 
 let home: string
+let originalHome: string | undefined
 
 beforeEach(() => {
+  originalHome = process.env.HOME
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'stash-telemetry-'))
   process.env.HOME = home
 })
 
 afterEach(() => {
+  if (originalHome === undefined) {
+    delete process.env.HOME
+  } else {
+    process.env.HOME = originalHome
+  }
   fs.rmSync(home, { recursive: true, force: true })
 })
 

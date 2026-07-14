@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CI_ENV_VARS } from '../../config/tty.js'
 import {
   ALLOWED_PROP_KEYS,
   resolveStatus,
@@ -17,21 +18,12 @@ function withKey(): void {
   vi.stubEnv('STASH_POSTHOG_KEY', 'phc_test_key')
 }
 
-/** Clear every env var that resolveStatus / isCI consult. */
+/** Clear every env var that resolveStatus / isCiEnv consult. */
 function clearGateEnv(): void {
   for (const name of [
     'DO_NOT_TRACK',
     'STASH_TELEMETRY_DISABLED',
-    'CI',
-    'CONTINUOUS_INTEGRATION',
-    'BUILD_NUMBER',
-    'GITHUB_ACTIONS',
-    'GITLAB_CI',
-    'CIRCLECI',
-    'TRAVIS',
-    'BUILDKITE',
-    'JENKINS_URL',
-    'TEAMCITY_VERSION',
+    ...CI_ENV_VARS,
   ]) {
     vi.stubEnv(name, '')
   }
@@ -101,10 +93,27 @@ describe('resolveStatus gates', () => {
     ).toBe('config')
   })
 
-  it('treats DO_NOT_TRACK=0 as not opted out', () => {
+  it('treats DO_NOT_TRACK=0 / false / empty as not opted out', () => {
     withKey()
-    vi.stubEnv('DO_NOT_TRACK', '0')
-    expect(resolveStatus(enabledState)).toEqual({ enabled: true })
+    for (const value of ['0', 'false', '']) {
+      vi.stubEnv('DO_NOT_TRACK', value)
+      expect(resolveStatus(enabledState)).toEqual({ enabled: true })
+    }
+  })
+
+  it('honors DO_NOT_TRACK set to any other non-empty value', () => {
+    withKey()
+    // The convention is that setting the variable at all signals opt-out.
+    for (const value of ['1', 'true', 'on', 'yes', 'please']) {
+      vi.stubEnv('DO_NOT_TRACK', value)
+      expect(reasonOf(resolveStatus(enabledState))).toBe('do-not-track')
+    }
+  })
+
+  it('auto-disables for a provider marker without CI (GitLab)', () => {
+    withKey()
+    vi.stubEnv('GITLAB_CI', 'true')
+    expect(reasonOf(resolveStatus(enabledState))).toBe('ci')
   })
 })
 

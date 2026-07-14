@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CI_ENV_VARS } from '../../../config/tty.js'
 import { messages } from '../../../messages.js'
 
 // region.ts imports `* as p from '@clack/prompts'` (no native `@cipherstash/auth`
@@ -29,6 +30,30 @@ const {
 let originalRegionEnv: string | undefined
 let originalCi: string | undefined
 let originalIsTty: boolean | undefined
+// isCiEnv() also consults provider vars (GITHUB_ACTIONS, GITLAB_CI, …); a real
+// GITHUB_ACTIONS=true in this repo's own CI would otherwise flip "not CI" tests.
+let savedProviderCi: Record<string, string | undefined> = {}
+
+function neutralizeProviderCi(): void {
+  savedProviderCi = {}
+  for (const name of CI_ENV_VARS) {
+    if (name === 'CI') continue // handled by originalCi above/below
+    savedProviderCi[name] = process.env[name]
+    // biome-ignore lint/performance/noDelete: restore exact absence in afterEach.
+    delete process.env[name]
+  }
+}
+
+function restoreProviderCi(): void {
+  for (const [name, value] of Object.entries(savedProviderCi)) {
+    if (value === undefined) {
+      // biome-ignore lint/performance/noDelete: restore exact absence.
+      delete process.env[name]
+    } else {
+      process.env[name] = value
+    }
+  }
+}
 
 function setTty(value: boolean | undefined) {
   Object.defineProperty(process.stdin, 'isTTY', {
@@ -52,6 +77,7 @@ beforeEach(() => {
   delete process.env[REGION_ENV_VAR]
   // biome-ignore lint/performance/noDelete: ditto.
   delete process.env.CI
+  neutralizeProviderCi()
 })
 
 afterEach(() => {
@@ -67,6 +93,7 @@ afterEach(() => {
   } else {
     process.env.CI = originalCi
   }
+  restoreProviderCi()
   setTty(originalIsTty)
   vi.restoreAllMocks()
 })

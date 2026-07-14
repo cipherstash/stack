@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CI_ENV_VARS } from '../config/tty.js'
 import { messages } from '../messages.js'
 
 // Mock seams. Hoisted so the in-test reconfiguration touches the same fn
@@ -39,6 +40,30 @@ let originalEnv: string | undefined
 let originalCi: string | undefined
 let originalIsTty: boolean | undefined
 let tmpDir: string
+// isCiEnv() also consults provider vars (GITHUB_ACTIONS, GITLAB_CI, …); a real
+// GITHUB_ACTIONS=true in this repo's own CI would otherwise flip "not CI" tests.
+let savedProviderCi: Record<string, string | undefined> = {}
+
+function neutralizeProviderCi(): void {
+  savedProviderCi = {}
+  for (const name of CI_ENV_VARS) {
+    if (name === 'CI') continue // handled by originalCi above/below
+    savedProviderCi[name] = process.env[name]
+    // biome-ignore lint/performance/noDelete: restore exact absence in afterEach.
+    delete process.env[name]
+  }
+}
+
+function restoreProviderCi(): void {
+  for (const [name, value] of Object.entries(savedProviderCi)) {
+    if (value === undefined) {
+      // biome-ignore lint/performance/noDelete: restore exact absence.
+      delete process.env[name]
+    } else {
+      process.env[name] = value
+    }
+  }
+}
 
 function noProject() {
   detect.detectSupabaseProject.mockReturnValue({
@@ -56,6 +81,7 @@ beforeEach(() => {
   delete process.env.DATABASE_URL
   // biome-ignore lint/performance/noDelete: ditto.
   delete process.env.CI
+  neutralizeProviderCi()
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'database-url-test-'))
   noProject()
 })
@@ -73,6 +99,7 @@ afterEach(() => {
   } else {
     process.env.CI = originalCi
   }
+  restoreProviderCi()
   Object.defineProperty(process.stdin, 'isTTY', {
     value: originalIsTty,
     configurable: true,

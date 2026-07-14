@@ -113,13 +113,16 @@ export const messages = {
     /**
      * The one-time first-run notice. Printed to stderr so it never pollutes
      * piped or `--json` stdout. Nothing is sent on the run that shows it.
+     * `stashRef` is the runner-aware invocation (e.g. `npx stash`) so the
+     * opt-out command is actionable even before `stash` is on PATH.
      */
-    notice: [
-      'CipherStash collects anonymous CLI usage analytics to improve the tool.',
-      'No plaintext, schema, table/column names, or connection details are ever collected.',
-      'We honor the DO_NOT_TRACK standard. Opt out any time: stash telemetry disable',
-      'Learn more: https://cipherstash.com/docs/reference/cli',
-    ].join('\n'),
+    notice: (stashRef: string) =>
+      [
+        'CipherStash collects anonymous CLI usage analytics to improve the tool.',
+        'No plaintext, schema, table/column names, or connection details are ever collected.',
+        `We honor the DO_NOT_TRACK standard. Opt out any time: set DO_NOT_TRACK=1, or run \`${stashRef} telemetry disable\`.`,
+        'Learn more: https://cipherstash.com/docs/reference/cli',
+      ].join('\n'),
     enabled: 'Telemetry enabled.',
     disabled: 'Telemetry disabled.',
     unknownSubcommand: 'Unknown telemetry command',
