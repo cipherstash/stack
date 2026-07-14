@@ -446,6 +446,9 @@ importers:
       pathe:
         specifier: ^2.0.3
         version: 2.0.3
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
       tsup:
         specifier: catalog:repo
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)

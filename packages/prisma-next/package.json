@@ -77,6 +77,7 @@
 		"dev": "tsup --watch",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
+		"test:live": "vitest run test/live",
 		"typecheck": "tsc --project tsconfig.json --noEmit",
 		"lint": "biome check . --error-on-warnings",
 		"lint:fix": "biome check --write .",
@@ -109,6 +110,7 @@
 		"@prisma-next/target-postgres": "0.14.0",
 		"fast-check": "^4.8.0",
 		"pathe": "^2.0.3",
+		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
 		"vitest": "catalog:repo"
