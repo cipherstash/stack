@@ -11,6 +11,7 @@ export default defineConfig({
     'src/exports/pack.ts',
     'src/exports/runtime.ts',
     'src/exports/stack.ts',
+    'src/exports/v3.ts',
   ],
   outDir: 'dist',
   format: ['esm'],

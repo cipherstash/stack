@@ -66,7 +66,6 @@
  * and the shared trait constants.
  */
 
-import type { QueryTypeName } from '@cipherstash/stack/types'
 import type { CodecTrait } from '@prisma-next/framework-components/codec'
 import type {
   SqlOperationDescriptor,
@@ -87,7 +86,7 @@ import {
   toExpr,
 } from '@prisma-next/sql-relational-core/expression'
 import {
-  EncryptedEnvelopeBase,
+  type EncryptedEnvelopeBase,
   setHandleRoutingKey,
 } from '../execution/envelope-base'
 import { EncryptedBigInt } from '../execution/envelope-bigint'
@@ -103,6 +102,22 @@ import {
 } from '../extension-metadata/constants-v3'
 import { V3_DOMAIN_META_BY_CODEC_ID, type V3DomainMeta } from './catalog'
 import { EncryptedNumber } from './envelope-number'
+import {
+  EncryptionOperatorError,
+  markV3QueryTerm,
+  type V3QueryTermType,
+} from './query-term'
+
+// The query-term seam (mark/read + the shared operator error) lives in
+// `./query-term` so the bulk-encrypt middleware and the v3 SDK adapter
+// can consume it without importing this module's operator registry.
+// Re-exported here so the operator surface keeps its original shape.
+export {
+  EncryptionOperatorError,
+  markV3QueryTerm,
+  type V3QueryTermType,
+  v3QueryTermTypeOf,
+} from './query-term'
 
 /**
  * Codec ID of the framework's Postgres boolean codec — referenced as a
@@ -121,86 +136,6 @@ const QUERY_TERM_PARAM_CODEC: CodecRef = { codecId: 'pg/text@1' }
 type PgBoolReturn = {
   readonly codecId: typeof PG_BOOL_CODEC_ID
   readonly nullable: false
-}
-
-/**
- * A dedicated error for v3 operator gating, operand-coercion, and
- * misuse failures, carrying the offending column/table/operator for
- * diagnostics.
- *
- * INTENTIONAL FORK of `@cipherstash/stack-drizzle`'s error of the same
- * name (same shape, same rationale): sharing it would couple two
- * independently-versioned public packages. v3-owned — the v2 operator
- * surface keeps throwing plain `TypeError`s.
- */
-export class EncryptionOperatorError extends Error {
-  constructor(
-    message: string,
-    public readonly context?: {
-      columnName?: string
-      tableName?: string
-      operator?: string
-    },
-  ) {
-    super(message)
-    this.name = 'EncryptionOperatorError'
-  }
-}
-
-/**
- * The query-term flavours a v3 operator can mint — the subset of the
- * stack's `QueryTypeName` union that maps 1:1 onto the four
- * capability families (`steVecSelector`/`steVecTerm` are subsumed by
- * `searchableJson`, which auto-infers).
- */
-export type V3QueryTermType = Extract<
-  QueryTypeName,
-  'equality' | 'orderAndRange' | 'freeTextSearch' | 'searchableJson'
->
-
-/**
- * Query-term marks, keyed by envelope identity. A WeakMap sidecar
- * rather than a handle slot so the version-neutral
- * `EncryptedEnvelopeHandle` (shared with v2, which has no query-term
- * concept) stays untouched.
- */
-const V3_QUERY_TERM_TYPES = new WeakMap<
-  EncryptedEnvelopeBase<unknown>,
-  V3QueryTermType
->()
-
-/**
- * Mark an envelope as a v3 QUERY TERM of the given flavour. Stamped by
- * every operator at lowering time; consumed by the v3 SDK boundary
- * (Task 7), which must encrypt marked envelopes via
- * `encryptQuery({ queryType })` — a ciphertext-free term — instead of
- * the storage `bulkEncrypt` path. Write-once-wins with a conflict
- * check, mirroring `setHandleRoutingKey`: one envelope instance feeds
- * one query flavour.
- */
-export function markV3QueryTerm(
-  envelope: EncryptedEnvelopeBase<unknown>,
-  queryType: V3QueryTermType,
-): void {
-  const existing = V3_QUERY_TERM_TYPES.get(envelope)
-  if (existing !== undefined && existing !== queryType) {
-    throw new EncryptionOperatorError(
-      `cipherstash v3 operator: envelope is already marked as a "${existing}" query term, refusing to remark as "${queryType}". Construct a fresh envelope per operator call.`,
-    )
-  }
-  V3_QUERY_TERM_TYPES.set(envelope, queryType)
-}
-
-/**
- * Read an envelope's query-term mark. `undefined` means the envelope
- * is a storage value (write path), not a query term.
- */
-export function v3QueryTermTypeOf(
-  envelope: unknown,
-): V3QueryTermType | undefined {
-  return envelope instanceof EncryptedEnvelopeBase
-    ? V3_QUERY_TERM_TYPES.get(envelope)
-    : undefined
 }
 
 /** Per-call column context resolved from the `self` expression. */

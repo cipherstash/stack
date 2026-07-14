@@ -60,6 +60,10 @@
 			"types": "./dist/stack.d.ts",
 			"import": "./dist/stack.js"
 		},
+		"./v3": {
+			"types": "./dist/v3.d.ts",
+			"import": "./dist/v3.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"types": "./dist/control.d.ts",

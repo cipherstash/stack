@@ -22,6 +22,11 @@
  * `cast_as`, and the installed index set — divergence throws at
  * setup so ZeroKMS can't end up with an index set that the EQL
  * bundle's installed configuration disagrees with.
+ *
+ * This is the **EQL v2** entry point. For an EQL v3 contract
+ * (`cipherstash/eql-v3/*` codec ids) use `cipherstashFromStackV3`
+ * (`./from-stack-v3.ts`) — v2 and v3 are separate entry points that
+ * are never co-registered in one client (decision 1b).
  */
 
 import { Encryption } from '@cipherstash/stack'

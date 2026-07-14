@@ -11,6 +11,19 @@
  *     the EQL payload ({@link v3ToDriver} — v3 columns are PG domains
  *     over `jsonb`), never the v2 `eql_v2_encrypted` composite literal.
  *     This module MUST NOT import `encodeEqlV2EncryptedWire`.
+ *   - **Query terms**: v3 additionally collects QUERY-TERM params —
+ *     envelopes marked by the v3 operators (`markV3QueryTerm`) and
+ *     bound under the bare-rendering `pg/text@1` codec, so they carry
+ *     no v3 codec id. The ENVELOPE itself is forwarded through
+ *     `sdk.bulkEncrypt` as the value, so the mark survives the SDK
+ *     boundary; the v3 SDK adapter (`./sdk-adapter-v3`) reads the mark
+ *     and routes the operand through the client's `encryptQuery`
+ *     (a ciphertext-free term), never the storage encrypt. The
+ *     resulting term is written back as JSONB text — exactly what the
+ *     operator's `$N::eql_v3.query_<domain>` template expects — but is
+ *     NOT stamped into the envelope's ciphertext slot (a query term is
+ *     not the cell's storage ciphertext; stamping it would poison
+ *     later write-path reuse of the same envelope).
  *
  * The `(table, column)` routing-key stamping is NOT forked: the AST walk
  * is version-neutral (it touches only the shared envelope base) and is
@@ -44,6 +57,7 @@ import type { CipherstashSdk } from '../execution/sdk'
 import { CIPHERSTASH_V3_CODEC_ID_SET } from '../extension-metadata/constants-v3'
 // Version-neutral AST routing-key stamping — reused, not the v2 encode path.
 import { stampRoutingKeysFromAst } from '../middleware/bulk-encrypt'
+import { v3QueryTermTypeOf } from './query-term'
 import { v3ToDriver } from './wire-v3'
 
 /**
@@ -98,14 +112,19 @@ export function bulkEncryptMiddlewareV3(sdk: CipherstashSdk): SqlMiddleware {
 
         // Replace each ParamRef's value with the plain JSONB text the
         // pg driver can serialise directly (the envelope instance
-        // itself would fail at the driver boundary). The envelope's
-        // ciphertext slot is also stamped via `setHandleCiphertext`
-        // and its plaintext slot retained, so follow-on reuse of the
-        // same envelope skips the re-encrypt round-trip.
+        // itself would fail at the driver boundary). For STORAGE
+        // targets the envelope's ciphertext slot is also stamped via
+        // `setHandleCiphertext` and its plaintext slot retained, so
+        // follow-on reuse of the same envelope skips the re-encrypt
+        // round-trip. QUERY-TERM targets skip the stamp: the returned
+        // value is a ciphertext-free query term, not the cell's
+        // storage ciphertext.
         params.replaceValues(
           group.map((t, i) => {
             const ciphertext = ciphertexts[i]
-            setHandleCiphertext(t.envelope, ciphertext)
+            if (v3QueryTermTypeOf(t.envelope) === undefined) {
+              setHandleCiphertext(t.envelope, ciphertext)
+            }
             return {
               ref: t.ref,
               newValue: v3ToDriver(ciphertext),
@@ -122,6 +141,33 @@ function collectV3Targets(
 ): BulkEncryptTarget<ParamRefHandle<string | undefined>>[] {
   const targets: BulkEncryptTarget<ParamRefHandle<string | undefined>>[] = []
   for (const entry of params.entries()) {
+    const entryValue = entry.value
+    if (
+      entryValue instanceof EncryptedEnvelopeBase &&
+      v3QueryTermTypeOf(entryValue) !== undefined
+    ) {
+      // v3 QUERY TERM — marked by a v3 operator at lowering time and
+      // bound under `pg/text@1` (no v3 codec id, so the storage arm
+      // below never sees it). The envelope itself travels through the
+      // SDK seam as the "plaintext" value so the v3 SDK adapter can
+      // read the mark and mint an `encryptQuery` term.
+      const handle = entryValue.expose()
+      if (handle.table === undefined || handle.column === undefined) {
+        throw new Error(
+          'cipherstash v3 bulk-encrypt: query-term envelope reached the bulk-encrypt phase without a ' +
+            '(table, column) routing context. Operators stamp routing from the column-bound self ' +
+            'expression; envelopes embedded in raw SQL must stamp routing context explicitly via ' +
+            '`setHandleRoutingKey` before execute.',
+        )
+      }
+      targets.push({
+        ref: entry.ref,
+        plaintext: entryValue,
+        envelope: entryValue,
+        routingKey: { table: handle.table, column: handle.column },
+      })
+      continue
+    }
     if (
       entry.codecId === undefined ||
       !CIPHERSTASH_V3_CODEC_ID_SET.has(entry.codecId)

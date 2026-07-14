@@ -104,26 +104,42 @@ const RUNTIME_FORBIDDEN = [
  * which uses content-named `constants-<hash>.mjs`). The cross-plane
  * shared chunk in our output carries pure literal constants (codec
  * id, native types, invariant ids) — sharing them is safe and
- * desirable. `ALLOWED_SHARED_CHUNK_CONTENT_MARKERS` below guards that
+ * desirable. `ALLOWED_SHARED_CHUNK_MARKER_SETS` below guards that
  * the matched chunk's body does not also smuggle runtime-plane logic
  * across the boundary.
  */
 const SHARED_CHUNK_PATTERN = /^chunk-[A-Za-z0-9_-]+\.js$/
 
 /**
- * Identifiers that uniquely fingerprint the shared constants chunk:
- * every shared chunk we accept must export every one of these. If a
- * `chunk-*.js` is shared between planes but does NOT include all of
- * these markers, it is not the constants chunk and the test rightly
+ * Identifiers that uniquely fingerprint an allowed shared chunk: every
+ * shared chunk we accept must export every marker of at least one set.
+ * If a `chunk-*.js` is shared between planes but does NOT match a set,
+ * it is not one of the known-safe metadata chunks and the test rightly
  * fails.
+ *
+ * Two safe-to-share chunks exist today:
+ *
+ *   - the v2 constants chunk (pure codec-id / native-type / invariant
+ *     literals);
+ *   - the v3 catalog chunk (`src/v3/catalog.ts` — per-domain metadata
+ *     derived from the stack's `DOMAIN_REGISTRY`: codec ids, castAs,
+ *     capabilities, index names). The control plane reaches it through
+ *     the v3 authoring constructors, the runtime plane through the v3
+ *     codec descriptors / operators; it carries no SDK, codec, wire, or
+ *     migration behaviour.
  */
-const ALLOWED_SHARED_CHUNK_CONTENT_MARKERS = [
-  'CIPHERSTASH_STRING_CODEC_ID',
-  'CIPHERSTASH_DOUBLE_CODEC_ID',
-  'CIPHERSTASH_BIGINT_CODEC_ID',
-  'CIPHERSTASH_DATE_CODEC_ID',
-  'CIPHERSTASH_BOOLEAN_CODEC_ID',
-  'CIPHERSTASH_JSON_CODEC_ID',
+const ALLOWED_SHARED_CHUNK_MARKER_SETS: ReadonlyArray<readonly string[]> = [
+  // v2 constants chunk
+  [
+    'CIPHERSTASH_STRING_CODEC_ID',
+    'CIPHERSTASH_DOUBLE_CODEC_ID',
+    'CIPHERSTASH_BIGINT_CODEC_ID',
+    'CIPHERSTASH_DATE_CODEC_ID',
+    'CIPHERSTASH_BOOLEAN_CODEC_ID',
+    'CIPHERSTASH_JSON_CODEC_ID',
+  ],
+  // v3 catalog chunk
+  ['V3_DOMAIN_META_BY_CODEC_ID', 'V3_FACTORY_BY_NATIVE_TYPE', 'toV3CodecId'],
 ] as const
 
 interface ChunkFile {
@@ -183,8 +199,8 @@ function isAllowedSharedChunk(chunk: string): boolean {
     return false
   }
   const body = readChunk(chunk).body
-  return ALLOWED_SHARED_CHUNK_CONTENT_MARKERS.every((marker) =>
-    body.includes(marker),
+  return ALLOWED_SHARED_CHUNK_MARKER_SETS.some((markers) =>
+    markers.every((marker) => body.includes(marker)),
   )
 }
 

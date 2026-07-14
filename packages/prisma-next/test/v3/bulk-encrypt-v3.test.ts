@@ -14,17 +14,24 @@
  */
 
 import {
+  ColumnRef,
   InsertAst,
   ParamRef,
+  ProjectionItem,
+  SelectAst,
   TableSource,
 } from '@prisma-next/sql-relational-core/ast'
 import type { SqlExecutionPlan } from '@prisma-next/sql-relational-core/plan'
 import { describe, expect, it } from 'vitest'
+import { setHandleRoutingKey } from '../../src/execution/envelope-base'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
 import { CIPHERSTASH_STRING_CODEC_ID } from '../../src/extension-metadata/constants'
 import { isCipherstashV3CodecId } from '../../src/extension-metadata/constants-v3'
 import { bulkEncryptMiddlewareV3 } from '../../src/v3/bulk-encrypt-v3'
+import { EncryptedNumber } from '../../src/v3/envelope-number'
+import { markV3QueryTerm } from '../../src/v3/query-term'
+import { v3ToDriver } from '../../src/v3/wire-v3'
 import {
   baseMeta,
   buildInsertPlan,
@@ -33,6 +40,17 @@ import {
   createSqlParamRefMutator,
   makeCounterSdk,
 } from '../bulk-encrypt-middleware.helpers'
+import {
+  callOperator,
+  columnAccessorV3,
+  contractV3,
+  getOperator,
+  INTEGER_ORD_CODEC_ID,
+  literalParamValue,
+  makeV3Adapter,
+  selectWithWhere,
+  TABLE,
+} from './operator-lowering-v3.helpers'
 
 const V3_TEXT_SEARCH = 'cipherstash/eql-v3/eql_v3_text_search@1'
 const V3_JSON = 'cipherstash/eql-v3/eql_v3_json@1'
@@ -305,6 +323,182 @@ describe('bulkEncryptMiddlewareV3', () => {
       await expect(envelope.decrypt()).resolves.toBe('alice@example.com')
       expect(sdk.singleDecryptCalls).toEqual([])
       expect(sdk.bulkDecryptCalls).toEqual([])
+    })
+  })
+
+  describe('query-term params (Task 6 → Task 7 seam)', () => {
+    /**
+     * Build a plan carrying one query-term param: an envelope MARKED by
+     * `markV3QueryTerm` (what the v3 operators do at lowering time),
+     * routing pre-stamped, bound under the bare-rendering `pg/text@1`
+     * codec (never a v3 codec id).
+     */
+    function queryTermPlan(envelope: EncryptedString): SqlExecutionPlan {
+      const ref = ParamRef.of(envelope, { codec: { codecId: 'pg/text@1' } })
+      // A WHERE-operand param lives outside insert/update rows; the AST
+      // shape here only needs to expose the ParamRef to the mutator.
+      const ast = new InsertAst(TableSource.named('user'), [{ email: ref }])
+      return {
+        sql: 'SELECT ... WHERE eql_v3.eq("user"."email", $1::eql_v3.query_text_search)',
+        params: [envelope],
+        meta: { ...baseMeta },
+        ast,
+      } as SqlExecutionPlan
+    }
+
+    it('forwards the MARKED ENVELOPE itself through sdk.bulkEncrypt and writes the term back as JSONB text', async () => {
+      const term = { i: { t: 'user', c: 'email' }, hm: 'term' }
+      const sdk = makeCounterSdk({ encryptImpl: () => [term] })
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const envelope = EncryptedString.from('alice@example.com')
+      setHandleRoutingKey(envelope, 'user', 'email')
+      markV3QueryTerm(envelope, 'equality')
+      const plan = queryTermPlan(envelope)
+      const params = createSqlParamRefMutator(plan)
+
+      await middleware.beforeExecute?.(plan, createCtx(), params)
+
+      expect(sdk.bulkEncryptCalls).toHaveLength(1)
+      expect(sdk.bulkEncryptCalls[0]?.routingKey).toEqual({
+        table: 'user',
+        column: 'email',
+      })
+      // The envelope travels the seam by IDENTITY, mark intact — the v3
+      // SDK adapter reads it to route through encryptQuery.
+      expect(sdk.bulkEncryptCalls[0]?.values).toEqual([envelope])
+      expect(params.currentParams()[0]).toBe(v3ToDriver(term))
+    })
+
+    it('does NOT stamp the query term into the envelope ciphertext slot', async () => {
+      const sdk = makeCounterSdk({ encryptImpl: () => [{ hm: 'term' }] })
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const envelope = EncryptedString.from('alice@example.com')
+      setHandleRoutingKey(envelope, 'user', 'email')
+      markV3QueryTerm(envelope, 'freeTextSearch')
+      const plan = queryTermPlan(envelope)
+      const params = createSqlParamRefMutator(plan)
+
+      await middleware.beforeExecute?.(plan, createCtx(), params)
+
+      expect(envelope.expose().ciphertext).toBeUndefined()
+      expect(envelope.expose().plaintext).toBe('alice@example.com')
+    })
+
+    it('groups a storage value and a query term on the same column into one SDK call, position-stable', async () => {
+      const sdk = makeCounterSdk({
+        encryptImpl: (args) =>
+          args.values.map((value) =>
+            value instanceof EncryptedString
+              ? { term: value.expose().plaintext }
+              : { c: `enc:${String(value)}` },
+          ),
+      })
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const storageEnvelope = EncryptedString.from('new@example.com')
+      const termEnvelope = EncryptedString.from('old@example.com')
+      setHandleRoutingKey(termEnvelope, 'user', 'email')
+      markV3QueryTerm(termEnvelope, 'equality')
+
+      // UPDATE user SET email = $1(storage) WHERE email = $2(term)
+      const storageRef = ParamRef.of(storageEnvelope, {
+        codec: { codecId: V3_TEXT_SEARCH },
+      })
+      const termRef = ParamRef.of(termEnvelope, {
+        codec: { codecId: 'pg/text@1' },
+      })
+      const ast = new InsertAst(TableSource.named('user'), [
+        { email: storageRef },
+        { email: termRef },
+      ])
+      const plan = {
+        sql: 'UPDATE ...',
+        params: [storageEnvelope, termEnvelope],
+        meta: { ...baseMeta },
+        ast,
+      } as SqlExecutionPlan
+      const params = createSqlParamRefMutator(plan)
+
+      await middleware.beforeExecute?.(plan, createCtx(), params)
+
+      expect(sdk.bulkEncryptCalls).toHaveLength(1)
+      // AST param order: the SET storage value first, the WHERE term
+      // second — the storage value travels as raw plaintext, the query
+      // term as the marked envelope itself.
+      expect(sdk.bulkEncryptCalls[0]?.values).toEqual([
+        'new@example.com',
+        termEnvelope,
+      ])
+      expect(params.currentParams()).toEqual([
+        v3ToDriver({ c: 'enc:new@example.com' }),
+        v3ToDriver({ term: 'old@example.com' }),
+      ])
+      // Storage envelope caches its ciphertext; the term envelope does not.
+      expect(storageEnvelope.expose().ciphertext).toEqual({
+        c: 'enc:new@example.com',
+      })
+      expect(termEnvelope.expose().ciphertext).toBeUndefined()
+    })
+
+    it('throws when a marked envelope has no routing context', async () => {
+      const sdk = makeCounterSdk()
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const envelope = EncryptedString.from('alice@example.com')
+      markV3QueryTerm(envelope, 'equality')
+      // A WHERE-side param on a SELECT: the insert/update AST walk has
+      // nothing to stamp from and no operator stamped routing.
+      const ref = ParamRef.of(envelope, { codec: { codecId: 'pg/text@1' } })
+      const ast = SelectAst.from(TableSource.named('user'))
+        .withProjection([ProjectionItem.of('id', ColumnRef.of('user', 'id'))])
+        .withWhere(ref)
+      const plan = {
+        sql: 'SELECT "user"."id" FROM "user" WHERE $1',
+        params: [envelope],
+        meta: { ...baseMeta },
+        ast,
+      } as SqlExecutionPlan
+      const params = createSqlParamRefMutator(plan)
+
+      await expect(
+        middleware.beforeExecute?.(plan, createCtx(), params),
+      ).rejects.toThrow(/without a[\s\S]*routing context/)
+      expect(sdk.bulkEncryptCalls).toEqual([])
+    })
+
+    it('END-TO-END: a real cipherstashEq lowering feeds the seam and the param lands as query-term JSONB', async () => {
+      const term = { i: { t: TABLE, c: 'score' }, ob: ['deadbeef'] }
+      const sdk = makeCounterSdk({ encryptImpl: () => [term] })
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+
+      const predicate = callOperator(
+        getOperator('cipherstashEq'),
+        columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
+        42,
+      )
+      const ast = selectWithWhere(predicate)
+      const lowered = makeV3Adapter().lower(ast, { contract: contractV3 })
+      const plan = {
+        sql: lowered.sql,
+        params: lowered.params.map(literalParamValue),
+        meta: { ...baseMeta },
+        ast,
+      } as SqlExecutionPlan
+      const params = createSqlParamRefMutator(plan)
+
+      await middleware.beforeExecute?.(plan, createCtx(), params)
+
+      // The operator minted a marked envelope; the middleware forwarded
+      // it by identity under the (user, score) routing key…
+      expect(sdk.bulkEncryptCalls).toHaveLength(1)
+      expect(sdk.bulkEncryptCalls[0]?.routingKey).toEqual({
+        table: TABLE,
+        column: 'score',
+      })
+      const forwarded = sdk.bulkEncryptCalls[0]?.values[0]
+      expect(forwarded).toBeInstanceOf(EncryptedNumber)
+      // …and wrote the resulting term back as the JSONB text the
+      // `$1::eql_v3.query_integer_ord` template consumes.
+      expect(lowered.sql).toContain('::eql_v3.query_integer_ord')
+      expect(params.currentParams()[0]).toBe(v3ToDriver(term))
     })
   })
 

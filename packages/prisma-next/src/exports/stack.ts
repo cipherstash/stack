@@ -32,5 +32,25 @@ export type {
   CipherstashFromStackResult,
 } from '../stack/from-stack'
 export { cipherstashFromStack } from '../stack/from-stack'
-
+// ---------------------------------------------------------------------------
+// EQL v3 (decision 1b: a SEPARATE entry point — a client is v2 or v3,
+// never both; `cipherstashFromStackV3` rejects contracts carrying v2
+// cipherstash codec ids).
+// ---------------------------------------------------------------------------
+export type {
+  CipherstashFromStackV3Options,
+  CipherstashFromStackV3Result,
+} from '../stack/from-stack-v3'
+export { cipherstashFromStackV3 } from '../stack/from-stack-v3'
 export { createCipherstashSdk } from '../stack/sdk-adapter'
+export type {
+  V3ContractColumnEntry,
+  V3ContractShape,
+} from '../v3/derive-schemas-v3'
+export {
+  deriveStackSchemasV3,
+  v3ContractColumnEntries,
+} from '../v3/derive-schemas-v3'
+export { assertV3SchemasAgree } from '../v3/from-stack-v3-validate'
+export type { CipherstashV3Client } from '../v3/sdk-adapter-v3'
+export { createCipherstashV3Sdk } from '../v3/sdk-adapter-v3'

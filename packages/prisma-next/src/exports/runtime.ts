@@ -120,6 +120,47 @@ export {
   CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_JSON_CODEC_ID,
 } from '../extension-metadata/constants'
+// ---------------------------------------------------------------------------
+// EQL v3 runtime surface (decision 1b: a SEPARATE extension descriptor
+// under v3's own id — never co-register it with the v2 descriptor
+// above; the shared `cipherstash*` method names collide in the flat
+// OperationRegistry).
+// ---------------------------------------------------------------------------
+export {
+  CIPHERSTASH_V3_CODEC_IDS,
+  CIPHERSTASH_V3_EXTENSION_VERSION,
+  CIPHERSTASH_V3_SPACE_ID,
+  type CipherstashV3CodecId,
+  isCipherstashV3CodecId,
+} from '../extension-metadata/constants-v3'
+export { bulkEncryptMiddlewareV3 } from '../v3/bulk-encrypt-v3'
+export {
+  CipherstashV3CellCodec,
+  type CipherstashV3CodecParams,
+  cipherstashV3ParamsSchema,
+  createV3CodecDescriptors,
+} from '../v3/codec-runtime-v3'
+export type {
+  EncryptedNumberFromInternalArgs,
+  EncryptedNumberHandle,
+} from '../v3/envelope-number'
+export { EncryptedNumber } from '../v3/envelope-number'
+export {
+  cipherstashV3Asc,
+  cipherstashV3Desc,
+  cipherstashV3QueryOperations,
+} from '../v3/operators-v3'
+export {
+  EncryptionOperatorError,
+  markV3QueryTerm,
+  type V3QueryTermType,
+  v3QueryTermTypeOf,
+} from '../v3/query-term'
+export {
+  type CreateCipherstashV3RuntimeDescriptorOptions,
+  createCipherstashV3RuntimeDescriptor,
+} from '../v3/runtime-v3'
+export { v3FromDriver, v3ToDriver } from '../v3/wire-v3'
 
 export { CIPHERSTASH_EXTENSION_VERSION }
 
