@@ -1,0 +1,90 @@
+name: Release JS (RC)
+
+# Prerelease (release-candidate) publishing for the EQL v3 1.0 line. A faithful
+# mirror of `release.yml` — same npm OIDC trusted publishing, same github-hosted
+# runner for provenance — with two differences:
+#
+#   1. It runs on the release branch(es) (`release/**`), never `main`. `main`
+#      keeps its own 0.x cadence via `release.yml`; this line is independent.
+#   2. It publishes under the `rc` npm dist-tag, so `@latest` is untouched
+#      (`npm i @cipherstash/stack` stays on the stable release; `@rc` opts in).
+#
+# REQUIRES the release branch to be in Changesets PRERELEASE mode — i.e. a
+# committed `.changeset/pre.json` (`pnpm changeset pre enter rc`). Without it,
+# `changeset version` produces stable versions, not `-rc.N`. `changesets/action`
+# opens a "Version Packages" PR with the rc versions; merging it triggers this
+# workflow again with no pending changesets, and the publish step runs.
+#
+# `workflow_dispatch` is included for manual runs, but note it only appears in
+# the Actions UI once this file is on the default branch — until then, the
+# `push` trigger on `release/**` is the reliable path.
+
+permissions:
+  id-token: write # Required for OIDC
+  contents: write # Required for changesets to commit and push
+  pull-requests: write # Required for changesets to check existing PRs
+
+on:
+  push:
+    branches:
+      - 'release/**'
+  workflow_dispatch:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Release RC
+    # GitHub-hosted (not Blacksmith): npm provenance attestations, generated
+    # automatically by OIDC trusted publishing, are only accepted from
+    # github-hosted runners — self-hosted runners are rejected with E422.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6.0.9
+        name: Install pnpm
+        with:
+          run_install: false
+          # Supply-chain hardening — never cache the pnpm store; a poisoned
+          # cache entry would execute in this credential-bearing workflow.
+          cache: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          # No `cache:`, and package-manager-cache disabled. This workflow
+          # publishes to npm (OIDC trusted publishing) and must not restore the
+          # GitHub Actions cache — a cache-poisoning / supply-chain vector.
+          # Enforced by .github/workflows/tests-supply-chain.yml.
+          package-manager-cache: false
+
+      # node-pty's install hook falls back to `node-gyp rebuild` when no
+      # linux-x64 prebuild matches. pnpm/action-setup v6 no longer ships
+      # node-gyp on PATH, so install it explicitly.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      # npm OIDC trusted publishing requires npm >= 11.5.1; Node 22 ships
+      # npm 10.x. `changeset publish` shells out to this npm to publish.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Publish RC to npm
+        id: changesets
+        uses: changesets/action@v1.9.0
+        with:
+          # `release:rc` = `pnpm run build && changeset publish --tag rc`.
+          publish: pnpm run release:rc
+          commitMode: 'github-api'
+        env:
+          # No NPM_TOKEN — publishing authenticates via npm OIDC trusted
+          # publishing (id-token: write above). If NPM_TOKEN is set,
+          # changesets/action writes a token .npmrc that shadows OIDC and
+          # every publish fails with E404 (see npm/cli#8976).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

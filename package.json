@@ -32,6 +32,7 @@
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
     "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
     "release": "pnpm run build && changeset publish",
+    "release:rc": "pnpm run build && changeset publish --tag rc",
     "test": "turbo test --filter './packages/*'",
     "test:e2e": "turbo run test:e2e",
     "test:scripts": "vitest run --config scripts/vitest.config.mjs"
