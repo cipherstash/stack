@@ -64,6 +64,23 @@ export const v3Dialect = {
     return sql`${left} OPERATOR(public.@>) ${enc}`
   },
 
+  /**
+   * Extract the encrypted JSONB leaf entry at a selector: `eql_v3."->"(src, sel)`
+   * → `eql_v3_jsonb_entry`. `src` is either an `eql_v3_json` column or a needle
+   * document literal already cast to `eql_v3_json`; `sel` is the bare HMAC
+   * selector hash bound as `text`. The returned entry is what the
+   * `eql_v3.{eq,neq,lt,lte,gt,gte}(jsonb_entry, jsonb_entry)` comparators take —
+   * so a selector-with-constraint is `equality`/`comparison` applied to two of
+   * these extractions (column side and needle side) rather than column vs operand.
+   *
+   * The root `eql_v3_json` domain has NO comparison operators (they're blocked in
+   * the bundle), which is why the selector must be extracted before comparing.
+   * `eql_v3."->"` is quoted because `->` is an operator-named function.
+   */
+  selectorEntry(source: SQL, sel: SQL): SQL {
+    return sql`${fn('"->"')}(${source}, ${sel})`
+  },
+
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {
     // eql-3.0.0 splits the ordering extractor by term flavour: `ord_term`
     // takes the OPE-backed `_ord` domains (returns eql_v3_internal.ope_cllw),
