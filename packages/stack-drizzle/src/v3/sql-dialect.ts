@@ -65,20 +65,41 @@ export const v3Dialect = {
   },
 
   /**
-   * Extract the encrypted JSONB leaf entry at a selector: `eql_v3."->"(src, sel)`
-   * → `eql_v3_jsonb_entry`. `src` is either an `eql_v3_json` column or a needle
-   * document literal already cast to `eql_v3_json`; `sel` is the bare HMAC
-   * selector hash bound as `text`. The returned entry is what the
-   * `eql_v3.{eq,neq,lt,lte,gt,gte}(jsonb_entry, jsonb_entry)` comparators take —
-   * so a selector-with-constraint is `equality`/`comparison` applied to two of
-   * these extractions (column side and needle side) rather than column vs operand.
+   * A ciphertext-free JSONPath selector-with-constraint on an `eql_v3_json`
+   * column. Both sides reduce to the encrypted TERM — `eql_v3.hmac_256` for
+   * equality, `eql_v3_internal.ope_cllw` for ordering — which compare natively
+   * (bytea), so no ciphertext ever reaches the WHERE clause:
    *
-   * The root `eql_v3_json` domain has NO comparison operators (they're blocked in
-   * the bundle), which is why the selector must be extracted before comparing.
-   * `eql_v3."->"` is quoted because `->` is an operator-named function.
+   * ```sql
+   * eql_v3.<term>(eql_v3.jsonb_path_query_first(col, '<sel>')) <cmp> eql_v3.<term>(<operand>)
+   * ```
+   *
+   * - LHS: `jsonb_path_query_first` returns the stored `eql_v3_jsonb_entry` at
+   *   the selector; `eq_term`/`ord_term` read only its `hm`/`op`.
+   * - RHS: `<operand>` is a ciphertext-free scalar query term
+   *   (`eql_v3.query_<T>_eq` / `_ord`), already cast by the operator layer.
+   * - `<term>` is `eq_term` for `eq`/`ne` (compared `=`/`<>`) and `ord_term` for
+   *   `gt`/`gte`/`lt`/`lte`.
+   *
+   * The direct-function form is used because the bundle has no
+   * `(eql_v3_jsonb_entry, eql_v3.query_<T>)` operator (only the scalar domains
+   * got those); adding it upstream would let this collapse to an operator and
+   * gain functional-index matching — see the EQL follow-up.
    */
-  selectorEntry(source: SQL, sel: SQL): SQL {
-    return sql`${fn('"->"')}(${source}, ${sel})`
+  selectorConstraint(
+    op: EqualityOp | ComparisonOp,
+    col: SQL,
+    selector: SQL,
+    operand: SQL,
+  ): SQL {
+    const isEquality = op === 'eq' || op === 'ne'
+    const term = isEquality ? 'eq_term' : 'ord_term'
+    const cmp = { eq: '=', ne: '<>', gt: '>', gte: '>=', lt: '<', lte: '<=' }[
+      op
+    ]
+    const lhs = sql`${fn(term)}(${fn('jsonb_path_query_first')}(${col}, ${selector}))`
+    const rhs = sql`${fn(term)}(${operand})`
+    return sql`${lhs} ${sql.raw(cmp)} ${rhs}`
   },
 
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {

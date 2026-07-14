@@ -1,13 +1,13 @@
 /**
  * Live JSONPath selector-with-constraint for the v3 `types.Json()` column (#623).
  * Distinct from containment (`ops.contains`, `@>`): this extracts the encrypted
- * leaf entry at a JSONPath and compares it, so it can express ORDERING at a path
- * (`col->'$.age' > 25`) that containment cannot. Emits
- * `eql_v3.<op>(eql_v3."->"(col, '<sel>'), eql_v3."->"('<needle>'::eql_v3_json, '<sel>'))`.
+ * leaf term at a JSONPath and compares it, so it can express ORDERING at a path
+ * (`col->'$.age' > 25`) that containment cannot. Entirely ciphertext-free — emits
+ * `eql_v3.<term>(eql_v3.jsonb_path_query_first(col, '<sel>')) <cmp> eql_v3.<term>(<operand>)`,
+ * where both sides reduce to the encrypted term (hmac_256 / ope_cllw).
  *
- * The selector hash comes from `encryptQuery(path, searchableJson)`; the
- * comparison entry from a STORAGE `encrypt` of `{path: value}` (its ciphertext
- * `c` is required by the `eql_v3_jsonb_entry` domain — a query term can't carry it).
+ * The selector hash comes from `encryptQuery(path, searchableJson)`; the RHS from
+ * a scalar `encryptQuery(value, { queryType })` term cast to `eql_v3.query_<T>_<eq|ord>`.
  */
 
 import type { JsonDocument } from '@cipherstash/stack/eql/v3'
