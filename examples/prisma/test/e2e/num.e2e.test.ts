@@ -1,18 +1,19 @@
 /**
- * End-to-end round-trip for `EncryptedDouble` against live
- * Postgres + EQL bundle + ZeroKMS.
+ * End-to-end round-trip for the `eql_v3_double_ord` domain against
+ * live Postgres + EQL v3 + ZeroKMS.
  *
  * Pins:
- *   - INSERT + decrypt round-trip recovers the source numbers.
+ *   - INSERT + decrypt round-trip recovers the source numbers (v3
+ *     `number`-castAs domains decrypt to the `EncryptedNumber`
+ *     envelope, not the v2 `EncryptedDouble`).
  *   - `cipherstashGt`, `cipherstashGte`, `cipherstashLt`,
  *     `cipherstashLte`, `cipherstashBetween` each filter rows
- *     correctly against the IEEE-754-encrypted column.
- *   - `cipherstashAsc` / `cipherstashDesc` produce numerically-
- *     sorted results via bare-column `ORDER BY` against the live
- *     EQL operator family. The cipherstash codec relies on the
- *     EQL bundle's overloads of `<` / `>` for `eql_v2_encrypted`,
- *     so an `ORDER BY <col>` clause sorts by the encrypted ORE
- *     value without requiring a wrapping helper.
+ *     correctly against the OPE-indexed encrypted column
+ *     (`eql_v3.gt(col, $n::eql_v3.query_double_ord)` and friends).
+ *   - `cipherstashV3Asc` / `cipherstashV3Desc` produce numerically
+ *     sorted results. Unlike v2's bare-column ORDER BY, v3 sorting
+ *     extracts the encrypted order term (`eql_v3.ord_term(col)`) —
+ *     the domain has no cross-row comparison operators of its own.
  *
  * Seed: four rows with file-scoped ID prefix `e2e-num-`. The
  * `beforeAll` truncates `users` first so the file's assertions
@@ -20,14 +21,14 @@
  */
 
 import {
-  cipherstashAsc,
-  cipherstashDesc,
+  cipherstashV3Asc,
+  cipherstashV3Desc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -44,7 +45,7 @@ function seedRow(s: (typeof SEED)[number]) {
   return {
     id: s.id,
     email: EncryptedString.from(`${s.id}@example.com`),
-    salary: EncryptedDouble.from(s.salary),
+    salary: EncryptedNumber.from(s.salary),
     accountId: EncryptedBigInt.from(1_000_000n),
     birthday: EncryptedDate.from(new Date('1990-01-01')),
     emailVerified: EncryptedBoolean.from(true),
@@ -52,14 +53,14 @@ function seedRow(s: (typeof SEED)[number]) {
   }
 }
 
-describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
+describe('EncryptedNumber (eql_v3_double_ord) e2e (live PG + EQL v3 + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
     await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
-  it('round-trips an EncryptedDouble through bulkEncrypt + bulkDecrypt', async () => {
+  it('round-trips an EncryptedNumber through bulkEncrypt + bulkDecrypt', async () => {
     const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
@@ -71,7 +72,7 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
     }
   })
 
-  it('cipherstashGt filters by encrypted IEEE-754 numeric order', async () => {
+  it('cipherstashGt filters by encrypted numeric order', async () => {
     const rows = await db.orm.public.User.where((u) =>
       u.salary.cipherstashGt(95_000),
     ).all()
@@ -114,9 +115,9 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-num-1', 'e2e-num-2'])
   })
 
-  it('cipherstashAsc orders by numeric value via bare-column ORDER BY', async () => {
+  it('cipherstashV3Asc orders by numeric value via the encrypted order term', async () => {
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashAsc(u.salary),
+      cipherstashV3Asc(u.salary),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-num-0',
@@ -126,9 +127,9 @@ describe('EncryptedDouble e2e (live PG + EQL + ZeroKMS)', () => {
     ])
   })
 
-  it('cipherstashDesc reverses the ascending order', async () => {
+  it('cipherstashV3Desc reverses the ascending order', async () => {
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashDesc(u.salary),
+      cipherstashV3Desc(u.salary),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-num-3',

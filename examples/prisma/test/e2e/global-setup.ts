@@ -12,10 +12,11 @@
  *      harness reports a clear actionable error when it's not up
  *      rather than orchestrating Docker itself).
  *   3. Apply the example app's migrations against the harness DB —
- *      the cipherstash baseline (EQL bundle install + per-column
- *      search configs) plus the application `users` table. The
- *      apply is idempotent at the marker level so a re-run on a
- *      warm container is a no-op.
+ *      the cipherstash baselines (EQL v2 + v3 bundle installs) plus
+ *      the application `users` table (typed against the
+ *      `public.eql_v3_*` domains; v3 needs no per-column search
+ *      configs). The apply is idempotent at the marker level so a
+ *      re-run on a warm container is a no-op.
  *   4. Truncate the `users` table for a clean slate per harness
  *      boot. Each test file owns its own seed data with file-scoped
  *      ID prefixes; the truncate guards against state bleeding
@@ -130,7 +131,8 @@ export default async function setup(): Promise<() => Promise<void>> {
   }
 
   // Clean slate for the suite. The `users` table is the only data-bearing
-  // application table; the EQL bundle tables (`eql_v2_configuration` etc.)
+  // application table; the EQL bundle state (`eql_v2_configuration`,
+  // the `public.eql_v3_*` domains, the `eql_v3` schema, etc.)
   // are state we want to keep.
   const truncate = spawnSync(
     'docker',

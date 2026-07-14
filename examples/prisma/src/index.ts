@@ -1,40 +1,51 @@
 /**
- * @cipherstash/prisma-next example — end-to-end demo.
+ * @cipherstash/prisma-next example — end-to-end demo (EQL v3).
  *
- * Exercises every cipherstash codec the extension ships, plus the
- * trait-dispatched predicate operators and the sort helpers, against
- * a real Postgres + EQL database.
+ * Exercises one v3 domain per plaintext family, plus the
+ * trait-dispatched predicate operators and the encrypted ORDER BY
+ * helpers, against a real Postgres + EQL v3 database.
  *
- * The bulk-encrypt middleware groups every plaintext placeholder
- * (row payloads + search terms) into a single `bulkEncrypt` SDK
- * round-trip per `(table, column)` group before each query executes;
- * `decryptAll(rows)` mirrors the same coalescing on the read side
- * with one `bulkDecrypt` call per `(table, column)` group across
- * every envelope on every column of the result set.
+ * The bulk-encrypt middleware groups every plaintext placeholder into
+ * the minimum number of SDK crossings per query: row payloads go
+ * through one storage `bulkEncrypt` per `(table, column)` group, and
+ * operator operands are minted as ciphertext-free QUERY TERMS via
+ * `encryptQuery` (batched per flavour). `decryptAll(rows)` mirrors the
+ * read side with one `bulkDecrypt` call per `(table, column)` group
+ * across the result set.
+ *
+ * Column surface (the constructor IS the capability set in v3):
+ *
+ *   - email         eql_v3_text_search — eq/range/free-text + ORDER BY
+ *   - salary        eql_v3_double_ord  — eq + range + ORDER BY
+ *   - accountId     eql_v3_bigint_ord  — eq + range + ORDER BY
+ *   - birthday      eql_v3_date_ord    — eq + range + ORDER BY
+ *   - emailVerified eql_v3_boolean     — STORAGE-ONLY (no operators)
+ *   - preferences   eql_v3_json        — cipherstashJsonContains (@>)
  *
  * Prerequisites:
  *
- *   1. A Postgres database with the EQL bundle installed. The
+ *   1. A Postgres database with the EQL v3 bundle installed. The
  *      extension contributes its own contract space at
- *      `migrations/cipherstash/` which installs the EQL composite
- *      types, configuration table, and bundle SQL alongside the
- *      application schema — `pnpm migration:apply` runs it for you.
- *   2. A CipherStash workspace + ZeroKMS credentials. Populate
- *      `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, and
- *      `CS_CLIENT_ACCESS_KEY` in `.env` (see `.env.example`).
+ *      `migrations/cipherstash/` which installs the EQL bundles
+ *      (v2 + v3 baselines) alongside the application schema —
+ *      `pnpm migration:apply` runs it for you.
+ *   2. A CipherStash workspace + ZeroKMS credentials. Run
+ *      `stash auth login` once, or populate `CS_WORKSPACE_CRN`,
+ *      `CS_CLIENT_ID`, `CS_CLIENT_KEY`, and `CS_CLIENT_ACCESS_KEY`
+ *      in `.env` (see `.env.example`).
  *   3. `DATABASE_URL` in `.env` pointing at the database from (1).
  */
 
 import 'dotenv/config'
 
 import {
-  cipherstashAsc,
+  cipherstashV3Asc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
 } from '@cipherstash/prisma-next/runtime'
 
@@ -110,7 +121,8 @@ async function main() {
     await rangeQueryOnSalary()
     await betweenQueryOnBirthday()
     await inArrayQueryOnAccountId()
-    await equalityQueryOnEmailVerified()
+    await decryptStorageOnlyBoolean()
+    await jsonContainmentOnPreferences()
     await sortByEmailAsc()
   } finally {
     await runtime.close()
@@ -127,13 +139,13 @@ async function clearUsers(): Promise<void> {
 }
 
 async function insertUsers(): Promise<void> {
-  console.log('--- Insert (mixed-codec round-trip) ---')
+  console.log('--- Insert (mixed-domain round-trip) ---')
   await Promise.all(
     SEED_USERS.map((seed) =>
       db.orm.public.User.create({
         id: seed.id,
         email: EncryptedString.from(seed.email),
-        salary: EncryptedDouble.from(seed.salary),
+        salary: EncryptedNumber.from(seed.salary),
         accountId: EncryptedBigInt.from(seed.accountId),
         birthday: EncryptedDate.from(seed.birthday),
         emailVerified: EncryptedBoolean.from(seed.emailVerified),
@@ -142,12 +154,12 @@ async function insertUsers(): Promise<void> {
     ),
   )
   console.log(
-    `Inserted ${SEED_USERS.length} rows across six cipherstash codecs.`,
+    `Inserted ${SEED_USERS.length} rows across six cipherstash v3 domains.`,
   )
 }
 
 async function searchByEq(): Promise<void> {
-  console.log('\n--- cipherstashEq (string equality) ---')
+  console.log('\n--- cipherstashEq (text_search equality) ---')
   const rows = await db.orm.public.User.where((u) =>
     u.email.cipherstashEq('alice@example.com'),
   ).all()
@@ -159,11 +171,14 @@ async function searchByEq(): Promise<void> {
 }
 
 async function searchByIlikeAndDecrypt(): Promise<void> {
-  console.log('\n--- cipherstashIlike (string free-text-search) ---')
+  console.log('\n--- cipherstashIlike (text_search free-text tokens) ---')
+  // v3 free-text search is bloom-filter TOKEN matching (eql_v3.contains),
+  // not SQL ILIKE: the needle's tokens must appear in the ciphertext's
+  // index. 'example.com' matches the three @example.com addresses.
   const rows = await db.orm.public.User.where((u) =>
-    u.email.cipherstashIlike('%@example.com'),
+    u.email.cipherstashIlike('example.com'),
   ).all()
-  console.log(`Found ${rows.length} row(s) matching %@example.com.`)
+  console.log(`Found ${rows.length} row(s) whose email contains example.com.`)
   await decryptAll(rows)
   for (const row of rows) {
     console.log(`  ${row.id}: ${await row.email.decrypt()}`)
@@ -171,7 +186,7 @@ async function searchByIlikeAndDecrypt(): Promise<void> {
 }
 
 async function rangeQueryOnSalary(): Promise<void> {
-  console.log('\n--- cipherstashGt (double order-and-range) ---')
+  console.log('\n--- cipherstashGt (double_ord order-and-range) ---')
   const rows = await db.orm.public.User.where((u) =>
     u.salary.cipherstashGt(100_000),
   ).all()
@@ -183,7 +198,7 @@ async function rangeQueryOnSalary(): Promise<void> {
 }
 
 async function betweenQueryOnBirthday(): Promise<void> {
-  console.log('\n--- cipherstashBetween (date order-and-range) ---')
+  console.log('\n--- cipherstashBetween (date_ord order-and-range) ---')
   const lower = new Date('1985-01-01')
   const upper = new Date('1995-12-31')
   const rows = await db.orm.public.User.where((u) =>
@@ -193,7 +208,7 @@ async function betweenQueryOnBirthday(): Promise<void> {
 }
 
 async function inArrayQueryOnAccountId(): Promise<void> {
-  console.log('\n--- cipherstashInArray (bigint equality) ---')
+  console.log('\n--- cipherstashInArray (bigint_ord equality) ---')
   const rows = await db.orm.public.User.where((u) =>
     u.accountId.cipherstashInArray([100_000_000_001n, 100_000_000_004n]),
   ).all()
@@ -202,20 +217,41 @@ async function inArrayQueryOnAccountId(): Promise<void> {
   )
 }
 
-async function equalityQueryOnEmailVerified(): Promise<void> {
-  console.log('\n--- cipherstashInArray (boolean equality-only) ---')
-  // Booleans surface only the equality-trait operators; a single-element
-  // array is the canonical equality form on non-string codecs.
+async function decryptStorageOnlyBoolean(): Promise<void> {
+  console.log('\n--- eql_v3_boolean (storage-only round-trip) ---')
+  // The v3 boolean domain carries no search indexes: it round-trips
+  // true/false losslessly but surfaces NO cipherstash operators —
+  // calling one would throw EncryptionOperatorError. Filter on a
+  // searchable column and decrypt the boolean from the result set.
   const rows = await db.orm.public.User.where((u) =>
-    u.emailVerified.cipherstashInArray([true]),
+    u.email.cipherstashEq('carol@example.com'),
   ).all()
-  console.log(`Found ${rows.length} user(s) with emailVerified = true.`)
+  await decryptAll(rows)
+  for (const row of rows) {
+    console.log(
+      `  ${row.id}: emailVerified=${await row.emailVerified.decrypt()}`,
+    )
+  }
+}
+
+async function jsonContainmentOnPreferences(): Promise<void> {
+  console.log('\n--- cipherstashJsonContains (encrypted jsonb @>) ---')
+  const rows = await db.orm.public.User.where((u) =>
+    u.preferences.cipherstashJsonContains({ theme: 'dark' }),
+  ).all()
+  console.log(`Found ${rows.length} user(s) with a dark-theme preference.`)
+  await decryptAll(rows)
+  for (const row of rows) {
+    console.log(
+      `  ${row.id}: ${JSON.stringify(await row.preferences.decrypt())}`,
+    )
+  }
 }
 
 async function sortByEmailAsc(): Promise<void> {
-  console.log('\n--- cipherstashAsc (bare-column ORDER BY) ---')
+  console.log('\n--- cipherstashV3Asc (encrypted order-term ORDER BY) ---')
   const rows = await db.orm.public.User.orderBy((u) =>
-    cipherstashAsc(u.email),
+    cipherstashV3Asc(u.email),
   ).all()
   await decryptAll(rows)
   for (const row of rows) {

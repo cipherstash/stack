@@ -1,51 +1,45 @@
 /**
- * End-to-end round-trip for `EncryptedBigInt` against live
- * Postgres + EQL bundle + ZeroKMS.
+ * End-to-end round-trip for the `eql_v3_bigint_ord` domain against
+ * live Postgres + EQL v3 + ZeroKMS.
  *
- * Pins the cipherstash bigint codec's encrypt + decrypt + range +
- * sort behaviour with bigint-specific assertions on top of the
- * general numeric coverage in `num.e2e.test.ts`.
- *
- * # Known limitation: Number.MAX_SAFE_INTEGER cap
- *
- * The underlying `@cipherstash/stack` SDK accepts only the
- * `string | number | boolean | object | array` `JsPlaintext` shape for
- * `bulkEncrypt`, and ZeroKMS's `big_int` cast rejects string
- * plaintexts (`Cannot convert String to BigInt`). The example SDK
- * adapter therefore converts `bigint` → JS `number` and throws
- * eagerly above `Number.MAX_SAFE_INTEGER` rather than silently
- * truncating. Consequently the live BigInt round-trip is bounded by
- * `Number.MAX_SAFE_INTEGER` (2^53 − 1) today; lifting the cap
- * requires SDK work documented in `examples/prisma/
- * src/sdk.ts` (`toJsPlaintext`). The negative test below pins the
- * boundary explicitly.
+ * Pins the v3 bigint pipeline's encrypt + decrypt + equality + range +
+ * sort behaviour — INCLUDING losslessness beyond
+ * `Number.MAX_SAFE_INTEGER`. The v2 example was capped at 2^53 − 1
+ * (its SDK adapter converted `bigint → Number`); v3's protect-ffi
+ * eqlVersion-3 wire handles `bigint` natively as a bounds-checked
+ * int8, so 2^53 + 1 (unrepresentable as a JS number) must survive the
+ * full round-trip and participate in equality/range/sort correctly.
  */
 
 import {
-  cipherstashAsc,
+  cipherstashV3Asc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
 
+// 2^53 + 1: NOT representable as a JS number. Losslessness here proves
+// the pipeline is bigint end-to-end (protect-ffi's eqlVersion-3 int8).
+const UNSAFE_BIG = 9_007_199_254_740_993n
+
 const SEED = [
   { id: 'e2e-bigint-0', accountId: 1_000_000_000_001n },
   { id: 'e2e-bigint-1', accountId: 1_000_000_000_002n },
   { id: 'e2e-bigint-2', accountId: 9_000_000_000_000_000n },
-  { id: 'e2e-bigint-3', accountId: BigInt(Number.MAX_SAFE_INTEGER) },
+  { id: 'e2e-bigint-3', accountId: UNSAFE_BIG },
 ] as const
 
 function seedRow(s: (typeof SEED)[number]) {
   return {
     id: s.id,
     email: EncryptedString.from(`${s.id}@example.com`),
-    salary: EncryptedDouble.from(50_000),
+    salary: EncryptedNumber.from(50_000),
     accountId: EncryptedBigInt.from(s.accountId),
     birthday: EncryptedDate.from(new Date('1990-01-01')),
     emailVerified: EncryptedBoolean.from(true),
@@ -53,14 +47,14 @@ function seedRow(s: (typeof SEED)[number]) {
   }
 }
 
-describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
+describe('EncryptedBigInt (eql_v3_bigint_ord) e2e (live PG + EQL v3 + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
     await Promise.all(SEED.map((s) => db.orm.public.User.create(seedRow(s))))
   })
 
-  it('round-trips an EncryptedBigInt through bulkEncrypt + bulkDecrypt', async () => {
+  it('round-trips losslessly, including beyond Number.MAX_SAFE_INTEGER', async () => {
     const rows = await db.orm.public.User.all()
     expect(rows).toHaveLength(SEED.length)
     await decryptAll(rows)
@@ -68,8 +62,17 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
     for (const s of SEED) {
       const r = byId.get(s.id)
       expect(r, `seed row ${s.id} present`).toBeDefined()
-      expect(r ? await r.accountId.decrypt() : undefined).toBe(s.accountId)
+      const got = r ? await r.accountId.decrypt() : undefined
+      expect(typeof got, `${s.id} must decrypt to a JS bigint`).toBe('bigint')
+      expect(got).toBe(s.accountId)
     }
+  })
+
+  it('cipherstashEq selects exactly the row holding the unsafe-range value', async () => {
+    const rows = await db.orm.public.User.where((u) =>
+      u.accountId.cipherstashEq(UNSAFE_BIG),
+    ).all()
+    expect(rows.map((r) => r.id)).toEqual(['e2e-bigint-3'])
   })
 
   it('cipherstashGt filters by encrypted bigint numeric order', async () => {
@@ -107,10 +110,7 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
 
   it('cipherstashInArray returns rows whose value matches any of the supplied bigints', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.accountId.cipherstashInArray([
-        1_000_000_000_001n,
-        BigInt(Number.MAX_SAFE_INTEGER),
-      ]),
+      u.accountId.cipherstashInArray([1_000_000_000_001n, UNSAFE_BIG]),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-bigint-0',
@@ -118,9 +118,12 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
     ])
   })
 
-  it('cipherstashAsc orders by bigint value (bare-column ORDER BY)', async () => {
+  it('cipherstashV3Asc orders by bigint value via the encrypted order term', async () => {
+    // 2^53 + 1 = 9_007_199_254_740_993 > 9_000_000_000_000_000, so the
+    // unsafe-range row sorts LAST — on the true int8 value, not a lossy
+    // float projection.
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashAsc(u.accountId),
+      cipherstashV3Asc(u.accountId),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-bigint-0',
@@ -128,17 +131,5 @@ describe('EncryptedBigInt e2e (live PG + EQL + ZeroKMS)', () => {
       'e2e-bigint-2',
       'e2e-bigint-3',
     ])
-  })
-
-  it('accepts bigint plaintexts above Number.MAX_SAFE_INTEGER at construction', () => {
-    expect(() =>
-      EncryptedBigInt.from(BigInt(Number.MAX_SAFE_INTEGER) + 1n),
-    ).not.toThrow()
-    // The construction is fine — the failure surfaces at the SDK
-    // boundary (`toJsPlaintext`) the moment a bulk-encrypt fires for
-    // this envelope. We pin the boundary in the SDK adapter's unit
-    // test rather than wire a live-ZeroKMS round-trip we expect to
-    // fail; surfacing the limit eagerly at the call site keeps test
-    // signals readable.
   })
 })

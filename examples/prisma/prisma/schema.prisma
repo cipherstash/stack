@@ -1,44 +1,47 @@
-// @cipherstash/prisma-next example schema.
+// @cipherstash/prisma-next example schema — EQL v3.
 //
-// One User model exercising every cipherstash codec the extension
-// ships — string, double, bigint, date, boolean, and json. The
-// no-args constructors default every per-codec search-mode flag to
-// `true`, opting each column into the maximal index surface its
-// codec supports.
+// One User model exercising one v3 domain per plaintext family. Each
+// v3 constructor is argument-less and maps 1:1 to a concrete
+// `public.eql_v3_*` Postgres domain; the constructor IS the capability
+// set (there are no per-column search-mode flags in v3).
 //
-// Operator visibility per column follows from the codec's search-mode
-// flag set (see the package README's operator surface table):
+// Operator visibility per column follows from the domain's query
+// capabilities (see the package README's operator surface table):
 //
-//   - email         (string)  — cipherstashEq / Ilike / NotIlike /
-//                                Gt / Gte / Lt / Lte / Between /
-//                                NotBetween / InArray / NotInArray.
-//   - salary        (double)  — equality + order-and-range.
-//   - accountId     (bigint)  — equality + order-and-range.
-//   - birthday      (date)    — equality + order-and-range.
-//   - emailVerified (boolean) — equality only.
-//   - preferences   (json)    — cipherstashJsonbPathQueryFirst /
-//                                cipherstashJsonbGet SELECT-expr
-//                                helpers; cipherstashJsonbPathExists
-//                                predicate is currently no-op against
-//                                the live EQL bundle — see the
-//                                "Known limitations" section of the
-//                                package README.
+//   - email         (EncryptedTextSearch → eql_v3_text_search)
+//                     equality + order/range + free-text search:
+//                     cipherstashEq / Ne / InArray / NotInArray /
+//                     Gt / Gte / Lt / Lte / Between / NotBetween /
+//                     Ilike / NotIlike, cipherstashV3Asc / Desc.
+//   - salary        (EncryptedDoubleOrd → eql_v3_double_ord)
+//                     equality + order/range.
+//   - accountId     (EncryptedBigIntOrd → eql_v3_bigint_ord)
+//                     equality + order/range.
+//   - birthday      (EncryptedDateOrd → eql_v3_date_ord)
+//                     equality + order/range.
+//   - emailVerified (EncryptedBoolean → eql_v3_boolean)
+//                     STORAGE-ONLY: no search operators at all — every
+//                     cipherstash* predicate throws
+//                     EncryptionOperatorError on this column.
+//   - preferences   (EncryptedJson → eql_v3_json)
+//                     searchable JSON: cipherstashJsonContains
+//                     (encrypted jsonb `@>` containment).
+//
+// v3 emits NO search configs: the domain carries its own index
+// metadata, so there are no `eql_v2.add_search_config` /
+// `add_encrypted_constraint` migration ops (and none of that bundle's
+// quoted-identifier quirks). The `@@map("users")` / lowercase column
+// maps below are kept anyway: `user` is a reserved word in Postgres,
+// and stable physical names keep the example's SQL and docs boring.
 
 model User {
   id            String @id
-  email         cipherstash.EncryptedString()
-  salary        cipherstash.EncryptedDouble()
-  accountId     cipherstash.EncryptedBigInt()     @map("accountid")
-  birthday      cipherstash.EncryptedDate()
+  email         cipherstash.EncryptedTextSearch()
+  salary        cipherstash.EncryptedDoubleOrd()
+  accountId     cipherstash.EncryptedBigIntOrd()  @map("accountid")
+  birthday      cipherstash.EncryptedDateOrd()
   emailVerified cipherstash.EncryptedBoolean()    @map("emailverified")
   preferences   cipherstash.EncryptedJson()
 
-  // The CipherStash EQL bundle hits a SQL-injection-style bug in
-  // `eql_v2.add_encrypted_constraint` when the table or column name
-  // needs quoting (reserved words, mixed case, etc.). `user` is
-  // reserved in Postgres, so we map the table to `users`; the
-  // mixed-case columns are mapped to lowercase column names so the
-  // bundle's `%I` interpolation renders them unquoted. Drop these
-  // overrides once the upstream bundle bug is fixed.
   @@map("users")
 }

@@ -40,7 +40,7 @@ import type {
 } from '@prisma-next/contract/types';
 
 export type StorageHash =
-  StorageHashBase<'sha256:b8c4febc9397cf1b68293cdb3b2afe9f568db6967f428e3f207e32575a2bc2fa'>;
+  StorageHashBase<'sha256:deb36a1ab7e51717f5ca822a32ff09a18cf3a0aaf1189262852c8953adba1720'>;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash =
   ProfileHashBase<'sha256:9c8aa3114e84ed3b7ea2bd57526d9c2e1bf7c5292be694e9d3801f566fda7ccb'>;
@@ -57,12 +57,12 @@ export type FieldOutputTypes = {
   readonly public: {
     readonly User: {
       readonly id: CodecTypes['pg/text@1']['output'];
-      readonly email: CodecTypes['cipherstash/string@1']['output'];
-      readonly salary: CodecTypes['cipherstash/double@1']['output'];
-      readonly accountId: CodecTypes['cipherstash/bigint@1']['output'];
-      readonly birthday: CodecTypes['cipherstash/date@1']['output'];
-      readonly emailVerified: CodecTypes['cipherstash/boolean@1']['output'];
-      readonly preferences: CodecTypes['cipherstash/json@1']['output'];
+      readonly email: CodecTypes['cipherstash/eql-v3/eql_v3_text_search@1']['output'];
+      readonly salary: CodecTypes['cipherstash/eql-v3/eql_v3_double_ord@1']['output'];
+      readonly accountId: CodecTypes['cipherstash/eql-v3/eql_v3_bigint_ord@1']['output'];
+      readonly birthday: CodecTypes['cipherstash/eql-v3/eql_v3_date_ord@1']['output'];
+      readonly emailVerified: CodecTypes['cipherstash/eql-v3/eql_v3_boolean@1']['output'];
+      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['output'];
     };
   };
 };
@@ -70,12 +70,12 @@ export type FieldInputTypes = {
   readonly public: {
     readonly User: {
       readonly id: CodecTypes['pg/text@1']['input'];
-      readonly email: CodecTypes['cipherstash/string@1']['input'];
-      readonly salary: CodecTypes['cipherstash/double@1']['input'];
-      readonly accountId: CodecTypes['cipherstash/bigint@1']['input'];
-      readonly birthday: CodecTypes['cipherstash/date@1']['input'];
-      readonly emailVerified: CodecTypes['cipherstash/boolean@1']['input'];
-      readonly preferences: CodecTypes['cipherstash/json@1']['input'];
+      readonly email: CodecTypes['cipherstash/eql-v3/eql_v3_text_search@1']['input'];
+      readonly salary: CodecTypes['cipherstash/eql-v3/eql_v3_double_ord@1']['input'];
+      readonly accountId: CodecTypes['cipherstash/eql-v3/eql_v3_bigint_ord@1']['input'];
+      readonly birthday: CodecTypes['cipherstash/eql-v3/eql_v3_date_ord@1']['input'];
+      readonly emailVerified: CodecTypes['cipherstash/eql-v3/eql_v3_boolean@1']['input'];
+      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['input'];
     };
   };
 };
@@ -102,44 +102,83 @@ type ContractBase = Omit<
                   readonly nullable: false;
                 };
                 readonly email: {
-                  readonly nativeType: 'eql_v2_encrypted';
-                  readonly codecId: 'cipherstash/string@1';
+                  readonly nativeType: 'public.eql_v3_text_search';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_text_search@1';
                   readonly nullable: false;
                   readonly typeParams: {
-                    readonly equality: true;
-                    readonly freeTextSearch: true;
-                    readonly orderAndRange: true;
+                    readonly castAs: 'string';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: true;
+                    };
                   };
                 };
                 readonly salary: {
-                  readonly nativeType: 'eql_v2_encrypted';
-                  readonly codecId: 'cipherstash/double@1';
+                  readonly nativeType: 'public.eql_v3_double_ord';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_double_ord@1';
                   readonly nullable: false;
-                  readonly typeParams: { readonly equality: true; readonly orderAndRange: true };
+                  readonly typeParams: {
+                    readonly castAs: 'number';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
                 readonly accountid: {
-                  readonly nativeType: 'eql_v2_encrypted';
-                  readonly codecId: 'cipherstash/bigint@1';
+                  readonly nativeType: 'public.eql_v3_bigint_ord';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_bigint_ord@1';
                   readonly nullable: false;
-                  readonly typeParams: { readonly equality: true; readonly orderAndRange: true };
+                  readonly typeParams: {
+                    readonly castAs: 'bigint';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
                 readonly birthday: {
-                  readonly nativeType: 'eql_v2_encrypted';
-                  readonly codecId: 'cipherstash/date@1';
+                  readonly nativeType: 'public.eql_v3_date_ord';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_date_ord@1';
                   readonly nullable: false;
-                  readonly typeParams: { readonly equality: true; readonly orderAndRange: true };
+                  readonly typeParams: {
+                    readonly castAs: 'date';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
                 readonly emailverified: {
-                  readonly nativeType: 'eql_v2_encrypted';
-                  readonly codecId: 'cipherstash/boolean@1';
+                  readonly nativeType: 'public.eql_v3_boolean';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_boolean@1';
                   readonly nullable: false;
-                  readonly typeParams: { readonly equality: true };
+                  readonly typeParams: {
+                    readonly castAs: 'boolean';
+                    readonly capabilities: {
+                      readonly equality: false;
+                      readonly orderAndRange: false;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
                 readonly preferences: {
-                  readonly nativeType: 'eql_v2_encrypted';
-                  readonly codecId: 'cipherstash/json@1';
+                  readonly nativeType: 'public.eql_v3_json';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_json@1';
                   readonly nullable: false;
-                  readonly typeParams: { readonly searchableJson: true };
+                  readonly typeParams: {
+                    readonly castAs: 'json';
+                    readonly capabilities: {
+                      readonly equality: false;
+                      readonly orderAndRange: false;
+                      readonly freeTextSearch: false;
+                      readonly searchableJson: true;
+                    };
+                  };
                 };
               };
               primaryKey: { readonly columns: readonly ['id'] };
@@ -174,11 +213,14 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/string@1';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_text_search@1';
                   readonly typeParams: {
-                    readonly equality: true;
-                    readonly freeTextSearch: true;
-                    readonly orderAndRange: true;
+                    readonly castAs: 'string';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: true;
+                    };
                   };
                 };
               };
@@ -186,40 +228,76 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/double@1';
-                  readonly typeParams: { readonly equality: true; readonly orderAndRange: true };
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_double_ord@1';
+                  readonly typeParams: {
+                    readonly castAs: 'number';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
               };
               readonly accountId: {
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/bigint@1';
-                  readonly typeParams: { readonly equality: true; readonly orderAndRange: true };
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_bigint_ord@1';
+                  readonly typeParams: {
+                    readonly castAs: 'bigint';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
               };
               readonly birthday: {
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/date@1';
-                  readonly typeParams: { readonly equality: true; readonly orderAndRange: true };
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_date_ord@1';
+                  readonly typeParams: {
+                    readonly castAs: 'date';
+                    readonly capabilities: {
+                      readonly equality: true;
+                      readonly orderAndRange: true;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
               };
               readonly emailVerified: {
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/boolean@1';
-                  readonly typeParams: { readonly equality: true };
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_boolean@1';
+                  readonly typeParams: {
+                    readonly castAs: 'boolean';
+                    readonly capabilities: {
+                      readonly equality: false;
+                      readonly orderAndRange: false;
+                      readonly freeTextSearch: false;
+                    };
+                  };
                 };
               };
               readonly preferences: {
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/json@1';
-                  readonly typeParams: { readonly searchableJson: true };
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_json@1';
+                  readonly typeParams: {
+                    readonly castAs: 'json';
+                    readonly capabilities: {
+                      readonly equality: false;
+                      readonly orderAndRange: false;
+                      readonly freeTextSearch: false;
+                      readonly searchableJson: true;
+                    };
+                  };
                 };
               };
             };
