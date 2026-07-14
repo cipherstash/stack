@@ -4,7 +4,10 @@
  * closed union derived from the imported catalog: `(codec id) ⟺ (public.*
  * domain)` is bijective, so the id set IS the catalog.
  */
-import type { AnyEncryptedV3Column, QueryCapabilities } from '@cipherstash/stack/eql/v3'
+import type {
+  AnyEncryptedV3Column,
+  QueryCapabilities,
+} from '@cipherstash/stack/eql/v3'
 import {
   CIPHERSTASH_TRAIT_EQUALITY,
   CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
@@ -103,19 +106,28 @@ export const CIPHERSTASH_V3_CODEC_IDS = [
 // catalog gains a domain that is not pinned above, `Exclude<...>` is non-`never`
 // and this assignment fails to compile with the offending id in the error.
 type _PinnedId = (typeof CIPHERSTASH_V3_CODEC_IDS)[number]
-type _NoUnpinnedDomain = [Exclude<CipherstashV3CodecId, _PinnedId>] extends [never]
+type _NoUnpinnedDomain = [Exclude<CipherstashV3CodecId, _PinnedId>] extends [
+  never,
+]
   ? true
-  : ['catalog gained an unpinned codec id', Exclude<CipherstashV3CodecId, _PinnedId>]
+  : [
+      'catalog gained an unpinned codec id',
+      Exclude<CipherstashV3CodecId, _PinnedId>,
+    ]
 const _driftGuard: _NoUnpinnedDomain = true
 void _driftGuard
 
-export const CIPHERSTASH_V3_CODEC_ID_SET: ReadonlySet<string> = new Set(CIPHERSTASH_V3_CODEC_IDS)
+export const CIPHERSTASH_V3_CODEC_ID_SET: ReadonlySet<string> = new Set(
+  CIPHERSTASH_V3_CODEC_IDS,
+)
 
 export function isCipherstashV3CodecId(id: string): id is CipherstashV3CodecId {
   return CIPHERSTASH_V3_CODEC_ID_SET.has(id)
 }
 
-export function v3TraitsForCapabilities(caps: QueryCapabilities): readonly string[] {
+export function v3TraitsForCapabilities(
+  caps: QueryCapabilities,
+): readonly string[] {
   const traits: string[] = []
   if (caps.equality) traits.push(CIPHERSTASH_TRAIT_EQUALITY)
   if (caps.orderAndRange) traits.push(CIPHERSTASH_TRAIT_ORDER_AND_RANGE)
@@ -124,7 +136,8 @@ export function v3TraitsForCapabilities(caps: QueryCapabilities): readonly strin
   return traits
 }
 
-export const CIPHERSTASH_V3_BASELINE_MIGRATION_NAME = '20260601T0100_install_eql_v3_bundle'
+export const CIPHERSTASH_V3_BASELINE_MIGRATION_NAME =
+  '20260601T0100_install_eql_v3_bundle'
 
 export const CIPHERSTASH_V3_INVARIANTS = {
   installBundle: 'cipherstash:install-eql-v3-bundle-v1',

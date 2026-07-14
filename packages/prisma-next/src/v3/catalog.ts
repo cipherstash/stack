@@ -56,24 +56,31 @@ const registryEntries: ReadonlyArray<readonly [string, V3ColumnFactory]> =
   Object.entries(DOMAIN_REGISTRY)
 
 const metaEntries: Array<readonly [string, V3DomainMeta]> = registryEntries.map(
-  ([bareDomain, factory]) => [toV3CodecId(bareDomain), metaFor(bareDomain, factory)] as const,
+  ([bareDomain, factory]) =>
+    [toV3CodecId(bareDomain), metaFor(bareDomain, factory)] as const,
 )
 
-export const V3_DOMAIN_META_BY_CODEC_ID: ReadonlyMap<string, V3DomainMeta> = new Map(metaEntries)
+export const V3_DOMAIN_META_BY_CODEC_ID: ReadonlyMap<string, V3DomainMeta> =
+  new Map(metaEntries)
 
 export const V3_CODEC_IDS: readonly string[] = metaEntries.map(([id]) => id)
 
 export const V3_FACTORY_BY_NATIVE_TYPE: ReadonlyMap<
   string,
   (name: string) => AnyEncryptedV3Column
-> = new Map(registryEntries.map(([, factory]) => [factory(PROBE).getEqlType(), factory] as const))
+> = new Map(
+  registryEntries.map(
+    ([, factory]) => [factory(PROBE).getEqlType(), factory] as const,
+  ),
+)
 
 export function isOrdOreDomain(bareDomain: string): boolean {
   return bareDomain.endsWith('_ord_ore')
 }
 
-export const EXPOSED_DOMAIN_ENTRIES: ReadonlyArray<readonly [string, V3DomainMeta]> =
-  metaEntries.filter(([, meta]) => !isOrdOreDomain(meta.bareDomain))
+export const EXPOSED_DOMAIN_ENTRIES: ReadonlyArray<
+  readonly [string, V3DomainMeta]
+> = metaEntries.filter(([, meta]) => !isOrdOreDomain(meta.bareDomain))
 
 export function envelopeTypeNameForCastAs(
   castAs: V3CastAs,

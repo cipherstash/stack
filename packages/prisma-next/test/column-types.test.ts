@@ -1,27 +1,96 @@
 /**
- * TS contract factory for cipherstash-encrypted string columns.
+ * TS contract factories for cipherstash-encrypted columns.
  *
- * The factory must produce a `ColumnTypeDescriptor` byte-identical to
- * the lowering output of the PSL constructor `cipherstash.EncryptedString`
- * registered in `src/contract-authoring.ts`. The full byte-equality is verified
- * by the integration parity fixture; these unit tests pin the shape
- * locally so a regression is caught in the package suite first.
+ * v3: one factory per exposed domain, derived 1:1 from the catalog. Each
+ * factory takes NO options and returns the domain's concrete descriptor —
+ * static codec id, `public.eql_v3_*` native type, and a static
+ * `{ castAs, capabilities }` typeParams block — byte-identical to the
+ * lowering output of the matching PSL constructor in
+ * `src/contract-authoring.ts`.
+ *
+ * v2: the six pre-rename factories survive verbatim under their `*V2`
+ * names (`encryptedStringV2`, …) with their original option arguments and
+ * `eql_v2_encrypted` outputs.
  */
 
 import { describe, expect, it } from 'vitest'
+import { v3CamelName } from '../src/contract-authoring'
+import * as columnTypes from '../src/exports/column-types'
 import {
-  encryptedBigInt,
-  encryptedBoolean,
-  encryptedDate,
-  encryptedDouble,
-  encryptedJson,
-  encryptedString,
+  encryptedBigIntV2,
+  encryptedBooleanV2,
+  encryptedDateV2,
+  encryptedDoubleV2,
+  encryptedJsonV2,
+  encryptedStringV2,
 } from '../src/exports/column-types'
+import { EXPOSED_DOMAIN_ENTRIES } from '../src/v3/catalog'
 
-describe('cipherstash column-types', () => {
-  describe('encryptedString({...}) factory', () => {
+describe('v3 TS factories', () => {
+  it('one factory per exposed domain, returning the concrete descriptor', () => {
+    for (const [codecId, meta] of EXPOSED_DOMAIN_ENTRIES) {
+      const name = v3CamelName(meta.bareDomain)
+      const fn = (columnTypes as Record<string, unknown>)[name]
+      expect(fn, `missing factory ${name}`).toBeTypeOf('function')
+      expect((fn as () => unknown)()).toEqual({
+        codecId,
+        nativeType: meta.nativeType,
+        typeParams: { castAs: meta.castAs, capabilities: meta.capabilities },
+      })
+    }
+  })
+
+  it('encryptedBigIntOrd() emits public.eql_v3_bigint_ord with bigint castAs', () => {
+    expect(columnTypes.encryptedBigIntOrd()).toMatchObject({
+      codecId: 'cipherstash/eql-v3/eql_v3_bigint_ord@1',
+      nativeType: 'public.eql_v3_bigint_ord',
+      typeParams: { castAs: 'bigint' },
+    })
+  })
+
+  it('encryptedTextSearch() emits public.eql_v3_text_search with full capabilities', () => {
+    expect(columnTypes.encryptedTextSearch()).toEqual({
+      codecId: 'cipherstash/eql-v3/eql_v3_text_search@1',
+      nativeType: 'public.eql_v3_text_search',
+      typeParams: {
+        castAs: 'string',
+        capabilities: {
+          equality: true,
+          orderAndRange: true,
+          freeTextSearch: true,
+        },
+      },
+    })
+  })
+
+  it('encryptedJson() emits public.eql_v3_json with searchableJson-only capabilities', () => {
+    expect(columnTypes.encryptedJson()).toEqual({
+      codecId: 'cipherstash/eql-v3/eql_v3_json@1',
+      nativeType: 'public.eql_v3_json',
+      typeParams: {
+        castAs: 'json',
+        capabilities: {
+          equality: false,
+          orderAndRange: false,
+          freeTextSearch: false,
+          searchableJson: true,
+        },
+      },
+    })
+  })
+
+  it('exposes no *OrdOre factories and no v3 encryptedString', () => {
+    const exported = columnTypes as Record<string, unknown>
+    expect(exported['encryptedBigIntOrdOre']).toBeUndefined()
+    expect(exported['encryptedTextOrdOre']).toBeUndefined()
+    expect(exported['encryptedString']).toBeUndefined()
+  })
+})
+
+describe('cipherstash column-types (v2 legacy aliases)', () => {
+  describe('encryptedStringV2({...}) factory', () => {
     it('produces a ColumnTypeDescriptor with cipherstash/string@1 codec id', () => {
-      const descriptor = encryptedString()
+      const descriptor = encryptedStringV2()
       expect(descriptor).toMatchObject({
         codecId: 'cipherstash/string@1',
         nativeType: 'eql_v2_encrypted',
@@ -29,7 +98,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('defaults all flags to true when called with no arguments', () => {
-      expect(encryptedString()).toEqual({
+      expect(encryptedStringV2()).toEqual({
         codecId: 'cipherstash/string@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: {
@@ -41,7 +110,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('defaults all flags to true for an empty options object', () => {
-      expect(encryptedString({})).toEqual({
+      expect(encryptedStringV2({})).toEqual({
         codecId: 'cipherstash/string@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: {
@@ -53,7 +122,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('lets equality be explicitly disabled', () => {
-      expect(encryptedString({ equality: false })).toMatchObject({
+      expect(encryptedStringV2({ equality: false })).toMatchObject({
         typeParams: {
           equality: false,
           freeTextSearch: true,
@@ -63,7 +132,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('lets freeTextSearch be explicitly disabled', () => {
-      expect(encryptedString({ freeTextSearch: false })).toMatchObject({
+      expect(encryptedStringV2({ freeTextSearch: false })).toMatchObject({
         typeParams: {
           equality: true,
           freeTextSearch: false,
@@ -73,7 +142,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('lets orderAndRange be explicitly disabled', () => {
-      expect(encryptedString({ orderAndRange: false })).toMatchObject({
+      expect(encryptedStringV2({ orderAndRange: false })).toMatchObject({
         typeParams: {
           equality: true,
           freeTextSearch: true,
@@ -84,7 +153,7 @@ describe('cipherstash column-types', () => {
 
     it('lets all flags be explicitly disabled (storage-only encryption)', () => {
       expect(
-        encryptedString({
+        encryptedStringV2({
           equality: false,
           freeTextSearch: false,
           orderAndRange: false,
@@ -100,7 +169,7 @@ describe('cipherstash column-types', () => {
 
     it('preserves all flags when explicitly enabled', () => {
       expect(
-        encryptedString({
+        encryptedStringV2({
           equality: true,
           freeTextSearch: true,
           orderAndRange: true,
@@ -116,7 +185,7 @@ describe('cipherstash column-types', () => {
 
     it('returns a structurally equivalent descriptor to the PSL constructor lowering', () => {
       expect(
-        encryptedString({
+        encryptedStringV2({
           equality: true,
           freeTextSearch: true,
           orderAndRange: true,
@@ -133,41 +202,41 @@ describe('cipherstash column-types', () => {
     })
   })
 
-  describe('encryptedDouble({...}) factory', () => {
+  describe('encryptedDoubleV2({...}) factory', () => {
     it('produces a ColumnTypeDescriptor with cipherstash/double@1 codec id', () => {
-      expect(encryptedDouble()).toMatchObject({
+      expect(encryptedDoubleV2()).toMatchObject({
         codecId: 'cipherstash/double@1',
         nativeType: 'eql_v2_encrypted',
       })
     })
 
     it('defaults both flags to true when called with no arguments', () => {
-      expect(encryptedDouble()).toMatchObject({
+      expect(encryptedDoubleV2()).toMatchObject({
         typeParams: { equality: true, orderAndRange: true },
       })
     })
 
     it('defaults both flags to true for an empty options object', () => {
-      expect(encryptedDouble({})).toMatchObject({
+      expect(encryptedDoubleV2({})).toMatchObject({
         typeParams: { equality: true, orderAndRange: true },
       })
     })
 
     it('lets equality be explicitly disabled', () => {
-      expect(encryptedDouble({ equality: false })).toMatchObject({
+      expect(encryptedDoubleV2({ equality: false })).toMatchObject({
         typeParams: { equality: false, orderAndRange: true },
       })
     })
 
     it('lets orderAndRange be explicitly disabled', () => {
-      expect(encryptedDouble({ orderAndRange: false })).toMatchObject({
+      expect(encryptedDoubleV2({ orderAndRange: false })).toMatchObject({
         typeParams: { equality: true, orderAndRange: false },
       })
     })
 
     it('lets both flags be explicitly disabled (storage-only encryption)', () => {
       expect(
-        encryptedDouble({ equality: false, orderAndRange: false }),
+        encryptedDoubleV2({ equality: false, orderAndRange: false }),
       ).toEqual({
         codecId: 'cipherstash/double@1',
         nativeType: 'eql_v2_encrypted',
@@ -176,23 +245,23 @@ describe('cipherstash column-types', () => {
     })
   })
 
-  describe('encryptedBigInt({...}) factory', () => {
+  describe('encryptedBigIntV2({...}) factory', () => {
     it('produces a ColumnTypeDescriptor with cipherstash/bigint@1 codec id', () => {
-      expect(encryptedBigInt()).toMatchObject({
+      expect(encryptedBigIntV2()).toMatchObject({
         codecId: 'cipherstash/bigint@1',
         nativeType: 'eql_v2_encrypted',
       })
     })
 
     it('defaults both flags to true when called with no arguments', () => {
-      expect(encryptedBigInt()).toMatchObject({
+      expect(encryptedBigIntV2()).toMatchObject({
         typeParams: { equality: true, orderAndRange: true },
       })
     })
 
     it('lets both flags be explicitly disabled (storage-only encryption)', () => {
       expect(
-        encryptedBigInt({ equality: false, orderAndRange: false }),
+        encryptedBigIntV2({ equality: false, orderAndRange: false }),
       ).toEqual({
         codecId: 'cipherstash/bigint@1',
         nativeType: 'eql_v2_encrypted',
@@ -201,22 +270,24 @@ describe('cipherstash column-types', () => {
     })
   })
 
-  describe('encryptedDate({...}) factory', () => {
+  describe('encryptedDateV2({...}) factory', () => {
     it('produces a ColumnTypeDescriptor with cipherstash/date@1 codec id', () => {
-      expect(encryptedDate()).toMatchObject({
+      expect(encryptedDateV2()).toMatchObject({
         codecId: 'cipherstash/date@1',
         nativeType: 'eql_v2_encrypted',
       })
     })
 
     it('defaults both flags to true when called with no arguments', () => {
-      expect(encryptedDate()).toMatchObject({
+      expect(encryptedDateV2()).toMatchObject({
         typeParams: { equality: true, orderAndRange: true },
       })
     })
 
     it('lets both flags be explicitly disabled', () => {
-      expect(encryptedDate({ equality: false, orderAndRange: false })).toEqual({
+      expect(
+        encryptedDateV2({ equality: false, orderAndRange: false }),
+      ).toEqual({
         codecId: 'cipherstash/date@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: { equality: false, orderAndRange: false },
@@ -224,16 +295,16 @@ describe('cipherstash column-types', () => {
     })
   })
 
-  describe('encryptedBoolean({...}) factory', () => {
+  describe('encryptedBooleanV2({...}) factory', () => {
     it('produces a ColumnTypeDescriptor with cipherstash/boolean@1 codec id', () => {
-      expect(encryptedBoolean()).toMatchObject({
+      expect(encryptedBooleanV2()).toMatchObject({
         codecId: 'cipherstash/boolean@1',
         nativeType: 'eql_v2_encrypted',
       })
     })
 
     it('defaults equality to true when called with no arguments', () => {
-      expect(encryptedBoolean()).toEqual({
+      expect(encryptedBooleanV2()).toEqual({
         codecId: 'cipherstash/boolean@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: { equality: true },
@@ -241,7 +312,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('lets equality be explicitly disabled', () => {
-      expect(encryptedBoolean({ equality: false })).toEqual({
+      expect(encryptedBooleanV2({ equality: false })).toEqual({
         codecId: 'cipherstash/boolean@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: { equality: false },
@@ -249,16 +320,16 @@ describe('cipherstash column-types', () => {
     })
   })
 
-  describe('encryptedJson({...}) factory', () => {
+  describe('encryptedJsonV2({...}) factory', () => {
     it('produces a ColumnTypeDescriptor with cipherstash/json@1 codec id', () => {
-      expect(encryptedJson()).toMatchObject({
+      expect(encryptedJsonV2()).toMatchObject({
         codecId: 'cipherstash/json@1',
         nativeType: 'eql_v2_encrypted',
       })
     })
 
     it('defaults searchableJson to true when called with no arguments', () => {
-      expect(encryptedJson()).toEqual({
+      expect(encryptedJsonV2()).toEqual({
         codecId: 'cipherstash/json@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: { searchableJson: true },
@@ -266,7 +337,7 @@ describe('cipherstash column-types', () => {
     })
 
     it('lets searchableJson be explicitly disabled (storage-only encryption)', () => {
-      expect(encryptedJson({ searchableJson: false })).toEqual({
+      expect(encryptedJsonV2({ searchableJson: false })).toEqual({
         codecId: 'cipherstash/json@1',
         nativeType: 'eql_v2_encrypted',
         typeParams: { searchableJson: false },

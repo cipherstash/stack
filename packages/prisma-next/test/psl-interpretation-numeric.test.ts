@@ -1,6 +1,6 @@
 /**
  * PSL→ColumnTypeDescriptor lowering for the numeric cipherstash
- * constructors: `cipherstash.EncryptedDouble` / `cipherstash.EncryptedBigInt`.
+ * constructors: `cipherstash.EncryptedDoubleV2` / `cipherstash.EncryptedBigIntV2`.
  *
  * Pinned behaviour for numeric codecs (shared by both):
  *   - Full args lower to `typeParams { equality, orderAndRange }`.
@@ -84,11 +84,11 @@ const asStorage = (storage: unknown): StorageView => {
   }
 }
 
-describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
+describe('PSL interpretation: cipherstash.EncryptedDoubleV2 constructor', () => {
   it('lowers full args to a column with cipherstash/double@1 codec, eql_v2_encrypted nativeType', () => {
     const result = interpret(`model Metric {
   id Int @id
-  value cipherstash.EncryptedDouble({ equality: true, orderAndRange: true })
+  value cipherstash.EncryptedDoubleV2({ equality: true, orderAndRange: true })
 }
 `)
     expect(result.ok).toBe(true)
@@ -106,7 +106,7 @@ describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
   it('defaults both flags to true for an empty options literal', () => {
     const result = interpret(`model Metric {
   id Int @id
-  value cipherstash.EncryptedDouble({})
+  value cipherstash.EncryptedDoubleV2({})
 }
 `)
     expect(result.ok).toBe(true)
@@ -122,7 +122,7 @@ describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
   it('rejects unknown argument names with PSL_INVALID_ATTRIBUTE_ARGUMENT', () => {
     const result = interpret(`model Metric {
   id Int @id
-  value cipherstash.EncryptedDouble({ freeTextSearch: true })
+  value cipherstash.EncryptedDoubleV2({ freeTextSearch: true })
 }
 `)
     expect(result.ok).toBe(false)
@@ -140,7 +140,7 @@ describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
   it('produces an inline-form descriptor structurally identical to the TS factory output', () => {
     const result = interpret(`model Metric {
   id Int @id
-  value cipherstash.EncryptedDouble({ equality: true, orderAndRange: false })
+  value cipherstash.EncryptedDoubleV2({ equality: true, orderAndRange: false })
 }
 `)
     expect(result.ok).toBe(true)
@@ -158,11 +158,11 @@ describe('PSL interpretation: cipherstash.EncryptedDouble constructor', () => {
   })
 })
 
-describe('PSL interpretation: cipherstash.EncryptedBigInt constructor', () => {
+describe('PSL interpretation: cipherstash.EncryptedBigIntV2 constructor', () => {
   it('lowers full args to a column with cipherstash/bigint@1 codec, eql_v2_encrypted nativeType', () => {
     const result = interpret(`model Ledger {
   id Int @id
-  amount cipherstash.EncryptedBigInt({ equality: true, orderAndRange: true })
+  amount cipherstash.EncryptedBigIntV2({ equality: true, orderAndRange: true })
 }
 `)
     expect(result.ok).toBe(true)
@@ -179,7 +179,7 @@ describe('PSL interpretation: cipherstash.EncryptedBigInt constructor', () => {
   it('defaults both flags to true with no arguments', () => {
     const result = interpret(`model Ledger {
   id Int @id
-  amount cipherstash.EncryptedBigInt()
+  amount cipherstash.EncryptedBigIntV2()
 }
 `)
     expect(result.ok).toBe(true)
@@ -195,7 +195,7 @@ describe('PSL interpretation: cipherstash.EncryptedBigInt constructor', () => {
   it('rejects unknown argument names with PSL_INVALID_ATTRIBUTE_ARGUMENT', () => {
     const result = interpret(`model Ledger {
   id Int @id
-  amount cipherstash.EncryptedBigInt({ freeTextSearch: true })
+  amount cipherstash.EncryptedBigIntV2({ freeTextSearch: true })
 }
 `)
     expect(result.ok).toBe(false)

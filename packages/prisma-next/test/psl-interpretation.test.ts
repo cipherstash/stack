@@ -1,6 +1,6 @@
 /**
  * Full PSL→ColumnTypeDescriptor lowering for the
- * `cipherstash.EncryptedString({...})` constructor.
+ * `cipherstash.EncryptedStringV2({...})` constructor.
  *
  * Exercises the interpreter end-to-end (parser → authoring contributions
  * → SQL contract IR) so the assertions are about *what users observe*
@@ -21,11 +21,15 @@
  *     the inline-form column's codec/nativeType/typeParams
  *     byte-for-byte.
  *
- * Sister files cover the other cipherstash constructors:
+ * Sister files cover the other v2 cipherstash constructors:
  *   - `psl-interpretation-numeric.test.ts`
- *     (`EncryptedDouble`, `EncryptedBigInt`)
+ *     (`EncryptedDoubleV2`, `EncryptedBigIntV2`)
  *   - `psl-interpretation-other-types.test.ts`
- *     (`EncryptedDate`, `EncryptedBoolean`, `EncryptedJson`)
+ *     (`EncryptedDateV2`, `EncryptedBooleanV2`, `EncryptedJsonV2`)
+ *
+ * The final describe block pins the v3 lowering path: argument-less
+ * constructors with STATIC `{ castAs, capabilities }` typeParams (no
+ * `AuthoringArgRef` resolution involved), and rejection of options.
  */
 
 import type { Contract } from '@prisma-next/contract/types'
@@ -101,11 +105,11 @@ const asStorage = (storage: unknown): StorageView => {
   }
 }
 
-describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
+describe('PSL interpretation: cipherstash.EncryptedStringV2 constructor', () => {
   it('lowers full args to a column with codecId, nativeType, typeParams', () => {
     const result = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedString({ equality: true, freeTextSearch: true, orderAndRange: true })
+  email cipherstash.EncryptedStringV2({ equality: true, freeTextSearch: true, orderAndRange: true })
 }
 `)
     expect(result.ok).toBe(true)
@@ -129,7 +133,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('defaults all flags to true for an empty options literal', () => {
     const result = interpret(`model User {
   id Int @id
-  notes cipherstash.EncryptedString({})
+  notes cipherstash.EncryptedStringV2({})
 }
 `)
     expect(result.ok).toBe(true)
@@ -153,7 +157,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('defaults all flags to true when called with no arguments', () => {
     const result = interpret(`model User {
   id Int @id
-  notes cipherstash.EncryptedString()
+  notes cipherstash.EncryptedStringV2()
 }
 `)
     expect(result.ok).toBe(true)
@@ -177,7 +181,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('lets orderAndRange be explicitly disabled', () => {
     const result = interpret(`model User {
   id Int @id
-  notes cipherstash.EncryptedString({ orderAndRange: false })
+  notes cipherstash.EncryptedStringV2({ orderAndRange: false })
 }
 `)
     expect(result.ok).toBe(true)
@@ -199,7 +203,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('lets equality be explicitly disabled', () => {
     const result = interpret(`model User {
   id Int @id
-  notes cipherstash.EncryptedString({ equality: false })
+  notes cipherstash.EncryptedStringV2({ equality: false })
 }
 `)
     expect(result.ok).toBe(true)
@@ -217,7 +221,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('lets both flags be explicitly disabled (storage-only encryption)', () => {
     const result = interpret(`model User {
   id Int @id
-  notes cipherstash.EncryptedString({ equality: false, freeTextSearch: false })
+  notes cipherstash.EncryptedStringV2({ equality: false, freeTextSearch: false })
 }
 `)
     expect(result.ok).toBe(true)
@@ -235,7 +239,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('marks nullable columns as nullable', () => {
     const result = interpret(`model User {
   id Int @id
-  username cipherstash.EncryptedString({ freeTextSearch: false })?
+  username cipherstash.EncryptedStringV2({ freeTextSearch: false })?
 }
 `)
     expect(result.ok).toBe(true)
@@ -253,7 +257,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('rejects unknown argument names with PSL_INVALID_ATTRIBUTE_ARGUMENT', () => {
     const result = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedString({ unknownFlag: true })
+  email cipherstash.EncryptedStringV2({ unknownFlag: true })
 }
 `)
     expect(result.ok).toBe(false)
@@ -271,7 +275,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
   it('rejects wrong-typed argument values with PSL_INVALID_ATTRIBUTE_ARGUMENT', () => {
     const result = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedString({ equality: "yes" })
+  email cipherstash.EncryptedStringV2({ equality: "yes" })
 }
 `)
     expect(result.ok).toBe(false)
@@ -288,7 +292,7 @@ describe('PSL interpretation: cipherstash.EncryptedString constructor', () => {
 
   it('resolves a named-type alias under types {} and uses it on a model field', () => {
     const result = interpret(`types {
-  SearchableEmail = cipherstash.EncryptedString({ freeTextSearch: false })
+  SearchableEmail = cipherstash.EncryptedStringV2({ freeTextSearch: false })
 }
 
 model User {
@@ -314,7 +318,7 @@ model User {
 
   it('produces an alias whose typeParams match the inline-constructor form for the same args', () => {
     const aliasResult = interpret(`types {
-  SearchableEmail = cipherstash.EncryptedString({ equality: true, freeTextSearch: true })
+  SearchableEmail = cipherstash.EncryptedStringV2({ equality: true, freeTextSearch: true })
 }
 
 model User {
@@ -324,7 +328,7 @@ model User {
 `)
     const inlineResult = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedString({ equality: true, freeTextSearch: true })
+  email cipherstash.EncryptedStringV2({ equality: true, freeTextSearch: true })
 }
 `)
     expect(aliasResult.ok).toBe(true)
@@ -356,7 +360,7 @@ model User {
   it('reports a span at the offending argument value', () => {
     const result = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedString({ equality: 42 })
+  email cipherstash.EncryptedStringV2({ equality: 42 })
 }
 `)
     expect(result.ok).toBe(false)
@@ -368,5 +372,96 @@ model User {
       start: { line: expect.any(Number), column: expect.any(Number) },
       end: { line: expect.any(Number), column: expect.any(Number) },
     })
+  })
+})
+
+describe('PSL interpretation: v3 argument-less constructors (static typeParams)', () => {
+  it('lowers cipherstash.EncryptedTextSearch() to the static v3 descriptor', () => {
+    const result = interpret(`model User {
+  id Int @id
+  email cipherstash.EncryptedTextSearch()
+}
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['user']?.columns['email'],
+    ).toEqual(
+      expect.objectContaining({
+        codecId: 'cipherstash/eql-v3/eql_v3_text_search@1',
+        nativeType: 'public.eql_v3_text_search',
+        typeParams: {
+          castAs: 'string',
+          capabilities: {
+            equality: true,
+            orderAndRange: true,
+            freeTextSearch: true,
+          },
+        },
+        nullable: false,
+      }),
+    )
+  })
+
+  it('lowers cipherstash.EncryptedBoolean() to the storage-only v3 descriptor', () => {
+    const result = interpret(`model User {
+  id Int @id
+  enabled cipherstash.EncryptedBoolean()
+}
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['user']?.columns['enabled'],
+    ).toEqual(
+      expect.objectContaining({
+        codecId: 'cipherstash/eql-v3/eql_v3_boolean@1',
+        nativeType: 'public.eql_v3_boolean',
+        typeParams: {
+          castAs: 'boolean',
+          capabilities: {
+            equality: false,
+            orderAndRange: false,
+            freeTextSearch: false,
+          },
+        },
+      }),
+    )
+  })
+
+  it('lowers cipherstash.EncryptedJson() with searchableJson-only capabilities', () => {
+    const result = interpret(`model User {
+  id Int @id
+  payload cipherstash.EncryptedJson()
+}
+`)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      asStorage(result.value.storage).tables['user']?.columns['payload'],
+    ).toEqual(
+      expect.objectContaining({
+        codecId: 'cipherstash/eql-v3/eql_v3_json@1',
+        nativeType: 'public.eql_v3_json',
+        typeParams: {
+          castAs: 'json',
+          capabilities: {
+            equality: false,
+            orderAndRange: false,
+            freeTextSearch: false,
+            searchableJson: true,
+          },
+        },
+      }),
+    )
+  })
+
+  it('rejects options on a v3 constructor (they take no arguments)', () => {
+    const result = interpret(`model User {
+  id Int @id
+  email cipherstash.EncryptedTextSearch({ equality: false })
+}
+`)
+    expect(result.ok).toBe(false)
   })
 })

@@ -23,7 +23,9 @@ describe('constants-v3', () => {
     // or reordering a domain). Both directions must hold.
     expect(new Set(CIPHERSTASH_V3_CODEC_IDS)).toEqual(new Set(V3_CODEC_IDS))
     expect(CIPHERSTASH_V3_CODEC_IDS.length).toBe(V3_CODEC_IDS.length)
-    expect(new Set(CIPHERSTASH_V3_CODEC_IDS).size).toBe(CIPHERSTASH_V3_CODEC_IDS.length)
+    expect(new Set(CIPHERSTASH_V3_CODEC_IDS).size).toBe(
+      CIPHERSTASH_V3_CODEC_IDS.length,
+    )
   })
 
   it('v3 and v2 codec-id sets are disjoint', () => {
@@ -32,19 +34,37 @@ describe('constants-v3', () => {
   })
 
   it('guard narrows only v3 ids', () => {
-    expect(isCipherstashV3CodecId('cipherstash/eql-v3/eql_v3_text_eq@1')).toBe(true)
+    expect(isCipherstashV3CodecId('cipherstash/eql-v3/eql_v3_text_eq@1')).toBe(
+      true,
+    )
     expect(isCipherstashV3CodecId('cipherstash/string@1')).toBe(false)
     // GA registry keys are eql_v3_*-prefixed; the un-prefixed form is NOT an id.
     expect(isCipherstashV3CodecId('cipherstash/eql-v3/text_eq@1')).toBe(false)
-    expect(CIPHERSTASH_V3_CODEC_ID_SET.has('cipherstash/eql-v3/eql_v3_text_eq@1')).toBe(true)
+    expect(
+      CIPHERSTASH_V3_CODEC_ID_SET.has('cipherstash/eql-v3/eql_v3_text_eq@1'),
+    ).toBe(true)
   })
 
   it('derives cipherstash-namespaced traits from capabilities', () => {
     expect(
-      [...v3TraitsForCapabilities({ equality: true, orderAndRange: true, freeTextSearch: true })].sort(),
-    ).toEqual(['cipherstash:equality', 'cipherstash:free-text-search', 'cipherstash:order-and-range'])
+      [
+        ...v3TraitsForCapabilities({
+          equality: true,
+          orderAndRange: true,
+          freeTextSearch: true,
+        }),
+      ].sort(),
+    ).toEqual([
+      'cipherstash:equality',
+      'cipherstash:free-text-search',
+      'cipherstash:order-and-range',
+    ])
     expect(
-      v3TraitsForCapabilities({ equality: false, orderAndRange: false, freeTextSearch: false }),
+      v3TraitsForCapabilities({
+        equality: false,
+        orderAndRange: false,
+        freeTextSearch: false,
+      }),
     ).toEqual([])
     expect(
       v3TraitsForCapabilities({
@@ -57,12 +77,18 @@ describe('constants-v3', () => {
   })
 
   it('pins the migration name + invariant', () => {
-    expect(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME).toBe('20260601T0100_install_eql_v3_bundle')
-    expect(CIPHERSTASH_V3_INVARIANTS.installBundle).toBe('cipherstash:install-eql-v3-bundle-v1')
+    expect(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME).toBe(
+      '20260601T0100_install_eql_v3_bundle',
+    )
+    expect(CIPHERSTASH_V3_INVARIANTS.installBundle).toBe(
+      'cipherstash:install-eql-v3-bundle-v1',
+    )
   })
 
   it('v3 extension identity is distinct from v2 (decision 1b — separate entry points)', () => {
     expect(CIPHERSTASH_V3_SPACE_ID).not.toBe(CIPHERSTASH_SPACE_ID)
-    expect(CIPHERSTASH_V3_EXTENSION_VERSION).not.toBe(CIPHERSTASH_EXTENSION_VERSION)
+    expect(CIPHERSTASH_V3_EXTENSION_VERSION).not.toBe(
+      CIPHERSTASH_EXTENSION_VERSION,
+    )
   })
 })
