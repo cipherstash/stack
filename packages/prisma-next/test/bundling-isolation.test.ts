@@ -117,10 +117,16 @@ const SHARED_CHUNK_PATTERN = /^chunk-[A-Za-z0-9_-]+\.js$/
  * it is not one of the known-safe metadata chunks and the test rightly
  * fails.
  *
- * Two safe-to-share chunks exist today:
+ * Three safe-to-share chunks exist today:
  *
  *   - the v2 constants chunk (pure codec-id / native-type / invariant
  *     literals);
+ *   - the v3 constants chunk (`src/extension-metadata/constants-v3.ts`
+ *     — the pinned v3 codec-id tuple, invariant ids, baseline
+ *     migration name, space id, and the pure `v3TraitsForCapabilities`
+ *     mapper over trait literals). The control plane reaches it through
+ *     the v3 baseline migration wiring in `control.ts`, the runtime
+ *     plane through the v3 codec descriptors;
  *   - the v3 catalog chunk (`src/v3/catalog.ts` — per-domain metadata
  *     derived from the stack's `DOMAIN_REGISTRY`: codec ids, castAs,
  *     capabilities, index names). The control plane reaches it through
@@ -137,6 +143,12 @@ const ALLOWED_SHARED_CHUNK_MARKER_SETS: ReadonlyArray<readonly string[]> = [
     'CIPHERSTASH_DATE_CODEC_ID',
     'CIPHERSTASH_BOOLEAN_CODEC_ID',
     'CIPHERSTASH_JSON_CODEC_ID',
+  ],
+  // v3 constants chunk
+  [
+    'CIPHERSTASH_V3_CODEC_IDS',
+    'CIPHERSTASH_V3_BASELINE_MIGRATION_NAME',
+    'v3TraitsForCapabilities',
   ],
   // v3 catalog chunk
   ['V3_DOMAIN_META_BY_CODEC_ID', 'V3_FACTORY_BY_NATIVE_TYPE', 'toV3CodecId'],

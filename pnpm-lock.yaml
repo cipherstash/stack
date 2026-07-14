@@ -410,6 +410,9 @@ importers:
         specifier: ^2.2.3
         version: 2.2.3
     devDependencies:
+      '@cipherstash/eql':
+        specifier: 3.0.0
+        version: 3.0.0
       '@prisma-next/adapter-postgres':
         specifier: 0.14.0
         version: 0.14.0(typanion@3.14.0)(typescript@5.9.3)

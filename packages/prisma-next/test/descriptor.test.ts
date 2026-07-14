@@ -32,6 +32,10 @@ import {
   CIPHERSTASH_SPACE_ID,
   EQL_V2_CONFIGURATION_TABLE,
 } from '../src/extension-metadata/constants'
+import {
+  CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+  CIPHERSTASH_V3_INVARIANTS,
+} from '../src/extension-metadata/constants-v3'
 import { EQL_BUNDLE_SQL } from '../src/migration/eql-bundle'
 
 describe('cipherstash extension descriptor (contract-space package layout)', () => {
@@ -61,13 +65,20 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(tables).toEqual([EQL_V2_CONFIGURATION_TABLE])
   })
 
-  it('publishes one baseline migration sourced from the on-disk emit pipeline', () => {
+  it('publishes the v2 + v3 baseline migrations sourced from the on-disk emit pipeline', () => {
     const space = cipherstashExtensionDescriptor.contractSpace!
-    expect(space.migrations).toHaveLength(1)
+    expect(space.migrations).toHaveLength(2)
     const baseline = space.migrations[0]!
     expect(baseline.dirName).toBe(CIPHERSTASH_BASELINE_MIGRATION_NAME)
     expect(baseline.metadata.from).toBeNull()
     expect(baseline.metadata.to).toBe(space.contractJson.storage.storageHash)
+    // The v3 baseline is an invariant-only edge: the bundle creates
+    // `public.eql_v3_*` domains + `eql_v3.*` functions but no
+    // contract-space storage, so the hash does not move.
+    const v3Baseline = space.migrations[1]!
+    expect(v3Baseline.dirName).toBe(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME)
+    expect(v3Baseline.metadata.from).toBe(baseline.metadata.to)
+    expect(v3Baseline.metadata.to).toBe(space.contractJson.storage.storageHash)
   })
 
   it('baseline ops carry the installEqlBundle op + structural create-* ops', () => {
@@ -77,13 +88,21 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(opIds).toEqual([CIPHERSTASH_INVARIANTS.installBundle])
   })
 
-  it('namespaces every baseline op invariantId under cipherstash:*', () => {
-    const baseline =
-      cipherstashExtensionDescriptor.contractSpace!.migrations[0]!
-    const ids = baseline.ops.map((op) => op.invariantId).filter(Boolean)
-    expect(ids.length).toBeGreaterThan(0)
-    for (const id of ids) {
-      expect(id).toMatch(/^cipherstash:/)
+  it('v3 baseline ops carry the installEqlV3Bundle op only', () => {
+    const space = cipherstashExtensionDescriptor.contractSpace!
+    const v3Baseline = space.migrations[1]!
+    const opIds = v3Baseline.ops.map((op) => op.invariantId).filter(Boolean)
+    expect(opIds).toEqual([CIPHERSTASH_V3_INVARIANTS.installBundle])
+  })
+
+  it('namespaces every op invariantId in every migration under cipherstash:*', () => {
+    for (const migration of cipherstashExtensionDescriptor.contractSpace!
+      .migrations) {
+      const ids = migration.ops.map((op) => op.invariantId).filter(Boolean)
+      expect(ids.length).toBeGreaterThan(0)
+      for (const id of ids) {
+        expect(id).toMatch(/^cipherstash:/)
+      }
     }
   })
 
@@ -99,11 +118,12 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(installOp?.execute?.[0]?.sql).toBe(EQL_BUNDLE_SQL)
   })
 
-  it("points the head ref at the latest migration's destination hash", () => {
+  it("points the head ref at the latest migration's destination hash with every migration's invariants", () => {
     const space = cipherstashExtensionDescriptor.contractSpace!
-    expect(space.headRef.hash).toBe(space.migrations[0]!.metadata.to)
+    const latest = space.migrations[space.migrations.length - 1]!
+    expect(space.headRef.hash).toBe(latest.metadata.to)
     expect([...space.headRef.invariants].sort()).toEqual(
-      [...space.migrations[0]!.metadata.providedInvariants].sort(),
+      space.migrations.flatMap((m) => m.metadata.providedInvariants).sort(),
     )
   })
 

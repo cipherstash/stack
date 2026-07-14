@@ -97,6 +97,7 @@
 		"arktype": "^2.2.3"
 	},
 	"devDependencies": {
+		"@cipherstash/eql": "3.0.0",
 		"@prisma-next/adapter-postgres": "0.14.0",
 		"@prisma-next/cli": "0.14.0",
 		"@prisma-next/driver-postgres": "0.14.0",

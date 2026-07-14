@@ -38,6 +38,12 @@ import baselineMetadata from '../../migrations/20260601T0000_install_eql_bundle/
 import baselineOps from '../../migrations/20260601T0000_install_eql_bundle/ops.json' with {
   type: 'json',
 }
+import v3BaselineMetadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
+  type: 'json',
+}
+import v3BaselineOps from '../../migrations/20260601T0100_install_eql_v3_bundle/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import contractJson from '../contract.json' with { type: 'json' }
 import {
@@ -49,6 +55,7 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
 } from '../extension-metadata/constants'
+import { CIPHERSTASH_V3_BASELINE_MIGRATION_NAME } from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
 import {
   cipherstashBigIntCodecHooks,
@@ -66,6 +73,17 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
       dirName: CIPHERSTASH_BASELINE_MIGRATION_NAME,
       metadata: baselineMetadata,
       ops: baselineOps,
+    },
+    // The v3 bundle baseline — an invariant-only edge (`from === to`;
+    // the bundle creates `public.eql_v3_*` domains + `eql_v3.*`
+    // functions but no contract-space storage). NO v3 codec id is
+    // registered in `controlPlaneHooks` below: that omission is what
+    // guarantees v3 columns emit no `add_search_config` /
+    // `remove_search_config` ops.
+    {
+      dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+      metadata: v3BaselineMetadata,
+      ops: v3BaselineOps,
     },
   ],
   headRef,
