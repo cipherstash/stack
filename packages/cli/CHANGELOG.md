@@ -1,5 +1,159 @@
 # @cipherstash/cli
 
+## 1.0.0-rc.0
+
+### Major Changes
+
+- 7c7dbca: CipherStash Stack 1.0 (release candidate).
+
+  This is the first 1.0-line release of `@cipherstash/stack`, the first published
+  release of the split-out EQL v3 adapters `@cipherstash/stack-drizzle` and
+  `@cipherstash/stack-supabase`, and moves the `stash` CLI to 1.0 alongside them.
+  These four packages now version together as the Stack 1.0 family.
+
+### Minor Changes
+
+- 229ce59: `stash eql install --eql-version 3` now installs the eql-3.0.0 GA bundle,
+  vendored from the pinned `@cipherstash/eql` package (sha256-verified).
+
+  Since eql-3.0.0 one artifact installs everywhere: the operator-class
+  statements self-skip when the role lacks superuser (managed Postgres,
+  Supabase) and the bundle disables the ORE-backed encrypted domains it cannot
+  support. The separate v3 Supabase bundle variant is gone — `--supabase` and
+  `--exclude-operator-family` no longer select a different v3 file (the role
+  GRANTs for `eql_v3` / `eql_v3_internal` still apply with `--supabase`).
+
+  The bundled skills are also refreshed for the eql-3.0.0 naming convention
+  (`public.eql_v3_<name>` column domains) and the EQL v3 typed-schema surface.
+
+- 0b9b192: Add an EQL v3 install path to `stash eql install` via a new `--eql-version <2|3>`
+  flag (default `2`). v3 installs the native concrete-domain schema (`public.*`
+  type domains, `eql_v3` operators, `eql_v3_internal` constructors) from bundles
+  vendored into `packages/cli/src/sql` by `scripts/build-eql-v3-sql.mjs` (full
+  bundle + a Supabase variant with the two superuser-only operator-class chunks
+  stripped). v3 currently supports the direct install path only —
+  `--drizzle`/`--migration`/`--migrations-dir`/`--latest` are rejected — and the
+  installer keys `isInstalled`/version checks and Supabase grants to the `eql_v3`
+  schema.
+- 0b9b192: Rename `stash db install` to `stash eql install`. The command scaffolds
+  `stash.config.ts` and installs the EQL extensions, so it now lives under a
+  dedicated `eql` command group. `stash db install` keeps working as a
+  deprecated alias that prints a warning pointing at the new name. All help
+  text, hints, generated migration headers, and wizard steps now reference
+  `stash eql install`.
+- e25eb22: Default EQL to v3 and stop the CLI recommending `stash db push` (#585).
+
+  - **EQL v3 is now the default.** `stash eql install` and `stash eql upgrade` target v3 (the native `eql_v3.*` domain schema) without `--eql-version 3`. The v2-only paths — `--drizzle`, `--migration`, `--migrations-dir`, and `--latest` — now require an explicit `--eql-version 2` and error with clear guidance otherwise (v3 installs via the direct path only). `stash init` pins v2 automatically when it drives the Drizzle migration flow. **Note:** for a Supabase project, `stash init` now runs a v3 direct install rather than offering the v2 migration-file flow; run `stash eql install --supabase --migration --eql-version 2` if you want a checked-in migration file.
+  - **`stash db push` is no longer recommended in CLI output.** `db push` writes the `public.eql_v2_configuration` table, which is a v2 + CipherStash Proxy artifact — EQL v3 has no configuration table (config lives in each column's `eql_v3.*` type) and nothing in the v3 stack reads it. The push recommendations are removed from `eql status`, the help banner, and the init/plan/cutover guidance. `db push` (and `db activate`) remain available for EQL v2 + Proxy users; they're now labelled as such.
+  - **`eql status` is v3-aware.** On a v3-only database it reports that encrypt config lives in the column types instead of hitting a "table not found" dead-end that told users to run `db push` (which neither creates that table nor applies to v3).
+  - **`stash db push` guards a v3-only database** with a clear "not needed under EQL v3" message instead of a raw `relation "public.eql_v2_configuration" does not exist` error.
+
+### Patch Changes
+
+- 31ca318: Update the bundled `stash-drizzle`, `stash-supabase`, and `stash-encryption` agent
+  skills (and the stack README / Supabase reference doc) for the adapter package
+  split: the Drizzle and Supabase integrations import from `@cipherstash/stack-drizzle`
+  (+ `/v3`) and `@cipherstash/stack-supabase` respectively, installed alongside
+  `@cipherstash/stack`, rather than from `@cipherstash/stack/{drizzle,supabase,eql/v3/drizzle}`
+  subpaths. Skills ship inside the `stash` tarball, so the stale import paths would
+  otherwise become wrong guidance in a user's project.
+- 82f2e69: Document EQL v3 JSON columns in the bundled skills: `types.Json` in the
+  `stash-encryption` typed-schema catalog (capability suffix, family, and an
+  encrypted-JSONB query section), and `contains(col, subObject)` JSON containment
+  on the v3 Drizzle operators in `stash-drizzle`.
+- f23f952: Remove the leftovers from the secrets removal (`1929c8fe`), which deleted
+  `packages/stack/src/secrets/` but left its export, build entry, skill, and docs
+  behind. Secrets tooling is not ready; nothing here was functional.
+
+  - **Drop the dead `@cipherstash/stack/secrets` subpath export.** It pointed at
+    `./dist/secrets/index.js`, which has no source and is not in the tarball, so
+    `import '@cipherstash/stack/secrets'` has been throwing `ERR_MODULE_NOT_FOUND`
+    for every consumer since the source was removed. Also drops the dangling
+    `src/secrets/index.ts` entry from `tsup.config.ts`. Removing an export that
+    cannot resolve breaks nothing.
+  - **Remove the `stash-secrets` agent skill** and its references in `AGENTS.md`
+    and the init setup-prompt skill index. It was never installed by `stash init`
+    (it is absent from `SKILL_MAP`), so no user project ever received it.
+  - **Remove the secrets documentation** from both published READMEs: the
+    `Secrets` class API and the `npx stash secrets` command reference in
+    `@cipherstash/stack`, and the `npx stash secrets` section in `stash`. The CLI
+    command does not exist — `stash secrets` returns `Unknown command`.
+
+- 1a9d190: Refresh the bundled `stash-cli` agent skill and the CLI README against the current
+  command surface. The skills directory ships inside the `stash` tarball and is copied
+  into the user's `.claude/skills/` / `.codex/skills/` (or inlined into `AGENTS.md`) at
+  handoff time, so a stale skill becomes stale guidance in the user's project.
+
+  - **New `Start here` and `Authentication` sections.** Setup is driven through the CLI:
+    agents read `stash manifest --json` first, then trigger `stash auth login --json` and
+    surface the verification URL for a human to approve, then run `stash init`. Authenticating
+    before `init` matters — `init`'s auth step is interactive and would otherwise try to open
+    a browser on the agent's host.
+  - **New `Never read these` invariant**, mirrored into the `AGENTS.md` doctrine: agents must
+    never read `~/.cipherstash/secretkey.json`, `~/.cipherstash/auth.json`, anything under
+    `~/.cipherstash/workspaces/`, or `.env*`. The wizard already blocks these paths in code;
+    the other handoff targets had no written rule.
+  - **Documents `manifest`, `doctor`, `wizard`, and `auth regions`**, which the skill omitted
+    entirely, plus the non-interactive interface (per-command escape hatches, exit codes, the
+    `DATABASE_URL` resolution order, the `auth login --json` NDJSON event contract).
+  - **Corrects the `db` → `eql` move.** `db install`, `db upgrade`, and `db status` are
+    deprecated aliases that warn and forward; `db push`, `db activate`, `db validate`,
+    `db test-connection`, and `db migrate` remain in the `db` group.
+  - **Scopes `db push` / `db activate` as EQL v2 + CipherStash Proxy only**, in both the skill
+    and the README's recommended flow. SDK users hold their encryption config in application
+    code and don't need them.
+  - Adds the missing `--database-url`, `--eql-version`, `--prisma-next`, `--proxy`/`--no-proxy`,
+    and `--region` flags; corrects six programmatic API signatures; fixes the README's claim
+    that `stash init` ends in an agent-handoff menu (that belongs to `stash plan` / `stash impl`);
+    and marks `stash env` as the non-functional stub it currently is.
+
+- 161f17b: Correct the `stash-drizzle` skill: `inArray` / `notInArray` now encrypt the whole
+  list in a single `encryptQuery` batch crossing (the `bulkEncrypt`/concurrency
+  fallback was removed when v3 query operands moved to `encryptQuery` — #622). The
+  skill ships inside the `stash` tarball, so this keeps the bundled guidance in step
+  with the adapter's behaviour.
+- e40c3da: Update the `stash-drizzle` and `stash-supabase` skills for the EQL v3
+  `contains()` → `matches()` rename (#617): the encrypted free-text operator is now
+  `matches()` (fuzzy bloom token matching), `contains()` is reserved for exact
+  containment, and Supabase `like()`/`ilike()` on encrypted columns are documented
+  as an approximate compatibility shim delegating to `matches()`. Skills ship inside
+  the `stash` tarball, so they must track the adapter surface.
+- 58d7439: Correct the bundled `stash-supabase` agent skill: EQL v3 `contains()` matches
+  substrings. The skill previously carried the reverse — that `contains()` matched
+  only exact values because the query's bloom filter appended the whole search term
+  as an extra token. That was never true: `include_original` is inert in
+  protect-ffi (the match bloom is trigram-only either way), so any substring of at
+  least the tokenizer's `token_length` (3 characters) matches, and shorter terms are
+  rejected rather than silently matching every row. The skills directory ships
+  inside the `stash` tarball and is copied into the user's `.claude/skills/` /
+  `.codex/skills/` (or inlined into `AGENTS.md`) at handoff time, so the stale
+  sentence was shipping wrong guidance into customer repos.
+- Updated dependencies [31ca318]
+- Updated dependencies [c4787c0]
+- Updated dependencies [66a0e02]
+- Updated dependencies [cfd46ee]
+- Updated dependencies [7eba32d]
+- Updated dependencies [0ebf57e]
+- Updated dependencies [d73a03c]
+- Updated dependencies [89b903f]
+- Updated dependencies [229ce59]
+- Updated dependencies [50c0a9c]
+- Updated dependencies [63ca540]
+- Updated dependencies [5d23e80]
+- Updated dependencies [1aa9a11]
+- Updated dependencies [af2d04e]
+- Updated dependencies [b8a3d20]
+- Updated dependencies [a0f3b2c]
+- Updated dependencies [f23f952]
+- Updated dependencies [7c7dbca]
+- Updated dependencies [5411a13]
+- Updated dependencies [99f8b0a]
+- Updated dependencies [fd33aad]
+- Updated dependencies [8cd485d]
+- Updated dependencies [9b65ae8]
+  - @cipherstash/stack@1.0.0-rc.0
+  - @cipherstash/migrate@1.0.0-rc.0
+
 ## 0.17.1
 
 ### Patch Changes

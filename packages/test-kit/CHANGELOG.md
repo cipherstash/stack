@@ -1,6 +1,6 @@
-# @cipherstash/bench
+# @cipherstash/test-kit
 
-## 0.0.5-rc.0
+## 0.0.1-rc.0
 
 ### Patch Changes
 
@@ -15,7 +15,6 @@
 - Updated dependencies [229ce59]
 - Updated dependencies [50c0a9c]
 - Updated dependencies [63ca540]
-- Updated dependencies [e40c3da]
 - Updated dependencies [5d23e80]
 - Updated dependencies [1aa9a11]
 - Updated dependencies [af2d04e]
@@ -29,40 +28,3 @@
 - Updated dependencies [8cd485d]
 - Updated dependencies [9b65ae8]
   - @cipherstash/stack@1.0.0-rc.0
-  - @cipherstash/stack-drizzle@1.0.0-rc.0
-
-## 0.0.4
-
-### Patch Changes
-
-- Updated dependencies [cc62407]
-- Updated dependencies [5e4f354]
-- Updated dependencies [4ceefed]
-- Updated dependencies [cb34d71]
-- Updated dependencies [aa9c4b1]
-- Updated dependencies [90d19fb]
-- Updated dependencies [a5f5422]
-- Updated dependencies [35b9ed6]
-  - @cipherstash/stack@0.19.0
-
-## 0.0.3
-
-### Patch Changes
-
-- Updated dependencies [6e7ae4e]
-- Updated dependencies [712d7fa]
-  - @cipherstash/stack@0.18.0
-
-## 0.0.2
-
-### Patch Changes
-
-- Updated dependencies [f743fcc]
-  - @cipherstash/stack@0.17.0
-
-## 0.0.1
-
-### Patch Changes
-
-- Updated dependencies [1c2fdbf]
-  - @cipherstash/stack@0.16.0
