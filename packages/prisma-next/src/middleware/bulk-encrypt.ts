@@ -194,7 +194,14 @@ function collectTargets(
   return targets
 }
 
-function stampRoutingKeysFromAst(ast: AnyQueryAst | undefined): void {
+/**
+ * Walk a lowered `InsertAst` / `UpdateAst` and stamp `(table, column)`
+ * routing context onto every cipherstash envelope embedded in a
+ * `ParamRef`. Version-neutral: it touches only the shared envelope base
+ * and the AST — no wire/codec knowledge — so the v3 middleware
+ * (`../v3/bulk-encrypt-v3.ts`) reuses it rather than forking the walk.
+ */
+export function stampRoutingKeysFromAst(ast: AnyQueryAst | undefined): void {
   if (!ast) return
   switch (ast.kind) {
     case 'insert':
