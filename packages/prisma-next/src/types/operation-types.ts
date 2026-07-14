@@ -84,6 +84,21 @@ type FreeTextSearchTraits = readonly ['cipherstash:free-text-search']
 type SearchableJsonTraits = readonly ['cipherstash:searchable-json']
 
 /**
+ * v3 TYPE-LEVEL marker traits (no runtime counterpart) — carried only
+ * by the v3 codec entries in `codec-types.ts` (see the vocabulary
+ * comment there). Three methods differ by runtime generation:
+ * `cipherstashEq` / `cipherstashIlike` are codec-id-pinned legacy
+ * registrations in v2 but trait-dispatched in v3, and
+ * `cipherstashJsonContains` (v3) / `cipherstashJsonbPathExists` (v2)
+ * exist in only one generation each. Dispatching those on the marker
+ * traits keeps type-level visibility exactly aligned with what each
+ * column's runtime can actually execute.
+ */
+type V3EqualityMarker = readonly ['cipherstash:v3-equality']
+type V3FreeTextSearchMarker = readonly ['cipherstash:v3-free-text-search']
+type V3SearchableJsonMarker = readonly ['cipherstash:v3-searchable-json']
+
+/**
  * Schematic constraint on `self` for a multi-codec cipherstash
  * predicate. The runtime impl reads `self.returnType.codecId` and
  * dispatches to the matching `Encrypted*` envelope — accepting any
@@ -123,17 +138,33 @@ type AnyExpressionLike = Expression<{
 export type QueryOperationTypes<CT extends CodecTypesBase> =
   CT extends CodecTypesBase
     ? {
+        // `self` carries BOTH dispatch forms: `OpMatchesField` tries the
+        // codec-id branch first (matches the v2 legacy single-codec
+        // registration on `cipherstash/string@1`) and falls through to
+        // the traits branch (matches v3 columns via the type-level
+        // `cipherstash:v3-*` markers). v2 non-string columns match
+        // neither — their runtime has no `cipherstashEq` to dispatch.
+        // The comparand is `unknown` (not `pg/text@1`) because v3
+        // equality spans every equality-capable domain family (bigint,
+        // date, numeric, …), and the runtime coerces + encrypts the
+        // operand per the column's castAs.
         readonly cipherstashEq: {
-          readonly self: { readonly codecId: CipherstashStringCodec }
+          readonly self: {
+            readonly codecId: CipherstashStringCodec
+            readonly traits: V3EqualityMarker
+          }
           readonly impl: (
-            self: CodecExpression<CipherstashStringCodec, boolean, CT>,
-            other: CodecExpression<'pg/text@1', boolean, CT>,
+            self: AnyExpressionLike,
+            other: unknown,
           ) => PgBoolReturn
         }
         readonly cipherstashIlike: {
-          readonly self: { readonly codecId: CipherstashStringCodec }
+          readonly self: {
+            readonly codecId: CipherstashStringCodec
+            readonly traits: V3FreeTextSearchMarker
+          }
           readonly impl: (
-            self: CodecExpression<CipherstashStringCodec, boolean, CT>,
+            self: AnyExpressionLike,
             pattern: CodecExpression<'pg/text@1', boolean, CT>,
           ) => PgBoolReturn
         }
@@ -212,6 +243,19 @@ export type QueryOperationTypes<CT extends CodecTypesBase> =
         readonly cipherstashJsonbPathExists: {
           readonly self: { readonly traits: SearchableJsonTraits }
           readonly impl: (self: AnyExpressionLike, path: string) => PgBoolReturn
+        }
+        // v3-only: encrypted jsonb `@>` containment on `eql_v3_json`
+        // columns. Dispatches on the v3 marker trait (NOT the shared
+        // `cipherstash:searchable-json`) so it never surfaces on v2
+        // JSON columns, whose runtime does not register the method —
+        // and, symmetrically, `cipherstashJsonbPathExists` above never
+        // surfaces on v3 columns.
+        readonly cipherstashJsonContains: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            needle: unknown,
+          ) => PgBoolReturn
         }
       }
     : never

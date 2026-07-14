@@ -24,7 +24,7 @@ import {
   CIPHERSTASH_SPACE_ID,
   CIPHERSTASH_STRING_CODEC_ID,
 } from '../../src/extension-metadata/constants'
-import { CIPHERSTASH_V3_SPACE_ID } from '../../src/extension-metadata/constants-v3'
+import { CIPHERSTASH_V3_EXTENSION_VERSION } from '../../src/extension-metadata/constants-v3'
 import { deriveStackSchemas } from '../../src/stack/derive-schemas'
 import {
   type CipherstashFromStackResult,
@@ -162,11 +162,16 @@ describeLivePg('v2 and v3 clients side by side against live Postgres', () => {
     if (sql) await sql.end()
   })
 
-  it('the two runtime descriptors carry distinct extension identities', () => {
-    expect(v3.cs.extensions[0]?.id).toBe(CIPHERSTASH_V3_SPACE_ID)
+  it('the two runtime descriptors share the pack id but carry distinct versions', () => {
+    // Both descriptors present the PACK id ('cipherstash') — the
+    // runtime matches contract extensionPacks by descriptor id, and one
+    // control descriptor emits both generations' contracts. Generation
+    // identity lives in the version.
+    expect(v3.cs.extensions[0]?.id).toBe(CIPHERSTASH_SPACE_ID)
+    expect(v3.cs.extensions[0]?.version).toBe(CIPHERSTASH_V3_EXTENSION_VERSION)
     if (v2) {
       expect(v2.extensions[0]?.id).toBe(CIPHERSTASH_SPACE_ID)
-      expect(v2.extensions[0]?.id).not.toBe(v3.cs.extensions[0]?.id)
+      expect(v2.extensions[0]?.version).not.toBe(v3.cs.extensions[0]?.version)
     }
   })
 

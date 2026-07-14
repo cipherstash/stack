@@ -27,13 +27,16 @@ import {
 } from '../../src/extension-metadata/constants-v3'
 
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
-  it('installs under the v3 invariant with a single additive rawSql op', () => {
+  it('installs under the v3 invariant with a single data-class rawSql op', () => {
     expect(v3Ops).toHaveLength(1)
     const op = (v3Ops as Array<Record<string, unknown>>)[0]!
     expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
     expect(op.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
     expect(op.invariantId).toBe('cipherstash:install-eql-v3-bundle-v1')
-    expect(op.operationClass).toBe('additive')
+    // `data`, not `additive`: the edge is a self-edge (from === to),
+    // and the aggregate integrity checker rejects self-edges without a
+    // data-class op — see the rationale comment in the migration file.
+    expect(op.operationClass).toBe('data')
   })
 
   it('inlines the @cipherstash/eql install SQL byte-for-byte through ops.json', () => {

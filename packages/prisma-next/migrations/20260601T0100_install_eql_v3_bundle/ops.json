@@ -2,7 +2,7 @@
   {
     "id": "cipherstash.install-eql-v3-bundle",
     "label": "Install EQL v3 bundle (eql-3.0.0: public.eql_v3_* domains + eql_v3.* functions)",
-    "operationClass": "additive",
+    "operationClass": "data",
     "invariantId": "cipherstash:install-eql-v3-bundle-v1",
     "target": {
       "id": "postgres"

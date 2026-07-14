@@ -76,7 +76,7 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
     const op = readOpsFixture()
     expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
     expect(op.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
-    expect(op.operationClass).toBe('additive')
+    expect(op.operationClass).toBe('data')
     expect(op.execute).toHaveLength(1)
     // Byte identity: what installEqlV3IfNeeded just applied IS the
     // migration bundle a customer's `prisma-next migrate` applies.

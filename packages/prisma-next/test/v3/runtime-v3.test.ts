@@ -33,11 +33,17 @@ function emptySdk(): CipherstashSdk {
 }
 
 describe('createCipherstashV3RuntimeDescriptor — descriptor shape', () => {
-  it('declares kind=extension under the v3 id/version (never the v2 id)', () => {
+  it('declares kind=extension under the PACK id with the v3 version', () => {
     const descriptor = createCipherstashV3RuntimeDescriptor({ sdk: emptySdk() })
     expect(descriptor.kind).toBe('extension')
-    expect(descriptor.id).toBe(CIPHERSTASH_V3_SPACE_ID)
-    expect(descriptor.id).not.toBe(CIPHERSTASH_SPACE_ID)
+    // The id must be the PACK id ('cipherstash'): the runtime matches
+    // the contract's declared extensionPacks against runtime descriptor
+    // ids, and both generations' contracts are emitted by the one
+    // cipherstash control descriptor. The VERSION carries v3's own
+    // identity. (CIPHERSTASH_V3_SPACE_ID remains v3's logical space
+    // identity but is deliberately NOT the runtime descriptor id.)
+    expect(descriptor.id).toBe(CIPHERSTASH_SPACE_ID)
+    expect(descriptor.id).not.toBe(CIPHERSTASH_V3_SPACE_ID)
     expect(descriptor.version).toBe(CIPHERSTASH_V3_EXTENSION_VERSION)
     expect(descriptor.familyId).toBe('sql')
     expect(descriptor.targetId).toBe('postgres')

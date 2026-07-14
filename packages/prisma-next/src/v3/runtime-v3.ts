@@ -5,11 +5,23 @@
  *
  * Composes the SDK-bound v3 codec descriptors (Task 4, one per catalog
  * domain) and the v3 query operations (Task 6) into a single
- * `SqlRuntimeExtensionDescriptor<'postgres'>` under v3's OWN extension
- * id/version (decision 1b) — NOT the v2 `CIPHERSTASH_SPACE_ID` /
- * `CIPHERSTASH_EXTENSION_VERSION`. The registered method names
+ * `SqlRuntimeExtensionDescriptor<'postgres'>`.
+ *
+ * ## Descriptor id = the PACK id (`cipherstash`), version = v3's own
+ *
+ * The runtime asserts every extension pack the contract declares has a
+ * runtime descriptor with a MATCHING ID
+ * (`assertExecutionStackContractRequirements` in sql-runtime's
+ * `sql-context.ts`). Both v2 and v3 contracts are emitted by the ONE
+ * cipherstash control descriptor, whose pack id is
+ * `CIPHERSTASH_SPACE_ID` (`'cipherstash'`) — so the v3 runtime
+ * descriptor must present that id too, or `postgres<Contract>({...})`
+ * rejects a v3 contract at startup with
+ * `RUNTIME.MISSING_EXTENSION_PACK`. The descriptor's VERSION carries
+ * v3's own identity (`CIPHERSTASH_V3_EXTENSION_VERSION`), and decision
+ * 1b's separation holds regardless: the registered method names
  * (`cipherstashEq`, …) are identical to the v2 set, so the v2 and v3
- * descriptors must NEVER be co-registered in one client: the flat,
+ * descriptors must NEVER be co-registered in one client — the flat,
  * method-name-keyed `OperationRegistry` throws on the shared names
  * (pinned in `test/v3/operator-gating-v3.test.ts`). A client is v2 or
  * v3, never both.
@@ -22,10 +34,8 @@
 
 import type { SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime'
 import type { CipherstashSdk } from '../execution/sdk'
-import {
-  CIPHERSTASH_V3_EXTENSION_VERSION,
-  CIPHERSTASH_V3_SPACE_ID,
-} from '../extension-metadata/constants-v3'
+import { CIPHERSTASH_SPACE_ID } from '../extension-metadata/constants'
+import { CIPHERSTASH_V3_EXTENSION_VERSION } from '../extension-metadata/constants-v3'
 import { createV3CodecDescriptors } from './codec-runtime-v3'
 import { cipherstashV3QueryOperations } from './operators-v3'
 
@@ -49,7 +59,8 @@ export function createCipherstashV3RuntimeDescriptor(
 
   return {
     kind: 'extension' as const,
-    id: CIPHERSTASH_V3_SPACE_ID,
+    // The PACK id, not CIPHERSTASH_V3_SPACE_ID — see the module header.
+    id: CIPHERSTASH_SPACE_ID,
     version: CIPHERSTASH_V3_EXTENSION_VERSION,
     familyId: 'sql' as const,
     targetId: 'postgres' as const,

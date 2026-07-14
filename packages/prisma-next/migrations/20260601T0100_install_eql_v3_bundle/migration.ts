@@ -51,7 +51,19 @@ export default class M extends Migration {
       rawSql({
         id: 'cipherstash.install-eql-v3-bundle',
         label: INSTALL_LABEL,
-        operationClass: 'additive',
+        // `data`, not `additive`: this edge is a SELF-EDGE (`from ===
+        // to` — the bundle declares no contract-space storage), and the
+        // aggregate integrity checker (`migration-tools`
+        // `check-integrity.ts`) rejects a self-edge unless it carries a
+        // `data`-class op. Along the axis the checker classifies —
+        // does the op move the modeled contract shape? — `data` is the
+        // truthful answer: the bundle creates `public.eql_v3_*` domains
+        // and `eql_v3.*` functions the space contract deliberately does
+        // not model. (Contrast the v2 bundle op: `additive`, because
+        // its edge really moves the hash by adding the
+        // `eql_v2_configuration` table.) The `migrate` policy allows
+        // all four classes, so apply behaviour is unchanged.
+        operationClass: 'data',
         invariantId: CIPHERSTASH_V3_INVARIANTS.installBundle,
         target: { id: 'postgres' },
         precheck: [],

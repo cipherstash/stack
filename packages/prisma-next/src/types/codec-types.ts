@@ -53,6 +53,63 @@ import type { EncryptedDate } from '../execution/envelope-date'
 import type { EncryptedDouble } from '../execution/envelope-double'
 import type { EncryptedJson } from '../execution/envelope-json'
 import type { EncryptedString } from '../execution/envelope-string'
+import type { EncryptedNumber } from '../v3/envelope-number'
+
+// ---------------------------------------------------------------------------
+// EQL v3 type-level trait vocabulary
+// ---------------------------------------------------------------------------
+//
+// The SHARED trait strings (`cipherstash:equality`, `cipherstash:
+// order-and-range`, `cipherstash:free-text-search`) appear on v3
+// entries exactly like on v2 entries: the trait-dispatched operator
+// methods (`cipherstashNe`, `cipherstashGt`, `cipherstashBetween`, …)
+// exist in BOTH runtime generations under the same names (decision 1b
+// keeps the method-name surface identical), so sharing the dispatch
+// trait is correct.
+//
+// The `cipherstash:v3-*` strings are TYPE-LEVEL MARKERS with no
+// runtime counterpart. They exist because three methods differ by
+// generation:
+//
+//   - `cipherstashEq` / `cipherstashIlike` are codec-id-pinned to
+//     `cipherstash/string@1` in the v2 runtime (legacy single-codec
+//     registration) but trait-dispatched in the v3 runtime. Their
+//     type-level `self` in `operation-types.ts` therefore declares
+//     BOTH a `codecId` (matched for v2 string columns) and a
+//     `traits: ['cipherstash:v3-equality' / 'cipherstash:v3-free-
+//     text-search']` marker (matched for v3 columns) — the
+//     framework's `OpMatchesField` tries codec-id first and falls
+//     through to traits.
+//   - `cipherstashJsonContains` exists ONLY in the v3 runtime, and
+//     `cipherstashJsonbPathExists` ONLY in the v2 runtime. The v3
+//     JSON entry deliberately carries `cipherstash:v3-searchable-json`
+//     INSTEAD of the shared `cipherstash:searchable-json` so each
+//     method surfaces only on the generation whose runtime registers
+//     it.
+//
+// Type-level visibility therefore never advertises a method the
+// column's runtime cannot dispatch.
+type V3TraitsNone = never
+type V3TraitsEq = 'cipherstash:equality' | 'cipherstash:v3-equality'
+type V3TraitsOrd = V3TraitsEq | 'cipherstash:order-and-range'
+type V3TraitsMatch =
+  | 'cipherstash:free-text-search'
+  | 'cipherstash:v3-free-text-search'
+type V3TraitsSearch = V3TraitsOrd | V3TraitsMatch
+type V3TraitsJson = 'cipherstash:v3-searchable-json'
+
+/**
+ * One v3 codec entry: `input` is the plaintext family or a pre-built
+ * envelope; `output` is the envelope class the v3 cell codec's
+ * `decode` constructs (per `envelopeTypeNameForCastAs`); `traits` is
+ * the type-level dispatch vocabulary above, derived from the domain's
+ * intrinsic query capabilities (see `v3/catalog.ts`).
+ */
+interface V3Codec<Plain, Envelope, Traits> {
+  readonly input: Plain | Envelope
+  readonly output: Envelope
+  readonly traits: Traits
+}
 
 export type CodecTypes = {
   readonly 'cipherstash/string@1': {
@@ -90,5 +147,216 @@ export type CodecTypes = {
     readonly input: unknown
     readonly output: EncryptedJson
     readonly traits: 'cipherstash:searchable-json'
+  }
+
+  // -------------------------------------------------------------------------
+  // EQL v3 — one entry per catalog domain (all 40, including the
+  // authoring-unexposed `*_ord_ore` variants the codec layer still
+  // decodes). Keys are the pinned `CIPHERSTASH_V3_CODEC_IDS` literals
+  // (registry key VERBATIM); trait tiers mirror each domain's intrinsic
+  // query capabilities exactly (`test/v3/codec-types-v3.test-d.ts` pins
+  // both directions of the correspondence).
+  // -------------------------------------------------------------------------
+  readonly 'cipherstash/eql-v3/eql_v3_integer@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_integer_eq@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_integer_ord_ore@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_integer_ord@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_smallint@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_smallint_eq@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_smallint_ord_ore@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_smallint_ord@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_bigint@1': V3Codec<
+    bigint,
+    EncryptedBigInt,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_bigint_eq@1': V3Codec<
+    bigint,
+    EncryptedBigInt,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_bigint_ord_ore@1': V3Codec<
+    bigint,
+    EncryptedBigInt,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_bigint_ord@1': V3Codec<
+    bigint,
+    EncryptedBigInt,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_date@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_date_eq@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_date_ord_ore@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_date_ord@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_timestamp@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_timestamp_eq@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_timestamp_ord_ore@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_timestamp_ord@1': V3Codec<
+    Date,
+    EncryptedDate,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_numeric@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_numeric_eq@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_numeric_ord_ore@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_numeric_ord@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_text@1': V3Codec<
+    string,
+    EncryptedString,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_text_eq@1': V3Codec<
+    string,
+    EncryptedString,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_text_match@1': V3Codec<
+    string,
+    EncryptedString,
+    V3TraitsMatch
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_text_ord_ore@1': V3Codec<
+    string,
+    EncryptedString,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_text_ord@1': V3Codec<
+    string,
+    EncryptedString,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_text_search@1': V3Codec<
+    string,
+    EncryptedString,
+    V3TraitsSearch
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_boolean@1': V3Codec<
+    boolean,
+    EncryptedBoolean,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_real@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_real_eq@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_real_ord_ore@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_real_ord@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_double@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsNone
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_double_eq@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsEq
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_double_ord_ore@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  readonly 'cipherstash/eql-v3/eql_v3_double_ord@1': V3Codec<
+    number,
+    EncryptedNumber,
+    V3TraitsOrd
+  >
+  // `unknown` subsumes `EncryptedJson` on the input side — same note
+  // as the v2 JSON entry above.
+  readonly 'cipherstash/eql-v3/eql_v3_json@1': {
+    readonly input: unknown
+    readonly output: EncryptedJson
+    readonly traits: V3TraitsJson
   }
 }
