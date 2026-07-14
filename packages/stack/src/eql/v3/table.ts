@@ -25,7 +25,14 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
   ) {}
 
   build(): TableDefinition {
-    const builtColumns: Record<string, ColumnSchema> = {}
+    // NULL PROTOTYPE — load-bearing, for the same reason as
+    // {@link buildColumnKeyMap}. Keys are DB column names, which the database
+    // supplies. On a plain object literal, `builtColumns['__proto__'] = schema`
+    // REPARENTS the object rather than adding an own key, so the column never
+    // reaches the encrypt config — `decryptModel` then skips it and its
+    // ciphertext is returned undecrypted. `encryptedTable()` rejects such names
+    // as JS properties, but nothing constrains a table's DB column names.
+    const builtColumns: Record<string, ColumnSchema> = Object.create(null)
     for (const builder of Object.values(this.columnBuilders)) {
       // Key by the column's DB name (`getName()`), NOT the JS property name.
       // `encrypt`/`decrypt` look columns up in the config by `column.getName()`,
@@ -56,9 +63,19 @@ export class EncryptedTable<T extends EncryptedV3TableColumn> {
    * encrypt config and FFI by DB name — `build()` keys columns by DB name, so
    * the two only agree when property == name. This recovers the mapping that
    * `build()` discards.
+   *
+   * NULL PROTOTYPE — load-bearing. Callers index this map by a column name that
+   * ultimately comes from the database (`addJsonbCastsV3`, `filterColumnName`,
+   * the mutation transform). On a plain object literal, a column named
+   * `constructor` / `toString` / `valueOf` / `__proto__` resolves to an
+   * inherited `Object.prototype` member, which is truthy — so a *plaintext*
+   * column with such a name would be mistaken for a mapped encrypted column and
+   * its `Object.prototype` value interpolated into the emitted select string.
+   * `encryptedTable()` rejects such names as JS *properties*, but nothing
+   * constrains the DB column names a table may contain.
    */
   buildColumnKeyMap(): Record<string, string> {
-    const map: Record<string, string> = {}
+    const map = Object.create(null) as Record<string, string>
     for (const [property, builder] of Object.entries(this.columnBuilders)) {
       map[property] = builder.getName()
     }
@@ -211,11 +228,14 @@ export type V3EncryptedModel<Table extends AnyV3Table, T> = {
     : T[K]
 }
 
-/** The decrypted result model: schema columns become their plaintext type, others pass through. */
-export type V3DecryptedModel<Table extends AnyV3Table, T> = {
-  [K in keyof T]: K extends keyof InferPlaintext<Table>
-    ? null extends T[K]
-      ? InferPlaintext<Table>[K] | null
-      : InferPlaintext<Table>[K]
-    : T[K]
-}
+/**
+ * The decrypted result model: schema columns become their plaintext type, others
+ * pass through. Structurally identical to {@link V3ModelInput} — decrypt yields
+ * the same plaintext shape encrypt accepts — so it is aliased rather than
+ * re-declared to keep the input and output shapes from silently drifting when
+ * one copy is edited. The distinct name is kept for call-site readability.
+ */
+export type V3DecryptedModel<Table extends AnyV3Table, T> = V3ModelInput<
+  Table,
+  T
+>

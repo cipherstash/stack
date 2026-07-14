@@ -1,0 +1,147 @@
+name: Integration — Supabase (EQL v3)
+
+# Real ZeroKMS ciphertext, a real PostgREST, and `supabase/postgres` — the only
+# job that proves the Supabase v3 adapter's queries return the right rows. The
+# unit suites drive a mock that records strings; they cannot.
+#
+# Separate from `tests.yml` on purpose: these suites need CipherStash credentials
+# and a database, and they THROW rather than skip when unconfigured. Keeping them
+# out of the unit job is what lets `pnpm test` stay runnable with neither.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/stack-supabase/**'
+      - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/supabase) can produce wrong wire output or rows, so
+      # trigger the live suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
+      - 'packages/stack/integration/**'
+      - 'packages/test-kit/**'
+      - 'packages/cli/src/installer/**'
+      - 'local/docker-compose.supabase.yml'
+      - 'local/supabase-init.sql'
+      - '.github/workflows/integration-supabase.yml'
+      - '.github/actions/integration-setup/**'
+  pull_request:
+    branches: ['**']
+    paths:
+      - 'packages/stack-supabase/**'
+      - 'packages/stack/src/eql/v3/**'
+      # Source layers the adapter's encoding/round-trip rests on: a break here
+      # (not just under src/supabase) can produce wrong wire output or rows, so
+      # trigger the live suite that would catch it.
+      - 'packages/stack/src/encryption/**'
+      - 'packages/stack/src/schema/**'
+      - 'packages/schema/**'
+      - 'packages/stack/integration/**'
+      - 'packages/test-kit/**'
+      - 'packages/cli/src/installer/**'
+      - 'local/docker-compose.supabase.yml'
+      - 'local/supabase-init.sql'
+      - '.github/workflows/integration-supabase.yml'
+      - '.github/actions/integration-setup/**'
+
+jobs:
+  integration:
+    name: Supabase v3 integration (db=${{ matrix.db }})
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Serialize every job that brings up the SAME docker-compose stack, so no two
+    # bind the same fixed host ports (55430 / 55433) on a shared runner at once —
+    # the "address already in use" flake. The group is keyed by the compose
+    # variant, NOT the ref: two different PRs contend for the same host port just
+    # as much as two pushes to one PR, so it must serialize across refs. It is the
+    # SAME key the Drizzle workflow's matching leg uses (`integration-live-db-<db>`),
+    # so those two workflows also queue against each other rather than colliding.
+    # `cancel-in-progress: false` queues (a live-DB job that shares one ZeroKMS
+    # workspace should finish, not be interrupted mid-run).
+    concurrency:
+      group: integration-live-db-${{ matrix.db }}
+      cancel-in-progress: false
+    # Fork PRs have no secrets. Skip cleanly rather than fail loudly on something
+    # the contributor cannot fix — `tests.yml` still gives them a green signal.
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+
+    strategy:
+      # A one-element matrix, not a cross-product: the Supabase adapter only ever
+      # runs against the Supabase variant. Kept as a matrix so adding a second
+      # database is a one-line change.
+      matrix:
+        db: [supabase]
+
+    env:
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
+      CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
+      CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+      # Job-level env, not a `.env` file: `dotenv/config` does not override an
+      # already-set `process.env`, so these win and no secret is written to disk.
+      #
+      # `postgres` here is deliberately NOT a superuser on this image — that is
+      # what makes the EQL install, the grants, and the ORE opclass skip behave
+      # as they do on a real Supabase project.
+      DATABASE_URL: postgres://postgres:password@localhost:55433/postgres
+      PGRST_URL: http://localhost:55430
+      # EXPLICIT, never inferred from `PGRST_URL` — see `dbVariant()`.
+      CS_IT_DB_VARIANT: ${{ matrix.db }}
+      # Scoped by directory, never by named file, so a renamed suite cannot
+      # silently drop from CI. `integration/shared/` holds the adapter-agnostic
+      # suites (harness, bloom, the ope-term tripwire for THIS job's `col->op`
+      # ordering path, and the crypto/SQL matrices); the Drizzle suites talk to
+      # plain Postgres and get their own job.
+      #
+      # `integration/identity/` runs on the Drizzle job (it needs Postgres +
+      # Drizzle, not PostgREST), so it is intentionally not listed here.
+      # The Supabase adapter suites now live in @cipherstash/stack-supabase (run
+      # below via its own test:integration). This glob scopes the adapter-agnostic
+      # `shared/` core suites that still live in @cipherstash/stack and run against
+      # this job's Postgres too.
+      CS_IT_SUITE: >-
+        integration/shared/**/*.integration.test.ts
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/integration-setup
+
+      # Fast pre-flight: fail in seconds if a secret was rotated or cleared,
+      # before paying for the ~2 GB supabase/postgres pull. The in-test
+      # `requireIntegrationEnv` is the correctness guarantee; this is the cheap one.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
+      # Belt-and-braces for the concurrency guard: a run that was hard-killed
+      # (runner crash / forced cancel) can skip its `down` and leak a container
+      # holding the host port onto a REUSED runner. Tear any prior stack down
+      # before starting a fresh one. `|| true` so a clean runner (nothing to
+      # remove) is not an error.
+      - name: Clear any leaked containers from a prior run
+        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v --remove-orphans || true
+
+      - name: Start ${{ matrix.db }}
+        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml up -d --wait
+
+      # `globalSetup` installs EQL v3 by shelling out to the real
+      # `stash eql install --eql-version 3 --supabase --direct`, so an installer
+      # regression fails here rather than hiding behind a test-only SQL apply.
+      - name: Supabase v3 integration suites
+        run: pnpm --filter @cipherstash/stack-supabase run test:integration
+
+      # A second vitest invocation (stack's shared/ suites live in a different
+      # package now). Its globalSetup calls the same EQL v3 install, but
+      # `isInstalled` short-circuits against the DB the first invocation already
+      # provisioned — so this is a fast no-op check, not a second schema apply.
+      - name: Shared core integration suites (against Supabase Postgres)
+        run: pnpm --filter @cipherstash/stack run test:integration
+
+      - name: Stop ${{ matrix.db }}
+        if: always()
+        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v

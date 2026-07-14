@@ -454,3 +454,33 @@ describe('Batched and/or operators', () => {
     expect(condition).toBeTruthy()
   })
 })
+
+// ============================================================================
+// bigint rejection — the EQL v2 integration cannot carry a native bigint
+// (`@cipherstash/protect`'s query term type is `JsPlaintext | null`), so a
+// bigint must fail loudly rather than silently coerce to the text "1".
+// ============================================================================
+
+describe('bigint values are rejected on the EQL v2 integration', () => {
+  it('gt throws ProtectOperatorError instead of silently stringifying a bigint', async () => {
+    const { protectOps } = setup()
+
+    // `age` has orderAndRange, so `gt` takes the encrypting path and reaches
+    // `toPlaintext`, where a bigint must be rejected.
+    await expect(
+      protectOps.gt(usersTable.age, 1n as unknown as number),
+    ).rejects.toThrow(ProtectOperatorError)
+    await expect(
+      protectOps.gt(usersTable.age, 1n as unknown as number),
+    ).rejects.toThrow(/bigint values are not supported/)
+  })
+
+  it('never reaches the encrypt client when rejecting a bigint', async () => {
+    const { protectOps, encryptQuery } = setup()
+
+    await expect(
+      protectOps.gt(usersTable.age, 1n as unknown as number),
+    ).rejects.toThrow(ProtectOperatorError)
+    expect(encryptQuery).not.toHaveBeenCalled()
+  })
+})

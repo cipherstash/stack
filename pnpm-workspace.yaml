@@ -90,9 +90,13 @@ blockExoticSubdeps: true
 #   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
 #                                 WASM-inline variant); also tracked in lockstep
 #                                 with protect-ffi for the WASM path.
+#   - @cipherstash/eql           CipherStash-published EQL SQL bundle + wire types,
+#                                 generated from the same eql-bindings commit as the
+#                                 payload format protect-ffi emits; bumped in lockstep.
 minimumReleaseAgeExclude:
   - '@prisma-next/*'
   - '@cipherstash/protect-ffi'
   - '@cipherstash/protect-ffi-*'
   - '@cipherstash/auth'
   - '@cipherstash/auth-*'
+  - '@cipherstash/eql'

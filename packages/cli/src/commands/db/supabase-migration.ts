@@ -99,11 +99,15 @@ export async function writeSupabaseEqlMigration(
     )
   }
 
-  // The runtime install always uses `cipherstash-encrypt-supabase.sql` for
-  // Supabase, which is the no-operator-family variant. We pass both flags so
-  // intent is explicit and `loadBundledEqlSql` resolves the supabase file
-  // even if the underlying selection rules ever change.
+  // The Supabase migration-file flow is v2-only (v3 has no migration-file
+  // path), so pin `eqlVersion: 2` explicitly — otherwise it would follow the
+  // v3 default and emit `cipherstash-encrypt-v3-supabase.sql` alongside the v2
+  // `SUPABASE_PERMISSIONS_SQL` below, producing a mismatched migration. We also
+  // pass both supabase/no-operator-family flags so intent is explicit and
+  // `loadBundledEqlSql` resolves the supabase file even if selection rules ever
+  // change.
   const eqlSql = loadBundledEqlSql({
+    eqlVersion: 2,
     supabase: true,
     excludeOperatorFamily: excludeOperatorFamily || true,
   })

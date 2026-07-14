@@ -1,9 +1,9 @@
 import { Encryption } from '@cipherstash/stack'
+import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import {
   encryptedType,
   extractEncryptionSchema,
-} from '@cipherstash/stack/drizzle'
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
+} from '@cipherstash/stack-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { pgTable, serial } from 'drizzle-orm/pg-core'
 import pg from 'pg'
@@ -13,7 +13,7 @@ import { getDatabaseUrl } from '../harness/db.js'
  * Drizzle schema for the bench table. Mirrors `sql/schema.sql`.
  *
  * `id` is `serial`; the encrypted columns are `eql_v2_encrypted` composites
- * driven by `@cipherstash/stack/drizzle`'s `encryptedType`.
+ * driven by `@cipherstash/stack-drizzle`'s `encryptedType`.
  *
  * Index config flags (`equality`, `freeTextSearch`, `orderAndRange`,
  * `searchableJson`) are deliberately all on — the bench needs to exercise

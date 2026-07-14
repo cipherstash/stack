@@ -12,7 +12,11 @@ import {
   SUPABASE_EQL_MIGRATION_FILENAME,
   writeSupabaseEqlMigration,
 } from '../commands/db/supabase-migration.js'
-import { SUPABASE_PERMISSIONS_SQL } from '../installer/index.js'
+import {
+  DEFAULT_EQL_VERSION,
+  resolveEqlVersion,
+  SUPABASE_PERMISSIONS_SQL,
+} from '../installer/index.js'
 
 /**
  * Generate the migration header for testing purposes.
@@ -140,8 +144,13 @@ describe('writeSupabaseEqlMigration', () => {
       /-- CipherStash EQL — installed by `(npx|bunx|pnpm dlx|yarn dlx) stash eql install --supabase --migration`/,
     )
     expect(contents).toContain('CipherStash')
-    // EQL SQL body — the bundled supabase variant defines eql_v2.
-    expect(contents).toContain('eql_v2')
+    // EQL SQL body — the bundled supabase variant defines eql_v2. The
+    // migration-file flow is v2-only, so the body must be the v2 generation:
+    // assert the v2 composite type is present and no v3 schema leaks in. (A
+    // bare `toContain('eql_v2')` isn't enough — the header + permissions
+    // mention eql_v2 even if the body were v3.)
+    expect(contents).toContain('eql_v2_encrypted')
+    expect(contents).not.toContain('eql_v3')
     // Permissions block (single source of truth).
     expect(contents).toContain(SUPABASE_PERMISSIONS_SQL.trim())
   })
@@ -203,13 +212,33 @@ describe('writeSupabaseEqlMigration', () => {
   })
 })
 
+describe('resolveEqlVersion', () => {
+  it('defaults a missing version to DEFAULT_EQL_VERSION (v3)', () => {
+    expect(DEFAULT_EQL_VERSION).toBe(3)
+    expect(resolveEqlVersion(undefined)).toBe(3)
+  })
+
+  it('resolves explicit strings to their generation', () => {
+    expect(resolveEqlVersion('2')).toBe(2)
+    expect(resolveEqlVersion('3')).toBe(3)
+  })
+})
+
 describe('validateInstallFlags', () => {
   it('returns null for an empty options object', () => {
     expect(validateInstallFlags({})).toBeNull()
   })
 
-  it('returns null when --supabase is paired with --migration', () => {
-    expect(validateInstallFlags({ supabase: true, migration: true })).toBeNull()
+  it('returns null when --supabase + --migration is pinned to --eql-version 2', () => {
+    // --migration is a v2-only path, so under the v3 default it needs an
+    // explicit `--eql-version 2` alongside --supabase.
+    expect(
+      validateInstallFlags({
+        supabase: true,
+        migration: true,
+        eqlVersion: '2',
+      }),
+    ).toBeNull()
   })
 
   it('returns null when --supabase is paired with --direct', () => {
@@ -255,7 +284,7 @@ describe('validateInstallFlags', () => {
     expect(validateInstallFlags({ eqlVersion: '4' })).toMatch(/--eql-version/)
   })
 
-  it('rejects --eql-version 3 with --drizzle, --migration, or --latest', () => {
+  it('rejects --eql-version 3 with --drizzle, --migration, --latest, or --migrations-dir', () => {
     expect(validateInstallFlags({ eqlVersion: '3', drizzle: true })).toMatch(
       /--drizzle/,
     )
@@ -278,6 +307,36 @@ describe('validateInstallFlags', () => {
         migrationsDir: 'db/migrations',
       }),
     ).toMatch(/--migrations-dir/)
+  })
+
+  it('defaults to v3: a plain install with no version is valid', () => {
+    expect(validateInstallFlags({})).toBeNull()
+    expect(validateInstallFlags({ supabase: true })).toBeNull()
+  })
+
+  it('v2-only flags without an explicit --eql-version 2 are rejected under the v3 default', () => {
+    // No eqlVersion passed → resolves to the v3 default, which can't do these.
+    for (const opts of [
+      { drizzle: true },
+      { latest: true },
+      { supabase: true, migration: true },
+      { supabase: true, migrationsDir: 'db/migrations' },
+    ]) {
+      const err = validateInstallFlags(opts)
+      expect(err).toMatch(/--eql-version 2/)
+    }
+  })
+
+  it('accepts the v2-only paths when --eql-version 2 is explicit', () => {
+    expect(validateInstallFlags({ eqlVersion: '2', drizzle: true })).toBeNull()
+    expect(validateInstallFlags({ eqlVersion: '2', latest: true })).toBeNull()
+    expect(
+      validateInstallFlags({
+        eqlVersion: '2',
+        supabase: true,
+        migration: true,
+      }),
+    ).toBeNull()
   })
 })
 

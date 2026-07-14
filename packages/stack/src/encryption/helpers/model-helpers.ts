@@ -4,6 +4,7 @@ import {
   encryptBulk,
 } from '@cipherstash/protect-ffi'
 import { isEncryptedPayload } from '@/encryption/helpers'
+import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import type { AuditData } from '@/encryption/operations/base-operation'
 import type { Context } from '@/identity'
 import type { BuildableTable, Client, Decrypted, Encrypted } from '@/types'
@@ -272,7 +273,12 @@ function prepareFieldsForEncryption<T extends Record<string, unknown>>(
           )
         }
       } else if (columnPaths.includes(fullKey)) {
-        // Only process fields that are explicitly defined in the schema
+        // Only process fields that are explicitly defined in the schema.
+        // Reject an out-of-range numeric plaintext (NaN/±Infinity for `number`,
+        // outside i64 for `bigint`) here — the single-value/query paths guard
+        // at their own boundary, but the model path builds the FFI payload
+        // directly, so validate per field before it reaches protect-ffi.
+        assertValidNumericValue(value)
         const id = index.toString()
         keyMap[id] = fullKey
         operationFields[fullKey] = value
@@ -569,7 +575,13 @@ function prepareBulkModelsForOperation<T extends Record<string, unknown>>(
             )
           }
         } else if (columnPaths.includes(fullKey)) {
-          // Only process fields that are explicitly defined in the schema
+          // Only process fields that are explicitly defined in the schema.
+          // Reject an out-of-range numeric plaintext (NaN/±Infinity for
+          // `number`, outside i64 for `bigint`) before it reaches the bulk FFI
+          // payload — the bulk path builds that payload directly. This arm runs
+          // only for encryption (`if (table)`); the decrypt walker below does
+          // not validate.
+          assertValidNumericValue(value)
           const id = index.toString()
           keyMap[id] = { modelIndex, fieldKey: fullKey }
           modelOperationFields[fullKey] = value

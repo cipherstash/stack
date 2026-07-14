@@ -118,7 +118,9 @@ async function main() {
 }
 
 async function clearUsers(): Promise<void> {
-  const removed = await db.orm.public.User.where((u) => u.id.isNotNull()).deleteCount()
+  const removed = await db.orm.public.User.where((u) =>
+    u.id.isNotNull(),
+  ).deleteCount()
   if (removed > 0) {
     console.log(`--- Cleanup ---\nRemoved ${removed} existing user row(s).\n`)
   }
@@ -212,7 +214,9 @@ async function equalityQueryOnEmailVerified(): Promise<void> {
 
 async function sortByEmailAsc(): Promise<void> {
   console.log('\n--- cipherstashAsc (bare-column ORDER BY) ---')
-  const rows = await db.orm.public.User.orderBy((u) => cipherstashAsc(u.email)).all()
+  const rows = await db.orm.public.User.orderBy((u) =>
+    cipherstashAsc(u.email),
+  ).all()
   await decryptAll(rows)
   for (const row of rows) {
     console.log(`  ${row.id}: email=${await row.email.decrypt()}`)

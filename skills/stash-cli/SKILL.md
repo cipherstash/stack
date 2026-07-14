@@ -308,7 +308,7 @@ Gets a project from zero to installed EQL. It loads an existing `stash.config.ts
 | `--migration` / `--direct` | Supabase: write a migration file, or run SQL directly |
 | `--migrations-dir <path>` | Supabase migrations directory (default `supabase/migrations`) |
 | `--exclude-operator-family` | Skip operator families (non-superuser roles) |
-| `--eql-version <2\|3>` | EQL generation. **Default `2`.** `3` is the native `eql_v3.*` domain schema. |
+| `--eql-version <2\|3>` | EQL generation. **Default `2`.** `3` is the native `public.eql_v3_*` domain schema. |
 | `--latest` | Fetch latest EQL from GitHub instead of the bundled copy (**v2 only**) |
 | `--database-url <url>` | One-shot install (see below) |
 

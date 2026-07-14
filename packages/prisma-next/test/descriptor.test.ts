@@ -121,7 +121,8 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
         headRefHash: space.headRef.hash,
         // The emit pipeline hashes through the SQL family's
         // canonicalization hooks; the recompute must use the same ones.
-        shouldPreserveEmpty: sqlContractCanonicalizationHooks.shouldPreserveEmpty,
+        shouldPreserveEmpty:
+          sqlContractCanonicalizationHooks.shouldPreserveEmpty,
         sortStorage: sqlContractCanonicalizationHooks.sortStorage,
       }),
     ).not.toThrow()

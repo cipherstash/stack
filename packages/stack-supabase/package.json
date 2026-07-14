@@ -1,0 +1,92 @@
+{
+	"name": "@cipherstash/stack-supabase",
+	"version": "0.0.0",
+	"description": "CipherStash Stack Supabase integration: transparent, searchable field-level encryption for Supabase.",
+	"keywords": [
+		"encrypted",
+		"encryption",
+		"searchable-encryption",
+		"security",
+		"supabase",
+		"postgres",
+		"cipherstash",
+		"stack"
+	],
+	"bugs": {
+		"url": "https://github.com/cipherstash/stack/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "packages/stack-supabase"
+	},
+	"license": "MIT",
+	"author": "CipherStash <humans@cipherstash.com>",
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			},
+			"require": {
+				"types": "./dist/index.d.cts",
+				"default": "./dist/index.cjs"
+			}
+		},
+		"./package.json": "./package.json"
+	},
+	"scripts": {
+		"prebuild": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"test": "vitest run",
+		"test:types": "vitest --run --typecheck.only",
+		"test:integration": "vitest run --config integration/vitest.config.ts",
+		"analyze:complexity": "fta src --score-cap 91"
+	},
+	"dependencies": {
+		"@cipherstash/stack": "workspace:*"
+	},
+	"peerDependencies": {
+		"@supabase/supabase-js": ">=2",
+		"pg": ">=8"
+	},
+	"peerDependenciesMeta": {
+		"@supabase/supabase-js": {
+			"optional": true
+		},
+		"pg": {
+			"optional": true
+		}
+	},
+	"devDependencies": {
+		"@cipherstash/protect-ffi": "0.29.0",
+		"@cipherstash/test-kit": "workspace:*",
+		"fta-cli": "3.0.0",
+		"@supabase/postgrest-js": "2.105.4",
+		"@supabase/supabase-js": "^2.110.0",
+		"@types/pg": "^8.20.0",
+		"fast-check": "^4.8.0",
+		"dotenv": "17.4.2",
+		"pg": "8.20.0",
+		"postgres": "^3.4.8",
+		"tsup": "catalog:repo",
+		"typescript": "catalog:repo",
+		"vitest": "catalog:repo"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

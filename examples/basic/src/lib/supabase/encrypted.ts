@@ -1,4 +1,4 @@
-import { encryptedSupabase } from '@cipherstash/stack/supabase'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
 import { contactsTable, encryptionClient } from '../../encryption/index'
 import { createServerClient } from './server'
 

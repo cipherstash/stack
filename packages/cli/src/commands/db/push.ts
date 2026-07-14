@@ -83,6 +83,24 @@ export async function pushCommand(options: {
     await client.connect()
     s.stop('Connected to Postgres.')
 
+    // `db push` writes `public.eql_v2_configuration` — a v2 + CipherStash Proxy
+    // artifact. EQL v3 has no configuration table (config lives in each
+    // column's `eql_v3.*` domain type) and nothing reads it, so if the table is
+    // absent — a v3-only database, or a database with no EQL installed at all —
+    // there's nothing to push. Check the table directly (one query on the
+    // connection we already hold) and exit cleanly instead of failing later
+    // with a raw `relation "public.eql_v2_configuration" does not exist`.
+    const tableResult = await client.query<{ reg: string | null }>(
+      "SELECT to_regclass('public.eql_v2_configuration') AS reg",
+    )
+    if (tableResult.rows[0]?.reg == null) {
+      p.log.info(
+        "`stash db push` writes the EQL v2 configuration table, which this database doesn't have. It only applies to EQL v2 with CipherStash Proxy — under EQL v3 (the default) encryption config lives in each column's `eql_v3.*` type, so there's nothing to push. For a v2 + Proxy setup, run `stash eql install --eql-version 2` first.",
+      )
+      p.outro('Nothing to do.')
+      return
+    }
+
     s.start('Checking public.eql_v2_configuration state...')
     const activeResult = await client.query<{ exists: boolean }>(
       "SELECT EXISTS(SELECT 1 FROM public.eql_v2_configuration WHERE state = 'active') AS exists",

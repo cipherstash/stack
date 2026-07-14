@@ -1,6 +1,6 @@
 ---
 name: stash-supabase
-description: Integrate CipherStash encryption with Supabase using @cipherstash/stack/supabase. Covers the encryptedSupabase wrapper, transparent encryption/decryption on insert/update/select, encrypted query filters (eq, like, ilike, gt/gte/lt/lte, in, or, match), identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
+description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabase wrapper, transparent encryption/decryption on insert/update/select, encrypted query filters (eq, like, ilike, gt/gte/lt/lte, in, or, match), identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
 ---
 
 # CipherStash Stack - Supabase Integration
@@ -18,8 +18,11 @@ Guide for integrating CipherStash field-level encryption with Supabase using the
 ## Installation
 
 ```bash
-npm install @cipherstash/stack @supabase/supabase-js
+npm install @cipherstash/stack @cipherstash/stack-supabase @supabase/supabase-js
 ```
+
+The Supabase integration ships as its own first-party package,
+`@cipherstash/stack-supabase`, which depends on `@cipherstash/stack`. Install both.
 
 ## Database Schema
 
@@ -70,7 +73,7 @@ const users = encryptedTable("users", {
 ```typescript
 import { createClient } from "@supabase/supabase-js"
 import { Encryption } from "@cipherstash/stack"
-import { encryptedSupabase } from "@cipherstash/stack/supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -322,7 +325,7 @@ const { data, error } = await eSupabase
 ```typescript
 import { createClient } from "@supabase/supabase-js"
 import { Encryption } from "@cipherstash/stack"
-import { encryptedSupabase } from "@cipherstash/stack/supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
 
 // Schema
@@ -394,56 +397,80 @@ type EncryptedSupabaseError = {
 
 ## Exported Types
 
-`@cipherstash/stack/supabase` also exports the following types:
+`@cipherstash/stack-supabase` also exports the following types:
 
 - `EncryptedSupabaseConfig`
 - `EncryptedSupabaseInstance`
 - `EncryptedQueryBuilder`
 - `PendingOrCondition`
 - `SupabaseClientLike`
-- `EncryptedSupabaseV3Config`, `EncryptedSupabaseV3Instance`, `EncryptedQueryBuilderV3` (EQL v3)
+- `EncryptedSupabaseV3Options`, `EncryptedSupabaseV3Instance`, `TypedEncryptedSupabaseV3Instance`, `EncryptedQueryBuilderV3`, `EncryptedQueryBuilderV3Untyped`, `V3Schemas` (EQL v3)
 
-## EQL v3 (native `eql_v3.*` domains)
+## EQL v3 (native `public.eql_v3_*` domains)
 
-`encryptedSupabaseV3` is the EQL v3 counterpart of `encryptedSupabase` for
-schemas authored with `@cipherstash/stack/eql/v3`. The public surface and call
-shape are **identical to v2** — same filter methods, `withLockContext`,
-`audit` — only the schema type and the wire encoding differ. Columns are
-stored in their native `eql_v3.*` domain (a `DOMAIN … AS jsonb` with a CHECK)
-instead of the v2 composite `eql_v2_encrypted`.
+`encryptedSupabaseV3` is the EQL v3 counterpart of `encryptedSupabase`.
+Instead of taking a schema, it **introspects the database at connect time**:
+it detects EQL v3 columns by their Postgres domain, derives each column's
+encryption config from the domain, and builds the encryption client
+internally. Columns are stored in their native `public.eql_v3_*` domain (a
+`DOMAIN … AS jsonb` with a CHECK) instead of the v2 composite
+`eql_v2_encrypted`.
+
+The query surface matches v2 — same filter methods, `withLockContext`,
+`audit` — with one deliberate fork: encrypted free-text search is `matches()`
+(fuzzy bloom token search); `contains()` stays native (exact) containment for
+plaintext columns; and `like`/`ilike` on an encrypted column are an approximate
+shim that delegates to `matches()` (see below).
 
 ### Setup
 
 ```typescript
-import { Encryption } from "@cipherstash/stack"
-import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-import { encryptedSupabaseV3 } from "@cipherstash/stack/supabase"
+import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
 
-const users = encryptedTable("users", {
-  email:  types.TextSearch("email"),      // eql_v3.text_search — eq + range + free-text
-  amount: types.IntegerOrd("amount"),     // eql_v3.integer_ord — eq + range
-  joined: types.TimestampOrd("joined_at") // eql_v3.timestamp_ord — eq + range, decrypts to Date
-})
+// Introspects the database via options.databaseUrl or DATABASE_URL
+const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
+// or wrap an existing client: await encryptedSupabaseV3(supabaseClient, options)
 
-const client = await Encryption({ schemas: [users] })
-const es = encryptedSupabaseV3({ encryptionClient: client, supabaseClient: supabase })
-
-await es.from("users", users).insert({ email: "a@b.com", amount: 30 })
-await es.from("users", users).select("id, email, amount").eq("email", "a@b.com")
-await es.from("users", users).select("id, amount").gte("amount", 10).lte("amount", 100)
+await es.from("users").insert({ email: "a@b.com", amount: 30 })
+await es.from("users").select("id, email, amount").eq("email", "a@b.com")
+await es.from("users").select("id, amount").gte("amount", 10).lte("amount", 100)
 ```
 
-Rows default to **exactly** the table's inferred plaintext shape. That keeps
-the storage-only-column filter guard active (see below), but it means
-plaintext passthrough columns (`id`, `created_at`, …) are not filterable or
-insertable at the type level in the default case — pass an explicit row type
-that includes them:
+`from(tableName)` takes only the table name — no schema argument. Column
+capabilities come from the introspected domains. Introspection needs a direct
+Postgres connection (`options.databaseUrl`, defaulting to `DATABASE_URL`), so
+the factory cannot run in a Worker or the browser.
+
+### Optional declared schemas (compile-time types)
+
+Declaring tables is optional. Passing `schemas` — a record whose keys must
+equal each table's name — adds compile-time types and verifies the declared
+tables against the database at construction:
 
 ```typescript
-type UserRow = { id: number; email: string; amount: number; joined: Date }
-const builder = es.from<typeof users, UserRow>("users", users)
-builder.eq("id", 1) // ok — id is in UserRow
+import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
+import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
+
+const users = encryptedTable("users", {
+  email:  types.TextSearch("email"),      // public.eql_v3_text_search — eq + range + free-text
+  amount: types.IntegerOrd("amount"),     // public.eql_v3_integer_ord — eq + range
+  joined: types.TimestampOrd("joined_at") // public.eql_v3_timestamp_ord — eq + range, decrypts to Date
+})
+
+const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey, {
+  schemas: { users },
+})
+
+const { data } = await es.from("users").select("id, email, joined").eq("email", "a@b.com")
 ```
+
+A declared table gets a typed builder: rows infer each column's plaintext
+type (`types.IntegerOrd` → `number`, `types.TimestampOrd` → `Date`),
+storage-only columns are excluded from every filter method, `matches()` is
+narrowed to match-indexed columns, and `order()` to plaintext columns.
+Undeclared tables behave exactly as with no `schemas` at all. Every v3 column
+is fully described by its `types.*` factory — there are no capability or
+tuning chains on v3 columns.
 
 A JS property may map to a different DB column name
 (`joined: types.TimestampOrd("joined_at")`) — filters, selects, and results
@@ -453,16 +480,17 @@ are translated automatically, and `date`/`timestamp` columns decrypt to real
 ### Database schema (per-domain columns)
 
 Each column is declared with its native domain — the `types.*` member name
-maps to the `eql_v3.<name>` domain (strip the `eql_v3.` prefix and PascalCase).
-The domains use SQL-standard type names (`integer`, `smallint`, `real`,
-`double`, `boolean`, `timestamp`):
+maps to the flat `public.eql_v3_<name>` domain (strip the `eql_v3_` prefix and
+PascalCase each `_`-separated segment: `types.TextEq` → `public.eql_v3_text_eq`,
+`types.IntegerOrd` → `public.eql_v3_integer_ord`). The domains use SQL-standard
+type names (`integer`, `smallint`, `real`, `double`, `boolean`, `timestamp`):
 
 ```sql
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
-  email eql_v3.text_search,
-  amount eql_v3.integer_ord,
-  joined_at eql_v3.timestamp_ord
+  email public.eql_v3_text_search,
+  amount public.eql_v3_integer_ord,
+  joined_at public.eql_v3_timestamp_ord
 );
 ```
 
@@ -472,70 +500,74 @@ CREATE TABLE users (
 stash eql install --eql-version 3 --supabase
 ```
 
-This installs the opclass-stripped v3 bundle (operator classes need superuser,
-which Supabase does not grant) and applies the grants for the
-`anon` / `authenticated` / `service_role` roles. The vendored bundle is the
-`eql-3.0.0-alpha.2` release artifact; it creates two schemas — `eql_v3` (the
-column domains and operators) and `eql_v3_internal` (SEM internals) — and the
-installer applies the role grants to both.
+Since eql-3.0.0 there is **one** v3 SQL artifact for every target — there is
+no separate Supabase variant. The bundle's only superuser-requiring
+statements (the ORE operator class/family) skip themselves when the install
+role lacks the privilege, and the bundle then disables the ORE-opclass-backed
+domains it cannot support. `--supabase` changes one thing: it additionally
+applies the role grants for `anon` / `authenticated` / `service_role` to the
+two schemas the bundle creates — `eql_v3` (the operator-backing functions)
+and `eql_v3_internal` (SEM internals). Without the grants, encrypted queries
+fail loudly with a permission error (e.g. `permission denied for schema
+eql_v3_internal`).
 
-**Manual step (same class of requirement as v2's `eql_v2`):** add `eql_v3` to
-the project's **Exposed schemas** (Dashboard → Settings → API → Exposed
-schemas). This puts the `eql_v3` operators on PostgREST's search_path so bare
-`col = term` filters resolve to the encrypted comparison. **If the schema is
-not exposed, the operators do not error — they silently fall back to base
-jsonb comparison and return wrong rows.** After changing the setting, verify
-with a known-value round-trip: insert a row, filter for it by an encrypted
-column, and assert the hit.
-
-Expose `eql_v3` **only** — do NOT expose `eql_v3_internal`. The internals
-schema exists precisely so that only the column domains are exposed (e.g.
-Supabase's Table-Builder type picker shows just the domains). It still needs —
-and receives — the role grants; grants and exposure are independent.
+No **Exposed schemas** change is needed for v3: the column domains and their
+operators live in `public`, so bare `col = term` filters resolve under
+Supabase's default PostgREST configuration. Do not expose `eql_v3_internal`.
 
 ### v3-specific behaviour
 
 All envelopes (stored payloads and filter operands) are versioned `v: 3`.
 
-- **INTERIM — filter operands are full envelopes.** This is a workaround, not
-  the design (tracked as Linear **CIP-3402**). Why it is required today: every
-  `eql_v3.*` domain CHECK requires the storage keys (`v`/`i`/`c` plus the
-  domain's index terms), and the SQL operators coerce their operand into the
-  domain — so the adapter encrypts each filter value with the full storage
-  path. The call shape is unchanged.
+- **`select('*')` (and bare `select()`) works on v3** — it expands to the
+  introspected column list. (v2 has no column list to expand, so it still
+  requires explicit columns.)
+- **Encrypted free-text search is `matches()`, not `contains()`/`like`/`ilike`.**
+  The v3 domains define no LIKE operator — encrypted free-text search is fuzzy
+  bloom-filter token matching (PostgREST `cs` / SQL `@>`): one-sided (a match
+  may be a false positive, a non-match never is) and order-/multiplicity-
+  insensitive, where `%` is tokenized like any other character. `matches(col,
+  needle)` is the operator; `contains()` on an encrypted column throws an error
+  pointing at `matches()`. `contains()` is reserved for native (exact)
+  jsonb/array containment on plaintext columns, which pass through unchanged.
+- **`like`/`ilike` on an encrypted column are an approximate compatibility
+  shim** delegating to `matches()`: leading/trailing `%` are stripped and the
+  residual term is fuzzy-matched (same `cs` wire, plus a one-time warning).
+  Results are APPROXIMATE — case-insensitive, one-sided, and anchoring is not
+  honored. A pattern with an internal `%` or any `_` cannot be approximated and
+  throws; call `matches()` directly to make the fuzzy intent explicit. On
+  plaintext columns `like`/`ilike` stay real SQL LIKE.
+- **`matches()` matches substrings.** The search term blooms to its own
+  trigrams, and a row matches when the stored value's bloom contains all of
+  them — so any substring of at least 3 characters (the tokenizer's
+  `token_length`) matches. Shorter terms bloom to nothing and would match every
+  row, so they are rejected with an error rather than answered.
+- **INTERIM — filter operands are full storage envelopes.** EQL ships
+  term-only query domains (`eql_v3.query_<name>`, which accept envelopes with
+  no ciphertext) and the encryption client can mint those narrowed terms, but
+  PostgREST has no syntax to cast a filter value — an uncast operand can only
+  reach the `jsonb` operator overload, which coerces it into the storage
+  domain, whose CHECK requires ciphertext. So the adapter still encrypts each
+  filter value with the full storage path. The call shape is unchanged.
 
-  **Security caveat:** query terms are meant to be index-terms-only by design,
-  but a full-envelope operand carries a real decryptable ciphertext `c` plus
-  **all** of the column's index terms, and PostgREST filters travel in GET
-  query strings — so these envelopes can land in URL logs, intermediate
-  proxies, and Supabase request logs. The planned fix is an EQL-side term-only
-  scalar query envelope (the scalar analog of `eql_v3.jsonb_query`); once it
-  ships, operands stop carrying ciphertext.
-- **`like`/`ilike` are emitted as PostgREST `cs`** (`@>` bloom-filter
-  containment) — the v3 domains define no LIKE operator. Match is tokenized
-  and downcased, so `like` and `ilike` behave identically; don't include `%`
-  wildcards in the pattern.
-- **INTERIM — free-text search needs `include_original: false`** on the
-  column's match index
-  (`types.TextSearch("email").freeTextSearch({ include_original: false })`)
-  for substring patterns to match. With the default `include_original: true`,
-  the full-envelope operand's bloom carries the whole pattern as an extra
-  token that only matches when the pattern equals the stored value. This is a
-  symptom of the same full-envelope interim mechanism above and goes away with
-  the term-only query envelope (CIP-3402).
+  **Security caveat:** query terms are meant to be index-terms-only by
+  design, but a full-envelope operand carries a real decryptable ciphertext
+  `c` plus **all** of the column's index terms, and PostgREST filters travel
+  in GET query strings — so these envelopes can land in URL logs,
+  intermediate proxies, and Supabase request logs. The remaining gap is
+  PostgREST operand casting; an adapter-side fix is tracked.
+- **No `ORDER BY` on encrypted v3 columns** — including the range-capable
+  ones. PostgREST cannot emit `ORDER BY eql_v3.ord_term(col)`, and a bare
+  `ORDER BY` would silently sort the raw ciphertext envelope, so the builder
+  rejects `order()` on any encrypted column with a clear error. Range
+  *filtering* (`gte`/`lte`/…) works. Order by a plaintext column, or sort
+  application-side after decrypting.
 - **Storage-only domains are not filterable** (e.g. `types.Boolean`,
-  `types.Text`): a filter (including `.match()`) on one is a type error, and
-  always a clear runtime error.
+  `types.Text`): a filter (including `.match()`) on one is a type error on a
+  declared table, and always a clear runtime error. `.is(column, null)`
+  remains available.
 - **Null filter values are rejected** with a pointer to `.is(column, null)` —
   a null cannot be encrypted into an operand.
-
-### Shared caveats (identical to v2)
-
-- **No `ORDER BY` on encrypted columns** — operator families need superuser,
-  which Supabase lacks. Range *filtering* (`gte`/`lte`/…) works. (OPE index
-  terms that are natively orderable — btree + `ORDER BY` on Supabase — are in
-  active development; out of scope here.)
-- **Operator visibility requires the exposed schema + grants** (above).
 
 ## Migrating an Existing Column to Encrypted
 

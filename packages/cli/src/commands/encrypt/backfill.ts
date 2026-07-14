@@ -201,7 +201,7 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     // time running a backfill that will fail on the first chunk.
     if (detectedCastAs === 'date' || detectedCastAs === 'timestamp') {
       p.log.warn(
-        `Column ${options.table}.${encryptedColumn} declares cast_as: '${detectedCastAs}', which protect-ffi does not currently support for encryption. The backfill will fail with "Cannot convert String to Date". Consider changing the schema to dataType: 'string' (or omitting dataType) and storing ISO date strings instead, then re-running \`stash db push\`.`,
+        `Column ${options.table}.${encryptedColumn} declares cast_as: '${detectedCastAs}', which protect-ffi does not currently support for encryption. The backfill will fail with "Cannot convert String to Date". Consider changing the schema to dataType: 'string' (or omitting dataType) and storing ISO date strings instead, then re-running the backfill.`,
       )
       const proceed = await p.confirm({
         message: 'Continue anyway?',

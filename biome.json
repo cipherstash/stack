@@ -1,12 +1,21 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.2/schema.json",
   "files": {
     "includes": [
       "**",
       "!**/package.json",
       "!**/.turbo/",
       "!**/dist",
-      "!**/nix/store"
+      "!**/nix/store",
+      "!**/*.grit",
+      "!**/*.generated.ts",
+      "!**/contract.json",
+      "!**/contract.d.ts",
+      "!**/end-contract.json",
+      "!**/end-contract.d.ts",
+      "!**/migrations/**/migration.json",
+      "!**/migrations/**/ops.json",
+      "!**/migrations/**/refs"
     ]
   },
   "formatter": {
@@ -30,5 +39,20 @@
         "noThenProperty": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "**/src/**",
+        "examples/**",
+        "!**/__tests__/**",
+        "!**/*.test.ts",
+        "!**/*.test-d.ts",
+        "!**/*.spec.ts",
+        "!**/integration/**",
+        "!**/tests/**"
+      ],
+      "plugins": ["./biome-plugins/no-type-erasing-assertions.grit"]
+    }
+  ]
 }

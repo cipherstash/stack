@@ -28,6 +28,7 @@
     "dev": "turbo dev --filter './packages/*'",
     "clean": "rimraf --glob **/.next **/.turbo **/dist **/node_modules",
     "code:fix": "biome check --write",
+    "code:check": "biome check",
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
     "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
     "release": "pnpm run build && changeset publish",

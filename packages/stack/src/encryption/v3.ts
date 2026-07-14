@@ -9,7 +9,8 @@ import type {
   V3EncryptedModel,
   V3ModelInput,
 } from '@/eql/v3'
-import type { EncryptionError } from '@/errors'
+import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
+import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
@@ -18,8 +19,10 @@ import type {
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
+  ScalarQueryTerm,
 } from '@/types'
 import {
+  type BatchEncryptQueryOperation,
   type BulkDecryptOperation,
   type BulkEncryptModelsOperation,
   type BulkEncryptOperation,
@@ -68,6 +71,14 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
       returnType?: EncryptedReturnType
     },
   ): EncryptQueryOperation
+
+  /**
+   * Batch form: encrypt many query terms in one crossing. Mirrors the nominal
+   * {@link EncryptionClient} overload — the per-term columns are heterogeneous,
+   * so the terms are the base {@link ScalarQueryTerm} rather than a per-column
+   * narrowed type. Consumed by the Drizzle `inArray`/`notInArray` operators.
+   */
+  encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
 
   encryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: V3ModelInput<Table, T>,
@@ -127,8 +138,10 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
  * row-invariant, but non-trivial to build — is derived once per call site,
  * not once per row on the bulk path.
  *
- * NOTE: `bigint` reconstruction is intentionally absent — bigint domains are
- * omitted from the v3 SDK until the native FFI supports lossless bigint I/O.
+ * NOTE: only date-like casts need per-row reconstruction. `bigint` (int8)
+ * needs none — protect-ffi 0.28 returns a native JS `bigint` on decrypt
+ * (and bounds-checks/encodes it on encrypt), so those columns pass through
+ * unchanged, exactly like `string`/`number`/`boolean`.
  */
 function rowReconstructor(
   table: AnyV3Table,
@@ -137,13 +150,13 @@ function rowReconstructor(
   // config keyed by DB name — bridge the two via the table's property→DB map.
   const { columns } = table.build()
   const propToDb = table.buildColumnKeyMap()
-  // Only date/timestamp columns need per-row work; resolve them up front.
-  // Both kinds decrypt to a JS `Date` — 'timestamp' additionally preserves
-  // the time-of-day component through the FFI.
+  // Only date-like columns need per-row work; resolve them up front.
   const dateProperties = Object.entries(propToDb)
     .filter(([, dbName]) => {
       const castAs = columns[dbName]?.cast_as
-      return castAs === 'date' || castAs === 'timestamp'
+      // Date-like casts share one source of truth with the type-level
+      // reconstruction (`PlaintextFromKind`) — see `DATE_LIKE_CASTS`.
+      return (DATE_LIKE_CASTS as readonly string[]).includes(castAs as string)
     })
     .map(([property]) => property)
 
@@ -169,29 +182,91 @@ function rowReconstructor(
  */
 export function typedClient<const S extends readonly AnyV3Table[]>(
   client: EncryptionClient,
-  ..._schemas: S
+  ...schemas: S
 ): TypedEncryptionClient<S> {
+  // Precompute one row reconstructor per schema table at construction. This runs
+  // each table's `build()` — which throws on duplicate DB column names — ONCE,
+  // here, off the Result-returning decrypt path. `decryptModel`/
+  // `bulkDecryptModels` therefore never call `build()` (whose throw would surface
+  // as a promise rejection and break their `Promise<Result<…>>` contract) and no
+  // longer rebuild the row-invariant config on every call.
+  // Keyed by `tableName`, not table object identity: `AnyV3Table` is
+  // structurally typed, so a table re-imported from another module (or rebuilt
+  // after an HMR reload) satisfies `Table extends S[number]` yet is a different
+  // object. Identity keying would fail those valid calls. `tableName` is the
+  // semantic identity the FFI encrypt config and `build()` already key on.
+  const reconstructors = new Map<
+    string,
+    (row: Record<string, unknown>) => Record<string, unknown>
+  >()
+  for (const table of schemas) {
+    reconstructors.set(table.tableName, rowReconstructor(table))
+  }
+
+  // A table not among the schemas this client was initialized with has no
+  // precomputed reconstructor. Return a Result failure rather than building one
+  // inline, which could throw and reject the Result-shaped decrypt promise.
+  const unknownTableFailure: { failure: EncryptionError } = {
+    failure: {
+      type: EncryptionErrorTypes.DecryptionError,
+      message:
+        '[eql/v3]: decryptModel received a table this client was not initialized with — pass a table given to EncryptionV3/typedClient',
+    },
+  }
+
+  // Overloaded so the implementation is checked against BOTH forms directly —
+  // no whole-value cast. The two public signatures mirror the interface member;
+  // the hidden implementation signature is broad and forwards to the nominal
+  // client (which routes to the batch operation when no `opts` are supplied).
+  // Only the forwarded args are `as never`, exactly as the sibling wrappers
+  // below: one forwarding body cannot re-derive the nominal client's per-column
+  // signatures.
+  function encryptQuery<
+    Table extends S[number],
+    Col extends QueryableColumnsOf<Table>,
+    QT extends QueryTypesForColumn<Col> = QueryTypesForColumn<Col>,
+  >(
+    plaintext: PlaintextForColumn<Col>,
+    opts: {
+      table: Table
+      column: Col
+      queryType?: QT
+      returnType?: EncryptedReturnType
+    },
+  ): EncryptQueryOperation
+  function encryptQuery(
+    terms: readonly ScalarQueryTerm[],
+  ): BatchEncryptQueryOperation
+  function encryptQuery(
+    plaintextOrTerms: unknown,
+    opts?: unknown,
+  ): EncryptQueryOperation | BatchEncryptQueryOperation {
+    return client.encryptQuery(plaintextOrTerms as never, opts as never)
+  }
+
   return {
     encrypt: (plaintext, opts) =>
       client.encrypt(plaintext as never, opts as never),
-    encryptQuery: (plaintext, opts) =>
-      client.encryptQuery(plaintext as never, opts as never),
+    encryptQuery,
     encryptModel: (input, table) =>
       client.encryptModel(input as never, table as never) as never,
     bulkEncryptModels: (input, table) =>
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
     decryptModel: async (input, table, lockContext) => {
+      const reconstruct = reconstructors.get(table.tableName)
+      if (!reconstruct) return unknownTableFailure as never
       const op = client.decryptModel(input as never)
       const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
-      return { data: rowReconstructor(table)(result.data) } as never
+      return { data: reconstruct(result.data) } as never
     },
     bulkDecryptModels: async (input, table, lockContext) => {
+      const reconstruct = reconstructors.get(table.tableName)
+      if (!reconstruct) return unknownTableFailure as never
       const op = client.bulkDecryptModels(input as never)
       const result = await (lockContext ? op.withLockContext(lockContext) : op)
       if (result.failure) return result as never
-      const reconstruct = rowReconstructor(table)
       return {
         data: result.data.map((row) =>
           reconstruct(row as Record<string, unknown>),
@@ -208,12 +283,6 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
  * Build a {@link TypedEncryptionClient} for EQL v3 schemas — the strongly-typed
  * counterpart to {@link Encryption}. Mirrors its config, then retypes the client
  * against the provided v3 `schemas`.
- *
- * The underlying client is created with `eqlVersion: 3` (protect-ffi 0.27+),
- * so `encrypt` / `encryptModel` emit EQL v3 wire payloads for the
- * per-capability `eql_v3` domains. Pass an explicit `config.eqlVersion` to
- * override — e.g. `2` to write v2-wire from a v3 schema set during a
- * migration.
  *
  * @example
  * ```typescript
@@ -235,12 +304,11 @@ export async function EncryptionV3<
     schemas: config.schemas as unknown as Parameters<
       typeof Encryption
     >[0]['schemas'],
-    // v3 schemas emit the EQL v3 wire format. Auto-detection in
-    // `Encryption` would resolve the same way (every v3 table carries the
-    // `buildColumnKeyMap` marker), but the version is set explicitly here
-    // so the contract doesn't hinge on duck-typing — while still honouring
-    // a caller's explicit override.
-    config: { ...config.config, eqlVersion: config.config?.eqlVersion ?? 3 },
+    // Force the v3 EQL wire format. protect-ffi's newClient defaults to
+    // eqlVersion 2; a v2-mode client cannot resolve v3 concrete-type columns
+    // and fails every encrypt with "Cannot convert undefined or null to
+    // object". This is a v3-only invariant, so it overrides any user value.
+    config: { ...config.config, eqlVersion: 3 },
   })
   return typedClient(client, ...config.schemas)
 }

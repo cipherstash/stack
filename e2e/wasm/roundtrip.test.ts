@@ -1,25 +1,29 @@
 /**
  * WASM smoke test for `@cipherstash/stack/wasm-inline`.
  *
- * Runs under Deno against real CipherStash credentials. Proves three
- * things together:
+ * Runs under Deno against real CipherStash credentials. Proves four things
+ * together:
  *   1. The stack `/wasm-inline` subpath resolves under Deno (no native
  *      binding required).
- *   2. The WASM protect-ffi client can complete an encrypt → decrypt
- *      round-trip against ZeroKMS / CTS.
- *   3. No FFI permission was granted to the Deno process, so the WASM
- *      path is the *only* path that could have succeeded.
+ *   2. The entry is EQL v3: a schema authored with the `types` DSL round-trips.
+ *      `TextSearch` maps to the concrete `eql_v3_text_search` domain, which a
+ *      v2-mode client cannot resolve — so a successful round-trip proves the
+ *      factory pinned `eqlVersion: 3` (#614).
+ *   3. The WASM protect-ffi client completes an encrypt → decrypt round-trip
+ *      against ZeroKMS / CTS.
+ *   4. No FFI permission was granted to the Deno process, so the WASM path is
+ *      the *only* path that could have succeeded.
  *
- * Skipped when any of the four CS_* env vars is missing — matches the
- * skip pattern in `e2e/tests/*.e2e.test.ts`.
+ * Skipped when any of the four CS_* env vars is missing — matches the skip
+ * pattern in `e2e/tests/*.e2e.test.ts`.
  */
 
 import { assertEquals, assertExists } from 'jsr:@std/assert@^1.0.0'
 import {
   Encryption,
-  encryptedColumn,
   encryptedTable,
   isEncrypted,
+  types,
 } from '@cipherstash/stack/wasm-inline'
 
 // `CS_WORKSPACE_CRN` is the single source of truth for workspace
@@ -46,7 +50,7 @@ function envOrSkip(): Record<(typeof REQUIRED_ENV)[number], string> | null {
 const env = envOrSkip()
 
 Deno.test({
-  name: 'stack/wasm-inline: encrypt → decrypt round-trip via WASM',
+  name: 'stack/wasm-inline: EQL v3 encrypt → decrypt round-trip via WASM',
   ignore: env === null,
   permissions: {
     env: true,
@@ -66,8 +70,11 @@ Deno.test({
       'Deno global missing (test framework misconfigured)',
     )
 
+    // A v3 table authored with the `types` DSL re-exported from `/wasm-inline`.
+    // `TextSearch` maps to `eql_v3_text_search`, which only a v3-mode client
+    // can resolve — so this round-trip proves the factory selected eqlVersion 3.
     const users = encryptedTable('protect-ci', {
-      email: encryptedColumn('email'),
+      email: types.TextSearch('email'),
     })
 
     const client = await Encryption({
@@ -82,7 +89,7 @@ Deno.test({
       },
     })
 
-    const plaintext = `wasm-smoke-${crypto.randomUUID()}@example.com`
+    const plaintext = `wasm-v3-smoke-${crypto.randomUUID()}@example.com`
 
     const encrypted = await client.encrypt(plaintext, {
       column: users.email,

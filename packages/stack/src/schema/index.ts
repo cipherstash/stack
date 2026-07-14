@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { BuildableTable, Encrypted } from '@/types'
-import { defaultMatchOpts } from './match-defaults'
+import { resolveMatchOpts } from './match-defaults'
 
 // ------------------------
 // Zod schemas
@@ -46,6 +46,10 @@ export const eqlCastAsEnum = z
 
 /**
  * SDK-facing data types — developer-friendly aliases accepted by `dataType()`.
+ *
+ * `timestamp` is distinct from `date`: `date` is calendar-date only (time-of-day
+ * truncated to midnight), while `timestamp` preserves the full date+time. v3
+ * `timestamp` domains set `cast_as: 'timestamp'` so the FFI keeps the instant.
  */
 export const castAsEnum = z
   .enum([
@@ -106,6 +110,11 @@ const tokenizerSchema = z
 
 const oreIndexOptsSchema = z.object({})
 
+// The OPE (CLLW-OPE, `op` term) ordering index — protect-ffi 0.29+. Emitted by
+// the EQL v3 `_ord` domains; the `_ord_ore` domains keep `ore` (block-ORE,
+// `ob`). v2 columns never emit it.
+const opeIndexOptsSchema = z.object({})
+
 const uniqueIndexOptsSchema = z.object({
   token_filters: z.array(tokenFilterSchema).default([]).optional(),
 })
@@ -131,11 +140,13 @@ const arrayIndexModeSchema = z.union([
 const steVecIndexOptsSchema = z.object({
   prefix: z.string(),
   array_index_mode: arrayIndexModeSchema.optional(),
+  mode: z.enum(['compat', 'standard']).optional(),
 })
 
 const indexesSchema = z
   .object({
     ore: oreIndexOptsSchema.optional(),
+    ope: opeIndexOptsSchema.optional(),
     unique: uniqueIndexOptsSchema.optional(),
     match: matchIndexOptsSchema.optional(),
     ste_vec: steVecIndexOptsSchema.optional(),
@@ -176,6 +187,7 @@ export type MatchIndexOpts = z.infer<typeof matchIndexOptsSchema>
 export type SteVecIndexOpts = z.infer<typeof steVecIndexOptsSchema>
 export type UniqueIndexOpts = z.infer<typeof uniqueIndexOptsSchema>
 export type OreIndexOpts = z.infer<typeof oreIndexOptsSchema>
+export type OpeIndexOpts = z.infer<typeof opeIndexOptsSchema>
 export type ColumnSchema = z.infer<typeof columnSchema>
 
 /**
@@ -224,7 +236,7 @@ export class EncryptedField {
    * a different type so the encryption layer knows how to encode the plaintext
    * before encrypting.
    *
-   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'text'`, `'bigint'`, or `'json'`.
+   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedField` instance for method chaining.
    *
    * @example
@@ -256,6 +268,9 @@ export class EncryptedColumn {
   private castAsValue: CastAs
   private indexesValue: {
     ore?: OreIndexOpts
+    // Never set by the v2 fluent builder (the OPE index is EQL v3-only);
+    // declared so `build()` stays assignable to the shared indexes shape.
+    ope?: OpeIndexOpts
     unique?: UniqueIndexOpts
     match?: Required<MatchIndexOpts>
     ste_vec?: SteVecIndexOpts
@@ -273,7 +288,7 @@ export class EncryptedColumn {
    * a different type so the encryption layer knows how to encode the plaintext
    * before encrypting.
    *
-   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'bigint'`, or `'json'`.
+   * @param castAs - The plaintext data type: `'string'`, `'number'`, `'boolean'`, `'date'`, `'timestamp'`, `'text'`, `'bigint'`, or `'json'`. Use `'timestamp'` (not `'date'`) to preserve time-of-day — `'date'` truncates to midnight.
    * @returns This `EncryptedColumn` instance for method chaining.
    *
    * @example
@@ -365,16 +380,11 @@ export class EncryptedColumn {
    * ```
    */
   freeTextSearch(opts?: MatchIndexOpts) {
-    // Shared defaults (schema/match-defaults) — one source of truth with the
-    // EQL v3 domain builders. The factory returns fresh nested objects.
-    const defaults = defaultMatchOpts()
-    this.indexesValue.match = {
-      tokenizer: opts?.tokenizer ?? defaults.tokenizer,
-      token_filters: opts?.token_filters ?? defaults.token_filters,
-      k: opts?.k ?? defaults.k,
-      m: opts?.m ?? defaults.m,
-      include_original: opts?.include_original ?? defaults.include_original,
-    }
+    // Shared merge+clone (schema/match-defaults) — one source of truth with the
+    // EQL v3 domain builders. `resolveMatchOpts` deep-clones, so a caller
+    // mutating their own `opts` (or its nested tokenizer/token_filters) after
+    // this call cannot leak into the stored schema.
+    this.indexesValue.match = resolveMatchOpts(opts)
     return this
   }
 
@@ -402,7 +412,17 @@ export class EncryptedColumn {
    */
   searchableJson() {
     this.castAsValue = 'json'
-    this.indexesValue.ste_vec = { prefix: 'enabled', array_index_mode: 'all' }
+    // `mode: 'standard'` pins the per-entry ordering term to CLLW-ORE (`oc`),
+    // the only encoding the eql_v2 SQL compares. protect-ffi 0.29 flipped the
+    // library default to `compat` (CLLW-OPE, `op`) for EQL v3; without the pin
+    // every v2 containment query silently matches nothing — and existing v2
+    // rows encrypted under `standard` are not cross-comparable with `compat`
+    // anyway, so this also keeps the v2 wire format byte-stable.
+    this.indexesValue.ste_vec = {
+      prefix: 'enabled',
+      array_index_mode: 'all',
+      mode: 'standard',
+    }
     return this
   }
 

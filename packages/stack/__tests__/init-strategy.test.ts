@@ -244,12 +244,15 @@ describe('Encryption config.eqlVersion', () => {
     expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 
-  it('EncryptionV3 honours an explicit eqlVersion override', async () => {
+  it('EncryptionV3 overrides an explicit eqlVersion — v3 is an invariant', async () => {
+    // A v2-mode client cannot resolve v3 concrete-type columns (every encrypt
+    // fails inside the FFI), so EncryptionV3 pins the wire format rather than
+    // honouring a caller's eqlVersion.
     await EncryptionV3({
       schemas: [v3Table() as never],
       config: { eqlVersion: 2 },
     })
 
-    expect(lastNewClientOpts().eqlVersion).toBe(2)
+    expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 })

@@ -97,8 +97,8 @@ Commands:
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
 
-  db push              Push encryption schema (writes pending if active config already exists)
-  db activate          Promote pending → active without renames (use after additive db push)
+  db push              (EQL v2 + Proxy) Push encryption schema to eql_v2_configuration
+  db activate          (EQL v2 + Proxy) Promote pending → active without renames
   db validate          Validate encryption schema
   db migrate           Run pending encrypt config migrations
   db test-connection   Test database connectivity
@@ -124,7 +124,6 @@ Examples:
   ${STASH} init                     # set up CipherStash in this project
   ${STASH} auth login               # authenticate
   ${STASH} eql install              # install EQL extensions
-  ${STASH} db push                  # push encryption schema
   ${STASH} manifest --json          # structured command surface for docs / agents
 `.trim()
 

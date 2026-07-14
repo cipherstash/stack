@@ -145,9 +145,7 @@ describe('cipherstash operator lowering — per-codec envelope dispatch', () => 
     const lowered = makeAdapter().lower(selectWithWhere(predicate), {
       contract,
     })
-    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(
-      EncryptedBigInt,
-    )
+    expect(literalParamValue(lowered.params[0])).toBeInstanceOf(EncryptedBigInt)
   })
 
   it('cipherstashGt on a date column wraps the value in EncryptedDate', () => {

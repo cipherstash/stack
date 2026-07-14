@@ -221,7 +221,7 @@ function nextMoveFor(
 ): string {
   if (path === 'new') {
     if (doneCount === 0) {
-      return `Declare the encrypted column in your schema and run the migration, then \`${cli} db push\`.`
+      return 'Declare the encrypted column in your schema and run the migration.'
     }
     return `Promote the pending EQL config — \`${cli} db activate\`.`
   }

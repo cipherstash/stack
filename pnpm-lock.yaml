@@ -110,7 +110,7 @@ importers:
         version: 7.8.5
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -120,6 +120,12 @@ importers:
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../../packages/stack
+      '@cipherstash/stack-drizzle':
+        specifier: workspace:*
+        version: link:../../packages/stack-drizzle
+      '@cipherstash/stack-supabase':
+        specifier: workspace:*
+        version: link:../../packages/stack-supabase
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -208,6 +214,9 @@ importers:
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
+      '@cipherstash/stack-drizzle':
+        specifier: workspace:*
+        version: link:../stack-drizzle
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9)
@@ -261,6 +270,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@cipherstash/eql':
+        specifier: 3.0.0
+        version: 3.0.0
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
@@ -284,7 +296,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
@@ -343,7 +355,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   packages/migrate:
     dependencies:
@@ -371,7 +383,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   packages/nextjs:
     dependencies:
@@ -396,7 +408,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.60.4
@@ -479,7 +491,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   packages/protect:
     dependencies:
@@ -525,7 +537,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
         specifier: 4.60.4
@@ -554,7 +566,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   packages/schema:
     dependencies:
@@ -570,7 +582,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   packages/stack:
     dependencies:
@@ -581,8 +593,8 @@ importers:
         specifier: catalog:repo
         version: 0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)
       '@cipherstash/protect-ffi':
-        specifier: 0.28.0
-        version: 0.28.0
+        specifier: 0.29.0
+        version: 0.29.0
       evlog:
         specifier: 1.11.0
         version: 1.11.0(next@15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
@@ -593,12 +605,24 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@cipherstash/eql':
+        specifier: 3.0.0
+        version: 3.0.0
       '@clack/prompts':
         specifier: ^1.4.0
         version: 1.4.0
+      '@clerk/backend':
+        specifier: 3.4.9
+        version: 3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@supabase/postgrest-js':
+        specifier: 2.105.4
+        version: 2.105.4
       '@supabase/supabase-js':
         specifier: ^2.110.0
         version: 2.110.0
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
       '@types/uuid':
         specifier: ^11.0.0
         version: 11.0.0
@@ -607,16 +631,22 @@ importers:
         version: 17.4.2
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9)
       execa:
         specifier: ^9.5.2
         version: 9.6.1
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.8.0
       fta-cli:
         specifier: 3.0.0
         version: 3.0.0
       json-schema-to-typescript:
         specifier: ^15.0.2
         version: 15.0.4
+      pg:
+        specifier: 8.20.0
+        version: 8.20.0
       postgres:
         specifier: ^3.4.8
         version: 3.4.9
@@ -631,7 +661,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
@@ -651,6 +681,105 @@ importers:
       '@cipherstash/auth-win32-x64-msvc':
         specifier: catalog:repo
         version: 0.41.0
+
+  packages/stack-drizzle:
+    dependencies:
+      '@byteslice/result':
+        specifier: 0.2.0
+        version: 0.2.0
+      '@cipherstash/stack':
+        specifier: workspace:*
+        version: link:../stack
+    devDependencies:
+      '@cipherstash/protect-ffi':
+        specifier: 0.29.0
+        version: 0.29.0
+      '@cipherstash/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
+      fta-cli:
+        specifier: 3.0.0
+        version: 3.0.0
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
+      tsup:
+        specifier: catalog:repo
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+
+  packages/stack-supabase:
+    dependencies:
+      '@cipherstash/stack':
+        specifier: workspace:*
+        version: link:../stack
+    devDependencies:
+      '@cipherstash/protect-ffi':
+        specifier: 0.29.0
+        version: 0.29.0
+      '@cipherstash/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
+      '@supabase/postgrest-js':
+        specifier: 2.105.4
+        version: 2.105.4
+      '@supabase/supabase-js':
+        specifier: ^2.110.0
+        version: 2.110.0
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.8.0
+      fta-cli:
+        specifier: 3.0.0
+        version: 3.0.0
+      pg:
+        specifier: 8.20.0
+        version: 8.20.0
+      postgres:
+        specifier: ^3.4.8
+        version: 3.4.9
+      tsup:
+        specifier: catalog:repo
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+
+  packages/test-kit:
+    dependencies:
+      '@cipherstash/stack':
+        specifier: workspace:*
+        version: link:../stack
+    devDependencies:
+      '@clerk/backend':
+        specifier: 3.4.9
+        version: 3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   packages/wizard:
     dependencies:
@@ -696,7 +825,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
@@ -972,13 +1101,16 @@ packages:
       '@cipherstash/auth-win32-x64-msvc':
         optional: true
 
+  '@cipherstash/eql@3.0.0':
+    resolution: {integrity: sha512-hi8zrIx3FEokLhgJaUN4VsRagUnxhyJOn6gbvIxjBpZjEXJdMQQXkkSq4eV6Bz2sroUf1+d+qeX2H2zejcM1Dg==}
+
   '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
     resolution: {integrity: sha512-DhkKC+trOfk3RLDvPXqGsrpWdVnLAMEVLUI59OuR9tdTcJeiABtbQx8VaXdbzvNxnbkoDnOqbFRE5D11Z7nerQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.28.0':
-    resolution: {integrity: sha512-QRwiovEdgjstbaCONZGYXA82NG4Gwz9mJOZeAzthUmNIQfnVErO9UQAfJ+I1T/YG1Ww2FCWcHltXMl/qjyeK4A==}
+  '@cipherstash/protect-ffi-darwin-arm64@0.29.0':
+    resolution: {integrity: sha512-Licuimkh6Y2cCAUQSBcwSzmjT9NOvA2ShC2wqaacA6fyWXtPlvRHvh5hct5fP0jBoKgMLAIu1qVJG0DdPU2OGQ==}
     cpu: [arm64]
     os: [darwin]
 
@@ -987,8 +1119,8 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-x64@0.28.0':
-    resolution: {integrity: sha512-H8qB2z3drJSc2bR5ITsJSFrOoNKvORbauTdHmaS1e5OleXsLl/F+56Zvghz8NWs+bXs/2aVzHxpYte8FgV8AAQ==}
+  '@cipherstash/protect-ffi-darwin-x64@0.29.0':
+    resolution: {integrity: sha512-rRVrhcwrmrPr4xw6RGuBht9SwhfdumSan9P+BV8t9ivmnmpR/GA7+3425794R07jSdwpjkyob0kkuLHwI+Wc1A==}
     cpu: [x64]
     os: [darwin]
 
@@ -997,8 +1129,8 @@ packages:
     cpu: [arm64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.28.0':
-    resolution: {integrity: sha512-h7vZxB/wako6j1jspkGl41gptTN1dBTWYqAR6jhVnvKJK0TBlyUKuSJwO1NeqyNfFQ/b1KmqJ11JGvY95uRZOA==}
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.29.0':
+    resolution: {integrity: sha512-zWb9gHJQo9iJw8AD0nkUORB4AxrWN66fePt/rxs9hCp/gBNMe19dJMqAUs8pgG7+S2mIi8SPa/TPm86wraTDCA==}
     cpu: [arm64]
     os: [linux]
 
@@ -1007,8 +1139,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.28.0':
-    resolution: {integrity: sha512-PgHn0Og0PiCwFdV4yKhipGKfqkCXP6Xchyy6ykTaISabmSlkkbRNkyNF1/tZEQYF65sm5gmqSpwSYzKODaAsbg==}
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.29.0':
+    resolution: {integrity: sha512-f+yz03a6ZKcunzf3UyBEDhBla9ux535pqkj+MJirlhI4x0cVevmwI4SYO+CaNAqAdIhfi/EDqsN3FcXTltoktA==}
     cpu: [x64]
     os: [linux]
 
@@ -1017,8 +1149,8 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.28.0':
-    resolution: {integrity: sha512-fMu3k1Y3wYMcGbGpVtrlCMNRLd1//5c9ZHcyWFjKFqimOCbBO5akgCQij4zcvj4kYDHtveu9dOdOKVhaG8k6hQ==}
+  '@cipherstash/protect-ffi-linux-x64-musl@0.29.0':
+    resolution: {integrity: sha512-bZUji9Za65dUoVP2b1FUBddjftZkkRDSJkAknZZVK6QEZ5SbOLyQwOYS1wT1/6zt1k6cpF6oT2+CzwZDEcggVw==}
     cpu: [x64]
     os: [linux]
 
@@ -1027,16 +1159,16 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.28.0':
-    resolution: {integrity: sha512-tF0y7TcyBtgN/jHodYMnrJ4etLkEI/klzDivW8Q8eIuIdoJ3q5muZKFIhNX0MbDDdh2O4GsRdNhXRubs7BiFpA==}
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.29.0':
+    resolution: {integrity: sha512-OZ39ODuq07+RTALQwJsWu+EFZYdaQeK/u9IFhpkr/Bf9hY/f7SvnTk6FrZEjUeTsR3mYqfZ3jp3VREXUncqTGA==}
     cpu: [x64]
     os: [win32]
 
   '@cipherstash/protect-ffi@0.23.0':
     resolution: {integrity: sha512-Ca8MKLrrumC561VoPDOhuUZcF8C8YenqO1Ig9hSJSRUB+jFeIJXeyn7glExsvKYWtxOx/pRub9FV8A0RyuPHMg==}
 
-  '@cipherstash/protect-ffi@0.28.0':
-    resolution: {integrity: sha512-R2L/8HwMREkVKlR5KCcuELIWz4QNButSBQzY+nRDHl1PUXjRqWG1h265FkKVtTXKNKUup7rB4mswu+M+t9KF3A==}
+  '@cipherstash/protect-ffi@0.29.0':
+    resolution: {integrity: sha512-sBnmODaUUAClDWOlCZPf91cIscxZq9+lVjIj9TqnPTvMc7TIjIpWuKYFyJIx8Ur1EAKy8KZ00Eoy9viSsW/GLQ==}
 
   '@clack/core@1.3.1':
     resolution: {integrity: sha512-fT1qHVGAag4IEkrupZ6lRRbNCs1vS9P01KB/sG8zKgvUztbYtFBtQpjSITNwooDZ83tpsPzP0mRNs1/KVszCRA==}
@@ -2093,19 +2225,9 @@ packages:
       typescript:
         optional: true
 
-  '@rollup/rollup-android-arm-eabi@4.59.0':
-    resolution: {integrity: sha512-upnNBkA6ZH2VKGcBj9Fyl9IGNPULcjXRlg0LLeaioQWueH30p6IXtJEbKAgvyv+mJaMxSm1l6xwDXYjpEMiLMg==}
-    cpu: [arm]
-    os: [android]
-
   '@rollup/rollup-android-arm-eabi@4.60.4':
     resolution: {integrity: sha512-F5QXMSiFebS9hKZj02XhWLLnRpJ3B3AROP0tWbFBSj+6kCbg5m9j5JoHKd4mmSVy5mS/IMQloYgYxCuJC0fxEQ==}
     cpu: [arm]
-    os: [android]
-
-  '@rollup/rollup-android-arm64@4.59.0':
-    resolution: {integrity: sha512-hZ+Zxj3SySm4A/DylsDKZAeVg0mvi++0PYVceVyX7hemkw7OreKdCvW2oQ3T1FMZvCaQXqOTHb8qmBShoqk69Q==}
-    cpu: [arm64]
     os: [android]
 
   '@rollup/rollup-android-arm64@4.60.4':
@@ -2113,19 +2235,9 @@ packages:
     cpu: [arm64]
     os: [android]
 
-  '@rollup/rollup-darwin-arm64@4.59.0':
-    resolution: {integrity: sha512-W2Psnbh1J8ZJw0xKAd8zdNgF9HRLkdWwwdWqubSVk0pUuQkoHnv7rx4GiF9rT4t5DIZGAsConRE3AxCdJ4m8rg==}
-    cpu: [arm64]
-    os: [darwin]
-
   '@rollup/rollup-darwin-arm64@4.60.4':
     resolution: {integrity: sha512-tua0TaJxMOB1R0V0RS1jFZ/RpURFDJIOR2A6jWwQeawuFyS4gBW+rntLRaQd0EQ4bd6Vp44Z2rXW+YYDBsj6IA==}
     cpu: [arm64]
-    os: [darwin]
-
-  '@rollup/rollup-darwin-x64@4.59.0':
-    resolution: {integrity: sha512-ZW2KkwlS4lwTv7ZVsYDiARfFCnSGhzYPdiOU4IM2fDbL+QGlyAbjgSFuqNRbSthybLbIJ915UtZBtmuLrQAT/w==}
-    cpu: [x64]
     os: [darwin]
 
   '@rollup/rollup-darwin-x64@4.60.4':
@@ -2133,19 +2245,9 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@rollup/rollup-freebsd-arm64@4.59.0':
-    resolution: {integrity: sha512-EsKaJ5ytAu9jI3lonzn3BgG8iRBjV4LxZexygcQbpiU0wU0ATxhNVEpXKfUa0pS05gTcSDMKpn3Sx+QB9RlTTA==}
-    cpu: [arm64]
-    os: [freebsd]
-
   '@rollup/rollup-freebsd-arm64@4.60.4':
     resolution: {integrity: sha512-+O8OkVdyvXMtJEciu2wS/pzm1IxntEEQx3z5TAVy4l32G0etZn+RsA48ARRrFm6Ri8fvqPQfgrvNxSjKAbnd3g==}
     cpu: [arm64]
-    os: [freebsd]
-
-  '@rollup/rollup-freebsd-x64@4.59.0':
-    resolution: {integrity: sha512-d3DuZi2KzTMjImrxoHIAODUZYoUUMsuUiY4SRRcJy6NJoZ6iIqWnJu9IScV9jXysyGMVuW+KNzZvBLOcpdl3Vg==}
-    cpu: [x64]
     os: [freebsd]
 
   '@rollup/rollup-freebsd-x64@4.60.4':
@@ -2153,23 +2255,11 @@ packages:
     cpu: [x64]
     os: [freebsd]
 
-  '@rollup/rollup-linux-arm-gnueabihf@4.59.0':
-    resolution: {integrity: sha512-t4ONHboXi/3E0rT6OZl1pKbl2Vgxf9vJfWgmUoCEVQVxhW6Cw/c8I6hbbu7DAvgp82RKiH7TpLwxnJeKv2pbsw==}
-    cpu: [arm]
-    os: [linux]
-    libc: [glibc]
-
   '@rollup/rollup-linux-arm-gnueabihf@4.60.4':
     resolution: {integrity: sha512-EIPRXTVQpHyF8WOo219AD2yEltPehLTcTMz2fn6JsatLYSzQf00hj3rulF+yauOlF9/FtM2WpkT/hJh/KJFGhA==}
     cpu: [arm]
     os: [linux]
     libc: [glibc]
-
-  '@rollup/rollup-linux-arm-musleabihf@4.59.0':
-    resolution: {integrity: sha512-CikFT7aYPA2ufMD086cVORBYGHffBo4K8MQ4uPS/ZnY54GKj36i196u8U+aDVT2LX4eSMbyHtyOh7D7Zvk2VvA==}
-    cpu: [arm]
-    os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm-musleabihf@4.60.4':
     resolution: {integrity: sha512-J3Yh9PzzF1Ovah2At+lHiGQdsYgArxBbXv/zHfSyaiFQEqvNv7DcW98pCrmdjCZBrqBiKrKKe2V+aaSGWuBe/w==}
@@ -2177,23 +2267,11 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@rollup/rollup-linux-arm64-gnu@4.59.0':
-    resolution: {integrity: sha512-jYgUGk5aLd1nUb1CtQ8E+t5JhLc9x5WdBKew9ZgAXg7DBk0ZHErLHdXM24rfX+bKrFe+Xp5YuJo54I5HFjGDAA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
   '@rollup/rollup-linux-arm64-gnu@4.60.4':
     resolution: {integrity: sha512-BFDEZMYfUvLn37ONE1yMBojPxnMlTFsdyNoqncT0qFq1mAfllL+ATMMJd8TeuVMiX84s1KbcxcZbXInmcO2mRg==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
-
-  '@rollup/rollup-linux-arm64-musl@4.59.0':
-    resolution: {integrity: sha512-peZRVEdnFWZ5Bh2KeumKG9ty7aCXzzEsHShOZEFiCQlDEepP1dpUl/SrUNXNg13UmZl+gzVDPsiCwnV1uI0RUA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-arm64-musl@4.60.4':
     resolution: {integrity: sha512-pc9EYOSlOgdQ2uPl1o9PF6/kLSgaUosia7gOuS8mB69IxJvlclko1MECXysjs5ryez1/5zjYqx3+xYU0TU6R1A==}
@@ -2201,23 +2279,11 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@rollup/rollup-linux-loong64-gnu@4.59.0':
-    resolution: {integrity: sha512-gbUSW/97f7+r4gHy3Jlup8zDG190AuodsWnNiXErp9mT90iCy9NKKU0Xwx5k8VlRAIV2uU9CsMnEFg/xXaOfXg==}
-    cpu: [loong64]
-    os: [linux]
-    libc: [glibc]
-
   '@rollup/rollup-linux-loong64-gnu@4.60.4':
     resolution: {integrity: sha512-NxnomyxYerDh5n4iLrNa+sH+Z+U4BMEE46V2PgQ/hoB909i8gV1M5wPojWg9fk1jWpO3IQnOs20K4wyZuFLEFQ==}
     cpu: [loong64]
     os: [linux]
     libc: [glibc]
-
-  '@rollup/rollup-linux-loong64-musl@4.59.0':
-    resolution: {integrity: sha512-yTRONe79E+o0FWFijasoTjtzG9EBedFXJMl888NBEDCDV9I2wGbFFfJQQe63OijbFCUZqxpHz1GzpbtSFikJ4Q==}
-    cpu: [loong64]
-    os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-loong64-musl@4.60.4':
     resolution: {integrity: sha512-nbJnQ8a3z1mtmrwImCYhc6BGpThAyYVRQxw9uKSKG4wR6aAYno9sVjJ0zaZcW9BPJX1GbrDPf+SvdWjgTuDmnw==}
@@ -2225,23 +2291,11 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@rollup/rollup-linux-ppc64-gnu@4.59.0':
-    resolution: {integrity: sha512-sw1o3tfyk12k3OEpRddF68a1unZ5VCN7zoTNtSn2KndUE+ea3m3ROOKRCZxEpmT9nsGnogpFP9x6mnLTCaoLkA==}
-    cpu: [ppc64]
-    os: [linux]
-    libc: [glibc]
-
   '@rollup/rollup-linux-ppc64-gnu@4.60.4':
     resolution: {integrity: sha512-2EU6acNrQLd8tYvo/LXW535wupT3m6fo7HKo6lr7ktQoItxTyOL1ZCR/GfGCuXl2vR+zmfI6eRXkSemafv+iVg==}
     cpu: [ppc64]
     os: [linux]
     libc: [glibc]
-
-  '@rollup/rollup-linux-ppc64-musl@4.59.0':
-    resolution: {integrity: sha512-+2kLtQ4xT3AiIxkzFVFXfsmlZiG5FXYW7ZyIIvGA7Bdeuh9Z0aN4hVyXS/G1E9bTP/vqszNIN/pUKCk/BTHsKA==}
-    cpu: [ppc64]
-    os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-ppc64-musl@4.60.4':
     resolution: {integrity: sha512-WeBtoMuaMxiiIrO2IYP3xs6GMWkJP2C0EoT8beTLkUPmzV1i/UcOSVw1d5r9KBODtHKilG5yFxsGRnBbK3wJ4A==}
@@ -2249,23 +2303,11 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@rollup/rollup-linux-riscv64-gnu@4.59.0':
-    resolution: {integrity: sha512-NDYMpsXYJJaj+I7UdwIuHHNxXZ/b/N2hR15NyH3m2qAtb/hHPA4g4SuuvrdxetTdndfj9b1WOmy73kcPRoERUg==}
-    cpu: [riscv64]
-    os: [linux]
-    libc: [glibc]
-
   '@rollup/rollup-linux-riscv64-gnu@4.60.4':
     resolution: {integrity: sha512-FJHFfqpKUI3A10WrWKiFbBZ7yVbGT4q4B5o1qKFFojqpaYoh9LrQgqWCmmcxQzVSXYtyB5bzkXrYzlHTs21MYA==}
     cpu: [riscv64]
     os: [linux]
     libc: [glibc]
-
-  '@rollup/rollup-linux-riscv64-musl@4.59.0':
-    resolution: {integrity: sha512-nLckB8WOqHIf1bhymk+oHxvM9D3tyPndZH8i8+35p/1YiVoVswPid2yLzgX7ZJP0KQvnkhM4H6QZ5m0LzbyIAg==}
-    cpu: [riscv64]
-    os: [linux]
-    libc: [musl]
 
   '@rollup/rollup-linux-riscv64-musl@4.60.4':
     resolution: {integrity: sha512-mcEl6CUT5IAUmQf1m9FYSmVqCJlpQ8r8eyftFUHG8i9OhY7BkBXSUdnLH5DOf0wCOjcP9v/QO93zpmF1SptCCw==}
@@ -2273,21 +2315,9 @@ packages:
     os: [linux]
     libc: [musl]
 
-  '@rollup/rollup-linux-s390x-gnu@4.59.0':
-    resolution: {integrity: sha512-oF87Ie3uAIvORFBpwnCvUzdeYUqi2wY6jRFWJAy1qus/udHFYIkplYRW+wo+GRUP4sKzYdmE1Y3+rY5Gc4ZO+w==}
-    cpu: [s390x]
-    os: [linux]
-    libc: [glibc]
-
   '@rollup/rollup-linux-s390x-gnu@4.60.4':
     resolution: {integrity: sha512-ynt3JxVd2w2buzoKDWIyiV1pJW93xlQic1THVLXilz429oijRpSHivZAgp65KBu+cMcgf1eVVjdnTLvPxgCuoQ==}
     cpu: [s390x]
-    os: [linux]
-    libc: [glibc]
-
-  '@rollup/rollup-linux-x64-gnu@4.59.0':
-    resolution: {integrity: sha512-3AHmtQq/ppNuUspKAlvA8HtLybkDflkMuLK4DPo77DfthRb71V84/c4MlWJXixZz4uruIH4uaa07IqoAkG64fg==}
-    cpu: [x64]
     os: [linux]
     libc: [glibc]
 
@@ -2297,51 +2327,25 @@ packages:
     os: [linux]
     libc: [glibc]
 
-  '@rollup/rollup-linux-x64-musl@4.59.0':
-    resolution: {integrity: sha512-2UdiwS/9cTAx7qIUZB/fWtToJwvt0Vbo0zmnYt7ED35KPg13Q0ym1g442THLC7VyI6JfYTP4PiSOWyoMdV2/xg==}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
   '@rollup/rollup-linux-x64-musl@4.60.4':
     resolution: {integrity: sha512-+qfSY27qIrFfI/Hom04KYFw3GKZSGU4lXus51wsb5EuySfFlWRwjkKWoE9emgRw/ukoT4Udsj4W/+xxG8VbPKg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@rollup/rollup-openbsd-x64@4.59.0':
-    resolution: {integrity: sha512-M3bLRAVk6GOwFlPTIxVBSYKUaqfLrn8l0psKinkCFxl4lQvOSz8ZrKDz2gxcBwHFpci0B6rttydI4IpS4IS/jQ==}
-    cpu: [x64]
-    os: [openbsd]
-
   '@rollup/rollup-openbsd-x64@4.60.4':
     resolution: {integrity: sha512-VpTfOPHgVXEBeeR8hZ2O0F3aSso+JDWqTWmTmzcQKted54IAdUVbxE+j/MVxUsKa8L20HJhv3vUezVPoquqWjA==}
     cpu: [x64]
     os: [openbsd]
-
-  '@rollup/rollup-openharmony-arm64@4.59.0':
-    resolution: {integrity: sha512-tt9KBJqaqp5i5HUZzoafHZX8b5Q2Fe7UjYERADll83O4fGqJ49O1FsL6LpdzVFQcpwvnyd0i+K/VSwu/o/nWlA==}
-    cpu: [arm64]
-    os: [openharmony]
 
   '@rollup/rollup-openharmony-arm64@4.60.4':
     resolution: {integrity: sha512-IPOsh5aRYuLv/nkU51X10Bf75Bsf6+gZdx1X+QP5QM6lIJFHHqbHLG0uJn/hWthzo13UAc2umiUorqZy3axoZg==}
     cpu: [arm64]
     os: [openharmony]
 
-  '@rollup/rollup-win32-arm64-msvc@4.59.0':
-    resolution: {integrity: sha512-V5B6mG7OrGTwnxaNUzZTDTjDS7F75PO1ae6MJYdiMu60sq0CqN5CVeVsbhPxalupvTX8gXVSU9gq+Rx1/hvu6A==}
-    cpu: [arm64]
-    os: [win32]
-
   '@rollup/rollup-win32-arm64-msvc@4.60.4':
     resolution: {integrity: sha512-4QzE9E81OohJ/HKzHhsqU+zcYYojVOXlFMs1DdyMT6qXl/niOH7AVElmmEdUNHHS/oRkc++d5k6Vy85zFs0DEw==}
     cpu: [arm64]
-    os: [win32]
-
-  '@rollup/rollup-win32-ia32-msvc@4.59.0':
-    resolution: {integrity: sha512-UKFMHPuM9R0iBegwzKF4y0C4J9u8C6MEJgFuXTBerMk7EJ92GFVFYBfOZaSGLu6COf7FxpQNqhNS4c4icUPqxA==}
-    cpu: [ia32]
     os: [win32]
 
   '@rollup/rollup-win32-ia32-msvc@4.60.4':
@@ -2349,18 +2353,8 @@ packages:
     cpu: [ia32]
     os: [win32]
 
-  '@rollup/rollup-win32-x64-gnu@4.59.0':
-    resolution: {integrity: sha512-laBkYlSS1n2L8fSo1thDNGrCTQMmxjYY5G0WFWjFFYZkKPjsMBsgJfGf4TLxXrF6RyhI60L8TMOjBMvXiTcxeA==}
-    cpu: [x64]
-    os: [win32]
-
   '@rollup/rollup-win32-x64-gnu@4.60.4':
     resolution: {integrity: sha512-DRS4G7mi9lJxqEDezIkKCaUIKCrLUUDCUaCsTPCi/rtqaC6D/jjwslMQyiDU50Ka0JKpeXeRBFBAXwArY52vBw==}
-    cpu: [x64]
-    os: [win32]
-
-  '@rollup/rollup-win32-x64-msvc@4.59.0':
-    resolution: {integrity: sha512-2HRCml6OztYXyJXAvdDXPKcawukWY2GpR5/nxKp4iBgiO3wcoEGkAaqctIbZcNB6KlUQBIqt8VYkNSj2397EfA==}
     cpu: [x64]
     os: [win32]
 
@@ -2395,6 +2389,10 @@ packages:
 
   '@supabase/phoenix@0.4.4':
     resolution: {integrity: sha512-Gt0pqoXuIqX/8dvG0OKp/wMCobXNH3klNbUPBNyOfN0YA1IswrM3HyWFMOPk1Jy+BRaIyDPcFx4jLBwHNmlyfQ==}
+
+  '@supabase/postgrest-js@2.105.4':
+    resolution: {integrity: sha512-SppIyLo/kTwIlz1qpv2HN1EQqBg0GVktrDDFsXygYROha3MgVn4rT7p5EjFHFqXQm2rdRGb/BI7bc+jr10m91w==}
+    engines: {node: '>=20.0.0'}
 
   '@supabase/postgrest-js@2.110.0':
     resolution: {integrity: sha512-ZbC1QZL3jcvBUfVKjJbgRM27G4Mg3Zzqdm44m5pJafe1e52Cli793EOnwQucomBAGEUDd03Nzaf7XV3ji/XexQ==}
@@ -2469,8 +2467,8 @@ packages:
   '@types/node@22.20.0':
     resolution: {integrity: sha512-QWlFW2wf3nTjC13/DqRnBpR4ZO36VJH/JVBkA/vcnmbTBNQIlnObqyqZE1tUR7+Ni23Lda8R1BxMfbXRpCUx5g==}
 
-  '@types/node@26.1.0':
-    resolution: {integrity: sha512-O0A1G3xPGy4w7AgQdAQYUlQ+BKk2Oovw8eRpofyp5KdBZULnbe+WqaOVNrm705SHphCiG4XHsACrSmPu1f+Kgw==}
+  '@types/node@25.8.0':
+    resolution: {integrity: sha512-TCFSk8IZh+iLX1xtksoBVtdmgL+1IX0fC9BeU4QqFSuNdN/K+HUlhqOzEmSYYpZUVsLYcPqc9KX+60iDuninSQ==}
 
   '@types/pg@8.16.0':
     resolution: {integrity: sha512-RmhMd/wD+CF8Dfo+cVIy3RR5cl8CyfXQ0tGgW6XBL8L4LM/UTEbNXYRbLwU6w+CgrKBNbrQWt4FUtTfaU5jSYQ==}
@@ -2517,11 +2515,6 @@ packages:
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
-
-  acorn@8.16.0:
-    resolution: {integrity: sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==}
-    engines: {node: '>=0.4.0'}
-    hasBin: true
 
   acorn@8.17.0:
     resolution: {integrity: sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==}
@@ -3812,11 +3805,6 @@ packages:
     engines: {node: 20 || >=22}
     hasBin: true
 
-  rollup@4.59.0:
-    resolution: {integrity: sha512-2oMpl67a3zCH9H79LeMcbDhXW/UmWG/y2zuqnF2jQq5uq9TbM9TVyXvA4+t+ne2IIkBdrLpAaRQAvo7YI/Yyeg==}
-    engines: {node: '>=18.0.0', npm: '>=8.0.0'}
-    hasBin: true
-
   rollup@4.60.4:
     resolution: {integrity: sha512-WHeFSbZYsPu3+bLoNRUuAO+wavNlocOPf3wSHTP7hcFKVnJeWsYlCDbr3mTS14FCizf9ccIxXA8sGL8zKeQN3g==}
     engines: {node: '>=18.0.0', npm: '>=8.0.0'}
@@ -4098,8 +4086,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici-types@8.3.0:
-    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
+  undici-types@7.24.6:
+    resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
 
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
@@ -4516,40 +4504,42 @@ snapshots:
       '@cipherstash/auth-linux-x64-musl': 0.41.0
       '@cipherstash/auth-win32-x64-msvc': 0.41.0
 
+  '@cipherstash/eql@3.0.0': {}
+
   '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.28.0':
+  '@cipherstash/protect-ffi-darwin-arm64@0.29.0':
     optional: true
 
   '@cipherstash/protect-ffi-darwin-x64@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-x64@0.28.0':
+  '@cipherstash/protect-ffi-darwin-x64@0.29.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-arm64-gnu@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.28.0':
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.29.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-x64-gnu@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.28.0':
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.29.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-x64-musl@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.28.0':
+  '@cipherstash/protect-ffi-linux-x64-musl@0.29.0':
     optional: true
 
   '@cipherstash/protect-ffi-win32-x64-msvc@0.23.0':
     optional: true
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.28.0':
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.29.0':
     optional: true
 
   '@cipherstash/protect-ffi@0.23.0':
@@ -4563,16 +4553,16 @@ snapshots:
       '@cipherstash/protect-ffi-linux-x64-musl': 0.23.0
       '@cipherstash/protect-ffi-win32-x64-msvc': 0.23.0
 
-  '@cipherstash/protect-ffi@0.28.0':
+  '@cipherstash/protect-ffi@0.29.0':
     dependencies:
       '@neon-rs/load': 0.1.82
     optionalDependencies:
-      '@cipherstash/protect-ffi-darwin-arm64': 0.28.0
-      '@cipherstash/protect-ffi-darwin-x64': 0.28.0
-      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.28.0
-      '@cipherstash/protect-ffi-linux-x64-gnu': 0.28.0
-      '@cipherstash/protect-ffi-linux-x64-musl': 0.28.0
-      '@cipherstash/protect-ffi-win32-x64-msvc': 0.28.0
+      '@cipherstash/protect-ffi-darwin-arm64': 0.29.0
+      '@cipherstash/protect-ffi-darwin-x64': 0.29.0
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.29.0
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.29.0
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.29.0
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.29.0
 
   '@clack/core@1.3.1':
     dependencies:
@@ -5448,151 +5438,76 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
-  '@rollup/rollup-android-arm-eabi@4.59.0':
-    optional: true
-
   '@rollup/rollup-android-arm-eabi@4.60.4':
-    optional: true
-
-  '@rollup/rollup-android-arm64@4.59.0':
     optional: true
 
   '@rollup/rollup-android-arm64@4.60.4':
     optional: true
 
-  '@rollup/rollup-darwin-arm64@4.59.0':
-    optional: true
-
   '@rollup/rollup-darwin-arm64@4.60.4':
-    optional: true
-
-  '@rollup/rollup-darwin-x64@4.59.0':
     optional: true
 
   '@rollup/rollup-darwin-x64@4.60.4':
     optional: true
 
-  '@rollup/rollup-freebsd-arm64@4.59.0':
-    optional: true
-
   '@rollup/rollup-freebsd-arm64@4.60.4':
-    optional: true
-
-  '@rollup/rollup-freebsd-x64@4.59.0':
     optional: true
 
   '@rollup/rollup-freebsd-x64@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-arm-gnueabihf@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-arm-gnueabihf@4.60.4':
-    optional: true
-
-  '@rollup/rollup-linux-arm-musleabihf@4.59.0':
     optional: true
 
   '@rollup/rollup-linux-arm-musleabihf@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-arm64-gnu@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-arm64-gnu@4.60.4':
-    optional: true
-
-  '@rollup/rollup-linux-arm64-musl@4.59.0':
     optional: true
 
   '@rollup/rollup-linux-arm64-musl@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-loong64-gnu@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-loong64-gnu@4.60.4':
-    optional: true
-
-  '@rollup/rollup-linux-loong64-musl@4.59.0':
     optional: true
 
   '@rollup/rollup-linux-loong64-musl@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-ppc64-gnu@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-ppc64-gnu@4.60.4':
-    optional: true
-
-  '@rollup/rollup-linux-ppc64-musl@4.59.0':
     optional: true
 
   '@rollup/rollup-linux-ppc64-musl@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-riscv64-gnu@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-riscv64-gnu@4.60.4':
-    optional: true
-
-  '@rollup/rollup-linux-riscv64-musl@4.59.0':
     optional: true
 
   '@rollup/rollup-linux-riscv64-musl@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-s390x-gnu@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-s390x-gnu@4.60.4':
-    optional: true
-
-  '@rollup/rollup-linux-x64-gnu@4.59.0':
     optional: true
 
   '@rollup/rollup-linux-x64-gnu@4.60.4':
     optional: true
 
-  '@rollup/rollup-linux-x64-musl@4.59.0':
-    optional: true
-
   '@rollup/rollup-linux-x64-musl@4.60.4':
-    optional: true
-
-  '@rollup/rollup-openbsd-x64@4.59.0':
     optional: true
 
   '@rollup/rollup-openbsd-x64@4.60.4':
     optional: true
 
-  '@rollup/rollup-openharmony-arm64@4.59.0':
-    optional: true
-
   '@rollup/rollup-openharmony-arm64@4.60.4':
-    optional: true
-
-  '@rollup/rollup-win32-arm64-msvc@4.59.0':
     optional: true
 
   '@rollup/rollup-win32-arm64-msvc@4.60.4':
     optional: true
 
-  '@rollup/rollup-win32-ia32-msvc@4.59.0':
-    optional: true
-
   '@rollup/rollup-win32-ia32-msvc@4.60.4':
     optional: true
 
-  '@rollup/rollup-win32-x64-gnu@4.59.0':
-    optional: true
-
   '@rollup/rollup-win32-x64-gnu@4.60.4':
-    optional: true
-
-  '@rollup/rollup-win32-x64-msvc@4.59.0':
     optional: true
 
   '@rollup/rollup-win32-x64-msvc@4.60.4':
@@ -5617,6 +5532,10 @@ snapshots:
       tslib: 2.8.1
 
   '@supabase/phoenix@0.4.4': {}
+
+  '@supabase/postgrest-js@2.105.4':
+    dependencies:
+      tslib: 2.8.1
 
   '@supabase/postgrest-js@2.110.0':
     dependencies:
@@ -5683,9 +5602,9 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/node@26.1.0':
+  '@types/node@25.8.0':
     dependencies:
-      undici-types: 8.3.0
+      undici-types: 7.24.6
     optional: true
 
   '@types/pg@8.16.0':
@@ -5697,7 +5616,7 @@ snapshots:
   '@types/pg@8.20.0':
     dependencies:
       '@types/node': 22.20.0
-      pg-protocol: 1.13.0
+      pg-protocol: 1.15.0
       pg-types: 2.2.0
 
   '@types/semver@7.7.1': {}
@@ -5722,13 +5641,13 @@ snapshots:
     optionalDependencies:
       vite: 7.3.6(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
-  '@vitest/mocker@3.2.6(vite@7.3.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))':
+  '@vitest/mocker@3.2.6(vite@7.3.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 3.2.6
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
 
   '@vitest/pretty-format@3.2.6':
     dependencies:
@@ -5761,10 +5680,7 @@ snapshots:
       mime-types: 3.0.2
       negotiator: 1.0.0
 
-  acorn@8.16.0: {}
-
-  acorn@8.17.0:
-    optional: true
+  acorn@8.17.0: {}
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
@@ -6262,7 +6178,7 @@ snapshots:
     dependencies:
       magic-string: 0.30.21
       mlly: 1.8.2
-      rollup: 4.59.0
+      rollup: 4.60.4
 
   forwarded@0.2.0: {}
 
@@ -6575,7 +6491,7 @@ snapshots:
 
   mlly@1.8.2:
     dependencies:
-      acorn: 8.16.0
+      acorn: 8.17.0
       pathe: 2.0.3
       pkg-types: 1.3.1
       ufo: 1.6.4
@@ -6731,7 +6647,7 @@ snapshots:
     dependencies:
       pg: 8.13.1
 
-  pg-pool@3.13.0(pg@8.20.0):
+  pg-pool@3.14.0(pg@8.20.0):
     dependencies:
       pg: 8.20.0
 
@@ -6763,13 +6679,13 @@ snapshots:
 
   pg@8.20.0:
     dependencies:
-      pg-connection-string: 2.12.0
-      pg-pool: 3.13.0(pg@8.20.0)
-      pg-protocol: 1.13.0
+      pg-connection-string: 2.14.0
+      pg-pool: 3.14.0(pg@8.20.0)
+      pg-protocol: 1.15.0
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
-      pg-cloudflare: 1.3.0
+      pg-cloudflare: 1.4.0
 
   pg@8.21.0:
     dependencies:
@@ -6910,37 +6826,6 @@ snapshots:
     dependencies:
       glob: 13.0.6
       package-json-from-dist: 1.0.1
-
-  rollup@4.59.0:
-    dependencies:
-      '@types/estree': 1.0.8
-    optionalDependencies:
-      '@rollup/rollup-android-arm-eabi': 4.59.0
-      '@rollup/rollup-android-arm64': 4.59.0
-      '@rollup/rollup-darwin-arm64': 4.59.0
-      '@rollup/rollup-darwin-x64': 4.59.0
-      '@rollup/rollup-freebsd-arm64': 4.59.0
-      '@rollup/rollup-freebsd-x64': 4.59.0
-      '@rollup/rollup-linux-arm-gnueabihf': 4.59.0
-      '@rollup/rollup-linux-arm-musleabihf': 4.59.0
-      '@rollup/rollup-linux-arm64-gnu': 4.59.0
-      '@rollup/rollup-linux-arm64-musl': 4.59.0
-      '@rollup/rollup-linux-loong64-gnu': 4.59.0
-      '@rollup/rollup-linux-loong64-musl': 4.59.0
-      '@rollup/rollup-linux-ppc64-gnu': 4.59.0
-      '@rollup/rollup-linux-ppc64-musl': 4.59.0
-      '@rollup/rollup-linux-riscv64-gnu': 4.59.0
-      '@rollup/rollup-linux-riscv64-musl': 4.59.0
-      '@rollup/rollup-linux-s390x-gnu': 4.59.0
-      '@rollup/rollup-linux-x64-gnu': 4.59.0
-      '@rollup/rollup-linux-x64-musl': 4.59.0
-      '@rollup/rollup-openbsd-x64': 4.59.0
-      '@rollup/rollup-openharmony-arm64': 4.59.0
-      '@rollup/rollup-win32-arm64-msvc': 4.59.0
-      '@rollup/rollup-win32-ia32-msvc': 4.59.0
-      '@rollup/rollup-win32-x64-gnu': 4.59.0
-      '@rollup/rollup-win32-x64-msvc': 4.59.0
-      fsevents: 2.3.3
 
   rollup@4.60.4:
     dependencies:
@@ -7238,11 +7123,11 @@ snapshots:
       picocolors: 1.1.1
       postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(yaml@2.9.0)
       resolve-from: 5.0.0
-      rollup: 4.59.0
+      rollup: 4.60.4
       source-map: 0.7.6
       sucrase: 3.35.1
       tinyexec: 0.3.2
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.16
       tree-kill: 1.2.2
     optionalDependencies:
       postcss: 8.5.14
@@ -7282,7 +7167,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici-types@8.3.0:
+  undici-types@7.24.6:
     optional: true
 
   unicorn-magic@0.3.0: {}
@@ -7320,13 +7205,13 @@ snapshots:
       - tsx
       - yaml
 
-  vite-node@3.2.4(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -7358,7 +7243,7 @@ snapshots:
       tsx: 4.22.1
       yaml: 2.9.0
 
-  vite@7.3.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite@7.3.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.4)
@@ -7367,7 +7252,7 @@ snapshots:
       rollup: 4.60.4
       tinyglobby: 0.2.16
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 25.8.0
       fsevents: 2.3.3
       jiti: 2.7.0
       lightningcss: 1.30.2
@@ -7416,11 +7301,11 @@ snapshots:
       - tsx
       - yaml
 
-  vitest@3.2.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vitest@3.2.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.6
-      '@vitest/mocker': 3.2.6(vite@7.3.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.6(vite@7.3.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.6
       '@vitest/runner': 3.2.6
       '@vitest/snapshot': 3.2.6
@@ -7438,11 +7323,11 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.6(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@26.1.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@25.8.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 26.1.0
+      '@types/node': 25.8.0
     transitivePeerDependencies:
       - jiti
       - less

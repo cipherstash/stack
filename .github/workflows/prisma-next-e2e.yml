@@ -38,8 +38,8 @@ jobs:
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
 
     env:
-      CS_WORKSPACE_CRN: ${{ secrets.CS_WORKSPACE_CRN }}
-      CS_CLIENT_ID: ${{ secrets.CS_CLIENT_ID }}
+      CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
@@ -67,6 +67,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The global-setup hook hard-errors without CS_WORKSPACE_CRN, but a
+      # missing sibling secret could still degrade coverage silently — assert
+      # all four up front so a rotated / fork-PR-absent secret fails loudly.
+      - name: Require CipherStash secrets
+        uses: ./.github/actions/require-cs-secrets
+        with:
+          workspace-crn: ${{ vars.CS_WORKSPACE_CRN }}
+          client-id: ${{ vars.CS_CLIENT_ID }}
+          client-key: ${{ secrets.CS_CLIENT_KEY }}
+          client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
+
       # Write the CS_* credentials and the harness DATABASE_URL into the
       # example app's .env so the runtime + the `prisma-next migration
       # apply` invocation in global-setup both pick them up. The harness
@@ -78,8 +89,8 @@ jobs:
         run: |
           touch ./examples/prisma/.env
           echo "DATABASE_URL=postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e" >> ./examples/prisma/.env
-          echo "CS_WORKSPACE_CRN=${{ secrets.CS_WORKSPACE_CRN }}" >> ./examples/prisma/.env
-          echo "CS_CLIENT_ID=${{ secrets.CS_CLIENT_ID }}" >> ./examples/prisma/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./examples/prisma/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./examples/prisma/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./examples/prisma/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./examples/prisma/.env
 

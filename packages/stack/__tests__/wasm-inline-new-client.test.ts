@@ -33,12 +33,13 @@ vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ({
 }))
 
 import { newClient as wasmNewClient } from '@cipherstash/protect-ffi/wasm-inline'
-import { Encryption, encryptedColumn, encryptedTable } from '../src/wasm-inline'
+import { Encryption, encryptedTable, types } from '../src/wasm-inline'
 
 const CRN = 'crn:ap-southeast-2.aws:test-workspace'
 
+// The WASM entry is EQL v3 — author with the `types` DSL re-exported from it.
 const users = encryptedTable('users', {
-  email: encryptedColumn('email'),
+  email: types.TextSearch('email'),
 })
 
 beforeEach(() => {
@@ -83,9 +84,9 @@ describe('wasm-inline Encryption → newClient (protect-ffi 0.25 single-object f
   })
 
   it('passes a cast_as-normalised encryptConfig (SDK "string" → EQL "text")', async () => {
-    // `encryptedColumn('email')` defaults to `cast_as: 'string'`; the WASM
-    // client only accepts EQL-native variants, so the factory must run the
-    // config through `normalizeCastAs` before handing it to `newClient`.
+    // `types.TextSearch('email')` carries `cast_as: 'string'`; the WASM client
+    // only accepts EQL-native variants, so the factory must run the config
+    // through `normalizeCastAs` before handing it to `newClient`.
     await Encryption({
       schemas: [users],
       config: {
