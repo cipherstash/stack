@@ -440,6 +440,9 @@ importers:
       '@prisma-next/target-postgres':
         specifier: 0.14.0
         version: 0.14.0(typanion@3.14.0)(typescript@5.9.3)
+      fast-check:
+        specifier: ^4.8.0
+        version: 4.8.0
       pathe:
         specifier: ^2.0.3
         version: 2.0.3
