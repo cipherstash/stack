@@ -80,6 +80,10 @@ type OperandEncryptionClient = {
   encrypt(value: never, opts: never): ChainableOperation<unknown>
 }
 
+// Path helpers now live in @cipherstash/stack/adapter-kit (shared with the
+// Supabase adapter, #650); re-exported so existing imports keep working.
+export { parseSelectorSegments, reconstructSelectorDocument }
+
 /**
  * A dedicated error for v3 operator gating and operand-encryption failures,
  * carrying the offending column/table/operator for diagnostics.
@@ -89,10 +93,6 @@ type OperandEncryptionClient = {
  * `./eql/v3/drizzle` — two independently-versioned public entry points — so the
  * duplication is deliberate, not an oversight.
  */
-// Path helpers now live in @cipherstash/stack/adapter-kit (shared with the
-// Supabase adapter, #650); re-exported so existing imports keep working.
-export { parseSelectorSegments, reconstructSelectorDocument }
-
 export class EncryptionOperatorError extends Error {
   constructor(
     message: string,

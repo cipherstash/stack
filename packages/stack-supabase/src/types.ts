@@ -91,14 +91,43 @@ export type NonQueryableV3Keys<Table extends AnyV3Table> = {
 }[Extract<keyof V3ColumnsOfTable<Table>, string>]
 
 /**
- * Row keys a v3 builder accepts in filter methods: every row key except the
- * table's storage-only encrypted columns. Plaintext (non-schema) columns pass
- * through untouched, exactly as in v2.
+ * The capability names a SCALAR predicate (`eq`/`neq`/`gt`/`gte`/`lt`/`lte`/
+ * `in`) can exercise. `searchableJson` is deliberately absent: an encrypted
+ * JSON document has no scalar terms, so a scalar predicate against it can only
+ * ever fail at runtime.
+ */
+type ScalarQueryTypeName = 'equality' | 'orderAndRange' | 'freeTextSearch'
+
+/**
+ * JS property names of a v3 table's columns that support NO scalar predicate:
+ * storage-only columns (no capability at all) AND `types.Json` columns (whose
+ * only capability is `searchableJson` — containment/selector querying, reached
+ * via `contains()`/`selectorEq()`/`selectorNe()` or the dedicated
+ * `filter(col, 'cs', …)` / `not(col, 'contains', …)` overloads, never via a
+ * scalar predicate).
+ */
+type NonScalarQueryableV3Keys<Table extends AnyV3Table> = {
+  [K in Extract<keyof V3ColumnsOfTable<Table>, string>]: [
+    Extract<
+      QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>,
+      ScalarQueryTypeName
+    >,
+  ] extends [never]
+    ? K
+    : never
+}[Extract<keyof V3ColumnsOfTable<Table>, string>]
+
+/**
+ * Row keys a v3 builder accepts in SCALAR filter methods: every row key except
+ * the table's encrypted columns with no scalar capability (storage-only
+ * columns, and `types.Json` documents — see {@link NonScalarQueryableV3Keys};
+ * before #650's `searchableJson` arm the two sets coincided). Plaintext
+ * (non-schema) columns pass through untouched, exactly as in v2.
  */
 export type V3FilterableKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
-> = Exclude<Extract<keyof Row, string>, NonQueryableV3Keys<Table>>
+> = Exclude<Extract<keyof Row, string>, NonScalarQueryableV3Keys<Table>>
 
 /**
  * JS property names of a v3 table's columns that carry NO `freeTextSearch`
@@ -221,46 +250,6 @@ type PlaintextContainsValue<V> = V extends readonly unknown[]
     : never
 
 /**
- * The `contains()` operand for column `K`.
- *
- * A DECLARED encrypted column reaching `contains` necessarily carries a
- * `freeTextSearch` capability — only `public.eql_v3_text_match` and
- * `public.eql_v3_text_search` do, and both `cast_as` to `string` — so its operand is
- * the string to tokenize into a bloom-filter query term.
- *
- * Any other key is a plaintext passthrough, where `contains` means PostgREST's
- * native jsonb/array containment and the operand follows the column
- * ({@link PlaintextContainsValue}). A blanket `value: string` made that half of
- * {@link V3FreeTextSearchableKeys} unreachable from TypeScript; a blanket
- * {@link NativeContainsValue} then over-corrected, admitting an array on a
- * plaintext scalar.
- *
- * A UNION key is only as permissive as its strictest member: if ANY member is a
- * declared column, the operand is the string term. `[K] extends [declared]` gets
- * this backwards — a mixed `'email' | 'tags'` fails that test and falls to the
- * plaintext branch, so an array typechecks for a key that may resolve to the
- * encrypted `email` at runtime. Nothing downstream catches it: the operand goes
- * straight to `encrypt()`, which has no plaintext-type guard.
- *
- * So test the INTERSECTION instead, wrapped in a tuple to stop the naked type
- * parameter distributing (which would rebuild the same permissive union).
- *
- * `PlaintextContainsValue` DOES distribute over `Row[K]`, which is safe only
- * because the tuple guard above has already excluded every encrypted member: a
- * union of plaintext keys (`'tags' | 'meta'`) must accept the operands of each.
- * The residual imprecision is a plaintext scalar unioned with a container column
- * (`'note' | 'tags'`), where an array still typechecks — and yields a loud 42883
- * rather than a silent mis-encryption.
- */
-export type V3ContainsValue<
-  Table extends AnyV3Table,
-  Row extends Record<string, unknown>,
-  K extends string,
-> = [Extract<K, Extract<keyof V3ColumnsOfTable<Table>, string>>] extends [never]
-  ? PlaintextContainsValue<K extends keyof Row ? Row[K] : never>
-  : string
-
-/**
  * JS property names of a v3 table's columns that `order()` cannot sort by. Two
  * cases:
  *
@@ -369,25 +358,58 @@ export interface EncryptedQueryBuilderV3<
   ): EncryptedQueryBuilderV3<Table, Row>
   /** Encrypted JSONPath-selector equality on a `types.Json` column:
    * `selectorEq('doc', '$.user.role', 'admin')` matches rows whose document
-   * carries exactly that value at that path. Compiled to encrypted containment
-   * of the reconstructed `{user: {role: 'admin'}}` needle — equality at a path
-   * IS containment of the path-shaped document. Paths are dot-notation object
-   * keys (`'$.a.b'`); array/wildcard steps are rejected. */
+   * carries that value at that path, compiled to encrypted containment of the
+   * reconstructed `{user: {role: 'admin'}}` needle. ARRAY-LEAF CAVEAT (pinned
+   * by the live integration suite): an ARRAY at the path does NOT match a
+   * scalar needle — ste_vec encodes array elements under their own selectors —
+   * so `{a:[40,30]}` is NOT matched by `selectorEq('$.a', 30)`; to match an
+   * array-valued path, pass the full array through `contains()`. Paths are
+   * dot-notation object keys (`'$.a.b'`); array/wildcard steps are
+   * rejected. */
   selectorEq<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
   ): EncryptedQueryBuilderV3<Table, Row>
   /** Encrypted JSONPath-selector inequality. Matches rows whose document does
-   * NOT carry `value` at `path` — INCLUDING rows where the path is absent
-   * (mirrors the Drizzle selector's documented `ne` semantics; it is `NOT
-   * contains`, and a missing path never contains). Selector ordering
+   * NOT carry `value` at `path` — INCLUDING rows where the path is absent and
+   * rows whose document column is SQL NULL (compiled to
+   * `payload IS NULL OR NOT contains`, matching the Drizzle selector's `ne`
+   * semantics for both absence cases). The array-leaf caveat on
+   * {@link selectorEq} carries over: an ARRAY at `path` is never equal to a
+   * scalar needle, so such rows are INCLUDED here. Selector ordering
    * (`gt`/`lt`/…) is not yet expressible over PostgREST — see
    * cipherstash/encrypt-query-language#407. */
   selectorNe<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
+  ): EncryptedQueryBuilderV3<Table, Row>
+  /** Raw containment spelling on an encrypted `types.Json` column — the ONLY
+   * `filter()` form a JSON column supports (scalar operators have no terms to
+   * compare; they are compile-excluded via {@link V3FilterableKeys}). */
+  filter<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    operator: 'cs',
+    value: EncryptedJsonContainsValue,
+  ): EncryptedQueryBuilderV3<Table, Row>
+  filter<K extends V3FilterableKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    operator: string,
+    value: Row[K],
+  ): EncryptedQueryBuilderV3<Table, Row>
+  /** Negated exact containment on an encrypted `types.Json` column (PostgREST
+   * `not.cs`). Note the bare form EXCLUDES rows whose document column is SQL
+   * NULL (three-valued logic) — {@link selectorNe} adds the IS NULL arm. */
+  not<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    operator: 'contains',
+    value: EncryptedJsonContainsValue,
+  ): EncryptedQueryBuilderV3<Table, Row>
+  not<K extends V3FilterableKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    operator: string,
+    value: Row[K],
   ): EncryptedQueryBuilderV3<Table, Row>
 }
 

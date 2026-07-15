@@ -80,6 +80,22 @@ describe('contains() on an encrypted types.Json column', () => {
     )
   })
 
+  it('rejects empty needles — {} and [] match every row', () => {
+    const { builder } = makeBuilder()
+    expect(() => builder.contains('payload', {})).toThrow(/matches every row/)
+    expect(() => builder.contains('payload', [])).toThrow(/matches every row/)
+  })
+
+  it('rejects non-plain objects (Date/Map) that would serialize to scalars or {}', () => {
+    const { builder } = makeBuilder()
+    expect(() => builder.contains('payload', new Date() as never)).toThrow(
+      /takes a sub-document/,
+    )
+    expect(() =>
+      builder.contains('payload', new Map([['a', 1]]) as never),
+    ).toThrow(/takes a sub-document/)
+  })
+
   it('still rejects contains() on an encrypted TEXT column (that is matches())', () => {
     const { builder } = makeBuilder()
     expect(() => builder.contains('name', { any: 'thing' })).toThrow(
@@ -153,7 +169,7 @@ describe('selectorEq()', () => {
     ).toThrow(/scalar leaf/)
     expect(() =>
       builder.selectorEq('payload', '$.user.role', null as never),
-    ).toThrow(/non-null scalar/)
+    ).toThrow(/non-null scalar leaf.*is\(column, null\)/s)
   })
 
   it('rejects a non-JSON column', () => {
@@ -168,16 +184,22 @@ describe('selectorEq()', () => {
 })
 
 describe('selectorNe()', () => {
-  it('emits the negated containment (not + cs) of the reconstructed needle', async () => {
+  it('emits the IS-NULL-inclusive or: payload.is.null, payload.not.cs.<needle>', async () => {
     const { supabase, builder } = makeBuilder()
     await builder.select('id').selectorNe('payload', '$.user.role', 'admin')
 
-    const call = containsCall(supabase, 'not')
-    expect(call.args[0]).toBe('payload')
-    expect(call.args[1]).toBe('cs')
-    expect(JSON.parse(call.args[2] as string).pt).toEqual({
-      user: { role: 'admin' },
-    })
+    // NULL-document parity with Drizzle's ne: a bare not.cs would drop rows
+    // whose payload column is SQL NULL (three-valued logic), so selectorNe
+    // compiles to a structured OR whose containment arm is encrypted.
+    const call = supabase.calls.find((c) => c.method === 'or')
+    expect(call).toBeDefined()
+    const orString = String(call?.args[0])
+    expect(orString).toContain('payload.is.null')
+    expect(orString).toContain('payload.not.cs.')
+    // The needle in the or-string is the ENCRYPTED envelope (quote-escaped by
+    // the or-value formatter), not a plaintext containment literal.
+    expect(orString).toContain('\\"pt\\"')
+    expect(orString).toContain('admin')
   })
 
   it('shares selectorEq validation (path + leaf + column kind)', () => {
@@ -188,6 +210,53 @@ describe('selectorNe()', () => {
     expect(() => builder.selectorNe('name', '$.a', 'x')).toThrow(
       /requires an encrypted JSON/,
     )
+  })
+})
+
+describe('the resolver operand boundary (non-method spellings)', () => {
+  it("raw .filter(col, 'cs', string) throws the sub-document steer, not a silent scalar query", async () => {
+    // Pre-#650 this failed on capability; the searchableJson resolution must
+    // not turn it into a silently-empty containment of a JSON string scalar.
+    const { builder } = makeBuilder()
+    const { error, status } = await builder
+      .select('id')
+      .filter('payload', 'cs', '{"role":"admin"}')
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/takes a sub-document/)
+  })
+
+  it("not(col, 'matches', …) on a JSON column throws the steer", () => {
+    const { builder } = makeBuilder()
+    expect(() => builder.not('payload', 'matches', 'admin')).toThrow(
+      /does not apply to encrypted JSON column/,
+    )
+  })
+
+  it('an .or() string condition with a raw cs term is rejected loudly', async () => {
+    const { builder } = makeBuilder()
+    const { error, status } = await builder.select('id').or('payload.cs.admin')
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/takes a sub-document/)
+  })
+
+  it('a structured .or() contains condition with a sub-document is encrypted', async () => {
+    const { supabase, builder } = makeBuilder()
+    await builder
+      .select('id')
+      .or([{ column: 'payload', op: 'contains', value: { a: 1 } }])
+    const call = supabase.calls.find((c) => c.method === 'or')
+    const orString = String(call?.args[0])
+    expect(orString).toContain('payload.cs.')
+    expect(orString).toContain('\\"pt\\"')
+  })
+
+  it('a structured .or() contains condition with an empty needle is rejected', async () => {
+    const { builder } = makeBuilder()
+    const { error, status } = await builder
+      .select('id')
+      .or([{ column: 'payload', op: 'contains', value: {} }])
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/matches every row/)
   })
 })
 
@@ -214,6 +283,16 @@ describe('raw filter routing on a JSON column', () => {
     await builder.select('id').not('payload', 'contains', { a: 1 })
     const call = containsCall(supabase, 'not')
     expect(call.args[1]).toBe('cs')
+    // The operand must be the ENCRYPTED envelope — a plaintext containment
+    // literal here would mean the term skipped encryption entirely.
+    expect(JSON.parse(call.args[2] as string).pt).toEqual({ a: 1 })
+  })
+
+  it('rejects a whitespace-at-boundary selector path', () => {
+    const { builder } = makeBuilder()
+    expect(() =>
+      builder.selectorEq('payload', '$.user .role', 'admin'),
+    ).toThrow(/whitespace at a segment boundary/)
   })
 
   it('not(col, "contains", …) stays rejected on an encrypted TEXT column', () => {

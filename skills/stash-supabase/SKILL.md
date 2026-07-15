@@ -592,8 +592,14 @@ es.from("events").select("id").selectorNe("payload", "$.user.role", "admin")
   rejected, and values must be scalars (an object operand belongs to
   `contains()`).
 - `selectorNe` matches rows that do NOT carry the value — **including rows
-  where the path is absent entirely** (it is NOT-contains, and a missing path
-  never contains). This mirrors the Drizzle selector's `ne` semantics.
+  where the path is absent entirely, and rows whose document column is SQL
+  NULL** (it compiles to `payload.is.null OR payload.not.cs.<needle>`, matching
+  the Drizzle selector's `ne` semantics for both absence cases).
+- **Array-valued paths:** a scalar needle does NOT match an array at the path —
+  ste_vec encodes array elements under their own selectors — so
+  `selectorEq("payload", "$.roles", "admin")` does not match
+  `{roles: ["admin", "analyst"]}` (and `selectorNe` includes that row). To
+  match an array-valued path, pass the full array through `contains()`.
 - **Selector ordering (`gt`/`gte`/`lt`/`lte`) is not available on Supabase.**
   PostgREST cannot reach the entry-comparison operators (it wraps JSON arrow
   paths in `to_jsonb`, and bare-column comparison is blocked by design); it
@@ -605,8 +611,15 @@ es.from("events").select("id").selectorNe("payload", "$.user.role", "admin")
   throws with a steer; scalar filters (`eq`, `gt`, `in`, …) on the column are
   rejected by capability.
 - The containment/selector operand is a **full storage envelope** of the
-  needle document — the same INTERIM shape (and the same security caveat about
-  ciphertext in GET query strings) as every other v3 filter operand above.
+  needle document. The GET-query-string security caveat above applies with an
+  important difference in degree: a JSON needle carries the root decryptable
+  ciphertext PLUS one ciphertext-bearing entry **per node of the sub-document**
+  — the exposure scales with needle size (the equivalent Drizzle containment
+  ships no ciphertext at all). Keep needles minimal; removing the ciphertext on
+  this surface is tracked in cipherstash/stack#654.
+- Empty needles (`{}` / `[]`) are rejected — jsonb containment holds for every
+  document, so an accidentally-empty filter would silently return the whole
+  table (the Drizzle adapter rejects the same needle).
 
 ## Migrating an Existing Column to Encrypted
 

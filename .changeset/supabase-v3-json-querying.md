@@ -1,6 +1,7 @@
 ---
 '@cipherstash/stack-supabase': minor
 '@cipherstash/stack': minor
+'stash': patch
 ---
 
 Encrypted-JSON querying on the v3 Supabase surface (#650). A `types.Json`
@@ -20,3 +21,8 @@ column no longer resolves to `never`, so typed adapter key sets can include
 it), and the JSONPath selector-path helpers the Drizzle adapter introduced in
 #651 moved to `@cipherstash/stack/adapter-kit` so both adapters share one
 validation surface (`@cipherstash/stack-drizzle` re-exports them unchanged).
+
+The bundled `stash-supabase` and `stash-encryption` skills are updated to
+document the new querying surface (including the array-leaf and SQL-NULL
+semantics, and the operand-exposure caveat) — skills ship inside the `stash`
+tarball, hence the patch.

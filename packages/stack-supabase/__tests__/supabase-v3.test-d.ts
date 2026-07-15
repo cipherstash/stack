@@ -380,10 +380,23 @@ describe('encrypted JSON keys and operands (#650)', () => {
     docsBuilder.contains('payload', '{"user":{}}')
   })
 
-  it('a types.Json column is filterable (no longer erased to never)', () => {
+  it('a types.Json column is queryable via its OWN methods, not scalar predicates', () => {
     // Pre-#650, QueryTypesForColumn resolved types.Json to never, putting it in
     // NonQueryableV3Keys and rejecting EVERY filter mention at compile time.
+    // Post-#650 the JSON methods are open…
     docsBuilder.selectorEq('payload', '$.user.role', 'admin')
+    docsBuilder.filter('payload', 'cs', { user: { role: 'admin' } })
+    docsBuilder.not('payload', 'contains', { user: { role: 'admin' } })
+    // …but the scalar predicates stay compile-excluded: an encrypted document
+    // has no scalar terms, so eq/gt/in against it can only fail at runtime.
+    // @ts-expect-error — eq on a JSON column has no term to compare
+    docsBuilder.eq('payload', { a: 1 })
+    // @ts-expect-error — gt on a JSON column has no ordering term
+    docsBuilder.gt('payload', { a: 1 })
+    // @ts-expect-error — in-lists have no equality terms on a JSON column
+    docsBuilder.in('payload', [{ a: 1 }])
+    // @ts-expect-error — the raw filter overload for JSON keys admits only 'cs'
+    docsBuilder.filter('payload', 'eq', { a: 1 })
   })
 
   it('selectorEq/selectorNe accept scalar leaves on the JSON column', () => {

@@ -685,13 +685,16 @@ const events = encryptedTable("events", { metadata: types.Json("metadata") })
 await client.encryptQuery({ roles: ["admin"] }, { column: events.metadata, table: events })
 ```
 
-Through the Drizzle v3 integration this is `ops.contains(col, subObject)` — see
+Through the Drizzle v3 integration this is `ops.contains(col, subObject)` (on Supabase: `contains(col, subObject)` — see the `stash-supabase` skill) — see
 the `stash-drizzle` skill.
 
 **JSONPath selector-with-constraint** is the second query pattern: it compares
 the encrypted value at a JSONPath, e.g. `metadata->'age' > 21`. Through the
-Drizzle v3 integration this is `ops.selector(col, '$.path').{eq,ne,gt,gte,lt,lte}(value)`.
-Its unique power over containment is **ordering at a path**
+Drizzle v3 integration this is `ops.selector(col, '$.path').{eq,ne,gt,gte,lt,lte}(value)`;
+on Supabase it is `selectorEq(col, path, value)` / `selectorNe(col, path, value)`
+— equality/inequality only, since selector ORDERING over PostgREST needs an
+EQL-bundle change (cipherstash/encrypt-query-language#407); see the
+`stash-supabase` skill. Drizzle's unique power over containment is **ordering at a path**
 (`ops.selector(events.metadata, '$.age').gt(21)`); equality at a path is also
 expressible as containment (`contains(col, { age: 21 })`). v1 supports
 dot-notation object paths (`$.a`, `$.a.b`); array-index/wildcard and empty/root

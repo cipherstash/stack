@@ -40,16 +40,25 @@ const DOCS: Record<string, JsonDocument> = {
   // No `$.age` and no `$.user.role` — exercises absent-path semantics
   // (excluded by contains/selectorEq, INCLUDED by selectorNe).
   norole: { user: { email: 'norole@example.com' } },
+  // ARRAY-VALUED path: pins the OBSERVED ste_vec semantics — a scalar-leaf
+  // needle does NOT match an array at the path (protect-ffi encodes array
+  // elements under their own selectors, not the parent path's), so selectorEq
+  // treats an array leaf as not-equal and selectorNe includes it. The docs
+  // carry this caveat; this fixture keeps it honest against the real FFI+EQL.
+  multi: { user: { email: 'multi@example.com', role: ['admin', 'analyst'] } },
 }
+
+/** A row whose payload COLUMN is SQL NULL — the maximally-absent document.
+ * selectorNe must include it (the `is.null` arm of its or-compilation). */
+const NULL_ROW_KEY = 'nulldoc'
 
 type Instance = Awaited<ReturnType<typeof encryptedSupabaseV3>>
 let instance: Instance
 
+type Row = { row_key: string; payload: JsonDocument; test_run_id: string }
+
 function from() {
-  return (instance as never as Instance)
-    .from<{ row_key: string; payload: JsonDocument }>(TABLE, docs as never)
-    .select('row_key')
-    .eq('test_run_id', RUN)
+  return instance.from<Row>(TABLE).select('row_key').eq('test_run_id', RUN)
 }
 
 async function rowKeys(
@@ -84,10 +93,14 @@ beforeAll(async () => {
     test_run_id: RUN,
     payload,
   }))
-  const { error } = await (instance as never as Instance)
-    .from(TABLE, docs as never)
-    .insert(models)
+  const { error } = await instance.from<Row>(TABLE).insert(models)
   if (error) throw new Error(`seed insert: ${error.message}`)
+
+  // NULL-payload row: inserted directly (the adapter's insert path encrypts
+  // model values; a SQL NULL column needs no encryption).
+  await sql.unsafe(
+    `INSERT INTO public.${TABLE} (row_key, test_run_id, payload) VALUES ('${NULL_ROW_KEY}', '${RUN}', NULL)`,
+  )
 }, 120_000)
 
 afterAll(async () => {
@@ -95,11 +108,30 @@ afterAll(async () => {
   await sql.end()
 })
 
+describe('decrypt round-trip (the read path)', () => {
+  it('a filtered row decrypts back to the original document', async () => {
+    const { data, error } = await instance
+      .from<Row>(TABLE)
+      .select('row_key, payload')
+      .eq('test_run_id', RUN)
+      .selectorEq('payload', '$.user.role', 'analyst')
+    if (error) throw new Error(error.message)
+    expect(data).toHaveLength(1)
+    expect(data?.[0].payload).toEqual(DOCS.zoe)
+  })
+})
+
 describe('encrypted containment (contains)', () => {
   it('matches rows containing a nested sub-document', async () => {
     expect(
       await rowKeys(from().contains('payload', { user: { role: 'admin' } })),
     ).toEqual(['ada', 'grace'])
+  })
+
+  it('not(col, "contains", …) is the bare negated containment (excludes the NULL row)', async () => {
+    expect(
+      await rowKeys(from().not('payload', 'contains', { age: 30 })),
+    ).toEqual(['grace', 'multi', 'norole', 'zoe'])
   })
 
   it('a multi-leaf needle requires EVERY leaf to match', async () => {
@@ -137,6 +169,22 @@ describe('selector equality (selectorEq)', () => {
     ).toEqual(['zoe'])
   })
 
+  it('ARRAY-LEAF: a scalar needle does NOT match an array at the path', async () => {
+    // multi.user.role = ['admin','analyst'] is NOT matched by the scalar
+    // needle 'admin' — array elements are encoded under their own selectors.
+    expect(
+      await rowKeys(from().selectorEq('payload', '$.user.role', 'admin')),
+    ).toEqual(['ada', 'grace'])
+  })
+
+  it('ARRAY-LEAF: the full array as a contains() needle matches the row', async () => {
+    expect(
+      await rowKeys(
+        from().contains('payload', { user: { role: ['admin', 'analyst'] } }),
+      ),
+    ).toEqual(['multi'])
+  })
+
   it('an absent path matches nothing', async () => {
     expect(
       await rowKeys(from().selectorEq('payload', '$.user.missing', 'x')),
@@ -145,19 +193,23 @@ describe('selector equality (selectorEq)', () => {
 })
 
 describe('selector inequality (selectorNe)', () => {
-  it('includes rows with a different value AND rows lacking the path', async () => {
-    // Documented semantics (mirrors the Drizzle selector `ne`): NOT-contains,
-    // and a document without the path never contains — so `norole` is in.
+  it('includes different-value rows, absent-path rows, AND SQL-NULL documents', async () => {
+    // Drizzle-parity semantics: NOT-contains OR IS NULL. `norole` lacks the
+    // path; `nulldoc` lacks the whole document (the case a bare not.cs drops
+    // under three-valued logic); `multi` is included because its role ARRAY is
+    // not-equal to the scalar needle (the array-leaf caveat).
     expect(
       await rowKeys(from().selectorNe('payload', '$.user.role', 'admin')),
-    ).toEqual(['norole', 'zoe'])
+    ).toEqual(['multi', 'norole', NULL_ROW_KEY, 'zoe'])
   })
 
   it('ne against an absent-everywhere value returns every row', async () => {
     expect(await rowKeys(from().selectorNe('payload', '$.age', 99))).toEqual([
       'ada',
       'grace',
+      'multi',
       'norole',
+      NULL_ROW_KEY,
       'zoe',
     ])
   })

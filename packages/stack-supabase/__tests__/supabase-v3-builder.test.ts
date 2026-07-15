@@ -1753,7 +1753,7 @@ describe('v3 raw filter() resolves the query type from the operator', () => {
     ])
   })
 
-  // `encryptCollectedTerms` rejects any queryType outside the three scalar EQL
+  // `encryptCollectedTerms` rejects any queryType outside the four supported EQL
   // v3 kinds. No public call path can produce a fifth — `mapFilterOpToQueryType`,
   // `queryTypeForRawOp` and `queryTypeForOrOp` are exhaustive — so this backstop
   // is unreachable without breaking the internal contract, which is exactly what

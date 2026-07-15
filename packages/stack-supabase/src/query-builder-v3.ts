@@ -60,6 +60,42 @@ type V3ColumnLike = {
 }
 
 /**
+ * Validate an encrypted-JSON containment operand: a NON-EMPTY plain object or a
+ * non-empty array. Everything else is rejected with an actionable steer:
+ *
+ * - Scalars/strings: the caller meant free-text (`matches` on a text column) or
+ *   a selector — a raw JSON string is NOT parsed, by design (parsing would make
+ *   `'{"a":1}'` and `{a:1}` silently different queries on other surfaces).
+ * - Non-plain objects (`Date`, `Map`, `RegExp`, class instances): these JSON-
+ *   serialize to scalars or `{}` — not the sub-document the caller believes.
+ * - `{}` and `[]`: jsonb containment holds for EVERY document (`doc @> '{}'`),
+ *   so an accidentally-empty needle would silently return (and decrypt) the
+ *   whole table. The Drizzle adapter rejects the same needle for the same
+ *   reason — the two first-party adapters must agree that this is an error.
+ */
+function assertJsonContainmentOperand(column: string, value: unknown): void {
+  const isPlainObject =
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null)
+  if (!isPlainObject && !Array.isArray(value)) {
+    throw new Error(
+      `[supabase v3]: encrypted JSON containment on column "${column}" takes a sub-document (plain object or array) to match, got ${value === null ? 'null' : Array.isArray(value) ? 'an array' : typeof value === 'object' ? (value as object).constructor?.name || 'a non-plain object' : typeof value}.`,
+    )
+  }
+  const empty = Array.isArray(value)
+    ? value.length === 0
+    : Object.keys(value as object).length === 0
+  if (empty) {
+    throw new Error(
+      `[supabase v3]: encrypted JSON containment on column "${column}" cannot take an empty ${Array.isArray(value) ? 'array' : 'object'} needle: it matches every row. Pass a non-empty sub-document, or omit the predicate to select all rows.`,
+    )
+  }
+}
+
+/**
  * Reject a declared property name that is also a DIFFERENT physical column.
  *
  * `select('*')` expands the introspected DB names into property names, so a
@@ -422,6 +458,15 @@ export class EncryptedQueryBuilderV3Impl<
       capabilities.searchableJson
     ) {
       queryType = 'searchableJson'
+      // THE single enforced operand boundary for encrypted-JSON containment.
+      // Terms reach this resolver from every spelling — contains(), raw
+      // .filter(col,'cs',…), not(col,'contains'|'matches',…), and .or()
+      // string/structured conditions — and only contains() has a method-level
+      // guard. Without this check a raw string (e.g. a free-text term ported
+      // from a text column, or an .or() condition value, which is always a
+      // string) would be storage-encrypted as a JSON SCALAR and silently match
+      // nothing; pre-#650 every such spelling failed loudly on capability.
+      assertJsonContainmentOperand(column.getName(), term.value)
     }
 
     if (
@@ -594,9 +639,7 @@ export class EncryptedQueryBuilderV3Impl<
 
   /** True when `column` is an encrypted `types.Json` document column. */
   private isSearchableJsonColumn(column: string): boolean {
-    const builder = this.v3Columns[column] as unknown as
-      | V3ColumnLike
-      | undefined
+    const builder: V3ColumnLike | undefined = this.v3Columns[column]
     return Boolean(builder?.getQueryCapabilities().searchableJson)
   }
 
@@ -610,11 +653,9 @@ export class EncryptedQueryBuilderV3Impl<
    */
   override contains(column: string, value: unknown): this {
     if (this.isSearchableJsonColumn(column)) {
-      if (value === null || typeof value !== 'object') {
-        throw new Error(
-          `[supabase v3]: contains("${column}", …) on an encrypted JSON column takes a sub-document (object or array) to match, got ${value === null ? 'null' : typeof value}.`,
-        )
-      }
+      // Same validator the term resolver enforces — failing here just surfaces
+      // the error at the call site instead of at execution.
+      assertJsonContainmentOperand(column, value)
       return super.contains(column, value)
     }
     if (this.isEncryptedV3Column(column)) {
@@ -671,6 +712,14 @@ export class EncryptedQueryBuilderV3Impl<
         `[supabase v3]: not("${column}", 'contains', …) does not apply to encrypted column "${column}" — that is fuzzy free-text matching, not containment. Use not("${column}", 'matches', …) or the raw 'cs' operator.`,
       )
     }
+    // Mirror of the matches() guard: a `matches` spelling on a JSON column
+    // would otherwise resolve to containment (the two share the `cs` wire op),
+    // silently negating an EXACT operation under a name that promises FUZZY.
+    if (operator === 'matches' && this.isSearchableJsonColumn(column)) {
+      throw new Error(
+        `[supabase v3]: not("${column}", 'matches', …) does not apply to encrypted JSON column "${column}" — matches() is free-text search. Use not("${column}", 'contains', subDocument) or selectorNe("${column}", path, value).`,
+      )
+    }
     return super.not(column, operator, value)
   }
 
@@ -691,12 +740,8 @@ export class EncryptedQueryBuilderV3Impl<
         `[supabase v3]: ${method}() requires an encrypted JSON (types.Json) column; "${column}" is not one.`,
       )
     }
-    if (value == null) {
-      throw new Error(
-        `[supabase v3]: ${method}("${column}", "${path}", …) requires a non-null scalar value.`,
-      )
-    }
-    // Selector comparisons compare a scalar LEAF (eq/ne arm — `ordering: false`;
+    // Selector comparisons compare a scalar LEAF (null included in the shared
+    // helper's rejection; eq/ne arm — `ordering: false`;
     // PostgREST cannot express selector ordering yet, see
     // cipherstash/encrypt-query-language#407).
     const leafReason = unsupportedLeafReason(value, false)
@@ -733,14 +778,20 @@ export class EncryptedQueryBuilderV3Impl<
 
   /**
    * Encrypted JSONPath-selector inequality: rows whose document does NOT carry
-   * `value` at `path` — INCLUDING rows where the path is absent, mirroring the
-   * Drizzle selector's documented `ne` semantics (`NOT contains`; a missing
-   * path never contains). Compiles to `not(column, 'contains', needle)` →
-   * PostgREST `not.cs`.
+   * `value` at `path` — INCLUDING rows where the path is absent AND rows whose
+   * document column is SQL NULL, matching the Drizzle selector's `ne` (whose
+   * `OR entry IS NULL` arm covers both absence cases). A bare `not.cs` would
+   * drop NULL documents under three-valued logic (`NOT (NULL @> x)` is NULL),
+   * so this compiles to a structured OR:
+   * `column.is.null, column.not.cs.<needle>` — the containment condition's
+   * operand is encrypted through the normal or-condition term path.
    */
   selectorNe(column: string, path: string, value: unknown): this {
     const needle = this.selectorNeedle('selectorNe', column, path, value)
-    return super.not(column, 'contains', needle)
+    return super.or([
+      { column, op: 'is', value: null },
+      { column, op: 'contains', negate: true, value: needle },
+    ])
   }
 
   /**
@@ -818,6 +869,12 @@ export class EncryptedQueryBuilderV3Impl<
    */
   protected override queryTypeForOrOp(op: FilterOp): QueryTypeName {
     if (op === 'matches') return 'freeTextSearch'
+    // Structured conditions may carry the `contains` METHOD spelling (the wire
+    // token becomes `cs` in rebuildOrString). It maps to the same capability
+    // gate as `cs`; on a JSON column the term resolver then re-types it to
+    // searchableJson and validates the operand. selectorNe's IS-NULL-inclusive
+    // or-form relies on this arm.
+    if (op === 'contains') return 'freeTextSearch'
     return this.queryTypeForRawOp(op)
   }
 

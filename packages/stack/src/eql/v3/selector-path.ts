@@ -50,6 +50,15 @@ export function parseSelectorSegments(path: string): string[] {
         `JSON selector path "${path}" is malformed (empty segment / ".." / stray dot) — use dot-notation object keys (e.g. "$.a.b").`,
       )
     }
+    // Leading/trailing whitespace in a segment is almost certainly spacing
+    // around a dot ('$.user .role'), which would silently address a DIFFERENT
+    // key ('user '). Interior whitespace stays legal — 'a b' is a valid JSON
+    // key a caller may genuinely have.
+    if (segment !== segment.trim()) {
+      throw new Error(
+        `JSON selector path "${path}" has whitespace at a segment boundary ("${segment}") — it would address a different key. Remove the spacing around the dot.`,
+      )
+    }
     if (FORBIDDEN_SEGMENTS.has(segment)) {
       throw new Error(
         `JSON selector path "${path}" addresses the forbidden key "${segment}".`,
@@ -75,6 +84,11 @@ export function unsupportedLeafReason(
   value: unknown,
   ordering: boolean,
 ): string | null {
+  // Explicit null arm: `typeof null === 'object'`, so without it a null leaf
+  // would get the actively-wrong "got an object — use contains()" steer.
+  if (value == null) {
+    return 'a selector compares a non-null scalar leaf, but got null/undefined — SQL NULL never equals anything; use is(column, null) for null checks.'
+  }
   const isScalar =
     value instanceof Date ||
     typeof value === 'number' ||

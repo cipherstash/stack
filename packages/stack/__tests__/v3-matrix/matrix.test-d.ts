@@ -14,6 +14,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import {
   encryptedTable,
   type InferPlaintext,
+  type JsonDocument,
   type QueryableColumnsOf,
   type QueryTypesForColumn,
 } from '@/eql/v3'
@@ -29,6 +30,9 @@ const records = encryptedTable('records', {
   createdAt: V3_MATRIX['public.eql_v3_timestamp_ord'].builder('created_at'), // date
   email: V3_MATRIX['public.eql_v3_text_search'].builder('email'), // string, full-text
   active: V3_MATRIX['public.eql_v3_boolean'].builder('active'), // boolean, storage-only
+  // Pinned so core's OWN suite guards the `searchableJson` arm rather than
+  // leaving it to a downstream adapter's typecheck (#650).
+  payload: V3_MATRIX['public.eql_v3_json'].builder('payload'), // JsonDocument, containment/selector only
 })
 
 describe('eql_v3 type-driven matrix (types)', () => {
@@ -41,6 +45,7 @@ describe('eql_v3 type-driven matrix (types)', () => {
       createdAt: Date
       email: string
       active: boolean
+      payload: JsonDocument
     }>()
   })
 
@@ -66,6 +71,13 @@ describe('eql_v3 type-driven matrix (types)', () => {
     expectTypeOf<
       QueryTypesForColumn<typeof records.active>
     >().toEqualTypeOf<never>()
+    // The #650 arm: exactly 'searchableJson' — never the scalar kinds (a
+    // regression to `never` re-erases JSON columns from every typed adapter
+    // key set; leaking a scalar kind would open scalar predicates that cannot
+    // succeed at runtime).
+    expectTypeOf<
+      QueryTypesForColumn<typeof records.payload>
+    >().toEqualTypeOf<'searchableJson'>()
   })
 
   it('excludes storage-only columns from the queryable set', () => {
