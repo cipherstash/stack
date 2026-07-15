@@ -1,5 +1,6 @@
 ---
 '@cipherstash/stack-drizzle': minor
+'stash': patch
 ---
 
 Add EQL v3 JSON **selector-with-constraint** querying to the Drizzle integration
@@ -19,3 +20,7 @@ The right-hand comparison operand is currently a storage-encrypted needle (its
 ste_vec entry carries the ordering term), pending a ciphertext-free ordering
 query needle from protect-ffi (cipherstash/protectjs-ffi#137); until then the
 value's ciphertext appears in the WHERE clause.
+
+The bundled `stash-encryption` and `stash-drizzle` skills document the new
+`ops.selector(...)` surface (they previously said JSONPath selector queries were
+not yet implemented).
