@@ -1754,17 +1754,18 @@ describe('v3 raw filter() resolves the query type from the operator', () => {
   })
 
   // `encryptCollectedTerms` rejects any queryType outside the three scalar EQL
-  // v3 kinds. No public call path can produce a fourth — `mapFilterOpToQueryType`,
+  // v3 kinds. No public call path can produce a fifth — `mapFilterOpToQueryType`,
   // `queryTypeForRawOp` and `queryTypeForOrOp` are exhaustive — so this backstop
   // is unreachable without breaking the internal contract, which is exactly what
   // the subclass below does. Keep the guard: it is what a future producer
-  // gaining a fourth QueryTypeName would trip over.
-  it('rejects a query type outside the scalar EQL v3 kinds', async () => {
+  // gaining a new QueryTypeName would trip over. (`searchableJson` used to be
+  // the exemplar here until #650 made it a real, supported kind.)
+  it('rejects a query type outside the supported EQL v3 kinds', async () => {
     const supabase = createMockSupabase()
 
     class BogusQueryType extends EncryptedQueryBuilderV3Impl<typeof users> {
       protected override queryTypeForRawOp(_operator: string) {
-        return 'searchableJson' as never
+        return 'steVecSelector' as never
       }
     }
 
@@ -1781,8 +1782,8 @@ describe('v3 raw filter() resolves the query type from the operator', () => {
       .filter('email', 'eq', 'a@b.com')
 
     expect(status).toBe(500)
-    expect(error?.message).toContain('query type "searchableJson"')
-    expect(error?.message).toContain('not supported on scalar EQL v3 columns')
+    expect(error?.message).toContain('query type "steVecSelector"')
+    expect(error?.message).toContain('not supported on EQL v3 columns')
   })
 })
 

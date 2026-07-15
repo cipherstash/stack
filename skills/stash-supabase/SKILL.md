@@ -527,9 +527,10 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   bloom-filter token matching (PostgREST `cs` / SQL `@>`): one-sided (a match
   may be a false positive, a non-match never is) and order-/multiplicity-
   insensitive, where `%` is tokenized like any other character. `matches(col,
-  needle)` is the operator; `contains()` on an encrypted column throws an error
-  pointing at `matches()`. `contains()` is reserved for native (exact)
-  jsonb/array containment on plaintext columns, which pass through unchanged.
+  needle)` is the operator; `contains()` on an encrypted TEXT column throws an
+  error pointing at `matches()`. `contains()` is native (exact) jsonb/array
+  containment on plaintext columns — and ENCRYPTED (exact) containment on a
+  `types.Json` column (see "Encrypted JSON querying" below).
 - **`like`/`ilike` on an encrypted column are an approximate compatibility
   shim** delegating to `matches()`: leading/trailing `%` are stripped and the
   residual term is fuzzy-matched (same `cs` wire, plus a one-time warning).
@@ -568,6 +569,44 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   remains available.
 - **Null filter values are rejected** with a pointer to `.is(column, null)` —
   a null cannot be encrypted into an operand.
+
+### Encrypted JSON querying (`types.Json`)
+
+A `types.Json("payload")` column (`public.eql_v3_json`) stores an encrypted
+JSONB document and supports two query forms:
+
+```typescript
+// Exact encrypted containment: every leaf of the sub-document must match at
+// its path (ste_vec `@>` — PostgREST `cs`).
+es.from("events").select("id").contains("payload", { user: { role: "admin" } })
+
+// JSONPath selector equality / inequality at a dot-notation path:
+es.from("events").select("id").selectorEq("payload", "$.user.role", "admin")
+es.from("events").select("id").selectorNe("payload", "$.user.role", "admin")
+```
+
+- `selectorEq(col, path, value)` matches rows carrying exactly `value` at
+  `path` — it compiles to containment of the path-shaped needle
+  (`{user: {role: "admin"}}`), which is the same operation. Paths are
+  dot-notation object keys (`"$.a.b"` or `"a.b"`); array/wildcard steps are
+  rejected, and values must be scalars (an object operand belongs to
+  `contains()`).
+- `selectorNe` matches rows that do NOT carry the value — **including rows
+  where the path is absent entirely** (it is NOT-contains, and a missing path
+  never contains). This mirrors the Drizzle selector's `ne` semantics.
+- **Selector ordering (`gt`/`gte`/`lt`/`lte`) is not available on Supabase.**
+  PostgREST cannot reach the entry-comparison operators (it wraps JSON arrow
+  paths in `to_jsonb`, and bare-column comparison is blocked by design); it
+  needs an EQL-bundle overload, tracked in
+  cipherstash/encrypt-query-language#407. The Drizzle integration's
+  `ops.selector()` supports ordering today — use it where ordering at a path
+  is required.
+- `matches()` does not apply to JSON columns (it is text free-text search) and
+  throws with a steer; scalar filters (`eq`, `gt`, `in`, …) on the column are
+  rejected by capability.
+- The containment/selector operand is a **full storage envelope** of the
+  needle document — the same INTERIM shape (and the same security caveat about
+  ciphertext in GET query strings) as every other v3 filter operand above.
 
 ## Migrating an Existing Column to Encrypted
 

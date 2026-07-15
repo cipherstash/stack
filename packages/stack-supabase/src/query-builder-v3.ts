@@ -2,6 +2,9 @@ import {
   DATE_LIKE_CASTS,
   EncryptedV3Column,
   logger,
+  parseSelectorSegments,
+  reconstructSelectorDocument,
+  unsupportedLeafReason,
 } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
@@ -50,6 +53,8 @@ type V3ColumnLike = {
     equality: boolean
     orderAndRange: boolean
     freeTextSearch: boolean
+    /** Optional: only `public.eql_v3_json` (`types.Json`) carries it. */
+    searchableJson?: boolean
   }
   build(): ColumnSchema
 }
@@ -402,19 +407,35 @@ export class EncryptedQueryBuilderV3Impl<
    */
   private assertTermQueryable(term: ScalarQueryTerm): V3ColumnLike {
     const column = term.column as unknown as V3ColumnLike
-    const queryType = term.queryType ?? 'equality'
+    let queryType = term.queryType ?? 'equality'
+    const capabilities = column.getQueryCapabilities()
+
+    // The `cs` wire operator is capability-overloaded: bloom free-text on a
+    // match/search TEXT column, encrypted ste_vec containment on a `types.Json`
+    // DOCUMENT column. Both arrive here as `freeTextSearch` (contains/matches/
+    // raw `cs` all map there); resolve to the capability the column actually
+    // carries. The two are mutually exclusive by construction, so this can
+    // never reinterpret a real free-text column.
+    if (
+      queryType === 'freeTextSearch' &&
+      !capabilities.freeTextSearch &&
+      capabilities.searchableJson
+    ) {
+      queryType = 'searchableJson'
+    }
 
     if (
       queryType !== 'equality' &&
       queryType !== 'orderAndRange' &&
-      queryType !== 'freeTextSearch'
+      queryType !== 'freeTextSearch' &&
+      queryType !== 'searchableJson'
     ) {
       throw new Error(
-        `[supabase v3]: query type "${queryType}" is not supported on scalar EQL v3 columns`,
+        `[supabase v3]: query type "${queryType}" is not supported on EQL v3 columns`,
       )
     }
 
-    if (!column.getQueryCapabilities()[queryType]) {
+    if (!capabilities[queryType]) {
       throw new Error(
         `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ${queryType} queries — declare the column with a domain that carries that capability`,
       )
@@ -571,13 +592,31 @@ export class EncryptedQueryBuilderV3Impl<
     return Boolean(this.v3Columns[column])
   }
 
+  /** True when `column` is an encrypted `types.Json` document column. */
+  private isSearchableJsonColumn(column: string): boolean {
+    const builder = this.v3Columns[column] as unknown as
+      | V3ColumnLike
+      | undefined
+    return Boolean(builder?.getQueryCapabilities().searchableJson)
+  }
+
   /**
-   * `contains` on the v3 surface is EXACT containment only — native jsonb/array
-   * `@>` on a plaintext column. On an encrypted match/search column containment
-   * is not the operation (that is the fuzzy `matches`), so refuse loudly rather
+   * `contains` on the v3 surface is EXACT containment: native jsonb/array `@>`
+   * on a plaintext column, ENCRYPTED ste_vec `@>` on a `types.Json` column (the
+   * sub-document operand is storage-encrypted whole; every leaf must match at
+   * its path — #650). On an encrypted match/search TEXT column containment is
+   * not the operation (that is the fuzzy `matches`), so refuse loudly rather
    * than silently emit a bloom match under a name that promises exactness.
    */
   override contains(column: string, value: unknown): this {
+    if (this.isSearchableJsonColumn(column)) {
+      if (value === null || typeof value !== 'object') {
+        throw new Error(
+          `[supabase v3]: contains("${column}", …) on an encrypted JSON column takes a sub-document (object or array) to match, got ${value === null ? 'null' : typeof value}.`,
+        )
+      }
+      return super.contains(column, value)
+    }
     if (this.isEncryptedV3Column(column)) {
       throw new Error(
         `[supabase v3]: contains() is native (exact) containment and does not apply to encrypted column "${column}". Use matches() for encrypted free-text search.`,
@@ -590,9 +629,18 @@ export class EncryptedQueryBuilderV3Impl<
    * `matches` is the encrypted free-text operator: fuzzy bloom-filter token
    * matching, one-sided (may false-positive), NOT containment. It requires an
    * encrypted match/search column; on a plaintext column, `contains` (native
-   * `@>`) is what the caller means.
+   * `@>`) is what the caller means — and on an encrypted JSON column,
+   * `contains`/`selectorEq` are (matching a document is containment, not
+   * free-text). Guarded here because both spellings collect the same
+   * `freeTextSearch` term, which the capability resolver would otherwise
+   * silently accept as containment of the raw string.
    */
   override matches(column: string, value: unknown): this {
+    if (this.isSearchableJsonColumn(column)) {
+      throw new Error(
+        `[supabase v3]: matches() is encrypted free-text search and does not apply to encrypted JSON column "${column}". Use contains("${column}", subDocument) or selectorEq("${column}", path, value).`,
+      )
+    }
     if (!this.isEncryptedV3Column(column)) {
       throw new Error(
         `[supabase v3]: matches() is encrypted free-text search and requires an encrypted column; "${column}" is not one. Use contains() for native containment.`,
@@ -602,20 +650,97 @@ export class EncryptedQueryBuilderV3Impl<
   }
 
   /**
-   * `not(col, 'contains', …)` on an encrypted column would negate a fuzzy bloom
-   * match under the `contains` name — the exact confusion #617 removes — because
-   * the base `not()` path rewrites the `contains` spelling to the `cs` wire
-   * operator. Reject it and steer to the `matches` spelling (or the raw `cs`
-   * operator, which is honest about the wire op). Plaintext columns keep native
-   * negated containment, and every other operator is delegated unchanged.
+   * `not(col, 'contains', …)` on an encrypted TEXT column would negate a fuzzy
+   * bloom match under the `contains` name — the exact confusion #617 removes —
+   * because the base `not()` path rewrites the `contains` spelling to the `cs`
+   * wire operator. Reject it and steer to the `matches` spelling (or the raw
+   * `cs` operator, which is honest about the wire op).
+   *
+   * On an encrypted JSON column negated containment IS the honest exact
+   * operation (`not.cs` over ste_vec containment — {@link selectorNe} compiles
+   * to it), so it passes through. Plaintext columns keep native negated
+   * containment, and every other operator is delegated unchanged.
    */
   override not(column: string, operator: string, value: unknown): this {
-    if (operator === 'contains' && this.isEncryptedV3Column(column)) {
+    if (
+      operator === 'contains' &&
+      this.isEncryptedV3Column(column) &&
+      !this.isSearchableJsonColumn(column)
+    ) {
       throw new Error(
         `[supabase v3]: not("${column}", 'contains', …) does not apply to encrypted column "${column}" — that is fuzzy free-text matching, not containment. Use not("${column}", 'matches', …) or the raw 'cs' operator.`,
       )
     }
     return super.not(column, operator, value)
+  }
+
+  /**
+   * Validate + reconstruct a selector needle: `('$.user.role', 'admin')` →
+   * `{user: {role: 'admin'}}`. Shared by {@link selectorEq}/{@link selectorNe};
+   * throws with column context for a non-JSON column, an invalid path, or a
+   * non-scalar leaf.
+   */
+  private selectorNeedle(
+    method: string,
+    column: string,
+    path: string,
+    value: unknown,
+  ): Record<string, unknown> {
+    if (!this.isSearchableJsonColumn(column)) {
+      throw new Error(
+        `[supabase v3]: ${method}() requires an encrypted JSON (types.Json) column; "${column}" is not one.`,
+      )
+    }
+    if (value == null) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", "${path}", …) requires a non-null scalar value.`,
+      )
+    }
+    // Selector comparisons compare a scalar LEAF (eq/ne arm — `ordering: false`;
+    // PostgREST cannot express selector ordering yet, see
+    // cipherstash/encrypt-query-language#407).
+    const leafReason = unsupportedLeafReason(value, false)
+    if (leafReason) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", "${path}", …): ${leafReason}`,
+      )
+    }
+    let segments: string[]
+    try {
+      segments = parseSelectorSegments(path)
+    } catch (err) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", …): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    return reconstructSelectorDocument(segments, value)
+  }
+
+  /**
+   * Encrypted JSONPath-selector equality: matches rows whose document carries
+   * exactly `value` at `path`. Equality at a path IS containment of the
+   * path-shaped needle (`{user: {role: 'admin'}}`), so this compiles to
+   * {@link contains} — the ste_vec entry at the selector matches on its
+   * equality/ordering term. Selector ORDERING (`gt`/`lt`/…) is not expressible
+   * over PostgREST until the bundle grows a needle-comparison overload
+   * (cipherstash/encrypt-query-language#407); the Drizzle adapter's
+   * `ops.selector()` supports it today.
+   */
+  selectorEq(column: string, path: string, value: unknown): this {
+    const needle = this.selectorNeedle('selectorEq', column, path, value)
+    return super.contains(column, needle)
+  }
+
+  /**
+   * Encrypted JSONPath-selector inequality: rows whose document does NOT carry
+   * `value` at `path` — INCLUDING rows where the path is absent, mirroring the
+   * Drizzle selector's documented `ne` semantics (`NOT contains`; a missing
+   * path never contains). Compiles to `not(column, 'contains', needle)` →
+   * PostgREST `not.cs`.
+   */
+  selectorNe(column: string, path: string, value: unknown): this {
+    const needle = this.selectorNeedle('selectorNe', column, path, value)
+    return super.not(column, 'contains', needle)
   }
 
   /**

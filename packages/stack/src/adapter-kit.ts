@@ -43,6 +43,17 @@ export {
   stripDomainSchema,
 } from './eql/v3/domain-registry.js'
 
+// Shared JSONPath-selector path handling (parse/validate, needle-document
+// reconstruction, scalar-leaf guard) for encrypted-JSON querying — used by the
+// Drizzle selector operators (#651) and the Supabase selector filters (#650) so
+// the validation rules cannot drift between adapters.
+export {
+  jsonPathOf,
+  parseSelectorSegments,
+  reconstructSelectorDocument,
+  unsupportedLeafReason,
+} from './eql/v3/selector-path.js'
+
 // Shared match-index guard (short-needle rejection), reused by both adapters.
 export { matchNeedleError } from './schema/match-defaults.js'
 // Shared structured logger (adapters log rejections through the same instance).

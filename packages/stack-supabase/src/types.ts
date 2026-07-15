@@ -146,6 +146,54 @@ export type V3EncryptedFreeTextKeys<
   Extract<keyof Row, string>
 
 /**
+ * JS property names of a v3 table's columns that carry NO `searchableJson`
+ * capability — i.e. every domain but `public.eql_v3_json`. Mirror of
+ * {@link NonFreeTextSearchV3Keys} for the encrypted-JSON capability.
+ */
+type NonSearchableJsonV3Keys<Table extends AnyV3Table> = {
+  [K in Extract<
+    keyof V3ColumnsOfTable<Table>,
+    string
+  >]: 'searchableJson' extends QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>
+    ? never
+    : K
+}[Extract<keyof V3ColumnsOfTable<Table>, string>]
+
+/**
+ * Row keys the encrypted-JSON query methods accept (`contains()` on an
+ * encrypted column, `selectorEq()`, `selectorNe()`): ONLY the table's ENCRYPTED
+ * columns whose domain is `public.eql_v3_json` (`types.Json`). Plaintext
+ * columns are excluded — on those, `contains()` is PostgREST-native containment
+ * and the selector methods do not apply. Mirror of
+ * {@link V3EncryptedFreeTextKeys} for the `searchableJson` capability.
+ */
+export type V3SearchableJsonKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = Exclude<
+  Extract<keyof V3ColumnsOfTable<Table>, string>,
+  NonSearchableJsonV3Keys<Table>
+> &
+  Extract<keyof Row, string>
+
+/**
+ * The operand `contains()` accepts on an ENCRYPTED `types.Json` column: a
+ * sub-document (object or array). The whole operand is storage-encrypted
+ * against the column and compared via encrypted ste_vec containment — never a
+ * raw PostgREST string form, which cannot be encrypted.
+ */
+export type EncryptedJsonContainsValue =
+  | Record<string, unknown>
+  | readonly unknown[]
+
+/**
+ * The scalar leaf value the selector methods compare at a JSONPath. Objects and
+ * arrays are rejected (that shape is `contains()`); see the adapters' shared
+ * `unsupportedLeafReason`.
+ */
+export type SelectorLeafValue = string | number | bigint | boolean | Date
+
+/**
  * The operand `contains()` accepts on a PLAINTEXT column, mirroring
  * postgrest-js's own untyped `contains` overload: a jsonb literal, an array, or
  * the raw string form.
@@ -310,6 +358,37 @@ export interface EncryptedQueryBuilderV3<
     column: K,
     value: PlaintextContainsValue<Row[K]>,
   ): EncryptedQueryBuilderV3<Table, Row>
+  /** ENCRYPTED (exact) JSON containment on a `types.Json` column: the
+   * sub-document operand is storage-encrypted against the column and compared
+   * via the encrypted ste_vec `@>`. Every leaf of the operand must match at its
+   * path. Note the operand's ciphertext appears in the request's filter string
+   * (the same tradeoff as every v3 filter operand — see the class doc). */
+  contains<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    value: EncryptedJsonContainsValue,
+  ): EncryptedQueryBuilderV3<Table, Row>
+  /** Encrypted JSONPath-selector equality on a `types.Json` column:
+   * `selectorEq('doc', '$.user.role', 'admin')` matches rows whose document
+   * carries exactly that value at that path. Compiled to encrypted containment
+   * of the reconstructed `{user: {role: 'admin'}}` needle — equality at a path
+   * IS containment of the path-shaped document. Paths are dot-notation object
+   * keys (`'$.a.b'`); array/wildcard steps are rejected. */
+  selectorEq<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    path: string,
+    value: SelectorLeafValue,
+  ): EncryptedQueryBuilderV3<Table, Row>
+  /** Encrypted JSONPath-selector inequality. Matches rows whose document does
+   * NOT carry `value` at `path` — INCLUDING rows where the path is absent
+   * (mirrors the Drizzle selector's documented `ne` semantics; it is `NOT
+   * contains`, and a missing path never contains). Selector ordering
+   * (`gt`/`lt`/…) is not yet expressible over PostgREST — see
+   * cipherstash/encrypt-query-language#407. */
+  selectorNe<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+    column: K,
+    path: string,
+    value: SelectorLeafValue,
+  ): EncryptedQueryBuilderV3<Table, Row>
 }
 
 /**
@@ -338,10 +417,25 @@ export interface EncryptedQueryBuilderV3Untyped<
     column: K,
     value: string,
   ): EncryptedQueryBuilderV3Untyped<Row>
-  /** Native jsonb/array containment on a plaintext column (PostgREST `cs`). */
+  /** Native jsonb/array containment on a plaintext column (PostgREST `cs`),
+   * or ENCRYPTED ste_vec containment on an encrypted `types.Json` column — the
+   * runtime resolves the column kind and picks the encoding. */
   contains<K extends StringKeyOf<Row>>(
     column: K,
     value: NativeContainsValue,
+  ): EncryptedQueryBuilderV3Untyped<Row>
+  /** Encrypted JSONPath-selector equality on an encrypted `types.Json` column
+   * (runtime-guarded on the untyped surface). */
+  selectorEq<K extends StringKeyOf<Row>>(
+    column: K,
+    path: string,
+    value: SelectorLeafValue,
+  ): EncryptedQueryBuilderV3Untyped<Row>
+  /** Encrypted JSONPath-selector inequality (includes absent-path rows). */
+  selectorNe<K extends StringKeyOf<Row>>(
+    column: K,
+    path: string,
+    value: SelectorLeafValue,
   ): EncryptedQueryBuilderV3Untyped<Row>
 }
 
