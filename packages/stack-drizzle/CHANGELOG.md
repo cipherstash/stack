@@ -1,5 +1,39 @@
 # @cipherstash/stack-drizzle
 
+## 1.0.0-rc.1
+
+### Minor Changes
+
+- 59b994e: Add EQL v3 JSON **selector-with-constraint** querying to the Drizzle integration
+  (#623). `ops.selector(col, '$.path')` returns comparison methods bound to a
+  JSONPath into a `types.Json` column — `eq`/`ne`/`gt`/`gte`/`lt`/`lte` — emitting
+  `col->'<selector>' <op> <value>` over the encrypted document. Its unique power
+  over `contains` is **ordering at a path** (`col->'$.age' > 21`), which
+  containment cannot express.
+
+  Complements the existing `contains` (JSONB `@>`) containment operator. Core
+  `@cipherstash/stack` needs no change — the selector hash and comparison entry are
+  produced by `encryptQuery`/`encrypt` on the existing `types.Json` surface. v1
+  supports dot-notation object paths; array-index/wildcard paths are rejected with
+  a clear error. The Supabase adapter is tracked separately.
+
+  The right-hand comparison operand is currently a storage-encrypted needle (its
+  ste_vec entry carries the ordering term), pending a ciphertext-free ordering
+  query needle from protect-ffi (cipherstash/protectjs-ffi#137); until then the
+  value's ciphertext appears in the WHERE clause.
+
+  The bundled `stash-encryption` and `stash-drizzle` skills document the new
+  `ops.selector(...)` surface (they previously said JSONPath selector queries were
+  not yet implemented).
+
+### Patch Changes
+
+- Updated dependencies [e297f64]
+- Updated dependencies [40ab142]
+- Updated dependencies [5fe9a2f]
+- Updated dependencies [7b53141]
+  - @cipherstash/stack@1.0.0-rc.1
+
 ## 1.0.0-rc.0
 
 ### Major Changes

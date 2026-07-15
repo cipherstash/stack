@@ -1,5 +1,13 @@
 # @cipherstash/drizzle
 
+## 3.0.4-rc.1
+
+### Patch Changes
+
+- 3fdd740: Docs: the README's "for new projects" pointer named the removed
+  `@cipherstash/stack/drizzle` subpath; it now points at the separate
+  `@cipherstash/stack-drizzle` package (EQL v3 on its `/v3` subpath).
+
 ## 3.0.4-rc.0
 
 ### Patch Changes

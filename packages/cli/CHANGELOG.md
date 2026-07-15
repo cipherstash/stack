@@ -1,5 +1,102 @@
 # @cipherstash/cli
 
+## 1.0.0-rc.1
+
+### Minor Changes
+
+- 134fd43: Add anonymous, opt-out usage analytics to the `stash` CLI, plus a
+  `stash telemetry [status|enable|disable]` command to manage it.
+
+  Only coarse events are collected — command name, CLI version, OS/arch, Node
+  version, success/failure, duration, and a coarse caller class (e.g.
+  `claude-code`, `cursor`, `interactive`) derived from environment markers so we
+  can gauge agent- vs human-driven usage. Events carry a random install
+  identifier (a locally generated UUID, not derived from any machine or user
+  attribute) used only to de-duplicate events in aggregate. Plaintext, schema,
+  table/column names,
+  connection strings, argument values, and any session/trace identifier are never
+  collected — enforced by a property-key allowlist at the emitter boundary plus
+  closed-vocabulary coercion of every argv- or error-derived value (unrecognised
+  commands, subcommands, and error class names all collapse to `<other>`). A
+  one-time notice is shown on first run, and nothing is sent on that run.
+
+  Telemetry is off by default in CI and can be disabled with `DO_NOT_TRACK=1`
+  (the cross-tool standard), `STASH_TELEMETRY_DISABLED=1`, or
+  `stash telemetry disable` (persisted to `~/.cipherstash/telemetry.json`).
+
+  Events are sent via a first-party proxy and never block or slow the CLI. The
+  feature ships dormant — no events are sent until a PostHog project key is
+  embedded at release. Updates the `stash-cli` skill to document the command and
+  opt-out controls.
+
+### Patch Changes
+
+- 59b994e: Add EQL v3 JSON **selector-with-constraint** querying to the Drizzle integration
+  (#623). `ops.selector(col, '$.path')` returns comparison methods bound to a
+  JSONPath into a `types.Json` column — `eq`/`ne`/`gt`/`gte`/`lt`/`lte` — emitting
+  `col->'<selector>' <op> <value>` over the encrypted document. Its unique power
+  over `contains` is **ordering at a path** (`col->'$.age' > 21`), which
+  containment cannot express.
+
+  Complements the existing `contains` (JSONB `@>`) containment operator. Core
+  `@cipherstash/stack` needs no change — the selector hash and comparison entry are
+  produced by `encryptQuery`/`encrypt` on the existing `types.Json` surface. v1
+  supports dot-notation object paths; array-index/wildcard paths are rejected with
+  a clear error. The Supabase adapter is tracked separately.
+
+  The right-hand comparison operand is currently a storage-encrypted needle (its
+  ste_vec entry carries the ordering term), pending a ciphertext-free ordering
+  query needle from protect-ffi (cipherstash/protectjs-ffi#137); until then the
+  value's ciphertext appears in the WHERE clause.
+
+  The bundled `stash-encryption` and `stash-drizzle` skills document the new
+  `ops.selector(...)` surface (they previously said JSONPath selector queries were
+  not yet implemented).
+
+- e297f64: Docs: EQL v3 is now the sole documented approach. The `stash-encryption`,
+  `stash-drizzle`, and `stash-supabase` skills and the `@cipherstash/stack`
+  README teach only the v3 typed surface (`EncryptionV3`, `types.*` concrete
+  domains, `@cipherstash/stack-drizzle/v3`, `encryptedSupabaseV3`); EQL v2
+  shrinks to one short Legacy section per document. Two explicit exceptions are
+  called out: DynamoDB still requires the v2 schema surface (#657), and the
+  encrypt rollout tooling (`stash encrypt backfill`/`cutover`,
+  `@cipherstash/migrate`) currently targets v2 columns (#648) — its guidance is
+  kept under a version callout. Also corrects the legacy `@cipherstash/drizzle`
+  README's pointer to the removed `@cipherstash/stack/drizzle` subpath (now the
+  separate `@cipherstash/stack-drizzle` package).
+- 40ab142: Docs: stop teaching the deprecated `LockContext.identify()` as the primary
+  identity-aware-encryption path (#591). The `stash-encryption` and `stash-supabase`
+  skills and the `@cipherstash/stack` README now lead with the current pattern —
+  authenticate the client with `OidcFederationStrategy`, then bind the claim per
+  operation with `.withLockContext({ identityClaim })` — and demote
+  `LockContext.identify()` to a clearly-marked deprecated note (per-operation CTS
+  tokens were removed in protect-ffi 0.25). Skills ship in the `stash` tarball, so
+  this keeps the bundled guidance correct for the 1.0 surface.
+- 5fe9a2f: Encrypted-JSON querying on the v3 Supabase surface (#650). A `types.Json`
+  column now supports exact encrypted containment — `contains(col, subDocument)`
+  (ste_vec `@>` via PostgREST `cs`, with the sub-document storage-encrypted
+  against the column) — and JSONPath selector predicates: `selectorEq(col, path,
+value)` and `selectorNe(col, path, value)` (dot-notation paths; `ne` includes
+  rows where the path is absent, mirroring the Drizzle selector's semantics).
+  Raw `.filter(col, 'cs', subDocument)` and `not(col, 'contains', …)` route
+  through the same encrypted path. Selector ordering is not expressible over
+  PostgREST yet (needs an EQL-bundle overload — see
+  cipherstash/encrypt-query-language#407); the Drizzle integration's
+  `ops.selector()` covers ordering today.
+
+  In core, `QueryTypesForColumn` gains the `searchableJson` arm (a `types.Json`
+  column no longer resolves to `never`, so typed adapter key sets can include
+  it), and the JSONPath selector-path helpers the Drizzle adapter introduced in
+  #651 moved to `@cipherstash/stack/adapter-kit` so both adapters share one
+  validation surface (`@cipherstash/stack-drizzle` re-exports them unchanged).
+
+  The bundled `stash-supabase` and `stash-encryption` skills are updated to
+  document the new querying surface (including the array-leaf and SQL-NULL
+  semantics, and the operand-exposure caveat) — skills ship inside the `stash`
+  tarball, hence the patch.
+
+  - @cipherstash/migrate@1.0.0-rc.0
+
 ## 1.0.0-rc.0
 
 ### Major Changes
