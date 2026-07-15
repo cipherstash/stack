@@ -145,7 +145,10 @@ The resolved URL is returned in memory only. It is never written to disk or into
 The CLI collects **anonymous, opt-out** usage analytics — coarse events only
 (command name, CLI version, OS/arch, Node version, success/failure, duration,
 and a coarse caller class such as `claude-code`/`cursor`/`interactive` derived
-from environment markers). It **never** collects plaintext, schema, table/column
+from environment markers). Events carry a random install identifier — a UUID
+generated locally and stored in `~/.cipherstash/telemetry.json`, not derived
+from any machine, user, or hardware attribute — used only to de-duplicate
+events in aggregate. It **never** collects plaintext, schema, table/column
 names, connection strings, argument values, or any session/trace identifier. A
 one-time notice is printed on first run, and nothing is sent on that first run.
 

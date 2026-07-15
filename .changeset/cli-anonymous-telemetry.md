@@ -8,7 +8,10 @@ Add anonymous, opt-out usage analytics to the `stash` CLI, plus a
 Only coarse events are collected — command name, CLI version, OS/arch, Node
 version, success/failure, duration, and a coarse caller class (e.g.
 `claude-code`, `cursor`, `interactive`) derived from environment markers so we
-can gauge agent- vs human-driven usage. Plaintext, schema, table/column names,
+can gauge agent- vs human-driven usage. Events carry a random install
+identifier (a locally generated UUID, not derived from any machine or user
+attribute) used only to de-duplicate events in aggregate. Plaintext, schema,
+table/column names,
 connection strings, argument values, and any session/trace identifier are never
 collected — enforced by a property-key allowlist at the emitter boundary plus
 closed-vocabulary coercion of every argv- or error-derived value (unrecognised
