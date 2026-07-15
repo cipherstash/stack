@@ -231,6 +231,20 @@ export const registry: CommandGroup[] = [
           },
         ],
       },
+      {
+        name: 'telemetry',
+        summary: 'Manage anonymous usage analytics',
+        long: [
+          'Manage the anonymous, opt-out usage analytics the CLI collects to',
+          'improve the tool. `status` (the default) reports whether telemetry is',
+          'on and which setting governs it; `enable` / `disable` write your saved',
+          'preference. Telemetry is also disabled by the DO_NOT_TRACK or',
+          'STASH_TELEMETRY_DISABLED environment variables and automatically in CI.',
+          'No plaintext, schema, table/column names, or connection details are',
+          'ever collected. See https://cipherstash.com/docs/reference/cli.',
+        ].join('\n'),
+        examples: ['telemetry status', 'telemetry disable', 'telemetry enable'],
+      },
     ],
   },
   {

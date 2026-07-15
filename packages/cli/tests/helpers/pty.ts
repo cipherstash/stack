@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { type IPty, spawn } from 'node-pty'
 import stripAnsi from 'strip-ansi'
+import { CI_ENV_VARS } from '../../src/config/tty.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -98,11 +99,25 @@ export function render(args: string[], opts: RenderOptions = {}): Rendered {
     // debugging a failure.
     NO_COLOR: '1',
     FORCE_COLOR: '0',
-    // Match the convention the CLI itself uses (e.g. install.ts checks
-    // `process.env.CI !== 'true'`) so test runs hit the same code paths.
-    CI: 'true',
-    ...(opts.env ?? {}),
   }
+  // Strip every CI marker so the harness default below (and per-test overrides)
+  // fully control CI detection. Prompt gating (isCiEnv) reads only `CI`, but
+  // telemetry's isCiEnvBroad consults the provider markers (GITHUB_ACTIONS,
+  // GITLAB_CI, …), which leak in from the ambient environment — this repo's own
+  // CI — and would otherwise flip telemetry gating in a test that de-CIs with
+  // `env: { CI: '' }`.
+  for (const name of CI_ENV_VARS) delete env[name]
+  // Match the convention the CLI itself uses (e.g. install.ts checks
+  // `process.env.CI !== 'true'`) so test runs hit the same code paths.
+  env.CI = 'true'
+  // Hard-disable telemetry regardless of the ambient shell. Without this, a
+  // developer with STASH_POSTHOG_KEY exported (the documented testing override)
+  // running the e2e suite would spawn telemetry-ENABLED CLIs against their real
+  // ~/.cipherstash — sending genuine events from tests and injecting the
+  // first-run notice into pty output. The CI='true' default is not enough: the
+  // de-CI'ing tests strip it. Tests exercising telemetry itself can override.
+  env.STASH_TELEMETRY_DISABLED = '1'
+  Object.assign(env, opts.env ?? {})
 
   // Use the absolute path to the current node binary — node-pty's
   // `posix_spawnp` doesn't inherit PATH lookup reliably across all macOS /

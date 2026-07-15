@@ -81,11 +81,20 @@ exercise the same code paths.
   test actually asserts on the string — premature extraction is worse
   than copy-paste here. For literals tests don't touch (e.g. command
   names like `init`, `eql install`), keep them inline.
-- **Telemetry.** The CLI source no longer imports `posthog-node` (analytics
-  moved to `packages/wizard`). The dep is still listed in `package.json`
-  and should be removed in a follow-up. If you re-introduce telemetry to
-  the CLI, gate construction on an env var (the wizard's
-  `getClient()` pattern) so E2E tests can no-op it.
+- **Telemetry.** The CLI has anonymous, opt-out usage analytics in
+  `src/telemetry/` (posthog-node, loaded lazily only when an event is
+  actually sent). It ships dormant — a real project key is embedded only by
+  the release build (`STASH_POSTHOG_KEY` repo variable → tsup define) — and
+  is force-disabled in every pty e2e child via `STASH_TELEMETRY_DISABLED=1`
+  in `tests/helpers/pty.ts`. Two contracts to preserve when touching it:
+  (1) event VALUES are closed vocabularies — `classifyCommand` /
+  `classifyErrorType` in `src/telemetry/classify-command.ts` must wrap
+  anything argv- or error-derived before emit; (2) never intercept
+  `process.exit` with a thrown signal — @clack/core exits from keypress
+  handlers and several commands have broad catches, so interception breaks
+  cancel flows (tried and reverted; see `src/cli/exit.ts`). Commands that
+  terminate via deep `process.exit()` are simply not tracked; cooperative
+  exits use `throw new CliExit(code)` from verified-unwindable sites only.
 
 ## Plan and rationale
 

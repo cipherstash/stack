@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
+import { CliExit } from '../cli/exit.js'
 import { renderCommandHelp } from '../cli/help.js'
 // Commands that depend on @cipherstash/stack are lazy-loaded in the switch below.
 import {
@@ -31,11 +32,22 @@ import {
   manifestCommand,
   planCommand,
   statusCommand,
+  telemetryCommand,
   testConnectionCommand,
   upgradeCommand,
   wizardCommand,
 } from '../commands/index.js'
 import { messages } from '../messages.js'
+import {
+  classifyCommand,
+  classifyErrorType,
+} from '../telemetry/classify-command.js'
+import {
+  initTelemetry,
+  maybeShowFirstRunNotice,
+  shutdownTelemetry,
+  trackCommand,
+} from '../telemetry/index.js'
 
 function isModuleNotFound(err: unknown): boolean {
   return (
@@ -72,7 +84,7 @@ async function requireStack<T>(importFn: () => Promise<T>): Promise<T> {
   Install it with: ${prodInstallCommand(PM, '@cipherstash/stack')}
   Or run: ${STASH} init`,
       )
-      process.exit(1) as never
+      throw new CliExit(1)
     }
     throw err
   }
@@ -92,6 +104,7 @@ Commands:
   wizard               AI-guided encryption setup (reads your codebase)
   doctor               Diagnose install problems (native binaries, runtime)
   manifest             Print the structured, versioned command surface (--json for docs/agents)
+  telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
   eql upgrade          Upgrade EQL extensions to the latest version
@@ -228,7 +241,7 @@ async function runEqlCommand(
       p.log.error(`${messages.eql.unknownSubcommand}: ${sub ?? '(none)'}`)
       console.log()
       console.log(HELP)
-      process.exit(1)
+      throw new CliExit(1)
   }
 }
 
@@ -292,7 +305,7 @@ async function runDbCommand(
       p.log.error(`${messages.db.unknownSubcommand}: ${sub ?? '(none)'}`)
       console.log()
       console.log(HELP)
-      process.exit(1)
+      throw new CliExit(1)
   }
 }
 
@@ -367,7 +380,7 @@ async function runEncryptCommand(
       p.log.error(`Unknown encrypt subcommand: ${sub ?? '(none)'}`)
       console.log()
       console.log(HELP)
-      process.exit(1)
+      throw new CliExit(1)
   }
 }
 
@@ -375,7 +388,7 @@ function requireValue(values: Record<string, string>, key: string): string {
   const v = values[key]
   if (!v) {
     p.log.error(`Missing required --${key} value.`)
-    process.exit(1)
+    throw new CliExit(1)
   }
   return v
 }
@@ -400,7 +413,7 @@ async function runSchemaCommand(
       p.log.error(`Unknown schema subcommand: ${sub ?? '(none)'}`)
       console.log()
       console.log(HELP)
-      process.exit(1)
+      throw new CliExit(1)
   }
 }
 
@@ -431,6 +444,58 @@ export async function run() {
     return
   }
 
+  // Anonymous, opt-out usage analytics. The notice shows once (to stderr) and
+  // the run that shows it sends nothing; both are no-ops when telemetry is off.
+  initTelemetry(pkg.version)
+  maybeShowFirstRunNotice(STASH)
+
+  const startedAt = Date.now()
+  let success = true
+  let errorType: string | undefined
+  let exitCode: number | undefined
+
+  // Outcomes are tracked for commands that RETURN, THROW, or throw CliExit (the
+  // cooperative exit used by main.ts's own helpers and the outermost cancel
+  // handlers — see cli/exit.ts). Deep `process.exit()` calls terminate without
+  // an event by design: intercepting them globally proved unsafe (clack exits
+  // from keypress handlers; broad catches swallowed the signal).
+  try {
+    await dispatch(command, subcommand, commandArgs, flags, values)
+  } catch (err) {
+    if (err instanceof CliExit) {
+      exitCode = err.code
+      success = err.code === 0
+    } else {
+      success = false
+      errorType = classifyErrorType(err)
+      // Rethrow to bootstrap's handler ("Fatal error" + exit 1). The finally
+      // below still runs — including the awaited flush — before propagation.
+      throw err
+    }
+  } finally {
+    // Coerce command/subcommand to a known vocabulary before emit so a free-text
+    // positional (e.g. a `stash wizard "<prompt>"` description) never leaves.
+    const safe = classifyCommand(command, subcommand)
+    trackCommand({
+      command: safe.command,
+      subcommand: safe.subcommand,
+      success,
+      durationMs: Date.now() - startedAt,
+      errorType,
+    })
+    await shutdownTelemetry()
+  }
+
+  if (exitCode !== undefined) process.exit(exitCode)
+}
+
+async function dispatch(
+  command: string,
+  subcommand: string | undefined,
+  commandArgs: string[],
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
   switch (command) {
     case 'init':
       await initCommand(flags, values)
@@ -473,6 +538,9 @@ export async function run() {
       // the native binary is missing.
       manifestCommand({ json: flags.json, version: pkg.version })
       break
+    case 'telemetry':
+      await telemetryCommand(subcommand)
+      break
     case 'wizard': {
       // Forward everything after `stash wizard` verbatim. The wizard package
       // owns its own flag parsing; we don't try to interpret its surface
@@ -492,6 +560,6 @@ export async function run() {
     default:
       console.error(`${messages.cli.unknownCommand}: ${command}\n`)
       console.log(HELP)
-      process.exit(1)
+      throw new CliExit(1)
   }
 }

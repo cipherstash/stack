@@ -69,3 +69,10 @@ jobs:
           # changesets/action writes a token .npmrc that shadows OIDC and
           # every publish fails with E404 (see npm/cli#8976).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Embeds the CLI's PostHog project key at build time (see
+          # packages/cli/tsup.config.ts). A repo *variable*, not a secret: the
+          # key is public and write-only (like a web SDK key). Unset until GA, so
+          # every release before it is flipped ships telemetry-dormant. This is
+          # the single go-live switch — set it with:
+          #   gh variable set STASH_POSTHOG_KEY --repo cipherstash/stack --body '<phc_...>'
+          STASH_POSTHOG_KEY: ${{ vars.STASH_POSTHOG_KEY }}
