@@ -7,7 +7,7 @@ import type {
   QueryTypesForColumn,
 } from '@cipherstash/stack/eql/v3'
 import type { EncryptionError } from '@cipherstash/stack/errors'
-import type { LockContext } from '@cipherstash/stack/identity'
+import type { LockContext, LockContextInput } from '@cipherstash/stack/identity'
 import type {
   EncryptedTable,
   EncryptedTableColumn,
@@ -792,7 +792,10 @@ export interface SupabaseClientLike {
 
 export type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 export type { EncryptionClient } from '@cipherstash/stack/encryption'
-export type { LockContext } from '@cipherstash/stack/identity'
+export type {
+  LockContext,
+  LockContextInput,
+} from '@cipherstash/stack/identity'
 export type {
   EncryptedColumn,
   EncryptedTable,
@@ -927,7 +930,9 @@ export interface EncryptedQueryBuilderCore<
   throwOnError(): Self
   /** Escape hatch: re-types the rows and drops back to the v2 builder surface. */
   returns<U extends Record<string, unknown>>(): EncryptedQueryBuilder<U>
-  withLockContext(lockContext: LockContext): Self
+  /** Bind identity-aware encryption. Accepts either a plain
+   * `{ identityClaim }` (the common form) or a `LockContext` instance. */
+  withLockContext(lockContext: LockContextInput): Self
   audit(config: AuditConfig): Self
 }
 
