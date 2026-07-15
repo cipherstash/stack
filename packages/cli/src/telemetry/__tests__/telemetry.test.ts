@@ -19,11 +19,14 @@ function withKey(): void {
   vi.stubEnv('STASH_POSTHOG_KEY', 'phc_test_key')
 }
 
-/** Clear every env var that resolveStatus / isCiEnv consult. */
+/** Clear every env var that resolveStatus / isCiEnvBroad consult, INCLUDING
+ * STASH_POSTHOG_KEY — a real value in the ambient shell (this repo sets it as a
+ * GitHub Actions variable) would otherwise flip the dormant tests to enabled. */
 function clearGateEnv(): void {
   for (const name of [
     'DO_NOT_TRACK',
     'STASH_TELEMETRY_DISABLED',
+    'STASH_POSTHOG_KEY',
     ...CI_ENV_VARS,
   ]) {
     vi.stubEnv(name, '')
@@ -73,6 +76,18 @@ describe('resolveStatus gates', () => {
     // sentinel must stay the identically-named string literal, or an un-injected
     // build would not be detected as dormant.
     expect(PLACEHOLDER_KEY).toBe('__STASH_POSTHOG_KEY__')
+  })
+
+  it('treats an empty/whitespace STASH_POSTHOG_KEY as unset → dormant', () => {
+    // The `?? EMBEDDED_KEY` nullish fallback would let '' slip through and flip a
+    // dormant build to enabled with an empty key; projectKey() trims it away.
+    for (const value of ['', '   ']) {
+      vi.stubEnv('STASH_POSTHOG_KEY', value)
+      expect(resolveStatus(enabledState)).toEqual({
+        enabled: false,
+        reason: 'unconfigured',
+      })
+    }
   })
 
   it('is enabled with a key and no opt-out signals', () => {

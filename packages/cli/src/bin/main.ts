@@ -37,6 +37,7 @@ import {
   wizardCommand,
 } from '../commands/index.js'
 import { messages } from '../messages.js'
+import { classifyCommand } from '../telemetry/classify-command.js'
 import {
   initTelemetry,
   maybeShowFirstRunNotice,
@@ -412,6 +413,14 @@ async function runSchemaCommand(
   }
 }
 
+/**
+ * Thrown by the `process.exit` override in {@link run} so a command that exits
+ * deep in the call stack still unwinds through the telemetry finally (track +
+ * flush) before the process actually terminates. Extends Error so it carries a
+ * stack and satisfies the "throw an Error" lint, though its payload is unused.
+ */
+class ExitSignal extends Error {}
+
 // The CLI body. Loaded by the thin launcher in stash.ts via dynamic import so
 // that a missing native binary (evaluated when this module's command graph
 // loads) surfaces as friendly guidance rather than a raw stack trace.
@@ -445,25 +454,50 @@ export async function run() {
   maybeShowFirstRunNotice(STASH)
 
   const startedAt = Date.now()
-  let succeeded = true
+  let success = true
   let errorType: string | undefined
+  let exitCode: number | undefined
+  let thrown: { err: unknown } | undefined
+
+  // Commands terminate deep in dispatch via process.exit(), which would bypass
+  // the finally below — dropping the event and skipping the flush. Intercept it:
+  // record the outcome, unwind via ExitSignal to the finally (which tracks +
+  // flushes), then perform the real exit afterwards. If a command's own catch
+  // swallows the signal it degrades gracefully — the finally still tracks on the
+  // eventual return/throw, and the recorded exitCode is still honoured.
+  const realExit = process.exit.bind(process)
+  process.exit = ((code?: number): never => {
+    exitCode = code ?? 0
+    success = exitCode === 0
+    throw new ExitSignal()
+  }) as typeof process.exit
 
   try {
     await dispatch(command, subcommand, commandArgs, flags, values)
   } catch (err) {
-    succeeded = false
-    errorType = err instanceof Error ? err.constructor.name : 'Unknown'
-    throw err
+    if (!(err instanceof ExitSignal)) {
+      success = false
+      errorType = err instanceof Error ? err.constructor.name : 'Unknown'
+      thrown = { err }
+    }
+    // ExitSignal: success/exitCode were already set by the process.exit override.
   } finally {
+    process.exit = realExit
+    // Coerce command/subcommand to a known vocabulary before emit so a free-text
+    // positional (e.g. a `stash wizard "<prompt>"` description) never leaves.
+    const safe = classifyCommand(command, subcommand)
     trackCommand({
-      command,
-      subcommand,
-      success: succeeded,
+      command: safe.command,
+      subcommand: safe.subcommand,
+      success,
       durationMs: Date.now() - startedAt,
       errorType,
     })
     await shutdownTelemetry()
   }
+
+  if (thrown !== undefined) throw thrown.err
+  if (exitCode !== undefined) realExit(exitCode)
 }
 
 async function dispatch(

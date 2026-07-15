@@ -36,16 +36,30 @@ export const CI_ENV_VARS = [
 ] as const
 
 /**
- * True in a CI environment. `CI`/`CONTINUOUS_INTEGRATION` set to a truthy
- * spelling (`true`/`1`) covers most providers — including GitHub Actions and
- * GitLab — and {@link CI_PROVIDER_ENV_VARS} catches the ones that don't set
- * `CI`. Shared by the region resolver (`commands/auth/region.ts`), the
- * DATABASE_URL resolver (`config/database-url.ts`), and telemetry gating so they
- * all decide "is this CI?" the same way.
+ * True when `CI` is set to a truthy spelling (`1`/`true`) — the near-universal
+ * marker, set by GitHub Actions, GitLab, CircleCI, and most others. This is the
+ * NARROW check that governs interactive prompting: the region resolver
+ * (`commands/auth/region.ts`), the DATABASE_URL resolver (`config/database-url.ts`),
+ * and {@link isInteractive}. It is intentionally conservative about suppressing a
+ * prompt — a developer whose shell happens to export a provider marker like
+ * `JENKINS_URL` should still get prompted. Telemetry uses the broader
+ * {@link isCiEnvBroad} instead, where erring toward "don't collect" is safer.
  */
 export function isCiEnv(): boolean {
   const ciVar = process.env.CI?.trim()
-  if (ciVar !== undefined && /^(1|true)$/i.test(ciVar)) return true
+  return ciVar !== undefined && /^(1|true)$/i.test(ciVar)
+}
+
+/**
+ * True in CI, detected broadly: {@link isCiEnv} plus `CONTINUOUS_INTEGRATION` and
+ * the {@link CI_PROVIDER_ENV_VARS} markers for systems that don't set `CI`
+ * (Jenkins, TeamCity, Azure Pipelines, …). Used ONLY for telemetry auto-disable,
+ * where a false positive merely skips collection — unlike prompt gating, where a
+ * false positive breaks an interactive command. Keep it separate from
+ * {@link isCiEnv} so broadening CI-for-telemetry never changes prompt behavior.
+ */
+export function isCiEnvBroad(): boolean {
+  if (isCiEnv()) return true
   if (process.env.CONTINUOUS_INTEGRATION?.trim()) return true
   return CI_PROVIDER_ENV_VARS.some((name) => Boolean(process.env[name]?.trim()))
 }
