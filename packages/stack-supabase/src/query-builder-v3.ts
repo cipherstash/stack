@@ -2,6 +2,7 @@ import {
   DATE_LIKE_CASTS,
   EncryptedV3Column,
   logger,
+  matchNeedleError,
   parseSelectorSegments,
   reconstructSelectorDocument,
   unsupportedLeafReason,
@@ -492,6 +493,22 @@ export class EncryptedQueryBuilderV3Impl<
       throw new Error(
         `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ${queryType} queries — declare the column with a domain that carries that capability`,
       )
+    }
+
+    // Free-text (bloom) needle floor. A needle shorter than the tokenizer's
+    // token_length produces NO tokens, so `bf @> '{}'` holds for every row and
+    // the query would silently return (and the caller decrypt) the whole table
+    // — a fail-open over-exposure. Reject it up front, mirroring the Drizzle v3
+    // adapter (matchNeedleError) so both first-party surfaces guard identically.
+    // JSON containment terms (searchableJson) are validated separately above.
+    if (queryType === 'freeTextSearch') {
+      const match = column.build().indexes?.match
+      const reason = match ? matchNeedleError(term.value, match) : undefined
+      if (reason) {
+        throw new Error(
+          `[supabase v3]: cannot search column "${column.getName()}": ${reason}`,
+        )
+      }
     }
 
     return column

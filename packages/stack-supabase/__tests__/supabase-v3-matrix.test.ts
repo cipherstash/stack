@@ -98,6 +98,18 @@ function firstSample(spec: DomainSpec): unknown {
   return sample
 }
 
+/** A free-text needle that clears the tokenizer's token_length floor. The text
+ * catalog's `samples[0]` is the empty string (a stored-value edge case), which
+ * the matches() short-needle guard now correctly REJECTS — so the wire tests
+ * for matches()/like() need a real, tokenizable needle instead. */
+function matchNeedle(spec: DomainSpec): string {
+  const needle = spec.samples.find(
+    (s): s is string => typeof s === 'string' && [...s].length >= 3,
+  )
+  expect(needle).toBeDefined()
+  return needle as string
+}
+
 describe('supabase v3 wire encoding, every domain', () => {
   // Guards the tier arithmetic itself. A domain silently dropping out of a
   // tier would otherwise just shrink an `it.each` with no test turning red.
@@ -195,7 +207,7 @@ describe('supabase v3 wire encoding, every domain', () => {
     it('emits matches() as a cs containment filter', async () => {
       const { q, supabase, name } = instanceFor(eqlType, spec)
 
-      await q.select(`id, ${name}`).matches(name, firstSample(spec))
+      await q.select(`id, ${name}`).matches(name, matchNeedle(spec))
 
       const [filter] = supabase.callsFor('filter')
       expect(filter.args[0]).toBe(name)
@@ -219,7 +231,7 @@ describe('supabase v3 wire encoding, every domain', () => {
     it('delegates like() to matches, emitting the same cs filter', async () => {
       const { q, supabase, name } = instanceFor(eqlType, spec)
 
-      await q.select(`id, ${name}`).like(name, firstSample(spec) as string)
+      await q.select(`id, ${name}`).like(name, matchNeedle(spec))
 
       const [filter] = supabase.callsFor('filter')
       expect(filter.args[0]).toBe(name)

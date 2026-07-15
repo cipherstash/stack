@@ -7,7 +7,7 @@ import {
 } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type { EncryptionError } from '@cipherstash/stack/errors'
-import type { LockContext } from '@cipherstash/stack/identity'
+import type { LockContextInput } from '@cipherstash/stack/identity'
 import type {
   EncryptedTable,
   EncryptedTableColumn,
@@ -94,7 +94,7 @@ export class EncryptedQueryBuilderImpl<
   protected shouldThrowOnError = false
 
   // Encryption-specific state
-  protected lockContext: LockContext | null = null
+  protected lockContext: LockContextInput | null = null
   protected auditConfig: AuditConfig | null = null
 
   constructor(
@@ -370,7 +370,7 @@ export class EncryptedQueryBuilderImpl<
   // Encryption-specific methods
   // ---------------------------------------------------------------------------
 
-  withLockContext(lockContext: LockContext): this {
+  withLockContext(lockContext: LockContextInput): this {
     this.lockContext = lockContext
     return this
   }
