@@ -1,8 +1,12 @@
 import type { Result } from '@byteslice/result'
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 import {
+  jsonPathOf,
   matchNeedleError,
+  parseSelectorSegments,
+  reconstructSelectorDocument,
   stripDomainSchema,
+  unsupportedLeafReason,
 } from '@cipherstash/stack/adapter-kit'
 import type {
   AnyEncryptedV3Column,
@@ -66,7 +70,19 @@ type OperandEncryptionClient = {
     opts: never,
   ): ChainableOperation<EncryptedQueryResult>
   encryptQuery(terms: never): ChainableOperation<EncryptedQueryResult[]>
+  /**
+   * Storage encryption — the JSON selector RHS. See {@link selectorCompare}:
+   * pending a ciphertext-free ordering query needle from protect-ffi
+   * (cipherstash/protectjs-ffi#137), the right-hand operand is a STORAGE
+   * encryption of `{path: value}`, whose ste_vec entry at the selector carries
+   * the `c` + `op`/`hm` the comparison extracts.
+   */
+  encrypt(value: never, opts: never): ChainableOperation<unknown>
 }
+
+// Path helpers now live in @cipherstash/stack/adapter-kit (shared with the
+// Supabase adapter, #650); re-exported so existing imports keep working.
+export { parseSelectorSegments, reconstructSelectorDocument }
 
 /**
  * A dedicated error for v3 operator gating and operand-encryption failures,
@@ -571,6 +587,159 @@ export function createEncryptionOperatorsV3(
     return sql`${JSON.stringify(result.data)}::eql_v3.query_jsonb`
   }
 
+  /**
+   * JSONPath selector-with-constraint on an `eql_v3_json` (`ste_vec`) column:
+   * `col->'path' <op> value`. Extracts the encrypted leaf entry at `path` on both
+   * sides (`v3Dialect.selectorEntry` → `jsonb_path_query_first`) and compares them
+   * with the `eql_v3_jsonb_entry` comparators; `eq_term`/`ord_term` read only the
+   * entries' `hm`/`op`.
+   *
+   * - the SELECTOR (`path`): `encryptQuery(path, searchableJson)` on a string
+   *   needle infers a `ste_vec_selector` term → the bare HMAC selector hash, the
+   *   `text` argument of `jsonb_path_query_first`.
+   * - the VALUE (RHS): **interim (cipherstash/protectjs-ffi#137)** — a STORAGE
+   *   `encrypt` of `{path: value}`, whose ste_vec entry carries `c` + `op`/`hm`.
+   *   protect-ffi can't yet mint a ciphertext-free ordering query needle for a
+   *   ste_vec column, so the value's ciphertext appears in the WHERE clause until
+   *   #137 lands; the comparison itself only reads `hm`/`op`.
+   *
+   * Equality-at-selector is also expressible via `contains(col, {path: value})`;
+   * this path's unique power is ORDERING at a selector (`gt`/`gte`/`lt`/`lte`).
+   */
+  async function selectorCompare(
+    col: SQLWrapper,
+    path: string,
+    op: EqualityOp | ComparisonOp,
+    value: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(col, operator)
+    requireIndex(
+      ctx,
+      JSON_CONTAINMENT_INDEXES,
+      operator,
+      'JSON selector (searchableJson)',
+    )
+    requireNonNullOperand(ctx, value, operator)
+
+    // A selector compares a scalar leaf — reject non-scalars / non-orderable
+    // types up front with a clear error, not a deferred DB failure.
+    const ordering = op !== 'eq' && op !== 'ne'
+    const leafReason = unsupportedLeafReason(value, ordering)
+    if (leafReason) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot compare column "${ctx.columnName}": ${leafReason}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+
+    // Surface path-validation failures as EncryptionOperatorError with context.
+    let segments: string[]
+    try {
+      segments = parseSelectorSegments(path)
+    } catch (err) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" on column "${ctx.columnName}": ${err instanceof Error ? err.message : String(err)}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+
+    // INTERIM (cipherstash/protectjs-ffi#137): the RHS is a STORAGE-encrypted
+    // needle, not a ciphertext-free query term. protect-ffi can't yet mint an
+    // ordering (`op`) query needle for a ste_vec column — `encryptQuery` only
+    // produces the `hm` equality term. So we storage-encrypt `{path: value}`,
+    // whose ste_vec entry at the selector carries `c` + `op`/`hm`, and extract
+    // that entry on the RHS. `eq_term`/`ord_term` read only `hm`/`op`, so the
+    // comparison is correct; the tradeoff is the value's ciphertext appears in
+    // the WHERE clause. Once #137 lands, the RHS becomes a ciphertext-free term.
+    //
+    // The selector hash and the storage needle are independent → encrypt
+    // concurrently (mirrors `range`).
+    const [selResult, docResult] = await Promise.all([
+      applyOperationOptions(
+        client.encryptQuery(
+          jsonPathOf(segments) as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+            queryType: 'searchableJson',
+          } as never,
+        ),
+        opts,
+      ),
+      applyOperationOptions(
+        client.encrypt(
+          reconstructSelectorDocument(segments, value) as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+          } as never,
+        ),
+        opts,
+      ),
+    ])
+    if (selResult.failure) {
+      throw operandFailure(ctx, operator, selResult.failure.message)
+    }
+    if (docResult.failure) {
+      throw operandFailure(ctx, operator, docResult.failure.message)
+    }
+
+    // A v3 selector term is the bare HMAC hash string; guard the shape so a
+    // wrapped envelope can't silently bind as a JSON blob and match no rows.
+    const selValue = selResult.data
+    if (typeof selValue !== 'string') {
+      throw operandFailure(
+        ctx,
+        operator,
+        `expected a bare selector hash, got ${typeof selValue}.`,
+      )
+    }
+
+    const selSql = sql`${selValue}::text`
+    const leftEntry = v3Dialect.selectorEntry(colSql(col), selSql)
+    const rightEntry = v3Dialect.selectorEntry(
+      sql`${JSON.stringify(docResult.data)}::public.eql_v3_json`,
+      selSql,
+    )
+    if (op === 'eq') return v3Dialect.equality('eq', leftEntry, rightEntry)
+    if (op === 'ne') {
+      // Absent-path semantics: a row whose document lacks the path yields a NULL
+      // entry, and "not equal to X" should INCLUDE "has no X". Without the
+      // `IS NULL` arm, three-valued logic silently drops those rows. (`eq` and the
+      // ordering ops keep SQL's default: a missing path is not equal to / not
+      // greater than the value, so those rows are correctly excluded.)
+      return sql`(${v3Dialect.equality('ne', leftEntry, rightEntry)} OR ${leftEntry} IS NULL)`
+    }
+    return v3Dialect.comparison(op, leftEntry, rightEntry)
+  }
+
+  /** Comparison methods bound to a `col->'path'` selector, mirroring the scalar
+   * operators. Async: each encrypts its operand. */
+  function selectorOps(col: SQLWrapper, path: string) {
+    const at =
+      (op: EqualityOp | ComparisonOp) =>
+      (value: unknown, opts?: EncryptionOperatorCallOpts) =>
+        selectorCompare(col, path, op, value, `selector(${path}).${op}`, opts)
+    return {
+      /** `col->'path' = value` (encrypted equality at the selector). A row whose
+       * document lacks `path` is excluded (it is not equal to `value`). */
+      eq: at('eq'),
+      /** `col->'path' <> value`, INCLUDING rows whose document lacks `path`
+       * ("not equal to value" covers "has no value"). */
+      ne: at('ne'),
+      /** `col->'path' > value` (encrypted ordering at the selector). */
+      gt: at('gt'),
+      /** `col->'path' >= value`. */
+      gte: at('gte'),
+      /** `col->'path' < value`. */
+      lt: at('lt'),
+      /** `col->'path' <= value`. */
+      lte: at('lte'),
+    }
+  }
+
   async function inArrayOp(
     left: SQLWrapper,
     values: unknown[],
@@ -674,6 +843,13 @@ export function createEncryptionOperatorsV3(
      * a `ste_vec` index (a `types.Json` column). */
     contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       containsJsonOp(l, r, 'contains', opts),
+    /** JSONPath selector-with-constraint on a `types.Json` (`ste_vec`) column.
+     * Returns comparison methods bound to `col->'path'` — e.g.
+     * `await ops.selector(users.doc, '$.age').gt(21)` emits
+     * `col->'<sel>' > <entry>`. Its unique power over `contains` is ORDERING at
+     * a path (`gt`/`gte`/`lt`/`lte`); `eq`/`ne` are also provided. Dot-notation
+     * object paths only in v1. */
+    selector: (l: SQLWrapper, path: string) => selectorOps(l, path),
     /** Membership: ORs one encrypted `eq` term per value. The whole list is
      * encrypted in one `encryptQuery` batch crossing. Rejects an empty list;
      * requires a `unique` or `ore` index. */

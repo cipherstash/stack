@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
+import { CliExit } from '../../cli/exit.js'
 import {
   HANDOFF_CHOICES,
   howToProceedStep,
@@ -224,7 +225,9 @@ export async function planCommand(
   } catch (err) {
     if (err instanceof CancelledError) {
       p.cancel('Cancelled.')
-      process.exit(0)
+      // Cooperative exit: unwinds to run() so the cancel is tracked and the
+      // telemetry flush completes before the process exits 0 (see cli/exit.ts).
+      throw new CliExit(0)
     }
     throw err
   }

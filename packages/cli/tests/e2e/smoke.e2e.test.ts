@@ -99,6 +99,23 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('bogus-sub')
   })
 
+  it('telemetry status reports the current state and exits 0', async () => {
+    const r = render(['telemetry', 'status'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(0)
+    // Dev builds carry the placeholder key, so status reports the dormant build
+    // (the harness also sets STASH_TELEMETRY_DISABLED, but unconfigured wins).
+    expect(r.output).toContain('Telemetry is')
+  })
+
+  it('telemetry bogus-sub exits 1 (the CliExit cooperative-exit path)', async () => {
+    const r = render(['telemetry', 'bogus-sub'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(1)
+    expect(r.output).toContain(messages.telemetry.unknownSubcommand)
+    expect(r.output).toContain('bogus-sub')
+  })
+
   // `--migration` without `--supabase` fails flag validation before any I/O
   // or prompt, so these two cases can observe the install entry path
   // deterministically without a database.

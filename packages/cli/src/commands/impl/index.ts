@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
+import { CliExit } from '../../cli/exit.js'
 import { type AgentEnvironment, detectAgents } from '../init/detect-agents.js'
 import {
   effectiveStep,
@@ -291,7 +292,9 @@ export async function implCommand(
   } catch (err) {
     if (err instanceof CancelledError) {
       p.cancel('Cancelled.')
-      process.exit(0)
+      // Cooperative exit: unwinds to run() so the cancel is tracked and the
+      // telemetry flush completes before the process exits 0 (see cli/exit.ts).
+      throw new CliExit(0)
     }
     throw err
   }

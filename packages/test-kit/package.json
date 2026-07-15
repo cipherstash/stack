@@ -1,8 +1,8 @@
 {
 	"name": "@cipherstash/test-kit",
-	"version": "0.0.0",
+	"version": "0.0.1-rc.0",
 	"private": true,
-	"description": "Shared EQL v3 test harness: the domain catalog, the plaintext oracle, and the integration-suite driver. Consumed as TypeScript source \u2014 no build step.",
+	"description": "Shared EQL v3 test harness: the domain catalog, the plaintext oracle, and the integration-suite driver. Consumed as TypeScript source — no build step.",
 	"type": "module",
 	"exports": {
 		"./integration-clerk": "./src/integration/clerk.ts",

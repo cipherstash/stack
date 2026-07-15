@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/e2e",
-  "version": "0.0.2",
+  "version": "0.0.3-rc.0",
   "private": true,
   "description": "End-to-end tests that exercise built CipherStash binaries and cross-package behaviour.",
   "type": "module",

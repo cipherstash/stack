@@ -262,7 +262,10 @@ export async function run(options: RunOptions) {
         })
       }
     } else {
-      trackWizardError(result.error ?? 'unknown', selectedIntegration)
+      // Fixed label only — result.error is the agent's raw message and can
+      // embed schema names or connection details; it stays local (changelog +
+      // stderr below), never on the wire.
+      trackWizardError('agent_failed', selectedIntegration)
       changelog.note(`Agent failed: ${result.error ?? 'unknown error'}`)
       await changelog.flush()
       p.log.error(result.error ?? 'Agent failed without a specific error.')
@@ -273,7 +276,12 @@ export async function run(options: RunOptions) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Agent execution failed.'
-    trackWizardError(message, selectedIntegration)
+    // Class name only — the message can embed schema names or connection
+    // details; it stays local (changelog + stderr below), never on the wire.
+    trackWizardError(
+      error instanceof Error ? error.constructor.name : 'unknown',
+      selectedIntegration,
+    )
     changelog.note(`Wizard threw: ${message}`)
     await changelog.flush()
     p.log.error(message)

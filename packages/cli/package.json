@@ -1,6 +1,6 @@
 {
 	"name": "stash",
-	"version": "0.17.1",
+	"version": "1.0.0-rc.0",
 	"description": "CipherStash CLI — the one stash command for auth, init, encryption schema, database setup, and secrets.",
 	"repository": {
 		"type": "git",
@@ -66,7 +66,7 @@
 		"@cipherstash/auth-win32-x64-msvc": "catalog:repo"
 	},
 	"peerDependencies": {
-		"@cipherstash/stack": ">=0.6.0"
+		"@cipherstash/stack": ">=1.0.0-rc.0"
 	},
 	"peerDependenciesMeta": {
 		"@cipherstash/stack": {

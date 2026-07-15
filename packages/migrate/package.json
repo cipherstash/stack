@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/migrate",
-  "version": "0.2.0",
+  "version": "1.0.0-rc.0",
   "description": "Plaintext-to-encrypted column migration for CipherStash: resumable backfill, per-column state, and EQL lifecycle orchestration.",
   "repository": {
     "type": "git",
@@ -50,7 +50,7 @@
     "zod": "^3.25.76"
   },
   "peerDependencies": {
-    "@cipherstash/stack": ">=0.6.0",
+    "@cipherstash/stack": ">=1.0.0-rc.0",
     "pg": ">=8"
   },
   "devDependencies": {
