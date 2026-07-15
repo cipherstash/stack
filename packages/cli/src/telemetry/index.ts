@@ -20,9 +20,16 @@ import { readState, type TelemetryState, writeState } from './state.js'
  *   is bounded by a timeout, and every failure is swallowed.
  */
 
-/** The CLI talks to our Cloudflare proxy, not PostHog directly, so that a future
- * US→EU migration is a proxy-target change with no CLI re-release. */
-const POSTHOG_HOST = 'https://telemetry.cipherstash.com'
+/** Default endpoint — our Cloudflare proxy, not PostHog directly, so a future
+ * US→EU migration is a proxy-target change with no CLI re-release.
+ * `STASH_POSTHOG_HOST` overrides it (testing against a real PostHog ingestion
+ * endpoint before the proxy is deployed, or self-hosting), symmetric with
+ * `STASH_POSTHOG_KEY`. */
+const DEFAULT_POSTHOG_HOST = 'https://telemetry.cipherstash.com'
+
+function posthogHost(): string {
+  return process.env.STASH_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST
+}
 
 /**
  * Public, write-only PostHog project key — safe to embed, exactly like a web
@@ -129,7 +136,7 @@ export function telemetryStatus(): TelemetryStatus {
 function getClient(): PostHog {
   if (client === null) {
     client = new PostHog(projectKey(), {
-      host: POSTHOG_HOST,
+      host: posthogHost(),
       flushAt: 1,
       flushInterval: 0,
       // Fire-and-forget: a short-lived CLI must not retry a failed send. Retries
