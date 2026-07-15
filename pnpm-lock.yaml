@@ -10,42 +10,42 @@ catalogs:
       specifier: 0.41.0
       version: 0.41.0
     '@cipherstash/auth-darwin-arm64':
-      specifier: 0.41.0
-      version: 0.41.0
+      specifier: 0.42.0
+      version: 0.42.0
     '@cipherstash/auth-darwin-x64':
-      specifier: 0.41.0
-      version: 0.41.0
+      specifier: 0.42.0
+      version: 0.42.0
     '@cipherstash/auth-linux-arm64-gnu':
-      specifier: 0.41.0
-      version: 0.41.0
+      specifier: 0.42.0
+      version: 0.42.0
     '@cipherstash/auth-linux-x64-gnu':
-      specifier: 0.41.0
-      version: 0.41.0
+      specifier: 0.42.0
+      version: 0.42.0
     '@cipherstash/auth-linux-x64-musl':
-      specifier: 0.41.0
-      version: 0.41.0
+      specifier: 0.42.0
+      version: 0.42.0
     '@cipherstash/auth-win32-x64-msvc':
-      specifier: 0.41.0
-      version: 0.41.0
+      specifier: 0.42.0
+      version: 0.42.0
     tsup:
       specifier: 8.5.1
       version: 8.5.1
     tsx:
-      specifier: 4.22.1
-      version: 4.22.1
+      specifier: 4.23.0
+      version: 4.23.0
     typescript:
       specifier: 5.9.3
       version: 5.9.3
     vitest:
-      specifier: 3.2.6
-      version: 3.2.6
+      specifier: 3.2.7
+      version: 3.2.7
   security:
     '@clerk/nextjs':
-      specifier: 7.3.5
-      version: 7.3.5
+      specifier: 7.5.14
+      version: 7.5.14
     next:
-      specifier: 15.5.18
-      version: 15.5.18
+      specifier: 15.5.20
+      version: 15.5.20
 
 overrides:
   next@<15.5.18: ~15.5.18
@@ -82,7 +82,7 @@ importers:
         version: 2.10.4
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   e2e:
     dependencies:
@@ -107,7 +107,7 @@ importers:
         version: 7.8.5
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -127,15 +127,15 @@ importers:
         specifier: ^17.4.2
         version: 17.4.2
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.22.0
+        version: 8.22.0
     devDependencies:
       stash:
         specifier: workspace:*
         version: link:../../packages/cli
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
@@ -196,13 +196,13 @@ importers:
         version: 2.0.3
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   examples/supabase-worker: {}
 
@@ -216,10 +216,10 @@ importers:
         version: link:../stack-drizzle
       drizzle-orm:
         specifier: 0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.22.0)(postgres@3.4.9)
       pg:
-        specifier: ^8.20.0
-        version: 8.20.0
+        specifier: ^8.22.0
+        version: 8.22.0
     devDependencies:
       '@types/node':
         specifier: ^22.20.1
@@ -229,25 +229,25 @@ importers:
         version: 8.20.0
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/cli:
     dependencies:
       '@cipherstash/auth':
         specifier: catalog:repo
-        version: 0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)
+        version: 0.41.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
       '@cipherstash/migrate':
         specifier: workspace:*
         version: link:../migrate
       '@clack/prompts':
-        specifier: 1.4.0
-        version: 1.4.0
+        specifier: 1.7.0
+        version: 1.7.0
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
@@ -255,14 +255,14 @@ importers:
         specifier: 2.7.0
         version: 2.7.0
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.22.0
+        version: 8.22.0
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
       posthog-node:
-        specifier: ^5.34.2
-        version: 5.34.2
+        specifier: ^5.40.0
+        version: 5.40.0
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -284,35 +284,35 @@ importers:
         version: 7.2.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-darwin-x64':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-arm64-gnu':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-x64-gnu':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-x64-musl':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-win32-x64-msvc':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
 
   packages/migrate:
     dependencies:
@@ -330,17 +330,17 @@ importers:
         specifier: ^17.4.2
         version: 17.4.2
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.22.0
+        version: 8.22.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/nextjs:
     dependencies:
@@ -350,26 +350,26 @@ importers:
     devDependencies:
       '@clerk/nextjs':
         specifier: catalog:security
-        version: 7.3.5(next@15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 7.5.14(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
       next:
         specifier: catalog:security
-        version: 15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.60.4
-        version: 4.60.4
+        specifier: 4.62.2
+        version: 4.62.2
 
   packages/prisma-next:
     dependencies:
@@ -407,8 +407,8 @@ importers:
         specifier: 0.14.0
         version: 0.14.0(typescript@5.9.3)
       arktype:
-        specifier: ^2.1.29
-        version: 2.2.0
+        specifier: ^2.2.3
+        version: 2.2.3
     devDependencies:
       '@prisma-next/adapter-postgres':
         specifier: 0.14.0
@@ -442,13 +442,13 @@ importers:
         version: 2.0.3
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/protect:
     dependencies:
@@ -456,14 +456,14 @@ importers:
         specifier: ^0.2.0
         version: 0.2.0
       '@cipherstash/protect-ffi':
-        specifier: 0.23.0
-        version: 0.23.0
+        specifier: 0.28.0
+        version: 0.28.0
       '@cipherstash/schema':
         specifier: workspace:*
         version: link:../schema
       '@stricli/core':
-        specifier: ^1.2.7
-        version: 1.2.7
+        specifier: ^1.2.9
+        version: 1.2.9
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
@@ -485,20 +485,20 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     optionalDependencies:
       '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.60.4
-        version: 4.60.4
+        specifier: 4.62.2
+        version: 4.62.2
 
   packages/protect-dynamodb:
     dependencies:
@@ -514,16 +514,16 @@ importers:
         version: 17.4.2
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/schema:
     dependencies:
@@ -533,13 +533,13 @@ importers:
     devDependencies:
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/stack:
     dependencies:
@@ -548,16 +548,16 @@ importers:
         version: 0.2.0
       '@cipherstash/auth':
         specifier: catalog:repo
-        version: 0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)
+        version: 0.41.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
       '@cipherstash/protect-ffi':
-        specifier: 0.29.0
-        version: 0.29.0
+        specifier: 0.28.0
+        version: 0.28.0
       evlog:
         specifier: 1.11.0
-        version: 1.11.0(next@15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
+        version: 1.11.0(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
       uuid:
-        specifier: 14.0.0
-        version: 14.0.0
+        specifier: 14.0.1
+        version: 14.0.1
       zod:
         specifier: 3.25.76
         version: 3.25.76
@@ -566,8 +566,8 @@ importers:
         specifier: 3.0.0
         version: 3.0.0
       '@clack/prompts':
-        specifier: ^1.4.0
-        version: 1.4.0
+        specifier: ^1.7.0
+        version: 1.7.0
       '@clerk/backend':
         specifier: 3.11.2
         version: 3.11.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -588,7 +588,7 @@ importers:
         version: 17.4.2
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.22.0)(postgres@3.4.9)
       execa:
         specifier: ^9.5.2
         version: 9.6.1
@@ -602,42 +602,42 @@ importers:
         specifier: ^15.0.2
         version: 15.0.4
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.22.0
+        version: 8.22.0
       postgres:
         specifier: ^3.4.8
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-darwin-x64':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-arm64-gnu':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-x64-gnu':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-x64-musl':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-win32-x64-msvc':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
 
   packages/stack-drizzle:
     dependencies:
@@ -649,8 +649,8 @@ importers:
         version: link:../stack
     devDependencies:
       '@cipherstash/protect-ffi':
-        specifier: 0.29.0
-        version: 0.29.0
+        specifier: 0.28.0
+        version: 0.28.0
       '@cipherstash/test-kit':
         specifier: workspace:*
         version: link:../test-kit
@@ -659,7 +659,7 @@ importers:
         version: 17.4.2
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.22.0)(postgres@3.4.9)
       fta-cli:
         specifier: 3.0.0
         version: 3.0.0
@@ -668,13 +668,13 @@ importers:
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/stack-supabase:
     dependencies:
@@ -683,8 +683,8 @@ importers:
         version: link:../stack
     devDependencies:
       '@cipherstash/protect-ffi':
-        specifier: 0.29.0
-        version: 0.29.0
+        specifier: 0.28.0
+        version: 0.28.0
       '@cipherstash/test-kit':
         specifier: workspace:*
         version: link:../test-kit
@@ -707,20 +707,20 @@ importers:
         specifier: 3.0.0
         version: 3.0.0
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.22.0
+        version: 8.22.0
       postgres:
         specifier: ^3.4.8
         version: 3.4.9
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/test-kit:
     dependencies:
@@ -736,34 +736,34 @@ importers:
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
   packages/wizard:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.143
-        version: 0.3.143(@anthropic-ai/sdk@0.106.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
+        specifier: ^0.3.204
+        version: 0.3.205(@anthropic-ai/sdk@0.110.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
       '@anthropic-ai/sdk':
-        specifier: ^0.106.0
-        version: 0.106.0(zod@3.25.76)
+        specifier: ^0.110.0
+        version: 0.110.0(zod@3.25.76)
       '@cipherstash/auth':
         specifier: catalog:repo
-        version: 0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)
+        version: 0.41.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
       '@clack/prompts':
-        specifier: 1.4.0
-        version: 1.4.0
+        specifier: 1.7.0
+        version: 1.7.0
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
       pg:
-        specifier: 8.20.0
-        version: 8.20.0
+        specifier: 8.22.0
+        version: 8.22.0
       picocolors:
         specifier: ^1.1.1
         version: 1.1.1
       posthog-node:
-        specifier: ^5.34.2
-        version: 5.34.2
+        specifier: ^5.40.0
+        version: 5.40.0
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -773,92 +773,92 @@ importers:
         version: 8.20.0
       tsup:
         specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0)
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
       tsx:
         specifier: catalog:repo
-        version: 4.22.1
+        version: 4.23.0
       typescript:
         specifier: catalog:repo
         version: 5.9.3
       vitest:
         specifier: catalog:repo
-        version: 3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     optionalDependencies:
       '@cipherstash/auth-darwin-arm64':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-darwin-x64':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-arm64-gnu':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-x64-gnu':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-linux-x64-musl':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
       '@cipherstash/auth-win32-x64-msvc':
         specifier: catalog:repo
-        version: 0.41.0
+        version: 0.42.0
 
 packages:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.143':
-    resolution: {integrity: sha512-41WuTuP+bk4NxrjpG9IJGffsjh1ivyiiAmqgb5QoxPltDAA0p3gs+iZ3lTgDmY4Ga68wDoN05Lt18oCE+DQb7g==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.205':
+    resolution: {integrity: sha512-lrfJ4eVtzfPkCpbSkBOGSMQCBbvmW6nbPzgHE4IwMN3scZlpuFMUFqh2aaJa/X2SAcWD9H2S0t2WWvSRgM7BjA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.143':
-    resolution: {integrity: sha512-3WrJ6MjjwQKvPnPbzUOm08qftlHYobkp/tmM1P/Vk/ldSjoPfFIgLFfzSzUmCKJiKEh2ZlHLJr8ORNrTxXhgQg==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.205':
+    resolution: {integrity: sha512-G6ETPmL5mNzJ2DFsWxG3jmsmrXgZX1N2ZCJvxaGUUpjTsKZJ4Tup1cWYvcd/m7o5fYZmx9REmgzTwsAIc1fdPQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.143':
-    resolution: {integrity: sha512-9UeV1W2vjOVwJSJrq9aw3UeMo82Ir59FfJ5mchh7OXZEaevkANvHYn25bTCnIpqfqOx7qFEosJW2ELIoV1nprg==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.205':
+    resolution: {integrity: sha512-91fgdG4aTnQ29sKOcUqgH4+tKCW2ut6PWGRSYmXNDbROasJm1rAlPdzC5brdu/e4c0CDSNV6TWyE5JCjaS/jlQ==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143':
-    resolution: {integrity: sha512-/9oP/FCewrPnwVN+QUS5rlO3kMa07w+hOrpWrz24aEpBYhcHzr0zoNMBriPDAkTr3ao/z1k40UZ2dHmgsSODzA==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.205':
+    resolution: {integrity: sha512-CXzySK3PV3EizCRPXnxPqeaAtgrBFDnMFOVpMe36oC3U16yDb1b1tAJGqZi/7uFrVvAiaXvnSFxhUWnDDSaO+A==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143':
-    resolution: {integrity: sha512-rr4334GOLl9caYDeyWsbwMaVJCiNvKHE9nLdey8opIkq7/FHHu712U6tDk0tcoCdsGU/S3/BBaZParOgF+s5qw==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.205':
+    resolution: {integrity: sha512-vvsb7GlnA8CTSVvvTkrXjcSeRKqxSM7p/tU3Od9ICAZeWHglptekEyzLEApzLuLbI5ewfFF/F0q3NwOBbo18dg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143':
-    resolution: {integrity: sha512-kwqnbHo4Zj6TzO1V/83uLhsTt0xBp/BN5V/aHIX+khM4UuNO6NOKNaZvr8Int3sF0ARF95Hjr4l/hMKxry6DhQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.205':
+    resolution: {integrity: sha512-siS+1iNqBSlGFZZvJY6+mhzZ/6/ec/TbX9GMuwmTF0E6fxGhIIp797jJxR1q8r6FAq7d39mEoRNhC0Ffo60uNQ==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143':
-    resolution: {integrity: sha512-q5UaLZ9ABbqQN8UXpqHUqjW6akI1zMrV5Jvtq0yueKP4nIRbBBZBQ80M4bpdrc0+SiRmjVRV3p8lsCCAd8azgg==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.205':
+    resolution: {integrity: sha512-SpP5zF68weFez/6pKrGzq/UVAJDMDNphWqmkLfOpWTDBL5xy6XlIZw5Bl4EXoVnfi2VLFkwuffNeFe+9SdX7kw==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.143':
-    resolution: {integrity: sha512-46L2mkskvIRfwzHP3p0uUE5u9Oc7Eb/DRVmXuGNk5Z8jiahlDSv0SHP1vnWSWw5nWIu4DWOKyXZelRmYc9LxCg==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.205':
+    resolution: {integrity: sha512-kg2kkXyeSoFLruO3Ic2IruLxzBR0xCUtmlJHdWi3SYW7JhAKNJg4fcrdJsWcardmEw23Y2UDGDJbRyxqSVx6wg==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.143':
-    resolution: {integrity: sha512-JnxOTRpSBpFqKFMfV5cW4QjpeDOHUNr31rRislmOVWEPsRmCjsy9jYwKxDf7kxcwxyZ6h/YHz1ACvMaUWy6o6A==}
+  '@anthropic-ai/claude-agent-sdk@0.3.205':
+    resolution: {integrity: sha512-ft6iBw9kXudsusiXNpeybIPBJ07Z3tqp1ROSg5cEJqgA+9i+JJj2sRfQth+QD+lyenbbAU8yPieLxIimvfBhtw==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
       '@modelcontextprotocol/sdk': ^1.29.0
       zod: ^4.0.0
 
-  '@anthropic-ai/sdk@0.106.0':
-    resolution: {integrity: sha512-ufwVvYNDBj2dzOGupBCTaNzBLxqcTnGOzI4z8Wouxlt+mT3J3HuOmatgCy1VmwCHOUueqZ41ERhm0O99OUcbWA==}
+  '@anthropic-ai/sdk@0.110.0':
+    resolution: {integrity: sha512-hOP4bNYXDFHDxxiEgzlILXrxZIYCDnhe8sry0RDRKD/QnsEpvZcQpablCdm9X/WuD/YgOiSIkkqsL1mLLlTqJw==}
     hasBin: true
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
@@ -873,8 +873,14 @@ packages:
   '@ark/schema@0.56.0':
     resolution: {integrity: sha512-ECg3hox/6Z/nLajxXqNhgPtNdHWC9zNsDyskwO28WinoFEnWow4IsERNz9AnXRhTZJnYIlAJ4uGn3nlLk65vZA==}
 
+  '@ark/schema@0.56.2':
+    resolution: {integrity: sha512-Qx4D2JFbBWpntiHZaTv7bGG4H/M2rigiknezKg/WVyDSaLdE4YCcWAOoFB7pjjDqHbbV2OqRfntm1nnXvwMexg==}
+
   '@ark/util@0.56.0':
     resolution: {integrity: sha512-BghfRC8b9pNs3vBoDJhcta0/c1J1rsoS1+HgVUreMFPdhz/CRAKReAu57YEllNaSy98rWAdY1gE+gFup7OXpgA==}
+
+  '@ark/util@0.56.2':
+    resolution: {integrity: sha512-9kU2sUE38FZEGG7l3hamYMBieLYEJh2L1mrYD2eXpT+78EnQSV1bhjxJhnxGBMSTbtwpBSDNSK+K60WvaI/DTQ==}
 
   '@babel/runtime@7.29.2':
     resolution: {integrity: sha512-JiDShH45zKHWyGe4ZNVRrCjBz8Nh9TMmZG1kh4QTK8hCBTWBi8Da+i7s1fJw7/lYpM4ccepSNfqzZ/QvABBi5g==}
@@ -1002,36 +1008,36 @@ packages:
   '@changesets/write@0.4.0':
     resolution: {integrity: sha512-CdTLvIOPiCNuH71pyDu3rA+Q0n65cmAbXnwWH84rKGiFumFzkmHNT8KHTMEchcxN+Kl8I54xGUhJ7l3E7X396Q==}
 
-  '@cipherstash/auth-darwin-arm64@0.41.0':
-    resolution: {integrity: sha512-2B+J/bPblfiWQcxm3Z9voLhV66TZcmDpzVz5aBNS4y/B7Ke55jGH6m3H9g+c1xHZbe62q7zwDUEatveOy69f2A==}
+  '@cipherstash/auth-darwin-arm64@0.42.0':
+    resolution: {integrity: sha512-8pDvjk2Sftdkh8/TQfBJJV3exHJT8HWWEVkJGXyFRaUrgvn5eDAXfx0RbSgGNfkPmj1ac1DsQ753Tgx/+N/xEQ==}
     cpu: [arm64]
     os: [darwin]
 
-  '@cipherstash/auth-darwin-x64@0.41.0':
-    resolution: {integrity: sha512-XrmFRSdQaoed7tqJ+RJLiBvuQr/v7qiSu7LDA3PCVbegHVcsjYQ9D0sd49zDZEEFN4zZlcwmeh80eGAEJiyhKg==}
+  '@cipherstash/auth-darwin-x64@0.42.0':
+    resolution: {integrity: sha512-tv5fE8pPbJ+PdCWRKwQ1KdJYGDxhaZ2oDDGFnmZkSXgzprN/1yayhJbt6uv6SYjXyeUAKhwT4UUGiowslmfQ1w==}
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/auth-linux-arm64-gnu@0.41.0':
-    resolution: {integrity: sha512-NQJK++HzV7XCQPuNbVmIJcC5T4QuflOySYmQtP2PoTg0p+V7WK/3yruZZKgjbbCU6v8tek/D3T8hk02snq/8sQ==}
+  '@cipherstash/auth-linux-arm64-gnu@0.42.0':
+    resolution: {integrity: sha512-urEes/2CIIzFXQz3GlLLofaS9EcIRczMKO0o3z2rvU5NsHBtRhFnHum/JwnhNdq3XF1bEyUfG3gGuFqJOPbZHQ==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@cipherstash/auth-linux-x64-gnu@0.41.0':
-    resolution: {integrity: sha512-9NMiMs2p8p5NBcir8Cx90zBzOlkM0EWbIZOeCIjokT9X4d6UJy3+JhXi5VRn0gWpqAA7i7+BZD+puZ+fmBzJLQ==}
+  '@cipherstash/auth-linux-x64-gnu@0.42.0':
+    resolution: {integrity: sha512-2UNbPQ3NxRxl+hK+QpmLAYzTw829tEiDBv/xpWXW3ymosruJUarIH4BneMv3tFKKMs8V3pSC+P6VM8JALRWI9Q==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@cipherstash/auth-linux-x64-musl@0.41.0':
-    resolution: {integrity: sha512-V8QwrxXLoqO0ED02hnvQJNBid/iDZUawt3zobUL+DqieN3QZxDxI5/viFIkA4bTg7CV6oSmy2b0rINGqiHvkig==}
+  '@cipherstash/auth-linux-x64-musl@0.42.0':
+    resolution: {integrity: sha512-OpjkyRpxudnEKuJhbR/3+0ldsZRs2asI75WM4ZixXBEkFoALpVfwY7oukf1YmvNVR04A6QTMxC7XlkuWvxf7Ag==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@cipherstash/auth-win32-x64-msvc@0.41.0':
-    resolution: {integrity: sha512-MkC04kTuyUd7J2/dRWIzdER1if6V+g6tVDRoZI/dql/Uq/+FXtV9lBXDcS1iATDyE/1APLvMMvuAqJeELGrGag==}
+  '@cipherstash/auth-win32-x64-msvc@0.42.0':
+    resolution: {integrity: sha512-fvcpTtY6LYCSVfimWNNuzeiV3mRvcGXzHdWNzHLeIvtOoMSdOi4eaUHLRN9Tivyxg3mR0bgDuJbRqJ0N95Xerw==}
     cpu: [x64]
     os: [win32]
 
@@ -1061,114 +1067,73 @@ packages:
   '@cipherstash/eql@3.0.0':
     resolution: {integrity: sha512-hi8zrIx3FEokLhgJaUN4VsRagUnxhyJOn6gbvIxjBpZjEXJdMQQXkkSq4eV6Bz2sroUf1+d+qeX2H2zejcM1Dg==}
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
-    resolution: {integrity: sha512-DhkKC+trOfk3RLDvPXqGsrpWdVnLAMEVLUI59OuR9tdTcJeiABtbQx8VaXdbzvNxnbkoDnOqbFRE5D11Z7nerQ==}
+  '@cipherstash/protect-ffi-darwin-arm64@0.28.0':
+    resolution: {integrity: sha512-QRwiovEdgjstbaCONZGYXA82NG4Gwz9mJOZeAzthUmNIQfnVErO9UQAfJ+I1T/YG1Ww2FCWcHltXMl/qjyeK4A==}
     cpu: [arm64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.29.0':
-    resolution: {integrity: sha512-Licuimkh6Y2cCAUQSBcwSzmjT9NOvA2ShC2wqaacA6fyWXtPlvRHvh5hct5fP0jBoKgMLAIu1qVJG0DdPU2OGQ==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@cipherstash/protect-ffi-darwin-x64@0.23.0':
-    resolution: {integrity: sha512-YuEn2RDHOaj9s8qDIX9cpQuBmsN2SZp/RjiNX72LxhV7JEDJuLSt0ySrl+k6MHoLiZotjkp7I1u6tq3vuLCC0Q==}
+  '@cipherstash/protect-ffi-darwin-x64@0.28.0':
+    resolution: {integrity: sha512-H8qB2z3drJSc2bR5ITsJSFrOoNKvORbauTdHmaS1e5OleXsLl/F+56Zvghz8NWs+bXs/2aVzHxpYte8FgV8AAQ==}
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-darwin-x64@0.29.0':
-    resolution: {integrity: sha512-rRVrhcwrmrPr4xw6RGuBht9SwhfdumSan9P+BV8t9ivmnmpR/GA7+3425794R07jSdwpjkyob0kkuLHwI+Wc1A==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.23.0':
-    resolution: {integrity: sha512-I1kID2JqWnJUd0VHzNQo4gxeOAhEgzeXg3Fn0iDHnGKy+HDHd7+t/qEei9YLrV0wAXDnDFRhXXWRRVs8CxDzZA==}
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.28.0':
+    resolution: {integrity: sha512-h7vZxB/wako6j1jspkGl41gptTN1dBTWYqAR6jhVnvKJK0TBlyUKuSJwO1NeqyNfFQ/b1KmqJ11JGvY95uRZOA==}
     cpu: [arm64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.29.0':
-    resolution: {integrity: sha512-zWb9gHJQo9iJw8AD0nkUORB4AxrWN66fePt/rxs9hCp/gBNMe19dJMqAUs8pgG7+S2mIi8SPa/TPm86wraTDCA==}
-    cpu: [arm64]
-    os: [linux]
-
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.23.0':
-    resolution: {integrity: sha512-n4aCDK0os4iY1BQIHVVUBgt8WnfIb8R3gLXTRrTkMVug0dcoQ0ZZaL5ltIUgFGJG4bvfW8+7zWLRZ51CZkqKsQ==}
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.28.0':
+    resolution: {integrity: sha512-PgHn0Og0PiCwFdV4yKhipGKfqkCXP6Xchyy6ykTaISabmSlkkbRNkyNF1/tZEQYF65sm5gmqSpwSYzKODaAsbg==}
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.29.0':
-    resolution: {integrity: sha512-f+yz03a6ZKcunzf3UyBEDhBla9ux535pqkj+MJirlhI4x0cVevmwI4SYO+CaNAqAdIhfi/EDqsN3FcXTltoktA==}
+  '@cipherstash/protect-ffi-linux-x64-musl@0.28.0':
+    resolution: {integrity: sha512-fMu3k1Y3wYMcGbGpVtrlCMNRLd1//5c9ZHcyWFjKFqimOCbBO5akgCQij4zcvj4kYDHtveu9dOdOKVhaG8k6hQ==}
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.23.0':
-    resolution: {integrity: sha512-62WG6ayFJ/1+M7W/AWGEDskLo6aHtr8PFoHoXkSTdhWf29RPb4+yU1pPNYVCitVWB1sdGs+lXSO6MFD4N6IIXw==}
-    cpu: [x64]
-    os: [linux]
-
-  '@cipherstash/protect-ffi-linux-x64-musl@0.29.0':
-    resolution: {integrity: sha512-bZUji9Za65dUoVP2b1FUBddjftZkkRDSJkAknZZVK6QEZ5SbOLyQwOYS1wT1/6zt1k6cpF6oT2+CzwZDEcggVw==}
-    cpu: [x64]
-    os: [linux]
-
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.23.0':
-    resolution: {integrity: sha512-z+jErHcPw1RwiwhSqqx/QzKqkk06gulh6YJl4TlSBPlJPjhR30TEcxQpQ2zf7kuv86JqsBRHv8UazLNePSiEww==}
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.28.0':
+    resolution: {integrity: sha512-tF0y7TcyBtgN/jHodYMnrJ4etLkEI/klzDivW8Q8eIuIdoJ3q5muZKFIhNX0MbDDdh2O4GsRdNhXRubs7BiFpA==}
     cpu: [x64]
     os: [win32]
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.29.0':
-    resolution: {integrity: sha512-OZ39ODuq07+RTALQwJsWu+EFZYdaQeK/u9IFhpkr/Bf9hY/f7SvnTk6FrZEjUeTsR3mYqfZ3jp3VREXUncqTGA==}
-    cpu: [x64]
-    os: [win32]
-
-  '@cipherstash/protect-ffi@0.23.0':
-    resolution: {integrity: sha512-Ca8MKLrrumC561VoPDOhuUZcF8C8YenqO1Ig9hSJSRUB+jFeIJXeyn7glExsvKYWtxOx/pRub9FV8A0RyuPHMg==}
-
-  '@cipherstash/protect-ffi@0.29.0':
-    resolution: {integrity: sha512-sBnmODaUUAClDWOlCZPf91cIscxZq9+lVjIj9TqnPTvMc7TIjIpWuKYFyJIx8Ur1EAKy8KZ00Eoy9viSsW/GLQ==}
+  '@cipherstash/protect-ffi@0.28.0':
+    resolution: {integrity: sha512-R2L/8HwMREkVKlR5KCcuELIWz4QNButSBQzY+nRDHl1PUXjRqWG1h265FkKVtTXKNKUup7rB4mswu+M+t9KF3A==}
 
   '@clack/core@1.3.1':
     resolution: {integrity: sha512-fT1qHVGAag4IEkrupZ6lRRbNCs1vS9P01KB/sG8zKgvUztbYtFBtQpjSITNwooDZ83tpsPzP0mRNs1/KVszCRA==}
+    engines: {node: '>= 20.12.0'}
+
+  '@clack/core@1.4.3':
+    resolution: {integrity: sha512-/kr3UWNtdJfxZtPgDqUOmG2pvwlmcLGheex5yiZKdwbzZJxhV+HMNR9QNmyY5cGwTNV6LrR7Jtp+KjhUAP1qBQ==}
     engines: {node: '>= 20.12.0'}
 
   '@clack/prompts@1.4.0':
     resolution: {integrity: sha512-S0My7XPGIgpRWMDG8uRqalbgT+a6FmCUdOW+HaIOVVpUPHOb7RrpvjTjiODadKp06fsrVDJZlIzc6yCTp4AnxA==}
     engines: {node: '>= 20.12.0'}
 
+  '@clack/prompts@1.7.0':
+    resolution: {integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==}
+    engines: {node: '>= 20.12.0'}
+
   '@clerk/backend@3.11.2':
     resolution: {integrity: sha512-HaHAnKzThRpdRi+QJkMo3+Cx/3hJUt+UdbQ62Ikzwwt0zIhUE0+qgG+zgUHjAdYhSbfiUzEWYsLdnBsfQ7yv7g==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/backend@3.4.9':
-    resolution: {integrity: sha512-2sbnGrHga3t/IFAkyvWO6H9QG1bnj7KUA13hpRB9utOYGCRdCn6oLxtiSdH6uGUzjX/km1dtw0uwZIxYgHbuVA==}
-    engines: {node: '>=20.9.0'}
-
-  '@clerk/nextjs@7.3.5':
-    resolution: {integrity: sha512-Q2VaWLqnZrvWrbyQdji34fIBBHdZtRHjhd+BmW8a70Gxk2MKGgd9S7CzDFUBC/Q9jBjgGeZAZkH47WEK0opZow==}
+  '@clerk/nextjs@7.5.14':
+    resolution: {integrity: sha512-Yji2jucIQk+LiNdM4UT4ovPKQ22etS0KtIX/XYnFWfG71qaPgswCBPq0/UEX09vsviEEdk8ckhc6U2zlqrsLMg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       next: ~15.5.18
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/react@6.6.4':
-    resolution: {integrity: sha512-jhXqn1GFv309/gvVOdm3pBbeHDVVolyKbbrnHmvB+sAxEiwT7fIMP1JRUe2Rr1ycevMXRnxDzZmidra5xoFPKw==}
+  '@clerk/react@6.12.1':
+    resolution: {integrity: sha512-FFIv0SUQh9R8lBOCpHfAC5ki+FjU0WlvBrujJUPQgBTJX7uaRUlbzKswB/ZfRlauGKnE9c80H5dnir08cEtLgw==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
-
-  '@clerk/shared@4.12.0':
-    resolution: {integrity: sha512-LEe3lpi1r2DhFH9FuqzVrDQ2UkQJ3TA6XkkqnfHHRBfAJdh+jnYXYiivQpj3znMCihm3FVLOMXcpSqBz80XoQg==}
-    engines: {node: '>=20.9.0'}
-    peerDependencies:
-      react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
-      react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
-    peerDependenciesMeta:
-      react:
-        optional: true
-      react-dom:
-        optional: true
 
   '@clerk/shared@4.25.1':
     resolution: {integrity: sha512-+FHoFEJ8zGenUymf03gARKEAYOLxOKm6B437tgukxP7oM5ORfI+ZND62W25S8ddVsDLlNTS0VEHlhDm3F+NF0A==}
@@ -1547,57 +1512,57 @@ packages:
   '@neon-rs/load@0.1.82':
     resolution: {integrity: sha512-H4Gu2o5kPp+JOEhRrOQCnJnf7X6sv9FBLttM/wSbb4efsgFWeHzfU/ItZ01E5qqEk+U6QGdeVO7lxXIAtYHr5A==}
 
-  '@next/env@15.5.18':
-    resolution: {integrity: sha512-hAV85Ckd9QR6RvH04MEKwsfLTksvFpO47j9xwtoIuvuPnlwecpSi+uZTtm8HirVbtlI2Fnz//xpcSTjFdyJk+g==}
+  '@next/env@15.5.20':
+    resolution: {integrity: sha512-dXh51Wvddf8daEyBXryZZEe1FdVxEWx9lgaTseLZUtC1XP/W8Wri+Z+VPOElHlByk23CyqHdc2oVByX7wsTWsw==}
 
-  '@next/swc-darwin-arm64@15.5.18':
-    resolution: {integrity: sha512-w0WvQf1n+txiwns/9pwIQteCJpZTbxzO2SE0FLcwuD4v0WEh1JPOjdyxWL21XwJsdpx8cFRjyzxzCS/siP7HcQ==}
+  '@next/swc-darwin-arm64@15.5.20':
+    resolution: {integrity: sha512-in0yXG7/pRBVjWeEl7f7ZZETpletSMFKXVS4GJgHENTPVrJFNJKPrYewa9rpZcvdjwFece5fZP0CK34G4PxowA==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
 
-  '@next/swc-darwin-x64@15.5.18':
-    resolution: {integrity: sha512-znn71QmDuxm+BOaglihMZfvyySMnNljkVIY5Z2TCssBmm+WqL6c19VhtH5ktFkHa8EZ2bnTUpcNcmNSQsg67og==}
+  '@next/swc-darwin-x64@15.5.20':
+    resolution: {integrity: sha512-0hsFshdPnTzGJdDTHeHJ+XPUShOpnyp9pUFDwDhqctsA0Cd8NcIVGRPtptYhgYY9DjkKgCDRkXxmgRc+CgT5Wg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
 
-  '@next/swc-linux-arm64-gnu@15.5.18':
-    resolution: {integrity: sha512-yPPe5MNL+igZUa+OsqQJisqSfh6oarIuA1Q0BDxljGJhRQyZeP+WRHh7rs/jZUGMh5aY0YdIjXZG0VohkKkUdw==}
+  '@next/swc-linux-arm64-gnu@15.5.20':
+    resolution: {integrity: sha512-DMvkoBtAABOzE6pMZRW/xNm7sKqql3wzzzZJ1R/d/rp4BCxv6LykouD3tHjGY8WdQqGpZs11t+R9AtjPxvvljw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@next/swc-linux-arm64-musl@15.5.18':
-    resolution: {integrity: sha512-glaCczEWIrHsokFZ3pP08U4BpKxwIdnT+txdOM32OBgpL9Yw4aqx8NejmgtZQZOdstQ5f0L3CasIZudzCuD+nw==}
+  '@next/swc-linux-arm64-musl@15.5.20':
+    resolution: {integrity: sha512-RQmDfeYBtXV2FSId7dfA1hE6M/T6+g7wdbYnFQ47tw/gUBwV+CccLVejNmCGa9yLDitk83foeg8hl/3DjfYQ5g==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@next/swc-linux-x64-gnu@15.5.18':
-    resolution: {integrity: sha512-oUfg2EgJmU3R0OCOWiokGFUTvZiPfXtriXiuF3YNxRoROCdgvTedHIzYoeKH34gsZxS/V7mHbfq2hpAHwhH1/A==}
+  '@next/swc-linux-x64-gnu@15.5.20':
+    resolution: {integrity: sha512-DkWLEdKajJwdGt27M3i1VEO2kelTvZrK6Pcb7JvW2BY+nofWm7FBsBNDj7g7Pr1NuQ5PLJvqEqYa20GTsBDnKQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@next/swc-linux-x64-musl@15.5.18':
-    resolution: {integrity: sha512-JLxSP3KTd9iu/bvUMQxH7RJo9xKSHf55/6RPE4a6FTSZygGn7uvZbCej0AHXydwkggQGSD9UddSjwv6Xz5ESfA==}
+  '@next/swc-linux-x64-musl@15.5.20':
+    resolution: {integrity: sha512-rAO5b7pKHvX+ExdmJskusDXTNbiNZfptifIPZItbUx+AOXxxTydVBsPt7Oz84DRd5mY8e0DcE8kvLj3AIfjE6w==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@next/swc-win32-arm64-msvc@15.5.18':
-    resolution: {integrity: sha512-ir1v7enP52K2HNz3tQQvwF+x7VNxBk1ciiZ18WBPvxf4C59IqdfmHPJYK3vH7rSxpuCVw/8C712wTXNAtEp+NA==}
+  '@next/swc-win32-arm64-msvc@15.5.20':
+    resolution: {integrity: sha512-Hp3zFsN8N8Kj9+vY6L4vnZ9EtA9eXyATu0q4EfGbZTiocgPUNSfz8NWhym6xvaOmHpJ8EuoypuU1WejCPsTFtg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [win32]
 
-  '@next/swc-win32-x64-msvc@15.5.18':
-    resolution: {integrity: sha512-LIu5me6QTANCd25E7I5uIEfvgQ06RK7tvHAbYo3zCb3VpxQEPvMcSpd87NwUABDT6MbGPdEGR5VRiK4PPTJhQg==}
+  '@next/swc-win32-x64-msvc@15.5.20':
+    resolution: {integrity: sha512-T/L7CXpR1M0wij/xbF3rT1+7KvSkfOLr7C+ToHHWZTG2eKmb52C5WvsyGCBNtkVvDEUESWkRUbbqSH4rSbOCYQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -1621,11 +1586,11 @@ packages:
   '@petamoriken/float16@3.9.3':
     resolution: {integrity: sha512-8awtpHXCx/bNpFt4mt2xdkgtgVvKqty8VbjHI/WWWQuEw+KLzFot3f4+LkQY9YmOtq7A5GdOnqoIC8Pdygjk2g==}
 
-  '@posthog/core@1.29.2':
-    resolution: {integrity: sha512-DYhR0Sl7pVdUXa+C9poCVjTj3D6SI9P7RLhIhr74YyHeHuCGL/MZsDEWcz3ul3qHDIhZU9myIUjID890QiQw+g==}
+  '@posthog/core@1.40.0':
+    resolution: {integrity: sha512-oGDbIwlTquNwdHbEL5ZLEkuW4UFkkEanfx3QAxDgyVbISv+OAA6YGQwrvo0JD3MUJEbJZvyh8XsX+WYDGw9XHw==}
 
-  '@posthog/types@1.373.5':
-    resolution: {integrity: sha512-K7STCnRG/WBE1q0BwEkIcrJB5OqECaymsQj6Hp4Ntvaek4dqHkZGfp6hxwIPqQPjlOXwidwPLo+XGsn+CoZUyw==}
+  '@posthog/types@1.393.0':
+    resolution: {integrity: sha512-vzWeEJZ7ERQhFRoQYaP5jzN1JvIu46UJyHXsuv+dTGW2r3sMgREOhNxXLZjmFHwZ8/FOHQoyqqQmXTCXZSfMSg==}
 
   '@prisma-next/adapter-postgres@0.14.0':
     resolution: {integrity: sha512-c90KFtI74WU+8YH3uhVg1DTmD10T2BpINzzys9F3n1jTM2Am0tXKx53V05Ev+7H1VBrjBoksZPZ92WWxVEXLew==}
@@ -2019,6 +1984,12 @@ packages:
     os: [linux]
     libc: [glibc]
 
+  '@rollup/rollup-linux-x64-gnu@4.62.2':
+    resolution: {integrity: sha512-5BqxR/pshjey51iliyzTD5Xi3EN0aLmQ2lZ3lvefVV9c82BvrLo2/6OT55iifpWBufs6kdwWbuOKS841DrmK9A==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
   '@rollup/rollup-linux-x64-musl@4.60.4':
     resolution: {integrity: sha512-+qfSY27qIrFfI/Hom04KYFw3GKZSGU4lXus51wsb5EuySfFlWRwjkKWoE9emgRw/ukoT4Udsj4W/+xxG8VbPKg==}
     cpu: [x64]
@@ -2068,8 +2039,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@stricli/core@1.2.7':
-    resolution: {integrity: sha512-a0HxA/cSWjqHj/9GM+cfc/zGNmBdxVTQQpHIEvY1AbDEgo4ZU84cTCbtywYEQOHw2wIc6Vu+PKv+ZQoqZwkHnQ==}
+  '@stricli/core@1.2.9':
+    resolution: {integrity: sha512-vKniyS+0GtarIaUpMRMQ5+Ck9mXeaBqdN/7otznkBTWU0EXfkMJAHt2QdOCmOudR9eciQZQf09DmYm14yfPWzw==}
 
   '@supabase/auth-js@2.110.1':
     resolution: {integrity: sha512-8EJUoRoqzAYWkieHrLCrGrxs3cBbRB94xK8GzHe0aSLlSa4mt1enYLCiMgLiKJOF8GNYeX6PLTBNef0XAhILgw==}
@@ -2100,9 +2071,6 @@ packages:
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
-
-  '@tanstack/query-core@5.100.9':
-    resolution: {integrity: sha512-SJSFw1S8+kQ0+knv/XGfrbocWoAlT7vDKsSImtLx3ZPQmEcR46hkDjLSvynSy25N8Ms4tIEini1FuBd5k7IscQ==}
 
   '@tanstack/query-core@5.101.2':
     resolution: {integrity: sha512-hH5MLoJhF7KaIGd7q3xTXGXvslI+GYlM1Z/35aSHHWaCJWB7XvTSHYuV3eM7tw+aE0mT/xMro4M4Q9rCGHT0lw==}
@@ -2171,11 +2139,11 @@ packages:
     resolution: {integrity: sha512-HVyk8nj2m+jcFRNazzqyVKiZezyhDKrGUA3jlEcg/nZ6Ms+qHwocba1Y/AaVaznJTAM9xpdFSh+ptbNrhOGvZA==}
     deprecated: This is a stub types definition. uuid provides its own type definitions, so you do not need this installed.
 
-  '@vitest/expect@3.2.6':
-    resolution: {integrity: sha512-1+7q9BtaKzEmO+fmNT3kYvoNn5Y71XWAx2Q5HRim4tTVRQVRv4uJFAQ5FbK0OPUeNP/WmVCpxYxoJdvuHVjzBQ==}
+  '@vitest/expect@3.2.7':
+    resolution: {integrity: sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==}
 
-  '@vitest/mocker@3.2.6':
-    resolution: {integrity: sha512-EZOrpDbkKotFAP7wPAQV1UIyoGOk4oX7ynWhBhLB7v+meMHbQhU16oPpIYGTTe4oFlhpryGpgpcZP/sin3hYuw==}
+  '@vitest/mocker@3.2.7':
+    resolution: {integrity: sha512-Trr0hYO9CM3Wj6ksWHRhK9IZpIY6wTMO5u/MqXurMxT57sWBaOPEtP3Oq60ihZuh5JsiagKfz95OcxdEP6dBrA==}
     peerDependencies:
       msw: ^2.4.9
       vite: ~7.3.5
@@ -2185,20 +2153,20 @@ packages:
       vite:
         optional: true
 
-  '@vitest/pretty-format@3.2.6':
-    resolution: {integrity: sha512-lb7XXXzmm2h2ASzFnRvQpDo6onT1NmMJA3tkGTWiBFtRJ9lxGY3d3mm/Apt36gej2bkkOVLL/yTOtufDaFa/jA==}
+  '@vitest/pretty-format@3.2.7':
+    resolution: {integrity: sha512-KUHlwqVu0sRlhCdyPdQ/wBoTfRahjUky1MubOmYw9fWfIZy1gNoHpuaaQBPAaMaVYdQYHJLurzj8ECCj5OwTqA==}
 
-  '@vitest/runner@3.2.6':
-    resolution: {integrity: sha512-HYcoSj1w5tcgUnzoF0HcyaAQjpA1gj9ftUJ7iSJSuipc02jW9gKkigwZbjFldAfYHA1fa8UZVRftdMY5msWM9Q==}
+  '@vitest/runner@3.2.7':
+    resolution: {integrity: sha512-sB9y4ovltoQP+WaUPwmSxO9WIg9Ig694Di5PalVPsYHklAdE027mehpWF2SQSVq+k6sFgaivbTjTJwZLSHbedA==}
 
-  '@vitest/snapshot@3.2.6':
-    resolution: {integrity: sha512-H+ZjNTWGpObenh0YnlBctAPnJSI20P81PL8BPzWpx54YXLLTm8hEsWawtcYLMrwvpK48hGxLLbCS+1KRXhsKhw==}
+  '@vitest/snapshot@3.2.7':
+    resolution: {integrity: sha512-7C+MwShwtBSI5Buwoyg3s/iY1eHL9PKAf+O1wVh/TdnjXUtkoL/9YQtre90i4MtNXM6edP1wJ2zOBpfCyhIS7g==}
 
-  '@vitest/spy@3.2.6':
-    resolution: {integrity: sha512-oq6BbH68WzcWmwtBrU9nqLeaXTR4XwJF7FSLkKEZo4i6eoXcrxjcwSuTvWBIRUTC6VC72nXYunzqgZA+IKdtxg==}
+  '@vitest/spy@3.2.7':
+    resolution: {integrity: sha512-Q2eQGI6d2L/hBtZ0qNuKcAGid68XK6cv1xsoaIma6PaJhHPoqcEJhYpXZ/5myCMqkNgtP6UKuBhbc0nHKnrkuQ==}
 
-  '@vitest/utils@3.2.6':
-    resolution: {integrity: sha512-lI23nIs4bnT3T8NIoh+vFaz5s2/DdP0Jgt2jxwgWljvwn82cLJtyi/If+fjFyoLMGIOz0U/fKvWE0d4jsNQEfg==}
+  '@vitest/utils@3.2.7':
+    resolution: {integrity: sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==}
 
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
@@ -2248,8 +2216,14 @@ packages:
   arkregex@0.0.5:
     resolution: {integrity: sha512-ncYjBdLlh5/QnVsAA8De16Tc9EqmYM7y/WU9j+236KcyYNUXogpz3sC4ATIZYzzLxwI+0sEOaQLEmLmRleaEXw==}
 
+  arkregex@0.0.8:
+    resolution: {integrity: sha512-PJcx6G1kQTgLKPUbeYlYecDRaKq15AMSGVajlKFYWlPeJRQL+j3dKE6tyMs40HZ99djS1l9Vhl3ezAHy9JBIqQ==}
+
   arktype@2.2.0:
     resolution: {integrity: sha512-t54MZ7ti5BhOEvzEkgKnWvqj+UbDfWig+DHr5I34xatymPusKLS0lQpNJd8M6DzmIto2QGszHfNKoFIT8tMCZQ==}
+
+  arktype@2.2.3:
+    resolution: {integrity: sha512-7W+0RLTUNJiBFIIZXwOQxSR8Z273IAd6IvqBeG9+gHnQKFsIx2C0iOtGTmMrPnlX4qLXyc5+ll7A0BIj9WrbTg==}
 
   array-union@2.1.0:
     resolution: {integrity: sha512-HGyxoOTYUyCM6stUe6EJgnd4EoewAI7zMdfqO+kGjnlZmBDz/cR5pf8r/cR4Wq60sL/p0IkcjUEEPwS3GFrIyw==}
@@ -2902,9 +2876,6 @@ packages:
     resolution: {integrity: sha512-z/wZZgDrkNV1eA0ULjM/F9/50Ya8fbzgKneSpoPsXSGd0KnpdtHfOZWK+GcwLk+EZbS4F9RBhU+K2RgzuDaItw==}
     engines: {node: '>=20'}
 
-  js-cookie@3.0.8:
-    resolution: {integrity: sha512-yeJd4aNAdYZQjaon2bpD/Gb0B/omw7HQOsynXXcOiWVCacbBcPlgn8S/d1X6blFSaHao7ozqtW7NZW19xpCtIw==}
-
   js-tokens@9.0.1:
     resolution: {integrity: sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==}
 
@@ -3118,8 +3089,8 @@ packages:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
 
-  next@15.5.18:
-    resolution: {integrity: sha512-eKL8zUJkX9Y5lE+RX/2YJoItVdGlIscyVyboeD9wSpp0PaGqjoA4tTpT2qPqz9ax+5IzGESyLSeZ/RCwbSZ2uQ==}
+  next@15.5.20:
+    resolution: {integrity: sha512-cvyS3/geydan1xLtE3FA8VCgdoQ/Gg/dlOldFkFCbB5VcVYJV7090hQLBnvTW2PwT76Z/dHdzDZCsVhZpoOlUA==}
     engines: {node: ^18.18.0 || ^19.8.0 || >= 20.0.0}
     hasBin: true
     peerDependencies:
@@ -3267,8 +3238,8 @@ packages:
     resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
     engines: {node: '>=4'}
 
-  pg@8.20.0:
-    resolution: {integrity: sha512-ldhMxz2r8fl/6QkXnBD3CR9/xg694oT6DZQ2s6c/RI28OjtSOpxnPrUCGOBJ46RCUxcWdx3p6kw/xnDHjKvaRA==}
+  pg@8.21.0:
+    resolution: {integrity: sha512-AUP1EYJuHraQGsVoCQVIcM7TEJVGtDzxWtGFZd8rds9d+CCXlU5Js1rYgfLNvxy9iJrpHjGrRjoi/3BT9fRyiA==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -3276,8 +3247,8 @@ packages:
       pg-native:
         optional: true
 
-  pg@8.21.0:
-    resolution: {integrity: sha512-AUP1EYJuHraQGsVoCQVIcM7TEJVGtDzxWtGFZd8rds9d+CCXlU5Js1rYgfLNvxy9iJrpHjGrRjoi/3BT9fRyiA==}
+  pg@8.22.0:
+    resolution: {integrity: sha512-8wih1vVIBMxoUM2oB4soJsD9tDnDpLv4OXBJ+EJzFsvycD+lfyIreC2gGHq78f8jbLLt+bvlPTFdFZfJkOuzAA==}
     engines: {node: '>= 16.0.0'}
     peerDependencies:
       pg-native: '>=3.0.1'
@@ -3359,8 +3330,8 @@ packages:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
     engines: {node: '>=12'}
 
-  posthog-node@5.34.2:
-    resolution: {integrity: sha512-lGp7zyyvzNZqrto3CPq3nQzVn9ZUg5tApE8jNh12Cu8kOqT9KTABZ8kMgiybfzxVttSdE3m25RsBPLBHkxCWDg==}
+  posthog-node@5.40.0:
+    resolution: {integrity: sha512-DrLfHuauO0W6qruF80iqr5JdmLysef74XzOB4eh36oRLRhxCySLraTqsi2Pj161LZnp9/JNdRDxwT8ei8VK2YA==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -3707,8 +3678,8 @@ packages:
       typescript:
         optional: true
 
-  tsx@4.22.1:
-    resolution: {integrity: sha512-TvncJykhxAzFCk0VQZKBTClall4Pm7qXDSodb6uxi8QFa8X8mT6ABjxxsQ2opDRYxG7AzcRWXaFtruz5HJKuWg==}
+  tsx@4.23.0:
+    resolution: {integrity: sha512-eUdUIaCr963q2h5u3+QwvYp0+eqPvn+egeqZUm0hwERCqqx1E3kK5ehbGCvqSE5MQAULr67ww0cA3jKc3YkM1w==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -3753,8 +3724,8 @@ packages:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
     engines: {node: '>= 0.8'}
 
-  uuid@14.0.0:
-    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
+  uuid@14.0.1:
+    resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
     hasBin: true
 
   vary@1.1.2:
@@ -3806,16 +3777,16 @@ packages:
       yaml:
         optional: true
 
-  vitest@3.2.6:
-    resolution: {integrity: sha512-xejya+bT/j/+R/AGa1XOfRxLmNUlLtlwjRsFUILF+xHfzElmGcmFydy2gqqIrd62ptIEfwVMofd19uNWD9L7Nw==}
+  vitest@3.2.7:
+    resolution: {integrity: sha512-KrxIJ62Fd89gfysR4WotlgZABiz2dqFPgqGzX7s+CwsqLFomRH7777ZcrOD6+WVAh7khPQP41A+BKbpcJFrdEg==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
     peerDependencies:
       '@edge-runtime/vm': '*'
       '@types/debug': ^4.1.12
       '@types/node': ^18.0.0 || ^20.0.0 || >=22.0.0
-      '@vitest/browser': 3.2.6
-      '@vitest/ui': 3.2.6
+      '@vitest/browser': 3.2.7
+      '@vitest/ui': 3.2.7
       happy-dom: '*'
       jsdom: '*'
     peerDependenciesMeta:
@@ -3879,46 +3850,46 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.143':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.205':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.143(@anthropic-ai/sdk@0.106.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.3.205(@anthropic-ai/sdk@0.110.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
     dependencies:
-      '@anthropic-ai/sdk': 0.106.0(zod@3.25.76)
+      '@anthropic-ai/sdk': 0.110.0(zod@3.25.76)
       '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
       zod: 3.25.76
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.143
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.143
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.205
 
-  '@anthropic-ai/sdk@0.106.0(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.110.0(zod@3.25.76)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
@@ -3935,7 +3906,13 @@ snapshots:
     dependencies:
       '@ark/util': 0.56.0
 
+  '@ark/schema@0.56.2':
+    dependencies:
+      '@ark/util': 0.56.2
+
   '@ark/util@0.56.0': {}
+
+  '@ark/util@0.56.2': {}
 
   '@babel/runtime@7.29.2': {}
 
@@ -4123,96 +4100,72 @@ snapshots:
       human-id: 4.1.3
       prettier: 2.8.8
 
-  '@cipherstash/auth-darwin-arm64@0.41.0':
+  '@cipherstash/auth-darwin-arm64@0.42.0':
     optional: true
 
-  '@cipherstash/auth-darwin-x64@0.41.0':
+  '@cipherstash/auth-darwin-x64@0.42.0':
     optional: true
 
-  '@cipherstash/auth-linux-arm64-gnu@0.41.0':
+  '@cipherstash/auth-linux-arm64-gnu@0.42.0':
     optional: true
 
-  '@cipherstash/auth-linux-x64-gnu@0.41.0':
+  '@cipherstash/auth-linux-x64-gnu@0.42.0':
     optional: true
 
-  '@cipherstash/auth-linux-x64-musl@0.41.0':
+  '@cipherstash/auth-linux-x64-musl@0.42.0':
     optional: true
 
-  '@cipherstash/auth-win32-x64-msvc@0.41.0':
+  '@cipherstash/auth-win32-x64-msvc@0.42.0':
     optional: true
 
-  '@cipherstash/auth@0.41.0(@cipherstash/auth-darwin-arm64@0.41.0)(@cipherstash/auth-darwin-x64@0.41.0)(@cipherstash/auth-linux-arm64-gnu@0.41.0)(@cipherstash/auth-linux-x64-gnu@0.41.0)(@cipherstash/auth-linux-x64-musl@0.41.0)(@cipherstash/auth-win32-x64-msvc@0.41.0)':
+  '@cipherstash/auth@0.41.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)':
     dependencies:
       '@byteslice/result': 0.3.0
     optionalDependencies:
-      '@cipherstash/auth-darwin-arm64': 0.41.0
-      '@cipherstash/auth-darwin-x64': 0.41.0
-      '@cipherstash/auth-linux-arm64-gnu': 0.41.0
-      '@cipherstash/auth-linux-x64-gnu': 0.41.0
-      '@cipherstash/auth-linux-x64-musl': 0.41.0
-      '@cipherstash/auth-win32-x64-msvc': 0.41.0
+      '@cipherstash/auth-darwin-arm64': 0.42.0
+      '@cipherstash/auth-darwin-x64': 0.42.0
+      '@cipherstash/auth-linux-arm64-gnu': 0.42.0
+      '@cipherstash/auth-linux-x64-gnu': 0.42.0
+      '@cipherstash/auth-linux-x64-musl': 0.42.0
+      '@cipherstash/auth-win32-x64-msvc': 0.42.0
 
   '@cipherstash/eql@3.0.0': {}
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
+  '@cipherstash/protect-ffi-darwin-arm64@0.28.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.29.0':
+  '@cipherstash/protect-ffi-darwin-x64@0.28.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-x64@0.23.0':
+  '@cipherstash/protect-ffi-linux-arm64-gnu@0.28.0':
     optional: true
 
-  '@cipherstash/protect-ffi-darwin-x64@0.29.0':
+  '@cipherstash/protect-ffi-linux-x64-gnu@0.28.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.23.0':
+  '@cipherstash/protect-ffi-linux-x64-musl@0.28.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.29.0':
+  '@cipherstash/protect-ffi-win32-x64-msvc@0.28.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.23.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.29.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-linux-x64-musl@0.23.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-linux-x64-musl@0.29.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.23.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.29.0':
-    optional: true
-
-  '@cipherstash/protect-ffi@0.23.0':
+  '@cipherstash/protect-ffi@0.28.0':
     dependencies:
       '@neon-rs/load': 0.1.82
     optionalDependencies:
-      '@cipherstash/protect-ffi-darwin-arm64': 0.23.0
-      '@cipherstash/protect-ffi-darwin-x64': 0.23.0
-      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.23.0
-      '@cipherstash/protect-ffi-linux-x64-gnu': 0.23.0
-      '@cipherstash/protect-ffi-linux-x64-musl': 0.23.0
-      '@cipherstash/protect-ffi-win32-x64-msvc': 0.23.0
-
-  '@cipherstash/protect-ffi@0.29.0':
-    dependencies:
-      '@neon-rs/load': 0.1.82
-    optionalDependencies:
-      '@cipherstash/protect-ffi-darwin-arm64': 0.29.0
-      '@cipherstash/protect-ffi-darwin-x64': 0.29.0
-      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.29.0
-      '@cipherstash/protect-ffi-linux-x64-gnu': 0.29.0
-      '@cipherstash/protect-ffi-linux-x64-musl': 0.29.0
-      '@cipherstash/protect-ffi-win32-x64-msvc': 0.29.0
+      '@cipherstash/protect-ffi-darwin-arm64': 0.28.0
+      '@cipherstash/protect-ffi-darwin-x64': 0.28.0
+      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.28.0
+      '@cipherstash/protect-ffi-linux-x64-gnu': 0.28.0
+      '@cipherstash/protect-ffi-linux-x64-musl': 0.28.0
+      '@cipherstash/protect-ffi-win32-x64-msvc': 0.28.0
 
   '@clack/core@1.3.1':
+    dependencies:
+      fast-wrap-ansi: 0.2.0
+      sisteransi: 1.0.5
+
+  '@clack/core@1.4.3':
     dependencies:
       fast-wrap-ansi: 0.2.0
       sisteransi: 1.0.5
@@ -4220,6 +4173,13 @@ snapshots:
   '@clack/prompts@1.4.0':
     dependencies:
       '@clack/core': 1.3.1
+      fast-string-width: 3.0.2
+      fast-wrap-ansi: 0.2.0
+      sisteransi: 1.0.5
+
+  '@clack/prompts@1.7.0':
+    dependencies:
+      '@clack/core': 1.4.3
       fast-string-width: 3.0.2
       fast-wrap-ansi: 0.2.0
       sisteransi: 1.0.5
@@ -4233,43 +4193,23 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/backend@3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/nextjs@7.5.14(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
+      '@clerk/backend': 3.11.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/react': 6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      standardwebhooks: 1.0.0
-      tslib: 2.8.1
-    transitivePeerDependencies:
-      - react
-      - react-dom
-
-  '@clerk/nextjs@7.3.5(next@15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@clerk/backend': 3.4.9(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/react': 6.6.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/shared': 4.12.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      next: 15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      next: 15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       server-only: 0.0.1
       tslib: 2.8.1
 
-  '@clerk/react@6.6.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/react@6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
-
-  '@clerk/shared@4.12.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      '@tanstack/query-core': 5.100.9
-      dequal: 2.0.3
-      glob-to-regexp: 0.4.1
-      js-cookie: 3.0.8
-      std-env: 3.10.0
-    optionalDependencies:
-      react: 19.2.3
-      react-dom: 19.2.3(react@19.2.3)
 
   '@clerk/shared@4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
@@ -4534,30 +4474,30 @@ snapshots:
 
   '@neon-rs/load@0.1.82': {}
 
-  '@next/env@15.5.18': {}
+  '@next/env@15.5.20': {}
 
-  '@next/swc-darwin-arm64@15.5.18':
+  '@next/swc-darwin-arm64@15.5.20':
     optional: true
 
-  '@next/swc-darwin-x64@15.5.18':
+  '@next/swc-darwin-x64@15.5.20':
     optional: true
 
-  '@next/swc-linux-arm64-gnu@15.5.18':
+  '@next/swc-linux-arm64-gnu@15.5.20':
     optional: true
 
-  '@next/swc-linux-arm64-musl@15.5.18':
+  '@next/swc-linux-arm64-musl@15.5.20':
     optional: true
 
-  '@next/swc-linux-x64-gnu@15.5.18':
+  '@next/swc-linux-x64-gnu@15.5.20':
     optional: true
 
-  '@next/swc-linux-x64-musl@15.5.18':
+  '@next/swc-linux-x64-musl@15.5.20':
     optional: true
 
-  '@next/swc-win32-arm64-msvc@15.5.18':
+  '@next/swc-win32-arm64-msvc@15.5.20':
     optional: true
 
-  '@next/swc-win32-x64-msvc@15.5.18':
+  '@next/swc-win32-x64-msvc@15.5.20':
     optional: true
 
   '@noble/hashes@2.2.0': {}
@@ -4577,11 +4517,11 @@ snapshots:
   '@petamoriken/float16@3.9.3':
     optional: true
 
-  '@posthog/core@1.29.2':
+  '@posthog/core@1.40.0':
     dependencies:
-      '@posthog/types': 1.373.5
+      '@posthog/types': 1.393.0
 
-  '@posthog/types@1.373.5': {}
+  '@posthog/types@1.393.0': {}
 
   '@prisma-next/adapter-postgres@0.14.0(typanion@3.14.0)(typescript@5.9.3)':
     dependencies:
@@ -4611,7 +4551,7 @@ snapshots:
     dependencies:
       '@prisma-next/config': 0.14.0(typescript@5.9.3)
       '@prisma-next/utils': 0.14.0(typescript@5.9.3)
-      arktype: 2.2.0
+      arktype: 2.2.3
       c12: 3.3.4
       pathe: 2.0.3
     optionalDependencies:
@@ -4656,7 +4596,7 @@ snapshots:
       '@prisma-next/contract': 0.14.0(typescript@5.9.3)
       '@prisma-next/framework-components': 0.14.0(typescript@5.9.3)
       '@prisma-next/utils': 0.14.0(typescript@5.9.3)
-      arktype: 2.2.0
+      arktype: 2.2.3
     optionalDependencies:
       typescript: 5.9.3
 
@@ -4699,7 +4639,7 @@ snapshots:
       '@prisma-next/operations': 0.14.0(typescript@5.9.3)
       '@prisma-next/ts-render': 0.14.0(typescript@5.9.3)
       '@prisma-next/utils': 0.14.0(typescript@5.9.3)
-      arktype: 2.2.0
+      arktype: 2.2.3
       prettier: 3.8.3
     optionalDependencies:
       typescript: 5.9.3
@@ -4759,7 +4699,7 @@ snapshots:
       '@prisma-next/contract': 0.14.0(typescript@5.9.3)
       '@prisma-next/framework-components': 0.14.0(typescript@5.9.3)
       '@prisma-next/utils': 0.14.0(typescript@5.9.3)
-      arktype: 2.2.0
+      arktype: 2.2.3
       pathe: 2.0.3
       prettier: 3.8.3
     optionalDependencies:
@@ -4851,7 +4791,7 @@ snapshots:
       '@prisma-next/framework-components': 0.14.0(typescript@5.9.3)
       '@prisma-next/sql-contract': 0.14.0(typescript@5.9.3)
       '@prisma-next/utils': 0.14.0(typescript@5.9.3)
-      arktype: 2.2.0
+      arktype: 2.2.3
       pathe: 2.0.3
       ts-toolbelt: 9.6.0
     optionalDependencies:
@@ -4874,7 +4814,7 @@ snapshots:
     dependencies:
       '@prisma-next/operations': 0.14.0(typescript@5.9.3)
       '@prisma-next/sql-contract': 0.14.0(typescript@5.9.3)
-      arktype: 2.2.0
+      arktype: 2.2.3
     optionalDependencies:
       typescript: 5.9.3
 
@@ -4901,7 +4841,7 @@ snapshots:
       '@prisma-next/sql-operations': 0.14.0(typescript@5.9.3)
       '@prisma-next/utils': 0.14.0(typescript@5.9.3)
       '@standard-schema/spec': 1.1.0
-      arktype: 2.2.0
+      arktype: 2.2.3
       ts-toolbelt: 9.6.0
     optionalDependencies:
       typescript: 5.9.3
@@ -5013,6 +4953,9 @@ snapshots:
   '@rollup/rollup-linux-x64-gnu@4.60.4':
     optional: true
 
+  '@rollup/rollup-linux-x64-gnu@4.62.2':
+    optional: true
+
   '@rollup/rollup-linux-x64-musl@4.60.4':
     optional: true
 
@@ -5042,7 +4985,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@stricli/core@1.2.7': {}
+  '@stricli/core@1.2.9': {}
 
   '@supabase/auth-js@2.110.1':
     dependencies:
@@ -5079,8 +5022,6 @@ snapshots:
   '@swc/helpers@0.5.15':
     dependencies:
       tslib: 2.8.1
-
-  '@tanstack/query-core@5.100.9': {}
 
   '@tanstack/query-core@5.101.2': {}
 
@@ -5136,55 +5077,55 @@ snapshots:
 
   '@types/uuid@11.0.0':
     dependencies:
-      uuid: 14.0.0
+      uuid: 14.0.1
 
-  '@vitest/expect@3.2.6':
+  '@vitest/expect@3.2.7':
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/spy': 3.2.6
-      '@vitest/utils': 3.2.6
+      '@vitest/spy': 3.2.7
+      '@vitest/utils': 3.2.7
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.6(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))':
+  '@vitest/mocker@3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))':
     dependencies:
-      '@vitest/spy': 3.2.6
+      '@vitest/spy': 3.2.7
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
-  '@vitest/mocker@3.2.6(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))':
+  '@vitest/mocker@3.2.7(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))':
     dependencies:
-      '@vitest/spy': 3.2.6
+      '@vitest/spy': 3.2.7
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
 
-  '@vitest/pretty-format@3.2.6':
+  '@vitest/pretty-format@3.2.7':
     dependencies:
       tinyrainbow: 2.0.0
 
-  '@vitest/runner@3.2.6':
+  '@vitest/runner@3.2.7':
     dependencies:
-      '@vitest/utils': 3.2.6
+      '@vitest/utils': 3.2.7
       pathe: 2.0.3
       strip-literal: 3.1.0
 
-  '@vitest/snapshot@3.2.6':
+  '@vitest/snapshot@3.2.7':
     dependencies:
-      '@vitest/pretty-format': 3.2.6
+      '@vitest/pretty-format': 3.2.7
       magic-string: 0.30.21
       pathe: 2.0.3
 
-  '@vitest/spy@3.2.6':
+  '@vitest/spy@3.2.7':
     dependencies:
       tinyspy: 4.0.4
 
-  '@vitest/utils@3.2.6':
+  '@vitest/utils@3.2.7':
     dependencies:
-      '@vitest/pretty-format': 3.2.6
+      '@vitest/pretty-format': 3.2.7
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
@@ -5226,11 +5167,21 @@ snapshots:
     dependencies:
       '@ark/util': 0.56.0
 
+  arkregex@0.0.8:
+    dependencies:
+      '@ark/util': 0.56.2
+
   arktype@2.2.0:
     dependencies:
       '@ark/schema': 0.56.0
       '@ark/util': 0.56.0
       arkregex: 0.0.5
+
+  arktype@2.2.3:
+    dependencies:
+      '@ark/schema': 0.56.2
+      '@ark/util': 0.56.2
+      arkregex: 0.0.8
 
   array-union@2.1.0: {}
 
@@ -5400,20 +5351,12 @@ snapshots:
 
   dotenv@17.4.2: {}
 
-  drizzle-orm@0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.20.0)(postgres@3.4.9):
+  drizzle-orm@0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.22.0)(postgres@3.4.9):
     optionalDependencies:
       '@types/pg': 8.20.0
       gel: 2.2.0
       mysql2: 3.16.0
-      pg: 8.20.0
-      postgres: 3.4.9
-
-  drizzle-orm@0.45.2(@types/pg@8.20.0)(gel@2.2.0)(mysql2@3.16.0)(pg@8.21.0)(postgres@3.4.9):
-    optionalDependencies:
-      '@types/pg': 8.20.0
-      gel: 2.2.0
-      mysql2: 3.16.0
-      pg: 8.21.0
+      pg: 8.22.0
       postgres: 3.4.9
 
   dunder-proto@1.0.1:
@@ -5489,9 +5432,9 @@ snapshots:
     dependencies:
       eventsource-parser: 3.1.0
 
-  evlog@1.11.0(next@15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3):
+  evlog@1.11.0(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3):
     optionalDependencies:
-      next: 15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      next: 15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
 
   execa@9.6.1:
@@ -5787,8 +5730,6 @@ snapshots:
 
   js-cookie@3.0.7: {}
 
-  js-cookie@3.0.8: {}
-
   js-tokens@9.0.1: {}
 
   js-yaml@3.15.0:
@@ -5971,9 +5912,9 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  next@15.5.18(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+  next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
     dependencies:
-      '@next/env': 15.5.18
+      '@next/env': 15.5.20
       '@swc/helpers': 0.5.15
       caniuse-lite: 1.0.30001760
       postcss: 8.5.14
@@ -5981,14 +5922,14 @@ snapshots:
       react-dom: 19.2.3(react@19.2.3)
       styled-jsx: 5.1.6(react@19.2.3)
     optionalDependencies:
-      '@next/swc-darwin-arm64': 15.5.18
-      '@next/swc-darwin-x64': 15.5.18
-      '@next/swc-linux-arm64-gnu': 15.5.18
-      '@next/swc-linux-arm64-musl': 15.5.18
-      '@next/swc-linux-x64-gnu': 15.5.18
-      '@next/swc-linux-x64-musl': 15.5.18
-      '@next/swc-win32-arm64-msvc': 15.5.18
-      '@next/swc-win32-x64-msvc': 15.5.18
+      '@next/swc-darwin-arm64': 15.5.20
+      '@next/swc-darwin-x64': 15.5.20
+      '@next/swc-linux-arm64-gnu': 15.5.20
+      '@next/swc-linux-arm64-musl': 15.5.20
+      '@next/swc-linux-x64-gnu': 15.5.20
+      '@next/swc-linux-x64-musl': 15.5.20
+      '@next/swc-win32-arm64-msvc': 15.5.20
+      '@next/swc-win32-x64-msvc': 15.5.20
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -6081,13 +6022,13 @@ snapshots:
 
   pg-int8@1.0.1: {}
 
-  pg-pool@3.14.0(pg@8.20.0):
-    dependencies:
-      pg: 8.20.0
-
   pg-pool@3.14.0(pg@8.21.0):
     dependencies:
       pg: 8.21.0
+
+  pg-pool@3.14.0(pg@8.22.0):
+    dependencies:
+      pg: 8.22.0
 
   pg-protocol@1.15.0: {}
 
@@ -6099,20 +6040,20 @@ snapshots:
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
 
-  pg@8.20.0:
+  pg@8.21.0:
     dependencies:
       pg-connection-string: 2.14.0
-      pg-pool: 3.14.0(pg@8.20.0)
+      pg-pool: 3.14.0(pg@8.21.0)
       pg-protocol: 1.15.0
       pg-types: 2.2.0
       pgpass: 1.0.5
     optionalDependencies:
       pg-cloudflare: 1.4.0
 
-  pg@8.21.0:
+  pg@8.22.0:
     dependencies:
       pg-connection-string: 2.14.0
-      pg-pool: 3.14.0(pg@8.21.0)
+      pg-pool: 3.14.0(pg@8.22.0)
       pg-protocol: 1.15.0
       pg-types: 2.2.0
       pgpass: 1.0.5
@@ -6147,13 +6088,13 @@ snapshots:
       exsolve: 1.0.8
       pathe: 2.0.3
 
-  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(yaml@2.9.0):
+  postcss-load-config@6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 2.7.0
       postcss: 8.5.14
-      tsx: 4.22.1
+      tsx: 4.23.0
       yaml: 2.9.0
 
   postcss@8.5.14:
@@ -6174,9 +6115,9 @@ snapshots:
 
   postgres@3.4.9: {}
 
-  posthog-node@5.34.2:
+  posthog-node@5.40.0:
     dependencies:
-      '@posthog/core': 1.29.2
+      '@posthog/core': 1.40.0
 
   prettier@2.8.8: {}
 
@@ -6533,7 +6474,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(typescript@5.9.3)(yaml@2.9.0):
+  tsup@8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.28.1)
       cac: 6.7.14
@@ -6544,7 +6485,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.22.1)(yaml@2.9.0)
+      postcss-load-config: 6.0.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(yaml@2.9.0)
       resolve-from: 5.0.0
       rollup: 4.60.4
       source-map: 0.7.6
@@ -6561,7 +6502,7 @@ snapshots:
       - tsx
       - yaml
 
-  tsx@4.22.1:
+  tsx@4.23.0:
     dependencies:
       esbuild: 0.28.1
     optionalDependencies:
@@ -6603,17 +6544,17 @@ snapshots:
 
   unpipe@1.0.0: {}
 
-  uuid@14.0.0: {}
+  uuid@14.0.1: {}
 
   vary@1.1.2: {}
 
-  vite-node@3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -6628,13 +6569,13 @@ snapshots:
       - tsx
       - yaml
 
-  vite-node@3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite-node@3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -6649,7 +6590,7 @@ snapshots:
       - tsx
       - yaml
 
-  vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.4)
@@ -6663,10 +6604,10 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.2
       terser: 5.44.1
-      tsx: 4.22.1
+      tsx: 4.23.0
       yaml: 2.9.0
 
-  vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.4)
@@ -6680,19 +6621,19 @@ snapshots:
       jiti: 2.7.0
       lightningcss: 1.30.2
       terser: 5.44.1
-      tsx: 4.22.1
+      tsx: 4.23.0
       yaml: 2.9.0
 
-  vitest@3.2.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vitest@3.2.7(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/expect': 3.2.6
-      '@vitest/mocker': 3.2.6(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))
-      '@vitest/pretty-format': 3.2.6
-      '@vitest/runner': 3.2.6
-      '@vitest/snapshot': 3.2.6
-      '@vitest/spy': 3.2.6
-      '@vitest/utils': 3.2.6
+      '@vitest/expect': 3.2.7
+      '@vitest/mocker': 3.2.7(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))
+      '@vitest/pretty-format': 3.2.7
+      '@vitest/runner': 3.2.7
+      '@vitest/snapshot': 3.2.7
+      '@vitest/spy': 3.2.7
+      '@vitest/utils': 3.2.7
       chai: 5.3.3
       debug: 4.4.3
       expect-type: 1.3.0
@@ -6705,8 +6646,8 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.20.1
@@ -6724,16 +6665,16 @@ snapshots:
       - tsx
       - yaml
 
-  vitest@3.2.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0):
+  vitest@3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0):
     dependencies:
       '@types/chai': 5.2.3
-      '@vitest/expect': 3.2.6
-      '@vitest/mocker': 3.2.6(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0))
-      '@vitest/pretty-format': 3.2.6
-      '@vitest/runner': 3.2.6
-      '@vitest/snapshot': 3.2.6
-      '@vitest/spy': 3.2.6
-      '@vitest/utils': 3.2.6
+      '@vitest/expect': 3.2.7
+      '@vitest/mocker': 3.2.7(vite@7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0))
+      '@vitest/pretty-format': 3.2.7
+      '@vitest/runner': 3.2.7
+      '@vitest/snapshot': 3.2.7
+      '@vitest/spy': 3.2.7
+      '@vitest/utils': 3.2.7
       chai: 5.3.3
       debug: 4.4.3
       expect-type: 1.3.0
@@ -6746,8 +6687,8 @@ snapshots:
       tinyglobby: 0.2.16
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
-      vite-node: 3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.22.1)(yaml@2.9.0)
+      vite: 7.3.6(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
+      vite-node: 3.2.4(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.1.1
