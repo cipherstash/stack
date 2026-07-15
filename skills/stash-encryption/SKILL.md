@@ -63,9 +63,26 @@ If you skip this step, you'll see runtime errors like `Cannot find module '@ciph
 
 ## Configuration
 
-### Environment Variables
+### Local Development (preferred: `stash auth login`)
 
-Set these in `.env` or your hosting platform:
+No environment variables are needed for local development:
+
+```bash
+npx stash init        # agent-assisted setup: auth + schema + database, end to end
+# or, if the project is already set up:
+npx stash auth login  # device code flow; token saved to ~/.cipherstash/auth.json
+```
+
+`npx stash init` is the assisted flow — it authenticates, builds the encryption
+schema with you, generates the client file, and wires the database. For an
+already-initialized project, `npx stash auth login` alone authenticates the
+machine; the SDK and CLI pick up the saved profile automatically. Sign up at
+[cipherstash.com/signup](https://cipherstash.com/signup) first.
+
+### CI and Production (environment variables)
+
+Deployed environments and CI use machine credentials via environment variables
+(set in your hosting platform or pipeline secrets — not committed `.env`):
 
 ```bash
 CS_WORKSPACE_CRN=crn:ap-southeast-2.aws:your-workspace-id
@@ -74,7 +91,8 @@ CS_CLIENT_KEY=your-client-key
 CS_CLIENT_ACCESS_KEY=your-access-key
 ```
 
-Sign up at [cipherstash.com/signup](https://cipherstash.com/signup) to generate credentials.
+When both are present, the `CS_*` variables take precedence over the saved
+profile.
 
 ### Programmatic Config
 
@@ -91,7 +109,7 @@ const client = await Encryption({
 })
 ```
 
-If `config` is omitted, the client reads `CS_*` environment variables automatically.
+If `config` is omitted, the client resolves credentials automatically: `CS_*` environment variables when set (CI/production), otherwise the local `stash auth login` profile (development).
 
 ### Logging
 
@@ -418,7 +436,7 @@ All values in the array must be non-null.
 
 ## Authentication
 
-The client authenticates to ZeroKMS through `config.authStrategy`. Leave it unset for the default **auto** strategy — credentials from the `CS_*` environment variables, falling back to the local dev profile created by `npx stash auth login`. Two explicit strategies cover the other cases:
+The client authenticates to ZeroKMS through `config.authStrategy`. Leave it unset for the default **auto** strategy: in local development, authenticate once with `npx stash auth login` (preferred — no credentials in your environment; `npx stash init` is the agent-assisted flow that also sets up schema and database); in CI/production, set the `CS_*` environment variables. Two explicit strategies cover the other cases:
 
 - **`AccessKeyStrategy`** — service-to-service / CI. Authenticates a *service* with a CipherStash access key.
 - **`OidcFederationStrategy`** — authenticates the client **as the end user** by federating a third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...) into a CipherStash service token:

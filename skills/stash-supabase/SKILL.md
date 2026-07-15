@@ -47,6 +47,12 @@ CREATE EXTENSION IF NOT EXISTS eql_v2;
 
 ## Setup
 
+**Credentials first:** for local development run `npx stash init` (the
+agent-assisted flow — auth, schema, and database end to end) or
+`npx stash auth login` (device code flow; no environment variables needed).
+CI and production use the `CS_*` machine-credential environment variables —
+see the `stash-encryption` skill's Configuration section.
+
 ### 1. Define Encrypted Schema
 
 ```typescript
@@ -292,9 +298,9 @@ Operator family support is currently being developed in collaboration with the S
 ## Authentication
 
 The encryption client authenticates to ZeroKMS through `config.authStrategy`.
-Unset, it uses the default **auto** strategy (`CS_*` environment variables,
-falling back to the `npx stash auth login` dev profile) — fine for
-service-level encryption. To authenticate **as the end user**, federate their
+Unset, it uses the default **auto** strategy — the `npx stash auth login`
+profile in local development (preferred), `CS_*` environment variables in
+CI/production — which is fine for service-level encryption. To authenticate **as the end user**, federate their
 third-party OIDC JWT (Clerk, Supabase, Auth0, ...) with
 `OidcFederationStrategy`:
 

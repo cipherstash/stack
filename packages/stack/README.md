@@ -449,9 +449,10 @@ Notes:
 ## Authentication
 
 The client authenticates to ZeroKMS through `config.authStrategy`. Leave it
-unset for the default **auto** strategy — credentials from the `CS_*`
-environment variables, falling back to the local dev profile created by
-`npx stash auth login`. Two explicit strategies cover the other cases:
+unset for the default **auto** strategy: in local development, authenticate
+once with `npx stash auth login` (preferred — no credentials in your
+environment); in CI/production, set the `CS_*` environment variables. Two
+explicit strategies cover the other cases:
 
 - **`AccessKeyStrategy`** — service-to-service / CI. Authenticates a *service*
   with a CipherStash access key.
@@ -555,7 +556,7 @@ After init, run `npx stash db setup` to configure your database.
 
 ### Local Development
 
-No environment variables or credentials are needed for local development. Run `npx @cipherstash/stack auth login` to authenticate via the device code flow, and the SDK and CLI will use the token saved to `~/.cipherstash/auth.json`.
+No environment variables or credentials are needed for local development. Run `npx stash auth login` to authenticate via the device code flow (or `npx stash init` for the agent-assisted end-to-end setup), and the SDK and CLI will use the token saved to `~/.cipherstash/auth.json`.
 
 ### Going to Production
 
