@@ -65,41 +65,19 @@ export const v3Dialect = {
   },
 
   /**
-   * A ciphertext-free JSONPath selector-with-constraint on an `eql_v3_json`
-   * column. Both sides reduce to the encrypted TERM — `eql_v3.hmac_256` for
-   * equality, `eql_v3_internal.ope_cllw` for ordering — which compare natively
-   * (bytea), so no ciphertext ever reaches the WHERE clause:
+   * Extract the encrypted JSONB leaf entry at a selector:
+   * `eql_v3.jsonb_path_query_first(src, sel)` → `eql_v3_jsonb_entry`. `src` is
+   * either an `eql_v3_json` column or a storage-needle document already cast to
+   * `eql_v3_json`; `sel` is the selector hash bound as `text`. The returned entry
+   * feeds `eql_v3.{eq,neq,lt,lte,gt,gte}(jsonb_entry, jsonb_entry)`, so a selector
+   * comparison is `equality`/`comparison` applied to two extractions (column side
+   * and needle side) rather than column vs operand.
    *
-   * ```sql
-   * eql_v3.<term>(eql_v3.jsonb_path_query_first(col, '<sel>')) <cmp> eql_v3.<term>(<operand>)
-   * ```
-   *
-   * - LHS: `jsonb_path_query_first` returns the stored `eql_v3_jsonb_entry` at
-   *   the selector; `eq_term`/`ord_term` read only its `hm`/`op`.
-   * - RHS: `<operand>` is a ciphertext-free scalar query term
-   *   (`eql_v3.query_<T>_eq` / `_ord`), already cast by the operator layer.
-   * - `<term>` is `eq_term` for `eq`/`ne` (compared `=`/`<>`) and `ord_term` for
-   *   `gt`/`gte`/`lt`/`lte`.
-   *
-   * The direct-function form is used because the bundle has no
-   * `(eql_v3_jsonb_entry, eql_v3.query_<T>)` operator (only the scalar domains
-   * got those); adding it upstream would let this collapse to an operator and
-   * gain functional-index matching — see the EQL follow-up.
+   * The root `eql_v3_json` domain has no comparison operators (they're blocked in
+   * the bundle), which is why the selector must be extracted before comparing.
    */
-  selectorConstraint(
-    op: EqualityOp | ComparisonOp,
-    col: SQL,
-    selector: SQL,
-    operand: SQL,
-  ): SQL {
-    const isEquality = op === 'eq' || op === 'ne'
-    const term = isEquality ? 'eq_term' : 'ord_term'
-    const cmp = { eq: '=', ne: '<>', gt: '>', gte: '>=', lt: '<', lte: '<=' }[
-      op
-    ]
-    const lhs = sql`${fn(term)}(${fn('jsonb_path_query_first')}(${col}, ${selector}))`
-    const rhs = sql`${fn(term)}(${operand})`
-    return sql`${lhs} ${sql.raw(cmp)} ${rhs}`
+  selectorEntry(source: SQL, selector: SQL): SQL {
+    return sql`${fn('jsonb_path_query_first')}(${source}, ${selector})`
   },
 
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {

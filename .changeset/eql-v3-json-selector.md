@@ -10,7 +10,12 @@ over `contains` is **ordering at a path** (`col->'$.age' > 21`), which
 containment cannot express.
 
 Complements the existing `contains` (JSONB `@>`) containment operator. Core
-`@cipherstash/stack` needs no change — the selector term and comparison entry are
+`@cipherstash/stack` needs no change — the selector hash and comparison entry are
 produced by `encryptQuery`/`encrypt` on the existing `types.Json` surface. v1
 supports dot-notation object paths; array-index/wildcard paths are rejected with
 a clear error. The Supabase adapter is tracked separately.
+
+The right-hand comparison operand is currently a storage-encrypted needle (its
+ste_vec entry carries the ordering term), pending a ciphertext-free ordering
+query needle from protect-ffi (cipherstash/protectjs-ffi#137); until then the
+value's ciphertext appears in the WHERE clause.

@@ -66,42 +66,64 @@ type OperandEncryptionClient = {
     opts: never,
   ): ChainableOperation<EncryptedQueryResult>
   encryptQuery(terms: never): ChainableOperation<EncryptedQueryResult[]>
-}
-
-/** `$`-root a bare path so the selector needle addresses from the document root. */
-function normalizeJsonPath(path: string): string {
-  return path.startsWith('$') ? path : `$.${path}`
+  /**
+   * Storage encryption — the JSON selector RHS. See {@link selectorCompare}:
+   * pending a ciphertext-free ordering query needle from protect-ffi
+   * (cipherstash/protectjs-ffi#137), the right-hand operand is a STORAGE
+   * encryption of `{path: value}`, whose ste_vec entry at the selector carries
+   * the `c` + `op`/`hm` the comparison extracts.
+   */
+  encrypt(value: never, opts: never): ChainableOperation<unknown>
 }
 
 /**
- * Reject array/wildcard selector paths (v1 supports object keys only). The
- * `->` selector addresses a single leaf; array-index / wildcard paths are a
- * follow-up.
+ * Parse a dot-notation JSONPath into its object-key segments, rejecting
+ * array/wildcard syntax (v1 supports object keys only) and the empty/root path.
+ * `'$.a.b'` / `'a.b'` → `['a', 'b']`. Mirrors core `toJsonPath` normalization
+ * (which isn't exported publicly) so leading `$`/`.` are handled correctly.
  */
-function assertObjectPath(path: string): void {
-  if (/[[\]*]/.test(path)) {
+function parseSelectorSegments(path: string): string[] {
+  const bare = path.replace(/^\$/, '').replace(/^\./, '')
+  if (/[[\]*]/.test(bare)) {
     throw new Error(
       `JSON selector path "${path}" uses array/wildcard syntax, which is not yet supported — use dot-notation object keys (e.g. "$.a.b").`,
     )
   }
+  const segments = bare.split('.').filter((segment) => segment.length > 0)
+  if (segments.length === 0) {
+    throw new Error(
+      `JSON selector path "${path}" addresses no field — use e.g. "$.a" or "$.a.b".`,
+    )
+  }
+  return segments
+}
+
+/** `$`-rooted JSONPath for `encryptQuery`'s selector needle. */
+function jsonPathOf(segments: string[]): string {
+  return `$.${segments.join('.')}`
 }
 
 /**
- * The `eql_v3.query_<T>_<eq|ord>` domain the ciphertext-free selector operand
- * casts to, inferred from the leaf value's JS type. `<T>` must match how
- * `encryptQuery` typed the term (protect-ffi keys the scalar term with the
- * column's key — see #623 discussion), which the live tests verify.
+ * Nest `value` under the segments: `['a','b']` → `{ a: { b: value } }`. The
+ * storage-needle document whose ste_vec entry at the path supplies the
+ * ciphertext-bearing comparison entry.
  */
-function queryDomainSuffix(value: unknown, kind: 'eq' | 'ord'): string | null {
-  let base: string | null
-  if (typeof value === 'bigint') base = 'bigint'
-  else if (typeof value === 'string') base = 'text'
-  else if (value instanceof Date) base = 'timestamp'
-  else if (typeof value === 'number')
-    base = Number.isInteger(value) ? 'integer' : 'double'
-  else base = null // boolean has no eq/ord query domain; unsupported here
-  if (base === null) return null
-  return `${base}_${kind}`
+function reconstructSelectorDocument(
+  segments: string[],
+  value: unknown,
+): Record<string, unknown> {
+  const root: Record<string, unknown> = {}
+  let cursor = root
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      cursor[segment] = value
+    } else {
+      const next: Record<string, unknown> = {}
+      cursor[segment] = next
+      cursor = next
+    }
+  })
+  return root
 }
 
 /**
@@ -639,60 +661,69 @@ export function createEncryptionOperatorsV3(
       'JSON selector (searchableJson)',
     )
     requireNonNullOperand(ctx, value, operator)
-    assertObjectPath(path)
+    const segments = parseSelectorSegments(path)
 
-    const isEquality = op === 'eq' || op === 'ne'
-    const suffix = queryDomainSuffix(value, isEquality ? 'eq' : 'ord')
-    if (suffix === null) {
-      throw operandFailure(
-        ctx,
-        operator,
-        `no ${isEquality ? 'equality' : 'ordering'} query domain for a ${typeof value} leaf value.`,
-      )
-    }
-
-    // Selector hash (LHS): a string needle → ste_vec_selector → bare HMAC hash.
-    const selResult = await applyOperationOptions(
-      client.encryptQuery(
-        normalizeJsonPath(path) as never,
-        {
-          table: ctx.table,
-          column: ctx.builder,
-          queryType: 'searchableJson',
-        } as never,
+    // INTERIM (cipherstash/protectjs-ffi#137): the RHS is a STORAGE-encrypted
+    // needle, not a ciphertext-free query term. protect-ffi can't yet mint an
+    // ordering (`op`) query needle for a ste_vec column — `encryptQuery` only
+    // produces the `hm` equality term. So we storage-encrypt `{path: value}`,
+    // whose ste_vec entry at the selector carries `c` + `op`/`hm`, and extract
+    // that entry on the RHS. `eq_term`/`ord_term` read only `hm`/`op`, so the
+    // comparison is correct; the tradeoff is the value's ciphertext appears in
+    // the WHERE clause. Once #137 lands, the RHS becomes a ciphertext-free term.
+    //
+    // The selector hash and the storage needle are independent → encrypt
+    // concurrently (mirrors `range`).
+    const [selResult, docResult] = await Promise.all([
+      applyOperationOptions(
+        client.encryptQuery(
+          jsonPathOf(segments) as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+            queryType: 'searchableJson',
+          } as never,
+        ),
+        opts,
       ),
-      opts,
-    )
+      applyOperationOptions(
+        client.encrypt(
+          reconstructSelectorDocument(segments, value) as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+          } as never,
+        ),
+        opts,
+      ),
+    ])
     if (selResult.failure) {
       throw operandFailure(ctx, operator, selResult.failure.message)
     }
-    const selValue = selResult.data
-    const selHash =
-      typeof selValue === 'string' ? selValue : JSON.stringify(selValue)
-
-    // Value (RHS): a ciphertext-free scalar query term for the leaf.
-    const valResult = await applyOperationOptions(
-      client.encryptQuery(
-        value as never,
-        {
-          table: ctx.table,
-          column: ctx.builder,
-          queryType: (isEquality ? 'equality' : 'orderAndRange') as never,
-        } as never,
-      ),
-      opts,
-    )
-    if (valResult.failure) {
-      throw operandFailure(ctx, operator, valResult.failure.message)
+    if (docResult.failure) {
+      throw operandFailure(ctx, operator, docResult.failure.message)
     }
 
-    const operand = sql`${JSON.stringify(valResult.data)}::eql_v3.query_${sql.raw(suffix)}`
-    return v3Dialect.selectorConstraint(
-      op,
-      colSql(col),
-      sql`${selHash}::text`,
-      operand,
+    // A v3 selector term is the bare HMAC hash string; guard the shape so a
+    // wrapped envelope can't silently bind as a JSON blob and match no rows.
+    const selValue = selResult.data
+    if (typeof selValue !== 'string') {
+      throw operandFailure(
+        ctx,
+        operator,
+        `expected a bare selector hash, got ${typeof selValue}.`,
+      )
+    }
+
+    const selSql = sql`${selValue}::text`
+    const leftEntry = v3Dialect.selectorEntry(colSql(col), selSql)
+    const rightEntry = v3Dialect.selectorEntry(
+      sql`${JSON.stringify(docResult.data)}::public.eql_v3_json`,
+      selSql,
     )
+    return op === 'eq' || op === 'ne'
+      ? v3Dialect.equality(op, leftEntry, rightEntry)
+      : v3Dialect.comparison(op, leftEntry, rightEntry)
   }
 
   /** Comparison methods bound to a `col->'path'` selector, mirroring the scalar
