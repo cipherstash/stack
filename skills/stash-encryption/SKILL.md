@@ -38,7 +38,7 @@ const encrypted = await client.encrypt("secret@example.com", {
   column: users.email,
 })
 if (encrypted.failure) {
-  // handle encrypted.failure.message
+  throw new Error(encrypted.failure.message)
 }
 
 const decrypted = await client.decrypt(encrypted.data)
@@ -247,9 +247,12 @@ Install the EQL v3 SQL with the stash CLI (v3 is the default):
 
 ```bash
 stash eql install --eql-version 3
+
+# Supabase targets: add --supabase to apply role grants
+stash eql install --eql-version 3 --supabase
 ```
 
-EQL v3 ships **one SQL bundle for every target, including Supabase** — no separate Supabase or no-operator-family variants. v3 installs via the direct path only (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are v2-only flags and are not supported for v3).
+EQL v3 ships **one SQL bundle for every target, including Supabase** — no separate Supabase or no-operator-family variants. For Supabase, though, still pass the `--supabase` flag: it applies the `anon`/`authenticated`/`service_role` grants on the `eql_v3` and `eql_v3_internal` schemas. Without it, encrypted queries fail with `permission denied for schema eql_v3_internal`. v3 installs via the direct path only (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are v2-only flags and are not supported for v3).
 
 In migrations, declare each encrypted column as its domain type:
 
@@ -307,10 +310,9 @@ const encrypted = await client.encrypt("hello@example.com", {
 })
 
 if (encrypted.failure) {
-  console.error(encrypted.failure.message)
-} else {
-  console.log(encrypted.data) // Encrypted payload (opaque object)
+  throw new Error(encrypted.failure.message)
 }
+console.log(encrypted.data) // Encrypted payload (opaque object)
 
 // Decrypt
 const decrypted = await client.decrypt(encrypted.data)
@@ -363,6 +365,8 @@ const userModels = [
 ]
 
 const encrypted = await client.bulkEncryptModels(userModels, users)
+if (encrypted.failure) throw new Error(encrypted.failure.message)
+
 const decrypted = await client.bulkDecryptModels(encrypted.data, users)
 ```
 
@@ -380,9 +384,11 @@ const encrypted = await client.bulkEncrypt(plaintexts, {
   column: users.email,
   table: users,
 })
+if (encrypted.failure) throw new Error(encrypted.failure.message)
 // encrypted.data = [{ id: "u1", data: EncryptedPayload }, ...]
 
 const decrypted = await client.bulkDecrypt(encrypted.data)
+if (decrypted.failure) throw new Error(decrypted.failure.message)
 // Per-item error handling:
 for (const item of decrypted.data) {
   if ("data" in item) {
@@ -443,7 +449,7 @@ Encrypted free-text search is **fuzzy bloom-filter token matching**, not SQL pat
 - The needle blooms to its own trigrams; a row matches when the stored value's bloom contains all of them. Case-insensitive; order- and multiplicity-insensitive.
 - **One-sided:** a match may be a false positive; a non-match never is.
 - Needles must be at least 3 characters (the default trigram length) — shorter needles bloom to nothing and are rejected rather than silently matching every row.
-- In the Drizzle and Supabase v3 integrations the operator is **`matches`** — `like`/`ilike` do not exist on the v3 surface by design. Don't pass `%` wildcards.
+- In the Drizzle and Supabase v3 integrations the operator is **`matches`** — the adapters expose free-text search as `matches`, not `like`/`ilike` (the Supabase adapter keeps a deprecated `like`/`ilike` shim that delegates to `matches` with a warning). Don't pass `%` wildcards.
 
 ### Query Result Formatting (`returnType`)
 
@@ -485,7 +491,7 @@ All values in the array must be non-null.
 
 ### On the Wire: Operators and Ordering
 
-Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`, `col > term`, ...), and `ORDER BY` on an encrypted column goes through the ordering extractors — `eql_v3.ord_term(col)` for OPE-backed (`Ord`/`Search`) domains, `eql_v3.ord_term_ore(col)` for `OrdOre`. The Drizzle v3 integration emits all of this for you (including `asc`/`desc`). Over Supabase/PostgREST, range *filtering* works but `ORDER BY` on encrypted columns cannot be expressed — order by a plaintext column or sort application-side after decrypting. See the `stash-drizzle` and `stash-supabase` skills.
+Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`, `col > term`, ...), and `ORDER BY` on an encrypted column goes through the ordering extractors — `eql_v3.ord_term(col)` for OPE-backed (`Ord`/`Search`) domains, `eql_v3.ord_term_ore(col)` for `OrdOre`. The Drizzle v3 integration emits all of this for you (including `asc`/`desc`, which emit `ORDER BY eql_v3.ord_term(col)`). Over Supabase/PostgREST, the adapter's `order()` works on OPE-backed ordering columns (plain `*_ord`, `text_ord`, `text_search`) by sorting on the column's `col->op` term; `OrdOre`-flavour (`*_ord_ore`) domains and columns with no ordering term are rejected. See the `stash-drizzle` and `stash-supabase` skills.
 
 ## Encrypted JSON (`types.Json`)
 
@@ -504,7 +510,7 @@ const events = encryptedTable("events", { metadata: types.Json("metadata") })
 await client.encryptQuery({ roles: ["admin"] }, { column: events.metadata, table: events })
 ```
 
-An empty-object needle is rejected (jsonb `{} ⊆ anything` — it would silently match every row).
+The Drizzle and Supabase adapters reject an empty-object needle (jsonb `{} ⊆ anything` — it would silently match every row); core `client.encryptQuery` does not enforce this, so guard against empty needles yourself when composing raw SQL.
 
 ### JSONPath Selectors (value-at-a-path)
 
@@ -513,9 +519,9 @@ Selector queries constrain the value **at a path** inside the document — `meta
 Semantics to know:
 
 - **`eq`** at a path excludes rows whose document lacks the path (absent is not equal).
-- **`ne`** at a path **includes** rows whose document lacks the path ("not equal to value" covers "has no value" — and, on Supabase, rows whose column is SQL NULL).
+- **`ne`** at a path **includes** rows whose document lacks the path, and — in both adapters — rows whose column is SQL NULL ("not equal to value" covers "has no value"; Drizzle adds `OR <col> IS NULL`, Supabase an `is.null` branch).
 - **Array-leaf caveat:** a scalar needle does not match an array at the path — ste_vec encodes array elements under their own selectors, so `{a: [40, 30]}` is NOT matched by a selector-eq of `30` at `$.a`. To match an array-valued path, pass the full array through containment.
-- **Ciphertext in the WHERE clause (interim):** pending a ciphertext-free ordering needle from protect-ffi ([cipherstash/protectjs-ffi#137](https://github.com/cipherstash/protectjs-ffi/issues/137)), the selector's right-hand operand is a storage encryption of `{path: value}` whose ciphertext appears in the emitted SQL statement — it can surface in SQL logs and statement views.
+- **Ciphertext in the WHERE clause (interim):** pending a ciphertext-free ordering needle from protect-ffi ([cipherstash/protectjs-ffi#137](https://github.com/cipherstash/protectjs-ffi/issues/137)), the selector's right-hand operand is a storage encryption of `{path: value}` whose ciphertext appears in the emitted SQL statement — it can surface in SQL logs and statement views. On Supabase, the selector/containment needle additionally ships as a full storage envelope because of a PostgREST operand-casting gap ([cipherstash/stack#654](https://github.com/cipherstash/stack/issues/654)) — #137 landing does not remove that exposure.
 
 ### Adapter Matrix
 
@@ -557,8 +563,6 @@ const client = await EncryptionV3({
 ```
 
 `OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()` at all.
-
-> **Known type error (runtime is fine).** The example above works at runtime, but `authStrategy: strategy.data` does not currently typecheck. `@cipherstash/auth` 0.41 strategies declare `getToken(): Promise<Result<TokenResult, AuthFailure>>`, while `@cipherstash/protect-ffi`'s exported `AuthStrategy` type still says `getToken(): Promise<{ token: string }>`. protect-ffi accepts **both** shapes at runtime (0.28+), on the Node and WASM paths alike — only its TypeScript declaration was left behind. Until it's widened, add `as unknown as AuthStrategy` or `// @ts-expect-error`. Tracked in [issue #602](https://github.com/cipherstash/stack/issues/602).
 
 Authentication stands on its own — an OIDC-authenticated client encrypts and decrypts normally. Binding *data* to the authenticated user is a separate, optional step: the lock context, below.
 
@@ -789,7 +793,7 @@ Three sources of truth, kept separate on purpose:
 
 ### CLI sequence for a single column
 
-> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked in issue [#447](https://github.com/cipherstash/stack/issues/447) follow-up work.
+> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked separately.
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.

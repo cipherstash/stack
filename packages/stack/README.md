@@ -6,7 +6,7 @@ The all-in-one TypeScript SDK for the CipherStash data security stack.
 [![License: MIT](https://img.shields.io/npm/l/@cipherstash/stack.svg?style=for-the-badge&labelColor=000000)](https://github.com/cipherstash/stack/blob/main/LICENSE.md)
 [![TypeScript](https://img.shields.io/badge/TypeScript-first-blue?style=for-the-badge&labelColor=000000)](https://www.typescriptlang.org/)
 
---
+---
 
 ## Table of Contents
 
@@ -27,7 +27,7 @@ The all-in-one TypeScript SDK for the CipherStash data security stack.
 - [Requirements](#requirements)
 - [License](#license)
 
---
+---
 
 ## Install
 
@@ -74,20 +74,19 @@ const encrypted = await client.encrypt("hello@example.com", {
   table: users,
 })
 
+// Every operation returns `{ data } | { failure }`. Narrow on `.failure` and
+// return/throw before reading `.data` — the failure branch has no `data`.
 if (encrypted.failure) {
-  console.error("Encryption failed:", encrypted.failure.message)
-} else {
-  console.log("Encrypted payload:", encrypted.data)
+  throw new Error(`Encryption failed: ${encrypted.failure.message}`)
 }
+console.log("Encrypted payload:", encrypted.data)
 
 // Decrypt the value
 const decrypted = await client.decrypt(encrypted.data)
-
 if (decrypted.failure) {
-  console.error("Decryption failed:", decrypted.failure.message)
-} else {
-  console.log("Plaintext:", decrypted.data) // "hello@example.com"
+  throw new Error(`Decryption failed: ${decrypted.failure.message}`)
 }
+console.log("Plaintext:", decrypted.data) // "hello@example.com"
 ```
 
 The client is typed from your schemas: passing the wrong plaintext type for a column (`client.encrypt(42, { column: users.email, ... })`) is a compile error.
@@ -155,6 +154,10 @@ Install the EQL v3 SQL into your database with the stash CLI:
 
 ```bash
 npx stash eql install --eql-version 3
+# On Supabase, add --supabase to grant the anon/authenticated/service_role
+# roles access to the eql_v3 schemas — without it, encrypted queries fail with
+# "permission denied for schema eql_v3_internal":
+npx stash eql install --eql-version 3 --supabase
 ```
 
 In migrations, declare each encrypted column as its domain type:
@@ -180,7 +183,8 @@ const encrypted = await client.encrypt("secret@example.com", {
   table: users,
 })
 
-// Decrypt
+// Decrypt (narrow on `.failure` before reading `.data`)
+if (encrypted.failure) throw new Error(encrypted.failure.message)
 const decrypted = await client.decrypt(encrypted.data)
 ```
 
@@ -202,6 +206,7 @@ const encryptedResult = await client.encryptModel(user, users)
 // encryptedResult.data.email -> Encrypted
 // encryptedResult.data.id    -> string
 
+if (encryptedResult.failure) throw new Error(encryptedResult.failure.message)
 const decryptedResult = await client.decryptModel(encryptedResult.data, users)
 // decryptedResult.data.email   -> string
 // decryptedResult.data.balance -> bigint
@@ -220,6 +225,7 @@ const userModels = [
 ]
 
 const encrypted = await client.bulkEncryptModels(userModels, users)
+if (encrypted.failure) throw new Error(encrypted.failure.message)
 const decrypted = await client.bulkDecryptModels(encrypted.data, users)
 ```
 
@@ -240,7 +246,9 @@ const encrypted = await client.bulkEncrypt(plaintexts, {
 
 // encrypted.data = [{ id: "u1", data: EncryptedPayload }, ...]
 
+if (encrypted.failure) throw new Error(encrypted.failure.message)
 const decrypted = await client.bulkDecrypt(encrypted.data)
+if (decrypted.failure) throw new Error(decrypted.failure.message)
 
 // Each item has either { data: "plaintext" } or { error: "message" }
 for (const item of decrypted.data) {
@@ -478,6 +486,7 @@ const IDENTITY = { identityClaim: ["sub"] }
 const encrypted = await client
   .encrypt("sensitive data", { column: users.email, table: users })
   .withLockContext(IDENTITY)
+if (encrypted.failure) throw new Error(encrypted.failure.message)
 
 const decrypted = await client
   .decrypt(encrypted.data)
@@ -527,16 +536,18 @@ npx stash init --supabase
 
 The wizard will:
 1. Authenticate with CipherStash (device code flow)
-2. Bind your device to the default Keyset
+2. Introspect your database and install the EQL v3 SQL
 3. Choose your database connection method (Drizzle ORM, Supabase JS, Prisma, or Raw SQL)
 4. Build an encryption schema interactively or use a placeholder, then generate the encryption client file
 5. Install `stash` as a dev dependency for database tooling
 
-After init, run `npx stash eql install --eql-version 3` to install the EQL v3 SQL into your database.
+`init` installs EQL for you — no separate `eql install` step is needed afterward.
 
 | Flag | Description |
 |------|-------------|
-| `--supabase` | Use Supabase-specific setup flow |
+| `--supabase` / `--drizzle` / `--prisma-next` | Target a specific integration's setup flow |
+| `--proxy` / `--no-proxy` | Opt in/out of the CipherStash Proxy path |
+| `--region <slug>` | Workspace region (env `STASH_REGION`); **required for non-interactive init when not already logged in** |
 
 ## Configuration
 
@@ -667,6 +678,8 @@ Method signatures are derived from your schemas: plaintext arguments are pinned 
 | `encrypt` | `(plaintext, { column, table })` | `EncryptOperation` (thenable) |
 | `decrypt` | `(encryptedData)` | `DecryptOperation` (thenable) |
 | `encryptQuery` | `(plaintext, { column, table, queryType?, returnType? })` | `EncryptQueryOperation` (thenable) |
+
+`returnType` controls the encrypted query term's shape: `'eql'` (default, the EQL JSON payload for the ORM adapters), `'composite-literal'` (a Postgres composite string for `.eq()`/string-based APIs), or `'escaped-composite-literal'` (the same, escaped for embedding). Most users take the default; the adapters set it as needed.
 | `encryptQuery` | `(terms: ScalarQueryTerm[])` | `BatchEncryptQueryOperation` (thenable) |
 | `encryptModel` | `(model, table)` | `EncryptModelOperation` (thenable) |
 | `decryptModel` | `(encryptedModel, table, lockContext?)` | `Promise<Result<...>>` |
@@ -769,7 +782,8 @@ are unchanged. From there, adopt EQL v3 for new tables:
 ## Requirements
 
 - **Node.js** >= 22
-- The package includes a native FFI module (`@cipherstash/protect-ffi`) written in Rust and embedded via [Neon](https://github.com/neon-bindings/neon). You must opt out of bundling this package in tools like Webpack, esbuild, or Next.js (`serverExternalPackages`).
+- The default entry includes a native FFI module (`@cipherstash/protect-ffi`). On a Node server, externalize it from bundling (e.g. Next.js `serverExternalPackages`).
+- For bundled or non-Node runtimes (Deno, Bun, Cloudflare Workers, Supabase Edge Functions), import `@cipherstash/stack/wasm-inline` instead — it inlines the WASM build, so no externalization is needed. See the [bundling guide](https://cipherstash.com/docs/stack/deploy/bundling).
 
 ## License
 

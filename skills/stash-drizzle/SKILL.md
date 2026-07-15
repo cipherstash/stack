@@ -7,7 +7,7 @@ description: Integrate CipherStash encryption with Drizzle ORM using @cipherstas
 
 Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack-drizzle/v3` (EQL v3). Provides Drizzle-native encrypted column factories and query operators that transparently encrypt search values — Drizzle never sees plaintext in a query.
 
-In EQL v3 every encrypted column is a **concrete Postgres domain** (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type you pick — there is no capability config object. See the `stash-encryption` skill's "EQL v3 Typed Schema" section for the full `types` catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`, `Json`).
+In EQL v3 every encrypted column is a **concrete Postgres domain** (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type you pick — there is no capability config object. See the `stash-encryption` skill's "Schema Definition" section (the `types` catalog) for the full catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`, `Json`).
 
 ## When to Use This Skill
 
@@ -42,7 +42,7 @@ EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that 
 stash eql install --eql-version 3
 ```
 
-v3 installs via the direct path only — the v2 `generate-eql-migration` Drizzle-migration flow is **not** supported for v3 (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are v2-only flags). EQL v3 ships one SQL bundle for every target, including Supabase.
+v3 installs via the direct path only — the v2 `stash eql install --drizzle` Drizzle-migration flow is **not** supported for v3 (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are v2-only flags). EQL v3 ships one SQL bundle for every target, including Supabase.
 
 ### Column Storage
 
@@ -82,7 +82,7 @@ const usersTable = pgTable("users", {
 })
 ```
 
-Capability suffixes at a glance (full catalog: `stash-encryption` skill, "EQL v3 Typed Schema"):
+Capability suffixes at a glance (full catalog: `stash-encryption` skill, "Schema Definition" — the `types` namespace):
 
 | Factory shape | Domain | Enables |
 |---|---|---|
@@ -126,7 +126,7 @@ const encryptionClient = await EncryptionV3({
 const ops = createEncryptionOperatorsV3(encryptionClient)
 ```
 
-`createEncryptionOperatorsV3(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; every operator also takes an optional trailing `{ lockContext, audit }` argument per call.
+`createEncryptionOperatorsV3(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; the async encrypting operators (`eq`, `ne`, `inArray`, `notInArray`, `gt`/`gte`/`lt`/`lte`, `between`/`notBetween`, `matches`, `contains`, and the comparison methods returned by `selector(...)`) also take an optional trailing `{ lockContext, audit }` argument per call. `asc`/`desc` and the passthrough operators (`isNull`, `isNotNull`, `not`, `and`, `or`, `exists`, `notExists`) encrypt nothing and take no such argument.
 
 ### 4. Create Drizzle Instance
 
@@ -469,7 +469,7 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. [Issue #447](https://github.com/cipherstash/stack/issues/447) tracks decoupling this requirement.
+> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`.
 
 #### Cutover: rename swap and activate
 
@@ -622,4 +622,4 @@ Encryption client operations (`encryptModel`, `bulkDecryptModels`, ...) don't th
 
 ## Legacy: EQL v2
 
-The original v2 integration — `encryptedType` config-flag columns, `extractEncryptionSchema`, and `createEncryptionOperators` (with `like`/`ilike`) from the `@cipherstash/stack-drizzle` package root, over the `eql_v2_encrypted` column type installed via `generate-eql-migration` — still exists for existing deployments and is documented at https://cipherstash.com/docs. New projects must use the `/v3` surface documented above. Note: `stash init --drizzle` currently pins EQL v2 because the v2 Drizzle-migration install path has no v3 equivalent yet.
+The original v2 integration — `encryptedType` config-flag columns, `extractEncryptionSchema`, and `createEncryptionOperators` (with `like`/`ilike`) from the `@cipherstash/stack-drizzle` package root, over the `eql_v2_encrypted` column type installed via `stash eql install --drizzle` (the older standalone `@cipherstash/drizzle` package shipped its own `generate-eql-migration` bin for the same purpose) — still exists for existing deployments and is documented at https://cipherstash.com/docs. New projects must use the `/v3` surface documented above. Note: `stash init --drizzle` currently pins EQL v2 because the v2 Drizzle-migration install path has no v3 equivalent yet.

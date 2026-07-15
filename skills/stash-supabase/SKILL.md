@@ -229,8 +229,9 @@ const { data, error } = await es
 ## Query Filters
 
 All filter values for encrypted columns are automatically encrypted before
-the query executes. Multiple filters are batch-encrypted in a single ZeroKMS
-call for efficiency.
+the query executes. Filter operands are grouped by column and each column
+group takes one `bulkEncrypt` crossing — a query filtering N distinct
+encrypted columns makes N ZeroKMS calls, run in parallel.
 
 ### Equality Filters
 
@@ -244,7 +245,8 @@ call for efficiency.
 // IN array
 .in("email", ["alice@example.com", "bob@example.com"])
 
-// NULL check (no encryption needed — also the required form for null operands)
+// NULL check (no encryption needed). Use this for genuine null checks — a
+// null operand passed to eq/neq is not rejected; it is forwarded unencrypted.
 .is("email", null)
 ```
 
@@ -258,7 +260,10 @@ call for efficiency.
 
 `like`/`ilike` on an encrypted column are a **deprecated approximate shim**
 that delegates to `matches()` — see "Query behaviour on encrypted columns"
-below. On plaintext columns they stay real SQL LIKE.
+below. On plaintext columns they stay real SQL LIKE. The shim is
+**runtime-only**: neither the typed nor the untyped v3 builder interface
+declares `like`/`ilike`, so in TypeScript the call is a compile error (use
+`matches()`) — the shim is reachable only from plain JavaScript or via a cast.
 
 ### Range/Comparison Filters
 
@@ -351,7 +356,10 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   Results are APPROXIMATE — case-insensitive, one-sided, and anchoring is not
   honored. A pattern with an internal `%` or any `_` cannot be approximated and
   throws; call `matches()` directly to make the fuzzy intent explicit. On
-  plaintext columns `like`/`ilike` stay real SQL LIKE.
+  plaintext columns `like`/`ilike` stay real SQL LIKE. Note the shim is
+  reachable only at runtime: `like`/`ilike` are absent from the v3 builder
+  interfaces (typed and untyped alike), so on the TypeScript surface the call
+  is a compile error — only untyped JavaScript or a cast reaches the shim.
 - **`matches()` matches substrings.** The search term blooms to its own
   trigrams, and a row matches when the stored value's bloom contains all of
   them — so any substring of at least 3 characters (the tokenizer's
@@ -387,8 +395,11 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   `types.Text`): a filter (including `.match()`) on one is a type error on a
   declared table, and always a clear runtime error. `.is(column, null)`
   remains available.
-- **Null filter values are rejected** with a pointer to `.is(column, null)` —
-  a null cannot be encrypted into an operand.
+- **Null filter operands are forwarded unencrypted, not rejected.** A null
+  cannot be encrypted into an operand, so the builder skips encryption and
+  passes the null through to PostgREST as-is (e.g. a `col=eq.null` filter),
+  which is rarely what you want. Use `.is(column, null)` for genuine null
+  checks — the builder does not throw.
 
 ## Encrypted JSON querying (`types.Json`)
 
@@ -409,8 +420,11 @@ es.from("events").select("id").selectorNe("payload", "$.user.role", "admin")
   `path` — it compiles to containment of the path-shaped needle
   (`{user: {role: "admin"}}`), which is the same operation. Paths are
   dot-notation object keys (`"$.a.b"` or `"a.b"`); array/wildcard steps are
-  rejected, and values must be scalars (an object operand belongs to
-  `contains()`).
+  rejected, and values must be JSON scalars — string, number, or boolean (an
+  object operand belongs to `contains()`). On Supabase a `Date` or `bigint`
+  leaf is rejected with a serialization steer: pass a Date as
+  `date.toISOString()` and a bigint as its string/number form. (The Drizzle
+  selector accepts Date/bigint directly.)
 - `selectorNe` matches rows that do NOT carry the value — **including rows
   where the path is absent entirely, and rows whose document column is SQL
   NULL** (it compiles to `payload.is.null OR payload.not.cs.<needle>`, matching
@@ -577,7 +591,7 @@ The column's `public.eql_v3_*` domain determines which filters it accepts:
 | Filter Method | Works On |
 |---|---|
 | `eq`, `neq`, `in`, `match()` | Equality-capable domains (`*_eq`, `*_ord`, `text_search`) |
-| `matches()` (and the `like`/`ilike` shim) | Match-indexed domains (`text_match`, `text_search`) |
+| `matches()` (and the runtime-only `like`/`ilike` shim — absent from the TS interfaces) | Match-indexed domains (`text_match`, `text_search`) |
 | `gt`, `gte`, `lt`, `lte` | Range-capable domains (`*_ord`, `text_search`) |
 | `contains()`, `selectorEq()`, `selectorNe()` | `eql_v3_json` (encrypted); `contains()` is also native containment on plaintext jsonb/array columns |
 | `order()` | OPE-backed ordering domains (plain `*_ord`, `text_ord`, `text_search`) — never `*_ord_ore` |
@@ -600,13 +614,57 @@ The hard case: a Supabase table that already exists with live data in a plaintex
 
 CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
 
-> **Known gap (EQL v3 backfill).** The `stash encrypt backfill` / `stash encrypt cutover` tooling currently targets EQL v2 (`eql_v2_encrypted`) columns — EQL v3 domain columns are not yet supported end-to-end. Tracked in [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648). The lifecycle below (rollout → deploy gate → cutover) is the correct shape either way; until #648 lands, run the CLI backfill/cutover commands against a v2 encrypted twin (see "Legacy: EQL v2"), or backfill v3 columns with your own script.
+> **Known gap (EQL v3 backfill).** The `stash encrypt backfill` / `stash encrypt cutover` tooling currently targets EQL v2 (`eql_v2_encrypted`) columns — EQL v3 domain columns are not yet supported end-to-end. Tracked in [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648). The lifecycle below (rollout → deploy gate → cutover) is the correct shape either way; until #648 lands, run the CLI backfill/cutover commands against a v2 encrypted twin (see "Interim path until #648" just below), or backfill v3 columns with your own script.
 
 > **Using CipherStash Proxy?** If you query encrypted data through [CipherStash Proxy](https://github.com/cipherstash/proxy) instead of the SDK, also run `stash db push` after schema-add and again before cutover to register the encrypted column shape with EQL.
 
 > **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
+
+### Interim path until #648: the v2 encrypted twin
+
+**This is the interim EQL v2 path, distinct from the v3 surface the rest of
+this skill documents.** `stash encrypt backfill` / `stash encrypt cutover`
+only operate on `eql_v2_encrypted` columns today, so to get the CLI-managed
+backfill/cutover, make the twin a **v2** column and dual-write it through the
+legacy `encryptedSupabase` (v2) wrapper. The lifecycle below (rollout → deploy
+gate → cutover) is unchanged — only the twin's column type and the dual-write
+client differ:
+
+```sql
+-- schema-add: v2 twin instead of the v3 domain (still nullable)
+ALTER TABLE users
+  ADD COLUMN email_encrypted eql_v2_encrypted;
+```
+
+```typescript
+// Dual-write through the legacy v2 wrapper: hand-written client-side schema,
+// two-argument from(table, schema).
+import { Encryption } from '@cipherstash/stack'
+import { encryptedColumn, encryptedTable } from '@cipherstash/stack/schema'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
+
+const users = encryptedTable('users', {
+  email_encrypted: encryptedColumn('email_encrypted').equality().freeTextSearch(),
+})
+
+const encryptionClient = await Encryption({ schemas: [users] })
+const esV2 = encryptedSupabase({ supabaseClient, encryptionClient })
+
+// Dual-write: BOTH the plaintext column and the encrypted twin.
+export async function insertUser(email: string) {
+  return esV2.from('users', users).insert({
+    email,                   // plaintext — keep writing until drop
+    email_encrypted: email,  // v2 twin — encrypted automatically
+  })
+}
+```
+
+With the v2 twin in place, the backfill and cutover commands in Step 2 work
+as written. Alternatively, keep the twin v3 (as shown in the steps below) and
+backfill it with your own script — once #648 lands, the v3 twin becomes the
+CLI-supported path end to end.
 
 ### Starting state
 
@@ -732,7 +790,7 @@ export const users = encryptedTable('users', {
 
 (Without declared schemas, introspection picks up the renamed column at the next client startup.)
 
-> **Known gap (SDK-only users):** `stash encrypt cutover` currently requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. This will be decoupled in a future release — see [issue #447](https://github.com/cipherstash/stack/issues/447).
+> **Known gap (SDK-only users):** `stash encrypt cutover` currently requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. This will be decoupled in a future release (tracked separately).
 >
 > **Using CipherStash Proxy?** Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
 >
@@ -793,5 +851,9 @@ supabaseClient, encryptionClient })` factory, which takes a hand-written
 client-side schema and a two-argument `from(tableName, schema)`. That surface
 still ships in `@cipherstash/stack-supabase` and is unchanged — keep using it
 for existing v2 deployments — but it is not the recommended path for new
-projects: use `encryptedSupabaseV3`. For the v2 wrapper's API and semantics,
-see the docs at https://cipherstash.com/docs.
+projects: use `encryptedSupabaseV3`. One current exception: the v2 wrapper is
+also the interim dual-write path for CLI-managed `stash encrypt backfill` /
+`stash encrypt cutover` until [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648)
+lands — see "Interim path until #648: the v2 encrypted twin" in the migration
+section above for a minimal recipe. For the v2 wrapper's full API and
+semantics, see the docs at https://cipherstash.com/docs.
