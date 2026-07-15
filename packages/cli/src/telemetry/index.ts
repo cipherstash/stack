@@ -1,5 +1,5 @@
 import { PostHog } from 'posthog-node'
-import { isCiEnv } from '../config/tty.js'
+import { isCiEnv, resolveCaller } from '../config/tty.js'
 import { messages } from '../messages.js'
 import { readState, type TelemetryState, writeState } from './state.js'
 
@@ -69,6 +69,7 @@ export const ALLOWED_PROP_KEYS: ReadonlySet<string> = new Set([
   'os',
   'arch',
   'nodeVersion',
+  'caller',
 ])
 
 /**
@@ -157,6 +158,9 @@ function baseProps(): Record<string, unknown> {
     os: process.platform,
     arch: process.arch,
     nodeVersion: process.versions.node,
+    // Coarse, fixed-enum classification of the caller (agent harness vs
+    // interactive shell). Never the raw env value — see resolveCaller.
+    caller: resolveCaller(),
   }
 }
 

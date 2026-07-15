@@ -143,10 +143,11 @@ The resolved URL is returned in memory only. It is never written to disk or into
 ## Telemetry
 
 The CLI collects **anonymous, opt-out** usage analytics — coarse events only
-(command name, CLI version, OS/arch, success/failure, duration). It **never**
-collects plaintext, schema, table/column names, connection strings, or argument
-values. A one-time notice is printed on first run, and nothing is sent on that
-first run.
+(command name, CLI version, OS/arch, Node version, success/failure, duration,
+and a coarse caller class such as `claude-code`/`cursor`/`interactive` derived
+from environment markers). It **never** collects plaintext, schema, table/column
+names, connection strings, argument values, or any session/trace identifier. A
+one-time notice is printed on first run, and nothing is sent on that first run.
 
 Opt out in any of these ways (any one wins; env vars override the saved
 preference):

@@ -143,6 +143,7 @@ describe('sanitize (property allowlist)', () => {
       os: 'darwin',
       arch: 'arm64',
       nodeVersion: '22.0.0',
+      caller: 'claude-code',
     }
     expect(sanitize(event)).toEqual(event)
     for (const key of Object.keys(event)) {

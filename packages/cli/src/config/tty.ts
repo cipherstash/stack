@@ -51,6 +51,69 @@ export function isCiEnv(): boolean {
 }
 
 /**
+ * Coarse classification of who invoked the CLI, for anonymous telemetry. A
+ * heuristic, not a guarantee: it recognises the major coding-agent harnesses by
+ * an env var each one sets, and otherwise falls back to whether stdin is a TTY.
+ * Only the fixed label ever leaves the machine (see the telemetry allowlist) —
+ * never the underlying env value, some of which carry session/trace IDs. Read
+ * the numbers as a lower bound on agent usage: a harness without a known marker
+ * lands in `interactive`/`non-interactive`.
+ */
+export type CallerKind =
+  | 'claude-code'
+  | 'cursor'
+  | 'codex'
+  | 'editor'
+  | 'interactive'
+  | 'non-interactive'
+
+/**
+ * Known coding-agent harnesses, each recognised by an env var it sets in the
+ * shell it drives. Ordered most-specific first; the first match wins. Extend
+ * this as new harnesses appear — every `kind` must stay a fixed, non-identifying
+ * string, because that label (not the env value) is what telemetry emits.
+ */
+const AGENT_MARKERS: ReadonlyArray<{
+  readonly kind: CallerKind
+  readonly envVars: readonly string[]
+}> = [
+  // Claude Code sets CLAUDECODE=1; CLAUDE_CODE_ENTRYPOINT is a backup signal.
+  { kind: 'claude-code', envVars: ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'] },
+  // Cursor's agent/terminal exports a per-session trace id.
+  { kind: 'cursor', envVars: ['CURSOR_TRACE_ID'] },
+  // OpenAI Codex CLI runs commands in a sandbox that exports CODEX_SANDBOX.
+  { kind: 'codex', envVars: ['CODEX_SANDBOX'] },
+]
+
+/**
+ * Every env var {@link resolveCaller} consults. Exported so tests can neutralize
+ * all caller signals hermetically — this repo's own agent harness sets some of
+ * these ambiently, which would otherwise flip the result.
+ */
+export const CALLER_ENV_VARS = [
+  ...AGENT_MARKERS.flatMap((m) => m.envVars),
+  'TERM_PROGRAM',
+] as const
+
+/**
+ * Classify the caller. Confirmed agent harnesses win first; then a VS Code-family
+ * editor terminal (`TERM_PROGRAM=vscode`, which Cursor also sets, so it is checked
+ * after Cursor and kept distinct because it may be a human in an editor); then the
+ * plain TTY heuristic.
+ */
+export function resolveCaller(): CallerKind {
+  for (const marker of AGENT_MARKERS) {
+    if (marker.envVars.some((name) => Boolean(process.env[name]?.trim()))) {
+      return marker.kind
+    }
+  }
+  if (process.env.TERM_PROGRAM?.trim().toLowerCase() === 'vscode') {
+    return 'editor'
+  }
+  return process.stdin.isTTY ? 'interactive' : 'non-interactive'
+}
+
+/**
  * True when it's safe to show an interactive clack prompt: stdin is a TTY and
  * we're not in CI. Every prompt gate (the DATABASE_URL resolver, the config
  * scaffolder, the Supabase install-mode selector) must decide this the same
