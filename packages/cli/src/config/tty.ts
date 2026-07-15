@@ -25,9 +25,10 @@ export const CI_PROVIDER_ENV_VARS = [
 ] as const
 
 /**
- * Every env var {@link isCiEnv} consults. Exported so tests can neutralize all
- * CI signals hermetically (clearing only `CI` leaves ambient provider vars — a
- * real `GITHUB_ACTIONS=true` in this repo's own CI — able to flip the result).
+ * Every env var {@link isCiEnvBroad} consults ({@link isCiEnv} reads only `CI`).
+ * Exported so tests can neutralize all CI signals hermetically — clearing only
+ * `CI` leaves ambient provider vars (a real `GITHUB_ACTIONS=true` in this
+ * repo's own CI) able to flip the broad check.
  */
 export const CI_ENV_VARS = [
   'CI',

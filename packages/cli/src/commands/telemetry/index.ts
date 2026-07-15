@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { CliExit } from '../../cli/exit.js'
 import { messages } from '../../messages.js'
 import {
   setTelemetryDisabled,
@@ -59,6 +60,6 @@ export async function telemetryCommand(sub: string | undefined): Promise<void> {
       break
     default:
       p.log.error(`${messages.telemetry.unknownSubcommand}: ${sub}`)
-      process.exit(1)
+      throw new CliExit(1)
   }
 }

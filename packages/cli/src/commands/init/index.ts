@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { CliExit } from '../../cli/exit.js'
 import { HANDOFF_CHOICES } from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
@@ -140,7 +141,9 @@ export async function initCommand(
   } catch (err) {
     if (err instanceof CancelledError) {
       p.cancel('Setup cancelled.')
-      process.exit(0)
+      // Cooperative exit: unwinds to run() so the cancel is tracked and the
+      // telemetry flush completes before the process exits 0 (see cli/exit.ts).
+      throw new CliExit(0)
     }
     throw err
   }

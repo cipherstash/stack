@@ -1,5 +1,51 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CALLER_ENV_VARS, resolveCaller } from '../tty.js'
+import {
+  CALLER_ENV_VARS,
+  CI_ENV_VARS,
+  isCiEnv,
+  isCiEnvBroad,
+  resolveCaller,
+} from '../tty.js'
+
+describe('isCiEnv vs isCiEnvBroad (the narrow/broad split)', () => {
+  beforeEach(() => {
+    for (const name of CI_ENV_VARS) vi.stubEnv(name, '')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('isCiEnv is NARROW: a provider marker alone must not flip it', () => {
+    // The contract prompt gating depends on: a developer with JENKINS_URL or
+    // GITHUB_ACTIONS exported in their shell still gets interactive prompts.
+    // Re-broadening isCiEnv (e.g. delegating to isCiEnvBroad) breaks that and
+    // this test is what catches it.
+    for (const marker of ['GITHUB_ACTIONS', 'GITLAB_CI', 'JENKINS_URL']) {
+      vi.stubEnv(marker, 'true')
+      expect(isCiEnv()).toBe(false)
+      vi.stubEnv(marker, '')
+    }
+  })
+
+  it('isCiEnv reads only a truthy CI', () => {
+    expect(isCiEnv()).toBe(false)
+    vi.stubEnv('CI', 'true')
+    expect(isCiEnv()).toBe(true)
+    vi.stubEnv('CI', '1')
+    expect(isCiEnv()).toBe(true)
+    vi.stubEnv('CI', 'false')
+    expect(isCiEnv()).toBe(false)
+  })
+
+  it('isCiEnvBroad is BROAD: provider markers and CONTINUOUS_INTEGRATION count', () => {
+    expect(isCiEnvBroad()).toBe(false)
+    vi.stubEnv('JENKINS_URL', 'https://ci.example.com')
+    expect(isCiEnvBroad()).toBe(true)
+    vi.stubEnv('JENKINS_URL', '')
+    vi.stubEnv('CONTINUOUS_INTEGRATION', 'true')
+    expect(isCiEnvBroad()).toBe(true)
+  })
+})
 
 describe('resolveCaller', () => {
   // This repo's own agent harness sets some caller markers ambiently, so clear

@@ -23,6 +23,13 @@ import { readState, type TelemetryState, writeState } from './state.js'
  *   no posthog-node until a real event is actually sent (both are deferred off
  *   the `--version`/`--help` fast paths), flushing is bounded by a timeout, and
  *   every failure is swallowed.
+ * - KNOWN MEASUREMENT GAP: commands that terminate via a deep `process.exit()`
+ *   (mid-flow cancels in db install, auth login failures, config-loader exits,
+ *   clack's own keypress exit) emit no event — the process ends before the
+ *   flush could run. Global interception was tried and reverted (it broke
+ *   cancel flows; see `cli/exit.ts`). First-party sites verified to unwind
+ *   cleanly use `throw new CliExit(code)` instead, which IS tracked. Read
+ *   success rates as covering returning/throwing/CliExit paths only.
  */
 
 /** Default endpoint — our Cloudflare proxy, not PostHog directly, so a future
@@ -114,8 +121,11 @@ function envOptOut(name: string): boolean {
 /**
  * Resolve whether telemetry is on, in precedence order. Env overrides win over
  * the persisted flag, so a user can force telemetry off in a context where the
- * config file says otherwise (and never the reverse). CI detection is shared
- * with the rest of the CLI via {@link isCiEnv}.
+ * config file says otherwise (and never the reverse). CI detection uses the
+ * BROAD check ({@link isCiEnvBroad} — provider markers included), deliberately
+ * separate from the narrow `isCiEnv` that gates interactive prompts: for
+ * telemetry a false CI positive merely skips collection, whereas for prompts it
+ * would break an interactive command.
  */
 export function resolveStatus(state: TelemetryState): TelemetryStatus {
   // Compare against the sentinel, NOT EMBEDDED_KEY: once a real key is injected
@@ -286,8 +296,13 @@ export function trackCommand(event: CommandEvent): void {
 export function maybeShowFirstRunNotice(stashRef: string): void {
   const { state, status, firstRun } = init()
   if (!status.enabled || !firstRun) return
-  process.stderr.write(`${messages.telemetry.notice(stashRef)}\n`)
   try {
+    // PERSIST FIRST, print only on success. On a machine where the state write
+    // fails (read-only HOME, sandboxed runner) the notice would otherwise print
+    // on every single run forever — worse than pre-notice behaviour. Persist
+    // failure ⇒ no print AND no telemetry ever (firstRun never clears), which is
+    // the honest fallback: no disclosure, no collection.
+    //
     // Reassign the cache: a later setTelemetryDisabled() in the same process
     // must not write from a stale `state` and clobber this noticeShownAt.
     stateCache = writeState({
@@ -295,8 +310,9 @@ export function maybeShowFirstRunNotice(stashRef: string): void {
       noticeShownAt: new Date().toISOString(),
     })
   } catch {
-    // A write failure just means we may show the notice again next run.
+    return
   }
+  process.stderr.write(`${messages.telemetry.notice(stashRef)}\n`)
 }
 
 /** Persist the opt-out flag. Surfaces write errors (the command wants to know). */
@@ -311,29 +327,39 @@ export async function shutdownTelemetry(): Promise<void> {
   // clientPromise is null iff nothing was ever captured (disabled/dormant/first
   // run), so there is nothing to flush and posthog-node was never loaded.
   if (clientPromise === null) return
-  // The timer MUST be cleared once shutdown() wins the race: an uncleared
+  // The timer MUST be cleared once the flush wins the race: an uncleared
   // pending setTimeout keeps the Node event loop alive, so the process would
   // hang for the full timeout after the flush already completed.
   let timer: ReturnType<typeof setTimeout> | undefined
+  // Capture the promises before the race so the finally can reset the module
+  // state regardless of which side wins.
+  const pendingCapture = lastCapture
+  const pendingClient = clientPromise
   try {
-    // Wait for the capture enqueue (client construction + queueing) to finish,
-    // otherwise shutdown() could race ahead of the event we mean to deliver.
-    if (lastCapture !== null) {
-      try {
-        await lastCapture
-      } catch {
-        // A failed capture is already swallowed in trackCommand.
-      }
-    }
-    const client = await clientPromise
+    // EVERYTHING is inside the race — including awaiting the capture enqueue
+    // (which contains the dynamic import of posthog-node) and the client
+    // resolution. If any of it stalls (a hung filesystem mid-import, a
+    // black-holed endpoint), the timeout still unblocks the process; nothing
+    // that can hang sits outside the bound. The swallow is attached to the
+    // flush promise ITSELF (not just the race): if the timeout wins while the
+    // flush is still pending, a later rejection would otherwise surface as an
+    // unhandledRejection crash.
+    const flush = (async () => {
+      // Wait for the capture enqueue (client construction + queueing) to
+      // finish, otherwise shutdown() could race ahead of the event we mean
+      // to deliver. Its rejections are already swallowed in trackCommand.
+      if (pendingCapture !== null) await pendingCapture
+      const client = await pendingClient
+      await client?.shutdown()
+    })().catch(() => {
+      // Swallow — a failed flush must not fail (or crash) the process.
+    })
     await Promise.race([
-      client.shutdown(),
+      flush,
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, FLUSH_TIMEOUT_MS)
       }),
     ])
-  } catch {
-    // Swallow — a failed flush must not fail the process.
   } finally {
     if (timer !== undefined) clearTimeout(timer)
     clientPromise = null

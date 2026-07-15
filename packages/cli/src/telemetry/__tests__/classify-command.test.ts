@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { classifyCommand } from '../classify-command.js'
+import { classifyCommand, classifyErrorType } from '../classify-command.js'
+
+describe('classifyErrorType (telemetry value allowlist)', () => {
+  it('passes builtins and first-party error class names through', () => {
+    expect(classifyErrorType(new TypeError('x'))).toBe('TypeError')
+    expect(classifyErrorType(new Error('x'))).toBe('Error')
+  })
+
+  it('collapses a user-defined error class name to <other>', () => {
+    // The CLI runs user code in-process (stash.config.ts via jiti); a class
+    // named after a table/column must not leave inside errorType.
+    class PatientsSsnColumnMissingError extends Error {}
+    expect(classifyErrorType(new PatientsSsnColumnMissingError('x'))).toBe(
+      '<other>',
+    )
+  })
+
+  it('collapses non-Error throws to <other>', () => {
+    expect(classifyErrorType('a thrown string')).toBe('<other>')
+    expect(classifyErrorType(undefined)).toBe('<other>')
+  })
+})
 
 describe('classifyCommand (telemetry value allowlist)', () => {
   it('keeps a recognised command + subcommand path', () => {

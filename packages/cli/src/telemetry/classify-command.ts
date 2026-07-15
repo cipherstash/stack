@@ -36,6 +36,44 @@ const KNOWN_COMMANDS: ReadonlySet<string> = new Set(
 )
 
 /**
+ * Error class names allowed to leave as `errorType`. The same closed-vocabulary
+ * rule as commands: the CLI executes USER code in-process (stash.config.ts and
+ * the encrypt client, via jiti), so `err.constructor.name` is an open
+ * vocabulary — a user-defined `PatientsSsnColumnMissingError` would carry a
+ * column name off the machine. First-party classes + Node/JS builtins pass;
+ * everything else collapses to `<other>`.
+ */
+const KNOWN_ERROR_TYPES: ReadonlySet<string> = new Set([
+  // JS builtins
+  'Error',
+  'TypeError',
+  'RangeError',
+  'SyntaxError',
+  'ReferenceError',
+  'EvalError',
+  'URIError',
+  'AggregateError',
+  // Node-flavoured
+  'AbortError',
+  'TimeoutError',
+  'SystemError',
+  // First-party CLI errors
+  'CliExit',
+  'CancelledError',
+  'BackfillConfigError',
+  // Config validation (zod)
+  'ZodError',
+])
+
+/** Coerce an unknown thrown value to a telemetry-safe error class name. */
+export function classifyErrorType(err: unknown): string {
+  if (!(err instanceof Error)) return '<other>'
+  return KNOWN_ERROR_TYPES.has(err.constructor.name)
+    ? err.constructor.name
+    : '<other>'
+}
+
+/**
  * Return telemetry-safe (command, subcommand). An unrecognised command becomes
  * `<other>` (and drops its subcommand); a recognised command with an
  * unrecognised subcommand keeps the command but reports `<other>` for the
