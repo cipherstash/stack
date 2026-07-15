@@ -116,6 +116,17 @@ jobs:
       - name: Type tests (test-kit — enforces v3 domain coverage)
         run: pnpm --filter @cipherstash/test-kit run test:types
 
+      # The adapter packages carry their own `.test-d.ts` type-contract guards
+      # (the M1 client-surface / #622 erasure guards, the Supabase key-set
+      # gating). They moved here from `@cipherstash/stack` in the #627 split but
+      # were never wired into CI, so type-level regressions in them went
+      # undetected — run them explicitly.
+      - name: Type tests (stack-drizzle)
+        run: pnpm --filter @cipherstash/stack-drizzle run test:types
+
+      - name: Type tests (stack-supabase)
+        run: pnpm --filter @cipherstash/stack-supabase run test:types
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

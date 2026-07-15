@@ -1,5 +1,536 @@
 # @cipherstash/stack
 
+## 1.0.0-rc.0
+
+### Major Changes
+
+- 7c7dbca: CipherStash Stack 1.0 (release candidate).
+
+  This is the first 1.0-line release of `@cipherstash/stack`, the first published
+  release of the split-out EQL v3 adapters `@cipherstash/stack-drizzle` and
+  `@cipherstash/stack-supabase`, and moves the `stash` CLI to 1.0 alongside them.
+  These four packages now version together as the Stack 1.0 family.
+
+### Minor Changes
+
+- 31ca318: Split the Drizzle and Supabase integrations into their own packages.
+
+  The adapters now ship as first-party packages that depend on `@cipherstash/stack`,
+  following the `@cipherstash/prisma-next` precedent:
+
+  - **`@cipherstash/stack-drizzle`** — Drizzle ORM integration. EQL v2 on the package
+    root (`@cipherstash/stack-drizzle`: `encryptedType`, `extractEncryptionSchema`,
+    `createEncryptionOperators`) and EQL v3 on `@cipherstash/stack-drizzle/v3`
+    (`types` factories, `createEncryptionOperatorsV3`, `extractEncryptionSchemaV3`, …).
+  - **`@cipherstash/stack-supabase`** — Supabase integration: `encryptedSupabase` (v2)
+    and `encryptedSupabaseV3` (v3, connect-time introspection).
+
+  **Breaking (`@cipherstash/stack`):** the `./drizzle`, `./supabase`, and
+  `./eql/v3/drizzle` subpath exports are removed. Migrate imports:
+
+  - `@cipherstash/stack/drizzle` → `@cipherstash/stack-drizzle`
+  - `@cipherstash/stack/eql/v3/drizzle` → `@cipherstash/stack-drizzle/v3`
+  - `@cipherstash/stack/supabase` → `@cipherstash/stack-supabase`
+
+  Add the relevant package to your dependencies alongside `@cipherstash/stack`. A new
+  `@cipherstash/stack/adapter-kit` subpath exposes the narrow core internals the
+  first-party adapters consume; it is the core↔adapter seam, not general-purpose API.
+
+- c4787c0: Restore the EQL v3 envelope and `Result` types the adapters were erasing.
+
+  Both v3 adapters typed their operand-encryption paths as `unknown` and dropped
+  the `Result` wrapper, so the query-type encoding and the failure channel were
+  invisible to the type system:
+
+  - `eql/v3/drizzle/operators.ts` typed the client's `encrypt`/`bulkEncrypt` as
+    returning `unknown`, collapsed the operation's `Result` to
+    `{ data?: unknown; failure?: { message } }`, and cast the bulk response to
+    `Array<{ data: unknown }>`.
+  - `supabase/query-builder-v3.ts` returned `Promise<unknown[]>` from
+    `encryptCollectedTerms`, `bulkEncryptGroup` and `encryptGroupPerTerm`, and the
+    base `query-builder.ts` did the same.
+
+  These now carry the SDK's real types — `Encrypted` (the storage envelope union,
+  which includes every v3 per-domain payload), `BulkEncryptedData`, and
+  `EncryptedQueryResult` — threaded through a properly-typed operation surface that
+  resolves `Result<T, EncryptionError>`. The Supabase divergence the erasure hid is
+  now explicit: the v2 path yields `encryptQuery` composite literals and the v3
+  path yields `JSON.stringify`'d envelope strings, and both are `EncryptedQueryResult`.
+
+  Bumped `minor`, not `patch`: `createEncryptionOperatorsV3` is a public export
+  (`@cipherstash/stack/eql/v3/drizzle`), and tightening its client contract from
+  `unknown` to a typed operation surface is a compile-time breaking change — a
+  downstream consumer passing a loosely-typed (`unknown`-returning) client double
+  will now fail `tsc`. That tightening has teeth: `operators.test-d.ts` pins it
+  with a negative type-test asserting an `unknown`-returning `{ encrypt }` double
+  is rejected (a positive "correctly-typed double is accepted" assertion cannot
+  catch a re-erasure, since a correct value is assignable to `unknown`).
+
+  Behaviour is otherwise unchanged, with one addition: the Supabase v3 bulk path
+  now rejects a `null` envelope returned by `bulkEncrypt` (the restored
+  `Encrypted | null` type makes that arm reachable, and a `null` would otherwise
+  be `JSON.stringify`'d to the literal `"null"` and sent as a filter operand).
+
+- 66a0e02: Add the EQL v3 bigint domain family to the public DSL: `types.Bigint`,
+  `types.BigintEq`, `types.BigintOrdOre`, and `types.BigintOrd`, backed by the
+  `public.bigint*` concrete domains. Plaintext is a JS `bigint`, round-tripped
+  losslessly across the protect-ffi 0.28 boundary (i64 bounds enforced at the
+  FFI — out-of-range values surface as encryption errors). Index emission follows
+  the numeric rule: `bigint_eq` → unique (hm); `bigint_ord`/`bigint_ord_ore` →
+  ore (equality answered via ob).
+- 7eba32d: EQL v3 Drizzle: encrypt every query operand with `encryptQuery`, not `encrypt` (#622).
+
+  The v3 Drizzle operators (`eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`between`/`notBetween`/
+  `inArray`/`notInArray`/`contains`) previously encrypted their operands with
+  `client.encrypt`, producing a full storage envelope (including the ciphertext `c`)
+  cast to `::jsonb`. A WHERE-clause operand should be a query _term_, not a value to
+  store. Every operator now uses `client.encryptQuery`, which yields a
+  ciphertext-free query term cast to the column's `eql_v3.query_<domain>` type — so
+  predicates carry no ciphertext and reach the bundle's `(domain, query_<domain>)`
+  operator overloads. This unifies the scalar/text operators with the JSON
+  containment path (already on `encryptQuery`) and removes the previously-optional
+  `encryptQuery` guard: it is now a required capability of the operand client.
+
+  `@cipherstash/stack` gains a batch `encryptQuery(terms)` overload on
+  `TypedEncryptionClient` (the type `EncryptionV3` returns), mirroring the nominal
+  `EncryptionClient`. This is additive — it lets `inArray`/`notInArray` encrypt a
+  whole list of query terms in one crossing.
+
+- 0ebf57e: Close two fail-open paths in the EQL v3 Drizzle adapter.
+
+  `ops.contains()` now throws `EncryptionOperatorError` for a search term that
+  tokenizes to nothing: the empty string, or a term shorter than the match index
+  tokenizer's `token_length` (3 by default). Such a term produces an empty bloom
+  filter, and `stored_bf @> '{}'` is true for every row — so a user searching
+  `"ad"` silently received the entire table. Measured live, the terms `"ad"`,
+  `"a"` and `"x"` each returned every seeded row, including one in which `"x"`
+  did not appear.
+
+  The floor counts Unicode codepoints, matching the tokenizer. A UTF-16 length
+  check would wave through an astral-plane term — `"👍👍"` is 4 code units but
+  only 2 codepoints, yields no trigram, and matched every row.
+
+  **Breaking for callers passing short terms:** `contains()` calls that previously
+  returned every row now throw. Terms of 3+ codepoints are unaffected.
+
+  `v3FromDriver()` now throws the new `EqlV3CodecError` on a payload that is not
+  an EQL envelope, instead of surfacing a raw `SyntaxError` for malformed JSON and
+  passing a bare scalar through unchecked — `v3FromDriver('5')` previously returned
+  `5` typed as `Encrypted`, which then reached `decrypt` as garbage. The guard
+  accepts both scalar envelopes (ciphertext at `c`) and SteVec documents
+  (ciphertext at `sv[0].c`). A SteVec's `sv` must be a non-empty array: `sv[0]` is
+  the decryption root, so `sv: []` carries a ciphertext key but no ciphertext, and
+  is now rejected rather than passed to `decrypt`. `EqlV3CodecError` is exported
+  from `@cipherstash/stack/eql/v3/drizzle` so callers can catch it.
+
+  Also removes an unreachable branch in `inArray`/`notInArray`, whose empty-list
+  guard already throws before it.
+
+  Note: the v2 Drizzle adapter's `like`/`ilike` path builds the same bloom filters
+  and has the same short-term fail-open. It is **not** fixed here — v2 terms carry
+  SQL wildcards, so the floor must be measured against what its tokenizer actually
+  receives before the shared guard can be reused. Tracked separately.
+
+- d73a03c: Add EQL v3 Drizzle support at `@cipherstash/stack/eql/v3/drizzle`. A Drizzle-native
+  `types` namespace (same PascalCase names as `@cipherstash/stack/eql/v3`) declares
+  encrypted columns whose Postgres type is the semantic `public.<domain>`; the concrete
+  type drives the legal query operators. `createEncryptionOperatorsV3` provides
+  capability-checked `eq`/`ne`/`gt`/`gte`/`lt`/`lte`/`between`/`contains`/`inArray`/
+  `asc`/`desc`/`and`/`or` that emit the latest two-argument `eql_v3` SQL functions with
+  full-envelope operands, and
+  `extractEncryptionSchemaV3` rebuilds the schema for `EncryptionV3`. The existing v2
+  `@cipherstash/stack/drizzle` integration is unchanged.
+
+  The v3 text-search helper is `contains`; obsolete `like`/`ilike` helpers are not
+  exposed because v3 free-text search is token containment rather than SQL wildcard
+  matching.
+
+- 89b903f: Upgrade `@cipherstash/protect-ffi` to 0.28.0 and update EQL v3 concrete Postgres domain names to match the SQL fixture (`integer*`, `smallint*`, `bool`, `real*`, and `double*`). The public factories remain semantic (`Integer`, `Smallint`, `Boolean`, `Real`, `Double`) while their concrete domains change, so this is a minor release.
+- 229ce59: Re-baseline EQL v3 on the eql-3.0.0 GA release and protect-ffi 0.29.
+
+  - **Breaking (v3 preview surface):** the EQL v3 column domains follow the
+    eql-3.0.0 naming convention — flat, prefixed names in `public`
+    (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, …) instead of the
+    alpha-era bare names. Databases installed from an alpha bundle must be
+    re-installed (`stash eql install --eql-version 3` replaces the schema).
+  - `encryptQuery` under `eqlVersion: 3` now returns EQL v3 query operands
+    (protect-ffi 0.29): term-only scalar operands for the `eql_v3.query_<name>`
+    domains, the `eql_v3.query_jsonb` containment needle, and bare selector
+    hashes for JSON path queries — v3 scalar and selector queries no longer
+    throw `EQL_V3_QUERY_UNSUPPORTED` (the code is gone).
+  - v2 `searchableJson()` columns now pin the SteVec encoding to `standard`
+    explicitly. protect-ffi 0.29 flipped the library default to `compat`
+    (EQL v3's encoding); without the pin, v2 JSON containment queries would
+    silently match nothing and newly written rows would not be comparable with
+    existing ones.
+  - The EQL v3 test/install SQL is sourced from the pinned `@cipherstash/eql`
+    package (3.0.0) instead of a hand-vendored fixture.
+
+- 50c0a9c: Add EQL v3 JSON columns. `types.Json('col')` declares a `public.eql_v3_json`
+  column that encrypts a JSON document to an ste_vec `SteVecDocument` and
+  round-trips it losslessly through `encrypt`/`decrypt` and the model path. A new
+  `searchableJson` query capability emits the ste_vec index; the index uses
+  `mode: 'compat'`, which eql-3.0.0's `eql_v3_json` requires (it orders ste_vec
+  entries by the CLLW-OPE `op` term, so v2's `'standard'`/CLLW-`oc` terms are
+  rejected).
+
+  The Drizzle integration's `contains(col, subObject)` now answers encrypted-JSONB
+  containment on a `types.Json` column, emitting the `@>` operator with a
+  `query_jsonb` needle (from `encryptQuery`). The ste_vec index indexes array
+  elements by identity but not position, so containment is a true subset test
+  (`{ roles: ['x'] }` matches any document whose `roles` array contains `x`,
+  regardless of index).
+
+- 5d23e80: Add `encryptedSupabaseV3` — the EQL v3 dialect of the Supabase adapter. It is
+  now a connect-time-async factory: `await encryptedSupabaseV3(url, key)` (or
+  `(client)`) introspects the database over `DATABASE_URL`, detects EQL v3 columns
+  by their Postgres domain (`information_schema.columns.domain_name`), and derives
+  each column's encryption config from its domain — callers no longer pass a
+  schema to `from()`. `select('*')` is supported (expanded from the introspected
+  column list, and aliased back to each declared column's JS property name so a
+  property→DB rename round-trips). A column using an EQL v3 domain this SDK version does not model
+  (e.g. `public.json`, `*_ord_ope`) throws at construction rather than silently
+  passing through. Supplying `schemas` remains optional and adds compile-time
+  types plus startup verification of the declared tables against the database.
+  Requires a Postgres connection for introspection (`pg` is a new optional peer),
+  so it cannot run in a Worker or the browser.
+
+  Every column name a query carries — filters, `match`, `not`, raw `filter`,
+  `or()`, `order()`, and the `onConflict` option — is now resolved from its JS
+  property name to its DB column name in a single pass before the query is built,
+  so a declared rename round-trips everywhere rather than only on the paths that
+  remembered to translate.
+
+  `order()` on ANY encrypted v3 column is now rejected — at compile time when
+  `schemas` is supplied, and at runtime otherwise. The EQL v3 domains are
+  `DOMAIN … AS jsonb` and the bundle declares no btree operator class on them, so
+  `ORDER BY col` resolves through jsonb's default `jsonb_cmp` and sorts by the
+  envelope's byte structure: a stable, plausible-looking, meaningless row order,
+  with no error. Correct ordering is `ORDER BY eql_v3.ord_term(col)`, which
+  PostgREST's `order=` cannot express. Order by a plaintext column, expose
+  `eql_v3.ord_term()` as a generated column or view, or use the EQL v3 Drizzle
+  integration, which emits `ord_term` directly. Note `gte`/`lte` filters remain
+  correct: the comparison operators _are_ declared on the ord domains, and only
+  sorting resolves through the missing operator class.
+
+  `.or()` now understands PostgREST's `column.not.<op>.<value>` negation. It was
+  previously parsed as `{ op: 'not', value: '<op>.<value>' }`, so on an encrypted
+  column `or('nickname.not.in.(ada,grace)')` encrypted the literal string
+  `in.(ada,grace)` as a single plaintext and produced a filter that silently
+  matched nothing.
+
+  Free-text search on the v3 builder is `contains(column, value)`. `like`/`ilike`
+  are not exposed, because EQL v3 free-text search is token containment over a
+  bloom filter (`@>`, backed by `eql_v3.contains`) rather than SQL wildcard
+  matching — `%` is tokenized like any other character, so a `like` pattern is a
+  category error. This matches the v3 Drizzle integration, which omits them for
+  the same reason. On an encrypted column `like`/`ilike` now throw and name
+  `contains`; on a plaintext column they remain ordinary PostgREST filters.
+
+  `contains` is narrowed at compile time to columns whose domain carries the
+  `freeTextSearch` capability (`public.text_match`, `public.text_search`), and
+  guarded at runtime for the untyped surface. A raw `filter(column, operator, …)`
+  on an encrypted v3 column now derives its query type from the operator instead
+  of always encrypting an equality term, so `filter('bio', 'cs', …)` on a
+  `public.text_match` column works rather than being rejected, and an unsupported
+  operator throws instead of silently encrypting the wrong term.
+
+  Substring `contains` matches any needle whose trigrams are all present in the
+  stored value; needles shorter than the tokenizer's window (3 characters) bloom to
+  nothing and are rejected rather than silently matching every row. The v3 match
+  index now emits `include_original: false` — the flag is inert in protect-ffi (the
+  bloom is trigram-only either way), so this moves no ciphertext and only pins the
+  value a substring-search domain wants.
+
+  v2 (`encryptedSupabase`) is unchanged: it keeps `like`/`ilike` (`eql_v2.like`,
+  `~~`) and its raw-`filter` query-type mapping, so no v2 ciphertext moves.
+
+- 1aa9a11: Add the EQL v3 `text_search` authoring DSL on a new `@cipherstash/stack/eql/v3`
+  subpath (`types.TextSearch`, v3 `encryptedTable` / `buildEncryptConfig`). The v3
+  builders emit the existing `EncryptConfig` shape, so encryption, payloads, and
+  query paths are unchanged at runtime.
+
+  Also widens the public client types (`EncryptionClientConfig.schemas`,
+  `EncryptOptions`, `SearchTerm`/`EncryptQueryOptions`) to a structural contract so
+  both v2 and v3 builders are accepted by `Encryption` / `encrypt` / `decrypt` /
+  `encryptQuery`. This is a backward-compatible widening — existing v2 usage is
+  unaffected. The structural contracts themselves (`BuildableColumn`,
+  `BuildableQueryColumn`, `BuildableV3QueryableColumn`, `BuildableTable`,
+  `BuildableTableColumns`) and the `encryptModel` return-type mapper
+  (`EncryptedFromBuildableTable`) are exported from `@cipherstash/stack/types` so
+  consumers can name them.
+
+- af2d04e: Add a strongly-typed EQL v3 client surface on a new `@cipherstash/stack/v3`
+  subpath (`EncryptionV3`, `typedClient`, `TypedEncryptionClient`). It re-exports
+  the v3 `types` namespace and table API (from `@cipherstash/stack/eql/v3`), so a
+  single import provides everything needed to author and use a v3 schema.
+
+  Every method derives its types from the concrete `table` / `column` builder
+  arguments:
+
+  - `encrypt` / `encryptQuery` pin the plaintext to the column's domain type
+    (`text → string`, `timestamp → Date`, …).
+  - `encryptQuery` constrains `queryType` to the column's capabilities and rejects
+    storage-only columns at compile time.
+  - `encryptModel` / `bulkEncryptModels` validate schema-column fields against their
+    inferred plaintext type (passthrough fields are untouched) and return a precise
+    encrypted model.
+  - `decryptModel` / `bulkDecryptModels` return the precise plaintext model,
+    reconstructing `Date` values from the encrypt-config `cast_as`.
+
+  Because the typed methods bind to the concrete branded v3 classes, a hand-rolled
+  structural table/column is rejected — closing the soundness gap where a non-branded
+  table could be encrypted at runtime while typed as plaintext.
+
+  Runtime behaviour is unchanged: the encrypt/query paths return the same operations
+  as the base client; only the model-decrypt paths add a per-column `Date`
+  reconstruction step. The v2 client surface (`Encryption`) is untouched.
+
+- b8a3d20: Add EQL v3 schema builders for supported generated SQL domains under `@cipherstash/stack/eql/v3`, exposed as the `types` namespace (one member per supported EQL v3 domain, e.g. `types.TextEq` / `types.IntegerOrd` / `types.Timestamp`), including explicit query capability metadata (`getQueryCapabilities()` / `isQueryable()`) and v3 table support in model encryption helpers (`encryptModel` / `bulkEncryptModels`).
+
+  Also widen the accepted plaintext input type for `encrypt` / `encryptQuery` to include `Date` (via the new `Plaintext` type), so v3 `date` / `timestamp` domains can be encrypted and queried with their natural JavaScript values.
+
+- a0f3b2c: `@cipherstash/stack/wasm-inline` is now EQL v3 (#614).
+
+  The WASM entry (Deno / Bun / Cloudflare Workers / Supabase Edge) previously
+  created a client pinned to the FFI's EQL v2 wire format, so a v3 schema
+  (concrete `eql_v3_*` domains) failed every encrypt on the edge. It now targets
+  EQL v3 exclusively:
+
+  - The factory constructs the WASM client with `eqlVersion: 3`, so v3 schemas
+    encrypt/decrypt correctly on the edge.
+  - The entry re-exports the **v3** authoring surface (`types`, `encryptedTable`,
+    the column classes, `buildEncryptConfig`, and the inference helpers) — the
+    same API as `@cipherstash/stack/eql/v3` — so an Edge Function authors and runs
+    v3 from one import:
+
+    ```ts
+    import {
+      Encryption,
+      encryptedTable,
+      types,
+    } from "@cipherstash/stack/wasm-inline";
+
+    const patients = encryptedTable("patients", {
+      email: types.TextSearch("email"),
+    });
+    const client = await Encryption({ schemas: [patients], config });
+    ```
+
+  The v2 schema builders (`encryptedColumn` / `encryptedField` / the v2
+  `encryptedTable`) are no longer exported from this entry, and passing a v2 table
+  throws a clear error. The WASM path was never announced or documented for v2 and
+  had no known users; EQL v2 remains fully supported on the native
+  `@cipherstash/stack` entry.
+
+- 5411a13: Add the `@cipherstash/stack/adapter-kit` subpath — a narrow support surface for
+  the first-party adapter packages (`@cipherstash/stack-supabase`,
+  `@cipherstash/stack-drizzle`) being split out of this package (#627). It
+  re-exports exactly the core internals the adapters consume (the logger,
+  `AuditConfig`, the v3 column model + `DATE_LIKE_CASTS`, the domain registry, the
+  match-index guard, and the model→composite helpers) so those imports resolve
+  across the package boundary without leaking six internal module paths. This is the
+  core↔adapter seam, not general-purpose public API.
+- 99f8b0a: Fix encrypted `in`-list operands in the Supabase adapter, and widen the `is` /
+  `contains` type surfaces.
+
+  **`in()` on an encrypted column produced a request PostgREST rejects.** Every
+  encrypted operand is a serialized envelope, dense with `"` and `,`. postgrest-js
+  wraps a comma-bearing element as `"…"` but never escapes the quotes already
+  inside it, so `.in('email', […])` emitted
+
+  ```
+  in.("{"v":1,"c":"…"}",…)
+         ^ PostgREST ends the value here → PGRST100
+  ```
+
+  Encrypted lists are now emitted through `filter(col, 'in', …)` with each element
+  quoted and escaped, matching what the `.or()` path already did. This affects
+  **v2 as well as v3** — v2's `("a@b.com")` composite literal is itself
+  quote-bearing and was equally broken.
+
+  **`not(col, 'in', […])` encrypted the whole list as a single ciphertext**, so
+  the filter silently matched nothing, and emitted an unparenthesized
+  `not.in.a,b`. Each element is now encrypted separately and the operand is
+  rendered as `not.in.(…)`. Passing a PostgREST list literal (`'(a,b)'`) for an
+  encrypted column now throws instead of silently matching nothing — pass an
+  array.
+
+  **`filter(col, 'in', […])` encrypted the whole list as a single ciphertext.**
+  The raw `.filter()` path reached `in` with none of the element-splitting the
+  `in()`, `not(…, 'in', …)` and `.or()` paths perform, so the entire list operand
+  was encrypted as one equality term. The two wire formats then failed
+  differently, which is why this went unnoticed: **v2**'s `("json")` composite
+  literal is already parenthesized, so PostgREST parsed it as a one-element list
+  and answered `200 []` — a filter that silently matched nothing. **v3**'s bare
+  `{…}` envelope is not, so PostgREST rejected the request outright with
+  `PGRST100 (failed to parse filter)`.
+
+  Each element is now encrypted separately and the operand rendered as a quoted
+  PostgREST list literal. As on the `not` path, passing a list literal
+  (`'(a,b)'`) for an encrypted column now throws instead — pass an array.
+
+  Plaintext columns are unaffected, including the pre-existing quirk that
+  postgrest-js renders `.filter(col, 'in', [array])` as an unparenthesized
+  `in.a,b` that PostgREST rejects; pass a list literal there, or use `.in()`.
+
+  **`is(col, null)` is now allowed on every column**, including storage-only
+  encrypted ones (`types.Boolean`, `types.Integer`, …). `is` is never encrypted
+  and a NULL plaintext is stored as a SQL NULL, so `IS NULL` is not merely legal
+  there but the only predicate those columns support. `is(col, true)` remains a
+  compile error on encrypted columns.
+
+  **`contains()` accepts native operands on plaintext array and jsonb columns.** A
+  plaintext jsonb/array column falls through to PostgREST's native containment, so
+  `contains('tags', ['vip'])` and `contains('meta', { plan: 'pro' })` now
+  typecheck. A plaintext SCALAR column does not: `@>` is undefined on `text`, so
+  the operand type follows the column's own shape and a scalar rejects every
+  containment operand. Encrypted match columns still take a `string` token.
+  Relatedly, `.or([{ op: 'contains' }])` now emits PostgREST's `cs` operator for
+  plaintext columns too — previously only encrypted conditions were translated, so
+  a plaintext containment reached the wire as `.contains.` and failed to parse.
+
+  **Direct `contains()` / `not(col, 'contains', …)` now serialize their operand.**
+  postgrest-js builds an array operand as `cs.{a,b}` with no element quoting, so
+  `contains('tags', ['with,comma'])` reached Postgres as two elements; and its
+  `not()` stringifies the operand outright, emitting `not.contains.with,comma`
+  (no braces, and the wrong operator token) or `[object Object]` for a jsonb
+  operand. Both paths now build the containment literal the `.or()` path already
+  built, and emit the `cs` token.
+
+  **`.or()` no longer drops a condition after an unbalanced brace or paren.** A
+  scalar operand containing `{` left the parser's depth counter stranded above
+  zero, so no later comma separated a condition and everything behind it was
+  swallowed into that operand. With a plaintext column first, the group was then
+  forwarded verbatim — running the swallowed condition against a ciphertext column
+  with a plaintext operand. Braces are now quoted on emit (they are structural to
+  PostgREST inside `or=(…)`), and the parser falls back to quote-only splitting
+  when its depth tracking does not balance.
+
+  **`is(col, true)` is now rejected on every encrypted column, not just the
+  storage-only ones.** The boolean form was gated on the filterable keys, which
+  exclude storage-only columns but keep queryable encrypted ones — so
+  `is(emailTextSearchColumn, true)` compiled and emitted `IS TRUE` against a jsonb
+  ciphertext.
+
+  **In-list operands encrypt in one crossing per column.** The element-wise `in` /
+  `not.in` encoding above spent one ZeroKMS round-trip per element; terms are now
+  grouped by column and each group takes a single `bulkEncrypt` call, matching the
+  Drizzle v3 path. Falls back to per-term encryption for clients without
+  `bulkEncrypt`, and rejects a bulk response whose length does not match the list
+  rather than silently truncating the predicate.
+
+- 9b65ae8: **`order()` now works on EQL v3 encrypted ordering columns in the Supabase
+  adapter.** It was rejected outright on every encrypted column.
+
+  A bare `ORDER BY col` on an EQL v3 domain really is wrong — the bundle declares
+  no btree operator class on any domain, so the sort falls through to jsonb's
+  default `jsonb_cmp` and compares the envelope's keys in storage order, starting
+  at the random ciphertext `c`. Measured over ten rows it returns
+  `r00,r04,r08,r01,…` where the plaintext order is `r00..r09`. No error, a stable
+  and plausible-looking meaningless order.
+
+  But the correct sort key is reachable without a function call. `eql_v3.ord_term`
+  returns the domain's `op` term, and OPE is order-preserving, so ordering by the
+  term reproduces the plaintext order. PostgREST cannot emit
+  `ORDER BY eql_v3.ord_term(col)`, but it can emit a jsonb path. The builder now
+  emits `order=col->op` for an encrypted ordering column, verified against a live
+  PostgREST for `integer_ord` and `text_search` in both directions.
+
+  The guard is now on the ordering FLAVOUR, not on encryption:
+
+  - **`ope` present → supported.** Every plain `*_ord` domain, plus `text_ord` and
+    `text_search`.
+  - **`ore` present → rejected.** The `ob` term is an array of ORE blocks whose
+    comparison needs the superuser-only operator class, which no jsonb path can
+    reach. (Such a column cannot hold data on managed Postgres anyway: its domain
+    CHECK raises `ore_domain_unavailable`.) ORE columns are now excluded from
+    `order()` at COMPILE time too, not only at runtime — `.order(oreColumn)` is a
+    type error, matching the rejection.
+  - **neither → rejected.** Storage-only, equality-only and match-only columns
+    carry no ordering term.
+
+  The path is `col->op` (jsonb), not `col->>op` (text). Neither avoids the
+  database collation — Postgres compares jsonb strings with `varstr_cmp` under the
+  default collation, exactly as it does text. What makes the ordering
+  collation-independent is the term's encoding: lowercase hex, fixed-width for
+  numeric and date domains, and per-character (16 hex chars each) for text, so
+  lexicographic order reproduces plaintext order including the prefix case
+  (`ada` < `adam`). `ope-term.integration.test.ts` pins that shape.
+
+  `V3OrderableKeys` widens to admit OPE-backed ordering columns (`*_ord`,
+  `text_ord`, `text_search`) while still excluding ORE (`*_ord_ore`) columns, so
+  `order()` typechecks exactly where it works. `is(col, true)` is unaffected — it
+  stays plaintext-only, and now has its own `V3PlaintextKeys` rather than
+  borrowing the orderable set.
+
+### Patch Changes
+
+- cfd46ee: Source the EQL v3 install bundle from `@cipherstash/eql@3.0.0-alpha.3` instead of a hand-vendored 43k-line SQL fixture committed to the test tree. The package publishes its SQL and its TypeScript wire types from the same `eql-bindings` commit, so the bundle is now pinned to a released EQL version rather than tracked by convention.
+
+  Test-and-tooling only — `@cipherstash/eql` is a `devDependency` and no public API changes.
+
+  The staleness check in the v3 install helper now compares `eql_v3.version()` against the pinned release instead of probing for a hand-picked sentinel domain. The previous sentinel (`public.timestamp`) exists in both the old and new bundles, so it would have reported a stale install as current and left the suite silently running the wrong SQL.
+
+- 63ca540: Re-vendor the EQL v3 SQL bundle and align the v3 DSL to it: encrypted type domains now live in the `public` schema (`public.text`, `public.integer`, …) rather than `eql_v3`, and the boolean domain is `public.boolean` (was `eql_v3.bool`). The `eql_v3` schema now holds only the operator-backing functions, and the index-term constructors (`hmac_256`, `ore_block_256`, `bloom_filter`) moved to `eql_v3_internal`. This keeps the SDK's emitted domain names byte-matched to the installed bundle so `CREATE TABLE`/cast resolution succeeds.
+- f23f952: Remove the leftovers from the secrets removal (`1929c8fe`), which deleted
+  `packages/stack/src/secrets/` but left its export, build entry, skill, and docs
+  behind. Secrets tooling is not ready; nothing here was functional.
+
+  - **Drop the dead `@cipherstash/stack/secrets` subpath export.** It pointed at
+    `./dist/secrets/index.js`, which has no source and is not in the tarball, so
+    `import '@cipherstash/stack/secrets'` has been throwing `ERR_MODULE_NOT_FOUND`
+    for every consumer since the source was removed. Also drops the dangling
+    `src/secrets/index.ts` entry from `tsup.config.ts`. Removing an export that
+    cannot resolve breaks nothing.
+  - **Remove the `stash-secrets` agent skill** and its references in `AGENTS.md`
+    and the init setup-prompt skill index. It was never installed by `stash init`
+    (it is absent from `SKILL_MAP`), so no user project ever received it.
+  - **Remove the secrets documentation** from both published READMEs: the
+    `Secrets` class API and the `npx stash secrets` command reference in
+    `@cipherstash/stack`, and the `npx stash secrets` section in `stash`. The CLI
+    command does not exist — `stash secrets` returns `Unknown command`.
+
+- fd33aad: Fix the Supabase adapter encrypting `is` and `null` filter operands.
+
+  `is` is a SQL predicate — PostgREST accepts only `null`/`true`/`false` after it
+  — and a `null` operand is SQL NULL, never a value to search for. Only the direct
+  `.is()` filter skipped encryption; `not()`, `or()`, `match()`, raw `filter()`,
+  and the `in()` element list all encrypted whatever they were handed. So
+  `or('age.is.null')` emitted `age.is."("null")"` and `eq('email', null)` emitted
+  `email=("null")` — operands PostgREST rejects. A null plaintext is stored as a
+  NULL column rather than ciphertext, so it is found with an unencrypted
+  `IS NULL`; encrypting the operand could never match.
+
+  A single `isEncryptableTerm(operator, value)` predicate now guards every term
+  collector. Affects both `encryptedSupabase` (v2) and `encryptedSupabaseV3`. On
+  v3 this additionally removes a spurious `does not support equality queries`
+  error, which `is` raised because it maps to the `equality` query type and so hit
+  the column-capability guard — `or('active.is.null')` on a storage-only column
+  threw rather than querying.
+
+  Relatedly, an `or()` string is now rebuilt whenever a condition _references_ an
+  encrypted column, not only when one of its values was encrypted. An `is` on an
+  encrypted column encrypts nothing, and the old condition sent it down the
+  verbatim path, forwarding the caller's JS property name to a database that only
+  knows the column's DB name.
+
+- 8cd485d: Fix the Supabase adapter's `.or()` string parser mis-splitting conditions, and pin `contains()` on a mixed union column key to the encrypted operand.
+
+  An `.or()` string is only rebuilt from its parse when it references an encrypted column — otherwise the caller's string is forwarded verbatim — so each of these corrupts precisely the mixed encrypted/plaintext case.
+
+  **Quotes were tracked only at brace depth 0.** A `}` inside a quoted array element or jsonb string value closed the literal early, and the next `"` re-opened quoting, so the following top-level comma never split: `.or('tags.cs.{"a}b"},email.eq.secret')` parsed as a single condition and silently absorbed `email.eq.secret` into the operand. Quotes are now opaque at every depth.
+
+  **A stray `}` or `)` drove the depth counter negative**, after which no comma split again. `}` and `)` are not PostgREST reserved characters, so `a}b` is a valid unquoted operand and `.or('nickname.eq.a}b,id.eq.1')` dropped `id.eq.1`. Depth now floors at zero.
+
+  **`in`-list elements were split on every comma, ignoring quotes.** `.or('email.in.("a,b",c)')` parsed as three elements with the quotes still embedded; on an encrypted column each fragment was encrypted as its own term, so the intended element never matched. Elements are now split on top-level commas and unquoted, the inverse of what the rebuild emits.
+
+  **A parenthesized operand was read as a list for every operator.** Only `in` and the range operators (`ov`, `sl`, `sr`, `nxr`, `nxl`, `adj`) take a paren-delimited operand; elsewhere `(` is an ordinary character. `email.eq.(foo)` parsed as `['foo']` and encrypted a JS array rather than the string, matching nothing.
+
+  **A string operand spelling `null`, `true` or `false` is now quoted.** PostgREST reads a bare `null` as SQL NULL, so `.or([{ column: 'name', op: 'eq', value: 'null' }])` emitted `name.eq.null` and compared against NULL instead of the three-character string.
+
+  **`contains(col, …)` where `col` is a union spanning an encrypted and a plaintext column** accepted an array or object operand. The union is now only as permissive as its strictest member: any declared encrypted column in the union pins the operand to `string`. A literal column argument was never affected.
+
 ## 0.19.0
 
 ### Minor Changes

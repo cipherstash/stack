@@ -1,5 +1,12 @@
 # @cipherstash/protect
 
+## 12.0.2-rc.0
+
+### Patch Changes
+
+- Updated dependencies [229ce59]
+  - @cipherstash/schema@3.0.2-rc.0
+
 ## 12.0.1
 
 ### Patch Changes

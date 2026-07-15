@@ -64,6 +64,22 @@ export const v3Dialect = {
     return sql`${left} OPERATOR(public.@>) ${enc}`
   },
 
+  /**
+   * Extract the encrypted JSONB leaf entry at a selector:
+   * `eql_v3.jsonb_path_query_first(src, sel)` → `eql_v3_jsonb_entry`. `src` is
+   * either an `eql_v3_json` column or a storage-needle document already cast to
+   * `eql_v3_json`; `sel` is the selector hash bound as `text`. The returned entry
+   * feeds `eql_v3.{eq,neq,lt,lte,gt,gte}(jsonb_entry, jsonb_entry)`, so a selector
+   * comparison is `equality`/`comparison` applied to two extractions (column side
+   * and needle side) rather than column vs operand.
+   *
+   * The root `eql_v3_json` domain has no comparison operators (they're blocked in
+   * the bundle), which is why the selector must be extracted before comparing.
+   */
+  selectorEntry(source: SQL, selector: SQL): SQL {
+    return sql`${fn('jsonb_path_query_first')}(${source}, ${selector})`
+  },
+
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {
     // eql-3.0.0 splits the ordering extractor by term flavour: `ord_term`
     // takes the OPE-backed `_ord` domains (returns eql_v3_internal.ope_cllw),

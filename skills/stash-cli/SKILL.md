@@ -16,7 +16,7 @@ Think Prisma Migrate or Drizzle Kit: a dev-time tool that prepares the database,
 Use this skill when:
 
 - The user wants to set up CipherStash or install EQL in a PostgreSQL database.
-- Any `stash` command is being run: `init`, `plan`, `impl`, `status`, `auth`, `eql`, `db`, `encrypt`, `schema`, `manifest`, `doctor`, `wizard`, `env`.
+- Any `stash` command is being run: `init`, `plan`, `impl`, `status`, `auth`, `eql`, `db`, `encrypt`, `schema`, `manifest`, `doctor`, `telemetry`, `wizard`, `env`.
 - A `stash.config.ts` file exists or needs to be created.
 - A `.cipherstash/` directory exists (`context.json`, `plan.md`, `migrations.json`, `setup-prompt.md`).
 - The user mentions "stash CLI", "EQL install", "encryption schema", or an encryption rollout/cutover.
@@ -139,6 +139,33 @@ First hit wins:
 `stash.config.ts` is **not** a separate tier: the scaffolded config calls this same resolver, and the `--database-url` flag still wins. The one exception is a hand-edited config assigning a literal `databaseUrl` string — that bypasses the resolver entirely and beats both flag and env.
 
 The resolved URL is returned in memory only. It is never written to disk or into `process.env`.
+
+## Telemetry
+
+The CLI collects **anonymous, opt-out** usage analytics — coarse events only
+(command name, CLI version, OS/arch, Node version, success/failure, duration,
+and a coarse caller class such as `claude-code`/`cursor`/`interactive` derived
+from environment markers). Events carry a random install identifier — a UUID
+generated locally and stored in `~/.cipherstash/telemetry.json`, not derived
+from any machine, user, or hardware attribute — used only to de-duplicate
+events in aggregate. It **never** collects plaintext, schema, table/column
+names, connection strings, argument values, or any session/trace identifier. A
+one-time notice is printed on first run, and nothing is sent on that first run.
+
+Opt out in any of these ways (any one wins; env vars override the saved
+preference):
+
+| Mechanism | Effect |
+|---|---|
+| `DO_NOT_TRACK=1` | Honors the cross-tool standard; disables telemetry |
+| `STASH_TELEMETRY_DISABLED=1` | Disables telemetry |
+| `CI=true` (or common CI markers) | Auto-disabled in CI |
+| `npx stash telemetry disable` | Persists opt-out to `~/.cipherstash/telemetry.json` |
+
+`npx stash telemetry status` reports the current state and which setting governs
+it; `npx stash telemetry enable` clears the saved opt-out (env overrides still
+apply). State lives in `~/.cipherstash/telemetry.json` — a non-secret file
+distinct from the auth credentials in that directory.
 
 ## Configuration
 
@@ -279,6 +306,7 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 | `status` | Rollout quest log (above) |
 | `manifest [--json]` | Print the structured, versioned command surface |
 | `doctor` | Diagnose install problems (native binaries, runtime). Runs before the CLI body loads, so it works when the native binary is broken. |
+| `telemetry [status\|enable\|disable]` | Manage anonymous usage analytics (below) |
 | `wizard` | AI-guided encryption setup — thin wrapper over `@cipherstash/wizard` |
 
 ### Auth
