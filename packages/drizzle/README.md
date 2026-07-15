@@ -5,7 +5,7 @@
 Seamlessly integrate CipherStash encryption with Drizzle ORM and PostgreSQL to encrypt your data while maintaining full query capabilities—equality, range queries, text search, and sorting—all with complete TypeScript type safety.
 
 > [!TIP]
-> For new projects we recommend [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack), which provides this integration as `encryptedType`, `extractEncryptionSchema`, and `createEncryptionOperators` from `@cipherstash/stack/drizzle`. See the [Drizzle docs](https://cipherstash.com/docs/stack/cipherstash/encryption/drizzle). This package documents the legacy `@cipherstash/protect`-based API.
+> For new projects we recommend [`@cipherstash/stack`](https://www.npmjs.com/package/@cipherstash/stack), which provides this integration via the separate [`@cipherstash/stack-drizzle`](https://www.npmjs.com/package/@cipherstash/stack-drizzle) package (EQL v3 on its `/v3` subpath). See the [Drizzle docs](https://cipherstash.com/docs). This package documents the legacy `@cipherstash/protect`-based API.
 
 ## Features
 
