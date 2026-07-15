@@ -1,6 +1,6 @@
 {
 	"name": "@cipherstash/wizard",
-	"version": "0.5.0-rc.0",
+	"version": "0.5.0-rc.1",
 	"description": "AI-powered encryption setup for CipherStash. Reads your codebase, picks columns to encrypt, and wires everything up.",
 	"repository": {
 		"type": "git",
