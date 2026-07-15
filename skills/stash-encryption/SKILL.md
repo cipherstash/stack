@@ -416,18 +416,18 @@ const results = await client.encryptQuery(terms)
 
 All values in the array must be non-null.
 
-## Identity-Aware Encryption
+## Authentication
 
-Bind a data key to a claim from the end user's JWT, so only that user can decrypt.
+The client authenticates to ZeroKMS through `config.authStrategy`. Leave it unset for the default **auto** strategy — credentials from the `CS_*` environment variables, falling back to the local dev profile created by `npx stash auth login`. Two explicit strategies cover the other cases:
 
-You do this in two parts: **authenticate the client as the user** with `OidcFederationStrategy`, then **name the claim** on each operation with `.withLockContext({ identityClaim })`.
+- **`AccessKeyStrategy`** — service-to-service / CI. Authenticates a *service* with a CipherStash access key.
+- **`OidcFederationStrategy`** — authenticates the client **as the end user** by federating a third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...) into a CipherStash service token:
 
 ```typescript
 import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-// 1. Authenticate the client as the end user. `getJwt` is re-invoked on every
-//    (re-)federation and must return the *current* third-party OIDC JWT
-//    (Clerk, Supabase, Auth0, Okta, ...).
+// `getJwt` is re-invoked on every (re-)federation and must return the
+// *current* third-party OIDC JWT.
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
   () => getUserJwt(),
@@ -440,8 +440,21 @@ const client = await Encryption({
   schemas: [users],
   config: { authStrategy: strategy.data },
 })
+```
 
-// 2. Bind the data key to the user's `sub` claim.
+`OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()` at all.
+
+> **Known type error (runtime is fine).** The example above works at runtime, but `authStrategy: strategy.data` does not currently typecheck. `@cipherstash/auth` 0.41 strategies declare `getToken(): Promise<Result<TokenResult, AuthFailure>>`, while `@cipherstash/protect-ffi`'s exported `AuthStrategy` type still says `getToken(): Promise<{ token: string }>`. protect-ffi accepts **both** shapes at runtime (0.28+), on the Node and WASM paths alike — only its TypeScript declaration was left behind. Until it's widened, add `as unknown as AuthStrategy` or `// @ts-expect-error`. Tracked in [issue #602](https://github.com/cipherstash/stack/issues/602).
+
+Authentication stands on its own — an OIDC-authenticated client encrypts and decrypts normally. Binding *data* to the authenticated user is a separate, optional step: the lock context, below.
+
+## Identity-Aware Encryption (Lock Contexts)
+
+Bind a data key to a claim from the end user's JWT, so only that user can decrypt. Chain `.withLockContext({ identityClaim })` on any operation:
+
+```typescript
+// Requires a client authenticated with OidcFederationStrategy (see
+// "Authentication" above) — the claim's value resolves from the federated JWT.
 const IDENTITY = { identityClaim: ["sub"] }
 
 const encrypted = await client
@@ -451,7 +464,7 @@ if (encrypted.failure) {
   throw new Error(`[encryption] ${encrypted.failure.type}: ${encrypted.failure.message}`)
 }
 
-// 3. Decrypt with the SAME claim. Anything else cannot reproduce the key.
+// Decrypt with the SAME claim. Anything else cannot reproduce the key.
 const decrypted = await client
   .decrypt(encrypted.data)
   .withLockContext(IDENTITY)
@@ -460,17 +473,13 @@ if (decrypted.failure) {
 }
 ```
 
-> **Known type error (runtime is fine).** The example above works at runtime, but `authStrategy: strategy.data` does not currently typecheck. `@cipherstash/auth` 0.41 strategies declare `getToken(): Promise<Result<TokenResult, AuthFailure>>`, while `@cipherstash/protect-ffi`'s exported `AuthStrategy` type still says `getToken(): Promise<{ token: string }>`. protect-ffi 0.28 accepts **both** shapes at runtime, on the Node and WASM paths alike — only its TypeScript declaration was left behind. Until it's widened, add `as unknown as AuthStrategy` or `// @ts-expect-error`. Tracked in [issue #602](https://github.com/cipherstash/stack/issues/602).
+Lock contexts **require** an `OidcFederationStrategy`-authenticated client: the claim's value resolves from the JWT the strategy federated. The auto and access-key strategies authenticate no end user, so there is no JWT to resolve claims from — `AccessKeyStrategy` in particular authenticates a *service* and cannot be used with a lock context. Plain authentication never requires a lock context.
 
-`OidcFederationStrategy.create()` returns a `Result` — **unwrap it**. Passing the envelope straight to `authStrategy` gives the FFI an object with no `getToken()` at all.
-
-Every operation returns a `Result` too. Narrow on `.failure` before touching `.data`: the `Failure` branch has no `data` property, so skipping the check is a type error, not merely a runtime risk.
+Every operation returns a `Result`. Narrow on `.failure` before touching `.data`: the `Failure` branch has no `data` property, so skipping the check is a type error, not merely a runtime risk.
 
 `identityClaim` is an array of JWT claim *names*, not values: `["sub"]` (the default) or `["sub", "org_id"]`. ZeroKMS resolves each claim's value from the JWT the strategy federated. **The same claim must be supplied to encrypt and decrypt** — it is baked into the data key's tag, so decrypting without it fails with `Failed to retrieve key`.
 
 Lock contexts work with every operation: `encrypt`, `decrypt`, `encryptModel`, `decryptModel`, `bulkEncrypt`, `bulkDecrypt`, `bulkEncryptModels`, `bulkDecryptModels`, `encryptQuery`.
-
-`AccessKeyStrategy` is the service-to-service / CI path. It authenticates a *service*, not a user, so it cannot be used with a lock context.
 
 ### Deprecated: `LockContext.identify()`
 

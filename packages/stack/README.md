@@ -16,7 +16,8 @@ The all-in-one TypeScript SDK for the CipherStash data security stack.
 - [Schema Definition](#schema-definition)
 - [Encryption and Decryption](#encryption-and-decryption)
 - [Searchable Encryption](#searchable-encryption)
-- [Identity-Aware Encryption](#identity-aware-encryption)
+- [Authentication](#authentication)
+- [Identity-Aware Encryption](#identity-aware-encryption-lock-contexts)
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Error Handling](#error-handling)
@@ -445,18 +446,24 @@ Notes:
 - **The concrete type defines the legal operators.** `TextEq` supports `eq` / `ne` / `inArray` / `notInArray`; `*Ord` types add `gt` / `gte` / `lt` / `lte` / `between` / `notBetween` and `asc` / `desc`; `*Match` and `TextSearch` add `contains`; a bare `Text` / `Integer` / `Bigint` column is storage-only. Using an unsupported operator throws `EncryptionOperatorError`.
 - Combine conditions with `ops.and` / `ops.or`, and do NULL checks with `ops.isNull` / `ops.isNotNull` (the where-clause operators are `async` and must be `await`ed; `ops.asc` / `ops.desc` are synchronous).
 
-## Identity-Aware Encryption
+## Authentication
 
-Bind a data key to a claim from the end user's JWT, so only that user can
-decrypt. Do it in two parts: **authenticate the client as the user** with
-`OidcFederationStrategy`, then **name the claim** on each operation with
-`.withLockContext({ identityClaim })`.
+The client authenticates to ZeroKMS through `config.authStrategy`. Leave it
+unset for the default **auto** strategy — credentials from the `CS_*`
+environment variables, falling back to the local dev profile created by
+`npx stash auth login`. Two explicit strategies cover the other cases:
+
+- **`AccessKeyStrategy`** — service-to-service / CI. Authenticates a *service*
+  with a CipherStash access key.
+- **`OidcFederationStrategy`** — authenticates the client **as the end user**
+  by federating a third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...)
+  into a CipherStash service token:
 
 ```typescript
 import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-// 1. Authenticate the client as the end user. The callback returns the current
-//    third-party OIDC JWT (Clerk, Supabase, Auth0, Okta, ...).
+// The callback is re-invoked on every (re-)federation and must return the
+// CURRENT third-party OIDC JWT.
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
   () => getUserJwt(),
@@ -467,8 +474,20 @@ const client = await Encryption({
   schemas: [users],
   config: { authStrategy: strategy.data },
 })
+```
 
-// 2. Bind the data key to the user's `sub` claim on encrypt AND decrypt.
+Authentication stands on its own — an OIDC-authenticated client encrypts and
+decrypts normally. Binding *data* to the authenticated user is a separate,
+optional step: the lock context, below.
+
+## Identity-Aware Encryption (Lock Contexts)
+
+Bind a data key to a claim from the end user's JWT, so only that user can
+decrypt. Chain `.withLockContext({ identityClaim })` on any operation:
+
+```typescript
+// Requires a client authenticated with OidcFederationStrategy (above) — the
+// claim's value resolves from the federated JWT.
 const IDENTITY = { identityClaim: ["sub"] }
 
 const encrypted = await client
@@ -479,6 +498,11 @@ const decrypted = await client
   .decrypt(encrypted.data)
   .withLockContext(IDENTITY)
 ```
+
+Lock contexts **require** an `OidcFederationStrategy`-authenticated client
+(the auto and access-key strategies authenticate no end user, so there is no
+JWT to resolve claims from); plain authentication never requires a lock
+context.
 
 `identityClaim` is an array of JWT claim *names* (`["sub"]`), not values, and the
 same claim must be supplied to encrypt and decrypt. Lock contexts work with all
@@ -662,7 +686,7 @@ All operations are thenable (awaitable) and support `.withLockContext(lockContex
 ### `LockContext` (legacy)
 
 Identity-aware encryption is done with `OidcFederationStrategy` +
-`.withLockContext({ identityClaim })` (see [Identity-Aware Encryption](#identity-aware-encryption)).
+`.withLockContext({ identityClaim })` (see [Identity-Aware Encryption](#identity-aware-encryption-lock-contexts)).
 `LockContext` / `identify()` remain for backwards compatibility only — the
 per-operation CTS token `identify()` fetches was removed in `protect-ffi` 0.25
 and is no longer used by encryption.

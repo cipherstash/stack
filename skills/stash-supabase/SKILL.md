@@ -289,20 +289,21 @@ Operator family support is currently being developed in collaboration with the S
 
 `.order()` on non-encrypted columns works normally.
 
-## Identity-Aware Encryption
+## Authentication
 
-Bind encryption to a specific user in two parts: **authenticate the client as the
-user** with `OidcFederationStrategy` when you build it, then **name the claim** on
-each query with `.withLockContext({ identityClaim })`.
+The encryption client authenticates to ZeroKMS through `config.authStrategy`.
+Unset, it uses the default **auto** strategy (`CS_*` environment variables,
+falling back to the `npx stash auth login` dev profile) — fine for
+service-level encryption. To authenticate **as the end user**, federate their
+third-party OIDC JWT (Clerk, Supabase, Auth0, ...) with
+`OidcFederationStrategy`:
 
 ```typescript
 import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
 
-// 1. Authenticate the client as the end user (getUserJwt returns the current
-//    third-party OIDC JWT — Clerk, Supabase, Auth0, ...).
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
-  () => getUserJwt(),
+  () => getUserJwt(), // re-invoked on every (re-)federation
 )
 if (strategy.failure) throw new Error(strategy.failure.error.message)
 
@@ -310,9 +311,22 @@ const encryptionClient = await Encryption({
   schemas: [users],
   config: { authStrategy: strategy.data },
 })
-const eSupabase = encryptedSupabase({ /* ...supabase config... */, encryptionClient })
+const eSupabase = encryptedSupabase({ supabaseClient, encryptionClient })
+```
 
-// 2. Bind the data key to the user's `sub` claim on each query.
+Authentication stands on its own — an OIDC-authenticated client runs every
+query normally. Binding *data* to the authenticated user is the optional next
+step: the lock context.
+
+## Identity-Aware Encryption (Lock Contexts)
+
+Bind the data key to a claim from the end user's JWT by chaining
+`.withLockContext({ identityClaim })` on a query. This **requires** an
+`OidcFederationStrategy`-authenticated client (above) — the claim's value
+resolves from the federated JWT; auto/access-key auth has no user JWT to
+resolve claims from. Plain authentication never requires a lock context.
+
+```typescript
 const { data, error } = await eSupabase
   .from("users", users)
   .insert({ email: "alice@example.com", name: "Alice" })
