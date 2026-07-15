@@ -431,3 +431,17 @@ describe('encrypted JSON keys and operands (#650)', () => {
     docsBuilder.contains('note', 'x')
   })
 })
+
+describe('withLockContext accepts the plain { identityClaim } form (not only LockContext)', () => {
+  it('accepts a plain identity-claim object — the canonical documented form', () => {
+    // The identity-aware example chains this exact shape; it must typecheck on
+    // the builder, not only on the stack-level operations.
+    mixedBuilder.withLockContext({ identityClaim: ['sub'] })
+    mixedBuilder.withLockContext({ identityClaim: ['sub', 'org_id'] })
+  })
+
+  it('rejects an object with an unknown key', () => {
+    // @ts-expect-error — `claim` is not `identityClaim`
+    mixedBuilder.withLockContext({ claim: ['sub'] })
+  })
+})

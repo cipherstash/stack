@@ -1,12 +1,16 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 
+// `as const` is load-bearing: without it every member's type widens to `string`,
+// so the `type` fields on the StackError union members below all become `string`
+// and the union stops discriminating — `switch (error.type)` cannot narrow, and
+// the documented exhaustive error-handling pattern fails to compile.
 export const EncryptionErrorTypes = {
   ClientInitError: 'ClientInitError',
   EncryptionError: 'EncryptionError',
   DecryptionError: 'DecryptionError',
   LockContextError: 'LockContextError',
   CtsTokenError: 'CtsTokenError',
-}
+} as const
 
 /**
  * Base error interface returned by all encryption operations.

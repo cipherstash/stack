@@ -203,6 +203,18 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(JSON.parse(gte.args[1] as string).c).toBeDefined()
   })
 
+  it('rejects a short matches needle up front (fail-open guard, mirrors Drizzle)', async () => {
+    const { es } = v3Instance()
+    // A 1-2 char needle blooms to no tokens; `bf @> '{}'` matches every row, so
+    // the query would silently return (and decrypt) the whole table.
+    const { error, status } = await es
+      .from('users', users)
+      .select('id')
+      .matches('email', 'ab')
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/at least 3 characters|match every row/)
+  })
+
   it('emits encrypted matches as PostgREST cs (bloom-filter containment)', async () => {
     const { es, supabase } = v3Instance()
 
