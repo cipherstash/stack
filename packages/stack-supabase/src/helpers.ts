@@ -237,9 +237,11 @@ export function mapFilterOpToQueryType(op: FilterOp): QueryTypeName {
       return 'equality'
     case 'like':
     case 'ilike':
-    // `matches` is the encrypted free-text (bloom) operator. `contains` remains
-    // for completeness/v2 but is plaintext-only on the v3 surface, so it never
-    // reaches term encryption there (a plaintext operand is not encrypted).
+    // `matches` is the encrypted free-text (bloom) operator. `contains` is
+    // plaintext-native on scalar columns, but on an encrypted `types.Json`
+    // column it IS the encrypted ste_vec containment (#650) — the v3 dialect's
+    // capability resolver re-types the collected term to `searchableJson` when
+    // the column carries that capability instead of `freeTextSearch`.
     case 'contains':
     case 'matches':
       return 'freeTextSearch'

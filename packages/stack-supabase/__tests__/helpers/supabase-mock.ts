@@ -36,11 +36,16 @@ export function fakeEnvelope(value: unknown, column: string): FakeEnvelope {
       : typeof value === 'bigint'
         ? value.toString()
         : value
+  // `String(pt)` throws on a null-prototype object (no toString) — which the
+  // JSON selector needles deliberately are (prototype-pollution safety). Tag
+  // the fake ciphertext via JSON for objects instead.
+  const tag =
+    pt !== null && typeof pt === 'object' ? JSON.stringify(pt) : String(pt)
   return {
     v: 2,
     i: { t: 'tbl', c: column },
-    c: `ct:${String(pt)}`,
-    hm: `hm:${String(pt)}`,
+    c: `ct:${tag}`,
+    hm: `hm:${tag}`,
     pt,
   }
 }

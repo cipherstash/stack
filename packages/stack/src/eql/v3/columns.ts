@@ -765,7 +765,7 @@ export type PlaintextForColumn<C> =
  * The user-facing `queryType` names a v3 column supports, derived 1:1 from its
  * capability flags. Resolves to `never` for a storage-only column (all flags
  * `false`) and for any non-v3 value. The names mirror the {@link QueryCapabilities}
- * keys and the first three {@link import('@/types').QueryTypeName} members.
+ * keys, each of which is also a {@link import('@/types').QueryTypeName} member.
  */
 export type QueryTypesForColumn<C> =
   C extends EncryptedV3Column<infer D>
@@ -776,6 +776,13 @@ export type QueryTypesForColumn<C> =
             : never)
         | (D['capabilities']['freeTextSearch'] extends true
             ? 'freeTextSearch'
+            : never)
+        // The flag is optional (absent means "not a JSON document column"), so
+        // only a literal `true` contributes. Without this arm a `types.Json`
+        // column resolved to `never`, and every typed adapter key set derived
+        // from this type excluded encrypted-JSON columns entirely (#650).
+        | (D['capabilities']['searchableJson'] extends true
+            ? 'searchableJson'
             : never)
     : never
 

@@ -355,3 +355,79 @@ describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
     supabase.from('users').select()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Encrypted JSON querying (#650): contains on types.Json + selector methods
+// ---------------------------------------------------------------------------
+
+const docs = encryptedTable('docs', {
+  payload: types.Json('payload'),
+  email: types.TextEq('email'),
+})
+
+declare const docsBuilder: EncryptedQueryBuilderV3<
+  typeof docs,
+  InferPlaintext<typeof docs> & { note: string; meta: Record<string, unknown> }
+>
+
+describe('encrypted JSON keys and operands (#650)', () => {
+  it('contains() accepts a sub-document on the types.Json column', () => {
+    docsBuilder.contains('payload', { user: { role: 'admin' } })
+    docsBuilder.contains('payload', [{ tag: 'vip' }])
+    // A raw-string operand is the PLAINTEXT native form only; the encrypted
+    // JSON overload requires an object/array sub-document.
+    // @ts-expect-error — string operand is not a sub-document
+    docsBuilder.contains('payload', '{"user":{}}')
+  })
+
+  it('a types.Json column is queryable via its OWN methods, not scalar predicates', () => {
+    // Pre-#650, QueryTypesForColumn resolved types.Json to never, putting it in
+    // NonQueryableV3Keys and rejecting EVERY filter mention at compile time.
+    // Post-#650 the JSON methods are open…
+    docsBuilder.selectorEq('payload', '$.user.role', 'admin')
+    docsBuilder.filter('payload', 'cs', { user: { role: 'admin' } })
+    docsBuilder.not('payload', 'contains', { user: { role: 'admin' } })
+    // …but the scalar predicates stay compile-excluded: an encrypted document
+    // has no scalar terms, so eq/gt/in against it can only fail at runtime.
+    // @ts-expect-error — eq on a JSON column has no term to compare
+    docsBuilder.eq('payload', { a: 1 })
+    // @ts-expect-error — gt on a JSON column has no ordering term
+    docsBuilder.gt('payload', { a: 1 })
+    // @ts-expect-error — in-lists have no equality terms on a JSON column
+    docsBuilder.in('payload', [{ a: 1 }])
+    // @ts-expect-error — the raw filter overload for JSON keys admits only 'cs'
+    docsBuilder.filter('payload', 'eq', { a: 1 })
+  })
+
+  it('selectorEq/selectorNe accept exactly the JSON scalar leaves', () => {
+    docsBuilder.selectorEq('payload', '$.user.age', 30)
+    docsBuilder.selectorNe('payload', '$.user.active', true)
+    docsBuilder.selectorEq('payload', '$.user.role', 'admin')
+    // @ts-expect-error — a JsonDocument cannot contain a Date; pass toISOString()
+    docsBuilder.selectorEq('payload', '$.user.joined', new Date())
+    // @ts-expect-error — a JsonDocument cannot contain a bigint
+    docsBuilder.selectorEq('payload', '$.user.balance', 10n)
+    // @ts-expect-error — objects are contains(), not a selector leaf
+    docsBuilder.selectorEq('payload', '$.user', { role: 'admin' })
+    // @ts-expect-error — null is not a comparable leaf
+    docsBuilder.selectorNe('payload', '$.user.role', null)
+  })
+
+  it('selector methods reject non-JSON columns at compile time', () => {
+    // @ts-expect-error — email is a TextEq column, not types.Json
+    docsBuilder.selectorEq('email', '$.a', 'x')
+    // @ts-expect-error — note is a plaintext column
+    docsBuilder.selectorNe('note', '$.a', 'x')
+  })
+
+  it('matches() still rejects the JSON column at compile time', () => {
+    // @ts-expect-error — payload carries searchableJson, not freeTextSearch
+    docsBuilder.matches('payload', 'admin')
+  })
+
+  it('plaintext contains() is unaffected', () => {
+    docsBuilder.contains('meta', { a: 1 })
+    // @ts-expect-error — scalar plaintext column has no containment operand
+    docsBuilder.contains('note', 'x')
+  })
+})

@@ -527,9 +527,10 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   bloom-filter token matching (PostgREST `cs` / SQL `@>`): one-sided (a match
   may be a false positive, a non-match never is) and order-/multiplicity-
   insensitive, where `%` is tokenized like any other character. `matches(col,
-  needle)` is the operator; `contains()` on an encrypted column throws an error
-  pointing at `matches()`. `contains()` is reserved for native (exact)
-  jsonb/array containment on plaintext columns, which pass through unchanged.
+  needle)` is the operator; `contains()` on an encrypted TEXT column throws an
+  error pointing at `matches()`. `contains()` is native (exact) jsonb/array
+  containment on plaintext columns — and ENCRYPTED (exact) containment on a
+  `types.Json` column (see "Encrypted JSON querying" below).
 - **`like`/`ilike` on an encrypted column are an approximate compatibility
   shim** delegating to `matches()`: leading/trailing `%` are stripped and the
   residual term is fuzzy-matched (same `cs` wire, plus a one-time warning).
@@ -556,18 +557,75 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   in GET query strings — so these envelopes can land in URL logs,
   intermediate proxies, and Supabase request logs. The remaining gap is
   PostgREST operand casting; an adapter-side fix is tracked.
-- **No `ORDER BY` on encrypted v3 columns** — including the range-capable
-  ones. PostgREST cannot emit `ORDER BY eql_v3.ord_term(col)`, and a bare
-  `ORDER BY` would silently sort the raw ciphertext envelope, so the builder
-  rejects `order()` on any encrypted column with a clear error. Range
-  *filtering* (`gte`/`lte`/…) works. Order by a plaintext column, or sort
-  application-side after decrypting.
+- **`order()` works on OPE-backed encrypted ordering columns** (every plain
+  `*_ord` domain, plus `text_ord` and `text_search`). PostgREST cannot emit
+  `ORDER BY eql_v3.ord_term(col)`, and a bare `ORDER BY` would silently sort
+  the raw ciphertext envelope — so the builder instead emits `order=col->op`,
+  sorting by the OPE term inside the envelope, which reproduces plaintext
+  order (the term is fixed-width lowercase hex, so string comparison agrees
+  with the bytea btree; pinned by `ope-term.integration.test.ts`). ORE-flavour
+  columns (`*_ord_ore`) are rejected at compile time and runtime — their `ob`
+  term needs the superuser-only operator class no jsonb path can reach — and
+  columns with no ordering term (storage-only, equality-only, match-only)
+  reject `order()` with a clear error. For those, order by a plaintext column
+  or sort application-side after decrypting.
 - **Storage-only domains are not filterable** (e.g. `types.Boolean`,
   `types.Text`): a filter (including `.match()`) on one is a type error on a
   declared table, and always a clear runtime error. `.is(column, null)`
   remains available.
 - **Null filter values are rejected** with a pointer to `.is(column, null)` —
   a null cannot be encrypted into an operand.
+
+### Encrypted JSON querying (`types.Json`)
+
+A `types.Json("payload")` column (`public.eql_v3_json`) stores an encrypted
+JSONB document and supports two query forms:
+
+```typescript
+// Exact encrypted containment: every leaf of the sub-document must match at
+// its path (ste_vec `@>` — PostgREST `cs`).
+es.from("events").select("id").contains("payload", { user: { role: "admin" } })
+
+// JSONPath selector equality / inequality at a dot-notation path:
+es.from("events").select("id").selectorEq("payload", "$.user.role", "admin")
+es.from("events").select("id").selectorNe("payload", "$.user.role", "admin")
+```
+
+- `selectorEq(col, path, value)` matches rows carrying exactly `value` at
+  `path` — it compiles to containment of the path-shaped needle
+  (`{user: {role: "admin"}}`), which is the same operation. Paths are
+  dot-notation object keys (`"$.a.b"` or `"a.b"`); array/wildcard steps are
+  rejected, and values must be scalars (an object operand belongs to
+  `contains()`).
+- `selectorNe` matches rows that do NOT carry the value — **including rows
+  where the path is absent entirely, and rows whose document column is SQL
+  NULL** (it compiles to `payload.is.null OR payload.not.cs.<needle>`, matching
+  the Drizzle selector's `ne` semantics for both absence cases).
+- **Array-valued paths:** a scalar needle does NOT match an array at the path —
+  ste_vec encodes array elements under their own selectors — so
+  `selectorEq("payload", "$.roles", "admin")` does not match
+  `{roles: ["admin", "analyst"]}` (and `selectorNe` includes that row). To
+  match an array-valued path, pass the full array through `contains()`.
+- **Selector ordering (`gt`/`gte`/`lt`/`lte`) is not available on Supabase.**
+  PostgREST cannot reach the entry-comparison operators (it wraps JSON arrow
+  paths in `to_jsonb`, and bare-column comparison is blocked by design); it
+  needs an EQL-bundle overload, tracked in
+  cipherstash/encrypt-query-language#407. The Drizzle integration's
+  `ops.selector()` supports ordering today — use it where ordering at a path
+  is required.
+- `matches()` does not apply to JSON columns (it is text free-text search) and
+  throws with a steer; scalar filters (`eq`, `gt`, `in`, …) on the column are
+  rejected by capability.
+- The containment/selector operand is a **full storage envelope** of the
+  needle document. The GET-query-string security caveat above applies with an
+  important difference in degree: a JSON needle carries the root decryptable
+  ciphertext PLUS one ciphertext-bearing entry **per node of the sub-document**
+  — the exposure scales with needle size (the equivalent Drizzle containment
+  ships no ciphertext at all). Keep needles minimal; removing the ciphertext on
+  this surface is tracked in cipherstash/stack#654.
+- Empty needles (`{}` / `[]`) are rejected — jsonb containment holds for every
+  document, so an accidentally-empty filter would silently return the whole
+  table (the Drizzle adapter rejects the same needle).
 
 ## Migrating an Existing Column to Encrypted
 
