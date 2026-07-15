@@ -216,11 +216,14 @@ export type EncryptedJsonContainsValue =
   | readonly unknown[]
 
 /**
- * The scalar leaf value the selector methods compare at a JSONPath. Objects and
- * arrays are rejected (that shape is `contains()`); see the adapters' shared
- * `unsupportedLeafReason`.
+ * The scalar leaf value the selector methods compare at a JSONPath: exactly the
+ * JSON scalar kinds a stored {@link import('@cipherstash/stack/eql/v3').JsonValue}
+ * can carry. `Date` and `bigint` are deliberately absent — a `JsonDocument`
+ * cannot contain them, so such a needle could never match a stored leaf
+ * (serialize to the stored form first, e.g. `date.toISOString()`). Objects and
+ * arrays are rejected too (that shape is `contains()`).
  */
-export type SelectorLeafValue = string | number | bigint | boolean | Date
+export type SelectorLeafValue = string | number | boolean
 
 /**
  * The operand `contains()` accepts on a PLAINTEXT column, mirroring

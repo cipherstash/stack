@@ -399,10 +399,14 @@ describe('encrypted JSON keys and operands (#650)', () => {
     docsBuilder.filter('payload', 'eq', { a: 1 })
   })
 
-  it('selectorEq/selectorNe accept scalar leaves on the JSON column', () => {
+  it('selectorEq/selectorNe accept exactly the JSON scalar leaves', () => {
     docsBuilder.selectorEq('payload', '$.user.age', 30)
     docsBuilder.selectorNe('payload', '$.user.active', true)
+    docsBuilder.selectorEq('payload', '$.user.role', 'admin')
+    // @ts-expect-error — a JsonDocument cannot contain a Date; pass toISOString()
     docsBuilder.selectorEq('payload', '$.user.joined', new Date())
+    // @ts-expect-error — a JsonDocument cannot contain a bigint
+    docsBuilder.selectorEq('payload', '$.user.balance', 10n)
     // @ts-expect-error — objects are contains(), not a selector leaf
     docsBuilder.selectorEq('payload', '$.user', { role: 'admin' })
     // @ts-expect-error — null is not a comparable leaf

@@ -55,7 +55,13 @@ const NULL_ROW_KEY = 'nulldoc'
 type Instance = Awaited<ReturnType<typeof encryptedSupabaseV3>>
 let instance: Instance
 
-type Row = { row_key: string; payload: JsonDocument; test_run_id: string }
+// `payload` is nullable: the suite seeds a SQL-NULL document row (the
+// selectorNe is.null arm), so the type must not promise non-null.
+type Row = {
+  row_key: string
+  payload: JsonDocument | null
+  test_run_id: string
+}
 
 function from() {
   return instance.from<Row>(TABLE).select('row_key').eq('test_run_id', RUN)

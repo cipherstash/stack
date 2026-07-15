@@ -172,6 +172,16 @@ describe('selectorEq()', () => {
     ).toThrow(/non-null scalar leaf.*is\(column, null\)/s)
   })
 
+  it('rejects Date/bigint leaves with the serialization steer (JSON scalars only)', () => {
+    const { builder } = makeBuilder()
+    expect(() =>
+      builder.selectorEq('payload', '$.user.joined', new Date() as never),
+    ).toThrow(/got a Date — pass date\.toISOString\(\)/)
+    expect(() =>
+      builder.selectorEq('payload', '$.user.balance', 10n as never),
+    ).toThrow(/JSON scalar.*got bigint/s)
+  })
+
   it('rejects a non-JSON column', () => {
     const { builder } = makeBuilder()
     expect(() => builder.selectorEq('name', '$.a', 'x')).toThrow(

@@ -81,8 +81,16 @@ function assertJsonContainmentOperand(column: string, value: unknown): void {
     (Object.getPrototypeOf(value) === Object.prototype ||
       Object.getPrototypeOf(value) === null)
   if (!isPlainObject && !Array.isArray(value)) {
+    // Array.isArray is false on this branch by construction, so the label only
+    // distinguishes null / non-plain object / scalar.
+    const got =
+      value === null
+        ? 'null'
+        : typeof value === 'object'
+          ? (value as object).constructor?.name || 'a non-plain object'
+          : typeof value
     throw new Error(
-      `[supabase v3]: encrypted JSON containment on column "${column}" takes a sub-document (plain object or array) to match, got ${value === null ? 'null' : Array.isArray(value) ? 'an array' : typeof value === 'object' ? (value as object).constructor?.name || 'a non-plain object' : typeof value}.`,
+      `[supabase v3]: encrypted JSON containment on column "${column}" takes a sub-document (plain object or array) to match, got ${got}.`,
     )
   }
   const empty = Array.isArray(value)
@@ -748,6 +756,19 @@ export class EncryptedQueryBuilderV3Impl<
     if (leafReason) {
       throw new Error(
         `[supabase v3]: ${method}("${column}", "${path}", …): ${leafReason}`,
+      )
+    }
+    // Stricter than the shared helper (whose Date/bigint arms serve the Drizzle
+    // surface): a stored JsonDocument leaf is a JSON scalar, so a Date/bigint
+    // needle could never match one — reject with the serialization steer
+    // instead of running a query that structurally returns nothing.
+    if (
+      typeof value !== 'string' &&
+      typeof value !== 'number' &&
+      typeof value !== 'boolean'
+    ) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", "${path}", …): a JSON document leaf is a JSON scalar (string/number/boolean); got ${value instanceof Date ? 'a Date — pass date.toISOString() (or the stored form)' : typeof value}.`,
       )
     }
     let segments: string[]
