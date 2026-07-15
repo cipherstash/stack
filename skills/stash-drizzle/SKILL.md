@@ -1,21 +1,22 @@
 ---
 name: stash-drizzle
-description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle. Covers the encryptedType column type, encrypted query operators (eq, like, ilike, gt/gte/lt/lte, between, inArray, asc/desc), schema extraction, batched and/or conditions, EQL migration generation, the EQL v3 integration (@cipherstash/stack-drizzle/v3), and the complete Drizzle integration workflow. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
+description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle/v3 (EQL v3). Covers the types.* encrypted column factories (concrete Postgres domains), auto-encrypting query operators (eq, ne, gt/gte/lt/lte, between, inArray, matches, contains, JSON selector, asc/desc), schema extraction, the EncryptionV3 typed client, database setup with stash eql install, and migrating existing plaintext columns to encrypted. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
 ---
 
 # CipherStash Stack - Drizzle ORM Integration
 
-Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack-drizzle`. Provides a custom column type for encrypted fields and query operators that transparently encrypt search values.
+Guide for integrating CipherStash field-level encryption with Drizzle ORM using `@cipherstash/stack-drizzle/v3` (EQL v3). Provides Drizzle-native encrypted column factories and query operators that transparently encrypt search values — Drizzle never sees plaintext in a query.
+
+In EQL v3 every encrypted column is a **concrete Postgres domain** (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type you pick — there is no capability config object. See the `stash-encryption` skill's "Schema Definition" section (the `types` catalog) for the full catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`, `Json`).
 
 ## When to Use This Skill
 
 - Adding field-level encryption to a Drizzle ORM project
-- Defining encrypted columns in Drizzle table schemas
-- Querying encrypted data with type-safe operators
-- Sorting and filtering on encrypted columns
-- Generating EQL database migrations
+- Defining encrypted columns in Drizzle table schemas with the v3 `types.*` factories
+- Querying encrypted data with type-safe, auto-encrypting operators
+- Sorting, filtering, and encrypted-JSONB querying on encrypted columns
+- Migrating an existing plaintext column to encrypted
 - Building Express/Hono/Next.js APIs with encrypted Drizzle queries
-- Using EQL v3 typed-schema columns in Drizzle (see "EQL v3 Integration" below)
 
 ## Installation
 
@@ -25,71 +26,55 @@ npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 
 The Drizzle integration ships as its own first-party package,
 `@cipherstash/stack-drizzle`, which depends on `@cipherstash/stack`. Install both.
+The v3 surface documented here lives on the `@cipherstash/stack-drizzle/v3` subpath.
 It is distinct from the older, separate `@cipherstash/drizzle` package (which is
 `@cipherstash/protect`-based, with different symbol names).
 
 ## Database Setup
 
-### Install EQL Extension
+> **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples in this skill show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
-The EQL (Encrypt Query Language) PostgreSQL extension enables searchable encryption functions. Generate a migration:
+### Install the EQL v3 SQL
 
-```bash
-npx generate-eql-migration
-# Options:
-#   -n, --name <name>   Migration name (default: "install-eql")
-#   -o, --out <dir>     Output directory (default: "drizzle")
-```
-
-Then apply it:
+EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that make encrypted columns searchable. Install version 3 directly against the database:
 
 ```bash
-npx drizzle-kit migrate
+stash eql install --eql-version 3
 ```
+
+v3 installs via the direct path only — the v2 `stash eql install --drizzle` Drizzle-migration flow is **not** supported for v3 (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are v2-only flags). EQL v3 ships one SQL bundle for every target, including Supabase.
 
 ### Column Storage
 
-Encrypted columns use the `eql_v2_encrypted` PostgreSQL type (installed by EQL). If not using EQL directly, use JSONB:
+Each encrypted column is a concrete Postgres domain named `public.eql_v3_<name>`:
 
 ```sql
 CREATE TABLE users (
-  id SERIAL PRIMARY KEY,
-  email eql_v2_encrypted,    -- with EQL extension
-  name jsonb NOT NULL,       -- or use jsonb
-  age INTEGER                -- non-encrypted columns are normal types
+  id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  email public.eql_v3_text_search,   -- equality + order/range + free-text
+  age public.eql_v3_integer_ord,     -- equality + order/range
+  profile public.eql_v3_json,        -- encrypted-JSONB queries
+  role VARCHAR(50)                   -- non-encrypted columns are normal types
 );
 ```
 
+You don't usually hand-write this: the `types.*` factories below emit the domain as the column's SQL type, so `drizzle-kit generate` produces the `ADD COLUMN email public.eql_v3_text_search` DDL for you.
+
 ## Schema Definition
 
-Use `encryptedType<T>()` to define encrypted columns in Drizzle table schemas:
+Use the `types` namespace from `@cipherstash/stack-drizzle/v3` to define encrypted columns. Each factory maps 1:1 to a Postgres domain, and the column's query capabilities are fixed by the type:
 
 ```typescript
 import { pgTable, integer, timestamp, varchar } from "drizzle-orm/pg-core"
-import { encryptedType } from "@cipherstash/stack-drizzle"
+import { types } from "@cipherstash/stack-drizzle/v3"
 
 const usersTable = pgTable("users", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
 
-  // Encrypted string with search capabilities
-  email: encryptedType<string>("email", {
-    equality: true,        // enables: eq, ne, inArray
-    freeTextSearch: true,  // enables: like, ilike
-    orderAndRange: true,   // enables: gt, gte, lt, lte, between, asc, desc
-  }),
-
-  // Encrypted number
-  age: encryptedType<number>("age", {
-    dataType: "number",
-    equality: true,
-    orderAndRange: true,
-  }),
-
-  // Encrypted JSON object with searchable JSONB queries
-  profile: encryptedType<{ name: string; bio: string }>("profile", {
-    dataType: "json",
-    searchableJson: true,
-  }),
+  email: types.TextSearch("email"),      // equality + order/range + free-text
+  age: types.IntegerOrd("age"),          // equality + order/range
+  notes: types.Text("notes"),            // storage only — encrypt/decrypt, no queries
+  profile: types.Json("profile"),        // encrypted-JSONB containment + selector
 
   // Non-encrypted columns
   role: varchar("role", { length: 50 }),
@@ -97,43 +82,51 @@ const usersTable = pgTable("users", {
 })
 ```
 
-### `encryptedType<TData>(name, config?)`
+Capability suffixes at a glance (full catalog: `stash-encryption` skill, "Schema Definition" — the `types` namespace):
 
-| Config Option | Type | Description |
+| Factory shape | Domain | Enables |
 |---|---|---|
-| `dataType` | `"string"` \| `"number"` \| `"json"` \| `"boolean"` \| `"bigint"` \| `"date"` | Plaintext data type (default: `"string"`) |
-| `equality` | `boolean` \| `TokenFilter[]` | Enable equality index |
-| `freeTextSearch` | `boolean` \| `MatchIndexOpts` | Enable free-text search index |
-| `orderAndRange` | `boolean` | Enable ORE index for sorting and range queries |
-| `searchableJson` | `boolean` | Enable JSONB path queries (requires `dataType: "json"`) |
+| `types.Text`, `types.Integer`, ... (no suffix) | `eql_v3_text`, ... | Storage only |
+| `types.TextEq`, `types.IntegerEq`, ... | `eql_v3_text_eq`, ... | `eq`, `ne`, `inArray`, `notInArray` |
+| `types.IntegerOrd`, `types.TimestampOrd`, ... | `eql_v3_integer_ord`, ... | equality + `gt`/`gte`/`lt`/`lte`/`between`/`asc`/`desc` |
+| `types.IntegerOrdOre`, ... | `eql_v3_integer_ord_ore`, ... | as `Ord`, with block-ORE ordering (superuser-only install — see Sorting) |
+| `types.TextMatch` | `eql_v3_text_match` | `matches` (fuzzy free-text) only |
+| `types.TextSearch` | `eql_v3_text_search` | equality + order/range + `matches` |
+| `types.Json` | `eql_v3_json` | `contains` + `selector` (encrypted JSONB) |
 
-The generic type parameter `<TData>` sets the TypeScript type for the decrypted value.
+Value families: `Integer`/`Smallint`/`Numeric`/`Real`/`Double` (`number`), `Bigint` (`bigint`), `Date`/`Timestamp` (`Date`), `Text` (`string`), `Boolean` (`boolean`, storage only), `Json` (a JSON document — object or array, not a top-level scalar).
+
+`makeEqlV3Column(builder)` wraps a column builder from `@cipherstash/stack/eql/v3` (e.g. `makeEqlV3Column(v3types.TextEq("email"))`) — `types.TextEq("email")` from the Drizzle subpath is shorthand for the same thing.
 
 ## Initialization
 
 ### 1. Extract Schema from Drizzle Table
 
 ```typescript
-import { extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack-drizzle"
-import { Encryption } from "@cipherstash/stack"
+import { extractEncryptionSchemaV3, createEncryptionOperatorsV3 } from "@cipherstash/stack-drizzle/v3"
+import { EncryptionV3 } from "@cipherstash/stack/v3"
 
-// Convert Drizzle table definition to CipherStash schema
-const usersSchema = extractEncryptionSchema(usersTable)
+// Convert the Drizzle table definition to a CipherStash v3 schema
+const usersSchema = extractEncryptionSchemaV3(usersTable)
 ```
 
-### 2. Initialize Encryption Client
+### 2. Initialize the Encryption Client
 
 ```typescript
-const encryptionClient = await Encryption({
+const encryptionClient = await EncryptionV3({
   schemas: [usersSchema],
 })
 ```
 
+`EncryptionV3` returns a strongly-typed client: plaintext types are pinned to each column's domain, and query methods only accept queryable columns.
+
 ### 3. Create Query Operators
 
 ```typescript
-const encryptionOps = createEncryptionOperators(encryptionClient)
+const ops = createEncryptionOperatorsV3(encryptionClient)
 ```
+
+`createEncryptionOperatorsV3(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; the async encrypting operators (`eq`, `ne`, `inArray`, `notInArray`, `gt`/`gte`/`lt`/`lte`, `between`/`notBetween`, `matches`, `contains`, and the comparison methods returned by `selector(...)`) also take an optional trailing `{ lockContext, audit }` argument per call. `asc`/`desc` and the passthrough operators (`isNull`, `isNotNull`, `not`, `and`, `or`, `exists`, `notExists`) encrypt nothing and take no such argument.
 
 ### 4. Create Drizzle Instance
 
@@ -146,7 +139,7 @@ const db = drizzle({ client: postgres(process.env.DATABASE_URL!) })
 
 ## Insert Encrypted Data
 
-Encrypt models before inserting:
+Rows are pre-encrypted with the client before `db.insert` — Drizzle only ever handles the encrypted EQL envelope:
 
 ```typescript
 // Single insert
@@ -173,31 +166,33 @@ if (!encrypted.failure) {
 
 ## Query Encrypted Data
 
+Operators auto-encrypt their plaintext operands into EQL v3 query terms — you pass plaintext, the emitted SQL compares encrypted values. Comparison operators are async (they encrypt), so `await` them (or hand them lazily to `ops.and`/`ops.or`, below).
+
 ### Equality
 
 ```typescript
-// Exact match - await the operator
 const results = await db
   .select()
   .from(usersTable)
-  .where(await encryptionOps.eq(usersTable.email, "alice@example.com"))
+  .where(await ops.eq(usersTable.email, "alice@example.com"))
 ```
 
-### Text Search
+### Free-Text Search (`matches`)
+
+`matches(col, needle)` is fuzzy bloom-token matching on a `TextMatch`/`TextSearch` column — **not** SQL pattern matching. There are no `like`/`ilike` operators on the v3 surface, by design; don't pass `%` wildcards.
 
 ```typescript
-// Case-insensitive search
 const results = await db
   .select()
   .from(usersTable)
-  .where(await encryptionOps.ilike(usersTable.email, "%alice%"))
-
-// Case-sensitive search
-const results = await db
-  .select()
-  .from(usersTable)
-  .where(await encryptionOps.like(usersTable.name, "%Smith%"))
+  .where(await ops.matches(usersTable.email, "alice"))
 ```
+
+Semantics to know:
+
+- **Fuzzy and one-sided.** The needle's downcased token set is bloom-tested as a subset of the column's — order- and multiplicity-insensitive. A match may be a false positive; a non-match never is. Re-check candidates after decryption if you need exactness.
+- **Case-insensitive**, and matches substrings of 3 characters or more.
+- **Short needles are rejected.** A needle shorter than the tokenizer's token length (3 by default) produces no tokens and would silently match every row, so the operator throws `EncryptionOperatorError` instead.
 
 ### Range Queries
 
@@ -205,130 +200,141 @@ const results = await db
 const results = await db
   .select()
   .from(usersTable)
-  .where(await encryptionOps.gte(usersTable.age, 18))
+  .where(await ops.gte(usersTable.age, 18))
 
 const results = await db
   .select()
   .from(usersTable)
-  .where(await encryptionOps.between(usersTable.age, 18, 65))
+  .where(await ops.between(usersTable.age, 18, 65))
 ```
 
-### Array Operators
+### Array Membership
 
 ```typescript
 const results = await db
   .select()
   .from(usersTable)
-  .where(await encryptionOps.inArray(usersTable.email, [
+  .where(await ops.inArray(usersTable.email, [
     "alice@example.com",
     "bob@example.com",
   ]))
 ```
 
+`inArray`/`notInArray` reject an empty list and encrypt the whole list in a single batch crossing.
+
 ### Sorting
 
 ```typescript
-// Sort by encrypted column (sync - no await needed)
+// Sort by encrypted column (sync — no await needed)
 const results = await db
   .select()
   .from(usersTable)
-  .orderBy(encryptionOps.asc(usersTable.age))
+  .orderBy(ops.asc(usersTable.age))
 
 const results = await db
   .select()
   .from(usersTable)
-  .orderBy(encryptionOps.desc(usersTable.age))
+  .orderBy(ops.desc(usersTable.age))
 ```
 
-**Note:** Sorting on encrypted columns requires operator family support in the database. On databases without operator families (e.g. Supabase, or when installed with `--exclude-operator-family`), `ORDER BY` on encrypted columns is not currently supported. Sort application-side after decrypting instead. Operator family support for Supabase is being developed with the Supabase and CipherStash teams.
+`ops.asc`/`ops.desc` emit `ORDER BY eql_v3.ord_term(col)` (`ord_term_ore(col)` for the `*OrdOre` domains). The ORE-flavoured domains require a superuser install and are unavailable on managed Postgres (Supabase, RDS, etc.) — prefer the plain `Ord` domains there; ordering works everywhere EQL v3 installs.
 
-## JSONB Queries
+### Encrypted-JSONB Containment (`contains`)
 
-Query encrypted JSON columns using JSONB operators. These require `searchableJson: true` and `dataType: "json"` in the column's `encryptedType` config.
-
-### Check path existence
+`contains(col, subDoc)` on a `types.Json` column is **exact** encrypted containment (jsonb `@>` semantics, no false positives). The needle is a ciphertext-free `query_jsonb` term. Array containment is position-independent — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
 
 ```typescript
-// Check if a JSONB path exists in an encrypted column
 const results = await db
   .select()
   .from(usersTable)
-  .where(await encryptionOps.jsonbPathExists(usersTable.profile, "$.bio"))
+  .where(await ops.contains(usersTable.profile, { roles: ["admin"] }))
 ```
 
-### Extract value at path
+An empty-object needle (`{}`) is rejected — `doc @> '{}'` holds for every document, so it would silently match every row. Omit the predicate if you want all rows.
+
+`types.Json` carries no equality or ordering: `eq`/`gt`/`asc` on a `Json` column throw.
+
+### JSONPath Selector-with-Constraint (`selector`)
+
+`ops.selector(col, path)` returns comparison methods bound to the encrypted value at a JSONPath inside a `types.Json` column. Its unique power over `contains` is **ordering at a path**:
 
 ```typescript
-// Extract the first matching value at a JSONB path
-const result = await encryptionOps.jsonbPathQueryFirst(usersTable.profile, "$.name")
+// col->'$.age' > 25
+const results = await db
+  .select()
+  .from(usersTable)
+  .where(await ops.selector(usersTable.profile, "$.age").gt(25))
+
+// col->'$.user' = 'zoe@example.com'
+const results = await db
+  .select()
+  .from(usersTable)
+  .where(await ops.selector(usersTable.profile, "$.user").eq("zoe@example.com"))
 ```
 
-### Get value with `->` operator
+Available methods: `.eq`, `.ne`, `.gt`, `.gte`, `.lt`, `.lte`. Rules:
 
-```typescript
-// Get a value using the JSONB -> operator
-const result = await encryptionOps.jsonbGet(usersTable.profile, "$.name")
-```
+- **Paths are dot-notation object keys only** (`"$.a.b"`). Array-index and wildcard syntax (`$.items[0]`) is rejected.
+- **Leaves are scalars only**: `string`, `number`, `boolean`, `Date`, or `bigint`. An object or array leaf is rejected — use `contains` for sub-object matching. A `boolean` leaf is rejected under the ordering methods (booleans have no ordering).
+- **A scalar needle does not match an array at the path.** `selector(col, "$.tags").eq("a")` will not match `{ tags: ["a"] }` — use `contains(col, { tags: ["a"] })` for that.
+- **Absent-path semantics:** `eq` and the ordering methods exclude rows whose document lacks the path; `ne` **includes** them ("not equal to X" covers "has no X").
+- **Interim ciphertext disclosure ([cipherstash/protectjs-ffi#137](https://github.com/cipherstash/protectjs-ffi/issues/137)):** the selector's right-hand value is currently a storage-encrypted needle, so its ciphertext appears in the WHERE clause (and therefore in Postgres logs that capture query text). The comparison itself only reads the needle's index terms. Once #137 lands, the needle becomes ciphertext-free like every other operand.
 
-> **Note:** `jsonbPathExists` returns a boolean and can be used in `WHERE` clauses. `jsonbPathQueryFirst` and `jsonbGet` return encrypted values — use them in `SELECT` expressions.
+### Batched Conditions (and / or)
 
-### Combine JSONB with other operators
+Use `ops.and()` and `ops.or()` to combine encrypted conditions. Pass the operators **lazily** (no `await`) so they resolve concurrently, then `await` the outer call:
 
 ```typescript
 const results = await db
   .select()
   .from(usersTable)
   .where(
-    await encryptionOps.and(
-      encryptionOps.jsonbPathExists(usersTable.profile, "$.name"),
-      encryptionOps.eq(usersTable.email, "jane@example.com"),
+    await ops.and(
+      ops.gte(usersTable.age, 18),              // no await — lazy
+      ops.lte(usersTable.age, 65),
+      ops.matches(usersTable.email, "example"),
+      eq(usersTable.role, "admin"),             // mix with regular Drizzle ops
+    ),
+  )
+
+const results = await db
+  .select()
+  .from(usersTable)
+  .where(
+    await ops.or(
+      ops.eq(usersTable.email, "alice@example.com"),
+      ops.eq(usersTable.email, "bob@example.com"),
     ),
   )
 ```
 
-## Batched Conditions (and / or)
-
-Use `encryptionOps.and()` and `encryptionOps.or()` to batch multiple encrypted conditions into a single ZeroKMS call. This is more efficient than awaiting each operator individually.
+Both accept `undefined` conditions, which are filtered out — useful for conditional query building:
 
 ```typescript
-// Batched AND - all encryptions happen in one call
-const results = await db
-  .select()
-  .from(usersTable)
-  .where(
-    await encryptionOps.and(
-      encryptionOps.gte(usersTable.age, 18),     // no await needed
-      encryptionOps.lte(usersTable.age, 65),     // lazy operators
-      encryptionOps.ilike(usersTable.email, "%example.com"),
-      eq(usersTable.role, "admin"),           // mix with regular Drizzle ops
-    ),
-  )
-
-// Batched OR
-const results = await db
-  .select()
-  .from(usersTable)
-  .where(
-    await encryptionOps.or(
-      encryptionOps.eq(usersTable.email, "alice@example.com"),
-      encryptionOps.eq(usersTable.email, "bob@example.com"),
-    ),
-  )
+await ops.and(
+  maybeEmail ? ops.eq(usersTable.email, maybeEmail) : undefined,
+  ops.gte(usersTable.age, 18),
+)
 ```
 
-**Key pattern:** Pass lazy operators (no `await`) to `and()`/`or()`, then `await` the outer call. This batches all encryption into a single operation.
+### NULLs and Non-Encrypted Columns
+
+- A `null` operand throws — use `ops.isNull(col)` / `ops.isNotNull(col)` for NULL checks.
+- **No plaintext-column fallback.** Every v3 operator requires an encrypted v3 column and throws `EncryptionOperatorError` otherwise. Use regular Drizzle operators (`eq`, `gte`, ...) for non-encrypted columns — mixing the two inside `ops.and`/`ops.or` is fine.
 
 ## Decrypt Results
 
+Selected rows hold encrypted envelopes; decrypt with the client. The v3 `decryptModel`/`bulkDecryptModels` take the schema table as the second argument:
+
 ```typescript
 // Single model
-const decrypted = await encryptionClient.decryptModel(results[0])
+const decrypted = await encryptionClient.decryptModel(results[0], usersSchema)
 if (!decrypted.failure) {
   console.log(decrypted.data.email) // "alice@example.com"
 }
 
 // Bulk decrypt
-const decrypted = await encryptionClient.bulkDecryptModels(results)
+const decrypted = await encryptionClient.bulkDecryptModels(results, usersSchema)
 if (!decrypted.failure) {
   for (const user of decrypted.data) {
     console.log(user.email)
@@ -336,13 +342,15 @@ if (!decrypted.failure) {
 }
 ```
 
+`Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged.
+
 ## Migrating an Existing Column to Encrypted
 
 The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
 CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
-> **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
+> **⚠️ v3 backfill tooling status.** The CLI backfill/cutover tooling (`stash encrypt backfill`, `stash encrypt cutover`, and the underlying `@cipherstash/migrate`) currently targets **EQL v2 columns**. v3 compatibility is tracked in [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648). The lifecycle below (schema-add → dual-write → deploy gate → backfill → cutover → drop) is the correct shape for v3 either way — until #648 lands, run the backfill/rename steps with your own scripts (encrypt with `bulkEncryptModels`, write in chunks) instead of the `stash encrypt` commands.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -370,15 +378,12 @@ Add an `email_encrypted` column **alongside** `email`. Crucially, the encrypted 
 
 ```typescript
 // src/db/schema.ts
-import { encryptedType } from '@cipherstash/stack-drizzle'
+import { types } from '@cipherstash/stack-drizzle/v3'
 
 export const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-  email: text('email').notNull(),                              // unchanged
-  email_encrypted: encryptedType<string>('email_encrypted', {  // new — nullable
-    freeTextSearch: true,
-    equality: true,
-  }),
+  email: text('email').notNull(),                    // unchanged
+  email_encrypted: types.TextSearch('email_encrypted'),  // new — nullable
 })
 ```
 
@@ -386,27 +391,27 @@ Update the encryption client to harvest the encrypted columns from the table:
 
 ```typescript
 // src/encryption/index.ts
-import { Encryption } from '@cipherstash/stack'
-import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { extractEncryptionSchemaV3 } from '@cipherstash/stack-drizzle/v3'
 import { users } from '../db/schema'
 
-const usersEncryptionSchema = extractEncryptionSchema(users)
+const usersEncryptionSchema = extractEncryptionSchemaV3(users)
 
-export const encryptionClient = await Encryption({ schemas: [usersEncryptionSchema] })
+export const encryptionClient = await EncryptionV3({ schemas: [usersEncryptionSchema] })
 ```
 
-Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN email_encrypted eql_v2_encrypted;`. Apply with `drizzle-kit migrate`.
+Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN email_encrypted public.eql_v3_text_search;`. Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)
 
 > **Using CipherStash Proxy?**
-> 
+>
 > If your app queries encrypted data through CipherStash Proxy, register the new encryption config with EQL:
-> 
+>
 > ```bash
 > stash db push
 > ```
-> 
+>
 > If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
-> 
+>
 > SDK-only users can skip this step.
 
 #### Dual-writing: write to both columns from app code
@@ -452,6 +457,8 @@ Once dual-writes are live in production and `cs_migrations` records `dual_writin
 
 #### Backfill: encrypt the historical rows
 
+> Until [#648](https://github.com/cipherstash/stack/issues/648) lands, the commands in this step target v2 columns — for v3 columns, replicate the same shape with a script (chunked `bulkEncryptModels` + UPDATE inside transactions, resumable and idempotent).
+
 ```bash
 stash encrypt backfill --table users --column email
 # (Interactive: answer 'yes' to the dual-write confirmation prompt.)
@@ -462,16 +469,16 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. [Issue #447](https://github.com/cipherstash/stack/issues/447) tracks decoupling this requirement.
+> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`.
 
 #### Cutover: rename swap and activate
 
-First, update the Drizzle schema to the post-cutover shape — switch `email` to use `encryptedType` and remove the `email_encrypted` column.
+First, update the Drizzle schema to the post-cutover shape — switch `email` to the encrypted type and remove the `email_encrypted` column.
 
 > **Using CipherStash Proxy?**
-> 
+>
 > If using Proxy, re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
-> 
+>
 > ```bash
 > stash db push
 > # → writes the new config as `pending`. Active config (still pointing at
@@ -492,10 +499,7 @@ The Drizzle schema you just edited now matches the physical DB shape — `email`
 // src/db/schema.ts (post-cutover)
 export const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-  email: encryptedType<string>('email', {
-    freeTextSearch: true,
-    equality: true,
-  }),
+  email: types.TextSearch('email'),
   email_plaintext: text('email_plaintext'),  // temporary; dropped next
 })
 ```
@@ -511,12 +515,12 @@ const email = rows[0].email
 
 // After
 const rows = await db.select().from(users).where(eq(users.id, id))
-const decrypted = await encryptionClient.decryptModel(rows[0])
+const decrypted = await encryptionClient.decryptModel(rows[0], usersEncryptionSchema)
 if (decrypted.failure) throw new Error(decrypted.failure.message)
 const email = decrypted.data.email
 ```
 
-For queries that filter on `email`, switch to the encrypted operators from `createEncryptionOperators` — `eq`, `like`, `gte`, etc. (See `## Query Encrypted Data` above.)
+For queries that filter on `email`, switch to the encrypted operators from `createEncryptionOperatorsV3` — `eq`, `matches`, `gte`, etc. (See `## Query Encrypted Data` above.)
 
 #### Drop: remove the plaintext column
 
@@ -532,10 +536,7 @@ The CLI emits a Drizzle migration file with `ALTER TABLE users DROP COLUMN email
 // src/db/schema.ts (final)
 export const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-  email: encryptedType<string>('email', {
-    freeTextSearch: true,
-    equality: true,
-  }),
+  email: types.TextSearch('email'),
 })
 ```
 
@@ -553,148 +554,58 @@ All three are read-only.
 
 ## Complete Operator Reference
 
+All comparison/containment operators auto-encrypt their operands and are async; `asc`/`desc` and the passthroughs are sync.
+
 ### Encrypted Operators (async)
 
-| Operator | Usage | Required Index |
+| Operator | Usage | Required column capability (domain suffix) |
 |---|---|---|
-| `eq(col, value)` | Equality | `equality: true` or `orderAndRange: true` |
-| `ne(col, value)` | Not equal | `equality: true` or `orderAndRange: true` |
-| `gt(col, value)` | Greater than | `orderAndRange: true` |
-| `gte(col, value)` | Greater than or equal | `orderAndRange: true` |
-| `lt(col, value)` | Less than | `orderAndRange: true` |
-| `lte(col, value)` | Less than or equal | `orderAndRange: true` |
-| `between(col, min, max)` | Between (inclusive) | `orderAndRange: true` |
-| `notBetween(col, min, max)` | Not between | `orderAndRange: true` |
-| `like(col, pattern)` | LIKE pattern match | `freeTextSearch: true` |
-| `ilike(col, pattern)` | ILIKE case-insensitive | `freeTextSearch: true` |
-| `notIlike(col, pattern)` | NOT ILIKE | `freeTextSearch: true` |
-| `inArray(col, values)` | IN array | `equality: true` |
-| `notInArray(col, values)` | NOT IN array | `equality: true` |
-| `jsonbPathQueryFirst(col, selector)` | Extract first value at JSONB path | `searchableJson: true` |
-| `jsonbGet(col, selector)` | Get value using JSONB `->` operator | `searchableJson: true` |
-| `jsonbPathExists(col, selector)` | Check if JSONB path exists | `searchableJson: true` |
+| `eq(col, value)` | Equality | equality (`Eq`, `Ord`, `OrdOre`, `TextSearch`) |
+| `ne(col, value)` | Not equal | equality |
+| `gt` / `gte` / `lt` / `lte` `(col, value)` | Comparison | order/range (`Ord`, `OrdOre`, `TextSearch`) |
+| `between(col, min, max)` | Inclusive range | order/range |
+| `notBetween(col, min, max)` | Negated range | order/range |
+| `inArray(col, values)` / `notInArray(col, values)` | Membership (single-batch encryption; empty list rejected) | equality |
+| `matches(col, needle)` | Fuzzy free-text token match (short needles rejected) | free-text (`TextMatch`, `TextSearch`) |
+| `contains(col, subDoc)` | Exact encrypted-JSONB containment (`{}` rejected) | `Json` |
+| `selector(col, path).eq/ne/gt/gte/lt/lte(value)` | JSONPath selector-with-constraint (dot-notation paths, scalar leaves) | `Json` |
 
 ### Sort Operators (sync)
 
-| Operator | Usage | Required Index |
+| Operator | Usage | Required capability |
 |---|---|---|
-| `asc(col)` | Ascending sort | `orderAndRange: true` |
-| `desc(col)` | Descending sort | `orderAndRange: true` |
+| `asc(col)` | `ORDER BY eql_v3.ord_term(col)` ascending | order/range |
+| `desc(col)` | `ORDER BY eql_v3.ord_term(col)` descending | order/range |
 
-### Logical Operators (async, batched)
+(`ord_term_ore` for `*OrdOre` domains — superuser-only, unavailable on managed Postgres.)
 
-| Operator | Usage | Description |
-|---|---|---|
-| `and(...conditions)` | Combine with AND | Batches encryption |
-| `or(...conditions)` | Combine with OR | Batches encryption |
+### Logical Operators (async, concurrent)
 
-Both `and()` and `or()` accept `undefined` conditions, which are filtered out. This is useful for conditional query building:
-
-```typescript
-const results = await db
-  .select()
-  .from(usersTable)
-  .where(
-    await encryptionOps.and(
-      maybeCond ? encryptionOps.eq(usersTable.email, value) : undefined,
-      encryptionOps.gte(usersTable.age, 18),
-    ),
-  )
-```
+| Operator | Description |
+|---|---|
+| `and(...conditions)` | Conjunction — accepts lazy (un-awaited) operators and `undefined`, resolves concurrently |
+| `or(...conditions)` | Disjunction — same |
 
 ### Passthrough Operators (sync, no encryption)
 
-`exists`, `notExists`, `isNull`, `isNotNull`, `not`, `arrayContains`, `arrayContained`, `arrayOverlaps`
+`isNull`, `isNotNull`, `not`, `exists`, `notExists` — re-exported from Drizzle and work identically.
 
-These are re-exported from Drizzle and work identically.
+### Other v3 Exports
 
-## Non-Encrypted Column Fallback
-
-All operators automatically detect whether a column is encrypted. If the column is not encrypted (regular Drizzle column), the operator falls back to the standard Drizzle operator:
-
-```typescript
-// This works for both encrypted and non-encrypted columns
-await encryptionOps.eq(usersTable.email, "alice@example.com") // encrypted
-await encryptionOps.eq(usersTable.role, "admin")              // falls back to drizzle eq()
-```
-
-## Complete Example: Express API
-
-```typescript
-import "dotenv/config"
-import express from "express"
-import { eq } from "drizzle-orm"
-import { drizzle } from "drizzle-orm/postgres-js"
-import postgres from "postgres"
-import { pgTable, integer, timestamp, varchar } from "drizzle-orm/pg-core"
-import { encryptedType, extractEncryptionSchema, createEncryptionOperators, EncryptionOperatorError, EncryptionConfigError } from "@cipherstash/stack-drizzle"
-import { Encryption } from "@cipherstash/stack"
-
-// Schema
-const usersTable = pgTable("users", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  email: encryptedType<string>("email", { equality: true, freeTextSearch: true }),
-  age: encryptedType<number>("age", { dataType: "number", orderAndRange: true }),
-  role: varchar("role", { length: 50 }),
-  createdAt: timestamp("created_at").defaultNow(),
-})
-
-// Init
-const usersSchema = extractEncryptionSchema(usersTable)
-const encryptionClient = await Encryption({ schemas: [usersSchema] })
-const encryptionOps = createEncryptionOperators(encryptionClient)
-const db = drizzle({ client: postgres(process.env.DATABASE_URL!) })
-
-const app = express()
-app.use(express.json())
-
-// Create user
-app.post("/users", async (req, res) => {
-  const encrypted = await encryptionClient.encryptModel(req.body, usersSchema)
-  if (encrypted.failure) return res.status(500).json({ error: encrypted.failure.message })
-
-  const [user] = await db.insert(usersTable).values(encrypted.data).returning()
-  res.json(user)
-})
-
-// Search users
-app.get("/users", async (req, res) => {
-  const conditions = []
-
-  if (req.query.email) {
-    conditions.push(encryptionOps.ilike(usersTable.email, `%${req.query.email}%`))
-  }
-  if (req.query.minAge) {
-    conditions.push(encryptionOps.gte(usersTable.age, Number(req.query.minAge)))
-  }
-  if (req.query.role) {
-    conditions.push(eq(usersTable.role, req.query.role as string))
-  }
-
-  let query = db.select().from(usersTable)
-  if (conditions.length > 0) {
-    query = query.where(await encryptionOps.and(...conditions)) as typeof query
-  }
-
-  const results = await query
-  const decrypted = await encryptionClient.bulkDecryptModels(results)
-  if (decrypted.failure) return res.status(500).json({ error: decrypted.failure.message })
-
-  res.json(decrypted.data)
-})
-
-app.listen(3000)
-```
+`types`, `makeEqlV3Column`, `getEqlV3Column`, `isEqlV3Column`, `extractEncryptionSchemaV3`, `createEncryptionOperatorsV3`, `EncryptionOperatorError`, and the codec helpers `v3ToDriver` / `v3FromDriver` / `EqlV3CodecError` — all from `@cipherstash/stack-drizzle/v3`.
 
 ## Error Handling
 
-Individual operators (e.g., `eq()`, `gte()`, `like()`) throw errors when invoked with invalid configuration or missing indexes:
+Operators throw `EncryptionOperatorError` (exported from `@cipherstash/stack-drizzle/v3`) whenever the query cannot be answered safely:
 
-- **`EncryptionOperatorError`** — thrown for operator-level issues (e.g., invalid arguments, unsupported operations).
-- **`EncryptionConfigError`** — thrown for configuration issues (e.g., using `like` on a column without `freeTextSearch: true`).
+- the column is not an encrypted v3 column (there is no plaintext fallback);
+- the column's domain lacks the operator's capability (e.g. ordering a `TextEq` column, `eq` on a `Json` column);
+- the operand is `null` (use `isNull`/`isNotNull`), an empty list (`inArray`), an empty object (`contains`), or a too-short needle (`matches`);
+- a `selector` path is malformed / uses array syntax, or its leaf value is a non-scalar;
+- operand encryption itself fails.
 
 ```typescript
-import { createEncryptionOperators, EncryptionOperatorError, EncryptionConfigError } from "@cipherstash/stack-drizzle"
+import { EncryptionOperatorError } from "@cipherstash/stack-drizzle/v3"
 
 class EncryptionOperatorError extends Error {
   context?: {
@@ -703,95 +614,12 @@ class EncryptionOperatorError extends Error {
     operator?: string
   }
 }
-
-class EncryptionConfigError extends Error {
-  context?: {
-    tableName?: string
-    columnName?: string
-    operator?: string
-  }
-}
 ```
 
-Encryption client operations return `Result` objects with `data` or `failure`.
+There is no `EncryptionConfigError` on the v3 path — capability problems surface as `EncryptionOperatorError` with the offending column/table/operator in `context`.
 
-## EQL v3 Integration (`@cipherstash/stack-drizzle/v3`)
+Encryption client operations (`encryptModel`, `bulkDecryptModels`, ...) don't throw — they return `Result` objects with `data` or `failure`. Check `.failure` before using `.data`.
 
-Everything above covers the v2 integration (`@cipherstash/stack-drizzle`). The **EQL v3** typed schema has its own Drizzle integration on the `@cipherstash/stack-drizzle/v3` subpath. In v3 every encrypted column is a concrete Postgres domain (`public.eql_v3_text_search`, `public.eql_v3_integer_ord`, ...) whose query capabilities are fixed by the type — there is no `equality: true` / `freeTextSearch: true` config object. See the `stash-encryption` skill's "EQL v3 Typed Schema" section for the full `types` catalog and capability suffixes (`Eq`, `Ord`/`OrdOre`, `Match`, `Search`).
+## Legacy: EQL v2
 
-Exports: `types` (Drizzle-native column factories mirroring the `@cipherstash/stack/eql/v3` namespace), `makeEqlV3Column`, `getEqlV3Column`, `isEqlV3Column`, `extractEncryptionSchemaV3`, `createEncryptionOperatorsV3`, `EncryptionOperatorError`, and the codec helpers `v3ToDriver` / `v3FromDriver` / `EqlV3CodecError`.
-
-### Schema, Client, and Operators
-
-```typescript
-import { pgTable, integer } from "drizzle-orm/pg-core"
-import { EncryptionV3 } from "@cipherstash/stack/v3"
-import {
-  types,
-  extractEncryptionSchemaV3,
-  createEncryptionOperatorsV3,
-} from "@cipherstash/stack-drizzle/v3"
-
-const users = pgTable("users", {
-  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
-  email: types.TextSearch("email"),   // equality + order/range + free-text
-  age: types.IntegerOrd("age"),       // equality + order/range
-})
-
-const usersSchema = extractEncryptionSchemaV3(users)
-const client = await EncryptionV3({ schemas: [usersSchema] })
-const ops = createEncryptionOperatorsV3(client)
-```
-
-Each `types.*` factory emits its domain as the column's SQL type, so `drizzle-kit generate` produces `ADD COLUMN email public.eql_v3_text_search` etc. Install the EQL v3 SQL first with `stash eql install --eql-version 3` (direct install only for v3 — the v2 `generate-eql-migration` Drizzle path is not supported yet).
-
-`makeEqlV3Column(builder)` wraps a column builder from `@cipherstash/stack/eql/v3` (e.g. `makeEqlV3Column(v3types.TextEq("email"))`) — `types.TextEq("email")` from the drizzle subpath is shorthand for the same thing.
-
-### Insert, Query, Decrypt
-
-The Drizzle column stores the encrypted EQL envelope, so encrypt models before insert and decrypt after select — passing the extracted schema table:
-
-```typescript
-// Insert
-const enc = await client.bulkEncryptModels(
-  [{ email: "alice@example.com", age: 30 }],
-  usersSchema,
-)
-if (!enc.failure) await db.insert(users).values(enc.data)
-
-// Query — operators auto-encrypt their plaintext operands
-const rows = await db.select().from(users)
-  .where(await ops.and(
-    ops.matches(users.email, "alice"),    // fuzzy free-text token match
-    ops.between(users.age, 18, 65),
-  ))
-  .orderBy(ops.asc(users.age))
-
-// Decrypt — v3 decryptModel/bulkDecryptModels take the schema table
-const dec = await client.bulkDecryptModels(rows, usersSchema)
-```
-
-### Operators
-
-| Operator | Required capability (domain suffix) |
-|---|---|
-| `eq`, `ne`, `inArray`, `notInArray` | equality (`Eq`, `Ord`, `OrdOre`, `TextSearch`) |
-| `gt`, `gte`, `lt`, `lte`, `between`, `notBetween`, `asc`, `desc` | order/range (`Ord`, `OrdOre`, `TextSearch`) |
-| `matches` | fuzzy free-text token match (`TextMatch`, `TextSearch`) |
-| `contains` | exact encrypted-JSONB containment (`Json`) |
-| `selector(col, '$.path').{eq,ne,gt,gte,lt,lte}` | JSONPath selector-with-constraint on a `Json` column — ordering/equality at a path |
-| `and`, `or` | combinators — accept lazy (un-awaited) operators and `undefined`, resolve concurrently |
-| `isNull`, `isNotNull`, `not`, `exists`, `notExists` | Drizzle passthroughs, no encryption |
-
-Differences from the v2 operators to know about:
-
-- **`like` / `ilike` do not exist — by design.** v3 free-text search is tokenised bloom matching, not SQL pattern matching; `matches(col, needle)` is the free-text operator. It is fuzzy (order- and multiplicity-insensitive) and one-sided (a match may be a false positive, a non-match never is). Don't pass `%` wildcards.
-- **`matches` is fuzzy free-text, `contains` is exact JSON containment — two distinct operators (#617).** `matches(col, needle)` requires a `TextMatch` / `TextSearch` column and throws `EncryptionOperatorError` (`requires free-text search`) otherwise. `contains(col, subdoc)` requires a `types.Json` column and throws (`requires JSON containment`) otherwise.
-- **`contains` on a `types.Json` column** answers exact encrypted-JSONB containment: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics, no false positives; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle. Applying `eq` / `gt` / `asc` **directly** to a `Json` column throws — use `selector(col, '$.path')` for equality/ordering **at a path** (next bullet).
-- **`selector(col, '$.path')` — JSONPath selector-with-constraint on a `types.Json` column.** Returns comparison methods bound to a path: `await ops.selector(events.metadata, '$.age').gt(21)`. Methods: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`. Its unique power over `contains` is **ordering at a path** (`gt`/`gte`/`lt`/`lte`); `eq`/`ne` are also provided (equality at a path is equivalently `contains(col, { age: 21 })`). v1 supports dot-notation object paths (`$.a`, `$.a.b`); array-index/wildcard and empty/root paths are rejected with a clear `Error`. **Interim behavior:** the comparison value is currently sent as a storage-encrypted document, so the (encrypted) value appears in the `WHERE` clause; a ciphertext-free form is tracked in `cipherstash/protectjs-ffi#137`.
-- **No plaintext-column fallback.** Every v3 operator requires an encrypted v3 column and throws `EncryptionOperatorError` otherwise. Use regular Drizzle operators for non-encrypted columns.
-- A `null` operand throws — use `isNull()` / `isNotNull()` for NULL checks.
-- `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `encryptQuery` batch crossing.
-- `matches` rejects a needle shorter than the match tokenizer's token length, and `contains` rejects an empty-object needle (either would otherwise silently match every row).
-- Operators gate on the column's capabilities and throw `EncryptionOperatorError` (with `context.columnName` / `tableName` / `operator`) when the domain can't answer the operator. This `EncryptionOperatorError` is exported from `@cipherstash/stack-drizzle/v3` and is deliberately separate from the v2 class of the same name; there is no `EncryptionConfigError` on the v3 path.
-- Every operator takes an optional trailing `{ lockContext, audit }` argument; `createEncryptionOperatorsV3(client, { lockContext, audit })` sets defaults applied to every operand encryption.
+The original v2 integration — `encryptedType` config-flag columns, `extractEncryptionSchema`, and `createEncryptionOperators` (with `like`/`ilike`) from the `@cipherstash/stack-drizzle` package root, over the `eql_v2_encrypted` column type installed via `stash eql install --drizzle` (the older standalone `@cipherstash/drizzle` package shipped its own `generate-eql-migration` bin for the same purpose) — still exists for existing deployments and is documented at https://cipherstash.com/docs. New projects must use the `/v3` surface documented above. Note: `stash init --drizzle` currently pins EQL v2 because the v2 Drizzle-migration install path has no v3 equivalent yet.

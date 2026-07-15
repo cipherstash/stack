@@ -147,8 +147,8 @@ Three rules to remember when editing CI or pnpm config:
 
 ## Key Concepts and APIs
 
-- **Initialization**: `Encryption({ schemas })` returns an initialized `EncryptionClient`. Provide at least one `encryptedTable`.
-- **Schema**: Define tables/columns with `encryptedTable` and `encryptedColumn` from `@cipherstash/stack/schema`. Add `.freeTextSearch().equality().orderAndRange()` to enable searchable encryption on PostgreSQL. Use `.searchableJson()` for encrypted JSONB queries. Use `encryptedField` for nested object encryption (DynamoDB).
+- **Initialization**: `EncryptionV3({ schemas })` returns the typed EQL v3 client. (`Encryption({ schemas })` is the legacy v2 client.) Provide at least one `encryptedTable`.
+- **Schema (EQL v3, the documented approach)**: Define tables/columns with `encryptedTable` and the `types.*` concrete-domain factories from `@cipherstash/stack/eql/v3` (`types.TextSearch`, `types.IntegerOrd`, `types.Json`, …) — each domain's query capabilities are fixed by its type; there are no chainable capability tuners. Build the client with `EncryptionV3` from `@cipherstash/stack/v3`. (Legacy EQL v2 — `Encryption` + `encryptedColumn(...).equality().freeTextSearch().orderAndRange().searchableJson()` from `@cipherstash/stack/schema` — remains for existing deployments and is what DynamoDB (`encryptedField`) still requires; see #657.)
 - **Operations** (all return Result-like objects and support chaining `.withLockContext(lockContext)` and `.audit()` when applicable):
   - `encrypt(plaintext, { table, column })`
   - `decrypt(encryptedPayload)`
