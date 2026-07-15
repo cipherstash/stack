@@ -557,12 +557,18 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
   in GET query strings — so these envelopes can land in URL logs,
   intermediate proxies, and Supabase request logs. The remaining gap is
   PostgREST operand casting; an adapter-side fix is tracked.
-- **No `ORDER BY` on encrypted v3 columns** — including the range-capable
-  ones. PostgREST cannot emit `ORDER BY eql_v3.ord_term(col)`, and a bare
-  `ORDER BY` would silently sort the raw ciphertext envelope, so the builder
-  rejects `order()` on any encrypted column with a clear error. Range
-  *filtering* (`gte`/`lte`/…) works. Order by a plaintext column, or sort
-  application-side after decrypting.
+- **`order()` works on OPE-backed encrypted ordering columns** (every plain
+  `*_ord` domain, plus `text_ord` and `text_search`). PostgREST cannot emit
+  `ORDER BY eql_v3.ord_term(col)`, and a bare `ORDER BY` would silently sort
+  the raw ciphertext envelope — so the builder instead emits `order=col->op`,
+  sorting by the OPE term inside the envelope, which reproduces plaintext
+  order (the term is fixed-width lowercase hex, so string comparison agrees
+  with the bytea btree; pinned by `ope-term.integration.test.ts`). ORE-flavour
+  columns (`*_ord_ore`) are rejected at compile time and runtime — their `ob`
+  term needs the superuser-only operator class no jsonb path can reach — and
+  columns with no ordering term (storage-only, equality-only, match-only)
+  reject `order()` with a clear error. For those, order by a plaintext column
+  or sort application-side after decrypting.
 - **Storage-only domains are not filterable** (e.g. `types.Boolean`,
   `types.Text`): a filter (including `.match()`) on one is a type error on a
   declared table, and always a clear runtime error. `.is(column, null)`
