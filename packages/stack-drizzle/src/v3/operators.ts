@@ -112,13 +112,16 @@ function reconstructSelectorDocument(
   segments: string[],
   value: unknown,
 ): Record<string, unknown> {
-  const root: Record<string, unknown> = {}
+  // Null-prototype objects: a segment like `__proto__` must become an OWN key,
+  // not invoke the prototype setter (which would drop it and mis-serialize the
+  // needle). JSON.stringify ignores the [[Prototype]], so this serializes fine.
+  const root: Record<string, unknown> = Object.create(null)
   let cursor = root
   segments.forEach((segment, index) => {
     if (index === segments.length - 1) {
       cursor[segment] = value
     } else {
-      const next: Record<string, unknown> = {}
+      const next: Record<string, unknown> = Object.create(null)
       cursor[segment] = next
       cursor = next
     }
@@ -631,16 +634,19 @@ export function createEncryptionOperatorsV3(
 
   /**
    * JSONPath selector-with-constraint on an `eql_v3_json` (`ste_vec`) column:
-   * `col->'path' <op> value`, entirely ciphertext-free. Both operands are query
-   * terms; the comparison reduces to the encrypted term on each side (see
-   * `v3Dialect.selectorConstraint`).
+   * `col->'path' <op> value`. Extracts the encrypted leaf entry at `path` on both
+   * sides (`v3Dialect.selectorEntry` → `jsonb_path_query_first`) and compares them
+   * with the `eql_v3_jsonb_entry` comparators; `eq_term`/`ord_term` read only the
+   * entries' `hm`/`op`.
    *
    * - the SELECTOR (`path`): `encryptQuery(path, searchableJson)` on a string
    *   needle infers a `ste_vec_selector` term → the bare HMAC selector hash, the
    *   `text` argument of `jsonb_path_query_first`.
-   * - the VALUE: a scalar query term for the leaf — `encryptQuery(value,
-   *   { queryType: equality | orderAndRange })` — cast to `eql_v3.query_<T>_<eq|ord>`.
-   *   No ciphertext, no storage encryption.
+   * - the VALUE (RHS): **interim (cipherstash/protectjs-ffi#137)** — a STORAGE
+   *   `encrypt` of `{path: value}`, whose ste_vec entry carries `c` + `op`/`hm`.
+   *   protect-ffi can't yet mint a ciphertext-free ordering query needle for a
+   *   ste_vec column, so the value's ciphertext appears in the WHERE clause until
+   *   #137 lands; the comparison itself only reads `hm`/`op`.
    *
    * Equality-at-selector is also expressible via `contains(col, {path: value})`;
    * this path's unique power is ORDERING at a selector (`gt`/`gte`/`lt`/`lte`).

@@ -699,6 +699,10 @@ paths are rejected with a clear error. Applying `eq` / `gt` / `asc` **directly**
 to a `types.Json` column (rather than through `ops.selector`) still throws — the
 column declares no scalar capabilities of its own.
 
+**Interim behavior:** the selector's comparison value is currently sent as a
+storage-encrypted document, so the (encrypted) value appears in the `WHERE`
+clause; a ciphertext-free form is tracked in `cipherstash/protectjs-ffi#137`.
+
 ### Strongly-Typed Client: `EncryptionV3`
 
 `EncryptionV3` from `@cipherstash/stack/v3` returns a `TypedEncryptionClient` whose method signatures are derived from your schemas — wrong-typed plaintext is rejected at compile time, and query methods only accept queryable columns with `queryType` constrained to the column's capabilities:
