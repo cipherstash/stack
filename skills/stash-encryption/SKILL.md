@@ -632,7 +632,7 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Ord` / `OrdOre` | Equality + ordering/range | `'equality'`, `'orderAndRange'` |
 | `Match` (text only) | Free-text containment only | `'freeTextSearch'` |
 | `Search` (text only) | Equality + ordering/range + free-text | all three |
-| `Json` (no suffix) | Encrypted-JSONB containment + JSONPath selector-with-constraint queries | `'searchableJson'` |
+| `Json` (no suffix) | Encrypted-JSONB containment + JSONPath selector-with-constraint queries (selector RHS is interim: encrypted value currently appears in the `WHERE` clause — see below) | `'searchableJson'` |
 
 **Domain families and plaintext types:**
 

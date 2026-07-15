@@ -44,6 +44,9 @@ const DOCS: Record<string, JsonDocument> = {
   ada: { user: 'ada@example.com', age: 30 },
   grace: { user: 'grace@example.com', age: 20 },
   zoe: { user: 'zoe@example.com', age: 40 },
+  // No `$.age` — exercises absent-path semantics (excluded by eq/ordering,
+  // included by ne).
+  noage: { user: 'noage@example.com' },
 }
 
 type SelectRow = { rowKey: string }
@@ -128,6 +131,34 @@ describe('v3 drizzle JSON selector-with-constraint (live pg)', () => {
     expect(
       await matching(await ops.selector(docTable.doc, '$.age').gt(100)),
     ).toEqual([])
+  }, 30000)
+
+  it('equality excludes rows whose document lacks the path', async () => {
+    // `noage` has no `$.age`, so it is not equal to 30 → excluded.
+    expect(
+      await matching(await ops.selector(docTable.doc, '$.age').eq(30)),
+    ).toEqual(['ada'])
+  }, 30000)
+
+  it('ne includes rows whose document lacks the path', async () => {
+    // ne(30): grace(20), zoe(40), AND noage (no `$.age`) — "not equal to 30"
+    // covers "has no age". Without the IS NULL arm, noage would be dropped.
+    expect(
+      await matching(await ops.selector(docTable.doc, '$.age').ne(30)),
+    ).toEqual(['grace', 'noage', 'zoe'])
+  }, 30000)
+
+  it('ordering excludes rows whose document lacks the path', async () => {
+    // noage has no age → not > 0.
+    expect(
+      await matching(await ops.selector(docTable.doc, '$.age').gt(0)),
+    ).toEqual(['ada', 'grace', 'zoe'])
+  }, 30000)
+
+  it('rejects a non-scalar leaf value before querying', async () => {
+    await expect(
+      ops.selector(docTable.doc, '$.age').eq({ nested: 1 }),
+    ).rejects.toThrow(/scalar leaf/)
   }, 30000)
 
   it('rejects array/wildcard selector paths (v1 supports object keys only)', async () => {

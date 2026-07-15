@@ -77,23 +77,51 @@ type OperandEncryptionClient = {
 }
 
 /**
- * Parse a dot-notation JSONPath into its object-key segments, rejecting
- * array/wildcard syntax (v1 supports object keys only) and the empty/root path.
- * `'$.a.b'` / `'a.b'` → `['a', 'b']`. Mirrors core `toJsonPath` normalization
- * (which isn't exported publicly) so leading `$`/`.` are handled correctly.
+ * Object keys that are prototype-pollution vectors — rejected outright (mirrors
+ * core's `FORBIDDEN_KEYS`), so a selector can never address them.
  */
-function parseSelectorSegments(path: string): string[] {
-  const bare = path.replace(/^\$/, '').replace(/^\./, '')
-  if (/[[\]*]/.test(bare)) {
+const FORBIDDEN_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'prototype',
+  'constructor',
+])
+
+/**
+ * Parse a dot-notation JSONPath into its object-key segments. Rejects, each with
+ * a clear message: array-index/wildcard syntax (v1 is object-keys-only), the
+ * empty/root path, malformed paths (`..`, stray/leading/trailing dots, so we
+ * never silently query a *different* path), and prototype-pollution keys.
+ * `'$.a.b'` / `' a.b '` → `['a', 'b']`. Mirrors core's JSONPath normalization
+ * (not exported publicly — see the follow-up to share it via adapter-kit).
+ *
+ * Exported for unit testing; NOT re-exported from the package index.
+ */
+export function parseSelectorSegments(path: string): string[] {
+  const trimmed = path.trim()
+  let body = trimmed.startsWith('$') ? trimmed.slice(1) : trimmed
+  if (body.startsWith('.')) body = body.slice(1)
+  if (body === '') {
+    throw new Error(
+      `JSON selector path "${path}" addresses no field — use e.g. "$.a" or "$.a.b".`,
+    )
+  }
+  if (/[[\]*]/.test(body)) {
     throw new Error(
       `JSON selector path "${path}" uses array/wildcard syntax, which is not yet supported — use dot-notation object keys (e.g. "$.a.b").`,
     )
   }
-  const segments = bare.split('.').filter((segment) => segment.length > 0)
-  if (segments.length === 0) {
-    throw new Error(
-      `JSON selector path "${path}" addresses no field — use e.g. "$.a" or "$.a.b".`,
-    )
+  const segments = body.split('.')
+  for (const segment of segments) {
+    if (segment === '') {
+      throw new Error(
+        `JSON selector path "${path}" is malformed (empty segment / ".." / stray dot) — use dot-notation object keys (e.g. "$.a.b").`,
+      )
+    }
+    if (FORBIDDEN_SEGMENTS.has(segment)) {
+      throw new Error(
+        `JSON selector path "${path}" addresses the forbidden key "${segment}".`,
+      )
+    }
   }
   return segments
 }
@@ -104,11 +132,37 @@ function jsonPathOf(segments: string[]): string {
 }
 
 /**
+ * A selector compares a single scalar LEAF. Returns a reason string when `value`
+ * is unsupported — a non-scalar (object/array → that's `contains`), or a boolean
+ * under an ordering operator (no ordering term) — else `null`. The caller raises
+ * it as an {@link EncryptionOperatorError} with column context, so a bad value is
+ * an actionable SDK error rather than a deferred, opaque DB failure.
+ */
+function unsupportedLeafReason(
+  value: unknown,
+  ordering: boolean,
+): string | null {
+  const isScalar =
+    value instanceof Date ||
+    typeof value === 'number' ||
+    typeof value === 'bigint' ||
+    typeof value === 'string' ||
+    typeof value === 'boolean'
+  if (!isScalar) {
+    return `a selector compares a scalar leaf, but got ${Array.isArray(value) ? 'an array' : 'an object'} — use contains() for sub-object matching.`
+  }
+  if (ordering && typeof value === 'boolean') {
+    return 'a boolean leaf has no ordering — use eq/ne (or contains()).'
+  }
+  return null
+}
+
+/**
  * Nest `value` under the segments: `['a','b']` → `{ a: { b: value } }`. The
  * storage-needle document whose ste_vec entry at the path supplies the
  * ciphertext-bearing comparison entry.
  */
-function reconstructSelectorDocument(
+export function reconstructSelectorDocument(
   segments: string[],
   value: unknown,
 ): Record<string, unknown> {
@@ -667,7 +721,28 @@ export function createEncryptionOperatorsV3(
       'JSON selector (searchableJson)',
     )
     requireNonNullOperand(ctx, value, operator)
-    const segments = parseSelectorSegments(path)
+
+    // A selector compares a scalar leaf — reject non-scalars / non-orderable
+    // types up front with a clear error, not a deferred DB failure.
+    const ordering = op !== 'eq' && op !== 'ne'
+    const leafReason = unsupportedLeafReason(value, ordering)
+    if (leafReason) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot compare column "${ctx.columnName}": ${leafReason}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+
+    // Surface path-validation failures as EncryptionOperatorError with context.
+    let segments: string[]
+    try {
+      segments = parseSelectorSegments(path)
+    } catch (err) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" on column "${ctx.columnName}": ${err instanceof Error ? err.message : String(err)}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
 
     // INTERIM (cipherstash/protectjs-ffi#137): the RHS is a STORAGE-encrypted
     // needle, not a ciphertext-free query term. protect-ffi can't yet mint an
@@ -727,9 +802,16 @@ export function createEncryptionOperatorsV3(
       sql`${JSON.stringify(docResult.data)}::public.eql_v3_json`,
       selSql,
     )
-    return op === 'eq' || op === 'ne'
-      ? v3Dialect.equality(op, leftEntry, rightEntry)
-      : v3Dialect.comparison(op, leftEntry, rightEntry)
+    if (op === 'eq') return v3Dialect.equality('eq', leftEntry, rightEntry)
+    if (op === 'ne') {
+      // Absent-path semantics: a row whose document lacks the path yields a NULL
+      // entry, and "not equal to X" should INCLUDE "has no X". Without the
+      // `IS NULL` arm, three-valued logic silently drops those rows. (`eq` and the
+      // ordering ops keep SQL's default: a missing path is not equal to / not
+      // greater than the value, so those rows are correctly excluded.)
+      return sql`(${v3Dialect.equality('ne', leftEntry, rightEntry)} OR ${leftEntry} IS NULL)`
+    }
+    return v3Dialect.comparison(op, leftEntry, rightEntry)
   }
 
   /** Comparison methods bound to a `col->'path'` selector, mirroring the scalar
@@ -740,9 +822,11 @@ export function createEncryptionOperatorsV3(
       (value: unknown, opts?: EncryptionOperatorCallOpts) =>
         selectorCompare(col, path, op, value, `selector(${path}).${op}`, opts)
     return {
-      /** `col->'path' = value` (encrypted equality at the selector). */
+      /** `col->'path' = value` (encrypted equality at the selector). A row whose
+       * document lacks `path` is excluded (it is not equal to `value`). */
       eq: at('eq'),
-      /** `col->'path' <> value`. */
+      /** `col->'path' <> value`, INCLUDING rows whose document lacks `path`
+       * ("not equal to value" covers "has no value"). */
       ne: at('ne'),
       /** `col->'path' > value` (encrypted ordering at the selector). */
       gt: at('gt'),
