@@ -632,7 +632,7 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Ord` / `OrdOre` | Equality + ordering/range | `'equality'`, `'orderAndRange'` |
 | `Match` (text only) | Free-text containment only | `'freeTextSearch'` |
 | `Search` (text only) | Equality + ordering/range + free-text | all three |
-| `Json` (no suffix) | Encrypted-JSONB containment queries (JSONPath selector: not yet, see #623) | `'searchableJson'` |
+| `Json` (no suffix) | Encrypted-JSONB containment + JSONPath selector-with-constraint queries (selector RHS is interim: encrypted value currently appears in the `WHERE` clause — see below) | `'searchableJson'` |
 
 **Domain families and plaintext types:**
 
@@ -686,14 +686,22 @@ await client.encryptQuery({ roles: ["admin"] }, { column: events.metadata, table
 ```
 
 Through the Drizzle v3 integration this is `ops.contains(col, subObject)` — see
-the `stash-drizzle` skill. `types.Json` carries no equality or ordering, so
-`eq` / `gt` / `asc` on it throw.
+the `stash-drizzle` skill.
 
-> **Not yet implemented:** JSONPath selector-with-constraint queries
-> (`metadata->'plan' = $1`, `metadata->'age' > $1`) — a distinct third pattern
-> the `eql_v3_json` domain supports at the SQL level (`->` / `->>`). Neither the
-> query operator nor the selector-string needle typing is wired up yet; tracked
-> in [#623](https://github.com/cipherstash/stack/issues/623).
+**JSONPath selector-with-constraint** is the second query pattern: it compares
+the encrypted value at a JSONPath, e.g. `metadata->'age' > 21`. Through the
+Drizzle v3 integration this is `ops.selector(col, '$.path').{eq,ne,gt,gte,lt,lte}(value)`.
+Its unique power over containment is **ordering at a path**
+(`ops.selector(events.metadata, '$.age').gt(21)`); equality at a path is also
+expressible as containment (`contains(col, { age: 21 })`). v1 supports
+dot-notation object paths (`$.a`, `$.a.b`); array-index/wildcard and empty/root
+paths are rejected with a clear error. Applying `eq` / `gt` / `asc` **directly**
+to a `types.Json` column (rather than through `ops.selector`) still throws — the
+column declares no scalar capabilities of its own.
+
+**Interim behavior:** the selector's comparison value is currently sent as a
+storage-encrypted document, so the (encrypted) value appears in the `WHERE`
+clause; a ciphertext-free form is tracked in `cipherstash/protectjs-ffi#137`.
 
 ### Strongly-Typed Client: `EncryptionV3`
 

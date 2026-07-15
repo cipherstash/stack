@@ -53,6 +53,9 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
         _opts?: never,
       ): QueryOp<EncryptedQueryResult> & QueryOp<EncryptedQueryResult[]> =>
         ({}) as never,
+      // Storage encryption — consumed only by the JSON selector RHS, but part of
+      // the operand-client contract, so a structural double must supply it too.
+      encrypt: (_value: never, _opts: never): QueryOp<unknown> => ({}) as never,
     }
     expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith(double)
   })
@@ -67,6 +70,9 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
     const erased = {
       encryptQuery: (_valueOrTerms: never, _opts?: never): QueryOp<unknown> =>
         ({}) as never,
+      // A correctly-typed `encrypt` so the ONLY reason this double is rejected is
+      // the `encryptQuery`-resolves-`unknown` erasure — not a missing member.
+      encrypt: (_value: never, _opts: never): QueryOp<unknown> => ({}) as never,
     }
     // @ts-expect-error — `encryptQuery` resolving `unknown` does not satisfy the
     // factory's `ChainableOperation<EncryptedQueryResult>` client contract.

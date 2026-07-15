@@ -779,6 +779,7 @@ const dec = await client.bulkDecryptModels(rows, usersSchema)
 | `gt`, `gte`, `lt`, `lte`, `between`, `notBetween`, `asc`, `desc` | order/range (`Ord`, `OrdOre`, `TextSearch`) |
 | `matches` | fuzzy free-text token match (`TextMatch`, `TextSearch`) |
 | `contains` | exact encrypted-JSONB containment (`Json`) |
+| `selector(col, '$.path').{eq,ne,gt,gte,lt,lte}` | JSONPath selector-with-constraint on a `Json` column — ordering/equality at a path |
 | `and`, `or` | combinators — accept lazy (un-awaited) operators and `undefined`, resolve concurrently |
 | `isNull`, `isNotNull`, `not`, `exists`, `notExists` | Drizzle passthroughs, no encryption |
 
@@ -786,7 +787,8 @@ Differences from the v2 operators to know about:
 
 - **`like` / `ilike` do not exist — by design.** v3 free-text search is tokenised bloom matching, not SQL pattern matching; `matches(col, needle)` is the free-text operator. It is fuzzy (order- and multiplicity-insensitive) and one-sided (a match may be a false positive, a non-match never is). Don't pass `%` wildcards.
 - **`matches` is fuzzy free-text, `contains` is exact JSON containment — two distinct operators (#617).** `matches(col, needle)` requires a `TextMatch` / `TextSearch` column and throws `EncryptionOperatorError` (`requires free-text search`) otherwise. `contains(col, subdoc)` requires a `types.Json` column and throws (`requires JSON containment`) otherwise.
-- **`contains` on a `types.Json` column** answers exact encrypted-JSONB containment: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics, no false positives; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle — a `Json` column carries no `eq` / ordering, so those operators throw on it.
+- **`contains` on a `types.Json` column** answers exact encrypted-JSONB containment: `contains(col, { roles: ['admin'] })` matches every row whose document contains that sub-object (jsonb `@>` semantics, no false positives; array containment is position-independent). It emits the `@>` operator with a `query_jsonb` needle. Applying `eq` / `gt` / `asc` **directly** to a `Json` column throws — use `selector(col, '$.path')` for equality/ordering **at a path** (next bullet).
+- **`selector(col, '$.path')` — JSONPath selector-with-constraint on a `types.Json` column.** Returns comparison methods bound to a path: `await ops.selector(events.metadata, '$.age').gt(21)`. Methods: `eq`, `ne`, `gt`, `gte`, `lt`, `lte`. Its unique power over `contains` is **ordering at a path** (`gt`/`gte`/`lt`/`lte`); `eq`/`ne` are also provided (equality at a path is equivalently `contains(col, { age: 21 })`). v1 supports dot-notation object paths (`$.a`, `$.a.b`); array-index/wildcard and empty/root paths are rejected with a clear `Error`. **Interim behavior:** the comparison value is currently sent as a storage-encrypted document, so the (encrypted) value appears in the `WHERE` clause; a ciphertext-free form is tracked in `cipherstash/protectjs-ffi#137`.
 - **No plaintext-column fallback.** Every v3 operator requires an encrypted v3 column and throws `EncryptionOperatorError` otherwise. Use regular Drizzle operators for non-encrypted columns.
 - A `null` operand throws — use `isNull()` / `isNotNull()` for NULL checks.
 - `inArray` / `notInArray` reject an empty list, and encrypt the whole list in a single `encryptQuery` batch crossing.
