@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CI_ENV_VARS } from '../../config/tty.js'
 import {
   ALLOWED_PROP_KEYS,
+  PLACEHOLDER_KEY,
   resolveStatus,
   sanitize,
   type TelemetryStatus,
@@ -47,6 +48,31 @@ describe('resolveStatus gates', () => {
       enabled: false,
       reason: 'unconfigured',
     })
+  })
+
+  it('an un-injected build (placeholder passthrough) stays dormant', () => {
+    // Simulates a dev/fork/CI build: tsup baked in no key, so the resolved key
+    // is the placeholder sentinel. Must read as unconfigured whatever the gates.
+    vi.stubEnv('STASH_POSTHOG_KEY', PLACEHOLDER_KEY)
+    expect(resolveStatus(enabledState)).toEqual({
+      enabled: false,
+      reason: 'unconfigured',
+    })
+  })
+
+  it('a release-injected key is NOT mistaken for the placeholder → enabled', () => {
+    // The regression the sentinel guards against: an injected key with no env
+    // override must not read as unconfigured (the old `=== EMBEDDED_KEY` check
+    // would have). Any real key differs from the placeholder.
+    vi.stubEnv('STASH_POSTHOG_KEY', 'phc_realish_injected_key')
+    expect(resolveStatus(enabledState)).toEqual({ enabled: true })
+  })
+
+  it('the placeholder sentinel matches the build-define identifier name', () => {
+    // tsup replaces the `__STASH_POSTHOG_KEY__` identifier at release; the
+    // sentinel must stay the identically-named string literal, or an un-injected
+    // build would not be detected as dormant.
+    expect(PLACEHOLDER_KEY).toBe('__STASH_POSTHOG_KEY__')
   })
 
   it('is enabled with a key and no opt-out signals', () => {

@@ -32,14 +32,33 @@ function posthogHost(): string {
 }
 
 /**
- * Public, write-only PostHog project key — safe to embed, exactly like a web
- * SDK key. This literal is replaced with the real key at release (build-time
- * define); `STASH_POSTHOG_KEY` overrides it for testing / self-hosting. Until a
- * real key is present telemetry stays fully dormant: {@link resolveStatus}
- * returns `unconfigured`, so no banner shows and nothing is ever sent.
+ * The un-injected sentinel. A build that has NOT embedded a key resolves to
+ * exactly this string, and {@link resolveStatus} treats it as "no key" →
+ * dormant. It is a plain string literal (not the `__STASH_POSTHOG_KEY__`
+ * identifier), so the build-time `define` below never rewrites it.
  */
-const EMBEDDED_KEY = '__STASH_POSTHOG_KEY__'
+export const PLACEHOLDER_KEY = '__STASH_POSTHOG_KEY__'
 
+/**
+ * Build-time define. The release build (`.github/workflows/release.yml`)
+ * replaces the `__STASH_POSTHOG_KEY__` identifier with the real, public,
+ * write-only PostHog project key from the `STASH_POSTHOG_KEY` repo variable, via
+ * tsup's esbuild `define` (see `tsup.config.ts`). Safe to embed, exactly like a
+ * web SDK key. EVERY other build — local dev, a contributor's checkout, a fork,
+ * CI unit tests — leaves the identifier undefined, so {@link EMBEDDED_KEY} falls
+ * back to {@link PLACEHOLDER_KEY} and telemetry stays fully dormant. The `typeof`
+ * guard makes the reference safe even when the identifier was never defined
+ * (`typeof undefinedIdent` yields `"undefined"` rather than throwing).
+ */
+declare const __STASH_POSTHOG_KEY__: string | undefined
+
+const EMBEDDED_KEY =
+  typeof __STASH_POSTHOG_KEY__ === 'string' && __STASH_POSTHOG_KEY__.length > 0
+    ? __STASH_POSTHOG_KEY__
+    : PLACEHOLDER_KEY
+
+/** `STASH_POSTHOG_KEY` in the environment overrides the embedded key entirely
+ * (testing / self-hosting); otherwise the build-time value is used. */
 function projectKey(): string {
   return process.env.STASH_POSTHOG_KEY ?? EMBEDDED_KEY
 }
@@ -90,7 +109,11 @@ function envOptOut(name: string): boolean {
  * with the rest of the CLI via {@link isCiEnv}.
  */
 export function resolveStatus(state: TelemetryState): TelemetryStatus {
-  if (projectKey() === EMBEDDED_KEY) {
+  // Compare against the sentinel, NOT EMBEDDED_KEY: once a real key is injected
+  // at release, EMBEDDED_KEY holds it, and `=== EMBEDDED_KEY` would then read a
+  // key-present build (no env override) as unconfigured. The placeholder passing
+  // through — no build-time key and no env override — is the "dormant" signal.
+  if (projectKey() === PLACEHOLDER_KEY) {
     return { enabled: false, reason: 'unconfigured' }
   }
   if (envOptOut('DO_NOT_TRACK')) {

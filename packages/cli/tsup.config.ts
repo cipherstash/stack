@@ -1,6 +1,18 @@
 import { cpSync, existsSync } from 'node:fs'
 import { defineConfig } from 'tsup'
 
+/**
+ * Build-time value for the embedded PostHog project key (see
+ * `src/telemetry/index.ts`). Only the release workflow sets `STASH_POSTHOG_KEY`
+ * (from a public repo variable), so every other build — dev, forks, CI — bakes
+ * in an empty string and the CLI ships telemetry-dormant. Applied to both bundles
+ * because either may inline the telemetry module. The value must be a JS
+ * expression string, hence `JSON.stringify`.
+ */
+const posthogKeyDefine = {
+  __STASH_POSTHOG_KEY__: JSON.stringify(process.env.STASH_POSTHOG_KEY ?? ''),
+}
+
 export default defineConfig([
   {
     entry: ['src/index.ts'],
@@ -17,6 +29,7 @@ export default defineConfig([
         ...options.logOverride,
         'empty-import-meta': 'silent',
       }
+      options.define = { ...options.define, ...posthogKeyDefine }
     },
     onSuccess: async () => {
       // Copy bundled SQL files into dist so they ship with the package
@@ -52,5 +65,8 @@ var require = __createRequire(import.meta.url);`,
     sourcemap: true,
 
     skipNodeModulesBundle: true,
+    esbuildOptions(options) {
+      options.define = { ...options.define, ...posthogKeyDefine }
+    },
   },
 ])
