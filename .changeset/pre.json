@@ -45,7 +45,11 @@
     "eql-v3-typed-client",
     "eql-v3-typed-schema",
     "eql-v3-wasm-inline",
+    "init-pins-runtime-versions",
     "prisma-next-0-14",
+    "prisma-next-joins-release-train",
+    "release-train-coupling",
+    "remove-legacy-drizzle-package",
     "remove-secrets-leftovers",
     "rename-db-install-to-eql-install",
     "schema-stevec-standard-pin",
@@ -64,7 +68,9 @@
     "supabase-v3-json-querying",
     "supabase-v3-order-by-ope-term",
     "v3-supabase-needle-lockcontext-errors",
+    "wasm-encrypt-query",
     "wizard-allow-env-templates",
-    "wizard-analytics-privacy"
+    "wizard-analytics-privacy",
+    "wizard-joins-release-train"
   ]
 }

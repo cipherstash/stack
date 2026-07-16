@@ -1,5 +1,17 @@
 # @cipherstash/prisma-next
 
+## 1.0.0-rc.2
+
+### Patch Changes
+
+- daa25b8: `@cipherstash/prisma-next` now versions in lockstep with the Stack release
+  train (`stash`, `@cipherstash/stack`, and the other adapters) via a Changesets
+  `fixed` group — `stash init` installs it pinned by exact version, so the two
+  must always release together. This moves the package from its previous `0.4.x`
+  line onto the shared train version; no API changes.
+- Updated dependencies [b085f66]
+  - @cipherstash/stack@1.0.0-rc.2
+
 ## 0.4.0-rc.1
 
 ### Patch Changes
