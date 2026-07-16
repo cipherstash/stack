@@ -74,4 +74,4 @@ encrypt search values.
 Full guide: https://cipherstash.com/docs/integrations/drizzle — see also the
 bundled `stash-drizzle` agent skill.
 
-> Not to be confused with `@cipherstash/drizzle`, the older `@cipherstash/protect`-based package — deprecated and no longer published; this package replaces it.
+> Not to be confused with `@cipherstash/drizzle`, the older `@cipherstash/protect`-based package — deprecated and no longer maintained; this package replaces it.
