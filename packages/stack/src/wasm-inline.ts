@@ -36,6 +36,17 @@
  *   table: users,
  * })
  * const dec = await client.decrypt(enc)
+ *
+ * // Searchable encryption: mint a ciphertext-free QUERY TERM and cast it
+ * // to the column's `eql_v3.query_<domain>` type in SQL to hit the index.
+ * const term = await client.encryptQuery("alice@example.com", {
+ *   column: users.email,
+ *   table: users,
+ *   queryType: "freeTextSearch",
+ * })
+ * // e.g. postgres-js:
+ * //   sql`SELECT * FROM users
+ * //       WHERE eql_v3.contains(email, ${term}::jsonb::eql_v3.query_text_search)`
  * ```
  *
  * For per-user, identity-bound encryption on the edge, build an
@@ -67,6 +78,8 @@ import {
 import {
   decrypt as wasmDecrypt,
   encrypt as wasmEncrypt,
+  encryptQuery as wasmEncryptQuery,
+  encryptQueryBulk as wasmEncryptQueryBulk,
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
@@ -77,7 +90,14 @@ import {
   encryptConfigSchema,
   toEqlCastAs,
 } from '@/schema'
-import type { Encrypted, EncryptOptions } from '@/types'
+import type {
+  BuildableV3QueryableColumn,
+  Encrypted,
+  EncryptedQuery,
+  EncryptOptions,
+  QueryTypeName,
+} from '@/types'
+import { queryTypeToFfi, queryTypeToQueryOp } from '@/types'
 
 // -----------------------------------------------------------------------
 // Schema + type re-exports
@@ -230,6 +250,71 @@ export type WasmEncryptionConfig = {
   config: WasmClientConfig
 }
 
+/** Options for {@link WasmEncryptionClient.encryptQuery}. The column must be
+ * a QUERYABLE v3 column (authored via the `types.*` factories re-exported
+ * from this entry) — storage-only columns have no indexes to query. */
+export type WasmEncryptQueryOptions = {
+  table: EncryptOptions['table']
+  column: BuildableV3QueryableColumn
+  /** Which index to target when the column has several. Omit to infer from
+   * the column's configured indexes (priority: unique > match > ore >
+   * ste_vec, matching the native client). */
+  queryType?: QueryTypeName
+}
+
+/** One term for {@link WasmEncryptionClient.encryptQueryBulk}. */
+export type WasmQueryTerm = WasmEncryptQueryOptions & {
+  value: WasmPlaintext
+}
+
+/**
+ * Resolve the FFI `{ indexType, queryOp }` for a query term. A local port of
+ * the native client's `resolveIndexType` (packages/protect
+ * `ffi/helpers/infer-index-type.ts`) — this module deliberately never
+ * imports `@cipherstash/protect` (it would drag the Node-only native FFI
+ * into the WASM bundle), so the ~40 lines live here. Keep the two in
+ * behavioural lockstep.
+ */
+function resolveQueryIndex(
+  column: BuildableV3QueryableColumn,
+  queryType: QueryTypeName | undefined,
+  plaintext: WasmPlaintext | null,
+): { indexType: string; queryOp?: string } {
+  const indexes = column.build().indexes ?? {}
+  const has = (k: string) =>
+    (indexes as Record<string, unknown>)[k] !== undefined
+
+  const stevecOp = () =>
+    typeof plaintext === 'string' ? 'ste_vec_selector' : 'ste_vec_term'
+
+  if (queryType) {
+    const indexType = queryTypeToFfi[queryType]
+    if (!has(indexType)) {
+      throw new Error(
+        `[encryption]: index type "${indexType}" is not configured on column "${column.getName()}"`,
+      )
+    }
+    if (queryType === 'searchableJson') {
+      return plaintext === null || plaintext === undefined
+        ? { indexType }
+        : { indexType, queryOp: stevecOp() }
+    }
+    return { indexType, queryOp: queryTypeToQueryOp[queryType] }
+  }
+
+  // Inference priority mirrors the native client: unique > match > ore > ste_vec.
+  const inferred = (['unique', 'match', 'ore', 'ste_vec'] as const).find(has)
+  if (!inferred) {
+    throw new Error(
+      `[encryption]: column "${column.getName()}" has no indexes configured — nothing to query`,
+    )
+  }
+  if (inferred === 'ste_vec' && plaintext !== null && plaintext !== undefined) {
+    return { indexType: inferred, queryOp: stevecOp() }
+  }
+  return { indexType: inferred }
+}
+
 /**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
@@ -241,10 +326,11 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
 /**
  * WASM encryption client. Returned by {@link Encryption}.
  *
- * Wraps an opaque `wasmNewClient` handle and exposes a minimal
- * `encrypt` / `decrypt` surface. Larger surface (bulk, query, model
- * helpers) lives on the Node entry — port lazily as Deno / edge
- * consumers demand it.
+ * Wraps an opaque `wasmNewClient` handle and exposes `encrypt`, `decrypt`,
+ * `isEncrypted`, and — since #662 made searchable encryption reachable on
+ * the edge — `encryptQuery` / `encryptQueryBulk` for minting v3 query
+ * terms. Remaining surface (bulk encrypt/decrypt, model helpers) lives on
+ * the Node entry — port lazily as Deno / edge consumers demand it.
  *
  * Construct via {@link Encryption} — the constructor is private to
  * prevent callers from wrapping arbitrary objects in this type.
@@ -294,6 +380,86 @@ export class WasmEncryptionClient {
 
   isEncrypted(value: unknown): boolean {
     return wasmIsEncrypted(value as never)
+  }
+
+  /**
+   * Encrypt a QUERY TERM (search needle) for a queryable v3 column —
+   * equality, free-text match, ORE range, or JSON containment/selector. The
+   * returned term carries no ciphertext; cast it to the column's
+   * `eql_v3.query_<domain>` type in SQL to reach the indexed operators:
+   *
+   * ```sql
+   * SELECT * FROM users WHERE email = $1::jsonb::eql_v3.query_text_eq
+   * ```
+   *
+   * `null` plaintext returns `null` (nothing to search for), mirroring the
+   * native client. Errors THROW, consistent with this surface's
+   * `encrypt`/`decrypt` (the native entry's Result envelope lives on the
+   * Node client only).
+   */
+  async encryptQuery(
+    plaintext: WasmPlaintext | null,
+    opts: WasmEncryptQueryOptions,
+  ): Promise<EncryptedQuery | null> {
+    if (plaintext === null || plaintext === undefined) return null
+    const { indexType, queryOp } = resolveQueryIndex(
+      opts.column,
+      opts.queryType,
+      plaintext,
+    )
+    return (await wasmEncryptQuery(
+      this.client as never,
+      {
+        plaintext,
+        table: opts.table.tableName,
+        column: getColumnName(opts.column),
+        indexType,
+        queryOp,
+      } as never,
+    )) as EncryptedQuery
+  }
+
+  /**
+   * Batch form of {@link encryptQuery} — one ZeroKMS round trip for many
+   * terms. Position-stable: a `null`/`undefined` value yields `null` at the
+   * same index.
+   */
+  async encryptQueryBulk(
+    terms: readonly WasmQueryTerm[],
+  ): Promise<Array<EncryptedQuery | null>> {
+    const live: Array<{ term: WasmQueryTerm; at: number }> = []
+    terms.forEach((term, at) => {
+      if (term.value !== null && term.value !== undefined)
+        live.push({ term, at })
+    })
+    const out: Array<EncryptedQuery | null> = terms.map(() => null)
+    if (live.length === 0) return out
+
+    const ffiTerms = live.map(({ term }) => {
+      const { indexType, queryOp } = resolveQueryIndex(
+        term.column,
+        term.queryType,
+        term.value,
+      )
+      return {
+        plaintext: term.value,
+        table: term.table.tableName,
+        column: getColumnName(term.column),
+        indexType,
+        queryOp,
+      }
+    })
+    const encrypted = (await wasmEncryptQueryBulk(
+      this.client as never,
+      {
+        terms: ffiTerms,
+      } as never,
+    )) as EncryptedQuery[]
+    encrypted.forEach((value, i) => {
+      const slot = live[i]
+      if (slot) out[slot.at] = value
+    })
+    return out
   }
 }
 

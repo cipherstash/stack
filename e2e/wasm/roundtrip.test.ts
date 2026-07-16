@@ -104,5 +104,30 @@ Deno.test({
 
     const decrypted = await client.decrypt(encrypted)
     assertEquals(decrypted, plaintext, 'round-trip plaintext mismatch')
+
+    // 5. (#662) Searchable encryption is reachable on the edge: mint a v3
+    //    QUERY TERM for the column's free-text index. Terms are
+    //    ciphertext-free needles — assert the wire shape, not decryption.
+    const term = (await client.encryptQuery(plaintext, {
+      column: users.email,
+      table: users,
+      queryType: 'freeTextSearch',
+    })) as Record<string, unknown> | null
+    assertExists(term, 'encryptQuery() returned null for live plaintext')
+    assertEquals(term.v, 3, 'query term is not EQL v3')
+    assertEquals(
+      'c' in term,
+      false,
+      'query term unexpectedly carries ciphertext',
+    )
+
+    // Bulk form is position-stable, nulls pass through.
+    const bulk = await client.encryptQueryBulk([
+      { value: plaintext, column: users.email, table: users },
+      { value: null as unknown as string, column: users.email, table: users },
+    ])
+    assertEquals(bulk.length, 2)
+    assertExists(bulk[0])
+    assertEquals(bulk[1], null)
   },
 })
