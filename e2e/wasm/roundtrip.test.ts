@@ -14,8 +14,8 @@
  *   4. No FFI permission was granted to the Deno process, so the WASM path is
  *      the *only* path that could have succeeded.
  *
- * Skipped when any of the four CS_* env vars is missing — matches the skip
- * pattern in `e2e/tests/*.e2e.test.ts`.
+ * FAILS LOUDLY when any CS_* env var is missing — a silently-skipped
+ * credential suite reads as green coverage that never ran.
  */
 
 import { assertEquals, assertExists } from 'jsr:@std/assert@^1.0.0'
@@ -37,21 +37,29 @@ const REQUIRED_ENV = [
   'CS_CLIENT_KEY',
 ] as const
 
-function envOrSkip(): Record<(typeof REQUIRED_ENV)[number], string> | null {
-  const out: Record<string, string> = {}
-  for (const name of REQUIRED_ENV) {
-    const v = Deno.env.get(name)
-    if (!v) return null
-    out[name] = v
+function requireEnv(): Record<(typeof REQUIRED_ENV)[number], string> {
+  const values = {} as Record<(typeof REQUIRED_ENV)[number], string>
+  const missing: string[] = []
+  for (const key of REQUIRED_ENV) {
+    const value = Deno.env.get(key)
+    if (value) values[key] = value
+    else missing.push(key)
   }
-  return out as Record<(typeof REQUIRED_ENV)[number], string>
+  if (missing.length > 0) {
+    // FAIL, don't skip: a silently-skipped credential suite reads as green
+    // coverage that never ran (same doctrine as the repo's integration
+    // harness — no skipIf credential gates).
+    throw new Error(
+      `Missing required env: ${missing.join(', ')}. This suite needs real ` +
+        'CipherStash credentials — set the CS_* variables (see .env.example) ' +
+        'or run via the CI job, which injects them.',
+    )
+  }
+  return values
 }
-
-const env = envOrSkip()
 
 Deno.test({
   name: 'stack/wasm-inline: EQL v3 encrypt → decrypt round-trip via WASM',
-  ignore: env === null,
   permissions: {
     env: true,
     net: true,
@@ -82,10 +90,10 @@ Deno.test({
       config: {
         // CRN is the single source of truth — the region the
         // AccessKeyStrategy needs is derived from it.
-        workspaceCrn: env!.CS_WORKSPACE_CRN,
-        accessKey: env!.CS_CLIENT_ACCESS_KEY,
-        clientId: env!.CS_CLIENT_ID,
-        clientKey: env!.CS_CLIENT_KEY,
+        workspaceCrn: env.CS_WORKSPACE_CRN,
+        accessKey: env.CS_CLIENT_ACCESS_KEY,
+        clientId: env.CS_CLIENT_ID,
+        clientKey: env.CS_CLIENT_KEY,
       },
     })
 

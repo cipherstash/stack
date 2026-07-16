@@ -65,7 +65,23 @@ for (const glob of SUITE_GLOBS) {
 }
 
 export default defineConfig({
-  resolve: { alias: { ...sharedAlias, ...stackSourceAlias } },
+  resolve: {
+    alias: {
+      ...sharedAlias,
+      ...stackSourceAlias,
+      // stackSourceAlias stubs the WASM-entry FFI/auth modules for UNIT
+      // tests. Integration suites (integration/wasm/**) exercise the real
+      // WASM path against live ZeroKMS — restore the genuine modules.
+      '@cipherstash/protect-ffi/wasm-inline': resolve(
+        __dirname,
+        '../node_modules/@cipherstash/protect-ffi/dist/wasm/protect_ffi_inline.js',
+      ),
+      '@cipherstash/auth/wasm-inline': resolve(
+        __dirname,
+        '../node_modules/@cipherstash/auth/wasm-inline.mjs',
+      ),
+    },
+  },
   test: {
     root: resolve(__dirname, '..'),
     // Unlike the adapter packages (fixed glob), stack's integration job scopes to

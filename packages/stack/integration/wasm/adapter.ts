@@ -1,0 +1,346 @@
+/**
+ * `IntegrationAdapter` over `@cipherstash/stack/wasm-inline` (#662) — runs the
+ * shared v3 family suite against the WASM entry, giving `encryptQuery` /
+ * `encryptQueryBulk` the same per-domain live row-matching coverage the
+ * Drizzle/Supabase adapters have.
+ *
+ * The WASM surface mints terms only (no operator builder, no model helpers),
+ * so this adapter IS the SQL layer: inserts encrypt per-field via
+ * `client.encrypt`, and every query op renders the documented raw-SQL shape —
+ * `eql_v3.<fn>(col, $n::jsonb::eql_v3.query_<domain>)` — that edge consumers
+ * hand-write. Passing here proves the whole recipe end to end: WASM-minted
+ * term → query-domain cast → indexed operator → correct row set.
+ *
+ * The SQL shapes deliberately mirror the Drizzle v3 dialect
+ * (`packages/stack-drizzle/src/v3/sql-dialect.ts`): `eq`/`neq`, comparison
+ * fns, parenthesised `gte AND lte` ranges, `contains` for bloom matching, and
+ * `ord_term` ordering. `in`/`notIn` decompose to OR-of-eq / AND-of-neq over
+ * one `encryptQueryBulk` batch — exercising the bulk path on every family.
+ */
+
+import type {
+  IntegrationAdapter,
+  Plain,
+  PlainRow,
+  QueryOp,
+  QueryOpKind,
+  TableSpec,
+} from '@cipherstash/test-kit'
+import { databaseUrl } from '@cipherstash/test-kit'
+import postgres from 'postgres'
+import { type AnyV3Table, encryptedTable } from '@/eql/v3'
+import type { BuildableV3QueryableColumn } from '@/types'
+import {
+  Encryption as WasmEncryption,
+  type WasmEncryptionClient,
+  type WasmPlaintext,
+} from '@/wasm-inline'
+
+const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
+  'eq',
+  'ne',
+  'in',
+  'notIn',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'between',
+  'notBetween',
+  'matches',
+  'order',
+  'isNull',
+  'isNotNull',
+])
+
+/**
+ * The WASM factory has no auto/dev-profile strategy (#663): it hard-requires
+ * explicit credentials, so — unlike the native adapters, where a
+ * `~/.cipherstash` profile satisfies the gate — this adapter needs the four
+ * `CS_*` variables themselves. Fail loud, per the harness doctrine.
+ */
+function requireWasmCreds() {
+  const keys = [
+    'CS_WORKSPACE_CRN',
+    'CS_CLIENT_ACCESS_KEY',
+    'CS_CLIENT_ID',
+    'CS_CLIENT_KEY',
+  ] as const
+  const missing = keys.filter((k) => !process.env[k])
+  if (missing.length > 0) {
+    throw new Error(
+      `WASM integration adapter: missing ${missing.join(', ')}. The ` +
+        '`@cipherstash/stack/wasm-inline` factory requires explicit ' +
+        'credentials (no dev-profile fallback — see #663), so the CS_* ' +
+        'variables must be set even when a ~/.cipherstash profile exists.',
+    )
+  }
+  return {
+    workspaceCrn: process.env.CS_WORKSPACE_CRN as string,
+    accessKey: process.env.CS_CLIENT_ACCESS_KEY as string,
+    clientId: process.env.CS_CLIENT_ID as string,
+    clientKey: process.env.CS_CLIENT_KEY as string,
+  }
+}
+
+/**
+ * `WasmPlaintext` has no `Date` arm (the WASM boundary serializes via serde,
+ * which doesn't consult `toJSON`) — send date/timestamp values as ISO
+ * strings, the same wire form the native SDK's `Date` handling produces.
+ */
+function toWasmPlaintext(value: Plain): WasmPlaintext {
+  return value instanceof Date ? value.toISOString() : value
+}
+
+/** `public.eql_v3_text_eq` → `eql_v3.query_text_eq`; irregular: json → jsonb. */
+function queryDomain(eqlType: string): string {
+  const suffix = eqlType.replace(/^public\.eql_v3_/, '')
+  return suffix === 'json' ? 'eql_v3.query_jsonb' : `eql_v3.query_${suffix}`
+}
+
+const QUERY_TYPE_BY_KIND = {
+  eq: 'equality',
+  ne: 'equality',
+  in: 'equality',
+  notIn: 'equality',
+  gt: 'orderAndRange',
+  gte: 'orderAndRange',
+  lt: 'orderAndRange',
+  lte: 'orderAndRange',
+  between: 'orderAndRange',
+  notBetween: 'orderAndRange',
+  matches: 'freeTextSearch',
+} as const
+
+type ColumnEntry = {
+  column: BuildableV3QueryableColumn
+  eqlType: string
+}
+
+export function makeWasmAdapter(): IntegrationAdapter {
+  const creds = requireWasmCreds()
+
+  let sql: postgres.Sql
+  let tableName = ''
+  let client: WasmEncryptionClient
+  let tableSchema: AnyV3Table
+  let columns: Record<string, ColumnEntry> = {}
+
+  function col(slug: string): ColumnEntry {
+    const entry = columns[slug]
+    if (!entry) throw new Error(`Unknown column slug "${slug}"`)
+    return entry
+  }
+
+  /** Mint one term and pair it with its query-domain cast. */
+  async function term(
+    slug: string,
+    value: Plain,
+    kind: keyof typeof QUERY_TYPE_BY_KIND,
+  ): Promise<{ param: string; cast: string }> {
+    const { column, eqlType } = col(slug)
+    const encrypted = await client.encryptQuery(toWasmPlaintext(value), {
+      table: tableSchema,
+      column,
+      queryType: QUERY_TYPE_BY_KIND[kind],
+    })
+    return { param: JSON.stringify(encrypted), cast: queryDomain(eqlType) }
+  }
+
+  async function selectKeys(
+    where: string,
+    params: readonly string[],
+    orderBy = 'row_key ASC',
+  ): Promise<string[]> {
+    const rows = await sql.unsafe(
+      `SELECT row_key FROM ${tableName} WHERE ${where} ORDER BY ${orderBy}`,
+      params as string[],
+    )
+    return rows.map((r) => (r as { row_key: string }).row_key)
+  }
+
+  async function insertRow(assignments: Record<string, unknown>) {
+    const keys = Object.keys(assignments)
+    const colList = keys.map((k) => `"${k}"`).join(', ')
+    const placeholders = keys
+      .map((k, i) => (k === 'row_key' ? `$${i + 1}` : `$${i + 1}::jsonb`))
+      .join(', ')
+    const params = keys.map((k) =>
+      k === 'row_key'
+        ? (assignments[k] as string)
+        : JSON.stringify(assignments[k]),
+    )
+    await sql.unsafe(
+      `INSERT INTO ${tableName} (${colList}) VALUES (${placeholders})`,
+      params,
+    )
+  }
+
+  async function encryptRow(row: PlainRow): Promise<Record<string, unknown>> {
+    const assignments: Record<string, unknown> = { row_key: row.rowKey }
+    for (const [slug, value] of Object.entries(row.values)) {
+      assignments[slug] = await client.encrypt(toWasmPlaintext(value), {
+        table: tableSchema,
+        column: col(slug).column,
+      })
+    }
+    return assignments
+  }
+
+  async function run(op: QueryOp): Promise<string[]> {
+    switch (op.kind) {
+      case 'eq':
+      case 'ne':
+      case 'gt':
+      case 'gte':
+      case 'lt':
+      case 'lte': {
+        const fn = op.kind === 'ne' ? 'neq' : op.kind
+        const t = await term(op.column, op.value, op.kind)
+        return selectKeys(
+          `eql_v3.${fn}("${op.column}", $1::jsonb::${t.cast})`,
+          [t.param],
+        )
+      }
+      case 'in':
+      case 'notIn': {
+        // One encryptQueryBulk crossing for the whole list — the bulk path
+        // gets exercised on every family this way.
+        const { column, eqlType } = col(op.column)
+        const encrypted = await client.encryptQueryBulk(
+          op.values.map((value) => ({
+            value: toWasmPlaintext(value),
+            table: tableSchema,
+            column,
+            queryType: 'equality' as const,
+          })),
+        )
+        const cast = queryDomain(eqlType)
+        const fn = op.kind === 'in' ? 'eq' : 'neq'
+        const joiner = op.kind === 'in' ? ' OR ' : ' AND '
+        const clauses = encrypted.map(
+          (_, i) => `eql_v3.${fn}("${op.column}", $${i + 1}::jsonb::${cast})`,
+        )
+        return selectKeys(
+          `(${clauses.join(joiner)})`,
+          encrypted.map((e) => JSON.stringify(e)),
+        )
+      }
+      case 'between':
+      case 'notBetween': {
+        const lo = await term(op.column, op.lo, op.kind)
+        const hi = await term(op.column, op.hi, op.kind)
+        // Parenthesised conjunction, mirroring the Drizzle dialect's
+        // load-bearing parentheses (NOT binds tighter than AND).
+        const range = `(eql_v3.gte("${op.column}", $1::jsonb::${lo.cast}) AND eql_v3.lte("${op.column}", $2::jsonb::${hi.cast}))`
+        return selectKeys(op.kind === 'between' ? range : `NOT ${range}`, [
+          lo.param,
+          hi.param,
+        ])
+      }
+      case 'matches': {
+        const t = await term(op.column, op.needle, 'matches')
+        return selectKeys(
+          `eql_v3.contains("${op.column}", $1::jsonb::${t.cast})`,
+          [t.param],
+        )
+      }
+      case 'order': {
+        // OPE ordering (`ord_term`) — the block-ORE domains are deferred in
+        // the catalog, so `ord_term_ore` never applies here.
+        return selectKeys(
+          `"${op.column}" IS NOT NULL`,
+          [],
+          `eql_v3.ord_term("${op.column}") ${op.direction.toUpperCase()}`,
+        )
+      }
+      case 'isNull':
+        return selectKeys(`"${op.column}" IS NULL`, [])
+      case 'isNotNull':
+        return selectKeys(`"${op.column}" IS NOT NULL`, [])
+    }
+  }
+
+  return {
+    name: 'wasm',
+    supportedOps: SUPPORTED_OPS,
+    alwaysRejectedOps: new Set(),
+
+    async setup() {
+      sql = postgres(databaseUrl(), { prepare: false })
+    },
+
+    async teardown() {
+      if (tableName) await sql.unsafe(`DROP TABLE IF EXISTS ${tableName}`)
+      await sql.end()
+    },
+
+    async createTable(spec: TableSpec) {
+      tableName = spec.name
+
+      const cols = Object.fromEntries(
+        spec.columns.map((c) => [c.slug, c.spec.builder(c.slug)]),
+      )
+      tableSchema = encryptedTable(spec.name, cols as never)
+      columns = Object.fromEntries(
+        spec.columns.map((c) => [
+          c.slug,
+          {
+            column: (
+              tableSchema as unknown as Record<string, ColumnEntry['column']>
+            )[c.slug],
+            eqlType: c.eqlType,
+          },
+        ]),
+      )
+
+      // DDL comes from the column builders, not a hand-written list, so a
+      // domain rename cannot silently desync the table from the schema.
+      const ddl = spec.columns
+        .map((c) => `"${c.slug}" ${c.eqlType}`)
+        .join(',\n          ')
+      await sql.unsafe(`DROP TABLE IF EXISTS ${spec.name}`)
+      await sql.unsafe(`
+        CREATE TABLE ${spec.name} (
+          row_key TEXT PRIMARY KEY,
+          ${ddl}
+        )
+      `)
+
+      // Rebuilt per family — the factory pins the schema set at construction.
+      client = await WasmEncryption({
+        schemas: [tableSchema],
+        config: creds,
+      })
+    },
+
+    // The WASM entry has no model helpers (encryptModel/bulkEncryptModels
+    // live on the Node client), so BOTH insert paths encrypt per field via
+    // `encrypt` — the surface an edge function actually has. The kit's
+    // single/bulk split still runs; it just exercises the same primitive.
+    async insertSingle(_spec: TableSpec, row: PlainRow) {
+      await insertRow(await encryptRow(row))
+    },
+
+    async insertBulk(_spec: TableSpec, rows: readonly PlainRow[]) {
+      for (const row of rows) {
+        await insertRow(await encryptRow(row))
+      }
+    },
+
+    async run(_spec: TableSpec, op: QueryOp) {
+      return run(op)
+    },
+
+    async expectRejected(_spec: TableSpec, op: QueryOp) {
+      try {
+        await run(op)
+      } catch {
+        return
+      }
+      throw new Error(
+        `Expected ${op.kind} on "${op.column}" to be rejected, but it ran.`,
+      )
+    },
+  }
+}

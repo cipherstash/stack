@@ -25,7 +25,7 @@
  * the ore→ope swap; both JSON shapes) are exactly why each type needs a
  * live crossing, not a mock.
  *
- * Skipped when any CS_* env var is missing, matching `roundtrip.test.ts`.
+ * FAILS LOUDLY when any CS_* env var is missing, matching `roundtrip.test.ts`.
  */
 
 import { assertEquals, assertExists } from 'jsr:@std/assert@^1.0.0'
@@ -42,17 +42,26 @@ const REQUIRED_ENV = [
   'CS_CLIENT_KEY',
 ] as const
 
-function envOrSkip(): Record<(typeof REQUIRED_ENV)[number], string> | null {
+function requireEnv(): Record<(typeof REQUIRED_ENV)[number], string> {
   const values = {} as Record<(typeof REQUIRED_ENV)[number], string>
+  const missing: string[] = []
   for (const key of REQUIRED_ENV) {
     const value = Deno.env.get(key)
-    if (!value) return null
-    values[key] = value
+    if (value) values[key] = value
+    else missing.push(key)
+  }
+  if (missing.length > 0) {
+    // FAIL, don't skip: a silently-skipped credential suite reads as green
+    // coverage that never ran (same doctrine as the repo's integration
+    // harness — no skipIf credential gates).
+    throw new Error(
+      `Missing required env: ${missing.join(', ')}. This suite needs real ` +
+        'CipherStash credentials — set the CS_* variables (see .env.example) ' +
+        'or run via the CI job, which injects them.',
+    )
   }
   return values
 }
-
-const env = envOrSkip()
 
 const catalog = encryptedTable('wasm_query_matrix', {
   email: types.TextEq('email'), // equality only
@@ -84,15 +93,15 @@ function assertContainmentNeedle(term: unknown, label: string) {
 
 Deno.test({
   name: 'stack/wasm-inline: encryptQuery covers every v3 query type',
-  ignore: env === null,
   async fn() {
+    const env = requireEnv()
     const client = await Encryption({
       schemas: [catalog],
       config: {
-        workspaceCrn: env!.CS_WORKSPACE_CRN,
-        accessKey: env!.CS_CLIENT_ACCESS_KEY,
-        clientId: env!.CS_CLIENT_ID,
-        clientKey: env!.CS_CLIENT_KEY,
+        workspaceCrn: env.CS_WORKSPACE_CRN,
+        accessKey: env.CS_CLIENT_ACCESS_KEY,
+        clientId: env.CS_CLIENT_ID,
+        clientKey: env.CS_CLIENT_KEY,
       },
     })
 

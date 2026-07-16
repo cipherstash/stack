@@ -26,6 +26,8 @@ on:
       - 'packages/stack/src/schema/**'
       - 'packages/schema/**'
       - 'packages/stack/integration/**'
+      # The WASM family suite (integration/wasm/**) exercises this entry:
+      - 'packages/stack/src/wasm-inline.ts'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
@@ -46,6 +48,8 @@ on:
       - 'packages/stack/src/schema/**'
       - 'packages/schema/**'
       - 'packages/stack/integration/**'
+      # The WASM family suite (integration/wasm/**) exercises this entry:
+      - 'packages/stack/src/wasm-inline.ts'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
@@ -129,7 +133,8 @@ jobs:
       # `identity/matrix-identity` suite.
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
-        integration/identity/**/*.integration.test.ts
+        integration/identity/**/*.integration.test.ts,
+        integration/wasm/**/*.integration.test.ts
 
     steps:
       - uses: actions/checkout@v6
