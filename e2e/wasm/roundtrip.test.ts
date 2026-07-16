@@ -71,6 +71,8 @@ Deno.test({
     ffi: false,
   },
   async fn() {
+    const env = requireEnv()
+
     // Sanity: we really are in Deno, and WASM is available.
     assertExists(globalThis.WebAssembly, 'WebAssembly global missing')
     assertExists(
@@ -109,6 +111,31 @@ Deno.test({
       true,
       'encrypt() did not return a recognised EQL payload',
     )
+
+    // The storage payload must survive `JSON.stringify` as a v3 envelope —
+    // this is the exact wire crossing every SQL insert performs, and
+    // `isEncrypted` alone cannot pin it: the wasm boundary deserializes JS
+    // `Map`s just as happily as plain objects, so a payload that stringifies
+    // to `{}` would still round-trip through decrypt above.
+    const envelope = encrypted as Record<string, unknown>
+    assertEquals(
+      envelope?.v,
+      3,
+      `storage payload is not a v3 envelope via property access — typeof=${typeof encrypted}, ` +
+        `ctor=${(encrypted as object)?.constructor?.name}, ` +
+        `keys=[${Object.keys(envelope ?? {}).join(', ')}]`,
+    )
+    const wire = JSON.parse(JSON.stringify(encrypted)) as Record<
+      string,
+      unknown
+    >
+    for (const key of ['v', 'i', 'c'] as const) {
+      assertExists(
+        wire[key],
+        `storage payload lost "${key}" across JSON.stringify — wire keys=[${Object.keys(wire).join(', ')}]`,
+      )
+    }
+    assertEquals(String(wire.v), '3', 'wire envelope is not v3')
 
     const decrypted = await client.decrypt(encrypted)
     assertEquals(decrypted, plaintext, 'round-trip plaintext mismatch')

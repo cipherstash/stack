@@ -137,24 +137,31 @@ export function makeWasmAdapter(): IntegrationAdapter {
     slug: string,
     value: Plain,
     kind: keyof typeof QUERY_TYPE_BY_KIND,
-  ): Promise<{ param: string; cast: string }> {
+  ): Promise<{ param: unknown; cast: string }> {
     const { column, eqlType } = col(slug)
     const encrypted = await client.encryptQuery(toWasmPlaintext(value), {
       table: tableSchema,
       column,
       queryType: QUERY_TYPE_BY_KIND[kind],
     })
-    return { param: JSON.stringify(encrypted), cast: queryDomain(eqlType) }
+    return { param: encrypted, cast: queryDomain(eqlType) }
   }
 
+  // Payload params are bound as RAW OBJECTS, never pre-stringified. The
+  // `$n::jsonb` casts make the server type those params as jsonb, and
+  // postgres.js serializes jsonb params with JSON.stringify — so a
+  // pre-stringified payload gets stringified AGAIN, arriving as a jsonb
+  // *string* scalar that fails every `jsonb_typeof(VALUE) = 'object'`
+  // domain CHECK. (Reproduced against postgres-eql with a hand-valid
+  // envelope; psql accepts what the double-encoded binding does not.)
   async function selectKeys(
     where: string,
-    params: readonly string[],
+    params: readonly unknown[],
     orderBy = 'row_key ASC',
   ): Promise<string[]> {
     const rows = await sql.unsafe(
       `SELECT row_key FROM ${tableName} WHERE ${where} ORDER BY ${orderBy}`,
-      params as string[],
+      params as never[],
     )
     return rows.map((r) => (r as { row_key: string }).row_key)
   }
@@ -165,24 +172,66 @@ export function makeWasmAdapter(): IntegrationAdapter {
     const placeholders = keys
       .map((k, i) => (k === 'row_key' ? `$${i + 1}` : `$${i + 1}::jsonb`))
       .join(', ')
-    const params = keys.map((k) =>
-      k === 'row_key'
-        ? (assignments[k] as string)
-        : JSON.stringify(assignments[k]),
-    )
-    await sql.unsafe(
-      `INSERT INTO ${tableName} (${colList}) VALUES (${placeholders})`,
-      params,
-    )
+    // Raw objects, NOT pre-stringified — see the serializer note on
+    // `selectKeys`. postgres.js JSON-encodes them exactly once for the
+    // jsonb-typed placeholders.
+    const params = keys.map((k) => assignments[k])
+    try {
+      await sql.unsafe(
+        `INSERT INTO ${tableName} (${colList}) VALUES (${placeholders})`,
+        params as never[],
+      )
+    } catch (cause) {
+      // Echo what actually reached the driver: `assertWireEnvelope` has
+      // already vouched for the JS-side shape, so a domain-CHECK failure
+      // here implicates the SQL binding, and the exact params are the
+      // evidence. Ciphertext only — EQL payloads never contain plaintext.
+      throw new Error(
+        `INSERT into ${tableName} failed for row "${assignments['row_key']}". ` +
+          `Bound params (truncated): ${params.map((p) => JSON.stringify(p)?.slice(0, 160)).join(' | ')}`,
+        { cause },
+      )
+    }
+  }
+
+  /**
+   * Pin the JS-side shape of a storage payload BEFORE it goes anywhere near
+   * SQL. The wasm boundary (serde-wasm-bindgen) can produce values that
+   * round-trip through the FFI fine but collapse under `JSON.stringify` —
+   * e.g. a JS `Map` stringifies to `{}` — and the resulting Postgres
+   * domain-CHECK error names the column's domain, not the cause. Failing
+   * here instead names the payload.
+   */
+  function assertWireEnvelope(slug: string, payload: unknown): void {
+    const json = JSON.stringify(payload)
+    const wire = json === undefined ? undefined : JSON.parse(json)
+    const ok =
+      wire !== null &&
+      typeof wire === 'object' &&
+      !Array.isArray(wire) &&
+      String(wire.v) === '3' &&
+      'i' in wire &&
+      'c' in wire
+    if (!ok) {
+      throw new Error(
+        `WASM encrypt for column "${slug}" did not produce a JSON-stringifiable v3 envelope. ` +
+          `typeof=${typeof payload}, ctor=${(payload as object)?.constructor?.name}, ` +
+          `isMap=${payload instanceof Map}, ` +
+          `ownKeys=[${payload && typeof payload === 'object' ? Object.keys(payload).join(', ') : ''}], ` +
+          `wire=${String(json).slice(0, 300)}`,
+      )
+    }
   }
 
   async function encryptRow(row: PlainRow): Promise<Record<string, unknown>> {
     const assignments: Record<string, unknown> = { row_key: row.rowKey }
     for (const [slug, value] of Object.entries(row.values)) {
-      assignments[slug] = await client.encrypt(toWasmPlaintext(value), {
+      const encrypted = await client.encrypt(toWasmPlaintext(value), {
         table: tableSchema,
         column: col(slug).column,
       })
+      assertWireEnvelope(slug, encrypted)
+      assignments[slug] = encrypted
     }
     return assignments
   }
@@ -221,10 +270,7 @@ export function makeWasmAdapter(): IntegrationAdapter {
         const clauses = encrypted.map(
           (_, i) => `eql_v3.${fn}("${op.column}", $${i + 1}::jsonb::${cast})`,
         )
-        return selectKeys(
-          `(${clauses.join(joiner)})`,
-          encrypted.map((e) => JSON.stringify(e)),
-        )
+        return selectKeys(`(${clauses.join(joiner)})`, encrypted)
       }
       case 'between':
       case 'notBetween': {
