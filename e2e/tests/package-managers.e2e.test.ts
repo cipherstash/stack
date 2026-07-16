@@ -26,10 +26,9 @@ const BIN = {
   cli: resolve(REPO_ROOT, 'packages/cli/dist/bin/stash.js'),
   wizard: resolve(REPO_ROOT, 'packages/wizard/dist/bin/wizard.js'),
   protect: resolve(REPO_ROOT, 'packages/protect/dist/bin/stash.js'),
-  drizzleGen: resolve(
-    REPO_ROOT,
-    'packages/drizzle/dist/bin/generate-eql-migration.js',
-  ),
+  // The legacy @cipherstash/drizzle `generate-eql-migration` bin is gone with
+  // the package (protect sunsets at 1.0; @cipherstash/stack-drizzle is the
+  // successor).
 } as const
 
 const UA: Record<PackageManager, string> = {

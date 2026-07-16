@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - '@cipherstash/protect@*'
-      - '@cipherstash/drizzle@*'
 
 jobs:
   trigger-docs-rebuild:

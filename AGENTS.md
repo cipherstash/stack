@@ -85,7 +85,6 @@ If these variables are missing, tests that require live encryption will fail or 
 - `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — EQL v2 (`.`) and EQL v3 (`./v3`). Split out of `@cipherstash/stack`.
 - `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — `encryptedSupabase` (v2) and `encryptedSupabaseV3` (v3). Split out of `@cipherstash/stack`.
 - `packages/schema`: Schema builder utilities and types (`encryptedTable`, `encryptedColumn`, `encryptedField`)
-- `packages/drizzle`: Drizzle ORM integration (`encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators`)
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/protect-dynamodb`: DynamoDB helpers (`encryptedDynamoDB`)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)

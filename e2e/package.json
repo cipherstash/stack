@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "stash": "workspace:*",
-    "@cipherstash/drizzle": "workspace:*",
     "@cipherstash/protect": "workspace:*",
     "@cipherstash/stack": "workspace:*",
     "@cipherstash/wizard": "workspace:*"
