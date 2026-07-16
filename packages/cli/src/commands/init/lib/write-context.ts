@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { pinnedSpec } from '../../../runtime-versions.js'
 import type {
   HandoffChoice,
   InitState,
@@ -102,7 +103,7 @@ export function buildContextFile(state: InitState): ContextFile {
     integration,
     encryptionClientPath: clientFilePath,
     packageManager: pm,
-    installCommand: prodInstallCommand(pm, '@cipherstash/stack'),
+    installCommand: prodInstallCommand(pm, pinnedSpec('@cipherstash/stack')),
     envKeys: [],
     schemas: state.schemas ?? [],
     installedSkills: [],

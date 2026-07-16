@@ -1,11 +1,13 @@
 import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
 import { isInteractive } from '../../../config/tty.js'
+import { expectedVersion, pinnedSpec } from '../../../runtime-versions.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
 import {
   combinedInstallCommands,
   detectPackageManager,
+  installedVersion,
   isPackageInstalled,
 } from '../utils.js'
 
@@ -35,6 +37,49 @@ function integrationPackageFor(integration?: string): string | null {
 }
 
 /**
+ * Report packages whose installed (resolved, on-disk) version differs from
+ * the version this CLI release was built alongside. Skew like this is how the
+ * dist-tag failure mode (#661) stays invisible: the project's `^`-range spec
+ * looks fine while `node_modules` holds a stale `0.19.0` or placeholder
+ * `0.0.0`. Packages that are absent, or absent from the release map (source
+ * builds), report nothing.
+ */
+export function versionSkew(
+  packages: readonly string[],
+  versions?: Readonly<Record<string, string>>,
+): Array<{ pkg: string; installed: string; expected: string }> {
+  const skewed: Array<{ pkg: string; installed: string; expected: string }> = []
+  for (const pkg of packages) {
+    const expected = versions ? versions[pkg] : expectedVersion(pkg)
+    if (!expected) continue
+    const installed = installedVersion(pkg)
+    if (installed && installed !== expected)
+      skewed.push({ pkg, installed, expected })
+  }
+  return skewed
+}
+
+/** Warn (never mutate) when installed versions don't match this release. */
+function warnOnVersionSkew(packages: readonly string[]): void {
+  const skewed = versionSkew(packages)
+  if (skewed.length === 0) return
+  const pm = detectPackageManager()
+  const lines = skewed.map(
+    ({ pkg, installed, expected }) =>
+      `${pkg}: installed ${installed}, this release of stash expects ${expected}`,
+  )
+  p.log.warn(`Version skew detected:\n  ${lines.join('\n  ')}`)
+  p.note(
+    `Align them with:\n  ${combinedInstallCommands(
+      pm,
+      skewed.map(({ pkg }) => pinnedSpec(pkg)),
+      [],
+    ).join('\n  ')}`,
+    'Version skew',
+  )
+}
+
+/**
  * Install the runtime + dev npm packages the user needs to run encryption:
  *
  * - `@cipherstash/stack` (prod) — the encryption client, schema builders, and
@@ -46,9 +91,16 @@ function integrationPackageFor(integration?: string): string | null {
  * - `stash` (dev) — the CLI itself, so the user can run `stash eql install`,
  *   `stash wizard`, etc. as a project script without the global install.
  *
- * Skips silently when everything is already present. Prompts before running the
- * install commands so the user sees the package manager invocation that's
- * about to execute.
+ * Installs are PINNED to the versions this CLI release was built alongside
+ * (see `src/runtime-versions.ts` and #661) — bare package names resolve
+ * through npm dist-tags, which lag or point at placeholders during
+ * pre-release windows and then deliver a different release than the CLI
+ * driving the setup. Already-present packages are left untouched, but a
+ * version that differs from this release's is called out loudly.
+ *
+ * Skips silently when everything is already present at matching versions.
+ * Prompts before running the install commands so the user sees the package
+ * manager invocation that's about to execute.
  */
 export const installDepsStep: InitStep = {
   id: 'install-deps',
@@ -63,20 +115,30 @@ export const installDepsStep: InitStep = {
       ? isPackageInstalled(integrationPkg)
       : true
 
-    // Everything already there — silent success, no prompts.
+    const allPackages = [
+      STACK_PACKAGE,
+      ...(integrationPkg ? [integrationPkg] : []),
+      CLI_PACKAGE,
+    ]
+
+    // Everything already there — leave it alone (no prompts), but surface
+    // version skew against this release rather than silently proceeding on a
+    // stale or placeholder install (#661).
     if (stackPresent && cliPresent && integrationPresent) {
       const installed = integrationPkg
         ? `${STACK_PACKAGE}, ${integrationPkg} and ${CLI_PACKAGE}`
         : `${STACK_PACKAGE} and ${CLI_PACKAGE}`
       p.log.success(`${installed} are already installed.`)
+      warnOnVersionSkew(allPackages)
       return { ...state, stackInstalled: true, cliInstalled: true }
     }
 
     const pm = detectPackageManager()
     const prodPackages: string[] = []
-    if (!stackPresent) prodPackages.push(STACK_PACKAGE)
-    if (integrationPkg && !integrationPresent) prodPackages.push(integrationPkg)
-    const devPackages = cliPresent ? [] : [CLI_PACKAGE]
+    if (!stackPresent) prodPackages.push(pinnedSpec(STACK_PACKAGE))
+    if (integrationPkg && !integrationPresent)
+      prodPackages.push(pinnedSpec(integrationPkg))
+    const devPackages = cliPresent ? [] : [pinnedSpec(CLI_PACKAGE)]
     const commands = combinedInstallCommands(pm, prodPackages, devPackages)
 
     const missingList = [
@@ -140,6 +202,9 @@ export const installDepsStep: InitStep = {
 
     if (stackInstalled && cliInstalled && integrationInstalled) {
       p.log.success('Stack dependencies installed.')
+      // Fresh installs above are pinned, but packages that were ALREADY
+      // present were not touched — check the whole set for skew.
+      warnOnVersionSkew(allPackages)
     } else {
       const stillMissing = [
         ...(stackInstalled ? [] : [`${STACK_PACKAGE} (prod)`]),
