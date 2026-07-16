@@ -464,7 +464,7 @@ Backfill **auto-detects the target column's EQL version** from its Postgres doma
 stash encrypt cutover --table users --column email
 ```
 
-**EQL v2 only** — v3 has no cut-over: the application switches to `<col>_encrypted` by name, and running this command on a v3 column reports "not applicable" (exit 0) with the next step. For v2, the preconditions are: the column is in the `backfilled` phase, **and** a pending EQL configuration exists.
+**EQL v2 only** — v3 has no cut-over: the application switches to the encrypted column by name. Running this command on a **backfilled** v3 column reports "not applicable" (exit 0) with the next step; before backfill completes it exits 1 and says to finish the backfill (never "switch now" onto a half-populated column). For v2, the preconditions are: the column is in the `backfilled` phase, **and** a pending EQL configuration exists (on a v3-only database — no `eql_v2_configuration` table — it explains that and exits 1).
 
 In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape.
 
