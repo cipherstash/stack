@@ -90,6 +90,7 @@ function assertContainmentNeedle(term: unknown, label: string) {
     `${label}: expected an {sv: [...]} containment needle`,
   )
   assertEquals('c' in obj, false, `${label}: needle carries ciphertext`)
+  assertEquals('v' in obj, false, `${label}: needle carries a version envelope`)
 }
 
 Deno.test({
