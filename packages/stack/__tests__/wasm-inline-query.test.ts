@@ -34,8 +34,10 @@ import { Encryption } from '../src/wasm-inline'
 const users = encryptedTable('users', {
   // TextEq → unique index only
   email: types.TextEq('email'),
-  // TextSearch → match (free-text) index
+  // TextSearch → unique + ope + match
   bio: types.TextSearch('bio'),
+  // IntegerOrd → ope only (the OPE ordering flavour, no unique)
+  age: types.IntegerOrd('age'),
   // Json → ste_vec
   prefs: types.Json('prefs'),
 })
@@ -89,6 +91,35 @@ describe('WasmEncryptionClient.encryptQuery', () => {
     expect(ffi.encryptQuery).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ indexType: 'match' }),
+    )
+  })
+
+  it("swaps orderAndRange's static 'ore' for the v3 ord domain's 'ope'", async () => {
+    // The live Deno matrix caught this: v3 `_ord` domains carry `ope`, not
+    // `ore` — the shared resolver (now used verbatim instead of a local
+    // port) swaps to the ordering index the column actually configures.
+    const c = await client()
+    await c.encryptQuery(42, {
+      table: users,
+      column: users.age,
+      queryType: 'orderAndRange',
+    })
+    expect(ffi.encryptQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ indexType: 'ope' }),
+    )
+  })
+
+  it('answers equality via the ordering index on order-capable columns without unique', async () => {
+    const c = await client()
+    await c.encryptQuery(42, {
+      table: users,
+      column: users.age,
+      queryType: 'equality',
+    })
+    expect(ffi.encryptQuery).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ indexType: 'ope' }),
     )
   })
 

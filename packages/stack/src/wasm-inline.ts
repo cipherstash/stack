@@ -83,6 +83,7 @@ import {
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
+import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
 import { type AnyV3Table, buildEncryptConfig } from '@/eql/v3'
 import {
   type CastAs,
@@ -95,9 +96,9 @@ import type {
   Encrypted,
   EncryptedQuery,
   EncryptOptions,
+  Plaintext,
   QueryTypeName,
 } from '@/types'
-import { queryTypeToFfi, queryTypeToQueryOp } from '@/types'
 
 // -----------------------------------------------------------------------
 // Schema + type re-exports
@@ -294,55 +295,6 @@ export type WasmQueryTerm = WasmEncryptQueryOptions & {
 }
 
 /**
- * Resolve the FFI `{ indexType, queryOp }` for a query term. A local port of
- * the native client's `resolveIndexType` (packages/protect
- * `ffi/helpers/infer-index-type.ts`) — this module deliberately never
- * imports `@cipherstash/protect` (it would drag the Node-only native FFI
- * into the WASM bundle), so the ~40 lines live here. Keep the two in
- * behavioural lockstep.
- */
-function resolveQueryIndex(
-  column: BuildableV3QueryableColumn,
-  queryType: QueryTypeName | undefined,
-  plaintext: WasmPlaintext | null,
-): { indexType: string; queryOp?: string } {
-  const indexes = column.build().indexes ?? {}
-  const has = (k: string) =>
-    (indexes as Record<string, unknown>)[k] !== undefined
-
-  const stevecOp = () =>
-    typeof plaintext === 'string' ? 'ste_vec_selector' : 'ste_vec_term'
-
-  if (queryType) {
-    const indexType = queryTypeToFfi[queryType]
-    if (!has(indexType)) {
-      throw new Error(
-        `[encryption]: index type "${indexType}" is not configured on column "${column.getName()}"`,
-      )
-    }
-    if (queryType === 'searchableJson') {
-      return plaintext === null || plaintext === undefined
-        ? { indexType }
-        : { indexType, queryOp: stevecOp() }
-    }
-    const mappedOp = queryTypeToQueryOp[queryType]
-    return mappedOp ? { indexType, queryOp: mappedOp } : { indexType }
-  }
-
-  // Inference priority mirrors the native client: unique > match > ore > ste_vec.
-  const inferred = (['unique', 'match', 'ore', 'ste_vec'] as const).find(has)
-  if (!inferred) {
-    throw new Error(
-      `[encryption]: column "${column.getName()}" has no indexes configured — nothing to query`,
-    )
-  }
-  if (inferred === 'ste_vec' && plaintext !== null && plaintext !== undefined) {
-    return { indexType: inferred, queryOp: stevecOp() }
-  }
-  return { indexType: inferred }
-}
-
-/**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
  * forge one even if they recreate `WasmEncryptionClient` via type
@@ -478,10 +430,19 @@ export class WasmEncryptionClient {
     opts: WasmEncryptQueryOptions,
   ): Promise<EncryptedQuery | null> {
     if (plaintext === null || plaintext === undefined) return null
-    const { indexType, queryOp } = resolveQueryIndex(
+    // The SAME resolver the native client uses (`@/encryption/helpers` is
+    // type-only on protect-ffi, so it's WASM-bundle-safe): explicit
+    // queryType validated against the column's indexes; v3 ord domains'
+    // `ope` swapped in for `orderAndRange`; equality answered via the
+    // ordering index on order-capable columns without `unique`; inference
+    // priority unique > match > ore/ope > ste_vec.
+    // WasmPlaintext widens Plaintext with `bigint` (carried natively over
+    // the WASM boundary); the resolver only `typeof`-inspects the value for
+    // ste_vec op inference, so the assertion is safe.
+    const { indexType, queryOp } = resolveIndexType(
       opts.column,
       opts.queryType,
-      plaintext,
+      plaintext as Plaintext,
     )
     // serde on the WASM side rejects explicitly-undefined fields ("invalid
     // type: unit value, expected a string") — OMIT queryOp when absent
@@ -534,10 +495,10 @@ export class WasmEncryptionClient {
     if (live.length === 0) return out
 
     const ffiTerms = live.map(({ term }) => {
-      const { indexType, queryOp } = resolveQueryIndex(
+      const { indexType, queryOp } = resolveIndexType(
         term.column,
         term.queryType,
-        term.value,
+        term.value as Plaintext,
       )
       return {
         plaintext: term.value,
