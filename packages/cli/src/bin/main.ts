@@ -38,6 +38,7 @@ import {
   wizardCommand,
 } from '../commands/index.js'
 import { messages } from '../messages.js'
+import { pinnedSpec } from '../runtime-versions.js'
 import {
   classifyCommand,
   classifyErrorType,
@@ -81,7 +82,7 @@ async function requireStack<T>(importFn: () => Promise<T>): Promise<T> {
     if (isModuleNotFound(err)) {
       p.log.error(
         `@cipherstash/stack is required for this command.
-  Install it with: ${prodInstallCommand(PM, '@cipherstash/stack')}
+  Install it with: ${prodInstallCommand(PM, pinnedSpec('@cipherstash/stack'))}
   Or run: ${STASH} init`,
       )
       throw new CliExit(1)

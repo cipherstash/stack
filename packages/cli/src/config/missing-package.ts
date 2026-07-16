@@ -12,6 +12,7 @@ import {
 } from '../commands/init/utils.js'
 import { messages } from '../messages.js'
 import { isModuleNotFound, moduleNotFoundSpecifier } from '../module-error.js'
+import { pinnedSpec } from '../runtime-versions.js'
 
 const CLI_PACKAGE = 'stash'
 const STACK_PACKAGE = '@cipherstash/stack'
@@ -44,7 +45,11 @@ export function missingCipherStashPackage(error: unknown): string | undefined {
 export function reportMissingCipherStashPackage(pkg: string): never {
   const pm = detectPackageManager()
   const stash = runnerCommand(pm, 'stash')
-  const install = combinedInstallCommands(pm, [STACK_PACKAGE], [CLI_PACKAGE])
+  const install = combinedInstallCommands(
+    pm,
+    [pinnedSpec(STACK_PACKAGE)],
+    [pinnedSpec(CLI_PACKAGE)],
+  )
   console.error(
     `Error: ${messages.db.missingCipherStashPackage(pkg, install.join('\n  '), stash)}\n`,
   )

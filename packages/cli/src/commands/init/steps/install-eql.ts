@@ -1,5 +1,6 @@
 import * as p from '@clack/prompts'
 import { isInteractive } from '../../../config/tty.js'
+import { pinnedSpec } from '../../../runtime-versions.js'
 import { installCommand } from '../../db/install.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
@@ -79,8 +80,11 @@ export const installEqlStep: InitStep = {
       p.log.error(
         '`stash` is not installed in this project. The previous step (install-deps) was skipped or failed. Re-run `stash init` and accept the dependency install when prompted, or install it manually:',
       )
+      // Pinned to this release's version (#661) — a bare `stash` here resolves
+      // the `latest` dist-tag, which can lag during pre-release windows.
+      const spec = pinnedSpec('stash')
       p.note(
-        '  npm install --save-dev stash\n  pnpm add -D stash\n  yarn add -D stash\n  bun add -D stash',
+        `  npm install --save-dev ${spec}\n  pnpm add -D ${spec}\n  yarn add -D ${spec}\n  bun add -D ${spec}`,
         'Then re-run init',
       )
       return { ...state, eqlInstalled: false }

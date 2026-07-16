@@ -24,6 +24,13 @@ In EQL v3 every encrypted column is a **concrete Postgres domain** (`public.eql_
 npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 ```
 
+> **Version note:** `npx stash init` is the preferred install path — it pins
+> every `@cipherstash/*` package to the versions matching your CLI release.
+> If you install manually as above, verify what actually resolved
+> (`node -p "require('@cipherstash/stack/package.json').version"`): bare
+> dist-tag installs can lag behind a release, and `stash init` will warn on
+> the version skew.
+
 The Drizzle integration ships as its own first-party package,
 `@cipherstash/stack-drizzle`, which depends on `@cipherstash/stack`. Install both.
 The v3 surface documented here lives on the `@cipherstash/stack-drizzle/v3` subpath.

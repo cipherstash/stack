@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Integration, SchemaDef } from './types.js'
 
@@ -17,6 +17,33 @@ export function isPackageInstalled(packageName: string): boolean {
   const modulePath = resolve(process.cwd(), 'node_modules', packageName)
   const manifestPath = resolve(modulePath, 'package.json')
   return existsSync(modulePath) && existsSync(manifestPath)
+}
+
+/**
+ * The RESOLVED version of an installed package — what's actually on disk in
+ * `node_modules/<pkg>/package.json`, not the specifier in the project
+ * manifest. Used by init to detect version skew against the release this CLI
+ * shipped with (#661): a stale or placeholder install (`0.19.0` / `0.0.0`
+ * from a lagging dist-tag) hides behind a `^`-range spec but is obvious here.
+ * Returns `undefined` when the package (or its manifest version) is absent.
+ */
+export function installedVersion(packageName: string): string | undefined {
+  const manifestPath = resolve(
+    process.cwd(),
+    'node_modules',
+    packageName,
+    'package.json',
+  )
+  if (!existsSync(manifestPath)) return undefined
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    const version = (manifest as { version?: unknown }).version
+    return typeof version === 'string' && version.length > 0
+      ? version
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export type PackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun'

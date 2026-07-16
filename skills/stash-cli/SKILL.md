@@ -36,7 +36,7 @@ npx stash init              # PostgreSQL / Drizzle / Prisma
 npx stash init --supabase   # Supabase
 ```
 
-`stash init` installs the CLI as a project dev dependency, so subsequent commands can drop the `npx`. The CLI is package-manager aware — before init, use whichever one-shot runner your project uses (`npx`, `pnpm dlx`, `bunx`, `yarn dlx`).
+`stash init` installs the CLI as a project dev dependency, so subsequent commands can drop the `npx`. The CLI is package-manager aware — before init, use whichever one-shot runner your project uses (`npx`, `pnpm dlx`, `bunx`, `yarn dlx`). Installs are **pinned to the exact `@cipherstash/*` versions this CLI release shipped with** (never bare dist-tags, which can lag behind a release), and init warns if an already-installed package's resolved version differs from the release's — treat that warning as a real problem and align versions before continuing.
 
 **If you are an agent, do this first:**
 

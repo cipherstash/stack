@@ -50,6 +50,13 @@ const decrypted = await client.decrypt(encrypted.data)
 npm install @cipherstash/stack
 ```
 
+> **Version note:** `npx stash init` is the preferred install path — it pins
+> every `@cipherstash/*` package to the versions matching your CLI release.
+> If you install manually as above, verify what actually resolved
+> (`node -p "require('@cipherstash/stack/package.json').version"`): bare
+> dist-tag installs can lag behind a release, and `stash init` will warn on
+> the version skew.
+
 > [!IMPORTANT]
 > **Exclude `@cipherstash/stack` from bundling — required for any project with a bundler (Next.js, webpack, esbuild, vite SSR, etc.).** The package wraps a native FFI module (`@cipherstash/protect-ffi`) that cannot be bundled. Importing the encryption client from server code without this exclusion will fail at runtime with errors about missing native modules. Configure as soon as you install the package; do not skip this step.
 

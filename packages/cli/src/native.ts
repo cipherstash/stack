@@ -20,6 +20,7 @@ import {
   type ModuleError,
   moduleNotFoundSpecifier,
 } from './module-error.js'
+import { pinnedSpec } from './runtime-versions.js'
 
 // Matches the platform-suffixed optional package, e.g.
 // `@cipherstash/protect-ffi-darwin-arm64` or `@cipherstash/auth-linux-x64-gnu`.
@@ -84,7 +85,11 @@ export function reportNativeBinaryMissing(err: unknown): void {
   const pm = detectPackageManager()
   // Runner-aware so we don't hardcode `npx` (see scripts/lint-no-hardcoded-runners.mjs):
   // npm → `npx`, bun → `bunx`, pnpm/yarn → `… dlx`.
-  const rerun = `${runnerCommand(pm, 'stash@latest')} <command>`
+  // Pinned to THIS release (#661): `stash@latest` could resolve a different
+  // (older) CLI during a pre-release window, silently switching releases
+  // mid-diagnosis. Re-running the same version with a cleared cache is the
+  // recovery we actually want.
+  const rerun = `${runnerCommand(pm, pinnedSpec('stash'))} <command>`
   // The one-shot runner cache is npm-specific (`_npx`); for other package
   // managers a clean re-run is the equivalent first step. Shell syntax differs
   // on Windows (PowerShell), which is a supported target.

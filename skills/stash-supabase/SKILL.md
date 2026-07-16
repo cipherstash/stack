@@ -31,6 +31,13 @@ deployments — see "Legacy: EQL v2" at the end. New projects should use
 npm install @cipherstash/stack @cipherstash/stack-supabase @supabase/supabase-js
 ```
 
+> **Version note:** `npx stash init` is the preferred install path — it pins
+> every `@cipherstash/*` package to the versions matching your CLI release.
+> If you install manually as above, verify what actually resolved
+> (`node -p "require('@cipherstash/stack/package.json').version"`): bare
+> dist-tag installs can lag behind a release, and `stash init` will warn on
+> the version skew.
+
 The Supabase integration ships as its own first-party package,
 `@cipherstash/stack-supabase`, which depends on `@cipherstash/stack`. Install both.
 
