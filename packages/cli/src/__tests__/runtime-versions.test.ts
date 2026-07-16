@@ -116,6 +116,14 @@ describe('compareVersions', () => {
     expect(compareVersions('1.0.0-rc.1', '1.0.0-rc.1')).toBe(0)
   })
 
+  it('treats a non-numeric core as not comparable (never "ahead")', () => {
+    // A corrupt manifest version must not NaN-poison the order into 1
+    // ("installed is newer") — that would suppress the align guidance.
+    expect(compareVersions('v1.0.0', '1.0.0')).toBe(0)
+    expect(compareVersions('1.0.x', '1.0.0')).toBe(0)
+    expect(compareVersions('garbage', '1.0.0')).toBe(0)
+  })
+
   it('numeric identifiers sort below alphanumeric; shorter below longer', () => {
     expect(compareVersions('1.0.0-1', '1.0.0-alpha')).toBe(-1)
     expect(compareVersions('1.0.0-rc', '1.0.0-rc.1')).toBe(-1)

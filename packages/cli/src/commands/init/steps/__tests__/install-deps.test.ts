@@ -316,6 +316,23 @@ describe('versionSkew', () => {
     expect(versionSkew(['@no-map/package'], {})).toEqual([])
   })
 
+  it('classifies a garbage installed version as behind (align guidance), not ahead', () => {
+    present('@cipherstash/stack')
+    resolvedVersions({ '@cipherstash/stack': 'not-a-version' })
+    expect(
+      versionSkew(['@cipherstash/stack'], {
+        '@cipherstash/stack': '9.9.9-test.1',
+      }),
+    ).toEqual([
+      {
+        pkg: '@cipherstash/stack',
+        installed: 'not-a-version',
+        expected: '9.9.9-test.1',
+        direction: 'behind',
+      },
+    ])
+  })
+
   it('flags an installed package with an unreadable manifest', () => {
     present('@cipherstash/stack')
     resolvedVersions({ '@cipherstash/stack': undefined })
