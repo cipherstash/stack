@@ -5,6 +5,11 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
+    // Mirrors `packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
+    // conditional exports, and bundler resolution omits `node` by
+    // default. Needed because the `@/*` mapping below pulls stack
+    // SOURCE (which imports protect-ffi types) into this program.
+    "customConditions": ["node"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
@@ -16,8 +21,19 @@
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "rootDir": "."
+    // No `rootDir` pin: the integration suite (like stack-drizzle's)
+    // pulls `@cipherstash/test-kit` SOURCE and the repo-root
+    // `vitest.shared.ts` into the program, which live outside this
+    // package. `noEmit` is set, so rootDir would only manufacture
+    // TS6059 errors here.
+    "baseUrl": ".",
+    "paths": {
+      // test-kit is a source-only package that consumes stack through
+      // the `@/` alias; mirror stack-drizzle's mapping so its sources
+      // typecheck inside this package's program.
+      "@/*": ["../stack/src/*"]
+    }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "integration/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
