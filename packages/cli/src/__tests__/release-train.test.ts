@@ -6,6 +6,7 @@ import { INTEGRATION_ADAPTER_PACKAGES } from '../commands/init/steps/install-dep
 import { RELEASE_TRAIN_MANIFESTS } from '../release-train.js'
 
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
+const REPO_ROOT = resolve(CLI_ROOT, '../..')
 
 // The growth guard for #661: `RELEASE_TRAIN_MANIFESTS` is the single source
 // the build embeds versions from, and `INTEGRATION_ADAPTER_PACKAGES` is what
@@ -45,5 +46,21 @@ describe('release train coverage', () => {
       expect(typeof m.version, `${pkg} version`).toBe('string')
       expect((m.version as string).length).toBeGreaterThan(0)
     }
+  })
+
+  it('the changesets fixed group is exactly the release train (staleness guard)', () => {
+    // The staleness half of #661/#669 is release-process config: every train
+    // package must version in lockstep with `stash`, or a release of the odd
+    // one out ships while the published CLI still embeds — and pins — its old
+    // version. Guard the config like the code: group membership must equal
+    // the train, exactly.
+    const config = JSON.parse(
+      readFileSync(resolve(REPO_ROOT, '.changeset/config.json'), 'utf8'),
+    ) as { fixed?: string[][] }
+    const group = config.fixed?.find((g) => g.includes('stash'))
+    expect(group, 'a changesets fixed group containing stash').toBeDefined()
+    expect(new Set(group)).toEqual(
+      new Set(Object.keys(RELEASE_TRAIN_MANIFESTS)),
+    )
   })
 })

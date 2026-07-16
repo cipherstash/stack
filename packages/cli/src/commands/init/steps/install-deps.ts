@@ -2,6 +2,7 @@ import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
 import { isInteractive } from '../../../config/tty.js'
 import {
+  compareVersions,
   expectedVersion,
   pinnedSpec,
   RUNTIME_PACKAGE_VERSIONS,
@@ -11,6 +12,7 @@ import { CancelledError } from '../types.js'
 import {
   combinedInstallCommands,
   detectPackageManager,
+  devInstallCommand,
   installedVersion,
   isPackageInstalled,
 } from '../utils.js'
@@ -49,6 +51,10 @@ export type VersionSkewEntry = {
   pkg: string
   installed: string
   expected: string
+  /** `behind`: older than this release (or unreadable) — offer alignment.
+   * `ahead`: NEWER than this release expects — the install is likely fine
+   * and the fix is updating stash, never downgrading the package. */
+  direction: 'behind' | 'ahead'
 }
 
 /**
@@ -71,7 +77,15 @@ export function versionSkew(
     if (!expected) continue
     if (!isPackageInstalled(pkg)) continue
     const installed = installedVersion(pkg) ?? UNREADABLE_VERSION
-    if (installed !== expected) skewed.push({ pkg, installed, expected })
+    if (installed === expected) continue
+    // Unreadable manifests are treated as `behind`: a broken install should
+    // be offered the (re)install fix, not a stash upgrade.
+    const direction =
+      installed !== UNREADABLE_VERSION &&
+      compareVersions(installed, expected) > 0
+        ? ('ahead' as const)
+        : ('behind' as const)
+    skewed.push({ pkg, installed, expected, direction })
   }
   return skewed
 }
@@ -83,6 +97,17 @@ function skewLines(skewed: readonly VersionSkewEntry[]): string {
     .map(
       ({ pkg, installed, expected }) =>
         `${pkg}: installed ${installed}, this release of stash expects ${expected}`,
+    )
+    .join('\n  ')
+}
+
+/** Render the newer-than-expected lines: the fix is updating stash, never
+ * downgrading a runtime package past releases the project already uses. */
+function aheadLines(ahead: readonly VersionSkewEntry[]): string {
+  return ahead
+    .map(
+      ({ pkg, installed, expected }) =>
+        `${pkg}: installed ${installed} is newer than this release of stash expects (${expected})`,
     )
     .join('\n  ')
 }
@@ -151,7 +176,13 @@ export const installDepsStep: InitStep = {
     // failure, or early return can skip it (#661). Every path below inherits
     // this warning.
     const pm = detectPackageManager()
-    const skewed = versionSkew(allPackages)
+    const allSkew = versionSkew(allPackages)
+    // Direction matters (#666 review): only packages BEHIND this release get
+    // the align treatment. A package AHEAD of this release means the CLI is
+    // the stale side — advising a downgrade would walk the project back past
+    // releases it already depends on.
+    const skewed = allSkew.filter(({ direction }) => direction === 'behind')
+    const ahead = allSkew.filter(({ direction }) => direction === 'ahead')
     const alignSplit = splitProdDev(skewed.map(({ pkg }) => pkg))
     const alignCommands = combinedInstallCommands(
       pm,
@@ -168,6 +199,29 @@ export const installDepsStep: InitStep = {
     if (integrationPkg && !integrationPresent) missing.push(integrationPkg)
     if (!cliPresent) missing.push(CLI_PACKAGE)
     const missingSplit = splitProdDev(missing)
+
+    if (ahead.length > 0) {
+      // Every release-train package versions in lockstep (the changesets
+      // `fixed` group), so a train package strictly ahead of this CLI's embed
+      // implies a stash release exists at that exact version — print the
+      // command instead of leaving the user to research "the matching
+      // release". Highest ahead version wins when several differ.
+      const target = ahead
+        .map(({ installed }) => installed)
+        .reduce((max, v) => (compareVersions(v, max) > 0 ? v : max))
+      const updateCmd = devInstallCommand(pm, `stash@${target}`)
+      // Installing MISSING packages now would pin them to this CLI's older
+      // embed, pairing them with the newer installed packages — a combination
+      // no lockstep release ever shipped. Say so instead of silently
+      // manufacturing the mismatch.
+      const missingNote =
+        missing.length > 0
+          ? `\nNote: ${missing.join(', ')} will be installed at THIS release's versions, which may not match the newer packages above — for a consistent set, update stash first and re-run init:\n  ${updateCmd}`
+          : `\nUpdate with:\n  ${updateCmd}\nthen re-run init.`
+      p.log.warn(
+        `Installed versions are newer than this release of stash:\n  ${aheadLines(ahead)}\nYour installs are likely fine — update the stash CLI to the matching release instead of downgrading.${missingNote}`,
+      )
+    }
 
     // Interactively, skewed packages can be aligned in the same install run.
     // Non-interactive runs never mutate an existing install: agents/CI get

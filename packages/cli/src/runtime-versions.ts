@@ -92,3 +92,72 @@ export function pinnedSpec(
   const version = expectedVersion(pkg, versions)
   return version ? `${pkg}@${version}` : pkg
 }
+
+/**
+ * Compare two release-train version strings per semver precedence (§11):
+ * numeric core compared numerically, then prerelease identifiers dot-by-dot
+ * (numeric < alphanumeric; a release outranks any of its prereleases).
+ * Returns -1 / 0 / 1 for a < b / a == b / a > b.
+ *
+ * Deliberately NOT a full semver implementation — no ranges, no build
+ * metadata — just enough to order the versions this repo publishes
+ * (`x.y.z` and `x.y.z-rc.n`), so the skew warning can tell "behind" from
+ * "ahead" without adding a dependency to the CLI.
+ *
+ * A version that isn't strictly `digits.digits.digits` with an optional
+ * well-formed prerelease (`v1.0.0`, `1.0.x`, `1.0`, `1.0.0-`, `1.0.0beta`,
+ * `1.0.0-rc.2+sha` — build metadata deliberately rejected, and any other
+ * garbage from a corrupt manifest) is NOT COMPARABLE: return `0` rather
+ * than a partially-parsed order. Callers classify non-ahead as behind, so
+ * an unparseable installed version gets the safe treatment (align/reinstall
+ * guidance) instead of being silently promoted to "newer, leave it".
+ */
+/** Exactly three numeric core segments, optional dot-separated prerelease
+ * identifiers (each non-empty alphanumeric/hyphen). No build metadata: `+`
+ * fails the shape and the version is treated as not comparable — the safe
+ * direction — rather than mis-ordered by an identifier like `2+sha`. */
+const VERSION_SHAPE = /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/
+
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  if (!VERSION_SHAPE.test(a) || !VERSION_SHAPE.test(b)) return 0
+  const parse = (v: string) => {
+    const [core, ...pre] = v.split('-')
+    return {
+      core: core.split('.').map((n) => Number.parseInt(n, 10)),
+      pre: pre.join('-'), // prerelease may itself contain '-'
+    }
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  for (let i = 0; i < 3; i++) {
+    // The shape gate guarantees exactly three numeric segments.
+    const da = pa.core[i] as number
+    const db = pb.core[i] as number
+    if (da !== db) return da < db ? -1 : 1
+  }
+  // Same core: a release (no prerelease) outranks any prerelease of it.
+  if (!pa.pre && !pb.pre) return 0
+  if (!pa.pre) return 1
+  if (!pb.pre) return -1
+  const ia = pa.pre.split('.')
+  const ib = pb.pre.split('.')
+  for (let i = 0; i < Math.max(ia.length, ib.length); i++) {
+    const xa = ia[i]
+    const xb = ib[i]
+    // Fewer identifiers sorts lower when all preceding ones are equal.
+    if (xa === undefined) return -1
+    if (xb === undefined) return 1
+    const na = /^\d+$/.test(xa) ? Number.parseInt(xa, 10) : undefined
+    const nb = /^\d+$/.test(xb) ? Number.parseInt(xb, 10) : undefined
+    if (na !== undefined && nb !== undefined) {
+      if (na !== nb) return na < nb ? -1 : 1
+    } else if (na !== undefined) {
+      return -1 // numeric identifiers sort below alphanumeric ones
+    } else if (nb !== undefined) {
+      return 1
+    } else if (xa !== xb) {
+      return xa < xb ? -1 : 1
+    }
+  }
+  return 0
+}
