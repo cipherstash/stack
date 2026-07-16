@@ -285,14 +285,15 @@ describe('decryptAll — one bulkDecrypt per routing-key group', () => {
 
     expect(sdk.bulkDecryptCalls).toHaveLength(1)
     const call = sdk.bulkDecryptCalls[0]
-    expect(call?.ciphertexts).toHaveLength(3)
+    if (!call) throw new Error('expected a recorded bulk decrypt call')
+    expect(call.ciphertexts).toHaveLength(3)
     // Order is the walker's discovery order — for a flat array this
     // is the array's own order; the assertion pins that the bulk
     // decrypt's `ciphertexts` slot lines up with the envelopes the
     // walker visits in sequence.
-    expect((call?.ciphertexts[0] as { c: string }).c).toBe('ct:x')
-    expect((call?.ciphertexts[1] as { c: string }).c).toBe('ct:y')
-    expect((call?.ciphertexts[2] as { c: string }).c).toBe('ct:z')
+    expect((call.ciphertexts[0] as { c: string }).c).toBe('ct:x')
+    expect((call.ciphertexts[1] as { c: string }).c).toBe('ct:y')
+    expect((call.ciphertexts[2] as { c: string }).c).toBe('ct:z')
   })
 
   it('groups by (sdk, routing key) so multi-tenant SDKs stay isolated', async () => {
