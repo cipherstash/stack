@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   detectPackageManager,
   devInstallCommand,
+  installedVersion,
   isPackageInstalled,
   prodInstallCommand,
   runnerCommand,
@@ -190,5 +191,55 @@ describe('isPackageInstalled', () => {
     mkdirSync(pkgDir, { recursive: true })
     writeFileSync(join(pkgDir, 'package.json'), '{"name":"@cipherstash/stack"}')
     expect(isPackageInstalled('@cipherstash/stack')).toBe(true)
+  })
+})
+
+// Real-filesystem coverage: installedVersion drives the #661 skew warning, so
+// its read/parse/degrade behaviour is exercised against actual manifests here
+// (everywhere else it's mocked).
+describe('installedVersion', () => {
+  let tmp: string
+  let cwdSpy: ReturnType<typeof vi.spyOn> | undefined
+
+  function writeManifest(pkg: string, contents: string) {
+    const dir = join(tmp, 'node_modules', ...pkg.split('/'))
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), contents)
+  }
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'installed-version-test-'))
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmp)
+  })
+
+  afterEach(() => {
+    cwdSpy?.mockRestore()
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  it('reads the resolved version from node_modules (scoped package)', () => {
+    writeManifest(
+      '@cipherstash/stack',
+      JSON.stringify({ name: '@cipherstash/stack', version: '9.9.9-test.1' }),
+    )
+    expect(installedVersion('@cipherstash/stack')).toBe('9.9.9-test.1')
+  })
+
+  it('returns undefined for an absent package', () => {
+    expect(installedVersion('@cipherstash/stack')).toBeUndefined()
+  })
+
+  it('returns undefined for a corrupt manifest (aborted install)', () => {
+    writeManifest('@cipherstash/stack', '{ truncated')
+    expect(installedVersion('@cipherstash/stack')).toBeUndefined()
+    // ...which the caller (versionSkew) reports as a broken install rather
+    // than treating as a matching one — see install-deps.test.ts.
+  })
+
+  it('returns undefined for a manifest without a usable version', () => {
+    writeManifest('pkg-no-version', JSON.stringify({ name: 'pkg-no-version' }))
+    expect(installedVersion('pkg-no-version')).toBeUndefined()
+    writeManifest('pkg-empty-version', JSON.stringify({ version: '' }))
+    expect(installedVersion('pkg-empty-version')).toBeUndefined()
   })
 })

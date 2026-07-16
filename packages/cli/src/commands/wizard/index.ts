@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import * as p from '@clack/prompts'
+import { pinnedSpec } from '../../runtime-versions.js'
 import {
   detectPackageManager,
   isPackageInstalled,
@@ -40,7 +41,11 @@ export async function runWizardSpawn(
   passthroughArgs: string[],
 ): Promise<number> {
   const pm = detectPackageManager()
-  const runner = runnerCommand(pm, WIZARD_PACKAGE)
+  // Pin the one-shot run to this release's wizard version (#661): a bare
+  // `npx @cipherstash/wizard` resolves `latest`, which can lag or point at a
+  // placeholder during pre-release windows — executing a DIFFERENT release
+  // than the CLI that spawned it.
+  const runner = runnerCommand(pm, pinnedSpec(WIZARD_PACKAGE))
   const cached = isPackageInstalled(WIZARD_PACKAGE)
 
   if (cached) {

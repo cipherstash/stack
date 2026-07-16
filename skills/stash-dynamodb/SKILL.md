@@ -22,6 +22,13 @@ Guide for integrating CipherStash field-level encryption with Amazon DynamoDB us
 npm install @cipherstash/stack @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb
 ```
 
+> **Version note:** `npx stash init` is the preferred install path — it pins
+> every `@cipherstash/*` package to the versions matching your CLI release.
+> If you install manually as above, verify what actually resolved
+> (`node -p "require('@cipherstash/stack/package.json').version"`): bare
+> dist-tag installs can lag behind a release, and `stash init` will warn on
+> the version skew.
+
 ## How It Works
 
 CipherStash encrypts each attribute into two DynamoDB attributes:

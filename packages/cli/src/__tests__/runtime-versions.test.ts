@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   expectedVersion,
+  parseEmbeddedVersions,
   pinnedSpec,
   RUNTIME_PACKAGE_VERSIONS,
 } from '../runtime-versions.js'
@@ -19,6 +20,44 @@ describe('runtime-versions (no build-time embed)', () => {
 
   it('expectedVersion is undefined', () => {
     expect(expectedVersion('@cipherstash/stack')).toBeUndefined()
+  })
+})
+
+// The embed parser is what stands between a build defect and silently
+// unpinned installs (#661): absent (source mode) is fine; present-but-broken
+// must THROW, never degrade to {}.
+describe('parseEmbeddedVersions', () => {
+  it('absent embed (source mode) yields an empty map', () => {
+    expect(parseEmbeddedVersions(undefined)).toEqual({})
+  })
+
+  it('parses a valid embed', () => {
+    expect(
+      parseEmbeddedVersions('{"stash":"9.9.9-test.1","@x/y":"8.8.8-test.2"}'),
+    ).toEqual({ stash: '9.9.9-test.1', '@x/y': '8.8.8-test.2' })
+  })
+
+  it('throws on unparseable JSON instead of degrading to unpinned', () => {
+    expect(() => parseEmbeddedVersions('{not json')).toThrow(
+      /build defect.*not valid JSON/s,
+    )
+  })
+
+  it('throws on a non-object shape', () => {
+    expect(() => parseEmbeddedVersions('["stash"]')).toThrow(
+      /not a plain object/,
+    )
+    expect(() => parseEmbeddedVersions('null')).toThrow(/not a plain object/)
+    expect(() => parseEmbeddedVersions('"9.9.9"')).toThrow(/not a plain object/)
+  })
+
+  it('throws on a missing/non-string version value', () => {
+    expect(() => parseEmbeddedVersions('{"stash":""}')).toThrow(
+      /usable version for "stash"/,
+    )
+    expect(() => parseEmbeddedVersions('{"stash":42}')).toThrow(
+      /usable version for "stash"/,
+    )
   })
 })
 
@@ -45,8 +84,8 @@ describe('runtime-versions (explicit version map)', () => {
   })
 
   it('leaves unknown packages unpinned', () => {
-    expect(pinnedSpec('@cipherstash/stack-drizzle', versions)).toBe(
-      '@cipherstash/stack-drizzle',
+    expect(pinnedSpec('@cipherstash/not-on-the-train', versions)).toBe(
+      '@cipherstash/not-on-the-train',
     )
   })
 
