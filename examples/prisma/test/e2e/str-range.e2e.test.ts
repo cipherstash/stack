@@ -6,18 +6,18 @@
  * equality + order/range (OPE) + free-text search (bloom match) on one
  * column. Pins:
  *   - Round-trip decrypt recovers the source strings.
- *   - `cipherstashEq` selects exactly the matching row.
- *   - `cipherstashGt('m')` filters lexicographically.
- *   - `cipherstashV3Asc` / `cipherstashV3Desc` order alphabetically
+ *   - `eqlEq` selects exactly the matching row.
+ *   - `eqlGt('m')` filters lexicographically.
+ *   - `eqlAsc` / `eqlDesc` order alphabetically
  *     via the encrypted order term.
- *   - `cipherstashIlike` — bloom-filter TOKEN containment
+ *   - `eqlMatch` — bloom-filter TOKEN containment
  *     (`eql_v3.contains`), not SQL ILIKE — coexists with the
  *     order-and-range operators on the same column.
  */
 
+import 'dotenv/config'
+
 import {
-  cipherstashV3Asc,
-  cipherstashV3Desc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
@@ -25,6 +25,8 @@ import {
   EncryptedJson,
   EncryptedNumber,
   EncryptedString,
+  eqlAsc,
+  eqlDesc,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
@@ -67,24 +69,20 @@ describe('EncryptedString (eql_v3_text_search) e2e (live PG + EQL v3 + ZeroKMS)'
     }
   })
 
-  it('cipherstashEq selects exactly the matching row', async () => {
+  it('eqlEq selects exactly the matching row', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.email.cipherstashEq('mallory@example.com'),
+      u.email.eqlEq('mallory@example.com'),
     ).all()
     expect(rows.map((r) => r.id)).toEqual(['e2e-str-2'])
   })
 
-  it('cipherstashGt filters lexicographically', async () => {
-    const rows = await db.orm.public.User.where((u) =>
-      u.email.cipherstashGt('m'),
-    ).all()
+  it('eqlGt filters lexicographically', async () => {
+    const rows = await db.orm.public.User.where((u) => u.email.eqlGt('m')).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-str-2', 'e2e-str-3'])
   })
 
-  it('cipherstashV3Asc orders alphabetically via the encrypted order term', async () => {
-    const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashV3Asc(u.email),
-    ).all()
+  it('eqlAsc orders alphabetically via the encrypted order term', async () => {
+    const rows = await db.orm.public.User.orderBy((u) => eqlAsc(u.email)).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-str-0',
       'e2e-str-1',
@@ -93,10 +91,8 @@ describe('EncryptedString (eql_v3_text_search) e2e (live PG + EQL v3 + ZeroKMS)'
     ])
   })
 
-  it('cipherstashV3Desc reverses the alphabetical order', async () => {
-    const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashV3Desc(u.email),
-    ).all()
+  it('eqlDesc reverses the alphabetical order', async () => {
+    const rows = await db.orm.public.User.orderBy((u) => eqlDesc(u.email)).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-str-3',
       'e2e-str-2',
@@ -105,9 +101,9 @@ describe('EncryptedString (eql_v3_text_search) e2e (live PG + EQL v3 + ZeroKMS)'
     ])
   })
 
-  it('cipherstashIlike (bloom token containment) coexists with order-and-range', async () => {
+  it('eqlMatch (bloom token containment) coexists with order-and-range', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.email.cipherstashIlike('example.com'),
+      u.email.eqlMatch('example.com'),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-str-0',
@@ -116,9 +112,9 @@ describe('EncryptedString (eql_v3_text_search) e2e (live PG + EQL v3 + ZeroKMS)'
     ])
   })
 
-  it('cipherstashIlike misses tokens absent from the ciphertext index', async () => {
+  it('eqlMatch misses tokens absent from the ciphertext index', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.email.cipherstashIlike('nonexistent-token'),
+      u.email.eqlMatch('nonexistent-token'),
     ).all()
     expect(rows).toHaveLength(0)
   })

@@ -4,14 +4,14 @@ End-to-end demo of [`@cipherstash/prisma-next`](../../packages/prisma-next/READM
 
 A single `User` model with one column per plaintext family, exercised end-to-end: insert, equality, free-text token search, range, between, in-array, encrypted-order-term sort, JSON containment, and `decryptAll`-amortised read.
 
-| Column          | Constructor                       | Domain                | Query surface                          |
-| --------------- | --------------------------------- | --------------------- | -------------------------------------- |
-| `email`         | `cipherstash.EncryptedTextSearch()` | `eql_v3_text_search` | equality + order/range + free-text     |
-| `salary`        | `cipherstash.EncryptedDoubleOrd()`  | `eql_v3_double_ord`  | equality + order/range                 |
-| `accountId`     | `cipherstash.EncryptedBigIntOrd()`  | `eql_v3_bigint_ord`  | equality + order/range (true `bigint`) |
-| `birthday`      | `cipherstash.EncryptedDateOrd()`    | `eql_v3_date_ord`    | equality + order/range                 |
-| `emailVerified` | `cipherstash.EncryptedBoolean()`    | `eql_v3_boolean`     | storage-only (no operators)            |
-| `preferences`   | `cipherstash.EncryptedJson()`       | `eql_v3_json`        | `cipherstashJsonContains` (`@>`)       |
+| Column          | Constructor                       | Domain                      | Query surface                          |
+| --------------- | --------------------------------- | --------------------------- | -------------------------------------- |
+| `email`         | `cipherstash.EncryptedTextSearch()` | `public.eql_v3_text_search` | equality + order/range + free-text (`eqlMatch`) |
+| `salary`        | `cipherstash.EncryptedDoubleOrd()`  | `public.eql_v3_double_ord`  | equality + order/range                 |
+| `accountId`     | `cipherstash.EncryptedBigIntOrd()`  | `public.eql_v3_bigint_ord`  | equality + order/range (true `bigint`) |
+| `birthday`      | `cipherstash.EncryptedDateOrd()`    | `public.eql_v3_date_ord`    | equality + order/range                 |
+| `emailVerified` | `cipherstash.EncryptedBoolean()`    | `public.eql_v3_boolean`     | storage-only (no operators)            |
+| `preferences`   | `cipherstash.EncryptedJson()`       | `public.eql_v3_json`        | `eqlJsonContains` (`@>`)               |
 
 📖 See the [Prisma Next encryption docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the full operator reference, security model, and known limitations.
 
@@ -64,36 +64,36 @@ pnpm install && pnpm emit && pnpm typecheck
 --- Insert (mixed-domain round-trip) ---
 Inserted 4 rows across six cipherstash v3 domains.
 
---- cipherstashEq (text_search equality) ---
+--- eqlEq (text_search equality) ---
 Found 1 row(s) for alice@example.com.
   user-0: alice@example.com
 
---- cipherstashIlike (text_search free-text tokens) ---
+--- eqlMatch (text_search free-text tokens) ---
 Found 3 row(s) whose email contains example.com.
   user-0: alice@example.com
   user-1: bob@example.com
   user-2: carol@example.com
 
---- cipherstashGt (double_ord order-and-range) ---
+--- eqlGt (double_ord order-and-range) ---
 Found 2 user(s) with salary > 100,000.
   user-1: salary=110000
   user-3: salary=145000
 
---- cipherstashBetween (date_ord order-and-range) ---
+--- eqlBetween (date_ord order-and-range) ---
 Found 3 user(s) born between 1985 and 1995.
 
---- cipherstashInArray (bigint_ord equality) ---
+--- eqlIn (bigint_ord equality) ---
 Found 2 user(s) whose accountId is in the supplied array.
 
 --- eql_v3_boolean (storage-only round-trip) ---
   user-2: emailVerified=false
 
---- cipherstashJsonContains (encrypted jsonb @>) ---
+--- eqlJsonContains (encrypted jsonb @>) ---
 Found 2 user(s) with a dark-theme preference.
   user-0: {"theme":"dark","notifications":true}
   user-2: {"theme":"dark","notifications":true}
 
---- cipherstashV3Asc (encrypted order-term ORDER BY) ---
+--- eqlAsc (encrypted order-term ORDER BY) ---
   user-0: email=alice@example.com
   user-1: email=bob@example.com
   user-2: email=carol@example.com
@@ -102,7 +102,7 @@ Found 2 user(s) with a dark-theme preference.
 
 Two v3 behaviours worth noticing in that output:
 
-- **`cipherstashIlike` is bloom-filter token containment** (`eql_v3.contains`), not SQL `ILIKE` — the needle's tokens must appear in the ciphertext's index. Plain substrings like `example.com` are the idiomatic needle; `%` wildcards are not part of the model.
+- **`eqlMatch` is fuzzy bloom-filter token matching** (`eql_v3.contains`), not SQL `ILIKE` — the needle's tokens must appear in the ciphertext's index. Plain literal terms like `example.com` are the idiomatic needle: leading/trailing `%` are stripped for compatibility, while an interior `%` or any `_` throws (the tokenizer would treat them as ordinary characters), as do needles shorter than the match tokenizer length.
 - **`eql_v3_boolean` is storage-only.** It round-trips `true`/`false` losslessly but surfaces no search operators — calling one throws `EncryptionOperatorError`. Filter on a searchable column and decrypt the boolean from the result set.
 
 ## References

@@ -3,7 +3,7 @@
  * Postgres + EQL v3 + ZeroKMS.
  *
  * v3 searchable JSON is containment-only: the ste_vec index answers
- * encrypted jsonb `@>` via `cipherstashJsonContains`, with the operand
+ * encrypted jsonb `@>` via `eqlJsonContains`, with the operand
  * minted as a ciphertext-free `eql_v3.query_jsonb` term. The v2
  * `cipherstashJsonbPathQueryFirst` / `cipherstashJsonbGet` /
  * `cipherstashJsonbPathExists` helpers do not exist in v3 (and with
@@ -12,7 +12,7 @@
  *
  * Pins:
  *   - INSERT + decrypt round-trip recovers the source JSON object.
- *   - `cipherstashJsonContains` selects by top-level, multi-key,
+ *   - `eqlJsonContains` selects by top-level, multi-key,
  *     nested-array, and nested-object containment (exact jsonb `@>`
  *     semantics, no false positives).
  *   - Negative cases: non-matching needles select zero rows.
@@ -93,16 +93,16 @@ describe('EncryptedJson (eql_v3_json) e2e (live PG + EQL v3 + ZeroKMS)', () => {
     }
   })
 
-  it('cipherstashJsonContains selects by top-level key/value containment', async () => {
+  it('eqlJsonContains selects by top-level key/value containment', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({ theme: 'dark' }),
+      u.preferences.eqlJsonContains({ theme: 'dark' }),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-2'])
   })
 
-  it('cipherstashJsonContains requires ALL needle keys (multi-key containment)', async () => {
+  it('eqlJsonContains requires ALL needle keys (multi-key containment)', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({
+      u.preferences.eqlJsonContains({
         theme: 'dark',
         locale: 'en-US',
       }),
@@ -110,34 +110,34 @@ describe('EncryptedJson (eql_v3_json) e2e (live PG + EQL v3 + ZeroKMS)', () => {
     expect(rows.map((r) => r.id)).toEqual(['e2e-json-0'])
   })
 
-  it('cipherstashJsonContains matches array-element containment', async () => {
+  it('eqlJsonContains matches array-element containment', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({ tags: ['beta'] }),
+      u.preferences.eqlJsonContains({ tags: ['beta'] }),
     ).all()
     // jsonb `@>`: ['alpha','beta'] ⊇ ['beta'] and ['beta'] ⊇ ['beta'].
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-1'])
   })
 
-  it('cipherstashJsonContains matches nested-object containment', async () => {
+  it('eqlJsonContains matches nested-object containment', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({ nested: { admin: true } }),
+      u.preferences.eqlJsonContains({ nested: { admin: true } }),
     ).all()
     expect(rows.map((r) => r.id)).toEqual(['e2e-json-2'])
   })
 
-  it('cipherstashJsonContains returns zero rows for non-matching needles', async () => {
+  it('eqlJsonContains returns zero rows for non-matching needles', async () => {
     const wrongValue = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({ theme: 'sepia' }),
+      u.preferences.eqlJsonContains({ theme: 'sepia' }),
     ).all()
     expect(wrongValue).toHaveLength(0)
 
     const wrongKey = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({ timezone: 'UTC' }),
+      u.preferences.eqlJsonContains({ timezone: 'UTC' }),
     ).all()
     expect(wrongKey).toHaveLength(0)
 
     const partialNested = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonContains({
+      u.preferences.eqlJsonContains({
         nested: { level: 3, admin: false },
       }),
     ).all()
@@ -146,9 +146,7 @@ describe('EncryptedJson (eql_v3_json) e2e (live PG + EQL v3 + ZeroKMS)', () => {
 
   it('rejects the match-everything empty-object needle loudly', () => {
     expect(() =>
-      db.orm.public.User.where((u) =>
-        u.preferences.cipherstashJsonContains({}),
-      ),
+      db.orm.public.User.where((u) => u.preferences.eqlJsonContains({})),
     ).toThrow(EncryptionOperatorError)
   })
 })

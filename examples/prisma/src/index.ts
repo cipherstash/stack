@@ -20,7 +20,7 @@
  *   - accountId     eql_v3_bigint_ord  — eq + range + ORDER BY
  *   - birthday      eql_v3_date_ord    — eq + range + ORDER BY
  *   - emailVerified eql_v3_boolean     — STORAGE-ONLY (no operators)
- *   - preferences   eql_v3_json        — cipherstashJsonContains (@>)
+ *   - preferences   eql_v3_json        — eqlJsonContains (@>)
  *
  * Prerequisites:
  *
@@ -39,7 +39,6 @@
 import 'dotenv/config'
 
 import {
-  cipherstashV3Asc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
@@ -47,6 +46,7 @@ import {
   EncryptedJson,
   EncryptedNumber,
   EncryptedString,
+  eqlAsc,
 } from '@cipherstash/prisma-next/runtime'
 
 import { db } from './db'
@@ -117,7 +117,7 @@ async function main() {
     await clearUsers()
     await insertUsers()
     await searchByEq()
-    await searchByIlikeAndDecrypt()
+    await searchByMatchAndDecrypt()
     await rangeQueryOnSalary()
     await betweenQueryOnBirthday()
     await inArrayQueryOnAccountId()
@@ -159,9 +159,9 @@ async function insertUsers(): Promise<void> {
 }
 
 async function searchByEq(): Promise<void> {
-  console.log('\n--- cipherstashEq (text_search equality) ---')
+  console.log('\n--- eqlEq (text_search equality) ---')
   const rows = await db.orm.public.User.where((u) =>
-    u.email.cipherstashEq('alice@example.com'),
+    u.email.eqlEq('alice@example.com'),
   ).all()
   console.log(`Found ${rows.length} row(s) for alice@example.com.`)
   await decryptAll(rows)
@@ -170,13 +170,13 @@ async function searchByEq(): Promise<void> {
   }
 }
 
-async function searchByIlikeAndDecrypt(): Promise<void> {
-  console.log('\n--- cipherstashIlike (text_search free-text tokens) ---')
+async function searchByMatchAndDecrypt(): Promise<void> {
+  console.log('\n--- eqlMatch (text_search free-text tokens) ---')
   // v3 free-text search is bloom-filter TOKEN matching (eql_v3.contains),
   // not SQL ILIKE: the needle's tokens must appear in the ciphertext's
   // index. 'example.com' matches the three @example.com addresses.
   const rows = await db.orm.public.User.where((u) =>
-    u.email.cipherstashIlike('example.com'),
+    u.email.eqlMatch('example.com'),
   ).all()
   console.log(`Found ${rows.length} row(s) whose email contains example.com.`)
   await decryptAll(rows)
@@ -186,9 +186,9 @@ async function searchByIlikeAndDecrypt(): Promise<void> {
 }
 
 async function rangeQueryOnSalary(): Promise<void> {
-  console.log('\n--- cipherstashGt (double_ord order-and-range) ---')
+  console.log('\n--- eqlGt (double_ord order-and-range) ---')
   const rows = await db.orm.public.User.where((u) =>
-    u.salary.cipherstashGt(100_000),
+    u.salary.eqlGt(100_000),
   ).all()
   console.log(`Found ${rows.length} user(s) with salary > 100,000.`)
   await decryptAll(rows)
@@ -198,19 +198,19 @@ async function rangeQueryOnSalary(): Promise<void> {
 }
 
 async function betweenQueryOnBirthday(): Promise<void> {
-  console.log('\n--- cipherstashBetween (date_ord order-and-range) ---')
+  console.log('\n--- eqlBetween (date_ord order-and-range) ---')
   const lower = new Date('1985-01-01')
   const upper = new Date('1995-12-31')
   const rows = await db.orm.public.User.where((u) =>
-    u.birthday.cipherstashBetween(lower, upper),
+    u.birthday.eqlBetween(lower, upper),
   ).all()
   console.log(`Found ${rows.length} user(s) born between 1985 and 1995.`)
 }
 
 async function inArrayQueryOnAccountId(): Promise<void> {
-  console.log('\n--- cipherstashInArray (bigint_ord equality) ---')
+  console.log('\n--- eqlIn (bigint_ord equality) ---')
   const rows = await db.orm.public.User.where((u) =>
-    u.accountId.cipherstashInArray([100_000_000_001n, 100_000_000_004n]),
+    u.accountId.eqlIn([100_000_000_001n, 100_000_000_004n]),
   ).all()
   console.log(
     `Found ${rows.length} user(s) whose accountId is in the supplied array.`,
@@ -224,7 +224,7 @@ async function decryptStorageOnlyBoolean(): Promise<void> {
   // calling one would throw EncryptionOperatorError. Filter on a
   // searchable column and decrypt the boolean from the result set.
   const rows = await db.orm.public.User.where((u) =>
-    u.email.cipherstashEq('carol@example.com'),
+    u.email.eqlEq('carol@example.com'),
   ).all()
   await decryptAll(rows)
   for (const row of rows) {
@@ -235,9 +235,9 @@ async function decryptStorageOnlyBoolean(): Promise<void> {
 }
 
 async function jsonContainmentOnPreferences(): Promise<void> {
-  console.log('\n--- cipherstashJsonContains (encrypted jsonb @>) ---')
+  console.log('\n--- eqlJsonContains (encrypted jsonb @>) ---')
   const rows = await db.orm.public.User.where((u) =>
-    u.preferences.cipherstashJsonContains({ theme: 'dark' }),
+    u.preferences.eqlJsonContains({ theme: 'dark' }),
   ).all()
   console.log(`Found ${rows.length} user(s) with a dark-theme preference.`)
   await decryptAll(rows)
@@ -249,10 +249,8 @@ async function jsonContainmentOnPreferences(): Promise<void> {
 }
 
 async function sortByEmailAsc(): Promise<void> {
-  console.log('\n--- cipherstashV3Asc (encrypted order-term ORDER BY) ---')
-  const rows = await db.orm.public.User.orderBy((u) =>
-    cipherstashV3Asc(u.email),
-  ).all()
+  console.log('\n--- eqlAsc (encrypted order-term ORDER BY) ---')
+  const rows = await db.orm.public.User.orderBy((u) => eqlAsc(u.email)).all()
   await decryptAll(rows)
   for (const row of rows) {
     console.log(`  ${row.id}: email=${await row.email.decrypt()}`)

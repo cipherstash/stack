@@ -10,9 +10,9 @@
 //
 //   - email         (EncryptedTextSearch → eql_v3_text_search)
 //                     equality + order/range + free-text search:
-//                     cipherstashEq / Ne / InArray / NotInArray /
+//                     eqlEq / Neq / In / NotIn /
 //                     Gt / Gte / Lt / Lte / Between / NotBetween /
-//                     Ilike / NotIlike, cipherstashV3Asc / Desc.
+//                     Match, eqlAsc / Desc.
 //   - salary        (EncryptedDoubleOrd → eql_v3_double_ord)
 //                     equality + order/range.
 //   - accountId     (EncryptedBigIntOrd → eql_v3_bigint_ord)
@@ -21,10 +21,10 @@
 //                     equality + order/range.
 //   - emailVerified (EncryptedBoolean → eql_v3_boolean)
 //                     STORAGE-ONLY: no search operators at all — every
-//                     cipherstash* predicate throws
+//                     eql* predicate throws
 //                     EncryptionOperatorError on this column.
 //   - preferences   (EncryptedJson → eql_v3_json)
-//                     searchable JSON: cipherstashJsonContains
+//                     searchable JSON: eqlJsonContains
 //                     (encrypted jsonb `@>` containment).
 //
 // v3 emits NO search configs: the domain carries its own index

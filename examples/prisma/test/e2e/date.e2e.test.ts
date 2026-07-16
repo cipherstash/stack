@@ -4,9 +4,9 @@
  *
  * Pins:
  *   - INSERT + decrypt round-trip recovers the source `Date`.
- *   - `cipherstashGt(<date>)` returns rows whose date is later.
- *   - `cipherstashBetween` filters a closed interval.
- *   - `cipherstashV3Asc` / `cipherstashV3Desc` order by calendar date
+ *   - `eqlGt(<date>)` returns rows whose date is later.
+ *   - `eqlBetween` filters a closed interval.
+ *   - `eqlAsc` / `eqlDesc` order by calendar date
  *     via the encrypted order term (`eql_v3.ord_term(col)`).
  *
  * protect-ffi's eqlVersion-3 wire accepts `Date` plaintexts natively
@@ -14,8 +14,6 @@
  */
 
 import {
-  cipherstashV3Asc,
-  cipherstashV3Desc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
@@ -23,6 +21,8 @@ import {
   EncryptedJson,
   EncryptedNumber,
   EncryptedString,
+  eqlAsc,
+  eqlDesc,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
@@ -71,26 +71,23 @@ describe('EncryptedDate (eql_v3_date_ord) e2e (live PG + EQL v3 + ZeroKMS)', () 
     }
   })
 
-  it('cipherstashGt filters dates after the cutoff', async () => {
+  it('eqlGt filters dates after the cutoff', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.birthday.cipherstashGt(new Date('1995-01-01')),
+      u.birthday.eqlGt(new Date('1995-01-01')),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-date-2', 'e2e-date-3'])
   })
 
-  it('cipherstashBetween filters a closed date interval', async () => {
+  it('eqlBetween filters a closed date interval', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.birthday.cipherstashBetween(
-        new Date('1985-01-01'),
-        new Date('2005-12-31'),
-      ),
+      u.birthday.eqlBetween(new Date('1985-01-01'), new Date('2005-12-31')),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-date-1', 'e2e-date-2'])
   })
 
-  it('cipherstashV3Asc orders by calendar date via the encrypted order term', async () => {
+  it('eqlAsc orders by calendar date via the encrypted order term', async () => {
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashV3Asc(u.birthday),
+      eqlAsc(u.birthday),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-date-0',
@@ -100,9 +97,9 @@ describe('EncryptedDate (eql_v3_date_ord) e2e (live PG + EQL v3 + ZeroKMS)', () 
     ])
   })
 
-  it('cipherstashV3Desc reverses the date order', async () => {
+  it('eqlDesc reverses the date order', async () => {
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashV3Desc(u.birthday),
+      eqlDesc(u.birthday),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-date-3',

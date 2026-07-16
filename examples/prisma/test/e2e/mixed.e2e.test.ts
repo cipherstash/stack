@@ -29,7 +29,6 @@
 
 import {
   bulkEncryptMiddlewareV3,
-  cipherstashV3Asc,
   createCipherstashV3RuntimeDescriptor,
   decryptAll,
   EncryptedBigInt,
@@ -38,6 +37,7 @@ import {
   EncryptedJson,
   EncryptedNumber,
   EncryptedString,
+  eqlAsc,
 } from '@cipherstash/prisma-next/runtime'
 import {
   cipherstashFromStackV3,
@@ -170,12 +170,12 @@ describe('Mixed-domain e2e (live PG + EQL v3 + ZeroKMS)', () => {
   it('executes a three-column WHERE + order-term read end-to-end', async () => {
     const rows = await db.orm.public.User.where((u) =>
       and(
-        u.email.cipherstashIlike('example.com'),
-        u.salary.cipherstashGt(75_000),
-        u.birthday.cipherstashLt(new Date('2000-01-01')),
+        u.email.eqlMatch('example.com'),
+        u.salary.eqlGt(75_000),
+        u.birthday.eqlLt(new Date('2000-01-01')),
       ),
     )
-      .orderBy((u) => cipherstashV3Asc(u.salary))
+      .orderBy((u) => eqlAsc(u.salary))
       .all()
 
     // carol (90k) and bob (110k) survive all three predicates, ordered
@@ -189,12 +189,12 @@ describe('Mixed-domain e2e (live PG + EQL v3 + ZeroKMS)', () => {
     counting.counts.reset()
     await db.orm.public.User.where((u) =>
       and(
-        u.email.cipherstashIlike('example.com'),
-        u.salary.cipherstashGt(75_000),
-        u.birthday.cipherstashLt(new Date('2000-01-01')),
+        u.email.eqlMatch('example.com'),
+        u.salary.eqlGt(75_000),
+        u.birthday.eqlLt(new Date('2000-01-01')),
       ),
     )
-      .orderBy((u) => cipherstashV3Asc(u.salary))
+      .orderBy((u) => eqlAsc(u.salary))
       .all()
     // Three distinct (users, <column>) groups in the WHERE — one
     // framework-SDK `bulkEncrypt` crossing per group (each routed to

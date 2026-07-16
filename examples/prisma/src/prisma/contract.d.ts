@@ -10,6 +10,7 @@ import type {
   EncryptedDate,
   EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
 } from '@prisma-next/extension-cipherstash/runtime';
 import type {
@@ -493,6 +494,970 @@ type ContractBase = Omit<
                 readonly traits: readonly ['cipherstash:searchable-json'];
               };
             },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_integer@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_integer' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_integer'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_integer_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_integer_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_integer_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_integer_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_integer_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_integer_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_integer_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_integer_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_integer_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_smallint@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_smallint' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_smallint'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_smallint_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_smallint_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_smallint_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_smallint_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_smallint_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_smallint_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_smallint_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_smallint_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_smallint_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_bigint@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_bigint' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_bigint'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_bigint_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_bigint_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_bigint_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_bigint_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_bigint_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_bigint_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_bigint_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_bigint_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_bigint_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_date@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_date' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_date'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_date_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_date_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_date_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_date_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_date_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_date_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_date_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_date_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_date_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_timestamp@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_timestamp' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_timestamp'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_timestamp_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_timestamp_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_timestamp_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_timestamp_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_timestamp_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_timestamp_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_timestamp_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_timestamp_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_timestamp_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_numeric@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_numeric' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_numeric'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_numeric_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_numeric_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_numeric_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_numeric_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_numeric_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_numeric_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_numeric_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_numeric_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_numeric_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_text@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_text' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_text'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_text_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_text_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_text_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_text_match@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_text_match' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_text_match'];
+                readonly traits: readonly ['cipherstash:free-text-search'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_text_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_text_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_text_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_text_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_text_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_text_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_text_search@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_text_search' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_text_search'];
+                readonly traits: readonly [
+                  'cipherstash:equality',
+                  'cipherstash:order-and-range',
+                  'cipherstash:free-text-search',
+                ];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_boolean@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_boolean' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_boolean'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_real@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_real' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_real'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_real_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_real_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_real_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_real_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_real_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_real_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_real_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_real_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_real_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_double@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_double' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_double'];
+                readonly traits: readonly [];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_double_eq@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_double_eq' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_double_eq'];
+                readonly traits: readonly ['cipherstash:equality'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_double_ord_ore@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_double_ord_ore' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_double_ord_ore'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_double_ord@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_double_ord' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_double_ord'];
+                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
+              };
+            },
+            {
+              readonly descriptor: {
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_json@1';
+                readonly factory: unknown;
+                readonly isParameterized: true;
+                readonly meta: {
+                  readonly db: {
+                    readonly sql: {
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_json' };
+                    };
+                  };
+                };
+                readonly paramsSchema: {
+                  readonly '~standard': {
+                    readonly validate: unknown;
+                    readonly vendor: 'cipherstash';
+                    readonly version: 1;
+                  };
+                };
+                readonly renderOutputType: unknown;
+                readonly targetTypes: readonly ['public.eql_v3_json'];
+                readonly traits: readonly ['cipherstash:searchable-json'];
+              };
+            },
           ];
           readonly import: {
             readonly alias: 'CipherstashTypes';
@@ -528,6 +1493,11 @@ type ContractBase = Omit<
             {
               readonly alias: 'EncryptedJson';
               readonly named: 'EncryptedJson';
+              readonly package: '@prisma-next/extension-cipherstash/runtime';
+            },
+            {
+              readonly alias: 'EncryptedNumber';
+              readonly named: 'EncryptedNumber';
               readonly package: '@prisma-next/extension-cipherstash/runtime';
             },
           ];
@@ -575,6 +1545,246 @@ type ContractBase = Omit<
             readonly nativeType: 'eql_v2_encrypted';
             readonly targetId: 'postgres';
             readonly typeId: 'cipherstash/json@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_integer';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_integer@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_integer_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_integer_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_integer_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_integer_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_integer_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_integer_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_smallint';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_smallint@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_smallint_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_smallint_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_smallint_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_smallint_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_smallint_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_smallint_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_bigint';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_bigint@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_bigint_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_bigint_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_bigint_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_bigint_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_bigint_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_bigint_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_date';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_date@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_date_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_date_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_date_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_date_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_date_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_date_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_timestamp';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_timestamp@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_timestamp_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_timestamp_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_timestamp_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_timestamp_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_timestamp_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_timestamp_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_numeric';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_numeric@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_numeric_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_numeric_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_numeric_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_numeric_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_numeric_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_numeric_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_text';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_text@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_text_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_text_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_text_match';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_text_match@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_text_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_text_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_text_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_text_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_text_search';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_text_search@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_boolean';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_boolean@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_real';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_real@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_real_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_real_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_real_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_real_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_real_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_real_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_double';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_double@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_double_eq';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_double_eq@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_double_ord_ore';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_double_ord_ore@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_double_ord';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_double_ord@1';
+          },
+          {
+            readonly familyId: 'sql';
+            readonly nativeType: 'public.eql_v3_json';
+            readonly targetId: 'postgres';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_json@1';
           },
         ];
       };

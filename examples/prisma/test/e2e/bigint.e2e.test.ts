@@ -12,7 +12,6 @@
  */
 
 import {
-  cipherstashV3Asc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
@@ -20,6 +19,7 @@ import {
   EncryptedJson,
   EncryptedNumber,
   EncryptedString,
+  eqlAsc,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
@@ -68,16 +68,16 @@ describe('EncryptedBigInt (eql_v3_bigint_ord) e2e (live PG + EQL v3 + ZeroKMS)',
     }
   })
 
-  it('cipherstashEq selects exactly the row holding the unsafe-range value', async () => {
+  it('eqlEq selects exactly the row holding the unsafe-range value', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.accountId.cipherstashEq(UNSAFE_BIG),
+      u.accountId.eqlEq(UNSAFE_BIG),
     ).all()
     expect(rows.map((r) => r.id)).toEqual(['e2e-bigint-3'])
   })
 
-  it('cipherstashGt filters by encrypted bigint numeric order', async () => {
+  it('eqlGt filters by encrypted bigint numeric order', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.accountId.cipherstashGt(1_000_000_000_002n),
+      u.accountId.eqlGt(1_000_000_000_002n),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-bigint-2',
@@ -85,9 +85,9 @@ describe('EncryptedBigInt (eql_v3_bigint_ord) e2e (live PG + EQL v3 + ZeroKMS)',
     ])
   })
 
-  it('cipherstashLte includes the equality boundary', async () => {
+  it('eqlLte includes the equality boundary', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.accountId.cipherstashLte(1_000_000_000_002n),
+      u.accountId.eqlLte(1_000_000_000_002n),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-bigint-0',
@@ -95,12 +95,9 @@ describe('EncryptedBigInt (eql_v3_bigint_ord) e2e (live PG + EQL v3 + ZeroKMS)',
     ])
   })
 
-  it('cipherstashBetween filters by encrypted bigint range', async () => {
+  it('eqlBetween filters by encrypted bigint range', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.accountId.cipherstashBetween(
-        1_000_000_000_002n,
-        9_000_000_000_000_000n,
-      ),
+      u.accountId.eqlBetween(1_000_000_000_002n, 9_000_000_000_000_000n),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-bigint-1',
@@ -108,9 +105,9 @@ describe('EncryptedBigInt (eql_v3_bigint_ord) e2e (live PG + EQL v3 + ZeroKMS)',
     ])
   })
 
-  it('cipherstashInArray returns rows whose value matches any of the supplied bigints', async () => {
+  it('eqlIn returns rows whose value matches any of the supplied bigints', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.accountId.cipherstashInArray([1_000_000_000_001n, UNSAFE_BIG]),
+      u.accountId.eqlIn([1_000_000_000_001n, UNSAFE_BIG]),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-bigint-0',
@@ -118,12 +115,12 @@ describe('EncryptedBigInt (eql_v3_bigint_ord) e2e (live PG + EQL v3 + ZeroKMS)',
     ])
   })
 
-  it('cipherstashV3Asc orders by bigint value via the encrypted order term', async () => {
+  it('eqlAsc orders by bigint value via the encrypted order term', async () => {
     // 2^53 + 1 = 9_007_199_254_740_993 > 9_000_000_000_000_000, so the
     // unsafe-range row sorts LAST — on the true int8 value, not a lossy
     // float projection.
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashV3Asc(u.accountId),
+      eqlAsc(u.accountId),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-bigint-0',
