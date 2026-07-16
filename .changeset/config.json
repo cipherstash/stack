@@ -8,6 +8,7 @@
       "@cipherstash/stack",
       "@cipherstash/stack-drizzle",
       "@cipherstash/stack-supabase",
+      "@cipherstash/prisma-next",
       "@cipherstash/wizard"
     ]
   ],

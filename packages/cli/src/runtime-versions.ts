@@ -104,13 +104,22 @@ export function pinnedSpec(
  * (`x.y.z` and `x.y.z-rc.n`), so the skew warning can tell "behind" from
  * "ahead" without adding a dependency to the CLI.
  *
- * A version whose core isn't numeric (`v1.0.0`, `1.0.x`, garbage from a
- * corrupt manifest) is NOT COMPARABLE: return `0` rather than a
- * NaN-poisoned order. Callers classify non-ahead as behind, so an
- * unparseable installed version gets the safe treatment (align/reinstall
+ * A version that isn't strictly `digits.digits.digits` with an optional
+ * well-formed prerelease (`v1.0.0`, `1.0.x`, `1.0`, `1.0.0-`, `1.0.0beta`,
+ * `1.0.0-rc.2+sha` — build metadata deliberately rejected, and any other
+ * garbage from a corrupt manifest) is NOT COMPARABLE: return `0` rather
+ * than a partially-parsed order. Callers classify non-ahead as behind, so
+ * an unparseable installed version gets the safe treatment (align/reinstall
  * guidance) instead of being silently promoted to "newer, leave it".
  */
+/** Exactly three numeric core segments, optional dot-separated prerelease
+ * identifiers (each non-empty alphanumeric/hyphen). No build metadata: `+`
+ * fails the shape and the version is treated as not comparable — the safe
+ * direction — rather than mis-ordered by an identifier like `2+sha`. */
+const VERSION_SHAPE = /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/
+
 export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  if (!VERSION_SHAPE.test(a) || !VERSION_SHAPE.test(b)) return 0
   const parse = (v: string) => {
     const [core, ...pre] = v.split('-')
     return {
@@ -120,10 +129,10 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
   }
   const pa = parse(a)
   const pb = parse(b)
-  if (pa.core.some(Number.isNaN) || pb.core.some(Number.isNaN)) return 0
   for (let i = 0; i < 3; i++) {
-    const da = pa.core[i] ?? 0
-    const db = pb.core[i] ?? 0
+    // The shape gate guarantees exactly three numeric segments.
+    const da = pa.core[i] as number
+    const db = pb.core[i] as number
     if (da !== db) return da < db ? -1 : 1
   }
   // Same core: a release (no prerelease) outranks any prerelease of it.

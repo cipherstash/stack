@@ -13,6 +13,9 @@ vi.mock('../../utils.js', () => ({
       ...(dev.length ? [`npm install --save-dev ${dev.join(' ')}`] : []),
     ],
   ),
+  devInstallCommand: vi.fn(
+    (_pm: string, pkg: string) => `npm install -D ${pkg}`,
+  ),
   detectPackageManager: vi.fn(() => 'npm'),
 }))
 // Pin map: pretend this CLI release was built alongside these versions, so
@@ -234,10 +237,41 @@ describe('installDepsStep', () => {
         '@cipherstash/stack: installed 9.9.10 is newer than this release of stash expects (9.9.9-test.1)',
       ),
     )
+    // Lockstep means stash@<installed> must exist — the warning prints the
+    // exact update command instead of an uncommanded "matching release".
+    expect(p.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('npm install -D stash@9.9.10'),
+    )
     // No align/downgrade guidance, no mutation, clean success.
     expect(p.note).not.toHaveBeenCalled()
     expect(execSyncMock).not.toHaveBeenCalled()
     expect(result.stackInstalled).toBe(true)
+  })
+
+  it('mixed ahead + missing: warns that fresh installs pin to THIS release and may mismatch', async () => {
+    vi.mocked(isInteractive).mockReturnValue(false)
+    // stack is installed and NEWER; the supabase adapter is missing — init
+    // will install the adapter at this CLI's older embed, so it must say the
+    // pairing may not match rather than silently manufacturing a cross-train
+    // mismatch under a "likely fine" banner.
+    present('@cipherstash/stack', 'stash')
+    resolvedVersions({
+      '@cipherstash/stack': '9.9.10',
+      stash: FIXTURE_VERSIONS.stash,
+    })
+
+    await installDepsStep.run(baseState, supabaseProvider)
+
+    expect(p.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "@cipherstash/stack-supabase will be installed at THIS release's versions",
+      ),
+    )
+    expect(p.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining('npm install -D stash@9.9.10'),
+    )
+    // The missing adapter still installs (non-interactive default).
+    expect(execSyncMock).toHaveBeenCalled()
   })
 
   it('reports an unreadable manifest as skew, not as a matching install', async () => {
