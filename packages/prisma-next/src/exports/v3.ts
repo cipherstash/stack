@@ -57,9 +57,9 @@ export { assertV3SchemasAgree } from '../v3/from-stack-v3-validate'
 // Query operators (registered by the runtime descriptor) + the
 // free-standing ORDER BY helpers.
 export {
-  cipherstashV3Asc,
-  cipherstashV3Desc,
   cipherstashV3QueryOperations,
+  eqlAsc,
+  eqlDesc,
 } from '../v3/operators-v3'
 // The query-term seam (consumed by custom CipherstashSdk implementations).
 export {

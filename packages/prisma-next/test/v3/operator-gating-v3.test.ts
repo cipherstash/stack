@@ -9,41 +9,40 @@
  * (or through a custom builder) must still be stopped when the domain
  * cannot answer the operator.
  *
- * Also pins decision 1b's registration constraint: the v3 descriptor
- * stands alone (a v3-only adapter builds cleanly), and co-registering
- * the v2 and v3 descriptors throws — the framework's flat
- * `OperationRegistry` rejects two descriptors sharing the
- * `cipherstashEq` method name. v2 and v3 are separate entry points,
- * never composed into one client.
+ * Also pins decision 1b's registration posture: the v3 descriptor
+ * stands alone (a v3-only adapter builds cleanly), and the v2
+ * `cipherstash*` and v3 `eql*` method-name sets are DISJOINT — the two
+ * surfaces share no registry key, so a client is v2 or v3 purely by
+ * which descriptor it was constructed with, never by registry
+ * collision. v2 and v3 remain separate entry points, never composed
+ * into one client.
  */
 
 import { describe, expect, it } from 'vitest'
-import { createCipherstashRuntimeDescriptor } from '../../src/exports/runtime'
+import { cipherstashQueryOperations } from '../../src/execution/operators'
 import {
-  cipherstashV3Asc,
   cipherstashV3QueryOperations,
   EncryptionOperatorError,
+  eqlAsc,
 } from '../../src/v3/operators-v3'
 import {
   assembleV3ExecutionContext,
   BOOLEAN_CODEC_ID,
   callOperator,
   columnAccessorV3,
-  emptySdk,
   getOperator,
   JSON_CODEC_ID,
   makeV3Adapter,
   TABLE,
   TEXT_EQ_CODEC_ID,
   TEXT_STORAGE_CODEC_ID,
-  v3RuntimeDescriptor,
 } from './operator-lowering-v3.helpers'
 
 describe('v3 operator capability gating', () => {
-  it('equality requires the equality capability — storage-only eql_v3_text rejects cipherstashEq', () => {
+  it('equality requires the equality capability — storage-only eql_v3_text rejects eqlEq', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'note', TEXT_STORAGE_CODEC_ID),
         'x',
       ),
@@ -53,60 +52,60 @@ describe('v3 operator capability gating', () => {
   it('names the column, domain, operator, and missing capability in the diagnostic', () => {
     try {
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'note', TEXT_STORAGE_CODEC_ID),
         'x',
       )
-      expect.unreachable('cipherstashEq on a storage-only column must throw')
+      expect.unreachable('eqlEq on a storage-only column must throw')
     } catch (error) {
       expect(error).toBeInstanceOf(EncryptionOperatorError)
       const operatorError = error as EncryptionOperatorError
-      expect(operatorError.message).toContain('cipherstashEq')
+      expect(operatorError.message).toContain('eqlEq')
       expect(operatorError.message).toContain('equality')
       expect(operatorError.message).toContain('"note"')
       expect(operatorError.message).toContain('public.eql_v3_text')
       expect(operatorError.context).toEqual({
         columnName: 'note',
         tableName: TABLE,
-        operator: 'cipherstashEq',
+        operator: 'eqlEq',
       })
     }
   })
 
-  it('comparison requires order/range — text_eq rejects cipherstashGt', () => {
+  it('comparison requires order/range — text_eq rejects eqlGt', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashGt'),
+        getOperator('eqlGt'),
         columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID),
         'x',
       ),
     ).toThrow(/order\/range/)
   })
 
-  it('free-text requires the match index — text_eq rejects cipherstashIlike', () => {
+  it('free-text requires the match index — text_eq rejects eqlMatch', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashIlike'),
+        getOperator('eqlMatch'),
         columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID),
         'x',
       ),
     ).toThrow(/free-text/)
   })
 
-  it('JSON containment requires searchableJson — text_eq rejects cipherstashJsonContains', () => {
+  it('JSON containment requires searchableJson — text_eq rejects eqlJsonContains', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashJsonContains'),
+        getOperator('eqlJsonContains'),
         columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID),
         { role: 'admin' },
       ),
     ).toThrow(/JSON containment/)
   })
 
-  it('eql_v3_json is searchableJson-only — rejects cipherstashEq', () => {
+  it('eql_v3_json is searchableJson-only — rejects eqlEq', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID),
         { role: 'admin' },
       ),
@@ -115,11 +114,11 @@ describe('v3 operator capability gating', () => {
 
   it('storage-only eql_v3_boolean rejects every search operator', () => {
     for (const method of [
-      'cipherstashEq',
-      'cipherstashNe',
-      'cipherstashGt',
-      'cipherstashIlike',
-      'cipherstashJsonContains',
+      'eqlEq',
+      'eqlNeq',
+      'eqlGt',
+      'eqlMatch',
+      'eqlJsonContains',
     ]) {
       expect(() =>
         callOperator(
@@ -131,16 +130,16 @@ describe('v3 operator capability gating', () => {
     }
   })
 
-  it('ordering helpers gate on order/range — text_eq rejects cipherstashV3Asc', () => {
+  it('ordering helpers gate on order/range — text_eq rejects eqlAsc', () => {
     expect(() =>
-      cipherstashV3Asc(columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID)),
+      eqlAsc(columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID)),
     ).toThrow(/order\/range/)
   })
 
   it('rejects a non-v3 codec id (v2 columns are the wrong entry point)', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'email', 'cipherstash/string@1'),
         'x',
       ),
@@ -150,7 +149,7 @@ describe('v3 operator capability gating', () => {
   it('rejects a self expression with no codec binding', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         {
           buildAst: () => {
             throw new Error('unreachable')
@@ -167,7 +166,7 @@ describe('v3 descriptor registration (decision 1b)', () => {
     expect(() => makeV3Adapter()).not.toThrow()
     // The execution context is what assembles the flat operation
     // registry from `queryOperations()` — a v3-only stack registers the
-    // full `cipherstash*` method set without collision.
+    // full `eql*` method set without collision.
     const registered = Object.keys(
       assembleV3ExecutionContext().queryOperations.entries(),
     )
@@ -176,18 +175,25 @@ describe('v3 descriptor registration (decision 1b)', () => {
     )
   })
 
-  it('co-registering the v2 and v3 descriptors throws on the shared method names', () => {
-    // Both descriptors define `cipherstashEq` (and eleven siblings); the
-    // flat, method-keyed OperationRegistry disallows override. This is
-    // WHY v2 and v3 are separate entry points that are never composed
-    // into one client. The registry is assembled when the execution
-    // context is built against a contract, so the collision surfaces
-    // there rather than at adapter construction.
-    expect(() =>
-      assembleV3ExecutionContext([
-        createCipherstashRuntimeDescriptor({ sdk: emptySdk() }),
-        v3RuntimeDescriptor(),
-      ]),
-    ).toThrow(/already registered/)
+  it('the v2 and v3 operator method-name sets are disjoint', () => {
+    // The v3 registry speaks the EQL-derived `eql*` vocabulary, v2
+    // keeps its historical `cipherstash*` names (PR #655 review). No
+    // shared key means the flat, method-keyed OperationRegistry can
+    // never confuse the two surfaces — generation identity is fixed at
+    // client construction (decision 1b), not resolved per method name.
+    const v2Methods = Object.keys(cipherstashQueryOperations())
+    const v3Methods = Object.keys(cipherstashV3QueryOperations())
+    expect(v2Methods.length).toBeGreaterThan(0)
+    expect(v3Methods.length).toBeGreaterThan(0)
+    const v2Set = new Set(v2Methods)
+    expect(v3Methods.filter((method) => v2Set.has(method))).toEqual([])
+    const v3Set = new Set(v3Methods)
+    expect(v2Methods.filter((method) => v3Set.has(method))).toEqual([])
+    // The naming split is total, not incidental: every v3 method wears
+    // the `eql` prefix, no v2 method does.
+    expect(v3Methods.every((method) => method.startsWith('eql'))).toBe(true)
+    expect(v2Methods.every((method) => method.startsWith('cipherstash'))).toBe(
+      true,
+    )
   })
 })

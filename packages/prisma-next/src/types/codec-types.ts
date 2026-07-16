@@ -59,42 +59,24 @@ import type { EncryptedNumber } from '../v3/envelope-number'
 // EQL v3 type-level trait vocabulary
 // ---------------------------------------------------------------------------
 //
-// The SHARED trait strings (`cipherstash:equality`, `cipherstash:
-// order-and-range`, `cipherstash:free-text-search`) appear on v3
-// entries exactly like on v2 entries: the trait-dispatched operator
-// methods (`cipherstashNe`, `cipherstashGt`, `cipherstashBetween`, …)
-// exist in BOTH runtime generations under the same names (decision 1b
-// keeps the method-name surface identical), so sharing the dispatch
-// trait is correct.
-//
 // The `cipherstash:v3-*` strings are TYPE-LEVEL MARKERS with no
-// runtime counterpart. They exist because three methods differ by
-// generation:
+// runtime counterpart. The v2 and v3 surfaces have DISJOINT method
+// names (`cipherstash*` vs the EQL-derived `eql*` — PR #655 review),
+// so v3 codec entries carry ONLY the v3 markers and none of the shared
+// v2 trait strings:
 //
-//   - `cipherstashEq` / `cipherstashIlike` are codec-id-pinned to
-//     `cipherstash/string@1` in the v2 runtime (legacy single-codec
-//     registration) but trait-dispatched in the v3 runtime. Their
-//     type-level `self` in `operation-types.ts` therefore declares
-//     BOTH a `codecId` (matched for v2 string columns) and a
-//     `traits: ['cipherstash:v3-equality' / 'cipherstash:v3-free-
-//     text-search']` marker (matched for v3 columns) — the
-//     framework's `OpMatchesField` tries codec-id first and falls
-//     through to traits.
-//   - `cipherstashJsonContains` exists ONLY in the v3 runtime, and
-//     `cipherstashJsonbPathExists` ONLY in the v2 runtime. The v3
-//     JSON entry deliberately carries `cipherstash:v3-searchable-json`
-//     INSTEAD of the shared `cipherstash:searchable-json` so each
-//     method surfaces only on the generation whose runtime registers
-//     it.
+//   - every `eql*` operator in `operation-types.ts` dispatches on a
+//     v3 marker, so it surfaces only on v3 columns;
+//   - every v2 operator dispatches on a shared v2 trait (or the legacy
+//     `cipherstash/string@1` codec-id pin), which no v3 entry carries,
+//     so the `cipherstash*` methods never surface on v3 columns.
 //
 // Type-level visibility therefore never advertises a method the
 // column's runtime cannot dispatch.
 type V3TraitsNone = never
-type V3TraitsEq = 'cipherstash:equality' | 'cipherstash:v3-equality'
-type V3TraitsOrd = V3TraitsEq | 'cipherstash:order-and-range'
-type V3TraitsMatch =
-  | 'cipherstash:free-text-search'
-  | 'cipherstash:v3-free-text-search'
+type V3TraitsEq = 'cipherstash:v3-equality'
+type V3TraitsOrd = V3TraitsEq | 'cipherstash:v3-order-and-range'
+type V3TraitsMatch = 'cipherstash:v3-free-text-search'
 type V3TraitsSearch = V3TraitsOrd | V3TraitsMatch
 type V3TraitsJson = 'cipherstash:v3-searchable-json'
 

@@ -1,6 +1,6 @@
 /**
- * v3 operator lowering — equality family (`cipherstashEq`,
- * `cipherstashNe`, `cipherstashInArray`, `cipherstashNotInArray`).
+ * v3 operator lowering — equality family (`eqlEq`,
+ * `eqlNeq`, `eqlIn`, `eqlNotIn`).
  *
  * The canonical v3 dialect (mirrors
  * `packages/stack-drizzle/src/v3/{operators,sql-dialect}.ts`):
@@ -40,10 +40,10 @@ import {
   TEXT_SEARCH_CODEC_ID,
 } from './operator-lowering-v3.helpers'
 
-describe('cipherstash v3 operator lowering — cipherstashEq', () => {
-  it('lowers nickname.cipherstashEq(plaintext) to eql_v3.eq(col, $1::eql_v3.query_text_eq)', () => {
+describe('cipherstash v3 operator lowering — eqlEq', () => {
+  it('lowers nickname.eqlEq(plaintext) to eql_v3.eq(col, $1::eql_v3.query_text_eq)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashEq'),
+      getOperator('eqlEq'),
       columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID),
       'alice',
     )
@@ -55,9 +55,9 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
     )
   })
 
-  it('lowers email.cipherstashEq on a text_search column with the query_text_search cast', () => {
+  it('lowers email.eqlEq on a text_search column with the query_text_search cast', () => {
     const predicate = callOperator(
-      getOperator('cipherstashEq'),
+      getOperator('eqlEq'),
       columnAccessorV3(TABLE, 'email', TEXT_SEARCH_CODEC_ID),
       'alice@example.com',
     )
@@ -71,7 +71,7 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
 
   it('accepts equality on an OPE-ordered domain (integer_ord answers equality via its ordering term)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashEq'),
+      getOperator('eqlEq'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       42,
     )
@@ -85,7 +85,7 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
 
   it('binds the plaintext as an envelope stamped with the routing key and the equality query-term mark', () => {
     const predicate = callOperator(
-      getOperator('cipherstashEq'),
+      getOperator('eqlEq'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       42,
     )
@@ -108,7 +108,7 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
   it('passes a pre-built envelope through unchanged (advanced caller path)', () => {
     const userEnvelope = EncryptedString.from('alice')
     const predicate = callOperator(
-      getOperator('cipherstashEq'),
+      getOperator('eqlEq'),
       columnAccessorV3(TABLE, 'nickname', TEXT_EQ_CODEC_ID),
       userEnvelope,
     )
@@ -125,14 +125,14 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
   it('rejects a plaintext that does not match the domain castAs with a specific diagnostic', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         'not-a-number',
       ),
     ).toThrow(EncryptionOperatorError)
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         'not-a-number',
       ),
@@ -142,7 +142,7 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
   it('rejects a null operand with an isNull() hint', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         null,
       ),
@@ -150,10 +150,10 @@ describe('cipherstash v3 operator lowering — cipherstashEq', () => {
   })
 })
 
-describe('cipherstash v3 operator lowering — cipherstashNe', () => {
+describe('cipherstash v3 operator lowering — eqlNeq', () => {
   it('lowers to eql_v3.neq(col, $1::eql_v3.query_<domain>)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashNe'),
+      getOperator('eqlNeq'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       42,
     )
@@ -169,10 +169,10 @@ describe('cipherstash v3 operator lowering — cipherstashNe', () => {
   })
 })
 
-describe('cipherstash v3 operator lowering — cipherstashInArray / cipherstashNotInArray', () => {
+describe('cipherstash v3 operator lowering — eqlIn / eqlNotIn', () => {
   it('lowers a single-element inArray to a one-term OR (outer parens retained)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashInArray'),
+      getOperator('eqlIn'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       [1],
     )
@@ -186,7 +186,7 @@ describe('cipherstash v3 operator lowering — cipherstashInArray / cipherstashN
 
   it('lowers a two-element inArray to an OR of eq terms, one query-term param per value', () => {
     const predicate = callOperator(
-      getOperator('cipherstashInArray'),
+      getOperator('eqlIn'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       [1, 2],
     )
@@ -207,9 +207,9 @@ describe('cipherstash v3 operator lowering — cipherstashInArray / cipherstashN
     }
   })
 
-  it('lowers cipherstashNotInArray to NOT-prefixed OR-of-equalities (whole disjunction negated)', () => {
+  it('lowers eqlNotIn to NOT-prefixed OR-of-equalities (whole disjunction negated)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashNotInArray'),
+      getOperator('eqlNotIn'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       [1, 2],
     )
@@ -224,7 +224,7 @@ describe('cipherstash v3 operator lowering — cipherstashInArray / cipherstashN
   it('rejects empty arrays with a descriptive error', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashInArray'),
+        getOperator('eqlIn'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         [],
       ),
@@ -234,7 +234,7 @@ describe('cipherstash v3 operator lowering — cipherstashInArray / cipherstashN
   it('rejects non-array arguments with a descriptive error', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashInArray'),
+        getOperator('eqlIn'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         'not-an-array',
       ),

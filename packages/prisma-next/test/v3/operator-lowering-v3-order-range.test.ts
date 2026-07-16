@@ -1,7 +1,7 @@
 /**
- * v3 operator lowering — order/range family (`cipherstashGt` / `Gte` /
+ * v3 operator lowering — order/range family (`eqlGt` / `Gte` /
  * `Lt` / `Lte` / `Between` / `NotBetween`) plus the free-standing
- * ordering helpers (`cipherstashV3Asc` / `cipherstashV3Desc`).
+ * ordering helpers (`eqlAsc` / `eqlDesc`).
  *
  * Canonical dialect (mirrors `packages/stack-drizzle/src/v3/sql-dialect.ts`):
  *
@@ -20,11 +20,7 @@
 import { describe, expect, it } from 'vitest'
 import { EncryptedBigInt } from '../../src/execution/envelope-bigint'
 import { EncryptedNumber } from '../../src/v3/envelope-number'
-import {
-  cipherstashV3Asc,
-  cipherstashV3Desc,
-  v3QueryTermTypeOf,
-} from '../../src/v3/operators-v3'
+import { eqlAsc, eqlDesc, v3QueryTermTypeOf } from '../../src/v3/operators-v3'
 import {
   BIGINT_ORD_ORE_CODEC_ID,
   callOperator,
@@ -41,10 +37,10 @@ import {
 
 describe('cipherstash v3 operator lowering — comparisons', () => {
   it.each([
-    ['cipherstashGt', 'gt'],
-    ['cipherstashGte', 'gte'],
-    ['cipherstashLt', 'lt'],
-    ['cipherstashLte', 'lte'],
+    ['eqlGt', 'gt'],
+    ['eqlGte', 'gte'],
+    ['eqlLt', 'lt'],
+    ['eqlLte', 'lte'],
   ] as const)('%s lowers to eql_v3.%s(col, $1::eql_v3.query_integer_ord)', (method, fn) => {
     const predicate = callOperator(
       getOperator(method),
@@ -64,7 +60,7 @@ describe('cipherstash v3 operator lowering — comparisons', () => {
 
   it('casts to the ord_ore query domain on a block-ORE column (bigint envelope dispatch)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashGt'),
+      getOperator('eqlGt'),
       columnAccessorV3(TABLE, 'balance', BIGINT_ORD_ORE_CODEC_ID),
       100n,
     )
@@ -79,9 +75,9 @@ describe('cipherstash v3 operator lowering — comparisons', () => {
 })
 
 describe('cipherstash v3 operator lowering — between / notBetween', () => {
-  it('cipherstashBetween is a SELF-PARENTHESISED conjunction (composition-safe)', () => {
+  it('eqlBetween is a SELF-PARENTHESISED conjunction (composition-safe)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashBetween'),
+      getOperator('eqlBetween'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       1,
       9,
@@ -103,9 +99,9 @@ describe('cipherstash v3 operator lowering — between / notBetween', () => {
     ).toBe(9)
   })
 
-  it('cipherstashNotBetween wraps the WHOLE conjunction: NOT (gte AND lte)', () => {
+  it('eqlNotBetween wraps the WHOLE conjunction: NOT (gte AND lte)', () => {
     const predicate = callOperator(
-      getOperator('cipherstashNotBetween'),
+      getOperator('eqlNotBetween'),
       columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
       1,
       9,
@@ -121,10 +117,10 @@ describe('cipherstash v3 operator lowering — between / notBetween', () => {
     expect(lowered.sql).not.toMatch(/NOT eql_v3\.gte/)
   })
 
-  it('cipherstashBetween enforces its 2-argument arity', () => {
+  it('eqlBetween enforces its 2-argument arity', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashBetween'),
+        getOperator('eqlBetween'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         1,
       ),
@@ -132,11 +128,9 @@ describe('cipherstash v3 operator lowering — between / notBetween', () => {
   })
 })
 
-describe('cipherstash v3 ordering — cipherstashV3Asc / cipherstashV3Desc', () => {
+describe('cipherstash v3 ordering — eqlAsc / eqlDesc', () => {
   it('lowers ASC on an OPE `_ord` column to ORDER BY eql_v3.ord_term(col) ASC', () => {
-    const item = cipherstashV3Asc(
-      columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
-    )
+    const item = eqlAsc(columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID))
     const lowered = makeV3Adapter().lower(selectWithOrderBy([item]), {
       contract: contractV3,
     })
@@ -147,7 +141,7 @@ describe('cipherstash v3 ordering — cipherstashV3Asc / cipherstashV3Desc', () 
   })
 
   it('lowers DESC on a block-ORE `_ord_ore` column to ORDER BY eql_v3.ord_term_ore(col) DESC', () => {
-    const item = cipherstashV3Desc(
+    const item = eqlDesc(
       columnAccessorV3(TABLE, 'balance', BIGINT_ORD_ORE_CODEC_ID),
     )
     const lowered = makeV3Adapter().lower(selectWithOrderBy([item]), {

@@ -10,8 +10,8 @@
  *     `createCipherstashV3RuntimeDescriptor` will productionise this
  *     exact shape; the inline copy keeps the operator tests decoupled
  *     from that task. The v2 descriptor is NEVER co-registered here —
- *     decision 1b (the flat `OperationRegistry` rejects two descriptors
- *     sharing the `cipherstashEq` method name; pinned in
+ *     decision 1b (a client is v2 or v3 by construction; the v2
+ *     `cipherstash*` and v3 `eql*` method sets are disjoint, pinned in
  *     `operator-gating-v3.test.ts`).
  *   - **Contract columns**: each v3 column carries its concrete
  *     `public.eql_v3_*` domain as `nativeType` plus the
@@ -202,8 +202,8 @@ export function makeV3Adapter(
  * Assemble a full SQL execution context (contract + stack) — the step
  * that builds the flat `OperationRegistry` from every contributor's
  * `queryOperations()`. This is where a duplicate method name across
- * extension packs throws (`adapter.lower` alone never touches the
- * registry), so the decision-1b co-registration pin drives this path.
+ * extension packs would throw (`adapter.lower` alone never touches the
+ * registry), so the decision-1b registration pins drive this path.
  */
 export function assembleV3ExecutionContext(
   extensionPacks: ReadonlyArray<SqlRuntimeExtensionDescriptor<'postgres'>> = [

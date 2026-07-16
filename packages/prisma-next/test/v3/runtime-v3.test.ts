@@ -82,8 +82,8 @@ describe('createCipherstashV3RuntimeDescriptor — descriptor shape', () => {
     expect(methods.sort()).toEqual(
       Object.keys(cipherstashV3QueryOperations()).sort(),
     )
-    expect(methods).toContain('cipherstashEq')
-    expect(methods).toContain('cipherstashJsonContains')
+    expect(methods).toContain('eqlEq')
+    expect(methods).toContain('eqlJsonContains')
   })
 
   it('create() returns a target-bound SQL/Postgres instance', () => {

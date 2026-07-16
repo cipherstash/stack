@@ -146,9 +146,9 @@ export type {
 } from '../v3/envelope-number'
 export { EncryptedNumber } from '../v3/envelope-number'
 export {
-  cipherstashV3Asc,
-  cipherstashV3Desc,
   cipherstashV3QueryOperations,
+  eqlAsc,
+  eqlDesc,
 } from '../v3/operators-v3'
 export {
   EncryptionOperatorError,

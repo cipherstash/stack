@@ -1,6 +1,6 @@
 /**
  * v3 operator lowering — encrypted-JSONB containment
- * (`cipherstashJsonContains`, trait `cipherstash:searchable-json`).
+ * (`eqlJsonContains`, trait `cipherstash:searchable-json`).
  *
  * Canonical dialect (mirrors `v3Dialect.containsJson` in
  * `packages/stack-drizzle/src/v3/sql-dialect.ts`): `eql_v3_json` has NO
@@ -15,7 +15,7 @@
  * be ambiguous ("operator is not unique", 42725) — the explicit cast
  * is load-bearing.
  *
- * Unlike the bloom `cipherstashIlike`, this is EXACT jsonb containment:
+ * Unlike the bloom `eqlMatch`, this is EXACT jsonb containment:
  * no false positives. This is the drizzle reference's full JSON
  * operator surface (`contains`); the reference exposes neither a
  * containedBy direction nor selector querying, so neither is
@@ -40,10 +40,10 @@ import {
   TABLE,
 } from './operator-lowering-v3.helpers'
 
-describe('cipherstash v3 operator lowering — cipherstashJsonContains', () => {
+describe('cipherstash v3 operator lowering — eqlJsonContains', () => {
   it('lowers to col OPERATOR(public.@>) $1::eql_v3.query_jsonb', () => {
     const predicate = callOperator(
-      getOperator('cipherstashJsonContains'),
+      getOperator('eqlJsonContains'),
       columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID),
       { role: 'admin' },
     )
@@ -57,7 +57,7 @@ describe('cipherstash v3 operator lowering — cipherstashJsonContains', () => {
 
   it('binds the needle as an EncryptedJson envelope with the searchableJson query-term mark', () => {
     const predicate = callOperator(
-      getOperator('cipherstashJsonContains'),
+      getOperator('eqlJsonContains'),
       columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID),
       { role: 'admin' },
     )
@@ -79,7 +79,7 @@ describe('cipherstash v3 operator lowering — cipherstashJsonContains', () => {
     // the same whole-table footgun the drizzle reference guards.
     expect(() =>
       callOperator(
-        getOperator('cipherstashJsonContains'),
+        getOperator('eqlJsonContains'),
         columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID),
         {},
       ),
@@ -89,10 +89,18 @@ describe('cipherstash v3 operator lowering — cipherstashJsonContains', () => {
   it('rejects a null needle with an isNull() hint', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashJsonContains'),
+        getOperator('eqlJsonContains'),
         columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID),
         null,
       ),
     ).toThrow(EncryptionOperatorError)
+    // The hint must actually name the NULL-check alternative.
+    expect(() =>
+      callOperator(
+        getOperator('eqlJsonContains'),
+        columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID),
+        null,
+      ),
+    ).toThrow(/isNull\(\)/)
   })
 })

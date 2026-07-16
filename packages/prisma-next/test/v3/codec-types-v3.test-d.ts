@@ -13,8 +13,12 @@
  *      pinned union — the table and the catalog can only drift
  *      together, and `constants-v3.ts` already locks the catalog.
  *   3. Spot-pins for each capability tier: output envelope class and
- *      the exact type-level trait union (shared strings + `v3-*`
- *      markers) for a representative domain per tier.
+ *      the exact type-level trait union for a representative domain
+ *      per tier. v3 entries carry ONLY the `cipherstash:v3-*` markers —
+ *      the v2 and v3 method names are disjoint (`cipherstash*` vs
+ *      `eql*`, PR #655 review), so the shared v2 trait strings must
+ *      never appear on a v3 entry (they would surface v2 methods a v3
+ *      runtime cannot dispatch).
  *
  * AGENTS.md permits `@ts-expect-error` exclusively in negative
  * type-test files; this is one of them.
@@ -63,22 +67,20 @@ describe('v3 CodecTypes entries', () => {
     >().toEqualTypeOf<never>()
   })
 
-  it('_eq domains carry equality + the v3-equality marker', () => {
+  it('_eq domains carry only the v3-equality marker', () => {
     expectTypeOf<
       CodecTypes['cipherstash/eql-v3/eql_v3_bigint_eq@1']['traits']
-    >().toEqualTypeOf<'cipherstash:equality' | 'cipherstash:v3-equality'>()
+    >().toEqualTypeOf<'cipherstash:v3-equality'>()
     expectTypeOf<
       CodecTypes['cipherstash/eql-v3/eql_v3_bigint_eq@1']['output']
     >().toEqualTypeOf<EncryptedBigInt>()
   })
 
-  it('_ord domains add order-and-range', () => {
+  it('_ord domains add the v3-order-and-range marker', () => {
     expectTypeOf<
       CodecTypes['cipherstash/eql-v3/eql_v3_double_ord@1']['traits']
     >().toEqualTypeOf<
-      | 'cipherstash:equality'
-      | 'cipherstash:v3-equality'
-      | 'cipherstash:order-and-range'
+      'cipherstash:v3-equality' | 'cipherstash:v3-order-and-range'
     >()
     // v3 `number`-castAs domains decode to EncryptedNumber, NOT the v2
     // EncryptedDouble.
@@ -87,22 +89,18 @@ describe('v3 CodecTypes entries', () => {
     >().toEqualTypeOf<EncryptedNumber>()
   })
 
-  it('text_match carries only the free-text pair', () => {
+  it('text_match carries only the v3-free-text-search marker', () => {
     expectTypeOf<
       CodecTypes['cipherstash/eql-v3/eql_v3_text_match@1']['traits']
-    >().toEqualTypeOf<
-      'cipherstash:free-text-search' | 'cipherstash:v3-free-text-search'
-    >()
+    >().toEqualTypeOf<'cipherstash:v3-free-text-search'>()
   })
 
-  it('text_search carries the full scalar tier', () => {
+  it('text_search carries the full scalar marker tier', () => {
     expectTypeOf<
       CodecTypes['cipherstash/eql-v3/eql_v3_text_search@1']['traits']
     >().toEqualTypeOf<
-      | 'cipherstash:equality'
       | 'cipherstash:v3-equality'
-      | 'cipherstash:order-and-range'
-      | 'cipherstash:free-text-search'
+      | 'cipherstash:v3-order-and-range'
       | 'cipherstash:v3-free-text-search'
     >()
     expectTypeOf<
@@ -117,5 +115,17 @@ describe('v3 CodecTypes entries', () => {
     expectTypeOf<
       CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['output']
     >().toEqualTypeOf<EncryptedJson>()
+  })
+
+  it('no v3 entry leaks a shared v2 trait string (the v2 method set must not surface on v3 columns)', () => {
+    type V3Traits = CodecTypes[V3ShapedKeys]['traits']
+    type LeakedV2Traits = Extract<
+      V3Traits,
+      | 'cipherstash:equality'
+      | 'cipherstash:order-and-range'
+      | 'cipherstash:free-text-search'
+      | 'cipherstash:searchable-json'
+    >
+    expectTypeOf<LeakedV2Traits>().toEqualTypeOf<never>()
   })
 })

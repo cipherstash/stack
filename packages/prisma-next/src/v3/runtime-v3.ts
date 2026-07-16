@@ -19,12 +19,10 @@
  * rejects a v3 contract at startup with
  * `RUNTIME.MISSING_EXTENSION_PACK`. The descriptor's VERSION carries
  * v3's own identity (`CIPHERSTASH_V3_EXTENSION_VERSION`), and decision
- * 1b's separation holds regardless: the registered method names
- * (`cipherstashEq`, …) are identical to the v2 set, so the v2 and v3
- * descriptors must NEVER be co-registered in one client — the flat,
- * method-name-keyed `OperationRegistry` throws on the shared names
- * (pinned in `test/v3/operator-gating-v3.test.ts`). A client is v2 or
- * v3, never both.
+ * 1b's separation holds regardless: the v3 method names (`eqlEq`, …)
+ * are disjoint from the v2 set, but the v2 and v3 descriptors must
+ * still NEVER be co-registered in one client — a client is v2 or v3,
+ * never both (pinned in `test/v3/operator-gating-v3.test.ts`).
  *
  * The v3 bulk-encrypt middleware ships separately
  * (`bulkEncryptMiddlewareV3(sdk)`) because

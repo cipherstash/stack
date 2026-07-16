@@ -79,6 +79,40 @@ describe('v3 TS factories', () => {
     })
   })
 
+  it('returns a FRESH descriptor per invocation — mutating one cannot affect the next', () => {
+    // Descriptors flow into caller-owned contract structures; a shared
+    // instance would make one caller's mutation alter every later
+    // contract (call-order-dependent output). `v3Authored` shallow-copies
+    // the capabilities block per call, pinned here.
+    const first = columnTypes.encryptedTextSearch()
+    const second = columnTypes.encryptedTextSearch()
+    expect(second).not.toBe(first)
+    expect(second.typeParams.capabilities).not.toBe(
+      first.typeParams.capabilities,
+    )
+
+    // Sabotage the first descriptor (test-only mutability cast — the
+    // descriptor type is readonly by design).
+    const mutable = first.typeParams.capabilities as {
+      equality: boolean
+      freeTextSearch: boolean
+    }
+    mutable.equality = false
+    mutable.freeTextSearch = false
+
+    // Neither the already-returned sibling nor a fresh call sees it.
+    expect(second.typeParams.capabilities).toEqual({
+      equality: true,
+      orderAndRange: true,
+      freeTextSearch: true,
+    })
+    expect(columnTypes.encryptedTextSearch().typeParams.capabilities).toEqual({
+      equality: true,
+      orderAndRange: true,
+      freeTextSearch: true,
+    })
+  })
+
   it('exposes no *OrdOre factories and no v3 encryptedString', () => {
     const exported = columnTypes as Record<string, unknown>
     expect(exported['encryptedBigIntOrdOre']).toBeUndefined()

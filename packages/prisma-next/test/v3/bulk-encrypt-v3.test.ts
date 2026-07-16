@@ -205,6 +205,31 @@ describe('bulkEncryptMiddlewareV3', () => {
     })
   })
 
+  describe('routing key write-once contract', () => {
+    it('rejects one envelope instance reused across two different columns', async () => {
+      // Same programming-error pin as the v2 suite
+      // (`../bulk-encrypt-middleware.test.ts`), through the v3 path:
+      // `stampRoutingKeysFromAst` stamps the first column, then
+      // `setHandleRoutingKey` throws on the conflicting reassignment so
+      // the envelope cannot silently retain a stale binding and route
+      // to the wrong bulk-encrypt batch.
+      const sdk = makeV3Sdk()
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const envelope = EncryptedString.from('alice@example.com')
+      const plan = buildInsertPlan(
+        'user',
+        [{ email: envelope, username: envelope }],
+        V3_TEXT_SEARCH,
+      )
+      const params = createSqlParamRefMutator(plan)
+
+      await expect(
+        middleware.beforeExecute?.(plan, createCtx(), params),
+      ).rejects.toThrow(/routing-key (table|column) conflict/)
+      expect(sdk.bulkEncryptCalls).toEqual([])
+    })
+  })
+
   describe('jurisdiction is the v3 codec-id set only', () => {
     it('ignores v2-codec params', async () => {
       const sdk = makeV3Sdk()
@@ -294,13 +319,20 @@ describe('bulkEncryptMiddlewareV3', () => {
       const controller = new AbortController()
       controller.abort()
 
+      // The rejection is the cipherstash-tagged `RUNTIME.ABORTED`
+      // envelope (`checkCipherstashAborted(ctx.signal, 'bulk-encrypt')`
+      // in `src/execution/abort.ts`), not just any error.
       await expect(
         middleware.beforeExecute?.(
           plan,
           createCtx({ signal: controller.signal }),
           params,
         ),
-      ).rejects.toThrow()
+      ).rejects.toMatchObject({
+        code: 'RUNTIME.ABORTED',
+        message: 'Operation aborted during bulk-encrypt',
+        details: { phase: 'bulk-encrypt' },
+      })
       expect(sdk.bulkEncryptCalls).toEqual([])
     })
   })
@@ -464,13 +496,13 @@ describe('bulkEncryptMiddlewareV3', () => {
       expect(sdk.bulkEncryptCalls).toEqual([])
     })
 
-    it('END-TO-END: a real cipherstashEq lowering feeds the seam and the param lands as query-term JSONB', async () => {
+    it('END-TO-END: a real eqlEq lowering feeds the seam and the param lands as query-term JSONB', async () => {
       const term = { i: { t: TABLE, c: 'score' }, ob: ['deadbeef'] }
       const sdk = makeCounterSdk({ encryptImpl: () => [term] })
       const middleware = bulkEncryptMiddlewareV3(sdk)
 
       const predicate = callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD_CODEC_ID),
         42,
       )

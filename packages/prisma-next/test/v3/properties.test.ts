@@ -65,9 +65,9 @@ import {
 import { deriveStackSchemasV3 } from '../../src/v3/derive-schemas-v3'
 import { EncryptedNumber } from '../../src/v3/envelope-number'
 import {
-  cipherstashV3Asc,
-  cipherstashV3Desc,
   EncryptionOperatorError,
+  eqlAsc,
+  eqlDesc,
 } from '../../src/v3/operators-v3'
 import { v3FromDriver, v3ToDriver } from '../../src/v3/wire-v3'
 import {
@@ -342,51 +342,48 @@ describe('property: operator-gating totality (every domain × every operator)', 
     capability: CapabilityKey
     args: (value: unknown) => unknown[]
   }> = [
-    { method: 'cipherstashEq', capability: 'equality', args: (v) => [v] },
-    { method: 'cipherstashNe', capability: 'equality', args: (v) => [v] },
+    { method: 'eqlEq', capability: 'equality', args: (v) => [v] },
+    { method: 'eqlNeq', capability: 'equality', args: (v) => [v] },
     {
-      method: 'cipherstashInArray',
+      method: 'eqlIn',
       capability: 'equality',
       args: (v) => [[v, v]],
     },
     {
-      method: 'cipherstashNotInArray',
+      method: 'eqlNotIn',
       capability: 'equality',
       args: (v) => [[v]],
     },
-    { method: 'cipherstashGt', capability: 'orderAndRange', args: (v) => [v] },
-    { method: 'cipherstashGte', capability: 'orderAndRange', args: (v) => [v] },
-    { method: 'cipherstashLt', capability: 'orderAndRange', args: (v) => [v] },
-    { method: 'cipherstashLte', capability: 'orderAndRange', args: (v) => [v] },
+    { method: 'eqlGt', capability: 'orderAndRange', args: (v) => [v] },
+    { method: 'eqlGte', capability: 'orderAndRange', args: (v) => [v] },
+    { method: 'eqlLt', capability: 'orderAndRange', args: (v) => [v] },
+    { method: 'eqlLte', capability: 'orderAndRange', args: (v) => [v] },
     {
-      method: 'cipherstashBetween',
+      method: 'eqlBetween',
       capability: 'orderAndRange',
       args: (v) => [v, v],
     },
     {
-      method: 'cipherstashNotBetween',
+      method: 'eqlNotBetween',
       capability: 'orderAndRange',
       args: (v) => [v, v],
     },
+    // No negated match case: the v3 registry deliberately exposes no
+    // `eqlNotMatch` (bloom negation false-negatives; PR #655 review).
     {
-      method: 'cipherstashIlike',
+      method: 'eqlMatch',
       capability: 'freeTextSearch',
       args: (v) => [v],
     },
     {
-      method: 'cipherstashNotIlike',
-      capability: 'freeTextSearch',
-      args: (v) => [v],
-    },
-    {
-      method: 'cipherstashJsonContains',
+      method: 'eqlJsonContains',
       capability: 'searchableJson',
       args: (v) => [v],
     },
   ]
 
   it('each pair either lowers with the canonical query cast or throws EncryptionOperatorError, decided by the capability', () => {
-    // The (domain × operator) grid is finite and small (40 × 13), so it
+    // The (domain × operator) grid is finite and small (40 × 12), so it
     // is swept exhaustively — strictly stronger than random sampling.
     for (const [codecId, meta] of ALL_DOMAIN_ENTRIES) {
       for (const opCase of OPERATOR_CASES) {
@@ -406,7 +403,7 @@ describe('property: operator-gating totality (every domain × every operator)', 
         // internal-invariant throw in requireQueryCast must be dead code.
         const template = templateOf(call())
         const cast =
-          opCase.method === 'cipherstashJsonContains'
+          opCase.method === 'eqlJsonContains'
             ? 'eql_v3.query_jsonb'
             : expectedQueryCast(meta)
         expect(template, label).toContain(`::${cast}`)
@@ -418,17 +415,17 @@ describe('property: operator-gating totality (every domain × every operator)', 
     for (const [codecId, meta] of ALL_DOMAIN_ENTRIES) {
       const col = () => columnAccessorV3(TABLE, 'c', codecId)
       if (!meta.capabilities.orderAndRange) {
-        expect(() => cipherstashV3Asc(col()), meta.bareDomain).toThrow(
+        expect(() => eqlAsc(col()), meta.bareDomain).toThrow(
           EncryptionOperatorError,
         )
-        expect(() => cipherstashV3Desc(col()), meta.bareDomain).toThrow(
+        expect(() => eqlDesc(col()), meta.bareDomain).toThrow(
           EncryptionOperatorError,
         )
         continue
       }
       const fn = 'ore' in meta.indexes ? 'ord_term_ore' : 'ord_term'
-      const asc = cipherstashV3Asc(col())
-      const desc = cipherstashV3Desc(col())
+      const asc = eqlAsc(col())
+      const desc = eqlDesc(col())
       expect(asc.dir).toBe('asc')
       expect(desc.dir).toBe('desc')
       expect(templateOf(asc.expr), meta.bareDomain).toBe(

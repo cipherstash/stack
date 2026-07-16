@@ -4,11 +4,11 @@
  * (`packages/stack-drizzle/src/v3/{operators,sql-dialect}.ts` is the
  * byte-for-byte reference):
  *
- *     eql_v3.eq(<col>, $n::eql_v3.query_<domain>)      -- equality
- *     eql_v3.gt(<col>, $n::eql_v3.query_<domain>)      -- comparison
- *     eql_v3.contains(<col>, $n::eql_v3.query_<domain>) -- bloom free-text
- *     <col> OPERATOR(public.@>) $n::eql_v3.query_jsonb  -- JSON containment
- *     eql_v3.ord_term(<col>) / eql_v3.ord_term_ore(<col>) -- ordering
+ *     eql_v3.eq(<col>, $n::eql_v3.query_<domain>)      -- equality (eqlEq)
+ *     eql_v3.gt(<col>, $n::eql_v3.query_<domain>)      -- comparison (eqlGt)
+ *     eql_v3.contains(<col>, $n::eql_v3.query_<domain>) -- bloom free-text (eqlMatch)
+ *     <col> OPERATOR(public.@>) $n::eql_v3.query_jsonb  -- JSON containment (eqlJsonContains)
+ *     eql_v3.ord_term(<col>) / eql_v3.ord_term_ore(<col>) -- ordering (eqlAsc/eqlDesc)
  *
  * ## Operands are QUERY TERMS, not storage envelopes
  *
@@ -55,17 +55,25 @@
  * derivation-time metadata, while a caller can reach a descriptor's
  * `impl` through a custom builder with any column expression.
  *
- * ## v2/v3 method-name identity (decision 1b)
+ * ## v3 method names are EQL-derived (`eql*`), not `cipherstash*`
  *
- * The registered method names (`cipherstashEq`, `cipherstashGt`, …)
- * are IDENTICAL to the v2 set — safe because the v2 and v3 runtime
- * descriptors are separate entry points that are never co-registered
- * (the flat `OperationRegistry` would throw on the shared names;
- * pinned in `test/v3/operator-gating-v3.test.ts`). This module imports
- * NO v2 codec/wire code — only the version-neutral envelope classes
- * and the shared trait constants.
+ * The registered method names (`eqlEq`, `eqlGt`, `eqlMatch`, …) derive
+ * from the `eql_v3.*` SQL functions they lower to, so the TS surface,
+ * the SQL, and the EQL docs share one vocabulary (PR #655 review). The
+ * `eql` prefix (rather than the bare `eq`/`gt`) is required: the
+ * framework's native scope-field methods already claim `eq`, `neq`,
+ * `gt`, `gte`, `lt`, `lte`, `in`, `notIn`, `like`, and those lower to
+ * plain SQL comparisons — wrong for EQL ciphertexts. The v2 surface
+ * keeps its historical `cipherstash*` names; the sets are disjoint, so
+ * the v2 and v3 descriptors no longer share any registry key (the
+ * never-co-registered stance of decision 1b still holds — a client is
+ * v2 or v3 by construction, pinned in
+ * `test/v3/operator-gating-v3.test.ts`). This module imports NO v2
+ * codec/wire code — only the version-neutral envelope classes and the
+ * shared trait constants.
  */
 
+import { matchNeedleError } from '@cipherstash/stack/adapter-kit'
 import type { CodecTrait } from '@prisma-next/framework-components/codec'
 import type {
   SqlOperationDescriptor,
@@ -175,7 +183,7 @@ function requireSelfCodec(
     throw new EncryptionOperatorError(
       `cipherstash ${method}: self expression is missing a CodecRef. ` +
         'Cipherstash predicate operators require a column-bound self argument; ' +
-        'reach the operator through the ORM model-accessor (e.g. `model.users.where((u) => u.email.cipherstashEq(...))`).',
+        'reach the operator through the ORM model-accessor (e.g. `model.users.where((u) => u.email.eqlEq(...))`).',
       { operator: method },
     )
   }
@@ -438,7 +446,7 @@ function fixedArityOperator(
 
 /**
  * Build a variable-arity v3 membership operator
- * (`cipherstashInArray` / `cipherstashNotInArray`): one query-term
+ * (`eqlIn` / `eqlNotIn`): one query-term
  * param per array element, template built per call from the array
  * length AND the domain's query cast. Empty arrays are rejected — an
  * OR-of-zero fragments has no well-defined lowering, and a silent
@@ -498,6 +506,96 @@ function membershipOperator(
 }
 
 /**
+ * Normalise and guard a free-text search needle BEFORE it is encrypted
+ * (string needles only — envelope and non-string operands fall through
+ * to `coerceV3`, which owns their diagnostics):
+ *
+ *   1. SQL wildcards: leading/trailing `%` are stripped (an
+ *      `ilike`-shaped habit like `'%foo%'` still means "rows containing
+ *      foo" under token matching), while an interior `%` or any `_`
+ *      throws — the bloom tokenizer would treat them as ORDINARY
+ *      CHARACTERS and silently match nothing. Mirrors
+ *      stack-supabase's `likeNeedle`.
+ *   2. Short needles: a needle below the match index's tokenizer
+ *      length blooms to nothing and can match EVERY row; the shared
+ *      `matchNeedleError` guard (adapter-kit — same check as the
+ *      Drizzle and Supabase v3 surfaces) rejects it with the reason.
+ */
+function normalizeMatchNeedle(
+  ctx: ColumnContext,
+  value: unknown,
+  method: string,
+): unknown {
+  if (typeof value !== 'string') return value
+  const needle = value.replace(/^%+/, '').replace(/%+$/, '')
+  if (needle.includes('%') || value.includes('_')) {
+    throw operatorError(
+      ctx,
+      method,
+      `cipherstash ${method}: pattern ${JSON.stringify(value)} on column "${ctx.columnName ?? 'unknown'}" has wildcards fuzzy free-text matching cannot honor (an interior "%" or any "_"). Pass a literal search term.`,
+    )
+  }
+  const match = ctx.meta.indexes.match
+  if (match !== undefined) {
+    const reason = matchNeedleError(
+      needle,
+      // Narrowing assertion: `meta.indexes` is the widened
+      // `Record<string, unknown>` snapshot of the column's `build()`
+      // output; the `match` slot IS the match-index opts the shared
+      // guard reads (same source the Drizzle adapter passes through).
+      match as Parameters<typeof matchNeedleError>[1],
+    )
+    if (reason !== undefined) {
+      throw operatorError(
+        ctx,
+        method,
+        `Operator "${method}" cannot search column "${ctx.columnName ?? 'unknown'}": ${reason}`,
+      )
+    }
+  }
+  return needle
+}
+
+/**
+ * Fuzzy free-text token match on a `text_search`/`text_match` column,
+ * lowering to `eql_v3.contains` — NOT SQL pattern matching: matching is
+ * case-insensitive, order- and multiplicity-insensitive, and one-sided
+ * (may false-positive). The needle is normalised and guarded by
+ * {@link normalizeMatchNeedle} before encryption.
+ */
+function matchOperator(): SqlOperationDescriptor {
+  const method = 'eqlMatch'
+  return {
+    // See `fixedArityOperator` for the cast rationale.
+    self: {
+      traits: [
+        CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
+      ] as unknown as readonly CodecTrait[],
+    },
+    impl: (
+      self: Expression<ScopeField>,
+      needle: unknown,
+    ): Expression<PgBoolReturn> => {
+      const ctx = resolveContext(self, method)
+      gate(ctx, FREE_TEXT_GATE.capability, FREE_TEXT_GATE.label, method)
+      const cast = requireQueryCast(ctx, method)
+      const guarded = normalizeMatchNeedle(ctx, needle, method)
+      const argRef = asQueryTermParam(ctx, guarded, method, 'freeTextSearch')
+      return buildOperation({
+        method,
+        args: [ctx.selfAst, argRef],
+        returns: { codecId: PG_BOOL_CODEC_ID, nullable: false },
+        lowering: {
+          targetFamily: 'sql',
+          strategy: 'function',
+          template: `eql_v3.contains({{self}}, {{arg0}}::${cast})`,
+        },
+      })
+    },
+  }
+}
+
+/**
  * Exact encrypted-JSONB containment on an `eql_v3_json` (`ste_vec`)
  * column: genuine jsonb `@>`, no false positives. `eql_v3_json` has no
  * `eql_v3.contains` overload — containment is the `@>` operator, whose
@@ -507,13 +605,14 @@ function membershipOperator(
  * plus the cast disambiguate among the four `eql_v3_json @> ?` RHS
  * overloads ("operator is not unique", 42725).
  *
- * This mirrors the drizzle reference's `contains` under the v2 set's
- * `cipherstashJson*` naming convention. The reference exposes neither
- * a containedBy direction nor selector querying, so neither is
- * registered here.
+ * This mirrors the drizzle reference's `contains` under the v3 `eql*`
+ * naming vocabulary. Selector querying (comparing the value at a
+ * JSONPath via `eql_v3.jsonb_path_query_first` — the drizzle
+ * reference's `selectorOps`, #651) is tracked for prisma-next in #677;
+ * a containedBy direction is exposed by neither adapter.
  */
 function jsonContainsOperator(): SqlOperationDescriptor {
-  const method = 'cipherstashJsonContains'
+  const method = 'eqlJsonContains'
   return {
     // See `fixedArityOperator` for the cast rationale.
     self: {
@@ -562,24 +661,25 @@ function jsonContainsOperator(): SqlOperationDescriptor {
 /**
  * Cipherstash's v3 query-operations contributions. Wired into the v3
  * runtime descriptor (Task 7's `createCipherstashV3RuntimeDescriptor`)
- * — and ONLY that descriptor: the method names are shared with the v2
- * set, and the flat `OperationRegistry` rejects co-registration
- * (decision 1b; pinned in `test/v3/operator-gating-v3.test.ts`).
+ * — and ONLY that descriptor (decision 1b: a client is v2 or v3, never
+ * both; pinned in `test/v3/operator-gating-v3.test.ts`).
  *
  * Operator → trait → lowering:
  *
- *   - `cipherstashEq` / `cipherstashNe` / `cipherstashInArray` /
- *     `cipherstashNotInArray` (`cipherstash:equality`) →
+ *   - `eqlEq` / `eqlNeq` / `eqlIn` / `eqlNotIn`
+ *     (`cipherstash:equality`) →
  *     `eql_v3.eq` / `eql_v3.neq` / OR-of-eq
- *   - `cipherstashGt` / `Gte` / `Lt` / `Lte` / `Between` / `NotBetween`
- *     (`cipherstash:order-and-range`) → `eql_v3.gt`/`gte`/`lt`/`lte`,
- *     range as a self-parenthesised `(gte AND lte)` conjunction
- *   - `cipherstashIlike` / `cipherstashNotIlike`
- *     (`cipherstash:free-text-search`) → `eql_v3.contains` — a
- *     bloom-filter TOKEN MATCH (order/multiplicity-insensitive,
- *     one-sided: may false-positive), NOT SQL ILIKE; the v2 method
- *     names are kept for surface continuity.
- *   - `cipherstashJsonContains` (`cipherstash:searchable-json`) →
+ *   - `eqlGt` / `eqlGte` / `eqlLt` / `eqlLte` / `eqlBetween` /
+ *     `eqlNotBetween` (`cipherstash:order-and-range`) →
+ *     `eql_v3.gt`/`gte`/`lt`/`lte`, range as a self-parenthesised
+ *     `(gte AND lte)` conjunction
+ *   - `eqlMatch` (`cipherstash:free-text-search`) → `eql_v3.contains`
+ *     — a bloom-filter TOKEN MATCH (order/multiplicity-insensitive,
+ *     one-sided: may false-positive), NOT SQL pattern matching. Guarded
+ *     up front: needles the column's match index cannot answer are
+ *     rejected (`matchNeedleError`), and SQL wildcards are normalised
+ *     away or rejected (see {@link matchOperator}).
+ *   - `eqlJsonContains` (`cipherstash:searchable-json`) →
  *     exact jsonb containment via `OPERATOR(public.@>)`.
  *
  * Every operand renders as `$n::eql_v3.query_<domain>` (irregularly
@@ -588,50 +688,50 @@ function jsonContainsOperator(): SqlOperationDescriptor {
  */
 export function cipherstashV3QueryOperations(): SqlOperationDescriptors {
   return {
-    cipherstashEq: fixedArityOperator(
-      'cipherstashEq',
+    eqlEq: fixedArityOperator(
+      'eqlEq',
       CIPHERSTASH_TRAIT_EQUALITY,
       1,
       EQUALITY_GATE,
       'equality',
       (cast) => `eql_v3.eq({{self}}, {{arg0}}::${cast})`,
     ),
-    cipherstashNe: fixedArityOperator(
-      'cipherstashNe',
+    eqlNeq: fixedArityOperator(
+      'eqlNeq',
       CIPHERSTASH_TRAIT_EQUALITY,
       1,
       EQUALITY_GATE,
       'equality',
       (cast) => `eql_v3.neq({{self}}, {{arg0}}::${cast})`,
     ),
-    cipherstashInArray: membershipOperator('cipherstashInArray', false),
-    cipherstashNotInArray: membershipOperator('cipherstashNotInArray', true),
-    cipherstashGt: fixedArityOperator(
-      'cipherstashGt',
+    eqlIn: membershipOperator('eqlIn', false),
+    eqlNotIn: membershipOperator('eqlNotIn', true),
+    eqlGt: fixedArityOperator(
+      'eqlGt',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       1,
       ORDERING_GATE,
       'orderAndRange',
       (cast) => `eql_v3.gt({{self}}, {{arg0}}::${cast})`,
     ),
-    cipherstashGte: fixedArityOperator(
-      'cipherstashGte',
+    eqlGte: fixedArityOperator(
+      'eqlGte',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       1,
       ORDERING_GATE,
       'orderAndRange',
       (cast) => `eql_v3.gte({{self}}, {{arg0}}::${cast})`,
     ),
-    cipherstashLt: fixedArityOperator(
-      'cipherstashLt',
+    eqlLt: fixedArityOperator(
+      'eqlLt',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       1,
       ORDERING_GATE,
       'orderAndRange',
       (cast) => `eql_v3.lt({{self}}, {{arg0}}::${cast})`,
     ),
-    cipherstashLte: fixedArityOperator(
-      'cipherstashLte',
+    eqlLte: fixedArityOperator(
+      'eqlLte',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       1,
       ORDERING_GATE,
@@ -645,8 +745,8 @@ export function cipherstashV3QueryOperations(): SqlOperationDescriptors {
     // composition, …) parses as `(NOT gte) AND lte` — rows BELOW the
     // lower bound instead of the range complement. Parenthesising here
     // makes every composition safe instead of relying on each caller.
-    cipherstashBetween: fixedArityOperator(
-      'cipherstashBetween',
+    eqlBetween: fixedArityOperator(
+      'eqlBetween',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       2,
       ORDERING_GATE,
@@ -654,8 +754,8 @@ export function cipherstashV3QueryOperations(): SqlOperationDescriptors {
       (cast) =>
         `(eql_v3.gte({{self}}, {{arg0}}::${cast}) AND eql_v3.lte({{self}}, {{arg1}}::${cast}))`,
     ),
-    cipherstashNotBetween: fixedArityOperator(
-      'cipherstashNotBetween',
+    eqlNotBetween: fixedArityOperator(
+      'eqlNotBetween',
       CIPHERSTASH_TRAIT_ORDER_AND_RANGE,
       2,
       ORDERING_GATE,
@@ -663,26 +763,14 @@ export function cipherstashV3QueryOperations(): SqlOperationDescriptors {
       (cast) =>
         `NOT (eql_v3.gte({{self}}, {{arg0}}::${cast}) AND eql_v3.lte({{self}}, {{arg1}}::${cast}))`,
     ),
-    // ilike/notIlike lower to eql_v3.contains — bloom-filter token
-    // matching, NOT SQL ILIKE (may false-positive; carry this caveat
-    // into user docs).
-    cipherstashIlike: fixedArityOperator(
-      'cipherstashIlike',
-      CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
-      1,
-      FREE_TEXT_GATE,
-      'freeTextSearch',
-      (cast) => `eql_v3.contains({{self}}, {{arg0}}::${cast})`,
-    ),
-    cipherstashNotIlike: fixedArityOperator(
-      'cipherstashNotIlike',
-      CIPHERSTASH_TRAIT_FREE_TEXT_SEARCH,
-      1,
-      FREE_TEXT_GATE,
-      'freeTextSearch',
-      (cast) => `NOT eql_v3.contains({{self}}, {{arg0}}::${cast})`,
-    ),
-    cipherstashJsonContains: jsonContainsOperator(),
+    eqlMatch: matchOperator(),
+    // NO negated match: `eql_v3.contains` is a bloom-filter test that
+    // may FALSE-POSITIVE, so its negation FALSE-NEGATIVES — it would
+    // silently drop rows that genuinely don't match. A trustworthy
+    // negative free-text search needs a decrypt-and-post-filter path;
+    // until one exists the operator must not be offered (PR #655
+    // review; same removal as the Drizzle/Supabase v3 surfaces).
+    eqlJsonContains: jsonContainsOperator(),
   }
 }
 
@@ -727,22 +815,20 @@ function ordTermExpression(
  * A free-standing helper, not a registered operator — same rationale
  * as the v2 `cipherstashAsc`: sort returns an `OrderByItem`, not the
  * boolean predicate the registry's where-binding pipeline expects. The
- * `V3` suffix keeps the export distinct from the v2 helper (unlike
- * registry method names, free-standing exports share one barrel
+ * `eql` prefix keeps the export distinct from the v2 helper AND names
+ * the vocabulary it belongs to (free-standing exports share one barrel
  * namespace). Unlike v2 (bare-column sort over `eql_v2_encrypted`'s
  * native operator family), v3 domains have no cross-row comparison
  * operators — sorting MUST extract the order term. Synchronous: no
  * operand, so no query term is minted.
  */
-export function cipherstashV3Asc(col: Expression<ScopeField>): OrderByItem {
-  return OrderByItem.asc(ordTermExpression(col, 'cipherstashV3Asc').buildAst())
+export function eqlAsc(col: Expression<ScopeField>): OrderByItem {
+  return OrderByItem.asc(ordTermExpression(col, 'eqlAsc').buildAst())
 }
 
 /**
- * DESC sort over an order-capable v3 column. See {@link cipherstashV3Asc}.
+ * DESC sort over an order-capable v3 column. See {@link eqlAsc}.
  */
-export function cipherstashV3Desc(col: Expression<ScopeField>): OrderByItem {
-  return OrderByItem.desc(
-    ordTermExpression(col, 'cipherstashV3Desc').buildAst(),
-  )
+export function eqlDesc(col: Expression<ScopeField>): OrderByItem {
+  return OrderByItem.desc(ordTermExpression(col, 'eqlDesc').buildAst())
 }
