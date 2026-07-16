@@ -15,10 +15,13 @@
  *   |   (string value) |   → ste_vec_selector |            |
  *   |   (object value) |   → ste_vec_term     |            |
  *
- * Every term must be EQL v3 and CIPHERTEXT-FREE (terms are needles matched
- * against stored values, never decrypted) — the two serde-boundary bugs this
- * suite's first run caught (undefined fields rejected; the bulk field is
- * `queries`) are exactly why each type needs a live crossing, not a mock.
+ * Envelope terms must be EQL v3 and CIPHERTEXT-FREE (terms are needles
+ * matched against stored values, never decrypted). The one deliberate
+ * exception: a SELECTOR query returns a BARE string (the selector hash) —
+ * v3 has no encrypted-selector envelope; it binds as the text argument of
+ * `->` / `->>`. The serde-boundary bugs this suite's first runs caught
+ * (undefined fields rejected; the bulk field is `queries`; the ore→ope
+ * swap) are exactly why each type needs a live crossing, not a mock.
  *
  * Skipped when any CS_* env var is missing, matching `roundtrip.test.ts`.
  */
@@ -108,14 +111,24 @@ Deno.test({
       'orderAndRange',
     )
 
-    // searchableJson, string value → ste_vec_selector (JSONPath)
-    assertV3Term(
-      await client.encryptQuery('$.theme', {
-        table: catalog,
-        column: catalog.prefs,
-        queryType: 'searchableJson',
-      }),
-      'searchableJson/selector',
+    // searchableJson, string value → ste_vec_selector (JSONPath). By
+    // contract the selector "term" is a BARE selector-hash string — no
+    // envelope — bound as the text argument of `->` / `->>`.
+    const selector = await client.encryptQuery('$.theme', {
+      table: catalog,
+      column: catalog.prefs,
+      queryType: 'searchableJson',
+    })
+    assertExists(selector, 'selector: encryptQuery returned null')
+    assertEquals(
+      typeof selector,
+      'string',
+      'selector: expected the bare selector-hash string',
+    )
+    assertEquals(
+      (selector as unknown as string).length > 0,
+      true,
+      'selector: empty selector hash',
     )
 
     // searchableJson, object value → ste_vec_term (containment)

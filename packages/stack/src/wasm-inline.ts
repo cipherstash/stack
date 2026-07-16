@@ -403,14 +403,20 @@ export class WasmEncryptionClient {
    *
    * @example Encrypted JSON — containment and JSONPath selector
    * ```ts
-   * // Object value → containment needle:
+   * // Object value → containment needle (a v3 envelope):
    * const contains = await client.encryptQuery({ role: "admin" }, {
    *   table: users, column: users.prefs, queryType: "searchableJson",
    * })
-   * // String value → JSONPath selector:
+   * sql`SELECT * FROM users
+   *     WHERE prefs @> ${contains}::jsonb::eql_v3.query_jsonb`
+   *
+   * // String value → JSONPath selector. NOTE: v3 has no encrypted-selector
+   * // envelope — this returns the BARE selector-hash string, bound as the
+   * // text argument of -> / ->>:
    * const selector = await client.encryptQuery("$.role", {
    *   table: users, column: users.prefs, queryType: "searchableJson",
    * })
+   * sql`SELECT prefs -> ${selector} FROM users`
    * ```
    *
    * @param plaintext - The search needle. `null`/`undefined` returns `null`
