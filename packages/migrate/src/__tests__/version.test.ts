@@ -32,6 +32,10 @@ describe('classifyEqlDomain', () => {
     expect(classifyEqlDomain('text')).toBeNull()
     expect(classifyEqlDomain('jsonb')).toBeNull()
     expect(classifyEqlDomain('citext')).toBeNull()
+    // Prefix is `eql_v3_` with the underscore — a hypothetical future
+    // `eql_v30_*` generation must not classify as v3.
+    expect(classifyEqlDomain('eql_v30_text')).toBeNull()
+    expect(classifyEqlDomain('eql_v3')).toBeNull()
   })
 })
 

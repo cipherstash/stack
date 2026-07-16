@@ -36,7 +36,9 @@ export interface EncryptedColumnInfo {
  */
 export function classifyEqlDomain(domain: string): EqlVersion | null {
   if (domain === 'eql_v2_encrypted') return 2
-  if (domain.startsWith('eql_v3')) return 3
+  // Underscore included: a bare `startsWith('eql_v3')` would also claim
+  // hypothetical future generations like `eql_v30_*`.
+  if (domain.startsWith('eql_v3_')) return 3
   return null
 }
 

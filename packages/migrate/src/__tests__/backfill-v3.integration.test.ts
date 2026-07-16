@@ -6,7 +6,9 @@
  * - the leak guard (`isEncryptedPayload`) accepts BOTH v3 wire shapes — flat
  *   scalars (`{v:3, i, c}`) and SteVec documents (`{v:3, k:'sv', i, sv}`) —
  *   so a v3 client's output flows through `runBackfill` unmodified;
- * - the `$N::jsonb` write lands v3 envelopes in the target column;
+ * - the `$N::jsonb` write lands v3 envelopes in a DOMAIN-typed target column
+ *   (implicit jsonb→domain cast + CHECK enforcement, the same assignment
+ *   path a real `eql_v3_*` column takes);
  * - `countEncrypted` (the v3 verification primitive — v3 has no
  *   `eql_v2.count_encrypted_with_active_config`) counts them.
  *
@@ -19,9 +21,9 @@
  * ```
  *
  * No CipherStash credentials required — payloads are deterministic v3-shaped
- * markers. End-to-end proof against a real `eql_v3_*` domain (whose CHECK
- * constraint demands real ciphertext structure) lives with the live-crypto
- * harness, not here.
+ * markers, and the target domain mirrors the real `eql_v3_*` storage CHECK
+ * (structure only; real-ciphertext proof lives with the live-crypto
+ * harness, not here).
  */
 
 import 'dotenv/config'
@@ -50,6 +52,22 @@ describe.skipIf(!runIntegration)('runBackfill with EQL v3 payloads', () => {
       await db.query('DROP SCHEMA IF EXISTS cipherstash CASCADE')
       await db.query('DROP SCHEMA IF EXISTS migrate_v3_test CASCADE')
       await db.query('CREATE SCHEMA migrate_v3_test')
+      // A domain with the SAME CHECK shape as the real `public.eql_v3_*`
+      // storage domains (object with v/i/c keys, v = 3), so the backfill's
+      // `$N::jsonb` write exercises the domain-typed assignment path — the
+      // implicit jsonb→domain cast plus CHECK enforcement — without needing
+      // an EQL install. A payload the real domain would reject fails here
+      // too (pinned below).
+      await db.query(`
+        CREATE DOMAIN migrate_v3_test.eql_v3_text_t AS jsonb
+          CHECK (
+            jsonb_typeof(VALUE) = 'object'
+            AND VALUE ? 'v'
+            AND VALUE ? 'i'
+            AND VALUE->>'v' = '3'
+            AND (VALUE ? 'c' OR (VALUE->>'k' = 'sv' AND VALUE ? 'sv'))
+          )
+      `)
       await installMigrationsSchema(db)
     } finally {
       db.release()
@@ -107,7 +125,7 @@ describe.skipIf(!runIntegration)('runBackfill with EQL v3 payloads', () => {
         CREATE TABLE migrate_v3_test.users (
           id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
           email           text NOT NULL,
-          email_encrypted jsonb
+          email_encrypted migrate_v3_test.eql_v3_text_t
         )
       `)
       await db.query(
