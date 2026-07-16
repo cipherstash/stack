@@ -28,7 +28,8 @@ The Drizzle integration ships as its own first-party package,
 `@cipherstash/stack-drizzle`, which depends on `@cipherstash/stack`. Install both.
 The v3 surface documented here lives on the `@cipherstash/stack-drizzle/v3` subpath.
 It is distinct from the older, separate `@cipherstash/drizzle` package (which is
-`@cipherstash/protect`-based, with different symbol names).
+`@cipherstash/protect`-based, with different symbol names) — that package is
+**deprecated and no longer published**; do not install it. This package replaces it.
 
 ## Database Setup
 
@@ -622,4 +623,4 @@ Encryption client operations (`encryptModel`, `bulkDecryptModels`, ...) don't th
 
 ## Legacy: EQL v2
 
-The original v2 integration — `encryptedType` config-flag columns, `extractEncryptionSchema`, and `createEncryptionOperators` (with `like`/`ilike`) from the `@cipherstash/stack-drizzle` package root, over the `eql_v2_encrypted` column type installed via `stash eql install --drizzle` (the older standalone `@cipherstash/drizzle` package shipped its own `generate-eql-migration` bin for the same purpose) — still exists for existing deployments and is documented at https://cipherstash.com/docs. New projects must use the `/v3` surface documented above. Note: `stash init --drizzle` currently pins EQL v2 because the v2 Drizzle-migration install path has no v3 equivalent yet.
+The original v2 integration — `encryptedType` config-flag columns, `extractEncryptionSchema`, and `createEncryptionOperators` (with `like`/`ilike`) from the `@cipherstash/stack-drizzle` package root, over the `eql_v2_encrypted` column type installed via `stash eql install --drizzle` (the deprecated standalone `@cipherstash/drizzle` package shipped its own `generate-eql-migration` bin for the same purpose) — still exists for existing deployments and is documented at https://cipherstash.com/docs. New projects must use the `/v3` surface documented above. Note: `stash init --drizzle` currently pins EQL v2 because the v2 Drizzle-migration install path has no v3 equivalent yet.

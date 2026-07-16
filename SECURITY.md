@@ -13,7 +13,6 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `stash` | CipherStash CLI |
 | `@cipherstash/protect` | Core encryption library (re-exported via `@cipherstash/stack`) |
 | `@cipherstash/schema` | Schema builder utilities |
-| `@cipherstash/drizzle` | Drizzle ORM integration |
 | `@cipherstash/nextjs` | Next.js helpers |
 | `@cipherstash/protect-dynamodb` | DynamoDB helpers |
 | `@cipherstash/migrate` | Plaintext-to-encrypted column migration tooling |

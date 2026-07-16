@@ -168,15 +168,6 @@ jobs:
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
-      - name: Create .env file in ./packages/drizzle/
-        run: |
-          touch ./packages/drizzle/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env
-
       # Run TurboRepo tests
       - name: Run tests
         run: pnpm run test
@@ -388,22 +379,13 @@ jobs:
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
-      - name: Create .env file in ./packages/drizzle/
-        run: |
-          touch ./packages/drizzle/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/drizzle/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/drizzle/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/drizzle/.env
-
       # Build with Node (turbo/tsup need Node), then run tests with Bun
       - name: Build packages
         run: pnpm turbo build --filter './packages/*'
 
       - name: Run tests with Bun
         run: |
-          for dir in packages/schema packages/protect packages/stack packages/protect-dynamodb packages/drizzle packages/stack-forge; do
+          for dir in packages/schema packages/protect packages/stack packages/protect-dynamodb packages/stack-forge; do
             if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/package.json" ]; then
               echo "--- Testing $dir ---"
               (cd "$dir" && bunx --bun vitest run) || true
