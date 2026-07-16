@@ -250,19 +250,45 @@ export type WasmEncryptionConfig = {
   config: WasmClientConfig
 }
 
-/** Options for {@link WasmEncryptionClient.encryptQuery}. The column must be
- * a QUERYABLE v3 column (authored via the `types.*` factories re-exported
- * from this entry) — storage-only columns have no indexes to query. */
+/**
+ * Options for {@link WasmEncryptionClient.encryptQuery}.
+ *
+ * The column must be a QUERYABLE v3 column (authored via the `types.*`
+ * factories re-exported from this entry) — storage-only columns like
+ * `types.Text` with no indexes have nothing to query.
+ */
 export type WasmEncryptQueryOptions = {
+  /** The `encryptedTable(...)` the column belongs to. */
   table: EncryptOptions['table']
+  /** The queryable v3 column the term targets, e.g. `users.email`. */
   column: BuildableV3QueryableColumn
-  /** Which index to target when the column has several. Omit to infer from
-   * the column's configured indexes (priority: unique > match > ore >
-   * ste_vec, matching the native client). */
+  /**
+   * Which of the column's indexes the term targets:
+   *
+   * - `'equality'` — exact match (`unique` index; `=` / `IN`)
+   * - `'freeTextSearch'` — fuzzy token match (`match` index; one-sided —
+   *   a match may be a false positive, a non-match never is)
+   * - `'orderAndRange'` — comparisons and ranges (`ore` index; `<` `>`
+   *   `BETWEEN` / `ORDER BY`)
+   * - `'searchableJson'` — encrypted JSON (`ste_vec` index): a **string**
+   *   value is treated as a JSONPath selector (`'$.user.email'`), any other
+   *   value as a containment needle (`{ role: 'admin' }`)
+   *
+   * Omit to infer from the column's configured indexes (priority:
+   * `unique > match > ore > ste_vec`, matching the native client) —
+   * unambiguous for single-index columns like `types.TextEq`, but be
+   * explicit for multi-index domains like `types.TextSearch` (which
+   * carries all three scalar indexes).
+   */
   queryType?: QueryTypeName
 }
 
-/** One term for {@link WasmEncryptionClient.encryptQueryBulk}. */
+/**
+ * One term for {@link WasmEncryptionClient.encryptQueryBulk} — the
+ * {@link WasmEncryptQueryOptions} plus the plaintext needle. A `null`
+ * value yields `null` at the same position in the result (nothing to
+ * search for).
+ */
 export type WasmQueryTerm = WasmEncryptQueryOptions & {
   value: WasmPlaintext
 }
@@ -385,18 +411,67 @@ export class WasmEncryptionClient {
 
   /**
    * Encrypt a QUERY TERM (search needle) for a queryable v3 column —
-   * equality, free-text match, ORE range, or JSON containment/selector. The
-   * returned term carries no ciphertext; cast it to the column's
-   * `eql_v3.query_<domain>` type in SQL to reach the indexed operators:
+   * equality, free-text match, ORE range, or JSON containment/selector.
    *
-   * ```sql
-   * SELECT * FROM users WHERE email = $1::jsonb::eql_v3.query_text_eq
+   * The returned term is **ciphertext-free**: it is matched against stored
+   * envelopes, never decrypted, so it is safe to log-scrub less aggressively
+   * than storage payloads (though it still derives from the plaintext).
+   * Interpolate it as a parameter and cast to the column's
+   * `eql_v3.query_<domain>` type to reach the indexed operators — the domain
+   * suffix mirrors the storage domain (`eql_v3_text_eq` →
+   * `eql_v3.query_text_eq`; irregular: `eql_v3_json` → `eql_v3.query_jsonb`).
+   *
+   * @example Equality (unique index)
+   * ```ts
+   * const term = await client.encryptQuery("alice@example.com", {
+   *   table: users, column: users.email, queryType: "equality",
+   * })
+   * // postgres-js:
+   * sql`SELECT * FROM users
+   *     WHERE email = ${term}::jsonb::eql_v3.query_text_eq`
    * ```
    *
-   * `null` plaintext returns `null` (nothing to search for), mirroring the
-   * native client. Errors THROW, consistent with this surface's
-   * `encrypt`/`decrypt` (the native entry's Result envelope lives on the
-   * Node client only).
+   * @example Free-text match (bloom index — one-sided, fuzzy)
+   * ```ts
+   * const term = await client.encryptQuery("needle", {
+   *   table: users, column: users.bio, queryType: "freeTextSearch",
+   * })
+   * sql`SELECT * FROM users
+   *     WHERE eql_v3.contains(bio, ${term}::jsonb::eql_v3.query_text_search)`
+   * ```
+   *
+   * @example Range / ORDER BY (ORE index)
+   * ```ts
+   * const term = await client.encryptQuery(42, {
+   *   table: users, column: users.age, queryType: "orderAndRange",
+   * })
+   * sql`SELECT * FROM users
+   *     WHERE eql_v3.gte(age, ${term}::jsonb::eql_v3.query_integer_ord)`
+   * ```
+   *
+   * @example Encrypted JSON — containment and JSONPath selector
+   * ```ts
+   * // Object value → containment needle:
+   * const contains = await client.encryptQuery({ role: "admin" }, {
+   *   table: users, column: users.prefs, queryType: "searchableJson",
+   * })
+   * // String value → JSONPath selector:
+   * const selector = await client.encryptQuery("$.role", {
+   *   table: users, column: users.prefs, queryType: "searchableJson",
+   * })
+   * ```
+   *
+   * @param plaintext - The search needle. `null`/`undefined` returns `null`
+   *   without contacting ZeroKMS (nothing to search for), mirroring the
+   *   native client.
+   * @param opts - Table, column, and (optionally) which index to target —
+   *   see {@link WasmEncryptQueryOptions.queryType} for the inference rules.
+   * @returns The v3 query term, or `null` for null plaintext.
+   * @throws When the requested `queryType` isn't configured on the column,
+   *   the column has no indexes at all, or encryption fails. Errors THROW,
+   *   consistent with this surface's `encrypt`/`decrypt` (the native
+   *   entry's `{ data } | { failure }` envelope lives on the Node client
+   *   only).
    */
   async encryptQuery(
     plaintext: WasmPlaintext | null,
@@ -425,8 +500,27 @@ export class WasmEncryptionClient {
 
   /**
    * Batch form of {@link encryptQuery} — one ZeroKMS round trip for many
-   * terms. Position-stable: a `null`/`undefined` value yields `null` at the
-   * same index.
+   * terms, which is the shape query builders want (encrypt every needle in
+   * a WHERE clause together).
+   *
+   * Position-stable: the result array is index-aligned with `terms`, and a
+   * `null`/`undefined` value yields `null` at the same index (an all-null
+   * batch short-circuits without calling ZeroKMS). Terms may mix query
+   * types and columns freely.
+   *
+   * @example
+   * ```ts
+   * const [emailEq, bioMatch] = await client.encryptQueryBulk([
+   *   { value: "alice@example.com", table: users, column: users.email,
+   *     queryType: "equality" },
+   *   { value: "needle", table: users, column: users.bio,
+   *     queryType: "freeTextSearch" },
+   * ])
+   * ```
+   *
+   * @param terms - The needles to encrypt; see {@link WasmQueryTerm}.
+   * @returns Index-aligned array of v3 query terms (or `null` per null value).
+   * @throws As {@link encryptQuery} — the first invalid term aborts the batch.
    */
   async encryptQueryBulk(
     terms: readonly WasmQueryTerm[],
