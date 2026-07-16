@@ -36,6 +36,17 @@
  *   table: users,
  * })
  * const dec = await client.decrypt(enc)
+ *
+ * // Searchable encryption: mint a ciphertext-free QUERY TERM and cast it
+ * // to the column's `eql_v3.query_<domain>` type in SQL to hit the index.
+ * const term = await client.encryptQuery("alice@example.com", {
+ *   column: users.email,
+ *   table: users,
+ *   queryType: "freeTextSearch",
+ * })
+ * // e.g. postgres-js:
+ * //   sql`SELECT * FROM users
+ * //       WHERE eql_v3.contains(email, ${term}::jsonb::eql_v3.query_text_search)`
  * ```
  *
  * For per-user, identity-bound encryption on the edge, build an
@@ -67,9 +78,16 @@ import {
 import {
   decrypt as wasmDecrypt,
   encrypt as wasmEncrypt,
+  encryptQuery as wasmEncryptQuery,
+  encryptQueryBulk as wasmEncryptQueryBulk,
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
+import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
+import {
+  assertValidNumericValue,
+  assertValueIndexCompatibility,
+} from '@/encryption/helpers/validation'
 import { type AnyV3Table, buildEncryptConfig } from '@/eql/v3'
 import {
   type CastAs,
@@ -77,7 +95,14 @@ import {
   encryptConfigSchema,
   toEqlCastAs,
 } from '@/schema'
-import type { Encrypted, EncryptOptions } from '@/types'
+import type {
+  BuildableV3QueryableColumn,
+  Encrypted,
+  EncryptedQuery,
+  EncryptOptions,
+  Plaintext,
+  QueryTypeName,
+} from '@/types'
 
 // -----------------------------------------------------------------------
 // Schema + type re-exports
@@ -231,6 +256,49 @@ export type WasmEncryptionConfig = {
 }
 
 /**
+ * Options for {@link WasmEncryptionClient.encryptQuery}.
+ *
+ * The column must be a QUERYABLE v3 column (authored via the `types.*`
+ * factories re-exported from this entry) — storage-only columns like
+ * `types.Text` with no indexes have nothing to query.
+ */
+export type WasmEncryptQueryOptions = {
+  /** The `encryptedTable(...)` the column belongs to. */
+  table: EncryptOptions['table']
+  /** The queryable v3 column the term targets, e.g. `users.email`. */
+  column: BuildableV3QueryableColumn
+  /**
+   * Which of the column's indexes the term targets:
+   *
+   * - `'equality'` — exact match (`unique` index; `=` / `IN`)
+   * - `'freeTextSearch'` — fuzzy token match (`match` index; one-sided —
+   *   a match may be a false positive, a non-match never is)
+   * - `'orderAndRange'` — comparisons and ranges (`ore` index; `<` `>`
+   *   `BETWEEN` / `ORDER BY`)
+   * - `'searchableJson'` — encrypted JSON (`ste_vec` index): a **string**
+   *   value is treated as a JSONPath selector (`'$.user.email'`), any other
+   *   value as a containment needle (`{ role: 'admin' }`)
+   *
+   * Omit to infer from the column's configured indexes (priority:
+   * `unique > match > ore > ste_vec`, matching the native client) —
+   * unambiguous for single-index columns like `types.TextEq`, but be
+   * explicit for multi-index domains like `types.TextSearch` (which
+   * carries all three scalar indexes).
+   */
+  queryType?: QueryTypeName
+}
+
+/**
+ * One term for {@link WasmEncryptionClient.encryptQueryBulk} — the
+ * {@link WasmEncryptQueryOptions} plus the plaintext needle. A `null`
+ * value yields `null` at the same position in the result (nothing to
+ * search for).
+ */
+export type WasmQueryTerm = WasmEncryptQueryOptions & {
+  value: WasmPlaintext
+}
+
+/**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
  * forge one even if they recreate `WasmEncryptionClient` via type
@@ -241,10 +309,11 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
 /**
  * WASM encryption client. Returned by {@link Encryption}.
  *
- * Wraps an opaque `wasmNewClient` handle and exposes a minimal
- * `encrypt` / `decrypt` surface. Larger surface (bulk, query, model
- * helpers) lives on the Node entry — port lazily as Deno / edge
- * consumers demand it.
+ * Wraps an opaque `wasmNewClient` handle and exposes `encrypt`, `decrypt`,
+ * `isEncrypted`, and — since #662 made searchable encryption reachable on
+ * the edge — `encryptQuery` / `encryptQueryBulk` for minting v3 query
+ * terms. Remaining surface (bulk encrypt/decrypt, model helpers) lives on
+ * the Node entry — port lazily as Deno / edge consumers demand it.
  *
  * Construct via {@link Encryption} — the constructor is private to
  * prevent callers from wrapping arbitrary objects in this type.
@@ -294,6 +363,144 @@ export class WasmEncryptionClient {
 
   isEncrypted(value: unknown): boolean {
     return wasmIsEncrypted(value as never)
+  }
+
+  /**
+   * Encrypt a QUERY TERM (search needle) for a queryable v3 column —
+   * equality, free-text match, ORE range, or JSON containment/selector.
+   *
+   * The returned term is **ciphertext-free**: it is matched against stored
+   * envelopes, never decrypted, so it is safe to log-scrub less aggressively
+   * than storage payloads (though it still derives from the plaintext).
+   * Interpolate it as a parameter and cast to the column's
+   * `eql_v3.query_<domain>` type to reach the indexed operators — the domain
+   * suffix mirrors the storage domain (`eql_v3_text_eq` →
+   * `eql_v3.query_text_eq`; irregular: `eql_v3_json` → `eql_v3.query_jsonb`).
+   *
+   * @example Equality (unique index)
+   * ```ts
+   * const term = await client.encryptQuery("alice@example.com", {
+   *   table: users, column: users.email, queryType: "equality",
+   * })
+   * // postgres-js:
+   * sql`SELECT * FROM users
+   *     WHERE email = ${term}::jsonb::eql_v3.query_text_eq`
+   * ```
+   *
+   * @example Free-text match (bloom index — one-sided, fuzzy)
+   * ```ts
+   * const term = await client.encryptQuery("needle", {
+   *   table: users, column: users.bio, queryType: "freeTextSearch",
+   * })
+   * sql`SELECT * FROM users
+   *     WHERE eql_v3.contains(bio, ${term}::jsonb::eql_v3.query_text_search)`
+   * ```
+   *
+   * @example Range / ORDER BY (ORE index)
+   * ```ts
+   * const term = await client.encryptQuery(42, {
+   *   table: users, column: users.age, queryType: "orderAndRange",
+   * })
+   * sql`SELECT * FROM users
+   *     WHERE eql_v3.gte(age, ${term}::jsonb::eql_v3.query_integer_ord)`
+   * ```
+   *
+   * @example Encrypted JSON — containment and JSONPath selector
+   * ```ts
+   * // Object value → containment needle (a v3 envelope):
+   * const contains = await client.encryptQuery({ role: "admin" }, {
+   *   table: users, column: users.prefs, queryType: "searchableJson",
+   * })
+   * sql`SELECT * FROM users
+   *     WHERE prefs @> ${contains}::jsonb::eql_v3.query_jsonb`
+   *
+   * // String value → JSONPath selector. NOTE: v3 has no encrypted-selector
+   * // envelope — this returns the BARE selector-hash string, bound as the
+   * // text argument of -> / ->>:
+   * const selector = await client.encryptQuery("$.role", {
+   *   table: users, column: users.prefs, queryType: "searchableJson",
+   * })
+   * sql`SELECT prefs -> ${selector} FROM users`
+   * ```
+   *
+   * @param plaintext - The search needle. `null`/`undefined` returns `null`
+   *   without contacting ZeroKMS (nothing to search for), mirroring the
+   *   native client.
+   * @param opts - Table, column, and (optionally) which index to target —
+   *   see {@link WasmEncryptQueryOptions.queryType} for the inference rules.
+   * @returns The v3 query term, or `null` for null plaintext.
+   * @throws When the requested `queryType` isn't configured on the column,
+   *   the column has no indexes at all, the value fails the same pre-flight
+   *   validation the native client runs (NaN / Infinity / out-of-int64
+   *   bigint, or a numeric value against a `freeTextSearch` index), or
+   *   encryption fails. Errors THROW, consistent with this surface's
+   *   `encrypt`/`decrypt` (the native entry's `{ data } | { failure }`
+   *   envelope lives on the Node client only).
+   */
+  async encryptQuery(
+    plaintext: WasmPlaintext,
+    opts: WasmEncryptQueryOptions,
+  ): Promise<EncryptedQuery | null> {
+    if (plaintext === null || plaintext === undefined) return null
+    return (await wasmEncryptQuery(
+      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+      this.client as never,
+      // biome-ignore lint/plugin: the term crosses the serde boundary, whose shape protect-ffi types as `any`
+      toFfiQueryTerm(plaintext, opts) as never,
+    )) as EncryptedQuery
+  }
+
+  /**
+   * Batch form of {@link encryptQuery} — one ZeroKMS round trip for many
+   * terms, which is the shape query builders want (encrypt every needle in
+   * a WHERE clause together).
+   *
+   * Position-stable: the result array is index-aligned with `terms`, and a
+   * `null`/`undefined` value yields `null` at the same index (an all-null
+   * batch short-circuits without calling ZeroKMS). Terms may mix query
+   * types and columns freely.
+   *
+   * @example
+   * ```ts
+   * const [emailEq, bioMatch] = await client.encryptQueryBulk([
+   *   { value: "alice@example.com", table: users, column: users.email,
+   *     queryType: "equality" },
+   *   { value: "needle", table: users, column: users.bio,
+   *     queryType: "freeTextSearch" },
+   * ])
+   * ```
+   *
+   * @param terms - The needles to encrypt; see {@link WasmQueryTerm}.
+   * @returns Index-aligned array of v3 query terms (or `null` per null value).
+   * @throws As {@link encryptQuery} — the first invalid term aborts the batch.
+   */
+  async encryptQueryBulk(
+    terms: readonly WasmQueryTerm[],
+  ): Promise<Array<EncryptedQuery | null>> {
+    const live: Array<{ term: WasmQueryTerm; at: number }> = []
+    terms.forEach((term, at) => {
+      if (term.value !== null && term.value !== undefined)
+        live.push({ term, at })
+    })
+    const out: Array<EncryptedQuery | null> = terms.map(() => null)
+    if (live.length === 0) return out
+
+    const ffiTerms = live.map(({ term }) => toFfiQueryTerm(term.value, term))
+    // The FFI's batch field is `queries` (matching the native
+    // ffiEncryptQueryBulk call in packages/protect).
+    const encrypted = (await wasmEncryptQueryBulk(
+      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+      this.client as never,
+      // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+      {
+        queries: ffiTerms,
+      } as never,
+    )) as EncryptedQuery[]
+    encrypted.forEach((value, i) => {
+      const slot = live[i]
+      if (slot) out[slot.at] = value
+    })
+    return out
   }
 }
 
@@ -417,6 +624,48 @@ export function getColumnName(col: EncryptOptions['column']): string {
   throw new Error(
     '[encryption]: opts.column must be a column builder exposing getName()',
   )
+}
+
+/**
+ * Build the FFI term for one query needle — the ONE place the single and
+ * bulk paths share, so the subtle parts can't drift between them.
+ *
+ * Runs the same pre-FFI guards as the native client's query operations
+ * (`assertValidNumericValue`, `assertValueIndexCompatibility`): NaN /
+ * Infinity / out-of-int64 bigint and numeric-on-match-index fail with the
+ * same named errors the Node entry raises, instead of an opaque serde
+ * failure — or a silently no-match term — from inside the WASM boundary.
+ *
+ * Index resolution is the SAME resolver the native client uses
+ * (`@/encryption/helpers` is type-only on protect-ffi, so it's
+ * WASM-bundle-safe): explicit queryType validated against the column's
+ * indexes; v3 ord domains' `ope` swapped in for `orderAndRange`; equality
+ * answered via the ordering index on order-capable columns without
+ * `unique`; inference priority unique > match > ore/ope > ste_vec.
+ *
+ * serde on the WASM side rejects explicitly-undefined fields ("invalid
+ * type: unit value, expected a string") — OMIT `queryOp` when absent (the
+ * native NAPI layer tolerates undefined; the WASM one does not).
+ *
+ * WasmPlaintext widens Plaintext with `bigint` (carried natively over the
+ * WASM boundary); the resolver only `typeof`-inspects the value for
+ * ste_vec op inference, so the assertion is safe.
+ */
+function toFfiQueryTerm(value: WasmPlaintext, opts: WasmEncryptQueryOptions) {
+  assertValidNumericValue(value)
+  const { indexType, queryOp } = resolveIndexType(
+    opts.column,
+    opts.queryType,
+    value as Plaintext,
+  )
+  assertValueIndexCompatibility(value, indexType, getColumnName(opts.column))
+  return {
+    plaintext: value,
+    table: opts.table.tableName,
+    column: getColumnName(opts.column),
+    indexType,
+    ...(queryOp ? { queryOp } : {}),
+  }
 }
 
 // Emit the `config.strategy` → `config.authStrategy` rename warning at most

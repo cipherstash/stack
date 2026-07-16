@@ -294,10 +294,10 @@ jobs:
       - name: Build stack
         run: pnpm exec turbo run build --filter @cipherstash/stack
 
-      # roundtrip.test.ts skips itself (Deno.test.ignore) when any of the four
-      # CS_* env vars is missing — fine locally, but in CI a silent skip would
-      # let a rotated / cleared secret hide a real WASM regression behind a
-      # green job. Fail loudly instead.
+      # The e2e/wasm suites FAIL when any of the four CS_* env vars is
+      # missing (requireEnv throws — no skip gating), so a rotated / cleared
+      # secret can't hide a real WASM regression behind a green job. This
+      # preflight just fails faster, before the Deno module downloads.
       - name: Require CipherStash secrets
         uses: ./.github/actions/require-cs-secrets
         with:

@@ -10,7 +10,7 @@ import type { PlainRow, TableSpec } from './rows.ts'
  * operations while both suites read as "comprehensive".
  */
 export interface IntegrationAdapter {
-  readonly name: 'drizzle' | 'supabase'
+  readonly name: 'drizzle' | 'supabase' | 'wasm'
 
   /**
    * Operations this adapter can express at all, independent of any domain. Both
