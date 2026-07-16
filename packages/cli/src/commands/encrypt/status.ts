@@ -65,6 +65,7 @@ export async function statusCommand() {
               state: stateMap.get(key) ?? null,
               eqlColumn: eqlConfig.get(key) ?? null,
               physicalColumns: physicalCols.get(tableName) ?? new Set(),
+              eqlVersion: column.eqlVersion,
             }),
           )
         }
@@ -116,6 +117,10 @@ function renderRow(input: {
   tableName: string
   columnName: string
   intentIndexes: string[] | undefined
+  /** From the manifest (recorded at backfill time). v3 columns have no
+   * `eql_v2_configuration` row and no rename, so the v2 drift flags don't
+   * apply. Absent = written by pre-v3 tooling = v2. */
+  eqlVersion?: 2 | 3
   state: {
     phase: MigrationPhase
     rowsProcessed: number | null
@@ -134,7 +139,9 @@ function renderRow(input: {
   } = input
 
   const phase = state?.phase ?? (intentIndexes ? 'schema-added' : '—')
-  const eql = eqlColumn ? eqlColumn.state : '—'
+  // v3 columns have no eql_v2_configuration row by design — show the
+  // version rather than a misleading blank.
+  const eql = eqlColumn ? eqlColumn.state : input.eqlVersion === 3 ? 'v3' : '—'
   const indexes = eqlColumn
     ? eqlColumn.indexes.join(', ') || '(none)'
     : intentIndexes?.join(', ') || '—'
@@ -147,12 +154,20 @@ function renderRow(input: {
   // writes covered every row from seeding). Frame per phase.
   const progress = formatProgress(phase, state)
 
+  const isV3 = input.eqlVersion === 3
   const flags: string[] = []
-  if (intentIndexes && !eqlColumn) flags.push('not-registered')
+  // v2-only drift flags: a v3 column is never registered in
+  // `eql_v2_configuration` (no config table exists) and never reaches the
+  // rename that creates `<col>_plaintext`.
+  if (!isV3 && intentIndexes && !eqlColumn) flags.push('not-registered')
   if (intentIndexes && !physicalColumns.has(`${columnName}_encrypted`)) {
     flags.push('encrypted-col-missing')
   }
-  if (phase === 'cut-over' && !physicalColumns.has(`${columnName}_plaintext`)) {
+  if (
+    !isV3 &&
+    phase === 'cut-over' &&
+    !physicalColumns.has(`${columnName}_plaintext`)
+  ) {
     flags.push('plaintext-col-missing')
   }
 

@@ -1,5 +1,6 @@
 import {
   appendEvent,
+  detectColumnEqlVersion,
   type ManifestColumn,
   progress,
   runBackfill,
@@ -136,6 +137,22 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     const encryptedColumn =
       options.encryptedColumn ?? `${options.column}_encrypted`
 
+    // v2 or v3 changes the rest of the LIFECYCLE (v3 has no cut-over — the
+    // ladder is backfill → switch-by-name → drop), so detect it up front,
+    // record it in the manifest, and tell the user which path they're on.
+    // `null` means the target column doesn't exist or isn't an EQL domain —
+    // let the existing checks below produce their specific errors.
+    const eqlVersion = await detectColumnEqlVersion(
+      db,
+      options.table,
+      encryptedColumn,
+    )
+    if (eqlVersion) {
+      p.log.info(
+        `${options.table}.${encryptedColumn} is EQL ${eqlVersion}${eqlVersion === 'v3' ? ' — lifecycle is backfill → switch the app to the encrypted column by name → drop (no cut-over rename).' : ''}`,
+      )
+    }
+
     // Phase guard: backfill requires the application to already be writing
     // to both columns, otherwise rows inserted *during* the backfill land
     // in plaintext only and create silent migration drift. Records the
@@ -186,6 +203,7 @@ export async function backfillCommand(options: BackfillCommandOptions) {
       schemaColumnKey,
       plaintextColumn,
       options.pkColumn,
+      eqlVersion,
     )
     await upsertManifestColumn(options.table, manifestEntry)
     p.log.success(
@@ -254,6 +272,12 @@ export async function backfillCommand(options: BackfillCommandOptions) {
       return
     }
 
+    if (eqlVersion === 'v3') {
+      p.note(
+        `EQL v3 has no cut-over. Next:\n  1. Point your application at ${encryptedColumn} (schema + queries), deploy, verify reads.\n  2. Generate the plaintext drop: stash encrypt drop --table ${options.table} --column ${plaintextColumn}`,
+        'Next steps (EQL v3)',
+      )
+    }
     p.outro(
       `Backfill complete. ${result.rowsProcessed.toLocaleString()} rows encrypted.`,
     )
@@ -499,6 +523,7 @@ function buildManifestEntry(
   schemaColumnKey: string,
   plaintextColumn: string,
   pkColumn: string | undefined,
+  eqlVersion: 'v2' | 'v3' | null,
 ): ManifestColumn {
   // SDK `cast_as` ('string', 'number', …) and EQL `castAs` ('text',
   // 'double', …) are different vocabularies; translate via the same
@@ -520,9 +545,12 @@ function buildManifestEntry(
     column: plaintextColumn,
     castAs,
     indexes,
-    targetPhase: 'cut-over',
+    // v2's ladder ends with the rename cut-over; v3 has none — its end
+    // state is the plaintext column dropped.
+    targetPhase: eqlVersion === 'v3' ? 'dropped' : 'cut-over',
     ...(pkColumn ? { pkColumn } : {}),
-  }
+    ...(eqlVersion ? { eqlVersion: eqlVersion === 'v3' ? 3 : 2 } : {}),
+  } as ManifestColumn
 }
 
 // Drop the wrapping default so unknown values fail validation instead of

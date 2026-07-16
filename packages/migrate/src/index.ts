@@ -31,6 +31,7 @@ export {
   runBackfill,
 } from './backfill.js'
 export {
+  countEncrypted,
   countUnencrypted,
   fetchUnencryptedPage,
   type KeysetPage,

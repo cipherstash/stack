@@ -498,7 +498,7 @@ export const registry: CommandGroup[] = [
       },
       {
         name: 'encrypt cutover',
-        summary: 'Rename swap encrypted → primary column',
+        summary: 'Rename swap encrypted → primary column (EQL v2 only)',
         flags: [
           TABLE_FLAG,
           COLUMN_FLAG,

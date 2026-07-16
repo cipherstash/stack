@@ -60,6 +60,15 @@ const ManifestColumnSchema = z.object({
    * CLI auto-detect via `information_schema`.
    */
   pkColumn: z.string().optional(),
+  /**
+   * The EQL version of the encrypted target column, recorded at backfill
+   * time from `detectColumnEqlVersion`. Lets `encrypt status`/`plan`
+   * branch without a DB round-trip: v3 columns have no
+   * `eql_v2_configuration` registration and no rename cut-over, so the
+   * v2-specific drift flags don't apply. Absent on manifests written
+   * before v3 support — those columns are necessarily v2.
+   */
+  eqlVersion: z.union([z.literal(2), z.literal(3)]).optional(),
 })
 
 /**

@@ -1,6 +1,7 @@
 import {
   activateConfig,
   appendEvent,
+  detectColumnEqlVersion,
   migrateConfig,
   progress,
   reloadConfig,
@@ -61,6 +62,26 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
 
   try {
     await client.connect()
+
+    // Cut-over is an EQL v2 concept: v2 hides the swap behind
+    // `eql_v2.rename_encrypted_columns()` + a Proxy config promotion. A v3
+    // column has neither — the application switches to the encrypted column
+    // BY NAME, and the plaintext column is dropped later. Detect before any
+    // phase/config checks so v3 users get the real answer, not a confusing
+    // precondition error.
+    const encryptedColumn = `${options.column}_encrypted`
+    const version = await detectColumnEqlVersion(
+      client,
+      options.table,
+      encryptedColumn,
+    )
+    if (version === 'v3') {
+      p.log.info(
+        `Cut-over is not applicable to EQL v3 columns. ${options.table}.${encryptedColumn} is EQL v3: there is no rename step — point your application at ${encryptedColumn} (update your schema/queries), verify reads, then generate the plaintext drop with:\n  stash encrypt drop --table ${options.table} --column ${options.column}`,
+      )
+      p.outro('Nothing to do for EQL v3.')
+      return
+    }
 
     const state = await progress(client, options.table, options.column)
     if (state?.phase !== 'backfilled') {
@@ -183,8 +204,13 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     exitCode = 1
   } finally {
     await client.end()
+    // In `finally` (not after the try/catch) deliberately: the precondition
+    // guards above `return` from inside `try`, which skips any code placed
+    // after the block — so a trailing `if (exitCode) process.exit(...)`
+    // was unreachable on exactly the failure paths it existed for, and
+    // guard failures exited 0.
+    if (exitCode) process.exit(exitCode)
   }
-  if (exitCode) process.exit(exitCode)
 }
 
 /**
