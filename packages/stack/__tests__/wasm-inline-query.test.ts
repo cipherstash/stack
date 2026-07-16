@@ -14,8 +14,8 @@ const ffi = vi.hoisted(() => ({
   isEncrypted: vi.fn(() => true),
   encryptQuery: vi.fn(async () => ({ v: 3, i: { t: 'users', c: 'email' } })),
   encryptQueryBulk: vi.fn(
-    async (_client: unknown, { terms }: { terms: unknown[] }) =>
-      terms.map((_, n) => ({ v: 3, n })),
+    async (_client: unknown, { queries }: { queries: unknown[] }) =>
+      queries.map((_, n) => ({ v: 3, n })),
   ),
 }))
 vi.mock('@cipherstash/protect-ffi/wasm-inline', () => ffi)
@@ -167,10 +167,10 @@ describe('WasmEncryptionClient.encryptQueryBulk', () => {
     expect(out[1]).toBeNull()
     expect(out[2]).toEqual({ v: 3, n: 1 })
     // Only the two live terms reached the FFI, with per-term resolution.
-    const { terms } = ffi.encryptQueryBulk.mock.calls[0][1] as {
-      terms: Array<{ indexType: string }>
+    const { queries } = ffi.encryptQueryBulk.mock.calls[0][1] as {
+      queries: Array<{ indexType: string }>
     }
-    expect(terms.map((t) => t.indexType)).toEqual(['unique', 'match'])
+    expect(queries.map((t) => t.indexType)).toEqual(['unique', 'match'])
   })
 
   it('short-circuits an all-null batch', async () => {

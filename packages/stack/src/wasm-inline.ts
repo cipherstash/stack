@@ -454,10 +454,12 @@ export class WasmEncryptionClient {
         ...(queryOp ? { queryOp } : {}),
       }
     })
+    // The FFI's batch field is `queries` (matching the native
+    // ffiEncryptQueryBulk call in packages/protect).
     const encrypted = (await wasmEncryptQueryBulk(
       this.client as never,
       {
-        terms: ffiTerms,
+        queries: ffiTerms,
       } as never,
     )) as EncryptedQuery[]
     encrypted.forEach((value, i) => {
