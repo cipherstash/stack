@@ -82,7 +82,12 @@ export async function fetchActiveEqlConfig(
 }
 
 /**
- * Read `information_schema.columns` and group column names by table.
+ * Read `information_schema.columns` and group columns by table, mapping each
+ * column name to its DOMAIN type (or `null` for plain types). The domain is
+ * what makes EQL columns self-describing (`eql_v2_encrypted` / `eql_v3_*`),
+ * so callers can classify encryption state from the types themselves rather
+ * than relying on the `<col>_encrypted` naming convention.
+ *
  * When `tables` is provided the query is constrained to that set —
  * status's quest log only ever needs ~5 specific tables, so passing
  * the manifest's tables avoids a full-schema scan.
@@ -90,25 +95,32 @@ export async function fetchActiveEqlConfig(
 export async function fetchPhysicalColumns(
   client: pg.ClientBase,
   tables?: ReadonlyArray<string>,
-): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>()
+): Promise<Map<string, Map<string, string | null>>> {
+  const out = new Map<string, Map<string, string | null>>()
+  type Row = {
+    table_name: string
+    column_name: string
+    domain_name: string | null
+  }
   try {
     const result =
       tables === undefined
-        ? await client.query<{ table_name: string; column_name: string }>(
-            `SELECT table_name, column_name FROM information_schema.columns
+        ? await client.query<Row>(
+            `SELECT table_name, column_name, domain_name
+             FROM information_schema.columns
              WHERE table_schema = current_schema()`,
           )
-        : await client.query<{ table_name: string; column_name: string }>(
-            `SELECT table_name, column_name FROM information_schema.columns
+        : await client.query<Row>(
+            `SELECT table_name, column_name, domain_name
+             FROM information_schema.columns
              WHERE table_schema = current_schema()
                AND table_name = ANY($1::text[])`,
             [tables],
           )
     for (const row of result.rows) {
-      const set = out.get(row.table_name) ?? new Set<string>()
-      set.add(row.column_name)
-      out.set(row.table_name, set)
+      const cols = out.get(row.table_name) ?? new Map<string, string | null>()
+      cols.set(row.column_name, row.domain_name)
+      out.set(row.table_name, cols)
     }
   } catch {
     // information_schema is always present; failures here are surprising

@@ -424,7 +424,12 @@ For AI-guided integration that edits your existing schema files in place, prefer
 
 ### Encrypt
 
-The cutover-step toolset: the database-side work that takes an existing plaintext column the rest of the way, **after** the rollout PR is deployed and dual-writes are live. It drives `@cipherstash/migrate`, recording every transition in `cipherstash.cs_migrations` (installed by `eql install`) and reading intent from `.cipherstash/migrations.json`. Internal phase names: `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`.
+The database-side toolset that takes an existing plaintext column the rest of the way, **after** the rollout PR is deployed and dual-writes are live. It drives `@cipherstash/migrate`, recording every transition in `cipherstash.cs_migrations` (installed by `eql install`) and reading intent from `.cipherstash/migrations.json`.
+
+The phase ladder depends on the column's EQL version, which the commands detect from the column's **domain type** (EQL v3 types are self-describing; the `<col>_encrypted` naming is a convention only, never relied upon):
+
+- **EQL v3 (the default):** `schema-added → dual-writing → backfilling → backfilled → dropped`. There is no cut-over — the application switches to the encrypted column by name, then the plaintext column is dropped.
+- **EQL v2:** `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`, where cut-over renames the encrypted twin into the original column name.
 
 #### `encrypt status` / `encrypt plan`
 
@@ -475,7 +480,7 @@ Flags: `--table`, `--column`, `--proxy-url <url>`, `--migrations-dir <path>`.
 stash encrypt drop --table users --column email
 ```
 
-Version-aware. For **EQL v2** columns in the `cut-over` phase it emits `ALTER TABLE <table> DROP COLUMN <col>_plaintext;` (the post-rename name). For **EQL v3** columns it runs from the `backfilled` phase and drops the ORIGINAL `<col>` — v3 has no rename, so make sure the application reads/writes `<col>_encrypted` first. Either way it does **not** apply the migration — review and run your own migrate command.
+Version-aware. For **EQL v2** columns in the `cut-over` phase it emits `ALTER TABLE <table> DROP COLUMN <col>_plaintext;` (the post-rename name). For **EQL v3** columns it runs from the `backfilled` phase and drops the ORIGINAL `<col>` — v3 has no rename, so make sure the application reads/writes the encrypted column first. Before generating, the v3 path **verifies live coverage** (refuses if any row still has `<col>` set with the encrypted column NULL — e.g. rows written without dual-writes since the backfill; re-run `encrypt backfill` to fix). Either way it does **not** apply the migration — review and run your own migrate command.
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
 

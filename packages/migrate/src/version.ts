@@ -6,43 +6,162 @@ import type { ClientBase } from 'pg'
  * (see {@link import('./eql.js')}), while v3 is domain-native — configuration
  * lives in the column's own type and there is no configuration table, so its
  * lifecycle is backfill-then-drop with no cut-over rename.
+ *
+ * Numeric (`2 | 3`) to match the manifest's `eqlVersion` field and the CLI
+ * installer's `--eql-version` — one representation everywhere, no
+ * string↔number translation at boundaries.
  */
-export type EqlVersion = 'v2' | 'v3'
+export type EqlVersion = 2 | 3
+
+/** An encrypted column found on a table, classified by its domain type. */
+export interface EncryptedColumnInfo {
+  /** The column's name, exactly as Postgres reports it. */
+  column: string
+  /** The EQL domain name, e.g. `eql_v2_encrypted` or `eql_v3_text_search`. */
+  domain: string
+  version: EqlVersion
+}
 
 /**
- * Detect the EQL version of a column by inspecting its Postgres type.
+ * Classify a Postgres domain-type name as an EQL generation.
  *
- * - v2 encrypted columns are the `public.eql_v2_encrypted` domain.
- * - v3 encrypted columns are a concrete `eql_v3_*` domain (e.g.
- *   `eql_v3_text_search`, `eql_v3_int8_ord`).
- * - Anything else — a plaintext column, or a column/table that doesn't exist —
- *   returns `null`.
+ * EQL v3 types are deliberately self-describing — the domain name alone
+ * carries the generation — which is why this predicate is the ONE place the
+ * rule lives, and why detection never relies on column NAMES: the
+ * `<column>_encrypted` naming is a convention, neither enforced nor required.
  *
- * Pass the **encrypted target** column (e.g. `email_encrypted`), not the
- * plaintext source: it's the encrypted column whose domain type carries the EQL
- * generation. `tableName` may be schema-qualified (`"schema.table"`);
- * resolution honours the connection's `search_path` via `to_regclass`.
+ * - `eql_v2_encrypted` → 2
+ * - `eql_v3_*` (e.g. `eql_v3_text_search`, `eql_v3_integer_ord`) → 3
+ * - anything else → `null` (not an EQL column)
+ */
+export function classifyEqlDomain(domain: string): EqlVersion | null {
+  if (domain === 'eql_v2_encrypted') return 2
+  if (domain.startsWith('eql_v3')) return 3
+  return null
+}
+
+/**
+ * Resolve `tableName` (optionally `schema.table`) to a regclass expression
+ * that preserves the identifier's case.
+ *
+ * A bare `to_regclass($1)` PARSES its argument, case-folding unquoted names —
+ * so `to_regclass('User')` looks up `user` and misses a Prisma-style `"User"`
+ * table that the rest of the pipeline (which quotes identifiers verbatim, see
+ * `qualifyTable`/`quoteIdent` in cursor.ts) handles fine. `format('%I', …)`
+ * quotes the name first, making the lookup case-exact while still honouring
+ * `search_path` for unqualified names.
+ */
+const REGCLASS_SQL = `to_regclass(
+  CASE WHEN $2::text IS NULL THEN format('%I', $1::text)
+       ELSE format('%I.%I', $2::text, $1::text) END
+)`
+
+/** Split `schema.table` the same way `qualifyTable` does (first dot wins). */
+function splitTableName(tableName: string): {
+  schema: string | null
+  table: string
+} {
+  const dot = tableName.indexOf('.')
+  return dot >= 0
+    ? { schema: tableName.slice(0, dot), table: tableName.slice(dot + 1) }
+    : { schema: null, table: tableName }
+}
+
+/**
+ * Detect the EQL version of one named column by inspecting its Postgres
+ * domain type. Returns `null` for a plaintext column, a non-EQL domain, or a
+ * table/column that doesn't exist.
+ *
+ * `tableName` may be schema-qualified (`schema.table`); resolution is
+ * case-exact and honours `search_path` for unqualified names.
  */
 export async function detectColumnEqlVersion(
   client: ClientBase,
   tableName: string,
   columnName: string,
 ): Promise<EqlVersion | null> {
+  const { schema, table } = splitTableName(tableName)
   // `a.atttypid` on a domain-typed column is the DOMAIN's oid, so `t.typname`
   // is the domain name (e.g. `eql_v2_encrypted`), not the underlying `jsonb`.
-  // `to_regclass` returns NULL for an unknown table → no rows → null.
   const result = await client.query<{ domain_name: string }>(
     `SELECT t.typname AS domain_name
        FROM pg_attribute a
        JOIN pg_type t ON t.oid = a.atttypid
-      WHERE a.attrelid = to_regclass($1)
-        AND a.attname = $2
+      WHERE a.attrelid = ${REGCLASS_SQL}
+        AND a.attname = $3
         AND NOT a.attisdropped`,
-    [tableName, columnName],
+    [table, schema, columnName],
   )
   const domain = result.rows[0]?.domain_name
-  if (domain === undefined) return null
-  if (domain === 'eql_v2_encrypted') return 'v2'
-  if (domain.startsWith('eql_v3')) return 'v3'
-  return null
+  return domain === undefined ? null : classifyEqlDomain(domain)
+}
+
+/**
+ * Every EQL-domain column on a table, classified. The EQL types are
+ * self-describing, so this is the ground truth for "which columns on this
+ * table are encrypted, and under which generation" — no naming convention
+ * involved.
+ */
+export async function listEncryptedColumns(
+  client: ClientBase,
+  tableName: string,
+): Promise<EncryptedColumnInfo[]> {
+  const { schema, table } = splitTableName(tableName)
+  const result = await client.query<{ column: string; domain_name: string }>(
+    `SELECT a.attname AS column, t.typname AS domain_name
+       FROM pg_attribute a
+       JOIN pg_type t ON t.oid = a.atttypid
+      WHERE a.attrelid = ${REGCLASS_SQL}
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+      ORDER BY a.attnum`,
+    [table, schema],
+  )
+  const out: EncryptedColumnInfo[] = []
+  for (const row of result.rows) {
+    const version = classifyEqlDomain(row.domain_name)
+    if (version !== null) {
+      out.push({ column: row.column, domain: row.domain_name, version })
+    }
+  }
+  return out
+}
+
+/**
+ * Find the encrypted counterpart of a plaintext column, trusting the domain
+ * types over any naming convention:
+ *
+ * 1. An explicit `hint` (from `--encrypted-column` or the manifest's recorded
+ *    `encryptedColumn`) wins — but only if that column really carries an EQL
+ *    domain.
+ * 2. Otherwise the `<column>_encrypted` CONVENTION is tried — again validated
+ *    against the domain type, never assumed.
+ * 3. Otherwise, if the table has exactly ONE EQL-domain column, that's the
+ *    one — the self-describing types make the convention unnecessary.
+ *
+ * Returns `null` when nothing matches or when several EQL columns exist and
+ * none is identifiable (ambiguous — the caller should ask the user, listing
+ * `listEncryptedColumns` output).
+ */
+export async function resolveEncryptedColumn(
+  client: ClientBase,
+  tableName: string,
+  plaintextColumn: string,
+  hint?: string,
+): Promise<EncryptedColumnInfo | null> {
+  const candidates = await listEncryptedColumns(client, tableName)
+  if (candidates.length === 0) return null
+
+  if (hint) {
+    return candidates.find((c) => c.column === hint) ?? null
+  }
+
+  const conventional = candidates.find(
+    (c) => c.column === `${plaintextColumn}_encrypted`,
+  )
+  if (conventional) return conventional
+
+  // The plaintext column itself can't be its own encrypted counterpart.
+  const others = candidates.filter((c) => c.column !== plaintextColumn)
+  return others.length === 1 ? (others[0] ?? null) : null
 }

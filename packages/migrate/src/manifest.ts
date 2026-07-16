@@ -61,12 +61,22 @@ const ManifestColumnSchema = z.object({
    */
   pkColumn: z.string().optional(),
   /**
+   * The encrypted counterpart column's name, recorded at backfill time.
+   * `<column>_encrypted` is the CONVENTION but it is neither enforced nor
+   * relied upon — the EQL v3 domain types are self-describing, so commands
+   * resolve the encrypted column from the domain types
+   * (`resolveEncryptedColumn`) and use this field only as the first hint.
+   * Absent on manifests written before it existed.
+   */
+  encryptedColumn: z.string().optional(),
+  /**
    * The EQL version of the encrypted target column, recorded at backfill
-   * time from `detectColumnEqlVersion`. Lets `encrypt status`/`plan`
-   * branch without a DB round-trip: v3 columns have no
-   * `eql_v2_configuration` registration and no rename cut-over, so the
-   * v2-specific drift flags don't apply. Absent on manifests written
-   * before v3 support — those columns are necessarily v2.
+   * time from `detectColumnEqlVersion`. A cached HINT for display paths
+   * (`encrypt status` renders 'v3' and suppresses the v2-only drift flags):
+   * the source of truth is always the column's domain type in the database.
+   * Absent when the manifest predates v3 support OR when detection couldn't
+   * see the column at backfill time — readers must fall back to the domain
+   * type, never assume v2.
    */
   eqlVersion: z.union([z.literal(2), z.literal(3)]).optional(),
 })

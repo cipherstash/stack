@@ -1,72 +1,161 @@
-import type { ClientBase, QueryConfig, QueryResult, QueryResultRow } from 'pg'
-import { describe, expect, it } from 'vitest'
-import { detectColumnEqlVersion } from '../version.js'
+import type { ClientBase } from 'pg'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  classifyEqlDomain,
+  detectColumnEqlVersion,
+  listEncryptedColumns,
+  resolveEncryptedColumn,
+} from '../version.js'
 
-interface RecordedQuery {
-  text: string
-  values: unknown[]
+function mockClient(rows: Array<Record<string, unknown>>) {
+  const query = vi.fn().mockResolvedValue({ rows })
+  return { client: { query } as unknown as ClientBase, query }
 }
 
-function createMockClient(rows: Array<Record<string, unknown>>): {
-  client: ClientBase
-  queries: RecordedQuery[]
-} {
-  const queries: RecordedQuery[] = []
-  const client = {
-    query(config: string | QueryConfig, values?: unknown[]) {
-      const text = typeof config === 'string' ? config : config.text
-      queries.push({ text, values: values ?? [] })
-      return Promise.resolve({
-        rows,
-        rowCount: rows.length,
-        command: '',
-        oid: 0,
-        fields: [],
-      } as unknown as QueryResult<QueryResultRow>)
-    },
-  } as unknown as ClientBase
-  return { client, queries }
-}
-
-describe('detectColumnEqlVersion', () => {
-  it('maps the eql_v2_encrypted domain to v2', async () => {
-    const { client } = createMockClient([{ domain_name: 'eql_v2_encrypted' }])
-    expect(
-      await detectColumnEqlVersion(client, 'users', 'email_encrypted'),
-    ).toBe('v2')
+describe('classifyEqlDomain', () => {
+  it('maps eql_v2_encrypted to 2', () => {
+    expect(classifyEqlDomain('eql_v2_encrypted')).toBe(2)
   })
 
-  it('maps any concrete eql_v3_* domain to v3', async () => {
+  it('maps any eql_v3_* domain to 3', () => {
     for (const domain of [
       'eql_v3_text_search',
       'eql_v3_text_match',
       'eql_v3_int8_ord',
       'eql_v3_encrypted',
     ]) {
-      const { client } = createMockClient([{ domain_name: domain }])
-      expect(
-        await detectColumnEqlVersion(client, 'users', 'email_encrypted'),
-      ).toBe('v3')
+      expect(classifyEqlDomain(domain)).toBe(3)
     }
   })
 
+  it('maps non-EQL types to null', () => {
+    expect(classifyEqlDomain('text')).toBeNull()
+    expect(classifyEqlDomain('jsonb')).toBeNull()
+    expect(classifyEqlDomain('citext')).toBeNull()
+  })
+})
+
+describe('detectColumnEqlVersion', () => {
+  it('classifies from the domain type', async () => {
+    const { client } = mockClient([{ domain_name: 'eql_v2_encrypted' }])
+    expect(
+      await detectColumnEqlVersion(client, 'users', 'email_encrypted'),
+    ).toBe(2)
+  })
+
   it('returns null for a plaintext column (base type, not a domain)', async () => {
-    const { client } = createMockClient([{ domain_name: 'text' }])
+    const { client } = mockClient([{ domain_name: 'text' }])
     expect(await detectColumnEqlVersion(client, 'users', 'email')).toBeNull()
   })
 
   it('returns null when the column/table is not found', async () => {
-    const { client } = createMockClient([])
+    const { client } = mockClient([])
     expect(await detectColumnEqlVersion(client, 'nope', 'missing')).toBeNull()
   })
 
-  it('passes the qualified table name and column as bind params (to_regclass)', async () => {
-    const { client, queries } = createMockClient([
+  it('resolves the table case-exactly: quoted-identifier semantics, not raw to_regclass parsing', async () => {
+    // A bare to_regclass($1) case-folds 'User' to 'user', silently missing
+    // Prisma-style quoted tables while the rest of the pipeline (which
+    // quotes identifiers verbatim) works — wedging a v3 column into the v2
+    // lifecycle. The format('%I', …) wrapping is what prevents that.
+    const { client, query } = mockClient([
       { domain_name: 'eql_v3_text_search' },
     ])
-    await detectColumnEqlVersion(client, 'app.users', 'email_encrypted')
-    expect(queries).toHaveLength(1)
-    expect(queries[0].text).toContain('to_regclass($1)')
-    expect(queries[0].values).toEqual(['app.users', 'email_encrypted'])
+    await detectColumnEqlVersion(client, 'User', 'email_encrypted')
+    const [sql, values] = query.mock.calls[0] as [string, unknown[]]
+    expect(sql).toContain("format('%I'")
+    expect(sql).not.toMatch(/to_regclass\(\$1\)/)
+    expect(values).toEqual(['User', null, 'email_encrypted'])
+  })
+
+  it('splits schema-qualified names on the first dot, like qualifyTable', async () => {
+    const { client, query } = mockClient([
+      { domain_name: 'eql_v3_text_search' },
+    ])
+    await detectColumnEqlVersion(client, 'app.Users', 'email_encrypted')
+    const [, values] = query.mock.calls[0] as [string, unknown[]]
+    expect(values).toEqual(['Users', 'app', 'email_encrypted'])
+  })
+})
+
+describe('listEncryptedColumns', () => {
+  it('returns only EQL-domain columns, classified', async () => {
+    const { client } = mockClient([
+      { column: 'id', domain_name: 'int8' },
+      { column: 'email', domain_name: 'text' },
+      { column: 'email_enc', domain_name: 'eql_v3_text_search' },
+      { column: 'ssn_encrypted', domain_name: 'eql_v2_encrypted' },
+    ])
+    expect(await listEncryptedColumns(client, 'users')).toEqual([
+      { column: 'email_enc', domain: 'eql_v3_text_search', version: 3 },
+      { column: 'ssn_encrypted', domain: 'eql_v2_encrypted', version: 2 },
+    ])
+  })
+})
+
+describe('resolveEncryptedColumn', () => {
+  const TABLE = [
+    { column: 'id', domain_name: 'int8' },
+    { column: 'email', domain_name: 'text' },
+  ]
+
+  it('an explicit hint wins, validated against the domain type', async () => {
+    const { client } = mockClient([
+      ...TABLE,
+      { column: 'email_enc', domain_name: 'eql_v3_text_search' },
+      { column: 'email_encrypted', domain_name: 'eql_v3_text_eq' },
+    ])
+    expect(
+      await resolveEncryptedColumn(client, 'users', 'email', 'email_enc'),
+    ).toEqual({ column: 'email_enc', domain: 'eql_v3_text_search', version: 3 })
+  })
+
+  it('a hint naming a non-EQL column resolves to null, not a guess', async () => {
+    const { client } = mockClient([
+      ...TABLE,
+      { column: 'email_encrypted', domain_name: 'eql_v3_text_eq' },
+    ])
+    expect(
+      await resolveEncryptedColumn(client, 'users', 'email', 'email'),
+    ).toBeNull()
+  })
+
+  it('falls back to the <column>_encrypted convention', async () => {
+    const { client } = mockClient([
+      ...TABLE,
+      { column: 'email_encrypted', domain_name: 'eql_v3_text_eq' },
+      { column: 'other_encrypted', domain_name: 'eql_v3_text_eq' },
+    ])
+    expect(await resolveEncryptedColumn(client, 'users', 'email')).toEqual({
+      column: 'email_encrypted',
+      domain: 'eql_v3_text_eq',
+      version: 3,
+    })
+  })
+
+  it('resolves a sole EQL column regardless of its name — the convention is never required', async () => {
+    const { client } = mockClient([
+      ...TABLE,
+      { column: 'secret_blob', domain_name: 'eql_v3_text_search' },
+    ])
+    expect(await resolveEncryptedColumn(client, 'users', 'email')).toEqual({
+      column: 'secret_blob',
+      domain: 'eql_v3_text_search',
+      version: 3,
+    })
+  })
+
+  it('returns null when several EQL columns exist and none is identifiable', async () => {
+    const { client } = mockClient([
+      ...TABLE,
+      { column: 'a_enc', domain_name: 'eql_v3_text_eq' },
+      { column: 'b_enc', domain_name: 'eql_v3_text_eq' },
+    ])
+    expect(await resolveEncryptedColumn(client, 'users', 'email')).toBeNull()
+  })
+
+  it('returns null on a table with no EQL columns', async () => {
+    const { client } = mockClient(TABLE)
+    expect(await resolveEncryptedColumn(client, 'users', 'email')).toBeNull()
   })
 })

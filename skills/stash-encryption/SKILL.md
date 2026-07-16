@@ -796,11 +796,11 @@ Three sources of truth, kept separate on purpose:
 
 `stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing). `stash status` (the quest log) rolls them up into the per-column "what's the next move" view used during a rollout.
 
-> **Note on internal phase names.** The runtime event log uses `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped` as machine-readable phase names. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then cutover, with a deploy gate in between."
+> **Note on internal phase names.** The runtime event log uses machine-readable phase names that depend on the column's EQL version: v3 (the default) runs `schema-added → dual-writing → backfilling → backfilled → dropped` (no cut-over — the app switches to the encrypted column by name), while v2 runs `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then switch reads to encrypted, with a deploy gate in between."
 
 ### CLI sequence for a single column
 
-> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked separately.
+> **Known limitation (v2):** `stash encrypt cutover` requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked separately. (EQL v3 columns never hit this — cutover doesn't apply to them.)
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.

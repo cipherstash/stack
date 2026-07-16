@@ -33,11 +33,17 @@ const CONNECT_TIMEOUT_MS = 2_000
 
 function manifestColumns(
   manifest: Manifest,
-): { table: string; column: string }[] {
-  const out: { table: string; column: string }[] = []
+): { table: string; column: string; eqlVersion?: 2 | 3 }[] {
+  const out: { table: string; column: string; eqlVersion?: 2 | 3 }[] = []
   for (const [table, cols] of Object.entries(manifest.tables)) {
     for (const col of cols) {
-      out.push({ table, column: col.column })
+      out.push({
+        table,
+        column: col.column,
+        // Cached hint only — the quest ladder shape (4 rungs for v3, 5 for
+        // v2) is display, so the manifest's record is good enough here.
+        ...(col.eqlVersion ? { eqlVersion: col.eqlVersion } : {}),
+      })
     }
   }
   return out
@@ -115,10 +121,11 @@ export async function gatherObservations(
       return {
         table: c.table,
         column: c.column,
+        ...(c.eqlVersion ? { eqlVersion: c.eqlVersion } : {}),
         phase: phaseRow ? phaseRow.phase : null,
         eql: eqlInfo ? { state: eqlInfo.state } : null,
         physicalEncryptedTwinExists: (
-          physicalCols.get(c.table) ?? new Set()
+          physicalCols.get(c.table) ?? new Map()
         ).has(`${c.column}_encrypted`),
       }
     })

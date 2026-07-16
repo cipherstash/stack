@@ -75,6 +75,11 @@ export interface ColumnObservation {
    *  cs_migrations doesn't yet track this column. `undefined` when the
    *  caller can't tell. */
   physicalEncryptedTwinExists?: boolean
+  /** The column's EQL generation, from the manifest's cached `eqlVersion`.
+   *  v3 has a 4-objective ladder (no cut-over rename — the app switches to
+   *  the encrypted column by name). `undefined` (unknown / pre-v3 manifest)
+   *  renders the v2 ladder. */
+  eqlVersion?: 2 | 3
 }
 
 const MIGRATE_OBJECTIVES = [
@@ -83,6 +88,16 @@ const MIGRATE_OBJECTIVES = [
   'Backfill historical rows',
   'Cut over to encrypted (rename swap, switch reads)',
   'Drop plaintext column',
+]
+
+// EQL v3 has no cut-over: configuration lives in the column's own domain
+// type, so the app switches to the encrypted column BY NAME and the
+// plaintext column is dropped straight after backfill.
+const MIGRATE_OBJECTIVES_V3 = [
+  'Schema-add — encrypted column added',
+  'Dual-writes deployed to production',
+  'Backfill historical rows',
+  'Switch app to the encrypted column, then drop plaintext',
 ]
 
 const NEW_OBJECTIVES = [
@@ -119,7 +134,12 @@ export function buildColumnQuest(
   cli: string,
 ): ColumnQuest {
   const path = inferQuestPath(obs)
-  const labels = path === 'migrate' ? MIGRATE_OBJECTIVES : NEW_OBJECTIVES
+  const labels =
+    path === 'migrate'
+      ? obs.eqlVersion === 3
+        ? MIGRATE_OBJECTIVES_V3
+        : MIGRATE_OBJECTIVES
+      : NEW_OBJECTIVES
   const total = labels.length
   const doneCount = computeDoneCount(path, obs)
   const dbUnreachable = obs.phase === undefined && obs.eql === undefined
@@ -188,10 +208,13 @@ function computeDoneNew(obs: ColumnObservation): number {
 function computeDoneMigrate(obs: ColumnObservation): number {
   if (obs.phase === undefined && obs.eql === undefined) return 0
 
-  // Phase progression dominates when we have it.
+  const isV3 = obs.eqlVersion === 3
+
+  // Phase progression dominates when we have it. The v3 ladder is one rung
+  // shorter (no cut-over), so its terminal phases map one lower.
   switch (obs.phase) {
     case 'dropped':
-      return 5
+      return isV3 ? 4 : 5
     case 'cut-over':
       return 4
     case 'backfilled':
@@ -226,7 +249,23 @@ function nextMoveFor(
     return `Promote the pending EQL config — \`${cli} db activate\`.`
   }
 
-  // Migrate.
+  // Migrate. The v3 ladder has no cut-over — after backfill the app
+  // switches to the encrypted column by name, then drops the plaintext.
+  if (obs.eqlVersion === 3) {
+    switch (doneCount) {
+      case 0:
+        return 'Add the encrypted column and run the migration.'
+      case 1:
+        return `Wire dual-write code on every persistence path, deploy to production, then run \`${cli} encrypt backfill\` (it confirms dual-writes and records the event).`
+      case 2:
+        return `Run \`${cli} encrypt backfill --table ${obs.table} --column ${obs.column}\` to encrypt historical rows.`
+      case 3:
+        return `Point your application at the encrypted column (update schema/queries — EQL v3 has no rename step), verify reads, then run \`${cli} encrypt drop --table ${obs.table} --column ${obs.column}\`.`
+      default:
+        return ''
+    }
+  }
+
   switch (doneCount) {
     case 0:
       return 'Add the encrypted twin column (`<col>_encrypted`) and run the migration.'

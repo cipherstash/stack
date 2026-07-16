@@ -16,7 +16,7 @@ EQL v3: schema-added → dual-writing → backfilling → backfilled ———�
 State is tracked in an append-only `cipherstash.cs_migrations` table installed by `stash eql install`.
 
 - **EQL v2** additionally keeps its intent (indexes, cast_as) in `eql_v2_configuration` so CipherStash Proxy works against the same database, and finishes with a **cut-over**: `eql_v2.rename_encrypted_columns()` swaps `<col>_encrypted` into place (`<col>` becomes `<col>_plaintext`) alongside a config promotion.
-- **EQL v3** has **no configuration table and no cut-over** — each column's domain type encodes its own configuration. The application switches to `<col>_encrypted` *by name*, and the original plaintext `<col>` is dropped once verified. Backfill verification is a plain count of the populated target column (`countEncrypted`); the concrete `eql_v3_*` domain's CHECK constraint guarantees every non-null value is a valid v3 envelope.
+- **EQL v3** has **no configuration table and no cut-over** — each column's domain type encodes its own configuration. The v3 types are *self-describing*, so tooling resolves encrypted columns from the domain types themselves; the `<col>_encrypted` naming is a convention only, never enforced or relied upon (`resolveEncryptedColumn`). The application switches to the encrypted column *by name*, and the original plaintext `<col>` is dropped once verified: `stash encrypt drop` refuses to generate the migration while any row still has the plaintext set and the encrypted column NULL (`countUnencrypted`); the concrete `eql_v3_*` domain's CHECK constraint guarantees every non-null value is a valid v3 envelope.
 
 ## API
 
@@ -57,9 +57,13 @@ Direct access to the `cs_migrations` event log. Use these if you're building you
 
 Thin wrappers around `eql_v2.rename_encrypted_columns()` (the **v2** cut-over primitive) and `eql_v2.reload_config()` (Proxy refresh hint — no-op when connected directly to Postgres). Not used in the v3 lifecycle — v3 has no rename step.
 
-### `detectColumnEqlVersion(client, table, column)` / `countEncrypted(client, table, column)`
+### `detectColumnEqlVersion` / `resolveEncryptedColumn` / `listEncryptedColumns` / `classifyEqlDomain`
 
-`detectColumnEqlVersion` inspects the column's Postgres domain type and returns `'v2'`, `'v3'`, or `null` (not an EQL column) — the branch point for everything version-specific above. `countEncrypted` counts populated target-column rows: the v3 backfill-verification primitive (v2 verified through `eql_v2.count_encrypted_with_active_config`, which needs the config table v3 doesn't have).
+The EQL types are self-describing, and these are the domain-type primitives everything version-specific above branches on. `detectColumnEqlVersion(client, table, column)` inspects one column's Postgres domain type and returns `2`, `3`, or `null` (not an EQL column); resolution is case-exact (quoted-identifier semantics, matching the rest of the pipeline) and honours `search_path`. `resolveEncryptedColumn(client, table, plaintextColumn, hint?)` finds a plaintext column's encrypted counterpart from the domain types — an explicit hint (e.g. the manifest's recorded `encryptedColumn`) wins, then the `<col>_encrypted` convention, then the table's sole EQL column; the name is never assumed. `listEncryptedColumns` returns every EQL-domain column on a table, classified.
+
+### `countEncrypted` / `countUnencrypted`
+
+Coverage counts over the live table. `countUnencrypted(client, table, plaintextColumn, encryptedColumn)` counts rows with plaintext set and ciphertext NULL — the check `stash encrypt drop` runs before generating the v3 plaintext-drop migration (a non-zero count means rows were written without dual-writes since the backfill). `countEncrypted` counts populated target-column rows (v2 verifies through `eql_v2.count_encrypted_with_active_config`, which needs the config table v3 doesn't have). Both are full-table scans — fine as one-shot verification, not per-row primitives.
 
 ### `readManifest(cwd)` / `writeManifest(manifest, cwd)`
 

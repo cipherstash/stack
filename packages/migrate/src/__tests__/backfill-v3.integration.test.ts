@@ -31,6 +31,11 @@ import { type EncryptionClientLike, runBackfill } from '../backfill.js'
 import { countEncrypted } from '../cursor.js'
 import { installMigrationsSchema } from '../install.js'
 import { progress } from '../state.js'
+import {
+  detectColumnEqlVersion,
+  listEncryptedColumns,
+  resolveEncryptedColumn,
+} from '../version.js'
 
 const PG_URL = process.env.PG_TEST_URL
 const runIntegration = Boolean(PG_URL)
@@ -190,3 +195,87 @@ describe.skipIf(!runIntegration)('runBackfill with EQL v3 payloads', () => {
     }
   })
 })
+
+/**
+ * The domain-type resolution primitives against a REAL Postgres catalog —
+ * the part unit mocks can't prove: case-exact `to_regclass` resolution for
+ * quoted (Prisma-style) table names, and name-free discovery of encrypted
+ * columns from their domain types. Local domains named like EQL's are
+ * enough: classification keys on `pg_type.typname`, which is what a real
+ * EQL install produces too.
+ */
+describe.skipIf(!runIntegration)(
+  'EQL version resolution (real catalog)',
+  () => {
+    let pool: pg.Pool
+
+    beforeAll(async () => {
+      pool = new pg.Pool({ connectionString: PG_URL, max: 2 })
+      await pool.query('DROP SCHEMA IF EXISTS migrate_v3_resolve CASCADE')
+      await pool.query('CREATE SCHEMA migrate_v3_resolve')
+      await pool.query(
+        'CREATE DOMAIN migrate_v3_resolve.eql_v3_text_search_t AS jsonb',
+      )
+      // Mixed-case table (Prisma default naming) with a custom-named
+      // encrypted column: exercises BOTH conventions this module must not
+      // rely on — lowercase names and the `_encrypted` suffix.
+      await pool.query(`
+      CREATE TABLE migrate_v3_resolve."Users" (
+        id bigint PRIMARY KEY,
+        email text,
+        secret_blob migrate_v3_resolve.eql_v3_text_search_t
+      )
+    `)
+    })
+
+    afterAll(async () => {
+      await pool.query('DROP SCHEMA IF EXISTS migrate_v3_resolve CASCADE')
+      await pool.end()
+    })
+
+    it('detects the version on a mixed-case (quoted) table name', async () => {
+      expect(
+        await detectColumnEqlVersion(
+          pool as unknown as pg.ClientBase,
+          'migrate_v3_resolve.Users',
+          'secret_blob',
+        ),
+      ).toBe(3)
+    })
+
+    it('returns null (not an error) for a table that truly does not exist', async () => {
+      expect(
+        await detectColumnEqlVersion(
+          pool as unknown as pg.ClientBase,
+          'migrate_v3_resolve.users',
+          'secret_blob',
+        ),
+      ).toBeNull()
+    })
+
+    it('lists encrypted columns from domain types alone', async () => {
+      expect(
+        await listEncryptedColumns(
+          pool as unknown as pg.ClientBase,
+          'migrate_v3_resolve.Users',
+        ),
+      ).toEqual([
+        {
+          column: 'secret_blob',
+          domain: 'eql_v3_text_search_t',
+          version: 3,
+        },
+      ])
+    })
+
+    it('resolves the encrypted counterpart with no naming convention at all', async () => {
+      const info = await resolveEncryptedColumn(
+        pool as unknown as pg.ClientBase,
+        'migrate_v3_resolve.Users',
+        'email',
+      )
+      expect(info?.column).toBe('secret_blob')
+      expect(info?.version).toBe(3)
+    })
+  },
+)

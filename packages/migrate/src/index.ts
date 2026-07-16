@@ -1,15 +1,18 @@
 /**
  * `@cipherstash/migrate` — primitives for migrating existing plaintext
- * columns to `eql_v2_encrypted` in production Postgres databases.
+ * columns to EQL-encrypted columns (`eql_v2_encrypted` or the
+ * self-describing `eql_v3_*` domains) in production Postgres databases.
  *
  * Powers the `stash encrypt` CLI command group, and is usable directly
  * from a user's own worker/cron when they'd rather not pipe gigabytes
  * through a CLI process.
  *
- * Per-column lifecycle:
+ * Per-column lifecycle (version-dependent — EQL v3 has no cut-over rename;
+ * the application switches to the encrypted column by name):
  *
  * ```
- * schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
+ * v2: schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
+ * v3: schema-added → dual-writing → backfilling → backfilled → dropped
  * ```
  *
  * State is split across three stores on purpose:
@@ -68,4 +71,11 @@ export {
   type MigrationStateRow,
   progress,
 } from './state.js'
-export { detectColumnEqlVersion, type EqlVersion } from './version.js'
+export {
+  classifyEqlDomain,
+  detectColumnEqlVersion,
+  type EncryptedColumnInfo,
+  type EqlVersion,
+  listEncryptedColumns,
+  resolveEncryptedColumn,
+} from './version.js'
