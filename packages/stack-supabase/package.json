@@ -69,7 +69,7 @@
 		}
 	},
 	"devDependencies": {
-		"@cipherstash/protect-ffi": "0.28.0",
+		"@cipherstash/protect-ffi": "0.29.0",
 		"@cipherstash/test-kit": "workspace:*",
 		"fta-cli": "3.0.0",
 		"@supabase/postgrest-js": "2.110.1",
