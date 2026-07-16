@@ -1,5 +1,67 @@
 # @cipherstash/cli
 
+## 1.0.0-rc.2
+
+### Patch Changes
+
+- 6fcb967: `stash init` now pins the packages it installs (`@cipherstash/stack`, the
+  integration adapter, and `stash` itself) to the exact versions this CLI
+  release was built alongside, instead of installing bare package names that
+  resolve through npm dist-tags (#661). During a pre-release window dist-tags
+  lag or point at placeholders, so an unpinned `init` could silently deliver a
+  different release than the CLI driving the setup — stale `@cipherstash/stack`,
+  or an empty placeholder adapter — breaking `/v3` imports out of the box. The
+  versions are embedded at build time from the release train itself
+  (`src/release-train.ts`, the single source both the build and the runtime
+  check against), so they can never disagree with what was published together.
+
+  Init also now surfaces **version skew** on already-installed packages —
+  unconditionally, before any prompt or early exit, including when the install
+  is declined or partially fails. Interactively it offers to align the skewed
+  packages in the same confirm as the missing installs (keeping `stash` a dev
+  dependency); non-interactively it never mutates an existing install — it
+  warns and prints the exact align commands. A package whose manifest exists
+  but can't be read (an aborted install) is reported as skew, not treated as
+  matching. All other install guidance is pinned the same way: the
+  missing-package hints, `.cipherstash/context.json`'s `installCommand`, the
+  `install-eql` manual note, the native-module recovery hint (previously
+  `stash@latest`), and the `stash wizard` one-shot spawn (previously an
+  unpinned `npx @cipherstash/wizard`). The `stash-cli` skill documents the
+  behaviour, and the other bundled skills' manual install commands now carry a
+  verify-what-resolved note.
+
+- d803914: Two guards for the release-train version embed (#661 follow-up):
+
+  **Direction-aware version skew.** `stash init` now distinguishes an installed
+  package that is _behind_ this CLI release (offered alignment / the pinned
+  install command, as before) from one that is _newer_ than the release expects.
+  A newer install no longer produces a downgrade command — init prints the exact
+  `stash` update command instead (release-train lockstep guarantees that version
+  exists), and when missing packages are about to be installed alongside newer
+  ones it says the pairing may not match and to update `stash` first. Unreadable
+  or malformed manifest versions always count as behind (a broken install should
+  be offered the reinstall fix, never "looks newer, leave it").
+
+  **Version lockstep.** The release-train packages (`stash`,
+  `@cipherstash/stack`, `@cipherstash/stack-drizzle`,
+  `@cipherstash/stack-supabase`, `@cipherstash/prisma-next`,
+  `@cipherstash/wizard`) are now a Changesets `fixed` group: a release of any of
+  them republishes all of them at the same version, so the CLI's embedded
+  version map can never go stale against the packages it pins (previously a
+  runtime-package-only release would have left the published CLI embedding —
+  and recommending — outdated versions). A test now asserts the fixed group
+  stays exactly equal to the release train.
+
+- 413ca39: The legacy `@cipherstash/drizzle` package (the `@cipherstash/protect`-based
+  Drizzle integration) is removed from the repository and the release train —
+  `@cipherstash/protect` is sunsetting at Stack 1.0, and the package's successor
+  is `@cipherstash/stack-drizzle`. Already-published versions remain installable
+  from npm (deprecated, pointing here); the git history preserves the source for
+  any emergency maintenance. The `stash-drizzle` skill and the
+  `@cipherstash/stack-drizzle` README now state the deprecation explicitly so
+  nobody (human or agent) installs the legacy package by mistake.
+  - @cipherstash/migrate@1.0.0-rc.0
+
 ## 1.0.0-rc.1
 
 ### Minor Changes

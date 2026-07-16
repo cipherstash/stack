@@ -1,5 +1,12 @@
 # @cipherstash/stack-supabase
 
+## 1.0.0-rc.2
+
+### Patch Changes
+
+- Updated dependencies [b085f66]
+  - @cipherstash/stack@1.0.0-rc.2
+
 ## 1.0.0-rc.1
 
 ### Minor Changes
