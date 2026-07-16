@@ -10,12 +10,16 @@
  * prettified transform decode would have to invert. The `eql-v3` token is a
  * logical version tag, NOT the operator schema.
  */
+// The registry is adapter-seam surface (`adapter-kit`), consumed here the same
+// way the Drizzle and Supabase adapters consume it; the public `eql/v3` entry
+// stays end-user authoring API only (see stack's `adapter-kit.ts` header).
 import {
   type AnyEncryptedV3Column,
   DOMAIN_REGISTRY,
-  type QueryCapabilities,
-  type V3ColumnFactory,
-} from '@cipherstash/stack/eql/v3'
+} from '@cipherstash/stack/adapter-kit'
+import type { QueryCapabilities } from '@cipherstash/stack/eql/v3'
+
+type V3ColumnFactory = (name: string) => AnyEncryptedV3Column
 
 export type V3CastAs =
   | 'string'

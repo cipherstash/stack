@@ -62,12 +62,6 @@ export {
   EncryptedTimestampOrdOreColumn,
   TEXT_SEARCH_EQL_TYPE,
 } from './columns'
-export {
-  DOMAIN_REGISTRY,
-  factoryForDomain,
-  stripDomainSchema,
-  type V3ColumnFactory,
-} from './domain-registry'
 export type {
   AnyV3Table,
   ColumnsOf,

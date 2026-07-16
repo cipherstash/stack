@@ -25,11 +25,12 @@
  * `AuthoringArgRef.default`.
  */
 
-import {
-  type AnyEncryptedV3Column,
-  stripDomainSchema,
-  types,
-} from '@cipherstash/stack/eql/v3'
+// `stripDomainSchema` is adapter-seam surface (`adapter-kit`), same import
+// route as the Drizzle and Supabase adapters; `types` and the column union
+// stay on the public authoring entry.
+import { stripDomainSchema } from '@cipherstash/stack/adapter-kit'
+import type { AnyEncryptedV3Column } from '@cipherstash/stack/eql/v3'
+import { types } from '@cipherstash/stack/eql/v3'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -97,19 +98,25 @@ function v3Authored<C extends AnyEncryptedV3Column>(
 ): () => V3ColumnDescriptor<C> {
   const probe = make('__probe__')
   const nativeType = probe.getEqlType()
-  const descriptor = {
-    codecId: toV3CodecId(stripDomainSchema(nativeType)),
-    nativeType,
-    typeParams: {
-      // Narrowing assertion, mirrors ../v3/catalog.ts: `build()` widens
-      // `cast_as` in the bundled d.ts; the value is the domain's literal.
-      castAs: probe.build().cast_as as V3CastAs,
-      capabilities: probe.getQueryCapabilities(),
-    },
-    // Narrowing assertion: runtime strings are the literals the getters
-    // declare; `toV3CodecId` returns `string` by signature.
-  } as V3ColumnDescriptor<C>
-  return () => descriptor
+  const codecId = toV3CodecId(stripDomainSchema(nativeType))
+  // Narrowing assertion, mirrors ../v3/catalog.ts: `build()` widens
+  // `cast_as` in the bundled d.ts; the value is the domain's literal.
+  const castAs = probe.build().cast_as as V3CastAs
+  const capabilities = probe.getQueryCapabilities()
+  // A FRESH descriptor per invocation: descriptors flow into caller-owned
+  // contract structures, so a shared instance would let one caller's
+  // mutation alter every later contract (call-order-dependent output).
+  return () =>
+    ({
+      codecId,
+      nativeType,
+      typeParams: {
+        castAs,
+        capabilities: { ...capabilities },
+      },
+      // Narrowing assertion: runtime strings are the literals the getters
+      // declare; `toV3CodecId` returns `string` by signature.
+    }) as V3ColumnDescriptor<C>
 }
 
 // Each factory has a DISTINCT return type (V3ColumnDescriptor<EncryptedXColumn>);

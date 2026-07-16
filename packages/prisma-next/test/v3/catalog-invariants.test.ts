@@ -1,4 +1,7 @@
-import { DOMAIN_REGISTRY } from '@cipherstash/stack/eql/v3'
+// The domain registry is adapter-seam surface: the eql/v3 barrel no
+// longer exports it, so it ships from adapter-kit (the same import
+// route `src/v3/catalog.ts` uses).
+import { DOMAIN_REGISTRY } from '@cipherstash/stack/adapter-kit'
 import { describe, expect, it } from 'vitest'
 import {
   EXPOSED_DOMAIN_ENTRIES,
