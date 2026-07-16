@@ -29,6 +29,8 @@ import {
   cipherstashDoubleCodecMetadata,
   cipherstashJsonCodecMetadata,
   cipherstashStringCodecMetadata,
+  cipherstashV3CodecMetadataInstances,
+  cipherstashV3StorageRows,
 } from './codec-metadata'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
@@ -62,6 +64,8 @@ export const cipherstashPackMeta = {
         cipherstashDateCodecMetadata,
         cipherstashBooleanCodecMetadata,
         cipherstashJsonCodecMetadata,
+        // EQL v3 — all 40 catalog domains, derived (see codec-metadata.ts).
+        ...cipherstashV3CodecMetadataInstances,
       ],
       // Drives the contract emitter to add
       //   `import type { CodecTypes as CipherstashTypes } from '@prisma-next/extension-cipherstash/codec-types'`
@@ -113,6 +117,14 @@ export const cipherstashPackMeta = {
           named: 'EncryptedJson',
           alias: 'EncryptedJson',
         },
+        // v3-only envelope (every numeric v3 domain renders as
+        // `EncryptedNumber`; the other v3 domains reuse the
+        // version-neutral envelope classes already imported above).
+        {
+          package: '@prisma-next/extension-cipherstash/runtime',
+          named: 'EncryptedNumber',
+          alias: 'EncryptedNumber',
+        },
       ],
     },
     queryOperationTypes: {
@@ -159,6 +171,9 @@ export const cipherstashPackMeta = {
         targetId: 'postgres',
         nativeType: EQL_V2_ENCRYPTED_TYPE,
       },
+      // EQL v3 — one row per catalog domain, each targeting its own
+      // concrete `public.eql_v3_*` native type (see codec-metadata.ts).
+      ...cipherstashV3StorageRows,
     ],
   },
 } as const

@@ -13,6 +13,7 @@
  * per-column search configuration).
  */
 
+import 'dotenv/config'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'pathe'
@@ -23,7 +24,7 @@ import {
   readInstallSql,
   releaseManifest,
 } from '../../src/migration/eql-bundle-v3'
-import { installEqlV3IfNeeded } from './helpers/eql-v3'
+import { installEqlV3IfNeeded, uninstallEqlV3 } from './helpers/eql-v3'
 import { liveConnection } from './helpers/harness'
 import { describeLivePg } from './helpers/live-gate'
 
@@ -65,6 +66,12 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
 
   beforeAll(async () => {
     sql = liveConnection()
+    // Reset to a clean pre-install state first: on a reused database
+    // `installEqlV3IfNeeded` would short-circuit on the version probe
+    // and this suite would never actually exercise the migration SQL.
+    // The uninstall removes `eql_v3.version()`, so the install below is
+    // guaranteed to apply the full bundle.
+    await uninstallEqlV3(sql)
     await installEqlV3IfNeeded(sql)
   }, 240_000)
 

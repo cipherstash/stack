@@ -14,6 +14,7 @@
  * differs from the pinned release manifest.
  */
 
+import { readUninstallSql } from '@cipherstash/eql/sql'
 import type postgres from 'postgres'
 import {
   readInstallSql,
@@ -33,6 +34,33 @@ async function readEqlV3Version(
     { version: string }[]
   >`SELECT eql_v3.version() AS version`
   return row?.version ?? null
+}
+
+/**
+ * Reset to a clean pre-install state, under the same advisory lock as
+ * the installer: run the release's own uninstall SQL (`DROP SCHEMA
+ * eql_v3 / eql_v3_internal CASCADE`), removing `eql_v3.version()` so a
+ * following {@link installEqlV3IfNeeded} MUST take the full install
+ * path instead of short-circuiting on the version probe. The
+ * `public.eql_v3_*` storage domains deliberately survive (the bundle
+ * creates them idempotently and application tables depend on them), so
+ * the other live suites' tables stay intact.
+ */
+export async function uninstallEqlV3(sql: postgres.Sql): Promise<void> {
+  const reserved = await sql.reserve()
+  try {
+    await reserved`SELECT pg_advisory_lock(${EQL_V3_ADVISORY_LOCK_ID})`
+    try {
+      await reserved.unsafe(readUninstallSql())
+      if ((await readEqlV3Version(reserved)) !== null) {
+        throw new Error('EQL v3 uninstall left eql_v3.version() behind')
+      }
+    } finally {
+      await reserved`SELECT pg_advisory_unlock(${EQL_V3_ADVISORY_LOCK_ID})`
+    }
+  } finally {
+    reserved.release()
+  }
 }
 
 export async function installEqlV3IfNeeded(sql: postgres.Sql): Promise<void> {

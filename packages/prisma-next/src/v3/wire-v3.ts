@@ -28,16 +28,27 @@ function bigintSafeReplacer(_key: string, value: unknown): unknown {
 /** Serialise an EQL payload to plain JSONB text; `null`/`undefined` → `null`. */
 export function v3ToDriver(value: unknown): string | null {
   if (value === null || value === undefined) return null
-  return JSON.stringify(value, bigintSafeReplacer)
+  // `JSON.stringify` returns `undefined` for unsupported top-level values
+  // (a function, a symbol, a lone `undefined` survivor of the replacer);
+  // coerce that branch to `null` so the declared contract holds.
+  return JSON.stringify(value, bigintSafeReplacer) ?? null
 }
 
 /**
  * Parse a JSONB wire back to the EQL payload. Text wires are
  * `JSON.parse`d; objects (drivers that pre-parse jsonb) pass through;
- * `null`/`undefined` are preserved as-is.
+ * `null`/`undefined` are preserved as-is — the overloads keep that
+ * passthrough visible to callers (a nullable input yields a nullable
+ * result) instead of laundering `null` into `T`.
  */
-export function v3FromDriver<T>(value: string | object | null | undefined): T {
-  if (value === null || value === undefined) return value as T
+export function v3FromDriver<T>(value: string | object): T
+export function v3FromDriver<T>(
+  value: string | object | null | undefined,
+): T | null | undefined
+export function v3FromDriver<T>(
+  value: string | object | null | undefined,
+): T | null | undefined {
+  if (value === null || value === undefined) return value
   if (typeof value === 'object') return value as T
   return JSON.parse(value) as T
 }

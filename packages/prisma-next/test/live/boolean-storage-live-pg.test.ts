@@ -6,6 +6,7 @@
  * is no searchable term to mint.
  */
 
+import 'dotenv/config'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { EncryptedBoolean } from '../../src/execution/envelope-boolean'
@@ -79,20 +80,21 @@ describeLivePg('v3 boolean storage against live Postgres', () => {
 
   it('every search operator throws EncryptionOperatorError on the storage-only domain', () => {
     const active = () => columnAccessorV3(TABLE, 'active', BOOLEAN)
+    // The full v3 registry — there is no negated match to attempt
+    // (`eqlNotMatch` deliberately does not exist).
     const attempts: ReadonlyArray<readonly [string, unknown[]]> = [
-      ['cipherstashEq', [true]],
-      ['cipherstashNe', [true]],
-      ['cipherstashInArray', [[true, false]]],
-      ['cipherstashNotInArray', [[true]]],
-      ['cipherstashGt', [false]],
-      ['cipherstashGte', [false]],
-      ['cipherstashLt', [true]],
-      ['cipherstashLte', [true]],
-      ['cipherstashBetween', [false, true]],
-      ['cipherstashNotBetween', [false, true]],
-      ['cipherstashIlike', ['tru']],
-      ['cipherstashNotIlike', ['tru']],
-      ['cipherstashJsonContains', [{ a: 1 }]],
+      ['eqlEq', [true]],
+      ['eqlNeq', [true]],
+      ['eqlIn', [[true, false]]],
+      ['eqlNotIn', [[true]]],
+      ['eqlGt', [false]],
+      ['eqlGte', [false]],
+      ['eqlLt', [true]],
+      ['eqlLte', [true]],
+      ['eqlBetween', [false, true]],
+      ['eqlNotBetween', [false, true]],
+      ['eqlMatch', ['tru']],
+      ['eqlJsonContains', [{ a: 1 }]],
     ]
     for (const [method, args] of attempts) {
       expect(

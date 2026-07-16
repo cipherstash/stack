@@ -7,13 +7,14 @@
  * (`@>` with `eql_v3.query_jsonb`).
  */
 
+import 'dotenv/config'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { EncryptedDate } from '../../src/execution/envelope-date'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
 import { EncryptedNumber } from '../../src/v3/envelope-number'
-import { cipherstashV3Asc, cipherstashV3Desc } from '../../src/v3/operators-v3'
+import { eqlAsc, eqlDesc } from '../../src/v3/operators-v3'
 import {
   callOperator,
   columnAccessorV3,
@@ -140,10 +141,10 @@ describeLivePg('v3 operators against live Postgres', () => {
       selectIdsWhere(TABLE, predicate),
     )
 
-  it('cipherstashEq on a text_search column selects exactly the matching row', async () => {
+  it('eqlEq on a text_search column selects exactly the matching row', async () => {
     const result = await where(
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'email', TEXT_SEARCH),
         'grace@example.com',
       ),
@@ -153,31 +154,28 @@ describeLivePg('v3 operators against live Postgres', () => {
     expect(result.ids).toEqual(['grace'])
   }, 60_000)
 
-  it('cipherstashEq / cipherstashNe / cipherstashInArray on a text_eq column', async () => {
+  it('eqlEq / eqlNeq / eqlIn on a text_eq column', async () => {
     const nickname = () => columnAccessorV3(TABLE, 'nickname', TEXT_EQ)
     const eq = await where(
-      callOperator(getOperator('cipherstashEq'), nickname(), 'ada'),
+      callOperator(getOperator('eqlEq'), nickname(), 'ada'),
     )
     expect(eq.ids).toEqual(['ada'])
 
     const ne = await where(
-      callOperator(getOperator('cipherstashNe'), nickname(), 'ada'),
+      callOperator(getOperator('eqlNeq'), nickname(), 'ada'),
     )
     expect(ne.ids.sort()).toEqual(['grace', 'zora'])
 
     const inArray = await where(
-      callOperator(getOperator('cipherstashInArray'), nickname(), [
-        'ada',
-        'zora',
-      ]),
+      callOperator(getOperator('eqlIn'), nickname(), ['ada', 'zora']),
     )
     expect(inArray.ids.sort()).toEqual(['ada', 'zora'])
   }, 60_000)
 
-  it('cipherstashIlike lowers to eql_v3.contains and finds the token match', async () => {
+  it('eqlMatch lowers to eql_v3.contains and finds the token match', async () => {
     const result = await where(
       callOperator(
-        getOperator('cipherstashIlike'),
+        getOperator('eqlMatch'),
         columnAccessorV3(TABLE, 'email', TEXT_SEARCH),
         'grace',
       ),
@@ -186,28 +184,24 @@ describeLivePg('v3 operators against live Postgres', () => {
     expect(result.ids).toEqual(['grace'])
   }, 60_000)
 
-  it('cipherstashGt / cipherstashLte / cipherstashBetween on integer_ord select the right rows', async () => {
+  it('eqlGt / eqlLte / eqlBetween on integer_ord select the right rows', async () => {
     const score = () => columnAccessorV3(TABLE, 'score', INTEGER_ORD)
-    const gt = await where(
-      callOperator(getOperator('cipherstashGt'), score(), 25),
-    )
+    const gt = await where(callOperator(getOperator('eqlGt'), score(), 25))
     expect(gt.ids).toEqual(['zora'])
 
-    const lte = await where(
-      callOperator(getOperator('cipherstashLte'), score(), 25),
-    )
+    const lte = await where(callOperator(getOperator('eqlLte'), score(), 25))
     expect(lte.ids.sort()).toEqual(['ada', 'grace'])
 
     const between = await where(
-      callOperator(getOperator('cipherstashBetween'), score(), 11, 40),
+      callOperator(getOperator('eqlBetween'), score(), 11, 40),
     )
     expect(between.ids.sort()).toEqual(['grace', 'zora'])
   }, 60_000)
 
-  it('cipherstashGt on date_ord and cipherstashBetween on timestamp_ord', async () => {
+  it('eqlGt on date_ord and eqlBetween on timestamp_ord', async () => {
     const bornAfter = await where(
       callOperator(
-        getOperator('cipherstashGt'),
+        getOperator('eqlGt'),
         columnAccessorV3(TABLE, 'birthday', DATE_ORD),
         new Date('1990-01-01T00:00:00Z'),
       ),
@@ -216,7 +210,7 @@ describeLivePg('v3 operators against live Postgres', () => {
 
     const seenIn2024 = await where(
       callOperator(
-        getOperator('cipherstashBetween'),
+        getOperator('eqlBetween'),
         columnAccessorV3(TABLE, 'seen_at', TIMESTAMP_ORD),
         new Date('2024-01-01T00:00:00Z'),
         new Date('2024-12-31T23:59:59Z'),
@@ -225,13 +219,13 @@ describeLivePg('v3 operators against live Postgres', () => {
     expect(seenIn2024.ids.sort()).toEqual(['ada', 'grace'])
   }, 60_000)
 
-  it('cipherstashV3Asc / Desc order by the encrypted order term', async () => {
+  it('eqlAsc / Desc order by the encrypted order term', async () => {
     const score = () => columnAccessorV3(TABLE, 'score', INTEGER_ORD)
     const asc = await runLoweredSelect(
       sql,
       live.middleware,
       contract,
-      selectIdsOrderBy(TABLE, [cipherstashV3Asc(score())]),
+      selectIdsOrderBy(TABLE, [eqlAsc(score())]),
     )
     expect(asc.sql).toContain('eql_v3.ord_term')
     expect(asc.ids).toEqual(['ada', 'grace', 'zora'])
@@ -240,15 +234,15 @@ describeLivePg('v3 operators against live Postgres', () => {
       sql,
       live.middleware,
       contract,
-      selectIdsOrderBy(TABLE, [cipherstashV3Desc(score())]),
+      selectIdsOrderBy(TABLE, [eqlDesc(score())]),
     )
     expect(desc.ids).toEqual(['zora', 'grace', 'ada'])
   }, 60_000)
 
-  it('cipherstashJsonContains (@> with eql_v3.query_jsonb) selects by encrypted containment', async () => {
+  it('eqlJsonContains (@> with eql_v3.query_jsonb) selects by encrypted containment', async () => {
     const result = await where(
       callOperator(
-        getOperator('cipherstashJsonContains'),
+        getOperator('eqlJsonContains'),
         columnAccessorV3(TABLE, 'payload', JSON_CODEC),
         { role: 'admin' },
       ),
@@ -259,7 +253,7 @@ describeLivePg('v3 operators against live Postgres', () => {
 
     const nested = await where(
       callOperator(
-        getOperator('cipherstashJsonContains'),
+        getOperator('eqlJsonContains'),
         columnAccessorV3(TABLE, 'payload', JSON_CODEC),
         { tags: ['compiler'] },
       ),

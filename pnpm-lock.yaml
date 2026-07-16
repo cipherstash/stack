@@ -413,6 +413,9 @@ importers:
       '@cipherstash/eql':
         specifier: 3.0.0
         version: 3.0.0
+      '@cipherstash/test-kit':
+        specifier: workspace:*
+        version: link:../test-kit
       '@prisma-next/adapter-postgres':
         specifier: 0.14.0
         version: 0.14.0(typanion@3.14.0)(typescript@5.9.3)
@@ -440,9 +443,12 @@ importers:
       '@prisma-next/target-postgres':
         specifier: 0.14.0
         version: 0.14.0(typanion@3.14.0)(typescript@5.9.3)
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
       fast-check:
         specifier: ^4.8.0
-        version: 4.8.0
+        version: 4.9.0
       pathe:
         specifier: ^2.0.3
         version: 2.0.3

@@ -188,6 +188,21 @@ const V3_WIRE_MARKERS = [
   'bulkEncryptMiddlewareV3',
 ] as const
 
+/**
+ * The six v2 codec-RUNTIME factories (all built on the composite wire's
+ * `makeCipherstashCellCodec`). Distinct from {@link V2_WIRE_MARKERS} so
+ * the v3-graph scans can name exactly which factory leaked, and safe as
+ * substrings: no v3 identifier contains any of them.
+ */
+const V2_CODEC_FACTORY_MARKERS = [
+  'createCipherstashStringCodec',
+  'createCipherstashDoubleCodec',
+  'createCipherstashBigIntCodec',
+  'createCipherstashDateCodec',
+  'createCipherstashBooleanCodec',
+  'createCipherstashJsonCodec',
+] as const
+
 interface ChunkFile {
   readonly file: string
   readonly body: string
@@ -250,6 +265,45 @@ function isAllowedSharedChunk(chunk: string): boolean {
   )
 }
 
+/**
+ * Scan an entry's COMPLETE import graph (entry body + every transitive
+ * chunk) for forbidden markers, returning `"<chunk> → <marker>"`
+ * diagnostics so a failure names the offending chunk, not just the
+ * entry. `exempt` skips known-safe chunks (with the invariant that the
+ * exemption itself is pinned elsewhere — see the call sites).
+ */
+function findLeaksInGraph(
+  entry: string,
+  forbidden: readonly string[],
+  exempt: (chunk: ChunkFile) => boolean = () => false,
+): string[] {
+  const leaks: string[] = []
+  for (const [file, chunk] of collectGraph(entry)) {
+    if (exempt(chunk)) continue
+    for (const marker of forbidden) {
+      if (chunk.body.includes(marker)) {
+        leaks.push(`${file} → ${marker}`)
+      }
+    }
+  }
+  return leaks
+}
+
+/**
+ * The version-neutral execution chunk — envelope base/classes, routing,
+ * abort, `stampRoutingKeysFromAst` — is legitimately reachable from
+ * EVERY entry (the v3 middleware imports the shared routing walk), and
+ * it currently also DEFINES the v2 wire encoder. Identified by CONTENT
+ * (it is the one chunk that defines the envelope base class), never by
+ * tsup's hash-named file. It is exempted ONLY from the v2-wire-marker
+ * scan of the v3 graph; the per-chunk "no chunk mixes the two wires"
+ * test below still pins that this chunk never gains a v3 wire marker,
+ * so the exemption cannot hide a fused chunk.
+ */
+function definesVersionNeutralExecutionChunk(chunk: ChunkFile): boolean {
+  return /var EncryptedEnvelopeBase\s*=/.test(chunk.body)
+}
+
 describe('bundling isolation', () => {
   it('dist entry files exist (run `pnpm --filter @cipherstash/prisma-next build` first)', () => {
     for (const entry of ENTRY_FILES) {
@@ -298,39 +352,39 @@ describe('bundling isolation', () => {
     expect(leaks, `v3 entry leaks: ${leaks.join(', ')}`).toEqual([])
   })
 
-  it('v3.js does not pull the v2 composite-literal wire', () => {
-    const entry = readChunk('v3.js')
-    const leaks = findLeaksInEntry(entry, V2_WIRE_MARKERS)
-    expect(leaks, `v3 entry leaks v2 wire: ${leaks.join(', ')}`).toEqual([])
+  it('no chunk in the v3 graph references the v2 composite-literal wire (version-neutral execution chunk exempted)', () => {
+    // COMPLETE-graph scan, not just the entry body: a cross-plane leak
+    // usually arrives through a transitive chunk import, which an
+    // entry-body substring check never sees. `v3.js` legitimately
+    // shares the version-neutral execution chunk (envelope
+    // base/classes, routing, abort, `stampRoutingKeysFromAst`) with the
+    // v2 entries — that chunk currently also DEFINES the v2 wire
+    // encoder, so it is exempted here by content and pinned against v3
+    // contamination by the per-chunk disjointness test below.
+    const leaks = findLeaksInGraph(
+      'v3.js',
+      V2_WIRE_MARKERS,
+      definesVersionNeutralExecutionChunk,
+    )
+    expect(leaks, `v3 graph leaks v2 wire: ${leaks.join(', ')}`).toEqual([])
   })
 
-  it('the v3 entry graph never reaches the v2 codec-runtime chunk', () => {
-    // `v3.js` legitimately shares the version-neutral execution chunk
-    // (envelope base/classes, routing, abort, `stampRoutingKeysFromAst`)
-    // with the v2 entries — that chunk currently also DEFINES the v2
-    // wire encoder, which the per-chunk disjointness test below pins.
-    // What must never happen is the v3 graph importing the v2
-    // codec-RUNTIME chunk (the six `createCipherstash*Codec` factories
-    // built on the composite wire).
-    const v3Chunks = collectGraph('v3.js')
-    const offenders = [...v3Chunks.entries()]
-      .filter(([file]) => file !== 'v3.js')
-      .filter(([, chunk]) =>
-        chunk.body.includes('createCipherstashStringCodec'),
-      )
-      .map(([file]) => file)
+  it('no chunk in the v3 graph references any v2 codec-runtime factory', () => {
+    // All six `createCipherstash*Codec` factories (built on the
+    // composite wire), against every chunk in the v3 graph — including
+    // the version-neutral execution chunk, which must never grow one.
+    const leaks = findLeaksInGraph('v3.js', V2_CODEC_FACTORY_MARKERS)
     expect(
-      offenders,
-      `v3 graph reaches v2 codec-runtime chunk(s): ${offenders.join(', ')}`,
+      leaks,
+      `v3 graph reaches v2 codec-runtime factories: ${leaks.join(', ')}`,
     ).toEqual([])
   })
 
-  it('middleware.js (v2 bulk-encrypt entry) does not pull the v3 wire plane', () => {
-    const entry = readChunk('middleware.js')
-    const leaks = findLeaksInEntry(entry, V3_WIRE_MARKERS)
+  it('no chunk in the middleware.js graph (v2 bulk-encrypt entry) references the v3 wire plane', () => {
+    const leaks = findLeaksInGraph('middleware.js', V3_WIRE_MARKERS)
     expect(
       leaks,
-      `middleware entry leaks v3 wire: ${leaks.join(', ')}`,
+      `middleware graph leaks v3 wire: ${leaks.join(', ')}`,
     ).toEqual([])
   })
 

@@ -218,6 +218,7 @@ export function createCipherstashV3Sdk(
         // `never` operands so the real client's GENERIC method satisfies
         // the structural surface (see the interface doc); the concrete
         // operand is re-widened at each call site.
+        // biome-ignore lint/plugin: deliberate bridge into the structural `never`-operand surface (rationale above)
         const result = await client.encryptQuery(terms as never)
         const data = unwrap(result, `encryptQuery(${queryType})`)
         if (data.length !== group.length) {
@@ -244,6 +245,7 @@ export function createCipherstashV3Sdk(
       await Promise.all(
         jsonTerms.map(async (slot) => {
           // Cast rationale: see the scalar branch above.
+          // biome-ignore lint/plugin: deliberate bridge into the structural `never`-operand surface (rationale above)
           const result = await client.encryptQuery(
             slot.plaintext as never,
             { table, column, queryType: 'searchableJson' } as never,
@@ -274,7 +276,15 @@ export function createCipherstashV3Sdk(
         data: ensureV3Payload(data, 'bulkDecrypt', index),
       }))
       const result = await client.bulkDecrypt(payload)
-      return unwrap(result, 'bulkDecrypt').map((entry) => {
+      const data = unwrap(result, 'bulkDecrypt')
+      // Same cardinality contract as bulkEncrypt above: a truncated
+      // response would silently misalign plaintexts with `ciphertexts`.
+      if (data.length !== ciphertexts.length) {
+        throw new Error(
+          `cipherstash v3 bulkDecrypt: client returned ${data.length} plaintexts for ${ciphertexts.length} ciphertexts.`,
+        )
+      }
+      return data.map((entry) => {
         if ('error' in entry && entry.error !== undefined) {
           throw new Error(
             `cipherstash v3 bulkDecrypt entry failed: ${String(entry.error)}`,

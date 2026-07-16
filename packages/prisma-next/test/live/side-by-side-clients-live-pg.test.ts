@@ -14,6 +14,7 @@
  * absent so the suite stays runnable against a v3-only database.
  */
 
+import 'dotenv/config'
 import type { PostgresContract } from '@prisma-next/adapter-postgres/types'
 import { validateSqlContractFully } from '@prisma-next/sql-contract/validators'
 import type postgres from 'postgres'
@@ -183,7 +184,7 @@ describeLivePg('v2 and v3 clients side by side against live Postgres', () => {
       selectIdsWhere(
         V3_TABLE,
         callOperator(
-          getOperator('cipherstashEq'),
+          getOperator('eqlEq'),
           columnAccessorV3(V3_TABLE, 'email', TEXT_SEARCH),
           V3_EMAIL,
         ),

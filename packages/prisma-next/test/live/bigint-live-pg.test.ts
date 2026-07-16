@@ -7,10 +7,11 @@
  * ordering terms order the real domain correctly.
  */
 
+import 'dotenv/config'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { EncryptedBigInt } from '../../src/execution/envelope-bigint'
-import { cipherstashV3Asc } from '../../src/v3/operators-v3'
+import { eqlAsc } from '../../src/v3/operators-v3'
 import {
   callOperator,
   columnAccessorV3,
@@ -111,7 +112,7 @@ describeLivePg('v3 bigint domains against live Postgres', () => {
     expect(negative).toBe(-7n)
   }, 60_000)
 
-  it('cipherstashEq on bigint_eq selects exactly the matching row', async () => {
+  it('eqlEq on bigint_eq selects exactly the matching row', async () => {
     const result = await runLoweredSelect(
       sql,
       live.middleware,
@@ -119,7 +120,7 @@ describeLivePg('v3 bigint domains against live Postgres', () => {
       selectIdsWhere(
         TABLE,
         callOperator(
-          getOperator('cipherstashEq'),
+          getOperator('eqlEq'),
           columnAccessorV3(TABLE, 'balance_eq', BIGINT_EQ),
           UNSAFE_BIG,
         ),
@@ -135,10 +136,7 @@ describeLivePg('v3 bigint domains against live Postgres', () => {
       sql,
       live.middleware,
       contract,
-      selectIdsWhere(
-        TABLE,
-        callOperator(getOperator('cipherstashGt'), ord(), 42n),
-      ),
+      selectIdsWhere(TABLE, callOperator(getOperator('eqlGt'), ord(), 42n)),
     )
     expect(gt.ids).toEqual(['huge'])
 
@@ -148,7 +146,7 @@ describeLivePg('v3 bigint domains against live Postgres', () => {
       contract,
       selectIdsWhere(
         TABLE,
-        callOperator(getOperator('cipherstashBetween'), ord(), -100n, 100n),
+        callOperator(getOperator('eqlBetween'), ord(), -100n, 100n),
       ),
     )
     expect(between.ids.sort()).toEqual(['negative', 'small'])
@@ -160,7 +158,7 @@ describeLivePg('v3 bigint domains against live Postgres', () => {
       live.middleware,
       contract,
       selectIdsOrderBy(TABLE, [
-        cipherstashV3Asc(columnAccessorV3(TABLE, 'balance_ord', BIGINT_ORD)),
+        eqlAsc(columnAccessorV3(TABLE, 'balance_ord', BIGINT_ORD)),
       ]),
     )
     expect(asc.sql).toContain('eql_v3.ord_term')
@@ -170,7 +168,7 @@ describeLivePg('v3 bigint domains against live Postgres', () => {
   it('the storage-only bigint domain refuses search operators', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'balance', BIGINT_STORAGE),
         42n,
       ),

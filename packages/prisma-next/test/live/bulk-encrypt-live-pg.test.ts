@@ -9,6 +9,7 @@
  * and every cell decrypts back to its original plaintext.
  */
 
+import 'dotenv/config'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { EncryptedString } from '../../src/execution/envelope-string'

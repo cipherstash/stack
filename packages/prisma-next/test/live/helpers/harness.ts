@@ -198,6 +198,12 @@ export interface LiveRowSpec {
  * batches per-column `bulkEncrypt`/`encryptQuery` crossings, and
  * replaces envelope params with JSONB text), then execute against the
  * live database.
+ *
+ * Every row's params are bound in the FIRST row's column order (the
+ * canonical `cellColumns` list below): the INSERT column list is built
+ * once from the first row, so a later row iterated in its own
+ * `Object.entries` order could silently bind values to the wrong SQL
+ * columns. A row with a differing column set throws instead.
  */
 export async function insertEncryptedRows(
   sql: postgres.Sql,
@@ -207,15 +213,33 @@ export async function insertEncryptedRows(
 ): Promise<void> {
   const first = rows[0]
   if (!first) return
-  const columnNames = ['id', ...Object.keys(first.cells)]
+  const cellColumns = Object.keys(first.cells)
+  const columnNames = ['id', ...cellColumns]
 
   const params: unknown[] = []
   const astRows = rows.map((row) => {
+    const rowColumns = Object.keys(row.cells)
+    if (
+      rowColumns.length !== cellColumns.length ||
+      !cellColumns.every((column) => column in row.cells)
+    ) {
+      throw new Error(
+        `insertEncryptedRows: row "${row.id}" columns [${rowColumns.join(
+          ', ',
+        )}] do not match the first row's [${cellColumns.join(', ')}]`,
+      )
+    }
     const astRow: Record<string, ParamRef> = {}
     const idRef = ParamRef.of(row.id, { codec: { codecId: PG_TEXT } })
     astRow.id = idRef
     params.push(row.id)
-    for (const [column, cell] of Object.entries(row.cells)) {
+    for (const column of cellColumns) {
+      const cell = row.cells[column]
+      if (!cell) {
+        throw new Error(
+          `insertEncryptedRows: row "${row.id}" is missing column "${column}"`,
+        )
+      }
       const ref = ParamRef.of(cell.value, {
         codec: { codecId: cell.codecId },
       })

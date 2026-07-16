@@ -6,6 +6,7 @@
  * minting a nonsense query term.
  */
 
+import 'dotenv/config'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { EncryptedString } from '../../src/execution/envelope-string'
@@ -87,7 +88,7 @@ describeLivePg('v3 null round-trips against live Postgres', () => {
       selectIdsWhere(
         TABLE,
         callOperator(
-          getOperator('cipherstashEq'),
+          getOperator('eqlEq'),
           columnAccessorV3(TABLE, 'email', TEXT_SEARCH),
           'filled@example.com',
         ),
@@ -99,14 +100,14 @@ describeLivePg('v3 null round-trips against live Postgres', () => {
   it('operators reject a null operand with the isNull() hint', () => {
     expect(() =>
       callOperator(
-        getOperator('cipherstashEq'),
+        getOperator('eqlEq'),
         columnAccessorV3(TABLE, 'email', TEXT_SEARCH),
         null,
       ),
     ).toThrow(/isNull/)
     expect(() =>
       callOperator(
-        getOperator('cipherstashGt'),
+        getOperator('eqlGt'),
         columnAccessorV3(TABLE, 'score', INTEGER_ORD),
         null,
       ),
