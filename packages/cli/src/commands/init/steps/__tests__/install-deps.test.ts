@@ -17,12 +17,15 @@ vi.mock('../../utils.js', () => ({
 }))
 // Pin map: pretend this CLI release was built alongside these versions, so
 // the pinned-spec and skew paths are exercisable from source-mode tests
-// (where the real build-time embed is absent).
+// (where the real build-time embed is absent). The versions are arbitrary
+// FIXTURES (deliberately unreal, so nobody mistakes them for values that must
+// track a release) — production values come from the workspace manifests at
+// build time, never from constants.
 vi.mock('../../../../runtime-versions.js', () => {
   const versions: Record<string, string> = {
-    stash: '1.0.0-rc.2',
-    '@cipherstash/stack': '1.0.0-rc.2',
-    '@cipherstash/stack-supabase': '1.0.0-rc.2',
+    stash: '9.9.9-test.1',
+    '@cipherstash/stack': '9.9.9-test.1',
+    '@cipherstash/stack-supabase': '9.9.9-test.1',
   }
   return {
     expectedVersion: (pkg: string) => versions[pkg],
@@ -111,17 +114,17 @@ describe('installDepsStep', () => {
 
     const [, prod, dev] = vi.mocked(combinedInstallCommands).mock.calls[0]
     expect(prod).toEqual([
-      '@cipherstash/stack@1.0.0-rc.2',
-      '@cipherstash/stack-supabase@1.0.0-rc.2',
+      '@cipherstash/stack@9.9.9-test.1',
+      '@cipherstash/stack-supabase@9.9.9-test.1',
     ])
-    expect(dev).toEqual(['stash@1.0.0-rc.2'])
+    expect(dev).toEqual(['stash@9.9.9-test.1'])
   })
 
   it('warns on version skew when packages are already installed (#661)', async () => {
     vi.mocked(isPackageInstalled).mockReturnValue(true)
     // The dist-tag failure mode: node_modules holds the stale 0.19.0.
     vi.mocked(installedVersion).mockImplementation((pkg: string) =>
-      pkg === '@cipherstash/stack' ? '0.19.0' : '1.0.0-rc.2',
+      pkg === '@cipherstash/stack' ? '0.19.0' : '9.9.9-test.1',
     )
 
     await installDepsStep.run(baseState, provider)
@@ -129,14 +132,14 @@ describe('installDepsStep', () => {
     expect(execSyncMock).not.toHaveBeenCalled()
     expect(p.log.warn).toHaveBeenCalledWith(
       expect.stringContaining(
-        '@cipherstash/stack: installed 0.19.0, this release of stash expects 1.0.0-rc.2',
+        '@cipherstash/stack: installed 0.19.0, this release of stash expects 9.9.9-test.1',
       ),
     )
   })
 
   it('stays silent when installed versions match the release', async () => {
     vi.mocked(isPackageInstalled).mockReturnValue(true)
-    vi.mocked(installedVersion).mockReturnValue('1.0.0-rc.2')
+    vi.mocked(installedVersion).mockReturnValue('9.9.9-test.1')
 
     await installDepsStep.run(baseState, provider)
 
@@ -146,18 +149,18 @@ describe('installDepsStep', () => {
   describe('versionSkew', () => {
     it('reports only packages whose resolved version differs', () => {
       vi.mocked(installedVersion).mockImplementation((pkg: string) =>
-        pkg === '@cipherstash/stack' ? '0.19.0' : '1.0.0-rc.2',
+        pkg === '@cipherstash/stack' ? '0.19.0' : '9.9.9-test.1',
       )
       expect(
         versionSkew(['@cipherstash/stack', 'stash'], {
-          '@cipherstash/stack': '1.0.0-rc.2',
-          stash: '1.0.0-rc.2',
+          '@cipherstash/stack': '9.9.9-test.1',
+          stash: '9.9.9-test.1',
         }),
       ).toEqual([
         {
           pkg: '@cipherstash/stack',
           installed: '0.19.0',
-          expected: '1.0.0-rc.2',
+          expected: '9.9.9-test.1',
         },
       ])
     })
@@ -166,7 +169,7 @@ describe('installDepsStep', () => {
       vi.mocked(installedVersion).mockReturnValue(undefined)
       expect(
         versionSkew(['@cipherstash/stack'], {
-          '@cipherstash/stack': '1.0.0-rc.2',
+          '@cipherstash/stack': '9.9.9-test.1',
         }),
       ).toEqual([])
       vi.mocked(installedVersion).mockReturnValue('0.19.0')
