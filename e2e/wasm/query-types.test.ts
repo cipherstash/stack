@@ -15,13 +15,15 @@
  *   |   (string value) |   → ste_vec_selector |            |
  *   |   (object value) |   → ste_vec_term     |            |
  *
- * Envelope terms must be EQL v3 and CIPHERTEXT-FREE (terms are needles
- * matched against stored values, never decrypted). The one deliberate
- * exception: a SELECTOR query returns a BARE string (the selector hash) —
- * v3 has no encrypted-selector envelope; it binds as the text argument of
- * `->` / `->>`. The serde-boundary bugs this suite's first runs caught
- * (undefined fields rejected; the bulk field is `queries`; the ore→ope
- * swap) are exactly why each type needs a live crossing, not a mock.
+ * Wire shapes differ by kind — which is exactly what this suite pins:
+ * SCALAR terms are v3 envelopes (`{v: 3, i, …}`); a JSON CONTAINMENT
+ * needle is a strict `{sv: [query-entry]}` with no version field; a
+ * SELECTOR query returns the BARE selector-hash string (v3 has no
+ * encrypted-selector envelope — bind as the text argument of `->`/`->>`).
+ * All are CIPHERTEXT-FREE. The boundary bugs this suite's first runs
+ * caught (undefined fields rejected by serde; the bulk field is `queries`;
+ * the ore→ope swap; both JSON shapes) are exactly why each type needs a
+ * live crossing, not a mock.
  *
  * Skipped when any CS_* env var is missing, matching `roundtrip.test.ts`.
  */
@@ -59,12 +61,25 @@ const catalog = encryptedTable('wasm_query_matrix', {
   prefs: types.Json('prefs'), // searchable JSON (ste_vec)
 })
 
-/** A v3 query term must exist, be versioned 3, and carry NO ciphertext. */
+/** A v3 SCALAR query term: versioned envelope (`v: 3`), NO ciphertext. */
 function assertV3Term(term: unknown, label: string) {
   assertExists(term, `${label}: encryptQuery returned null`)
   const obj = term as Record<string, unknown>
   assertEquals(obj.v, 3, `${label}: term is not EQL v3`)
   assertEquals('c' in obj, false, `${label}: term carries ciphertext`)
+}
+
+/** A v3 JSON CONTAINMENT needle: strict `{sv: [query-entry]}` — no `v`
+ * envelope, no ciphertext (per `is_valid_ste_vec_query_payload`). */
+function assertContainmentNeedle(term: unknown, label: string) {
+  assertExists(term, `${label}: encryptQuery returned null`)
+  const obj = term as Record<string, unknown>
+  assertEquals(
+    Array.isArray(obj.sv),
+    true,
+    `${label}: expected an {sv: [...]} containment needle`,
+  )
+  assertEquals('c' in obj, false, `${label}: needle carries ciphertext`)
 }
 
 Deno.test({
@@ -131,8 +146,10 @@ Deno.test({
       'selector: empty selector hash',
     )
 
-    // searchableJson, object value → ste_vec_term (containment)
-    assertV3Term(
+    // searchableJson, object value → ste_vec_term (containment needle:
+    // strict {sv: [...]}, no version envelope — per the eql_v3.query_jsonb
+    // wire contract)
+    assertContainmentNeedle(
       await client.encryptQuery(
         { theme: 'dark' },
         {
@@ -192,6 +209,6 @@ Deno.test({
     assertEquals(bulk[1], null, 'bulk: null value must yield null')
     assertV3Term(bulk[2], 'bulk/freeTextSearch')
     assertV3Term(bulk[3], 'bulk/orderAndRange')
-    assertV3Term(bulk[4], 'bulk/searchableJson')
+    assertContainmentNeedle(bulk[4], 'bulk/searchableJson')
   },
 })
