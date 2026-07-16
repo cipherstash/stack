@@ -293,11 +293,14 @@ export function makeWasmAdapter(): IntegrationAdapter {
       }
       case 'order': {
         // OPE ordering (`ord_term`) — the block-ORE domains are deferred in
-        // the catalog, so `ord_term_ore` never applies here.
+        // the catalog, so `ord_term_ore` never applies here. The secondary
+        // `row_key ASC` mirrors the oracle's tie-break: domains with fewer
+        // samples than rows (date/timestamp have two) guarantee tied values,
+        // and without it the tied rows come back in arbitrary order.
         return selectKeys(
           `"${op.column}" IS NOT NULL`,
           [],
-          `eql_v3.ord_term("${op.column}") ${op.direction.toUpperCase()}`,
+          `eql_v3.ord_term("${op.column}") ${op.direction.toUpperCase()}, row_key ASC`,
         )
       }
       case 'isNull':
