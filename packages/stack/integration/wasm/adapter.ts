@@ -225,14 +225,18 @@ export function makeWasmAdapter(): IntegrationAdapter {
 
   async function encryptRow(row: PlainRow): Promise<Record<string, unknown>> {
     const assignments: Record<string, unknown> = { row_key: row.rowKey }
-    for (const [slug, value] of Object.entries(row.values)) {
-      const encrypted = await client.encrypt(toWasmPlaintext(value), {
-        table: tableSchema,
-        column: col(slug).column,
-      })
-      assertWireEnvelope(slug, encrypted)
-      assignments[slug] = encrypted
-    }
+    // Field encrypts are independent ZeroKMS round-trips — run them
+    // concurrently rather than paying fields × RTT per row.
+    await Promise.all(
+      Object.entries(row.values).map(async ([slug, value]) => {
+        const encrypted = await client.encrypt(toWasmPlaintext(value), {
+          table: tableSchema,
+          column: col(slug).column,
+        })
+        assertWireEnvelope(slug, encrypted)
+        assignments[slug] = encrypted
+      }),
+    )
     return assignments
   }
 
@@ -253,6 +257,12 @@ export function makeWasmAdapter(): IntegrationAdapter {
       }
       case 'in':
       case 'notIn': {
+        // Parity with the production operators (drizzle inArrayOp): an
+        // empty list would otherwise render `WHERE ()` — a syntax error,
+        // not empty-IN semantics.
+        if (op.values.length === 0) {
+          throw new Error(`${op.kind} requires a non-empty list of values`)
+        }
         // One encryptQueryBulk crossing for the whole list — the bulk path
         // gets exercised on every family this way.
         const { column, eqlType } = col(op.column)
@@ -274,8 +284,10 @@ export function makeWasmAdapter(): IntegrationAdapter {
       }
       case 'between':
       case 'notBetween': {
-        const lo = await term(op.column, op.lo, op.kind)
-        const hi = await term(op.column, op.hi, op.kind)
+        const [lo, hi] = await Promise.all([
+          term(op.column, op.lo, op.kind),
+          term(op.column, op.hi, op.kind),
+        ])
         // Parenthesised conjunction, mirroring the Drizzle dialect's
         // load-bearing parentheses (NOT binds tighter than AND).
         const range = `(eql_v3.gte("${op.column}", $1::jsonb::${lo.cast}) AND eql_v3.lte("${op.column}", $2::jsonb::${hi.cast}))`
@@ -372,20 +384,40 @@ export function makeWasmAdapter(): IntegrationAdapter {
     },
 
     async insertBulk(_spec: TableSpec, rows: readonly PlainRow[]) {
-      for (const row of rows) {
-        await insertRow(await encryptRow(row))
-      }
+      // Rows are independent (distinct row_key PKs, no ordering
+      // dependency) — encrypt and insert them concurrently.
+      await Promise.all(
+        rows.map(async (row) => insertRow(await encryptRow(row))),
+      )
     },
 
     async run(_spec: TableSpec, op: QueryOp) {
       return run(op)
     },
 
+    // Discriminate capability rejections from infrastructure failures —
+    // this adapter's run() path is fully live (ZeroKMS + real SQL), so a
+    // bare catch would record a connection reset or a dropped table as a
+    // passing negative test. Same doctrine as the Supabase adapter's
+    // expectRejected. Two shapes are legitimate rejections here:
+    //  - client-side: resolveIndexType / the pre-FFI validators throw when
+    //    the queryType isn't configured on the column;
+    //  - server-side (order ops only): domains without an ordering index
+    //    have no eql_v3.ord_term overload, so Postgres rejects the call.
     async expectRejected(_spec: TableSpec, op: QueryOp) {
       try {
         await run(op)
-      } catch {
-        return
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const isCapabilityRejection =
+          /is not configured on column|has no indexes configured|\[encryption\]:/.test(
+            message,
+          ) || /ord_term/.test(message)
+        if (isCapabilityRejection) return
+        throw new Error(
+          `Expected ${op.kind} on "${op.column}" to be rejected by a capability error, but got an unrelated failure: ${message}`,
+          { cause: error },
+        )
       }
       throw new Error(
         `Expected ${op.kind} on "${op.column}" to be rejected, but it ran.`,

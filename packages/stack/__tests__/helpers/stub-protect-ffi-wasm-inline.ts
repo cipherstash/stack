@@ -20,6 +20,18 @@ export const encrypt = (): never => {
   )
 }
 
+export const encryptQuery = (): never => {
+  throw new Error(
+    '[test stub]: protect-ffi/wasm-inline encryptQuery not implemented',
+  )
+}
+
+export const encryptQueryBulk = (): never => {
+  throw new Error(
+    '[test stub]: protect-ffi/wasm-inline encryptQueryBulk not implemented',
+  )
+}
+
 export const isEncrypted = (): boolean => false
 
 export const newClient = (): never => {

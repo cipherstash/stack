@@ -51,8 +51,9 @@ function requireEnv(): Record<(typeof REQUIRED_ENV)[number], string> {
     // harness — no skipIf credential gates).
     throw new Error(
       `Missing required env: ${missing.join(', ')}. This suite needs real ` +
-        'CipherStash credentials — set the CS_* variables (see .env.example) ' +
-        'or run via the CI job, which injects them.',
+        'CipherStash credentials — export the four CS_* variables (or put them ' +
+        'in a repo-root .env; see AGENTS.md "Environment variables") or run ' +
+        'via the CI job, which injects them.',
     )
   }
   return values
@@ -159,7 +160,7 @@ Deno.test({
     // Bulk form is position-stable, nulls pass through.
     const bulk = await client.encryptQueryBulk([
       { value: plaintext, column: users.email, table: users },
-      { value: null as unknown as string, column: users.email, table: users },
+      { value: null, column: users.email, table: users },
     ])
     assertEquals(bulk.length, 2)
     assertExists(bulk[0])

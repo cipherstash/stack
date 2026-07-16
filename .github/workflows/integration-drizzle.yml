@@ -129,8 +129,9 @@ jobs:
       # The Drizzle adapter suites (incl. the Clerk-federated lock-context one)
       # now live in @cipherstash/stack-drizzle (run below via its own
       # test:integration). This glob scopes what still lives in @cipherstash/stack:
-      # the adapter-agnostic `shared/` core suites and the model-path
-      # `identity/matrix-identity` suite.
+      # the adapter-agnostic `shared/` core suites, the model-path
+      # `identity/matrix-identity` suite, and the `wasm/` family suite (the
+      # `@cipherstash/stack/wasm-inline` adapter over the shared v3 matrix).
       CS_IT_SUITE: >-
         integration/shared/**/*.integration.test.ts,
         integration/identity/**/*.integration.test.ts,
@@ -172,7 +173,7 @@ jobs:
       # different package now). Its globalSetup calls the same EQL v3 install, but
       # `isInstalled` short-circuits against the DB the first invocation already
       # provisioned — a fast no-op check, not a second schema apply.
-      - name: Shared core + identity integration suites
+      - name: Shared core + identity + wasm integration suites
         run: pnpm --filter @cipherstash/stack run test:integration
 
       - name: Stop ${{ matrix.db }}

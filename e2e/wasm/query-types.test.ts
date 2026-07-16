@@ -56,8 +56,9 @@ function requireEnv(): Record<(typeof REQUIRED_ENV)[number], string> {
     // harness — no skipIf credential gates).
     throw new Error(
       `Missing required env: ${missing.join(', ')}. This suite needs real ` +
-        'CipherStash credentials — set the CS_* variables (see .env.example) ' +
-        'or run via the CI job, which injects them.',
+        'CipherStash credentials — export the four CS_* variables (or put them ' +
+        'in a repo-root .env; see AGENTS.md "Environment variables") or run ' +
+        'via the CI job, which injects them.',
     )
   }
   return values
@@ -93,6 +94,16 @@ function assertContainmentNeedle(term: unknown, label: string) {
 
 Deno.test({
   name: 'stack/wasm-inline: encryptQuery covers every v3 query type',
+  permissions: {
+    env: true,
+    net: true,
+    read: true,
+    sys: true,
+    // No FFI permission, same pin as roundtrip.test.ts: if protect-ffi ever
+    // silently fell back to a native binding under Deno, the call would
+    // reject — so a green run proves the WASM path minted every term.
+    ffi: false,
+  },
   async fn() {
     const env = requireEnv()
     const client = await Encryption({
@@ -190,7 +201,7 @@ Deno.test({
         queryType: 'equality',
       },
       {
-        value: null as unknown as string,
+        value: null,
         table: catalog,
         column: catalog.email,
       },

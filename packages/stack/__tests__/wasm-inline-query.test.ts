@@ -170,6 +170,48 @@ describe('WasmEncryptionClient.encryptQuery', () => {
     ).toBeNull()
     expect(ffi.encryptQuery).not.toHaveBeenCalled()
   })
+
+  // The same pre-FFI guards the native client runs — an invalid value must
+  // fail with the NAMED error before any FFI/network crossing, not with an
+  // opaque serde failure (or a silently no-match term) from inside WASM.
+  it('rejects NaN with the named validation error before the FFI', async () => {
+    const c = await client()
+    await expect(
+      c.encryptQuery(Number.NaN, {
+        table: users,
+        column: users.age,
+        queryType: 'orderAndRange',
+      }),
+    ).rejects.toThrow('[encryption]: Cannot encrypt NaN value')
+    expect(ffi.encryptQuery).not.toHaveBeenCalled()
+  })
+
+  it('rejects a numeric value against a match index before the FFI', async () => {
+    const c = await client()
+    await expect(
+      c.encryptQuery(42, {
+        table: users,
+        column: users.bio,
+        queryType: 'freeTextSearch',
+      }),
+    ).rejects.toThrow(/Cannot use 'match' index with numeric value/)
+    expect(ffi.encryptQuery).not.toHaveBeenCalled()
+  })
+
+  it('applies the same validation on the bulk path', async () => {
+    const c = await client()
+    await expect(
+      c.encryptQueryBulk([
+        {
+          value: Number.POSITIVE_INFINITY,
+          table: users,
+          column: users.age,
+          queryType: 'orderAndRange',
+        },
+      ]),
+    ).rejects.toThrow('[encryption]: Cannot encrypt Infinity value')
+    expect(ffi.encryptQueryBulk).not.toHaveBeenCalled()
+  })
 })
 
 describe('WasmEncryptionClient.encryptQueryBulk', () => {
@@ -181,7 +223,7 @@ describe('WasmEncryptionClient.encryptQueryBulk', () => {
     const c = await client()
     const out = await c.encryptQueryBulk([
       { value: 'a@b.com', table: users, column: users.email },
-      { value: null as unknown as string, table: users, column: users.email },
+      { value: null, table: users, column: users.email },
       {
         value: 'needle',
         table: users,
@@ -207,7 +249,7 @@ describe('WasmEncryptionClient.encryptQueryBulk', () => {
   it('short-circuits an all-null batch', async () => {
     const c = await client()
     const out = await c.encryptQueryBulk([
-      { value: null as unknown as string, table: users, column: users.email },
+      { value: null, table: users, column: users.email },
     ])
     expect(out).toEqual([null])
     expect(ffi.encryptQueryBulk).not.toHaveBeenCalled()

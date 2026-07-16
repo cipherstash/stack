@@ -84,6 +84,10 @@ import {
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
 import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
+import {
+  assertValidNumericValue,
+  assertValueIndexCompatibility,
+} from '@/encryption/helpers/validation'
 import { type AnyV3Table, buildEncryptConfig } from '@/eql/v3'
 import {
   type CastAs,
@@ -426,42 +430,23 @@ export class WasmEncryptionClient {
    *   see {@link WasmEncryptQueryOptions.queryType} for the inference rules.
    * @returns The v3 query term, or `null` for null plaintext.
    * @throws When the requested `queryType` isn't configured on the column,
-   *   the column has no indexes at all, or encryption fails. Errors THROW,
-   *   consistent with this surface's `encrypt`/`decrypt` (the native
-   *   entry's `{ data } | { failure }` envelope lives on the Node client
-   *   only).
+   *   the column has no indexes at all, the value fails the same pre-flight
+   *   validation the native client runs (NaN / Infinity / out-of-int64
+   *   bigint, or a numeric value against a `freeTextSearch` index), or
+   *   encryption fails. Errors THROW, consistent with this surface's
+   *   `encrypt`/`decrypt` (the native entry's `{ data } | { failure }`
+   *   envelope lives on the Node client only).
    */
   async encryptQuery(
-    plaintext: WasmPlaintext | null,
+    plaintext: WasmPlaintext,
     opts: WasmEncryptQueryOptions,
   ): Promise<EncryptedQuery | null> {
     if (plaintext === null || plaintext === undefined) return null
-    // The SAME resolver the native client uses (`@/encryption/helpers` is
-    // type-only on protect-ffi, so it's WASM-bundle-safe): explicit
-    // queryType validated against the column's indexes; v3 ord domains'
-    // `ope` swapped in for `orderAndRange`; equality answered via the
-    // ordering index on order-capable columns without `unique`; inference
-    // priority unique > match > ore/ope > ste_vec.
-    // WasmPlaintext widens Plaintext with `bigint` (carried natively over
-    // the WASM boundary); the resolver only `typeof`-inspects the value for
-    // ste_vec op inference, so the assertion is safe.
-    const { indexType, queryOp } = resolveIndexType(
-      opts.column,
-      opts.queryType,
-      plaintext as Plaintext,
-    )
-    // serde on the WASM side rejects explicitly-undefined fields ("invalid
-    // type: unit value, expected a string") — OMIT queryOp when absent
-    // (the native NAPI layer tolerates undefined; the WASM one does not).
     return (await wasmEncryptQuery(
+      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
       this.client as never,
-      {
-        plaintext,
-        table: opts.table.tableName,
-        column: getColumnName(opts.column),
-        indexType,
-        ...(queryOp ? { queryOp } : {}),
-      } as never,
+      // biome-ignore lint/plugin: the term crosses the serde boundary, whose shape protect-ffi types as `any`
+      toFfiQueryTerm(plaintext, opts) as never,
     )) as EncryptedQuery
   }
 
@@ -500,25 +485,13 @@ export class WasmEncryptionClient {
     const out: Array<EncryptedQuery | null> = terms.map(() => null)
     if (live.length === 0) return out
 
-    const ffiTerms = live.map(({ term }) => {
-      const { indexType, queryOp } = resolveIndexType(
-        term.column,
-        term.queryType,
-        term.value as Plaintext,
-      )
-      return {
-        plaintext: term.value,
-        table: term.table.tableName,
-        column: getColumnName(term.column),
-        indexType,
-        // See the single-term path: WASM serde rejects undefined fields.
-        ...(queryOp ? { queryOp } : {}),
-      }
-    })
+    const ffiTerms = live.map(({ term }) => toFfiQueryTerm(term.value, term))
     // The FFI's batch field is `queries` (matching the native
     // ffiEncryptQueryBulk call in packages/protect).
     const encrypted = (await wasmEncryptQueryBulk(
+      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
       this.client as never,
+      // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
       {
         queries: ffiTerms,
       } as never,
@@ -651,6 +624,48 @@ export function getColumnName(col: EncryptOptions['column']): string {
   throw new Error(
     '[encryption]: opts.column must be a column builder exposing getName()',
   )
+}
+
+/**
+ * Build the FFI term for one query needle — the ONE place the single and
+ * bulk paths share, so the subtle parts can't drift between them.
+ *
+ * Runs the same pre-FFI guards as the native client's query operations
+ * (`assertValidNumericValue`, `assertValueIndexCompatibility`): NaN /
+ * Infinity / out-of-int64 bigint and numeric-on-match-index fail with the
+ * same named errors the Node entry raises, instead of an opaque serde
+ * failure — or a silently no-match term — from inside the WASM boundary.
+ *
+ * Index resolution is the SAME resolver the native client uses
+ * (`@/encryption/helpers` is type-only on protect-ffi, so it's
+ * WASM-bundle-safe): explicit queryType validated against the column's
+ * indexes; v3 ord domains' `ope` swapped in for `orderAndRange`; equality
+ * answered via the ordering index on order-capable columns without
+ * `unique`; inference priority unique > match > ore/ope > ste_vec.
+ *
+ * serde on the WASM side rejects explicitly-undefined fields ("invalid
+ * type: unit value, expected a string") — OMIT `queryOp` when absent (the
+ * native NAPI layer tolerates undefined; the WASM one does not).
+ *
+ * WasmPlaintext widens Plaintext with `bigint` (carried natively over the
+ * WASM boundary); the resolver only `typeof`-inspects the value for
+ * ste_vec op inference, so the assertion is safe.
+ */
+function toFfiQueryTerm(value: WasmPlaintext, opts: WasmEncryptQueryOptions) {
+  assertValidNumericValue(value)
+  const { indexType, queryOp } = resolveIndexType(
+    opts.column,
+    opts.queryType,
+    value as Plaintext,
+  )
+  assertValueIndexCompatibility(value, indexType, getColumnName(opts.column))
+  return {
+    plaintext: value,
+    table: opts.table.tableName,
+    column: getColumnName(opts.column),
+    indexType,
+    ...(queryOp ? { queryOp } : {}),
+  }
 }
 
 // Emit the `config.strategy` → `config.authStrategy` rename warning at most
