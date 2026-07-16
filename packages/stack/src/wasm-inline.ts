@@ -299,7 +299,8 @@ function resolveQueryIndex(
         ? { indexType }
         : { indexType, queryOp: stevecOp() }
     }
-    return { indexType, queryOp: queryTypeToQueryOp[queryType] }
+    const mappedOp = queryTypeToQueryOp[queryType]
+    return mappedOp ? { indexType, queryOp: mappedOp } : { indexType }
   }
 
   // Inference priority mirrors the native client: unique > match > ore > ste_vec.
@@ -407,6 +408,9 @@ export class WasmEncryptionClient {
       opts.queryType,
       plaintext,
     )
+    // serde on the WASM side rejects explicitly-undefined fields ("invalid
+    // type: unit value, expected a string") — OMIT queryOp when absent
+    // (the native NAPI layer tolerates undefined; the WASM one does not).
     return (await wasmEncryptQuery(
       this.client as never,
       {
@@ -414,7 +418,7 @@ export class WasmEncryptionClient {
         table: opts.table.tableName,
         column: getColumnName(opts.column),
         indexType,
-        queryOp,
+        ...(queryOp ? { queryOp } : {}),
       } as never,
     )) as EncryptedQuery
   }
@@ -446,7 +450,8 @@ export class WasmEncryptionClient {
         table: term.table.tableName,
         column: getColumnName(term.column),
         indexType,
-        queryOp,
+        // See the single-term path: WASM serde rejects undefined fields.
+        ...(queryOp ? { queryOp } : {}),
       }
     })
     const encrypted = (await wasmEncryptQueryBulk(

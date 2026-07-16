@@ -70,6 +70,12 @@ describe('WasmEncryptionClient.encryptQuery', () => {
         indexType: 'unique',
       }),
     )
+    // WASM serde rejects explicitly-undefined fields — queryOp must be
+    // OMITTED for non-JSON query types, not passed as undefined.
+    expect(
+      'queryOp' in
+        (ffi.encryptQuery.mock.calls[0][1] as Record<string, unknown>),
+    ).toBe(false)
   })
 
   it('honours an explicit queryType and maps it to the FFI index', async () => {
