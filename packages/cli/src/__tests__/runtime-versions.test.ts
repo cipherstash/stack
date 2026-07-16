@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  compareVersions,
   expectedVersion,
   parseEmbeddedVersions,
   pinnedSpec,
@@ -92,5 +93,31 @@ describe('runtime-versions (explicit version map)', () => {
   it('expectedVersion reads the map', () => {
     expect(expectedVersion('stash', versions)).toBe('9.9.9-test.1')
     expect(expectedVersion('nope', versions)).toBeUndefined()
+  })
+})
+
+// Precedence per semver §11, over the shapes this repo actually publishes.
+describe('compareVersions', () => {
+  it('orders numeric cores', () => {
+    expect(compareVersions('0.19.0', '1.0.0-rc.1')).toBe(-1)
+    expect(compareVersions('1.1.0', '1.0.9')).toBe(1)
+    expect(compareVersions('1.0.0', '1.0.0')).toBe(0)
+  })
+
+  it('a release outranks its own prereleases', () => {
+    expect(compareVersions('1.0.0', '1.0.0-rc.9')).toBe(1)
+    expect(compareVersions('1.0.0-rc.9', '1.0.0')).toBe(-1)
+  })
+
+  it('orders prerelease identifiers numerically, not lexically', () => {
+    expect(compareVersions('1.0.0-rc.2', '1.0.0-rc.1')).toBe(1)
+    // Lexical comparison would get this one wrong ('10' < '2').
+    expect(compareVersions('1.0.0-rc.10', '1.0.0-rc.2')).toBe(1)
+    expect(compareVersions('1.0.0-rc.1', '1.0.0-rc.1')).toBe(0)
+  })
+
+  it('numeric identifiers sort below alphanumeric; shorter below longer', () => {
+    expect(compareVersions('1.0.0-1', '1.0.0-alpha')).toBe(-1)
+    expect(compareVersions('1.0.0-rc', '1.0.0-rc.1')).toBe(-1)
   })
 })

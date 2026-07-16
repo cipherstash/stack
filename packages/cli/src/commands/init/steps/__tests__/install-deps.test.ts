@@ -26,7 +26,10 @@ const FIXTURE_VERSIONS: Record<string, string> = vi.hoisted(() => ({
   '@cipherstash/stack': '9.9.9-test.1',
   '@cipherstash/stack-supabase': '9.9.9-test.1',
 }))
-vi.mock('../../../../runtime-versions.js', () => ({
+vi.mock('../../../../runtime-versions.js', async (importOriginal) => ({
+  // Keep the real pure helpers (compareVersions, parseEmbeddedVersions);
+  // override only the release map and the map-reading functions.
+  ...(await importOriginal<typeof import('../../../../runtime-versions.js')>()),
   RUNTIME_PACKAGE_VERSIONS: FIXTURE_VERSIONS,
   expectedVersion: (
     pkg: string,
@@ -216,6 +219,27 @@ describe('installDepsStep', () => {
     expect(result.cliInstalled).toBe(true)
   })
 
+  it('a NEWER install gets an update-stash warning, never a downgrade command', async () => {
+    vi.mocked(isInteractive).mockReturnValue(false)
+    present('@cipherstash/stack', 'stash')
+    resolvedVersions({
+      '@cipherstash/stack': '9.9.10',
+      stash: FIXTURE_VERSIONS.stash,
+    })
+
+    const result = await installDepsStep.run(baseState, provider)
+
+    expect(p.log.warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '@cipherstash/stack: installed 9.9.10 is newer than this release of stash expects (9.9.9-test.1)',
+      ),
+    )
+    // No align/downgrade guidance, no mutation, clean success.
+    expect(p.note).not.toHaveBeenCalled()
+    expect(execSyncMock).not.toHaveBeenCalled()
+    expect(result.stackInstalled).toBe(true)
+  })
+
   it('reports an unreadable manifest as skew, not as a matching install', async () => {
     vi.mocked(isInteractive).mockReturnValue(false)
     present('@cipherstash/stack', 'stash')
@@ -257,6 +281,24 @@ describe('versionSkew', () => {
         pkg: '@cipherstash/stack',
         installed: '0.19.0',
         expected: '9.9.9-test.1',
+        direction: 'behind',
+      },
+    ])
+  })
+
+  it('classifies a newer-than-expected install as ahead', () => {
+    present('@cipherstash/stack')
+    resolvedVersions({ '@cipherstash/stack': '9.9.10' })
+    expect(
+      versionSkew(['@cipherstash/stack'], {
+        '@cipherstash/stack': '9.9.9-test.1',
+      }),
+    ).toEqual([
+      {
+        pkg: '@cipherstash/stack',
+        installed: '9.9.10',
+        expected: '9.9.9-test.1',
+        direction: 'ahead',
       },
     ])
   })
@@ -286,6 +328,8 @@ describe('versionSkew', () => {
         pkg: '@cipherstash/stack',
         installed: 'unknown (unreadable package.json)',
         expected: '9.9.9-test.1',
+        // Unreadable = broken install → offer the (re)install fix.
+        direction: 'behind',
       },
     ])
   })

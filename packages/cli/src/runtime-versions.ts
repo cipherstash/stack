@@ -92,3 +92,56 @@ export function pinnedSpec(
   const version = expectedVersion(pkg, versions)
   return version ? `${pkg}@${version}` : pkg
 }
+
+/**
+ * Compare two release-train version strings per semver precedence (§11):
+ * numeric core compared numerically, then prerelease identifiers dot-by-dot
+ * (numeric < alphanumeric; a release outranks any of its prereleases).
+ * Returns -1 / 0 / 1 for a < b / a == b / a > b.
+ *
+ * Deliberately NOT a full semver implementation — no ranges, no build
+ * metadata — just enough to order the versions this repo publishes
+ * (`x.y.z` and `x.y.z-rc.n`), so the skew warning can tell "behind" from
+ * "ahead" without adding a dependency to the CLI.
+ */
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  const parse = (v: string) => {
+    const [core, ...pre] = v.split('-')
+    return {
+      core: core.split('.').map((n) => Number.parseInt(n, 10)),
+      pre: pre.join('-'), // prerelease may itself contain '-'
+    }
+  }
+  const pa = parse(a)
+  const pb = parse(b)
+  for (let i = 0; i < 3; i++) {
+    const da = pa.core[i] ?? 0
+    const db = pb.core[i] ?? 0
+    if (da !== db) return da < db ? -1 : 1
+  }
+  // Same core: a release (no prerelease) outranks any prerelease of it.
+  if (!pa.pre && !pb.pre) return 0
+  if (!pa.pre) return 1
+  if (!pb.pre) return -1
+  const ia = pa.pre.split('.')
+  const ib = pb.pre.split('.')
+  for (let i = 0; i < Math.max(ia.length, ib.length); i++) {
+    const xa = ia[i]
+    const xb = ib[i]
+    // Fewer identifiers sorts lower when all preceding ones are equal.
+    if (xa === undefined) return -1
+    if (xb === undefined) return 1
+    const na = /^\d+$/.test(xa) ? Number.parseInt(xa, 10) : undefined
+    const nb = /^\d+$/.test(xb) ? Number.parseInt(xb, 10) : undefined
+    if (na !== undefined && nb !== undefined) {
+      if (na !== nb) return na < nb ? -1 : 1
+    } else if (na !== undefined) {
+      return -1 // numeric identifiers sort below alphanumeric ones
+    } else if (nb !== undefined) {
+      return 1
+    } else if (xa !== xb) {
+      return xa < xb ? -1 : 1
+    }
+  }
+  return 0
+}
