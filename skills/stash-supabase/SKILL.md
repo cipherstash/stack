@@ -51,8 +51,9 @@ see the `stash-encryption` skill's Configuration section. Mint them from your
 device session with `npx stash env --name <name>` (no dashboard copy-paste);
 this is also how **Supabase Edge Functions** get credentials in local dev —
 `supabase functions serve` runs in a container that cannot see
-`~/.cipherstash`, so write the vars to a file (`stash env --name edge-dev
---write`) and pass `--env-file`, or `supabase secrets set` them for deploys.
+`~/.cipherstash`, so write the vars to a file with
+`stash env --name edge-dev --write` and pass `--env-file`, or
+`supabase secrets set` them for deploys.
 
 ### 1. Install EQL v3 on the database
 

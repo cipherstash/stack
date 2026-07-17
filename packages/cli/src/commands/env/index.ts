@@ -118,6 +118,15 @@ async function runEnv(
   }
 
   const keyName = await resolveKeyName(options, json, cliRef)
+  // The name lands in the emitted dotenv comment line, so a control
+  // character (esp. \n) could break out of the comment and inject a line
+  // into a credentials file — reject before it reaches anything.
+  if (CONTROL_CHARS.test(keyName)) {
+    throw new MintError(
+      'invalid_name',
+      'The credential name must not contain newlines or control characters.',
+    )
+  }
   const writeTarget = await resolveWriteTarget(options, json)
 
   const s = json ? null : p.spinner(CHROME)
@@ -189,8 +198,11 @@ async function resolveKeyName(
   const answer = await p.text({
     message: 'Name for this deployment credential',
     initialValue: suggestKeyName(),
-    validate: (value) =>
-      value.trim().length === 0 ? 'A name is required.' : undefined,
+    validate: (value) => {
+      if (value.trim().length === 0) return 'A name is required.'
+      if (CONTROL_CHARS.test(value)) return 'No control characters.'
+      return undefined
+    },
     ...CHROME,
   })
   if (p.isCancel(answer)) {
@@ -301,6 +313,10 @@ const accessKeySchema = z
 /** Standard padded base64 — rejected BEFORE Node's lenient decoder can turn
  *  a hex/enveloped/garbled key into plausible-looking wrong bytes. */
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
+
+/** C0 controls + DEL — anything that could corrupt the emitted dotenv block. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control chars is the point
+const CONTROL_CHARS = /[\x00-\x1f\x7f]/
 
 function parsed<T>(schema: z.ZodType<T>, data: unknown, what: string): T {
   const result = schema.safeParse(data)
@@ -460,20 +476,38 @@ function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '')
 }
 
-function apiFetch(
+/** Per-request deadline — a stalled CTS/ZeroKMS endpoint must not hang the CLI. */
+const REQUEST_TIMEOUT_MS = 30_000
+
+async function apiFetch(
   url: string,
   token: string,
   init?: { method?: string; body?: string },
 ): Promise<Response> {
-  return fetch(url, {
-    method: init?.method ?? 'GET',
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': 'application/json',
-      'user-agent': 'stash-cli',
-    },
-    body: init?.body,
-  })
+  try {
+    return await fetch(url, {
+      method: init?.method ?? 'GET',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'user-agent': 'stash-cli',
+      },
+      body: init?.body,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+  } catch (err) {
+    const host = new URL(url).host
+    if (err instanceof DOMException && err.name === 'TimeoutError') {
+      throw new MintError(
+        'request_timeout',
+        `Request to ${host} timed out after ${REQUEST_TIMEOUT_MS / 1000}s — check your network and try again.`,
+      )
+    }
+    throw new MintError(
+      'network_error',
+      `Could not reach ${host}: ${err instanceof Error ? (err.cause instanceof Error ? err.cause.message : err.message) : String(err)}`,
+    )
+  }
 }
 
 /** Build a MintError from a non-2xx response, including the body (which CTS

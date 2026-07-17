@@ -516,7 +516,7 @@ login`) — no dashboard copy-paste. It creates a fresh ZeroKMS client and a
 CipherStash access key (both named `--name`), then emits the four env vars a
 deployed app needs:
 
-```
+```dotenv
 CS_WORKSPACE_CRN=crn:<region>:<workspace-id>
 CS_CLIENT_ID=<uuid>
 CS_CLIENT_KEY=<hex>

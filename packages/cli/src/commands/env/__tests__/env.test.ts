@@ -195,6 +195,13 @@ describe('envCommand — pre-mint argv failures (all credential-free)', () => {
     expect(authMock.DeviceSessionStrategy.fromProfile).not.toHaveBeenCalled()
   })
 
+  it('rejects a name containing control characters before touching the profile', async () => {
+    await expectExit(envCommand({ name: 'bad\nCS_INJECTED=1', json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({ status: 'error', code: 'invalid_name' })
+    expect(authMock.DeviceSessionStrategy.fromProfile).not.toHaveBeenCalled()
+  })
+
   it('rejects a stray positional with did-you-mean guidance', async () => {
     await expectExit(envCommand({ unexpectedArg: 'my-app-prod' }), 1)
     const message = lastError()
@@ -329,6 +336,38 @@ describe('envCommand — failure modes', () => {
     const message = lastError()
     expect(message).toContain('Duplicate key error')
     expect(message).toContain('--name')
+  })
+
+  it('maps a request timeout to a clear request_timeout error', async () => {
+    stubSession()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new DOMException('The operation timed out.', 'TimeoutError')
+      }),
+    )
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({ status: 'error', code: 'request_timeout' })
+    expect(String(event.message)).toContain('cts.test')
+  })
+
+  it('maps a connection failure to a network_error naming the host', async () => {
+    stubSession()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed', {
+          cause: new Error('getaddrinfo ENOTFOUND cts.test'),
+        })
+      }),
+    )
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({ status: 'error', code: 'network_error' })
+    expect(String(event.message)).toContain('ENOTFOUND')
   })
 
   it('fails when the session workspace is missing from the workspace list', async () => {
