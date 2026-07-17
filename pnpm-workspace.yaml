@@ -29,7 +29,7 @@ catalogs:
     typescript: 5.9.3
     vitest: 3.2.7
   security:
-    '@clerk/nextjs': 7.5.15
+    '@clerk/nextjs': 7.5.16
     next: 15.5.20
     vite: 8.1.4
 

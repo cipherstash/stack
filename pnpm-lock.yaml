@@ -41,8 +41,8 @@ catalogs:
       version: 3.2.7
   security:
     '@clerk/nextjs':
-      specifier: 7.5.15
-      version: 7.5.15
+      specifier: 7.5.16
+      version: 7.5.16
     next:
       specifier: 15.5.20
       version: 15.5.20
@@ -350,7 +350,7 @@ importers:
     devDependencies:
       '@clerk/nextjs':
         specifier: catalog:security
-        version: 7.5.15(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        version: 7.5.16(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -741,8 +741,8 @@ importers:
   packages/wizard:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.204
-        version: 0.3.205(@anthropic-ai/sdk@0.110.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
+        specifier: ^0.3.206
+        version: 0.3.206(@anthropic-ai/sdk@0.110.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
       '@anthropic-ai/sdk':
         specifier: ^0.110.0
         version: 0.110.0(zod@3.25.76)
@@ -805,52 +805,52 @@ importers:
 
 packages:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.205':
-    resolution: {integrity: sha512-lrfJ4eVtzfPkCpbSkBOGSMQCBbvmW6nbPzgHE4IwMN3scZlpuFMUFqh2aaJa/X2SAcWD9H2S0t2WWvSRgM7BjA==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.206':
+    resolution: {integrity: sha512-FL2+NKcMMN47vcnCW2Fkt3AOgeRRlQxrisbPNaxrxqPJFzhUKs17x5j0XzLefd0xRbDAr74hd0PK/tnp6PHM6w==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.205':
-    resolution: {integrity: sha512-G6ETPmL5mNzJ2DFsWxG3jmsmrXgZX1N2ZCJvxaGUUpjTsKZJ4Tup1cWYvcd/m7o5fYZmx9REmgzTwsAIc1fdPQ==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.206':
+    resolution: {integrity: sha512-mRW8PPMfQN15EunLwpdmcVzk3XuM4DXQUM8DOzaeA1Hr1yxYPaVVBLr9hkdBKOqr8XTl3ueoTR6RZAy6a/n7OA==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.205':
-    resolution: {integrity: sha512-91fgdG4aTnQ29sKOcUqgH4+tKCW2ut6PWGRSYmXNDbROasJm1rAlPdzC5brdu/e4c0CDSNV6TWyE5JCjaS/jlQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.206':
+    resolution: {integrity: sha512-aMZe1Kl+kYv5QlA15W9Ae25MAzBsA9FA40f5TOtJebA+M/xliF0r2LLb2NdyBviiZCDllcE31l0zgYE0rQqFQw==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.205':
-    resolution: {integrity: sha512-CXzySK3PV3EizCRPXnxPqeaAtgrBFDnMFOVpMe36oC3U16yDb1b1tAJGqZi/7uFrVvAiaXvnSFxhUWnDDSaO+A==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.206':
+    resolution: {integrity: sha512-Id6H8l6EsGb7849EAZDOB4Ic+FQpbzt4D5HGOwp59CTW3o/1c4etjQA/Kl1K+DSEWn3FGo6D5UMVgc/rwhBj8g==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.205':
-    resolution: {integrity: sha512-vvsb7GlnA8CTSVvvTkrXjcSeRKqxSM7p/tU3Od9ICAZeWHglptekEyzLEApzLuLbI5ewfFF/F0q3NwOBbo18dg==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.206':
+    resolution: {integrity: sha512-xQBOBhlcmTNc7YeYT5qLZOikpSq3WHlsJ/t6i7kJqUWrcXlOPaAoSMdKp5xO/V0CjAdzdJoWB88I55UAh8mclQ==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.205':
-    resolution: {integrity: sha512-siS+1iNqBSlGFZZvJY6+mhzZ/6/ec/TbX9GMuwmTF0E6fxGhIIp797jJxR1q8r6FAq7d39mEoRNhC0Ffo60uNQ==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.206':
+    resolution: {integrity: sha512-egZhOC1RlEVhZyq6Oa1b04AF7hh4hO+8oCsJCZ3gOifJQuHih1oW3lZ8fOUxU85jlT2ytAnt5kRp4uQr6PJgbg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.205':
-    resolution: {integrity: sha512-SpP5zF68weFez/6pKrGzq/UVAJDMDNphWqmkLfOpWTDBL5xy6XlIZw5Bl4EXoVnfi2VLFkwuffNeFe+9SdX7kw==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.206':
+    resolution: {integrity: sha512-oRQk23bFXSz4QRhOxqnnvlLWq/KiF2PtSBYXrMg1AQrCOHJd2k66aOAS7AJ4ZSzejiyV4N6sS6UThfmF6ipHBQ==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.205':
-    resolution: {integrity: sha512-kg2kkXyeSoFLruO3Ic2IruLxzBR0xCUtmlJHdWi3SYW7JhAKNJg4fcrdJsWcardmEw23Y2UDGDJbRyxqSVx6wg==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.206':
+    resolution: {integrity: sha512-BdjKmDojZjc5RjN+8Q6K7Yqf1WYhel6I3DkMXc9zdxS/xIuN42sx7zgQpdMGY73pm7ROPLqo3LieOeMhVH161w==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.205':
-    resolution: {integrity: sha512-ft6iBw9kXudsusiXNpeybIPBJ07Z3tqp1ROSg5cEJqgA+9i+JJj2sRfQth+QD+lyenbbAU8yPieLxIimvfBhtw==}
+  '@anthropic-ai/claude-agent-sdk@0.3.206':
+    resolution: {integrity: sha512-KljDh9Pg4YCYpoXS8dnWoVSsOHtU4yLCW268K2iOruSxFXE8/Tay6DPvmJzYuqjP5YLNYfj05ZGykwZSUn6GXA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -1153,16 +1153,20 @@ packages:
     resolution: {integrity: sha512-HaHAnKzThRpdRi+QJkMo3+Cx/3hJUt+UdbQ62Ikzwwt0zIhUE0+qgG+zgUHjAdYhSbfiUzEWYsLdnBsfQ7yv7g==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/nextjs@7.5.15':
-    resolution: {integrity: sha512-CNRdvIZ9YHpDLJVng69Ot9qfxF2ycMml0fr8N1LhPLiTDZ//bkBtnK4/XL6sN/aNTygLeoN5nyFIlWDU+enu6w==}
+  '@clerk/backend@3.11.3':
+    resolution: {integrity: sha512-takrEE0nliUz39e8Ct1YG471eBcuU2I1ZStRIU9U0UAIuiNAxNTNuaVZSXaZeK4QTuJtdQhoGy8rvzxr/10Btw==}
+    engines: {node: '>=20.9.0'}
+
+  '@clerk/nextjs@7.5.16':
+    resolution: {integrity: sha512-rvIw+xxQxi52qXhRONOKrSbV11mq4pJlJegBdYHG0jQOmR1qke13qBEIPj0H+lNokaOyD1g/flP51wcoQLEoRw==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       next: ~15.5.18
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/react@6.12.1':
-    resolution: {integrity: sha512-FFIv0SUQh9R8lBOCpHfAC5ki+FjU0WlvBrujJUPQgBTJX7uaRUlbzKswB/ZfRlauGKnE9c80H5dnir08cEtLgw==}
+  '@clerk/react@6.12.2':
+    resolution: {integrity: sha512-Y+OGZlYfRW+3b+fjdbvSYyYB/IraGitrlLJKYaHxeZYNIwvoUNH0zlreSxUSmxYZ0E2yETSEvkCXszvuZUMa3A==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -1170,6 +1174,18 @@ packages:
 
   '@clerk/shared@4.25.1':
     resolution: {integrity: sha512-+FHoFEJ8zGenUymf03gARKEAYOLxOKm6B437tgukxP7oM5ORfI+ZND62W25S8ddVsDLlNTS0VEHlhDm3F+NF0A==}
+    engines: {node: '>=20.9.0'}
+    peerDependencies:
+      react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+      react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+
+  '@clerk/shared@4.25.2':
+    resolution: {integrity: sha512-v7zgDh0eVLl3KzRHbKYTsPQ+4Xcx8A2oiU5iZ9WhME024WudwkjjPJRK12RycY0VA1Sj8i4Pi5zEpecqB/gp1Q==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -3883,44 +3899,44 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.205':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.206':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.205(@anthropic-ai/sdk@0.110.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
+  '@anthropic-ai/claude-agent-sdk@0.3.206(@anthropic-ai/sdk@0.110.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)':
     dependencies:
       '@anthropic-ai/sdk': 0.110.0(zod@3.25.76)
       '@modelcontextprotocol/sdk': 1.29.0(zod@3.25.76)
       zod: 3.25.76
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.205
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.205
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.206
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.206
 
   '@anthropic-ai/sdk@0.110.0(zod@3.25.76)':
     dependencies:
@@ -4255,25 +4271,44 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.5.15(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/backend@3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/backend': 3.11.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/react': 6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      standardwebhooks: 1.0.0
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - react
+      - react-dom
+
+  '@clerk/nextjs@7.5.16(next@15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@clerk/backend': 3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/react': 6.12.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       next: 15.5.20(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       server-only: 0.0.1
       tslib: 2.8.1
 
-  '@clerk/react@6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/react@6.12.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
 
   '@clerk/shared@4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@tanstack/query-core': 5.101.2
+      dequal: 2.0.3
+      glob-to-regexp: 0.4.1
+      js-cookie: 3.0.7
+    optionalDependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+
+  '@clerk/shared@4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@tanstack/query-core': 5.101.2
       dequal: 2.0.3
