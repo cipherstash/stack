@@ -113,11 +113,12 @@ describe('v3 TS factories', () => {
     })
   })
 
-  it('exposes no *OrdOre factories and no v3 encryptedString', () => {
+  it('exposes no *OrdOre factories and no v3 string factory', () => {
     const exported = columnTypes as Record<string, unknown>
-    expect(exported['encryptedBigIntOrdOre']).toBeUndefined()
-    expect(exported['encryptedTextOrdOre']).toBeUndefined()
-    expect(exported['encryptedString']).toBeUndefined()
+    expect(exported['bigIntOrdOre']).toBeUndefined()
+    expect(exported['textOrdOre']).toBeUndefined()
+    // v3 text uses `text`/`textEq`/`textSearch`/… — there is no `string`.
+    expect(exported['string']).toBeUndefined()
   })
 })
 
