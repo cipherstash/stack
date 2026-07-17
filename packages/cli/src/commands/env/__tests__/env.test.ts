@@ -338,6 +338,19 @@ describe('envCommand — failure modes', () => {
     expect(message).toContain('--name')
   })
 
+  it('does NOT append the --name hint to a 500 (only 400/409 are duplicates)', async () => {
+    stubSession()
+    stubFetch({
+      accessKey: new Response('internal error', { status: 500 }),
+    })
+
+    await expectExit(envCommand({ name: 'x' }), 1)
+    const message = lastError()
+    expect(message).not.toContain('already taken')
+    // The leftover-client note still appears — a client was minted.
+    expect(message).toContain("ZeroKMS client 'x'")
+  })
+
   it('maps a request timeout to a clear request_timeout error', async () => {
     stubSession()
     vi.stubGlobal(
@@ -432,6 +445,39 @@ describe('envCommand — response validation (nothing minted may print undefined
     expect(message).toContain("Revoke 'privileged'")
     // The over-privileged secret itself must not be printed anywhere.
     expect(stdout()).not.toContain('CSAKTid.secret')
+  })
+
+  it('treats an absent role as member (server default) and succeeds', async () => {
+    stubSession()
+    stubFetch({
+      // No `role` field — the check must assume member, not skip.
+      accessKey: Response.json(
+        { accessKey: 'CSAKTid.secret' },
+        { status: 201 },
+      ),
+    })
+
+    await envCommand({ name: 'x' })
+    expect(stdout()).toContain('CS_CLIENT_ACCESS_KEY=CSAKTid.secret')
+  })
+
+  it('refuses to emit a server value containing a control character', async () => {
+    stubSession()
+    stubFetch({
+      // A newline in the region would break out of the CRN's dotenv line.
+      workspaces: Response.json([
+        { id: 'WS123', region: 'us-east-1.aws\nCS_INJECTED=evil' },
+      ]),
+    })
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({
+      status: 'error',
+      code: 'unexpected_response',
+    })
+    expect(String(event.message)).toContain('workspaceCrn')
+    expect(stdout()).not.toContain('CS_INJECTED')
   })
 })
 

@@ -446,30 +446,53 @@ async function mintCredentials(keyName: string): Promise<MintedCredentials> {
       'create the access key',
       keyResponse,
     )
-    throw new MintError(
-      base.code,
-      `${base.message} If the name is already taken, rerun with a different --name.${leftover}`,
-    )
+    // A duplicate name comes back as 400 (BadRequest) or 409 (Conflict); only
+    // then is "pick a different name" the right suggestion — a 500 shouldn't
+    // carry it.
+    const dupHint =
+      keyResponse.status === 400 || keyResponse.status === 409
+        ? ' If the name is already taken, rerun with a different --name.'
+        : ''
+    throw new MintError(base.code, `${base.message}${dupHint}${leftover}`)
   }
   const accessKeyBody = parsed(
     accessKeySchema,
     await keyResponse.json(),
     'access key',
   )
-  if (accessKeyBody.role && accessKeyBody.role.toLowerCase() !== 'member') {
+  // The request pinned `member` and the server owns the default, so an ABSENT
+  // role means "server default (member)" — treat it as member rather than
+  // skipping the check, so the documented "verified on the response" guarantee
+  // doesn't quietly depend on the field always being present.
+  const returnedRole = (accessKeyBody.role ?? 'member').toLowerCase()
+  if (returnedRole !== 'member') {
     throw new MintError(
       'unexpected_role',
       `CTS returned a '${accessKeyBody.role}' access key where member was requested — refusing to emit it. Revoke '${keyName}' in the dashboard.`,
     )
   }
 
-  return {
+  const creds: MintedCredentials = {
     keyName,
     workspaceCrn,
     clientId: client.id,
     clientKey,
     accessKey: accessKeyBody.accessKey,
   }
+  // Defense-in-depth: the name is already control-char-guarded, but the
+  // server-provided values (CRN region, client id, access key) land on their
+  // own dotenv lines too. A control char — especially a newline — could break
+  // out of its line and inject another. Very low risk (trusted server), fully
+  // closed here. clientKey is hex by construction, so it can't carry one.
+  for (const [field, value] of Object.entries(creds)) {
+    if (CONTROL_CHARS.test(value)) {
+      throw new MintError(
+        'unexpected_response',
+        `The service returned a ${field} containing a control character — refusing to emit it. Check for a newer CLI release.`,
+      )
+    }
+  }
+  return creds
 }
 
 function trimTrailingSlash(url: string): string {
