@@ -6,12 +6,12 @@ A single `User` model with one column per plaintext family, exercised end-to-end
 
 | Column          | Constructor                       | Domain                      | Query surface                          |
 | --------------- | --------------------------------- | --------------------------- | -------------------------------------- |
-| `email`         | `cipherstash.EncryptedTextSearch()` | `public.eql_v3_text_search` | equality + order/range + free-text (`eqlMatch`) |
-| `salary`        | `cipherstash.EncryptedDoubleOrd()`  | `public.eql_v3_double_ord`  | equality + order/range                 |
-| `accountId`     | `cipherstash.EncryptedBigIntOrd()`  | `public.eql_v3_bigint_ord`  | equality + order/range (true `bigint`) |
-| `birthday`      | `cipherstash.EncryptedDateOrd()`    | `public.eql_v3_date_ord`    | equality + order/range                 |
-| `emailVerified` | `cipherstash.EncryptedBoolean()`    | `public.eql_v3_boolean`     | storage-only (no operators)            |
-| `preferences`   | `cipherstash.EncryptedJson()`       | `public.eql_v3_json`        | `eqlJsonContains` (`@>`)               |
+| `email`         | `cipherstash.TextSearch()` | `public.eql_v3_text_search` | equality + order/range + free-text (`eqlMatch`) |
+| `salary`        | `cipherstash.DoubleOrd()`  | `public.eql_v3_double_ord`  | equality + order/range                 |
+| `accountId`     | `cipherstash.BigIntOrd()`  | `public.eql_v3_bigint_ord`  | equality + order/range (true `bigint`) |
+| `birthday`      | `cipherstash.DateOrd()`    | `public.eql_v3_date_ord`    | equality + order/range                 |
+| `emailVerified` | `cipherstash.Boolean()`    | `public.eql_v3_boolean`     | storage-only (no operators)            |
+| `preferences`   | `cipherstash.Json()`       | `public.eql_v3_json`        | `eqlJsonContains` (`@>`)               |
 
 📖 See the [Prisma Next encryption docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the full operator reference, security model, and known limitations.
 
@@ -22,7 +22,7 @@ A single `User` model with one column per plaintext family, exercised end-to-end
 | `docker-compose.yml`       | Local Postgres 16 on port 54338.                                                               |
 | `prisma/schema.prisma`     | Application schema (one `User` model exercising six cipherstash v3 domains).                  |
 | `prisma-next.config.ts`    | Wires `cipherstash` into `extensionPacks`.                                                    |
-| `src/db.ts`                | One-call setup via `cipherstashFromStackV3({ contractJson })`.                                |
+| `src/db.ts`                | One-call setup via `cipherstashFromStack({ contractJson })`.                                |
 | `src/index.ts`             | The demo flow.                                                                                |
 | `src/prisma/contract.*`    | Emitted by `pnpm emit`.                                                                       |
 | `migrations/`              | Emitted by `pnpm migration:plan` (app space + the cipherstash EQL bundle baselines).          |

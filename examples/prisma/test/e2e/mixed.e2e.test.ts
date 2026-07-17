@@ -13,7 +13,7 @@
  *     middleware controls and what this suite observes.)
  *
  * Crossing counts are observed by wrapping a fresh `CipherstashSdk`
- * (built from `cipherstashFromStackV3({ contractJson }).encryptionClient`
+ * (built from `cipherstashFromStack({ contractJson }).encryptionClient`
  * via `createCipherstashV3Sdk`) with a counting decorator and threading
  * the wrapped instance into a private `db` runtime. Concretely:
  *
@@ -40,7 +40,7 @@ import {
   eqlAsc,
 } from '@cipherstash/prisma-next/runtime'
 import {
-  cipherstashFromStackV3,
+  cipherstashFromStack,
   createCipherstashV3Sdk,
   deriveStackSchemasV3,
 } from '@cipherstash/prisma-next/v3'
@@ -141,12 +141,12 @@ describe('Mixed-domain e2e (live PG + EQL v3 + ZeroKMS)', () => {
   let runtime: { close(): Promise<void> } | undefined
 
   beforeAll(async () => {
-    // Reuse the encryption client from `cipherstashFromStackV3` so the
+    // Reuse the encryption client from `cipherstashFromStack` so the
     // counting wrapper observes the same ZeroKMS workspace + schema
     // surface the example app would in production. Re-derive the v3
     // stack schemas from `contractJson` to satisfy
     // `createCipherstashV3Sdk`'s `(client, schemas)` contract.
-    const { encryptionClient } = await cipherstashFromStackV3({ contractJson })
+    const { encryptionClient } = await cipherstashFromStack({ contractJson })
     const schemas = deriveStackSchemasV3(contractJson)
     const baseSdk = createCipherstashV3Sdk(encryptionClient, schemas)
     counting = wrapWithCounting(baseSdk)

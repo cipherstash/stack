@@ -167,9 +167,9 @@ const ALLOWED_SHARED_CHUNK_MARKER_SETS: ReadonlyArray<readonly string[]> = [
  * planes in one module graph is exactly the confusion decision 1b
  * (a client is v2 or v3, never both) exists to prevent.
  *
- * Marker choice notes: `bulkEncryptMiddleware` and `cipherstashFromStack`
+ * Marker choice notes: `bulkEncryptMiddleware` and `cipherstashFromStackV2`
  * are NOT usable as v2 markers — they are substrings of their v3
- * siblings (`bulkEncryptMiddlewareV3`, `cipherstashFromStackV3`), so a
+ * siblings (`bulkEncryptMiddlewareV3`, `cipherstashFromStack`), so a
  * substring scan would false-positive on every v3 chunk.
  */
 const V2_WIRE_MARKERS = [

@@ -3,7 +3,7 @@
  * `@cipherstash/stack` SDK against a Prisma Next contract.
  *
  * The three exports here form a layered API. Most consumers want
- * {@link cipherstashFromStack}; the two primitives are exposed for
+ * {@link cipherstashFromStackV2}; the two primitives are exposed for
  * advanced users who need to interpose custom logic.
  *
  * - {@link deriveStackSchemas} — pure function, contract.json →
@@ -15,7 +15,7 @@
  *   shape. Use when you've constructed the client yourself (custom
  *   keyset, multi-tenant routing).
  *
- * - {@link cipherstashFromStack} — the all-in-one factory.
+ * - {@link cipherstashFromStackV2} — the all-in-one factory.
  *   Returns ready-to-spread arrays for `postgres<Contract>({...})`.
  *
  * This subpath imports `@cipherstash/stack` directly. Consumers who
@@ -31,17 +31,17 @@ export type {
   CipherstashFromStackOptions,
   CipherstashFromStackResult,
 } from '../stack/from-stack'
-export { cipherstashFromStack } from '../stack/from-stack'
+export { cipherstashFromStackV2 } from '../stack/from-stack'
 // ---------------------------------------------------------------------------
 // EQL v3 (decision 1b: a SEPARATE entry point — a client is v2 or v3,
-// never both; `cipherstashFromStackV3` rejects contracts carrying v2
+// never both; `cipherstashFromStack` rejects contracts carrying v2
 // cipherstash codec ids).
 // ---------------------------------------------------------------------------
 export type {
   CipherstashFromStackV3Options,
   CipherstashFromStackV3Result,
 } from '../stack/from-stack-v3'
-export { cipherstashFromStackV3 } from '../stack/from-stack-v3'
+export { cipherstashFromStack } from '../stack/from-stack-v3'
 export { createCipherstashSdk } from '../stack/sdk-adapter'
 export type {
   V3ContractColumnEntry,

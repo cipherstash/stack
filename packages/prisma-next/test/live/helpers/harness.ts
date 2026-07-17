@@ -3,7 +3,7 @@
  *
  * Everything on the encryption path is REAL:
  *
- *   - the client is `cipherstashFromStackV3({ contractJson })` over a
+ *   - the client is `cipherstashFromStack({ contractJson })` over a
  *     real `EncryptionV3` (ZeroKMS round-trips, no fakes);
  *   - writes go through the REAL v3 bulk-encrypt middleware returned by
  *     that factory (`cs.middleware[0].beforeExecute`), driven exactly
@@ -42,7 +42,7 @@ import type { EncryptedEnvelopeBase } from '../../../src/execution/envelope-base
 import type { CipherstashSdk } from '../../../src/execution/sdk'
 import {
   type CipherstashFromStackV3Result,
-  cipherstashFromStackV3,
+  cipherstashFromStack,
 } from '../../../src/stack/from-stack-v3'
 import {
   toV3CodecId,
@@ -162,7 +162,7 @@ export async function createLiveTable(
 
 export interface LiveV3Client {
   readonly cs: CipherstashFromStackV3Result
-  /** The REAL middleware instance wired by `cipherstashFromStackV3`. */
+  /** The REAL middleware instance wired by `cipherstashFromStack`. */
   readonly middleware: SqlMiddleware
   /** Read-side SDK adapter over the same client (envelope decrypt path). */
   readonly sdk: CipherstashSdk
@@ -171,10 +171,10 @@ export interface LiveV3Client {
 export async function setupLiveV3(
   contract: PostgresContract,
 ): Promise<LiveV3Client> {
-  const cs = await cipherstashFromStackV3({ contractJson: contract })
+  const cs = await cipherstashFromStack({ contractJson: contract })
   const middleware = cs.middleware[0]
   if (!middleware) {
-    throw new Error('cipherstashFromStackV3 returned no middleware')
+    throw new Error('cipherstashFromStack returned no middleware')
   }
   const sdk = createCipherstashV3Sdk(
     cs.encryptionClient,

@@ -85,7 +85,7 @@ export interface V3ContractColumnEntry {
 
 /**
  * Flatten every contract column across all namespaces/tables. Shared by
- * {@link deriveStackSchemasV3} and `cipherstashFromStackV3`'s
+ * {@link deriveStackSchemasV3} and `cipherstashFromStack`'s
  * v2-codec-id scan (a v3 client is v3-only; foreign cipherstash codec
  * ids are a hard error there).
  */

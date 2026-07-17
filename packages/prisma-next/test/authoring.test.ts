@@ -5,7 +5,7 @@
  *   - Every exposed v3 domain (the catalog minus `*_ord_ore`) gets exactly
  *     one concrete, argument-less `typeConstructor` whose name is the
  *     mechanical `Encrypted<Stem><Suffix>` transform of the bare domain
- *     (`eql_v3_text_search` → `EncryptedTextSearch`). The output carries the
+ *     (`eql_v3_text_search` → `TextSearch`). The output carries the
  *     domain's STATIC codec id, `public.eql_v3_*` native type, and a static
  *     `{ castAs, capabilities }` typeParams block — no options, no
  *     `AuthoringArgRef` nodes.
@@ -14,7 +14,7 @@
  *     shapes, same `cipherstash/*@1` codec ids, same `eql_v2_encrypted`
  *     native type, same `true`-defaulting `AuthoringArgRef` typeParams.
  *   - `EncryptedString` (unqualified) no longer exists — v3 text columns use
- *     the `EncryptedText*` family. `EncryptedJson` (unqualified) is now the
+ *     the `Text*` family. `Json` (unqualified) is now the
  *     v3 `eql_v3_json` domain.
  *
  * Full PSL→ColumnTypeDescriptor lowering is exercised in
@@ -61,8 +61,8 @@ describe('cipherstash v3 authoring (concrete per-domain, static descriptors)', (
     }
   })
 
-  it('EncryptedTextSearch → public.eql_v3_text_search with full capabilities', () => {
-    expect(ns.EncryptedTextSearch?.output).toMatchObject({
+  it('TextSearch → public.eql_v3_text_search with full capabilities', () => {
+    expect(ns.TextSearch?.output).toMatchObject({
       codecId: 'cipherstash/eql-v3/eql_v3_text_search@1',
       nativeType: 'public.eql_v3_text_search',
       typeParams: {
@@ -76,8 +76,8 @@ describe('cipherstash v3 authoring (concrete per-domain, static descriptors)', (
     })
   })
 
-  it('EncryptedBoolean → storage-only public.eql_v3_boolean (no equality constructor exists)', () => {
-    expect(ns.EncryptedBoolean?.output).toMatchObject({
+  it('Boolean → storage-only public.eql_v3_boolean (no equality constructor exists)', () => {
+    expect(ns.Boolean?.output).toMatchObject({
       codecId: 'cipherstash/eql-v3/eql_v3_boolean@1',
       nativeType: 'public.eql_v3_boolean',
       typeParams: {
@@ -89,11 +89,11 @@ describe('cipherstash v3 authoring (concrete per-domain, static descriptors)', (
         },
       },
     })
-    expect(ns.EncryptedBooleanEq).toBeUndefined()
+    expect(ns.BooleanEq).toBeUndefined()
   })
 
-  it('EncryptedJson → public.eql_v3_json with searchableJson-only capabilities', () => {
-    expect(ns.EncryptedJson?.output).toMatchObject({
+  it('Json → public.eql_v3_json with searchableJson-only capabilities', () => {
+    expect(ns.Json?.output).toMatchObject({
       codecId: 'cipherstash/eql-v3/eql_v3_json@1',
       nativeType: 'public.eql_v3_json',
       typeParams: {
@@ -109,20 +109,20 @@ describe('cipherstash v3 authoring (concrete per-domain, static descriptors)', (
   })
 
   it('BigInt family is present (public.eql_v3_bigint*, castAs bigint); no *OrdOre, no v3 String', () => {
-    expect(ns.EncryptedBigInt?.output).toMatchObject({
+    expect(ns.BigInt?.output).toMatchObject({
       nativeType: 'public.eql_v3_bigint',
       typeParams: { castAs: 'bigint' },
     })
-    expect(ns.EncryptedBigIntEq?.output).toMatchObject({
+    expect(ns.BigIntEq?.output).toMatchObject({
       nativeType: 'public.eql_v3_bigint_eq',
     })
-    expect(ns.EncryptedBigIntOrd?.output).toMatchObject({
+    expect(ns.BigIntOrd?.output).toMatchObject({
       nativeType: 'public.eql_v3_bigint_ord',
     })
-    expect(ns.EncryptedBigIntOrdOre).toBeUndefined()
-    expect(ns.EncryptedIntegerOrdOre).toBeUndefined()
-    expect(ns.EncryptedTextOrdOre).toBeUndefined()
-    // v3 text columns use EncryptedText*; the unqualified v2 name is gone.
+    expect(ns.BigIntOrdOre).toBeUndefined()
+    expect(ns.IntegerOrdOre).toBeUndefined()
+    expect(ns.TextOrdOre).toBeUndefined()
+    // v3 text columns use Text*; the unqualified v2 name is gone.
     expect(ns.EncryptedString).toBeUndefined()
   })
 

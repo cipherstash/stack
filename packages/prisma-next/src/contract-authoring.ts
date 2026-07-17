@@ -7,14 +7,14 @@
  * `*_ord_ore` variants) gets exactly one argument-less PSL constructor,
  * derived 1:1 from `EXPOSED_DOMAIN_ENTRIES`:
  *
- *   `cipherstash.EncryptedTextSearch` → codec
+ *   `cipherstash.TextSearch` → codec
  *   `cipherstash/eql-v3/eql_v3_text_search@1`, native type
  *   `public.eql_v3_text_search`, static
  *   `typeParams: { castAs, capabilities }`.
  *
  * There are NO options: the constructor IS the capability set. The name is
  * the mechanical `Encrypted<Stem><Suffix>` transform of the bare domain with
- * its `eql_v3_` prefix stripped (`eql_v3_bigint_ord` → `EncryptedBigIntOrd`);
+ * its `eql_v3_` prefix stripped (`eql_v3_bigint_ord` → `BigIntOrd`);
  * the codec id keeps the registry key VERBATIM (never name-transformed).
  *
  * ### Static typeParams — confirmed framework shape (Step 0)
@@ -107,11 +107,25 @@ function coreName(bareDomain: string): string {
   return `${stemLabel}${suffixLabel}`
 }
 
-/** `eql_v3_text_search` → `EncryptedTextSearch`, `eql_v3_bigint_ord` → `EncryptedBigIntOrd`. */
+/**
+ * `eql_v3_text_search` → `TextSearch`, `eql_v3_bigint_ord` → `BigIntOrd`.
+ *
+ * The `cipherstash.` PSL namespace already disambiguates, so the constructor
+ * names drop the `Encrypted` prefix to line up with the stack / Drizzle
+ * `types.*` catalog (`types.TextSearch`, `types.BigintOrd`, …). The v2
+ * constructors keep their `*V2` names; the runtime envelope classes
+ * (`EncryptedString`, `EncryptedBoolean`, …) are a separate surface and are
+ * unchanged.
+ */
 export function v3PascalName(bareDomain: string): string {
-  return `Encrypted${coreName(bareDomain)}`
+  return coreName(bareDomain)
 }
-/** `eql_v3_text_search` → `encryptedTextSearch`, `eql_v3_bigint_ord` → `encryptedBigIntOrd`. */
+/**
+ * `eql_v3_text_search` → `encryptedTextSearch`. The camelCase TS-authoring
+ * factory names keep their `encrypted` prefix for now — only the PSL
+ * constructor names (`v3PascalName`) drop it in this pass; aligning the
+ * camelCase exports is a follow-up.
+ */
 export function v3CamelName(bareDomain: string): string {
   return `encrypted${coreName(bareDomain)}`
 }

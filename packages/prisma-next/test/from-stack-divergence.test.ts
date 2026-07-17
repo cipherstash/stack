@@ -1,10 +1,10 @@
 /**
- * Pin the divergence-check semantics of `cipherstashFromStack`.
+ * Pin the divergence-check semantics of `cipherstashFromStackV2`.
  *
- * The full `cipherstashFromStack` path is not exercisable in unit
+ * The full `cipherstashFromStackV2` path is not exercisable in unit
  * tests because it calls `Encryption({ schemas })` which talks to
  * ZeroKMS at module-evaluation time. We instead pull out the
- * divergence check by calling `cipherstashFromStack` with an
+ * divergence check by calling `cipherstashFromStackV2` with an
  * intentionally-broken override; the assertion fires before any
  * SDK round-trip is attempted, so the test stays hermetic.
  *
@@ -19,7 +19,7 @@ import {
   CIPHERSTASH_BOOLEAN_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
 } from '../src/extension-metadata/constants'
-import { cipherstashFromStack } from '../src/stack/from-stack'
+import { cipherstashFromStackV2 } from '../src/stack/from-stack'
 
 function makeContract() {
   return {
@@ -48,7 +48,7 @@ function makeContract() {
   }
 }
 
-describe('cipherstashFromStack — divergence check', () => {
+describe('cipherstashFromStackV2 — divergence check', () => {
   it('throws when an override drops a column the contract declares', async () => {
     const override = encryptedTable('users', {
       email: encryptedColumn('email').equality().freeTextSearch(),
@@ -56,7 +56,7 @@ describe('cipherstashFromStack — divergence check', () => {
     })
 
     await expect(
-      cipherstashFromStack({
+      cipherstashFromStackV2({
         contractJson: makeContract(),
         schemas: [override],
       }),
@@ -71,7 +71,7 @@ describe('cipherstashFromStack — divergence check', () => {
     })
 
     await expect(
-      cipherstashFromStack({
+      cipherstashFromStackV2({
         contractJson: makeContract(),
         schemas: [override],
       }),
@@ -85,7 +85,7 @@ describe('cipherstashFromStack — divergence check', () => {
     })
 
     await expect(
-      cipherstashFromStack({
+      cipherstashFromStackV2({
         contractJson: makeContract(),
         schemas: [override],
       }),
@@ -102,7 +102,7 @@ describe('cipherstashFromStack — divergence check', () => {
     })
 
     await expect(
-      cipherstashFromStack({
+      cipherstashFromStackV2({
         contractJson: makeContract(),
         schemas: [override],
       }),
@@ -118,7 +118,7 @@ describe('cipherstashFromStack — divergence check', () => {
       },
     }
     await expect(
-      cipherstashFromStack({ contractJson: emptyContract }),
+      cipherstashFromStackV2({ contractJson: emptyContract }),
     ).rejects.toThrow(/no cipherstash columns found/)
   })
 })

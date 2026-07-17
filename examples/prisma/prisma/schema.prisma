@@ -36,12 +36,12 @@
 
 model User {
   id            String @id
-  email         cipherstash.EncryptedTextSearch()
-  salary        cipherstash.EncryptedDoubleOrd()
-  accountId     cipherstash.EncryptedBigIntOrd()  @map("accountid")
-  birthday      cipherstash.EncryptedDateOrd()
-  emailVerified cipherstash.EncryptedBoolean()    @map("emailverified")
-  preferences   cipherstash.EncryptedJson()
+  email         cipherstash.TextSearch()
+  salary        cipherstash.DoubleOrd()
+  accountId     cipherstash.BigIntOrd()  @map("accountid")
+  birthday      cipherstash.DateOrd()
+  emailVerified cipherstash.Boolean()    @map("emailverified")
+  preferences   cipherstash.Json()
 
   @@map("users")
 }
