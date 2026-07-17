@@ -35,10 +35,17 @@ export const handoffClaudeStep: HandoffStep = {
     writeArtifacts(cwd, state, 'claude-code', installed)
 
     const mode = state.mode ?? 'implement'
+    // Only point the agent at the skills dir when skills were actually copied.
+    // A stripped CLI build (no bundled skills) returns [] — claiming they're
+    // there would send the agent to read files that don't exist.
+    const skillsClause =
+      installed.length > 0
+        ? `The installed skills under ${CLAUDE_SKILLS_DIR}/ have the rules; `
+        : ''
     const launchPrompt =
       mode === 'plan'
-        ? `Read ${SETUP_PROMPT_REL_PATH} and produce the planning deliverable it describes. The installed skills under ${CLAUDE_SKILLS_DIR}/ have the rules; ${CONTEXT_REL_PATH} has the project facts. Do not edit code or run mutating commands during this phase.`
-        : `Read ${SETUP_PROMPT_REL_PATH} and complete the setup steps. The installed skills under ${CLAUDE_SKILLS_DIR}/ have the rules; ${CONTEXT_REL_PATH} has the project facts.`
+        ? `Read ${SETUP_PROMPT_REL_PATH} and produce the planning deliverable it describes. ${skillsClause}${CONTEXT_REL_PATH} has the project facts. Do not edit code or run mutating commands during this phase.`
+        : `Read ${SETUP_PROMPT_REL_PATH} and complete the setup steps. ${skillsClause}${CONTEXT_REL_PATH} has the project facts.`
 
     if (!state.agents?.cli.claudeCode) {
       p.note(

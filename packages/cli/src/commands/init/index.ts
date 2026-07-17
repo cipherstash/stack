@@ -1,5 +1,6 @@
 import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
+import { messages } from '../../messages.js'
 import { HANDOFF_CHOICES } from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
 import { createBaseProvider } from './providers/base.js'
@@ -99,16 +100,38 @@ export async function initCommand(
 
     const pm = detectPackageManager()
     const cli = runnerCommand(pm, 'stash')
+    // Only claim what actually happened. Auth throws on failure (reaching here
+    // means it succeeded); the database step *resolves* a URL but never opens a
+    // connection, so don't claim "verified"; the client scaffold is skipped for
+    // Prisma Next (no `clientFilePath` on state).
     const checkmarks: string[] = [
       '✓ Authenticated to CipherStash',
-      '✓ Database connection verified',
-      '✓ Encryption client scaffolded',
+      '✓ Database URL resolved',
     ]
+    if (state.clientFilePath) {
+      checkmarks.push('✓ Encryption client scaffolded')
+    }
     if (state.stackInstalled) {
       checkmarks.push('✓ `@cipherstash/stack` installed')
     }
     if (state.cliInstalled) checkmarks.push('✓ `stash` CLI installed')
     if (state.eqlInstalled) checkmarks.push('✓ EQL extension installed')
+
+    // EQL is required for encryption. Prisma Next installs it via `migration
+    // apply` (so `eqlInstalled` is false by design there); every other
+    // integration needs it installed here. If it's missing, setup is NOT
+    // complete — say so and exit non-zero so automation can't read a false
+    // success from a run where encryption would fail at query time.
+    const eqlPending =
+      !state.eqlInstalled && state.integration !== 'prisma-next'
+    if (eqlPending) {
+      checkmarks.push('✗ EQL extension NOT installed')
+      p.note(checkmarks.join('\n'), messages.init.setupIncomplete)
+      p.log.error(
+        `${messages.init.eqlNotInstalled} Run \`${cli} eql install\` before running any encryption.`,
+      )
+      throw new CliExit(1)
+    }
 
     p.note(checkmarks.join('\n'), 'Setup complete')
 

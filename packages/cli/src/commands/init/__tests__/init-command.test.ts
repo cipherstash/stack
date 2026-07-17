@@ -1,4 +1,7 @@
+import * as p from '@clack/prompts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { CliExit } from '../../../cli/exit.js'
+import { messages } from '../../../messages.js'
 import type { InitState } from '../types.js'
 
 // `--region` is the non-interactive escape hatch for `stash init`; it must land
@@ -9,6 +12,10 @@ import type { InitState } from '../types.js'
 // (`authenticate`, `install-deps`) out of the fast suite.
 const authRun = vi.hoisted(() => vi.fn(async (state: InitState) => state))
 const passthrough = { run: async (s: InitState) => s }
+// Controllable so the honest-summary tests can vary whether EQL installed.
+const eqlRun = vi.hoisted(() =>
+  vi.fn(async (s: InitState) => ({ ...s, eqlInstalled: true })),
+)
 
 vi.mock('../steps/authenticate.js', () => ({
   authenticateStep: { id: 'authenticate', name: 'Authenticate', run: authRun },
@@ -26,7 +33,10 @@ vi.mock('../steps/install-deps.js', () => ({
   installDepsStep: { id: 'install-deps', ...passthrough },
 }))
 vi.mock('../steps/install-eql.js', () => ({
-  installEqlStep: { id: 'install-eql', ...passthrough },
+  // A successful init installs EQL — the default mark keeps the honest-summary
+  // gate (`eqlPending` → exit 1) happy for the region-threading runs. The
+  // honest-summary tests override `eqlRun` per case.
+  installEqlStep: { id: 'install-eql', run: eqlRun },
 }))
 vi.mock('../steps/gather-context.js', () => ({
   gatherContextStep: { id: 'gather-context', ...passthrough },
@@ -68,5 +78,40 @@ describe('initCommand — region threading', () => {
     expect(authRun).toHaveBeenCalledTimes(1)
     const [stateArg] = authRun.mock.calls[0]
     expect(stateArg.regionFlag).toBeUndefined()
+  })
+})
+
+describe('initCommand — honest summary', () => {
+  it('exits non-zero and reports "Setup incomplete" when EQL was not installed', async () => {
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      eqlInstalled: false,
+    }))
+
+    await expect(initCommand({}, {})).rejects.toBeInstanceOf(CliExit)
+    // The summary titles the run as incomplete, and the EQL fix is surfaced.
+    expect(vi.mocked(p.note)).toHaveBeenCalledWith(
+      expect.any(String),
+      messages.init.setupIncomplete,
+    )
+    expect(vi.mocked(p.log.error)).toHaveBeenCalledWith(
+      expect.stringContaining(messages.init.eqlNotInstalled),
+    )
+  })
+
+  it('completes (no throw) when EQL was not installed but the integration is prisma-next', async () => {
+    // Prisma Next installs EQL via `migration apply`, so eqlInstalled=false is
+    // expected there and must NOT be treated as an incomplete setup.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'prisma-next',
+      eqlInstalled: false,
+    }))
+
+    await expect(initCommand({}, {})).resolves.toBeUndefined()
+    expect(vi.mocked(p.note)).toHaveBeenCalledWith(
+      expect.any(String),
+      'Setup complete',
+    )
   })
 })
