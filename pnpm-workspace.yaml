@@ -7,11 +7,17 @@ catalogs:
   repo:
     # @cipherstash/auth ships per-platform native bindings as optional
     # peerDependencies. pnpm does not auto-install platform-matched
-    # optional peer deps, so the consuming packages (wizard, cli)
-    # declare them as `optionalDependencies` via `catalog:repo`. Keep
-    # all seven entries on the same version so a single bump here moves
-    # everything in lockstep.
-    '@cipherstash/auth': 0.41.0
+    # optional peer deps, so the consuming packages (stack, cli, wizard)
+    # declare them as `optionalDependencies` via `catalog:repo`.
+    #
+    # LOCKSTEP IS LOAD-BEARING, not tidiness: auth pins its bindings as
+    # EXACT-version optional peer deps, so a skewed set makes npm nest
+    # per-consumer binding copies that the hoisted auth package cannot
+    # resolve — every project-local install of the CLI/SDK then dies with
+    # "Failed to load native binding" (the 1.0.0-rc.2 B1 bug). Enforced by
+    # e2e/tests/supply-chain.e2e.test.ts; Dependabot ignores all seven
+    # names — bump them together, manually.
+    '@cipherstash/auth': 0.42.0
     '@cipherstash/auth-darwin-arm64': 0.42.0
     '@cipherstash/auth-darwin-x64': 0.42.0
     '@cipherstash/auth-linux-arm64-gnu': 0.42.0
