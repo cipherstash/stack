@@ -111,6 +111,12 @@ already-initialized project, `npx stash auth login` alone authenticates the
 machine; the SDK and CLI pick up the saved profile automatically. Sign up at
 [cipherstash.com/signup](https://cipherstash.com/signup) first.
 
+Agents can drive the login too: `npx stash auth login --json --region <slug>`
+emits the verification URL as data — run it in the background, relay the URL
+to the human, and the flow completes when they approve in a browser. The
+event contract and the operational loop are in the `stash-cli` skill's
+Authentication section.
+
 ### CI and Production (environment variables)
 
 Deployed environments and CI use machine credentials via environment variables

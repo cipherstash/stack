@@ -82,6 +82,22 @@ npx stash auth login --json --region us-east-1
 | `{ status: "device_bound" }` | Device bound to the default keyset. Done. |
 | `{ status: "error", code, message }` | Failure. Exit code 1. |
 
+Operationally: after printing `authorization_required` the command **blocks,
+polling, until the human approves or the code expires** (`expiresIn` is
+~900 s). So run it as a background/async task with a generous timeout —
+a short-timeout synchronous run kills the poll and the login never lands.
+The working loop is:
+
+1. Start `npx stash auth login --json --region <slug>` in the background.
+2. Read the first stdout line; relay `verificationUriComplete` to the human
+   (include `userCode` so they can cross-check what they're approving, and
+   mention the ~15-minute expiry).
+3. Leave the process running. Success is **exit 0 with `device_bound` as the
+   final event** — the session and development key are then in the profile
+   and every later command authenticates silently.
+4. To confirm, trust the event stream or run any authenticated command —
+   never inspect `~/.cipherstash` (see "Never read these").
+
 **Authenticate before `stash init`.** Init's authenticate step uses the interactive path, so an agent running `init` unauthenticated makes the CLI try to open a browser on the agent's machine — and in a non-TTY it exits with `region_required` unless `--region` or `STASH_REGION` is set. Once a valid token exists, init logs `Using workspace X (region)` and moves on silently.
 
 Flags: `--region <slug>` (env `STASH_REGION`), `--json`, `--no-open`, `--supabase` / `--drizzle` (referrer tracking only).
