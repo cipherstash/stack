@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
+import { isInteractive as isInteractiveTty } from '../../config/tty.js'
 import { messages } from '../../messages.js'
 import {
   HANDOFF_CHOICES,
@@ -58,7 +59,6 @@ function buildStateFromContext(
 async function confirmCompleteRollout(opts: {
   assumeYes: boolean
   isInteractive: boolean
-  cli: string
 }): Promise<void> {
   p.log.warn(
     '`--complete-rollout` plans the full encryption lifecycle (schema-add through drop) in one document. It SKIPS the production-deploy gate that protects backfill from running before dual-writes are live.',
@@ -186,13 +186,14 @@ export async function planCommand(
 
   p.intro('CipherStash Plan')
 
-  // Interactive only when stdin is a real TTY and we're not in CI — the same
-  // gate `stash impl` and the encrypt commands use. Keying off
+  // Interactive only when stdin is a real TTY and we're not in CI — via the
+  // shared `isInteractive()` (config/tty.ts) so this gate stays identical to
+  // every other prompt gate (its `isCiEnv()` treats `CI=1`/`CI=TRUE` as CI too,
+  // which a bare `CI !== 'true'` inline would miss). Keying off
   // `process.stdout.isTTY` alone is wrong: a redirected stdin still hangs the
   // agent-target picker (clack `select` reads from /dev/tty). Computed up here
   // because the complete-rollout confirmation needs it too.
-  const isInteractive =
-    Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
+  const isInteractive = isInteractiveTty()
 
   try {
     if (existsSync(resolve(cwd, PLAN_REL_PATH))) {
@@ -206,7 +207,6 @@ export async function planCommand(
       await confirmCompleteRollout({
         assumeYes: flags.yes ?? false,
         isInteractive,
-        cli,
       })
       planStep = 'complete'
     } else {
