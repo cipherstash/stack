@@ -18,10 +18,12 @@ import {
   loadBundledEqlSql,
   resolveEqlVersion,
 } from '@/installer/index.js'
+import { messages } from '@/messages.js'
 import { ensureEncryptionClient } from './client-scaffold.js'
 import { offerStashConfig } from './config-scaffold.js'
 import {
   detectDrizzle,
+  detectPrismaNext,
   detectSupabase,
   detectSupabaseProject,
   type SupabaseProjectInfo,
@@ -177,6 +179,17 @@ export async function installCommand(options: InstallOptions) {
   const flagError = validateInstallFlags(options)
   if (flagError) {
     p.log.error(flagError)
+    p.outro('Installation aborted.')
+    process.exit(1)
+  }
+
+  // Prisma Next owns EQL installation via its own migration system, so the
+  // standalone installer is the wrong tool here. Refuse (before any DB I/O)
+  // unless --force. Fires fast so a user who typed the wrong command gets a
+  // pointer, not a half-applied install.
+  const prismaNextBlock = prismaNextInstallGuard(process.cwd(), options)
+  if (prismaNextBlock) {
+    p.log.error(prismaNextBlock)
     p.outro('Installation aborted.')
     process.exit(1)
   }
@@ -627,6 +640,32 @@ export function routeInstallPathForEqlVersion(
     drizzle: resolved.drizzle,
     useSupabaseInstallModeSelection: resolved.supabase,
   }
+}
+
+/**
+ * `stash eql install` is the wrong tool in a Prisma Next project: Prisma Next
+ * contributes a `migrations/cipherstash/` control space that installs the EQL
+ * bundle as part of `prisma-next migration apply`, in the same ledger as the
+ * app schema. Running the standalone installer applies EQL out-of-band from
+ * that ledger. `stash init --prisma-next` already skips the installer; this
+ * guards the manual-invocation path too.
+ *
+ * Returns the guidance string when the install should be blocked, else null.
+ * `--force` overrides (an escape hatch for a deliberate standalone install).
+ * Pure + cwd-injected so it unit-tests without a real project.
+ */
+export function prismaNextInstallGuard(
+  cwd: string,
+  options: Pick<InstallOptions, 'force'>,
+): string | null {
+  if (options.force) return null
+  if (!detectPrismaNext(cwd)) return null
+  return (
+    `${messages.eql.prismaNextDetected} (found prisma-next.config.* or @cipherstash/prisma-next). ` +
+    'Prisma Next installs the EQL bundle through its own migration system — run ' +
+    '`prisma-next migration apply` instead of `stash eql install`. ' +
+    'Pass --force to run the standalone installer against this database anyway.'
+  )
 }
 
 export function validateInstallFlags(options: InstallOptions): string | null {

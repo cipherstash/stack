@@ -128,7 +128,9 @@ npx prisma-next migration apply      # installs EQL bundle + your schema
 
 Do **not** run `stash eql install` for a Prisma Next project — `prisma-next
 migration apply` owns EQL installation, and `stash init --prisma-next` skips the
-standalone installer for exactly this reason.
+standalone installer for exactly this reason. The CLI enforces this: `stash eql
+install` detects a Prisma Next project and refuses (pointing you at `prisma-next
+migration apply`) unless you pass `--force`.
 
 ## Writing and reading encrypted values
 

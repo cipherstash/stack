@@ -17,3 +17,8 @@ Next surface — the domain-named encrypted column types (`EncryptedTextSearch`,
 envelopes, the `eql*` query operators, and EQL installation via
 `prisma-next migration apply`. It is installed for Prisma Next projects and
 inlined into `AGENTS.md` for editor agents.
+
+`stash eql install` now refuses to run in a Prisma Next project (pointing you
+at `prisma-next migration apply`, which owns EQL installation) unless you pass
+`--force` — closing the manual-invocation hole that `stash init --prisma-next`
+already avoided.
