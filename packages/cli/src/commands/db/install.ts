@@ -413,7 +413,7 @@ function resolveProviderOptions(
   return { supabase, drizzle, excludeOperatorFamily }
 }
 
-function printNextSteps(): void {
+export function printNextSteps(): void {
   p.note(
     [
       'Your project is set up. To encrypt your first column, pick the path',

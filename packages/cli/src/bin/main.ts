@@ -108,6 +108,7 @@ Commands:
   telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
+  eql migration        Generate an EQL v3 install migration for your ORM (Drizzle)
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
 

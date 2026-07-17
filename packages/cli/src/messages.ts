@@ -80,6 +80,9 @@ export const messages = {
      */
     migrationPrismaUnavailable:
       '`stash eql migration --prisma` is not available yet — Prisma Next installs EQL v3 via its own migration system (`prisma-next migration apply`, see cipherstash/stack#690). Use `--drizzle` today.',
+    /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
+    migrationBadName:
+      'Migration name must contain only letters, numbers, dashes, and underscores.',
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',

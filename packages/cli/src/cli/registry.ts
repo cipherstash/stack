@@ -405,13 +405,13 @@ export const registry: CommandGroup[] = [
             name: '--name',
             value: '<name>',
             description:
-              'Name for the generated migration (Drizzle). Defaults to `install-eql`.',
+              'Name for the generated migration (Drizzle). Letters, numbers, dashes, underscores only. Defaults to `install-eql`.',
           },
           {
             name: '--out',
             value: '<path>',
             description:
-              'Directory to write the generated migration into (Drizzle). Defaults to `drizzle`.',
+              'Directory drizzle-kit writes the migration into (passed to `drizzle-kit generate --out`). Defaults to `drizzle`; set it to match your drizzle.config.ts.',
           },
           DRY_RUN_FLAG,
         ],

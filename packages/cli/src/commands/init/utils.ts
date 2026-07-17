@@ -213,6 +213,52 @@ export function runnerArgv(pm: PackageManager): {
   }
 }
 
+/**
+ * Map the package manager to the right "run a binary from node_modules" form —
+ * distinct from {@link runnerCommand}, which is the download-and-run
+ * (`pnpm dlx` / `npx <pkg>`) form. For a project-local binary like drizzle-kit
+ * you want the local one, so it resolves the project's own install and its
+ * `drizzle.config.ts` / schema imports rather than fetching a fresh copy into a
+ * temp store.
+ *   npm  → `npx --no-install` (never surprise-download a dep that should exist)
+ *   pnpm → `pnpm exec`
+ *   yarn → `yarn` (works for yarn 1 and berry: `yarn <bin>`)
+ *   bun  → `bun x` (binary-runner mode, not the `bunx` dlx alias)
+ */
+export function execCommand(pm: PackageManager): string {
+  switch (pm) {
+    case 'npm':
+      return 'npx --no-install'
+    case 'pnpm':
+      return 'pnpm exec'
+    case 'yarn':
+      return 'yarn'
+    case 'bun':
+      return 'bun x'
+  }
+}
+
+/**
+ * argv split of {@link execCommand} for callers using `spawnSync` / `spawn`
+ * (no shell → no word-splitting or injection from interpolated arguments).
+ * Returns the binary plus any prefix args; the caller appends the rest.
+ */
+export function execArgv(pm: PackageManager): {
+  command: string
+  prefixArgs: string[]
+} {
+  switch (pm) {
+    case 'npm':
+      return { command: 'npx', prefixArgs: ['--no-install'] }
+    case 'pnpm':
+      return { command: 'pnpm', prefixArgs: ['exec'] }
+    case 'yarn':
+      return { command: 'yarn', prefixArgs: [] }
+    case 'bun':
+      return { command: 'bun', prefixArgs: ['x'] }
+  }
+}
+
 function toCamelCase(str: string): string {
   return str.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
 }

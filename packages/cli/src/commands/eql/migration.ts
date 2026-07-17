@@ -1,18 +1,27 @@
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { MIGRATIONS_SCHEMA_SQL } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
+import { CliExit } from '@/cli/exit.js'
 import {
   cleanupMigrationFile,
   findGeneratedMigration,
+  printNextSteps,
 } from '@/commands/db/install.js'
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import {
+  detectPackageManager,
+  execArgv,
+  execCommand,
+} from '@/commands/init/utils.js'
 import { loadBundledEqlSql, supabaseGrantsFor } from '@/installer/index.js'
 import { messages } from '@/messages.js'
 
 const DEFAULT_MIGRATION_NAME = 'install-eql'
 const DEFAULT_DRIZZLE_OUT = 'drizzle'
+
+/** File-system-safe migration name: what drizzle-kit accepts, and shell-inert. */
+const SAFE_MIGRATION_NAME = /^[\w-]+$/
 
 export interface EqlMigrationOptions {
   /** Emit a Drizzle custom migration. */
@@ -41,7 +50,8 @@ export interface EqlMigrationOptions {
  * idempotent and harmless, and required when the same tables are reached via
  * PostgREST/RLS.
  *
- * The `cs_migrations` tracking schema is bundled in so a single migration run
+ * Order is load-bearing: schema creation → grants (which reference that schema)
+ * → the `cs_migrations` tracking schema, appended last so one migration run
  * installs everything `stash encrypt …` needs — no out-of-band `stash eql
  * install`.
  */
@@ -62,6 +72,10 @@ export function buildEqlV3MigrationSql(opts: { supabase: boolean }): string {
  *
  * v3 only — there is no `--eql-version` here. prisma-next never shipped v2, and
  * the Drizzle v3 surface is the documented one.
+ *
+ * Validation exits throw {@link CliExit} rather than `process.exit` so the
+ * telemetry `finally` in `main.ts` still runs (and the branches stay unit
+ * testable).
  */
 export async function eqlMigrationCommand(
   options: EqlMigrationOptions,
@@ -72,11 +86,11 @@ export async function eqlMigrationCommand(
   ].filter(Boolean)
   if (targets.length === 0) {
     p.log.error(messages.eql.migrationNeedsTarget)
-    process.exit(1)
+    throw new CliExit(1)
   }
   if (targets.length > 1) {
     p.log.error(messages.eql.migrationOneTarget)
-    process.exit(1)
+    throw new CliExit(1)
   }
 
   if (options.prisma) {
@@ -84,7 +98,7 @@ export async function eqlMigrationCommand(
     // (PR #655); it can't install a v3 schema that doesn't exist on that
     // surface yet. Fail loudly with a pointer rather than emit a broken file.
     p.log.error(messages.eql.migrationPrismaUnavailable)
-    process.exit(1)
+    throw new CliExit(1)
   }
 
   await generateDrizzleEqlMigration(options)
@@ -94,15 +108,48 @@ async function generateDrizzleEqlMigration(
   options: EqlMigrationOptions,
 ): Promise<void> {
   const migrationName = options.name ?? DEFAULT_MIGRATION_NAME
+  if (!SAFE_MIGRATION_NAME.test(migrationName)) {
+    p.log.error(messages.eql.migrationBadName)
+    throw new CliExit(1)
+  }
   const outDir = resolve(options.out ?? DEFAULT_DRIZZLE_OUT)
-  const runner = runnerCommand(detectPackageManager(), '').trim()
-  const drizzleCmd = `${runner} drizzle-kit generate --custom --name=${migrationName}`
+  const pm = detectPackageManager()
 
-  const sql = buildEqlV3MigrationSql({ supabase: options.supabase ?? false })
+  // Run the PROJECT-LOCAL drizzle-kit (`pnpm exec` / `npx --no-install`), not the
+  // download-and-run form — it must resolve this project's drizzle.config.ts and
+  // schema. Invoke via spawnSync with an argv array (no shell), so a `--name`
+  // carrying spaces or shell metacharacters is one inert token, never word-split
+  // or executed. `--out` is always passed so drizzle-kit WRITES where we then
+  // LOOK — otherwise a project whose drizzle.config.ts points elsewhere would
+  // have drizzle-kit write there while we search `drizzle/` and fail in step 2.
+  // It defaults to `drizzle/`; override with `--out` to match your config.
+  const { command, prefixArgs } = execArgv(pm)
+  const drizzleArgs = [
+    ...prefixArgs,
+    'drizzle-kit',
+    'generate',
+    '--custom',
+    `--name=${migrationName}`,
+    `--out=${outDir}`,
+  ]
+  const displayCmd = `${execCommand(pm)} ${drizzleArgs.slice(prefixArgs.length).join(' ')}`
+
+  // Load the SQL up front so a corrupt/missing bundle fails BEFORE we scaffold
+  // anything (nothing to orphan), with the same spinner-free error the other
+  // steps use rather than a raw fatal stack trace.
+  let sql: string
+  try {
+    sql = buildEqlV3MigrationSql({ supabase: options.supabase ?? false })
+  } catch (error) {
+    p.log.error(error instanceof Error ? error.message : String(error))
+    throw new CliExit(1)
+  }
+
+  p.intro('CipherStash EQL migration')
 
   if (options.dryRun) {
     p.note(
-      `Would run: ${drizzleCmd}\nWould write the EQL v3 install SQL${options.supabase ? ' (with Supabase grants)' : ''} into the generated migration in ${outDir}`,
+      `Would run: ${displayCmd}\nWould write the EQL v3 install SQL${options.supabase ? ' (with Supabase grants)' : ''} into the generated migration in ${outDir}`,
       'Dry Run',
     )
     p.outro('Dry run complete.')
@@ -114,25 +161,25 @@ async function generateDrizzleEqlMigration(
   // Step 1 — scaffold an empty custom migration (drizzle-kit owns the journal
   // + sequence numbering; hand-rolling that is fragile).
   s.start('Generating custom Drizzle migration...')
-  try {
-    execSync(drizzleCmd, { stdio: 'pipe', encoding: 'utf-8' })
-    s.stop('Custom Drizzle migration generated.')
-  } catch (error) {
+  const result = spawnSync(command, drizzleArgs, {
+    stdio: 'pipe',
+    encoding: 'utf-8',
+  })
+  if (result.status !== 0) {
     s.stop('Failed to generate migration.')
-    const stderr =
-      error !== null &&
-      typeof error === 'object' &&
-      'stderr' in error &&
-      typeof error.stderr === 'string'
-        ? error.stderr.trim()
-        : undefined
+    const stderr = result.stderr?.trim()
     p.log.error(
-      stderr || (error instanceof Error ? error.message : 'Unknown error.'),
+      stderr ||
+        result.error?.message ||
+        `drizzle-kit exited with status ${result.status ?? 'unknown'}.`,
     )
-    p.log.info('Make sure drizzle-kit is installed: npm install -D drizzle-kit')
+    p.log.info(
+      `Make sure drizzle-kit is installed and configured: ${execCommand(pm)} drizzle-kit --version`,
+    )
     p.outro('Migration aborted.')
-    process.exit(1)
+    throw new CliExit(1)
   }
+  s.stop('Custom Drizzle migration generated.')
 
   // Step 2 — locate the file drizzle-kit just wrote.
   let migrationPath: string
@@ -143,8 +190,11 @@ async function generateDrizzleEqlMigration(
   } catch (error) {
     s.stop('Failed to locate migration file.')
     p.log.error(error instanceof Error ? error.message : String(error))
+    p.log.info(
+      `If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.`,
+    )
     p.outro('Migration aborted.')
-    process.exit(1)
+    throw new CliExit(1)
   }
 
   // Step 3 — write the EQL v3 install SQL into it.
@@ -157,13 +207,14 @@ async function generateDrizzleEqlMigration(
     p.log.error(error instanceof Error ? error.message : String(error))
     cleanupMigrationFile(migrationPath)
     p.outro('Migration aborted.')
-    process.exit(1)
+    throw new CliExit(1)
   }
 
   p.log.success(`Migration created: ${migrationPath}`)
   p.note(
-    `Run your Drizzle migrations to install EQL v3:\n\n  ${runner} drizzle-kit migrate`,
+    `Run your Drizzle migrations to install EQL v3:\n\n  ${execCommand(pm)} drizzle-kit migrate`,
     'Next Steps',
   )
+  printNextSteps()
   p.outro('Done!')
 }
