@@ -119,6 +119,19 @@ export const messages = {
     nameRequiresValue: '--name requires a value',
     unexpectedArgument: 'Unexpected argument',
   },
+  plan: {
+    /**
+     * Stable leader of the refusal shown when `plan --complete-rollout` runs
+     * non-interactively without `--yes`. The e2e suite asserts on it; the
+     * `--yes` hint is appended at the call site. Exits non-zero — the plan
+     * was NOT drafted, so automation must not read exit 0 as success.
+     */
+    completeRolloutNeedsYes:
+      '`--complete-rollout` skips the production-deploy gate and needs explicit confirmation',
+    /** Shown when `--yes` confirms the gate-skip (bypasses the prompt). */
+    completeRolloutConfirmed:
+      'Proceeding with --yes: the production-deploy gate is skipped',
+  },
   telemetry: {
     /**
      * The one-time first-run notice. Printed to stderr so it never pollutes

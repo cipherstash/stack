@@ -149,12 +149,21 @@ export const registry: CommandGroup[] = [
       {
         name: 'plan',
         summary: 'Draft a reviewable encryption plan at .cipherstash/plan.md',
-        examples: ['plan', 'plan --target claude-code'],
+        examples: [
+          'plan',
+          'plan --target claude-code',
+          'plan --complete-rollout --yes --target claude-code',
+        ],
         flags: [
           {
             name: '--complete-rollout',
             description:
-              'Plan the entire encryption lifecycle (schema-add through drop) in one document. Skips the production-deploy gate; only safe when this database is not backing a deployed application.',
+              'Plan the entire encryption lifecycle (schema-add through drop) in one document. Skips the production-deploy gate; only safe when this database is not backing a deployed application. Needs confirmation — an interactive prompt, or --yes non-interactively (else it exits non-zero without drafting).',
+          },
+          {
+            name: '--yes',
+            description:
+              "Confirm --complete-rollout's gate-skip without a prompt (for automation / CI). No effect without --complete-rollout.",
           },
           {
             name: '--target',
