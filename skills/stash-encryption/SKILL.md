@@ -111,6 +111,12 @@ already-initialized project, `npx stash auth login` alone authenticates the
 machine; the SDK and CLI pick up the saved profile automatically. Sign up at
 [cipherstash.com/signup](https://cipherstash.com/signup) first.
 
+Agents can drive the login too: `npx stash auth login --json --region <slug>`
+emits the verification URL as data — run it in the background, relay the URL
+to the human, and the flow completes when they approve in a browser. The
+event contract and the operational loop are in the `stash-cli` skill's
+Authentication section.
+
 ### CI and Production (environment variables)
 
 Deployed environments and CI use machine credentials via environment variables
@@ -122,6 +128,16 @@ CS_CLIENT_ID=your-client-id
 CS_CLIENT_KEY=your-client-key
 CS_CLIENT_ACCESS_KEY=your-access-key
 ```
+
+Mint all four from your device session with `npx stash env --name <name>` —
+no dashboard copy-paste. It creates a fresh ZeroKMS client plus a
+**member-role** access key (shown exactly once; the CLI cannot mint admin
+keys) and prints the block above, ready to pipe into your platform's secret
+store. `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY` are secrets — never commit
+them. Also the path for runtimes that can't read `~/.cipherstash` — e.g.
+`@cipherstash/stack/wasm-inline` on Supabase Edge Functions (containerised
+even in local dev) or Cloudflare Workers. See the `stash-cli` skill for flags
+(`--write`, `--json`).
 
 When both are present, the `CS_*` variables take precedence over the saved
 profile.

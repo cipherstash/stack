@@ -530,15 +530,49 @@ export const registry: CommandGroup[] = [
     ],
   },
   {
-    title: 'Experimental',
+    title: 'Deployment',
     commands: [
       {
         name: 'env',
-        summary: '(experimental) Print production env vars for deployment',
+        summary: 'Mint deployment credentials and print them as env vars',
+        long: [
+          'Mints a fresh ZeroKMS client and a CipherStash access key from your',
+          'device-code session (`stash auth login`), then prints the four env',
+          'vars a deployed app needs: CS_WORKSPACE_CRN, CS_CLIENT_ID,',
+          'CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY.',
+          '',
+          'The access key is created with the member role (the CLI never mints',
+          'admin keys) and is shown exactly once — pipe the output into your',
+          'deployment secret store. Creating access keys requires your user to',
+          'have the admin role in the workspace.',
+          '',
+          'Stdout carries only the dotenv block (or the --json events);',
+          'progress UI goes to stderr, so `stash env --name x > prod.env`',
+          'and pipes into secret stores are safe.',
+        ].join('\n'),
+        examples: [
+          'env --name my-app-prod',
+          'env --name my-app-prod --write',
+          'env --name staging --write .env.staging.local',
+          'env --name edge-dev --json',
+        ],
         flags: [
           {
+            name: '--name',
+            value: '<name>',
+            description:
+              'Name for the minted access key and ZeroKMS client. Prompted for interactively; required in non-interactive runs.',
+          },
+          {
             name: '--write',
-            description: 'Write the vars to a file instead of printing them.',
+            value: '[path]',
+            description:
+              'Write the vars to a file (default .env.production.local, mode 0600) instead of printing them. An existing file prompts before overwriting — and is refused non-interactively — before anything is minted.',
+          },
+          {
+            name: '--json',
+            description:
+              'Emit machine-readable NDJSON (a { status: "minted" } object, or { status: "written" } with --write — deliberately secret-free since the secrets are in the file; failures are { status: "error" }). Implies no prompts.',
           },
         ],
       },

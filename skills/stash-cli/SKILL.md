@@ -82,6 +82,22 @@ npx stash auth login --json --region us-east-1
 | `{ status: "device_bound" }` | Device bound to the default keyset. Done. |
 | `{ status: "error", code, message }` | Failure. Exit code 1. |
 
+Operationally: after printing `authorization_required` the command **blocks,
+polling, until the human approves or the code expires** (`expiresIn` is
+~900 s). So run it as a background/async task with a generous timeout —
+a short-timeout synchronous run kills the poll and the login never lands.
+The working loop is:
+
+1. Start `npx stash auth login --json --region <slug>` in the background.
+2. Read the first stdout line; relay `verificationUriComplete` to the human
+   (include `userCode` so they can cross-check what they're approving, and
+   mention the ~15-minute expiry).
+3. Leave the process running. Success is **exit 0 with `device_bound` as the
+   final event** — the session and development key are then in the profile
+   and every later command authenticates silently.
+4. To confirm, trust the event stream or run any authenticated command —
+   never inspect `~/.cipherstash` (see "Never read these").
+
 **Authenticate before `stash init`.** Init's authenticate step uses the interactive path, so an agent running `init` unauthenticated makes the CLI try to open a browser on the agent's machine — and in a non-TTY it exits with `region_required` unless `--region` or `STASH_REGION` is set. Once a valid token exists, init logs `Using workspace X (region)` and moves on silently.
 
 Flags: `--region <slug>` (env `STASH_REGION`), `--json`, `--no-open`, `--supabase` / `--drizzle` (referrer tracking only).
@@ -484,15 +500,59 @@ Version-aware. For **EQL v2** columns in the `cut-over` phase it emits `ALTER TA
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
 
-### Experimental
+### Deployment
 
 #### `env`
 
 ```bash
-stash env
+stash env --name my-app-prod           # print the four CS_* vars to stdout
+stash env --name my-app-prod --write   # write .env.production.local (mode 0600)
+stash env --name staging --write .env.staging.local   # custom target path
+stash env --name edge-dev --json       # NDJSON events, no prompts
 ```
 
-**A stub — it does not work yet.** Gated behind `STASH_EXPERIMENTAL_ENV_CMD`, and even then the credential mint endpoint is not wired up, so it emits nothing. Intended to print the `CS_*` variables needed to deploy. Don't build on it.
+Mints deployment credentials from the local device-code session (`stash auth
+login`) — no dashboard copy-paste. It creates a fresh ZeroKMS client and a
+CipherStash access key (both named `--name`), then emits the four env vars a
+deployed app needs:
+
+```dotenv
+CS_WORKSPACE_CRN=crn:<region>:<workspace-id>
+CS_CLIENT_ID=<uuid>
+CS_CLIENT_KEY=<hex>
+CS_CLIENT_ACCESS_KEY=CSAK…
+```
+
+Things to know:
+
+- **The access key is shown exactly once** — CTS cannot re-reveal it. Pipe the
+  output straight into your secret store (`supabase secrets set --env-file`,
+  `vercel env add`, `wrangler secret put`, …). `CS_CLIENT_KEY` and
+  `CS_CLIENT_ACCESS_KEY` are secrets; never commit them.
+- **Stdout is pipe-clean.** Only the dotenv block (or the `--json` events)
+  goes to stdout; progress UI and prompts go to stderr. `stash env --name x
+  > prod.env` and pipes into dotenv consumers are safe.
+- **The key is member-role, always** — pinned in the request and verified on
+  the response. The CLI deliberately cannot mint admin keys — use the
+  dashboard for those. *Creating* a key does, however, require your own user
+  to have the admin role in the workspace (403 otherwise).
+- **Non-interactive runs require `--name`** — without it the command exits 1
+  with an actionable message before touching the network, and `--write`
+  refuses to overwrite an existing file (also before anything is minted).
+  In `--json` mode failures arrive as `{ status: "error", code, message }`
+  on stdout.
+- **`--json` + `--write` compose**: the file is written and the JSON
+  confirmation (`{ status: "written", path, … }`) is deliberately
+  secret-free, so captured CI logs never contain the key.
+- Each run mints a **new** credential; a duplicate name is rejected by the
+  server — rerun with a different `--name`.
+- This is also the local-dev path for runtimes that can't reach
+  `~/.cipherstash` (Supabase Edge Functions run in a container; Workers have
+  no filesystem): mint a key, feed it via `supabase functions serve
+  --env-file` or the platform's secret store, and use
+  `@cipherstash/stack/wasm-inline` with explicit config.
+
+Flags: `--name <name>`, `--write [path]`, `--json`.
 
 ## Programmatic API
 

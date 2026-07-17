@@ -109,6 +109,16 @@ export const messages = {
     ) =>
       `\`${pkg}\` is not installed in this project.\n\nInstall the CipherStash packages, then re-run:\n  ${installCommands}\n\nOr run \`${stash} init\` to set everything up.`,
   },
+  env: {
+    /**
+     * Stable leaders of the pre-mint argv errors. The e2e suite asserts on
+     * these; the runner-aware hints are appended at the call sites. All
+     * three fire BEFORE any profile or network access.
+     */
+    missingName: 'A credential name is required in non-interactive mode',
+    nameRequiresValue: '--name requires a value',
+    unexpectedArgument: 'Unexpected argument',
+  },
   telemetry: {
     /**
      * The one-time first-run notice. Printed to stderr so it never pollutes
