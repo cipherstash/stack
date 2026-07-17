@@ -27,8 +27,8 @@ const BASE_SKILLS: readonly string[] = ['stash-encryption', 'stash-cli']
  * entry would ship as `undefined` and crash both consumers (`installSkills`,
  * the AGENTS.md builder) with "not iterable". Degrade to the base skill set
  * instead: the user still gets `stash-encryption` + `stash-cli`, never a
- * stack trace. (Regression-guarded by a test that pins SKILL_MAP's keys to
- * the init provider registry.)
+ * stack trace. (Regression-guarded by a test asserting SKILL_MAP has a
+ * non-empty entry for every value in a maintained `ALL_INTEGRATIONS` list.)
  */
 export function skillsFor(integration: Integration): readonly string[] {
   return SKILL_MAP[integration] ?? BASE_SKILLS

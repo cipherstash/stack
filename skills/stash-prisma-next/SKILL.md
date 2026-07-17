@@ -36,7 +36,10 @@ npm install @cipherstash/stack @cipherstash/prisma-next
 ```
 
 Or run `npx stash init --prisma-next`, which detects Prisma Next, installs both
-packages pinned to the CLI release, authenticates, and scaffolds the wiring.
+packages pinned to the CLI release, and authenticates. It does **not** scaffold
+the wiring files — Prisma Next derives its schema from `contract.json`, so there
+is no encryption-client file to generate; init prints the next steps (declare
+encrypted columns, emit the contract, run the migration) instead.
 
 ## The three wiring points
 
@@ -174,7 +177,7 @@ EQL-derived `eql*` vocabulary (the legacy v2 surface keeps `cipherstash*` names)
 | `eqlMatch(term)` | free-text token match (`eql_v3.contains`) | `EncryptedTextSearch` |
 | `eqlGt/eqlGte/eqlLt/eqlLte(v)` | range comparison | an `*Ord` domain |
 | `eqlBetween(lo,hi)` / `eqlNotBetween(lo,hi)` | range window | an `*Ord` domain |
-| `eqlAsc()` / `eqlDesc()` | ORDER BY | an `*Ord` or `TextSearch` domain |
+| `eqlAsc(col)` / `eqlDesc(col)` | ORDER BY (free functions, take the column) | an `*Ord` or `TextSearch` domain |
 | `eqlJsonContains(obj)` | encrypted JSON containment (`@>`) | `EncryptedJson` |
 
 ```typescript
