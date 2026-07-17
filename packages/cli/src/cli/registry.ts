@@ -530,15 +530,43 @@ export const registry: CommandGroup[] = [
     ],
   },
   {
-    title: 'Experimental',
+    title: 'Deployment',
     commands: [
       {
         name: 'env',
-        summary: '(experimental) Print production env vars for deployment',
+        summary: 'Mint deployment credentials and print them as env vars',
+        long: [
+          'Mints a fresh ZeroKMS client and a CipherStash access key from your',
+          'device-code session (`stash auth login`), then prints the four env',
+          'vars a deployed app needs: CS_WORKSPACE_CRN, CS_CLIENT_ID,',
+          'CS_CLIENT_KEY, CS_CLIENT_ACCESS_KEY.',
+          '',
+          'The access key is created with the member role (the CLI never mints',
+          'admin keys) and is shown exactly once — pipe the output into your',
+          'deployment secret store. Creating access keys requires your user to',
+          'have the admin role in the workspace.',
+        ].join('\n'),
+        examples: [
+          'env --name my-app-prod',
+          'env --name my-app-prod --write',
+          'env --name edge-dev --json',
+        ],
         flags: [
           {
+            name: '--name',
+            value: '<name>',
+            description:
+              'Name for the minted access key and ZeroKMS client. Prompted for interactively; required in non-interactive runs.',
+          },
+          {
             name: '--write',
-            description: 'Write the vars to a file instead of printing them.',
+            description:
+              'Write the vars to .env.production.local (mode 0600) instead of printing them.',
+          },
+          {
+            name: '--json',
+            description:
+              'Emit a single machine-readable JSON object (or a { status: "error" } envelope) instead of a dotenv block. Implies no prompts.',
           },
         ],
       },

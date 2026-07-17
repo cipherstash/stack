@@ -109,6 +109,14 @@ export const messages = {
     ) =>
       `\`${pkg}\` is not installed in this project.\n\nInstall the CipherStash packages, then re-run:\n  ${installCommands}\n\nOr run \`${stash} init\` to set everything up.`,
   },
+  env: {
+    /**
+     * Stable leader of the non-interactive missing-name error. The e2e suite
+     * asserts on this; the `--name` hint (with the runner-aware invocation)
+     * is appended at the call site.
+     */
+    missingName: 'A credential name is required in non-interactive mode',
+  },
   telemetry: {
     /**
      * The one-time first-run notice. Printed to stderr so it never pollutes

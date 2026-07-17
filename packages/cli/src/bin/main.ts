@@ -125,7 +125,7 @@ Commands:
   encrypt cutover      Rename swap encrypted → primary column (EQL v2 only)
   encrypt drop         Generate a migration to drop the plaintext column
 
-  env                  (experimental) Print production env vars for deployment
+  env                  Mint deployment credentials and print them as env vars
 
 Options:
   --help, -h           Show help
@@ -532,7 +532,11 @@ async function dispatch(
       await runSchemaCommand(subcommand, flags, values)
       break
     case 'env':
-      await envCommand({ write: flags.write })
+      await envCommand({
+        write: flags.write,
+        json: flags.json,
+        name: values.name,
+      })
       break
     case 'manifest':
       // Pure metadata (no native code) — safe to run anywhere, including when

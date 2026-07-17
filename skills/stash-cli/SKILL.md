@@ -484,15 +484,48 @@ Version-aware. For **EQL v2** columns in the `cut-over` phase it emits `ALTER TA
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
 
-### Experimental
+### Deployment
 
 #### `env`
 
 ```bash
-stash env
+stash env --name my-app-prod           # print the four CS_* vars to stdout
+stash env --name my-app-prod --write   # write .env.production.local (mode 0600)
+stash env --name edge-dev --json       # single JSON object, no prompts
 ```
 
-**A stub — it does not work yet.** Gated behind `STASH_EXPERIMENTAL_ENV_CMD`, and even then the credential mint endpoint is not wired up, so it emits nothing. Intended to print the `CS_*` variables needed to deploy. Don't build on it.
+Mints deployment credentials from the local device-code session (`stash auth
+login`) — no dashboard copy-paste. It creates a fresh ZeroKMS client and a
+CipherStash access key (both named `--name`), then emits the four env vars a
+deployed app needs:
+
+```
+CS_WORKSPACE_CRN=crn:<region>:<workspace-id>
+CS_CLIENT_ID=<uuid>
+CS_CLIENT_KEY=<hex>
+CS_CLIENT_ACCESS_KEY=CSAK…
+```
+
+Things to know:
+
+- **The access key is shown exactly once** — CTS cannot re-reveal it. Pipe the
+  output straight into your secret store (`supabase secrets set --env-file`,
+  `vercel env add`, `wrangler secret put`, …). `CS_CLIENT_KEY` and
+  `CS_CLIENT_ACCESS_KEY` are secrets; never commit them.
+- **The key is member-role, always.** The CLI deliberately cannot mint admin
+  keys — use the dashboard for those. *Creating* a key does, however, require
+  your own user to have the admin role in the workspace (403 otherwise).
+- **Non-interactive runs require `--name`** — without it the command exits 1
+  with an actionable message before touching the network. In `--json` mode
+  failures arrive as `{ status: "error", code, message }` on stdout.
+- Each run mints a **new** credential; a duplicate name is rejected by the
+  server — rerun with a different `--name`.
+- This is also the local-dev path for runtimes that can't reach
+  `~/.cipherstash` (Supabase Edge Functions run in a container; Workers have
+  no filesystem): mint a key, feed it via `--env-file` or the platform's
+  secret store, and use `@cipherstash/stack/wasm-inline` with explicit config.
+
+Flags: `--name <name>`, `--write`, `--json`.
 
 ## Programmatic API
 
