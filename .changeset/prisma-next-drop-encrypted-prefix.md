@@ -14,11 +14,13 @@ The v3 one-call setup function is renamed `cipherstashFromStackV3` →
 `cipherstashFromStack` (v3 is the default), and the existing v2 setup function
 becomes `cipherstashFromStackV2`.
 
+The camelCase TS-authoring factory exports move in lockstep:
+`encryptedTextSearch` → `textSearch`, `encryptedDoubleOrd` → `doubleOrd`, etc.
+(a property test enforces the PSL and TS names agree modulo first-letter case).
+
 Unchanged: the runtime value envelopes (`EncryptedString`, `EncryptedNumber`,
 `EncryptedBoolean`, …), the `cipherstash.*V2` legacy column constructors, the
-generated `contract.json` / codec ids, and the `eql*` query operators. The
-camelCase TS-authoring factory exports (`encryptedTextSearch`, …) keep their
-prefix for now — a follow-up will align them.
+generated `contract.json` / codec ids, and the `eql*` query operators.
 
 The `stash-prisma-next` skill is updated to the new names (skills ship in the
 `stash` tarball).

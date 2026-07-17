@@ -266,7 +266,10 @@ describe('property: constructor ↔ domain totality (authoring namespace)', () =
       fc.property(fc.constantFrom(...EXPOSED_DOMAIN_ENTRIES), ([, meta]) => {
         const pascal = v3PascalName(meta.bareDomain)
         const camel = v3CamelName(meta.bareDomain)
-        expect(pascal.startsWith('Encrypted')).toBe(true)
+        // v3 constructor names dropped the `Encrypted` prefix (the
+        // `cipherstash.` namespace disambiguates); they are PascalCase.
+        expect(pascal.startsWith('Encrypted')).toBe(false)
+        expect(pascal.charAt(0)).toBe(pascal.charAt(0).toUpperCase())
         expect(camel).toBe(
           `${pascal.charAt(0).toLowerCase()}${pascal.slice(1)}`,
         )

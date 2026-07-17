@@ -121,13 +121,15 @@ export function v3PascalName(bareDomain: string): string {
   return coreName(bareDomain)
 }
 /**
- * `eql_v3_text_search` → `encryptedTextSearch`. The camelCase TS-authoring
- * factory names keep their `encrypted` prefix for now — only the PSL
- * constructor names (`v3PascalName`) drop it in this pass; aligning the
- * camelCase exports is a follow-up.
+ * `eql_v3_text_search` → `textSearch`, `eql_v3_bigint_ord` → `bigIntOrd`.
+ *
+ * Kept in lockstep with {@link v3PascalName} — the camelCase TS-authoring
+ * factory name is the PSL constructor name with a lowercased first letter
+ * (a property test enforces the two agree modulo first-letter case).
  */
 export function v3CamelName(bareDomain: string): string {
-  return `encrypted${coreName(bareDomain)}`
+  const core = coreName(bareDomain)
+  return `${core.charAt(0).toLowerCase()}${core.slice(1)}`
 }
 
 /**
