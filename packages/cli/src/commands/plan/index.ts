@@ -3,6 +3,8 @@ import { resolve } from 'node:path'
 import { readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
+import { isInteractive as isInteractiveTty } from '../../config/tty.js'
+import { messages } from '../../messages.js'
 import {
   HANDOFF_CHOICES,
   howToProceedStep,
@@ -44,17 +46,43 @@ function buildStateFromContext(
 }
 
 /**
- * Confirm the user wants to skip the production-deploy gate. Default-no is
- * the security stance — the warning has to be a deliberate `y` press, not
- * a stray Enter.
+ * Confirm the user wants to skip the production-deploy gate.
+ *
+ * The gate-skip is a deliberate act, so it needs explicit consent:
+ *  - interactive TTY → a default-no `p.confirm` (a stray Enter is "no").
+ *  - `--yes` → the non-interactive consent flag; proceed, after logging the
+ *    warnings so the record shows what was skipped.
+ *  - non-interactive without `--yes` → REFUSE with a non-zero exit. We must
+ *    not silently cancel-with-0: automation that asked for a complete-rollout
+ *    plan and got exit 0 would assume a plan exists when none was drafted.
  */
-async function confirmCompleteRollout(): Promise<void> {
+async function confirmCompleteRollout(opts: {
+  assumeYes: boolean
+  isInteractive: boolean
+}): Promise<void> {
   p.log.warn(
     '`--complete-rollout` plans the full encryption lifecycle (schema-add through drop) in one document. It SKIPS the production-deploy gate that protects backfill from running before dual-writes are live.',
   )
   p.log.warn(
     'Only safe when this database is not backing a deployed application — local development, ephemeral test environments, or freshly seeded sandboxes. If a deployed app writes to this database, rows inserted during the planned backfill will land in plaintext only and you will need a recovery pass.',
   )
+
+  if (opts.assumeYes) {
+    p.log.info(
+      `${messages.plan.completeRolloutConfirmed} by your explicit confirmation.`,
+    )
+    return
+  }
+
+  if (!opts.isInteractive) {
+    p.log.error(
+      `${messages.plan.completeRolloutNeedsYes}. Re-run with \`--yes\` to confirm non-interactively — only safe when no deployed application writes to this database (see the warnings above).`,
+    )
+    // Non-zero: the requested plan was NOT drafted. Distinct from a user's
+    // interactive decline (a deliberate "no" → exit 0 via CancelledError).
+    throw new CliExit(1)
+  }
+
   const ok = await p.confirm({
     message: 'Proceed with a complete-rollout plan?',
     initialValue: false,
@@ -124,8 +152,12 @@ async function detectPlanStep(cwd: string): Promise<PlanStep> {
  * Flags:
  *   `--complete-rollout` — escape hatch for databases without a deployed
  *                          application. Plans schema-add through drop in
- *                          one document with no deploy gate. Confirms
- *                          (default-no) before generating.
+ *                          one document with no deploy gate. Needs explicit
+ *                          confirmation: an interactive default-no prompt, or
+ *                          `--yes` non-interactively (else it refuses with a
+ *                          non-zero exit rather than silently doing nothing).
+ *   `--yes`              — confirm `--complete-rollout`'s gate-skip without a
+ *                          prompt, for automation. No effect without it.
  */
 export async function planCommand(
   flags: Record<string, boolean> = {},
@@ -154,6 +186,15 @@ export async function planCommand(
 
   p.intro('CipherStash Plan')
 
+  // Interactive only when stdin is a real TTY and we're not in CI — via the
+  // shared `isInteractive()` (config/tty.ts) so this gate stays identical to
+  // every other prompt gate (its `isCiEnv()` treats `CI=1`/`CI=TRUE` as CI too,
+  // which a bare `CI !== 'true'` inline would miss). Keying off
+  // `process.stdout.isTTY` alone is wrong: a redirected stdin still hangs the
+  // agent-target picker (clack `select` reads from /dev/tty). Computed up here
+  // because the complete-rollout confirmation needs it too.
+  const isInteractive = isInteractiveTty()
+
   try {
     if (existsSync(resolve(cwd, PLAN_REL_PATH))) {
       p.log.warn(
@@ -163,7 +204,10 @@ export async function planCommand(
 
     let planStep: PlanStep
     if (flags['complete-rollout']) {
-      await confirmCompleteRollout()
+      await confirmCompleteRollout({
+        assumeYes: flags.yes ?? false,
+        isInteractive,
+      })
       planStep = 'complete'
     } else {
       planStep = await detectPlanStep(cwd)
@@ -180,13 +224,6 @@ export async function planCommand(
 
     const agents = detectAgents(cwd, process.env)
     const state = buildStateFromContext(ctx, agents, planStep)
-
-    // Interactive only when stdin is a real TTY and we're not in CI — the
-    // same gate `stash impl` and the encrypt commands use. Keying off
-    // `process.stdout.isTTY` alone is wrong: a redirected stdin still
-    // hangs the agent-target picker (clack `select` reads from /dev/tty).
-    const isInteractive =
-      Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
 
     // Non-interactive without --target would hang on the agent-target
     // picker. Exit cleanly with a hint so automation users discover the flag.

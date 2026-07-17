@@ -123,7 +123,7 @@ If a command fails on authentication, re-run `stash auth login`. Do not inspect 
 
 A command is interactive only when **stdin is a TTY and `CI` is not set** to `1`/`true` (case-insensitive). Otherwise prompts are skipped.
 
-There is **no global `--non-interactive`, `--yes`, or `--json` flag.** Each command carries its own escape hatch:
+There is **no global `--non-interactive` or `--json` flag** (and no global `--yes` — but a few commands carry a scoped one, e.g. `plan --complete-rollout --yes`). Each command carries its own escape hatch:
 
 | Need | Escape hatch |
 |---|---|
@@ -238,7 +238,8 @@ Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--proxy` / `--no-proxy`, `--
 
 ```bash
 stash plan
-stash plan --complete-rollout
+stash plan --complete-rollout                          # interactive: default-no confirm
+stash plan --complete-rollout --yes --target claude-code   # non-interactive / CI
 stash plan --target claude-code
 ```
 
@@ -250,7 +251,7 @@ Pre-flights `.cipherstash/context.json` (errors with "Run `stash init` first" if
 |---|---|
 | No `dual_writing` event recorded | **Encryption rollout** — schema-add + dual-write code. Ends at the deploy gate. |
 | A column has `dual_writing` or later | **Encryption cutover** — backfill, schema rename, read-path switch, drop. Requires the rollout to be deployed. |
-| `--complete-rollout` passed | **Complete rollout** — schema-add through drop, no deploy gate. Default-no confirm with a loud warning. |
+| `--complete-rollout` passed | **Complete rollout** — schema-add through drop, no deploy gate. Needs consent: an interactive default-no confirm, or `--yes` non-interactively (without it, a non-interactive run **exits non-zero without drafting** rather than silently doing nothing). |
 
 The agent writes a machine-readable header into the plan:
 
