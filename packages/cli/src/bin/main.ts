@@ -232,6 +232,20 @@ async function runEqlCommand(
     case 'install':
       await runInstall(flags, values)
       break
+    case 'migration': {
+      const { eqlMigrationCommand } = await import(
+        '../commands/eql/migration.js'
+      )
+      await eqlMigrationCommand({
+        drizzle: flags.drizzle,
+        prisma: flags.prisma,
+        supabase: flags.supabase,
+        name: values.name,
+        out: values.out,
+        dryRun: flags['dry-run'],
+      })
+      break
+    }
     case 'upgrade':
       await runUpgrade(flags, values)
       break

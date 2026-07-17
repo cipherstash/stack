@@ -66,6 +66,20 @@ export const messages = {
      * actionable command + `--force` note are appended at the call site.
      */
     prismaNextDetected: 'This looks like a Prisma Next project',
+    /** `stash eql migration` with no `--drizzle`/`--prisma` target. */
+    migrationNeedsTarget:
+      'Specify a target: `stash eql migration --drizzle` (or `--prisma`).',
+    /** More than one target passed to `stash eql migration`. */
+    migrationOneTarget:
+      'Pass exactly one target: `--drizzle` or `--prisma`, not both.',
+    /**
+     * `--prisma` isn't wired yet — Prisma Next installs EQL v3 through its own
+     * migration system (`prisma-next migration apply`), so the CLI emitter is
+     * not needed there today. Points at the tracking issue so the failure is
+     * actionable.
+     */
+    migrationPrismaUnavailable:
+      '`stash eql migration --prisma` is not available yet — Prisma Next installs EQL v3 via its own migration system (`prisma-next migration apply`, see cipherstash/stack#690). Use `--drizzle` today.',
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',

@@ -44,13 +44,22 @@ It is distinct from the older, separate `@cipherstash/drizzle` package (which is
 
 ### Install the EQL v3 SQL
 
-EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that make encrypted columns searchable. Install version 3 directly against the database:
+EQL (Encrypt Query Language) provides the PostgreSQL functions and domains that make encrypted columns searchable. Two ways to install version 3:
+
+**Direct install** — run the SQL straight against the database (quick, good for dev):
 
 ```bash
 stash eql install --eql-version 3
 ```
 
-v3 installs via the direct path only — the v2 `stash eql install --drizzle` Drizzle-migration flow is **not** supported for v3 (`--drizzle`, `--migration`, `--migrations-dir`, and `--latest` are v2-only flags). EQL v3 ships one SQL bundle for every target, including Supabase.
+**Migration (preferred for real projects)** — generate a Drizzle custom migration that carries the EQL v3 install SQL, so it lands in your migration history and ships to every environment through `drizzle-kit migrate`:
+
+```bash
+stash eql migration --drizzle              # writes a custom migration into drizzle/
+stash eql migration --drizzle --supabase   # also grants eql_v3 to anon/authenticated/service_role
+```
+
+The generated migration also installs the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers everything `stash encrypt …` needs — no out-of-band `stash eql install`. EQL v3 ships one SQL bundle for every target including Supabase; `--supabase` only adds the PostgREST/RLS role grants (harmless when you connect directly as `postgres`). Requires `drizzle-kit` installed and configured.
 
 ### Column Storage
 

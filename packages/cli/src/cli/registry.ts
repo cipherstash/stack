@@ -378,6 +378,45 @@ export const registry: CommandGroup[] = [
         ],
       },
       {
+        name: 'eql migration',
+        summary:
+          'Generate an EQL v3 install migration for your ORM (Drizzle now; Prisma Next soon)',
+        examples: [
+          'eql migration --drizzle',
+          'eql migration --drizzle --supabase',
+        ],
+        flags: [
+          {
+            name: '--drizzle',
+            description:
+              'Emit a Drizzle custom migration containing the EQL v3 install SQL.',
+          },
+          {
+            name: '--prisma',
+            description:
+              'Emit a Prisma Next migration (ships with prisma-next EQL v3 support; not available yet).',
+          },
+          {
+            name: '--supabase',
+            description:
+              'Append the Supabase role grants (eql_v3 + eql_v3_internal for anon/authenticated/service_role).',
+          },
+          {
+            name: '--name',
+            value: '<name>',
+            description:
+              'Name for the generated migration (Drizzle). Defaults to `install-eql`.',
+          },
+          {
+            name: '--out',
+            value: '<path>',
+            description:
+              'Directory to write the generated migration into (Drizzle). Defaults to `drizzle`.',
+          },
+          DRY_RUN_FLAG,
+        ],
+      },
+      {
         name: 'eql upgrade',
         summary: 'Upgrade EQL extensions to the latest version',
         flags: [
