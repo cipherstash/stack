@@ -127,6 +127,15 @@ jobs:
       - name: Type tests (stack-supabase)
         run: pnpm --filter @cipherstash/stack-supabase run test:types
 
+      # prisma-next's operator-capability gating is proven by `.test-d.ts`
+      # `@ts-expect-error` assertions (an unsupported operator on a column
+      # must be a compile error). Those only fire when tsc processes them,
+      # so the package `typecheck` must run — and be required — here (#684).
+      # Its tsconfig resolves stack subpaths to SOURCE, so no build step is
+      # needed first.
+      - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
+        run: pnpm --filter @cipherstash/prisma-next run typecheck
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

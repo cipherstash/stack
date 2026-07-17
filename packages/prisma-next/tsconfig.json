@@ -28,9 +28,22 @@
     // TS6059 errors here.
     "baseUrl": ".",
     "paths": {
-      // test-kit is a source-only package that consumes stack through
-      // the `@/` alias; mirror stack-drizzle's mapping so its sources
-      // typecheck inside this package's program.
+      // Resolve every consumed stack subpath to SOURCE, not `dist`
+      // (mirrors `packages/test-kit/tsconfig.json`). Without these,
+      // `pnpm typecheck` only works after `pnpm build` — and on a
+      // fresh/stale checkout the dist d.ts resolves partially, which
+      // surfaces as implicit-`any` noise far from the real cause
+      // (#684). The matching runtime aliases live in `vitest.shared.ts`.
+      "@cipherstash/stack": ["../stack/src/index.ts"],
+      "@cipherstash/stack/client": ["../stack/src/client.ts"],
+      "@cipherstash/stack/types": ["../stack/src/types-public.ts"],
+      "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
+      "@cipherstash/stack/schema": ["../stack/src/schema/index.ts"],
+      "@cipherstash/stack/v3": ["../stack/src/encryption/v3.ts"],
+      "@cipherstash/stack/adapter-kit": ["../stack/src/adapter-kit.ts"],
+      // Resolving stack to source means we also inherit stack's OWN
+      // internal alias (`@/…` inside stack sources) — and test-kit's
+      // sources (pulled in by the integration suite) use it too.
       "@/*": ["../stack/src/*"]
     }
   },
