@@ -123,6 +123,16 @@ CS_CLIENT_KEY=your-client-key
 CS_CLIENT_ACCESS_KEY=your-access-key
 ```
 
+Mint all four from your device session with `npx stash env --name <name>` —
+no dashboard copy-paste. It creates a fresh ZeroKMS client plus a
+**member-role** access key (shown exactly once; the CLI cannot mint admin
+keys) and prints the block above, ready to pipe into your platform's secret
+store. `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY` are secrets — never commit
+them. Also the path for runtimes that can't read `~/.cipherstash` — e.g.
+`@cipherstash/stack/wasm-inline` on Supabase Edge Functions (containerised
+even in local dev) or Cloudflare Workers. See the `stash-cli` skill for flags
+(`--write`, `--json`).
+
 When both are present, the `CS_*` variables take precedence over the saved
 profile.
 
