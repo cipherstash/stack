@@ -1,7 +1,7 @@
 {
 	"name": "stash",
 	"version": "1.0.0-rc.2",
-	"description": "CipherStash CLI — the one stash command for auth, init, encryption schema, database setup, and secrets.",
+	"description": "CipherStash CLI \u2014 the one stash command for auth, init, encryption schema, database setup, and secrets.",
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cipherstash/stack.git",
@@ -42,11 +42,11 @@
 		"dev": "tsup --watch",
 		"test": "vitest run",
 		"test:e2e": "vitest run --config vitest.integration.config.ts",
-		"gen:eql-v3-sql": "node scripts/build-eql-v3-sql.mjs",
 		"lint": "biome check ."
 	},
 	"dependencies": {
 		"@cipherstash/auth": "catalog:repo",
+		"@cipherstash/eql": "3.0.0",
 		"@cipherstash/migrate": "workspace:*",
 		"@clack/prompts": "1.7.0",
 		"dotenv": "17.4.2",
@@ -56,7 +56,7 @@
 		"posthog-node": "^5.40.0",
 		"zod": "^3.25.76"
 	},
-	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies — pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. All seven names share a single catalog entry to keep them in lockstep.",
+	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies \u2014 pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. All seven names share a single catalog entry to keep them in lockstep.",
 	"optionalDependencies": {
 		"@cipherstash/auth-darwin-arm64": "catalog:repo",
 		"@cipherstash/auth-darwin-x64": "catalog:repo",
@@ -74,7 +74,6 @@
 		}
 	},
 	"devDependencies": {
-		"@cipherstash/eql": "3.0.0",
 		"@cipherstash/stack": "workspace:*",
 		"@types/pg": "^8.20.0",
 		"node-pty": "^1.1.0",

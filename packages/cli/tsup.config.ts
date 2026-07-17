@@ -66,7 +66,10 @@ export default defineConfig([
     clean: true,
     target: 'es2022',
     tsconfig: './tsconfig.json',
-    external: ['pg'],
+    // `@cipherstash/eql` is external so `readInstallSql()` resolves the real
+    // installed package (and its `dist/sql/*.sql`) at runtime rather than
+    // getting flattened into the bundle. `pg` is a native-ish dep, kept external.
+    external: ['pg', '@cipherstash/eql', '@cipherstash/eql/sql'],
     esbuildOptions(options) {
       // Suppress import.meta warning in CJS — we guard with typeof checks at runtime
       options.logOverride = {
