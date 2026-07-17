@@ -54,10 +54,12 @@ describe('v3 drizzle bigint columns', () => {
     )
   })
 
-  it('emits the concrete public.eql_v3_bigint* SQL type through pgTable', () => {
-    expect(accounts.balance.getSQLType()).toBe('public.eql_v3_bigint_ord')
-    expect(accounts.ledgerId.getSQLType()).toBe('public.eql_v3_bigint_eq')
-    expect(accounts.archived.getSQLType()).toBe('public.eql_v3_bigint')
+  it('emits the BARE eql_v3_bigint* SQL type through pgTable (drizzle-kit safe)', () => {
+    // Unqualified: a `public.`-prefixed name would be quote-wrapped whole by
+    // drizzle-kit into an invalid identifier. See makeEqlV3Column.
+    expect(accounts.balance.getSQLType()).toBe('eql_v3_bigint_ord')
+    expect(accounts.ledgerId.getSQLType()).toBe('eql_v3_bigint_eq')
+    expect(accounts.archived.getSQLType()).toBe('eql_v3_bigint')
   })
 
   it('encrypts a native bigint operand for eq without JSON-stringifying it', async () => {

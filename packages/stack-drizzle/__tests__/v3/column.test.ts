@@ -15,11 +15,29 @@ import {
 } from '../../src/v3/column'
 
 describe('makeEqlV3Column', () => {
-  it('sets dataType() to the concrete eql_v3 domain', () => {
+  it('sets dataType() to the BARE eql_v3 domain (no schema qualifier)', () => {
     const col = makeEqlV3Column(v3Types.IntegerOrd('age'))
     const table = pgTable('users', { age: col })
 
-    expect(table.age.getSQLType()).toBe('public.eql_v3_integer_ord')
+    // Bare, not `public.eql_v3_integer_ord`: drizzle-kit wraps the whole
+    // dataType() string in one pair of quotes, so a qualified name would emit
+    // the invalid identifier `"public.eql_v3_integer_ord"`. See makeEqlV3Column.
+    expect(table.age.getSQLType()).toBe('eql_v3_integer_ord')
+  })
+
+  it('never leaks a schema-qualified (dotted) type into the emitted DDL', () => {
+    // The regression guard for the drizzle-kit invalid-DDL bug: getSQLType() is
+    // what drizzle-kit quote-wraps into the CREATE/ALTER, so a dot here is an
+    // un-runnable migration. Assert it for every concrete domain.
+    for (const [eqlType] of typedEntries(V3_MATRIX)) {
+      const column = makeEqlV3Column(V3_MATRIX[eqlType].builder(slug(eqlType)))
+      const table = pgTable('t', { [slug(eqlType)]: column } as never)
+      const sqlType = (table as Record<string, { getSQLType(): string }>)[
+        slug(eqlType)
+      ].getSQLType()
+      expect(sqlType).not.toContain('.')
+      expect(sqlType).toBe(slug(eqlType))
+    }
   })
 
   it('recovers the stashed builder before and after pgTable processing', () => {
@@ -98,6 +116,18 @@ describe('makeEqlV3Column', () => {
     expect(builder?.getEqlType()).toBe('public.eql_v3_text_eq')
   })
 
+  it('recovers a v3 builder from a BARE getSQLType (a real live column)', () => {
+    // A processed column reports its type unqualified now, so recovery must
+    // re-qualify a bare name to the canonical `public.eql_v3_*` identity.
+    const builder = getEqlV3Column('nickname', {
+      getSQLType: () => 'eql_v3_text_eq',
+    })
+
+    expect(isEqlV3Column({ getSQLType: () => 'eql_v3_text_eq' })).toBe(true)
+    expect(builder?.getName()).toBe('nickname')
+    expect(builder?.getEqlType()).toBe('public.eql_v3_text_eq')
+  })
+
   it('recognises v3 columns by dataType() when getSQLType is absent', () => {
     const column = { dataType: () => 'public.eql_v3_text_eq' }
     const builder = getEqlV3Column('nickname', column)
@@ -132,7 +162,9 @@ describe('makeEqlV3Column', () => {
     const pgColumn = (table as Record<string, { getSQLType(): string }>)[
       columnName
     ]
-    expect(pgColumn?.getSQLType()).toBe(eqlType)
+    // getSQLType() is the bare (unqualified) domain — what drizzle-kit emits —
+    // while recovery still yields the qualified builder identity.
+    expect(pgColumn?.getSQLType()).toBe(slug(eqlType))
     expect(getEqlV3Column(columnName, pgColumn)?.getEqlType()).toBe(eqlType)
   })
 
