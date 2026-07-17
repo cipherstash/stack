@@ -87,6 +87,39 @@ describe('supply chain — pnpm configuration', () => {
     }
   })
 
+  it('@cipherstash/auth and its six platform bindings are catalog-pinned in lockstep', () => {
+    // Not tidiness — a load-bearing invariant. @cipherstash/auth pins its
+    // bindings as EXACT-version optional peerDependencies, while stash /
+    // stack / wizard declare the bindings in their own optionalDependencies
+    // (pnpm doesn't auto-install optional peer deps). If the seven catalog
+    // entries skew, npm nests per-consumer binding copies that the hoisted
+    // auth package cannot resolve, and every project-local install of the
+    // CLI/SDK dies at startup with "Failed to load native binding". That is
+    // exactly what happened in 1.0.0-rc.2: Dependabot bumped the six
+    // bindings to 0.42.0 while the ignored @cipherstash/auth stayed 0.41.0.
+    // Dependabot now ignores all seven names; this test catches every other
+    // way the set can drift.
+    const ws = readYaml('pnpm-workspace.yaml') as {
+      catalogs?: Record<string, Record<string, string>>
+    }
+    const repo = ws.catalogs?.repo ?? {}
+    const authEntries = Object.entries(repo).filter(
+      ([name]) =>
+        name === '@cipherstash/auth' || name.startsWith('@cipherstash/auth-'),
+    )
+    // The wrapper + the six platform bindings. A count change means a
+    // binding was added/removed upstream — update the consumers' package
+    // JSONs and this expectation together.
+    expect(authEntries.length).toBe(7)
+    const versions = new Set(authEntries.map(([, v]) => v))
+    expect(
+      versions.size,
+      `@cipherstash/auth* catalog entries have skewed versions: ${authEntries
+        .map(([n, v]) => `${n}@${v}`)
+        .join(', ')}`,
+    ).toBe(1)
+  })
+
   it('security overrides stay range-scoped and remain a small allowlist (≤12 entries)', () => {
     // Every override must be scoped to the advisory's vulnerable range
     // (`pkg@<range>`), never a blanket `pkg` pin — a blanket pin silently
