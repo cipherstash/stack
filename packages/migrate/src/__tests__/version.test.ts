@@ -3,10 +3,15 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   classifyEqlDomain,
   detectColumnEqlVersion,
+  type EncryptedColumnInfo,
   listEncryptedColumns,
+  pickEncryptedColumn,
   resolveEncryptedColumn,
 } from '../version.js'
 
+// The one contained type-erasing cast in this file: the functions under
+// test take a pg.ClientBase but only ever call `.query`, and ClientBase's
+// overloaded query signature can't be satisfied by a structural fixture.
 function mockClient(rows: Array<Record<string, unknown>>) {
   const query = vi.fn().mockResolvedValue({ rows })
   return { client: { query } as unknown as ClientBase, query }
@@ -97,69 +102,87 @@ describe('listEncryptedColumns', () => {
   })
 })
 
-describe('resolveEncryptedColumn', () => {
-  const TABLE = [
-    { column: 'id', domain_name: 'int8' },
-    { column: 'email', domain_name: 'text' },
-  ]
+describe('pickEncryptedColumn', () => {
+  const col = (
+    column: string,
+    domain = 'eql_v3_text_eq',
+    version: 2 | 3 = 3,
+  ): EncryptedColumnInfo => ({ column, domain, version })
 
-  it('an explicit hint wins, validated against the domain type', async () => {
-    const { client } = mockClient([
-      ...TABLE,
-      { column: 'email_enc', domain_name: 'eql_v3_text_search' },
-      { column: 'email_encrypted', domain_name: 'eql_v3_text_eq' },
-    ])
-    expect(
-      await resolveEncryptedColumn(client, 'users', 'email', 'email_enc'),
-    ).toEqual({ column: 'email_enc', domain: 'eql_v3_text_search', version: 3 })
+  it('an explicit hint wins, validated against the domain type', () => {
+    const candidates = [
+      col('email_enc', 'eql_v3_text_search'),
+      col('email_encrypted'),
+    ]
+    expect(pickEncryptedColumn(candidates, 'email', 'email_enc')).toEqual({
+      column: 'email_enc',
+      domain: 'eql_v3_text_search',
+      version: 3,
+      via: 'hint',
+    })
   })
 
-  it('a hint naming a non-EQL column resolves to null, not a guess', async () => {
-    const { client } = mockClient([
-      ...TABLE,
-      { column: 'email_encrypted', domain_name: 'eql_v3_text_eq' },
-    ])
+  it('a hint naming a non-EQL column resolves to null, not a guess', () => {
     expect(
-      await resolveEncryptedColumn(client, 'users', 'email', 'email'),
+      pickEncryptedColumn([col('email_encrypted')], 'email', 'email'),
     ).toBeNull()
   })
 
-  it('falls back to the <column>_encrypted convention', async () => {
+  it('falls back to the <column>_encrypted convention', () => {
+    const candidates = [col('email_encrypted'), col('other_encrypted')]
+    expect(pickEncryptedColumn(candidates, 'email')).toEqual({
+      column: 'email_encrypted',
+      domain: 'eql_v3_text_eq',
+      version: 3,
+      via: 'convention',
+    })
+  })
+
+  it("resolves a sole EQL column regardless of its name — flagged 'sole', because uniqueness cannot prove the pairing", () => {
+    // The convention is never REQUIRED (the whole point of self-describing
+    // v3 types), but a by-elimination match may encrypt a different field —
+    // `via: 'sole'` is what lets destructive callers refuse to act on it.
+    expect(
+      pickEncryptedColumn([col('secret_blob', 'eql_v3_text_search')], 'email'),
+    ).toEqual({
+      column: 'secret_blob',
+      domain: 'eql_v3_text_search',
+      version: 3,
+      via: 'sole',
+    })
+  })
+
+  it('never resolves the plaintext column to itself', () => {
+    // Post-cutover v2: `email` itself carries the v2 domain. It is the
+    // ciphertext, not a counterpart of itself.
+    expect(
+      pickEncryptedColumn([col('email', 'eql_v2_encrypted', 2)], 'email'),
+    ).toBeNull()
+  })
+
+  it('returns null when several EQL columns exist and none is identifiable', () => {
+    expect(
+      pickEncryptedColumn([col('a_enc'), col('b_enc')], 'email'),
+    ).toBeNull()
+  })
+
+  it('returns null with no EQL columns', () => {
+    expect(pickEncryptedColumn([], 'email')).toBeNull()
+  })
+})
+
+describe('resolveEncryptedColumn', () => {
+  it('picks from the live catalog (fetch + pick passthrough)', async () => {
     const { client } = mockClient([
-      ...TABLE,
+      { column: 'id', domain_name: 'int8' },
+      { column: 'email', domain_name: 'text' },
       { column: 'email_encrypted', domain_name: 'eql_v3_text_eq' },
-      { column: 'other_encrypted', domain_name: 'eql_v3_text_eq' },
     ])
     expect(await resolveEncryptedColumn(client, 'users', 'email')).toEqual({
       column: 'email_encrypted',
       domain: 'eql_v3_text_eq',
       version: 3,
+      via: 'convention',
     })
-  })
-
-  it('resolves a sole EQL column regardless of its name — the convention is never required', async () => {
-    const { client } = mockClient([
-      ...TABLE,
-      { column: 'secret_blob', domain_name: 'eql_v3_text_search' },
-    ])
-    expect(await resolveEncryptedColumn(client, 'users', 'email')).toEqual({
-      column: 'secret_blob',
-      domain: 'eql_v3_text_search',
-      version: 3,
-    })
-  })
-
-  it('returns null when several EQL columns exist and none is identifiable', async () => {
-    const { client } = mockClient([
-      ...TABLE,
-      { column: 'a_enc', domain_name: 'eql_v3_text_eq' },
-      { column: 'b_enc', domain_name: 'eql_v3_text_eq' },
-    ])
-    expect(await resolveEncryptedColumn(client, 'users', 'email')).toBeNull()
-  })
-
-  it('returns null on a table with no EQL columns', async () => {
-    const { client } = mockClient(TABLE)
-    expect(await resolveEncryptedColumn(client, 'users', 'email')).toBeNull()
   })
 })

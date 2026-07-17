@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // v2 config machine, and `encrypt drop` must target the ORIGINAL plaintext
 // column (there is no `<col>_plaintext`) gated on `backfilled` AND a live
 // coverage check. Version + encrypted-column NAME come from the domain types
-// via `resolveEncryptedColumn` — the `<col>_encrypted` naming is a
-// convention, never relied upon. The v2 paths are pinned alongside as
-// regression guards.
+// via `resolveColumnLifecycle` — the `<col>_encrypted` naming is a
+// convention, never relied upon — and both commands FAIL CLOSED when
+// resolution is ambiguous instead of guessing a lifecycle. The v2 paths are
+// pinned alongside as regression guards.
 
 const queryMock = vi.hoisted(() =>
   vi.fn(async (_sql: string) => ({ rows: [] as unknown[] })),
@@ -23,16 +24,12 @@ vi.mock('pg', () => ({
 }))
 
 type ColumnInfo = { column: string; domain: string; version: 2 | 3 }
+type ResolvedInfo = ColumnInfo & { via: 'hint' | 'convention' | 'sole' }
+type Lifecycle = { info: ResolvedInfo | null; candidates: ColumnInfo[] }
 
 const migrateMocks = vi.hoisted(() => ({
-  resolveEncryptedColumn: vi.fn(
-    async (): Promise<ColumnInfo | null> => ({
-      column: 'email_encrypted',
-      domain: 'eql_v3_text_search',
-      version: 3,
-    }),
-  ),
   listEncryptedColumns: vi.fn(async (): Promise<ColumnInfo[]> => []),
+  pickEncryptedColumn: vi.fn(() => null),
   readManifest: vi.fn(async () => null),
   countUnencrypted: vi.fn(async () => 0),
   progress: vi.fn(
@@ -46,6 +43,22 @@ const migrateMocks = vi.hoisted(() => ({
   reloadConfig: vi.fn(async () => {}),
 }))
 vi.mock('@cipherstash/migrate', () => migrateMocks)
+
+// Mock the lifecycle RESOLUTION (each test states its scenario directly)
+// but keep the real `explainUnresolved` — the fail-closed messaging is part
+// of what these tests pin.
+const lifecycleMock = vi.hoisted(() =>
+  vi.fn(
+    async (): Promise<{
+      info: (ColumnInfo & { via: string }) | null
+      candidates: ColumnInfo[]
+    }> => ({ info: null, candidates: [] }),
+  ),
+)
+vi.mock('../lib/resolve-eql.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/resolve-eql.js')>()
+  return { ...actual, resolveColumnLifecycle: lifecycleMock }
+})
 
 vi.mock('@clack/prompts', () => ({
   intro: vi.fn(),
@@ -104,6 +117,13 @@ const V2_INFO: ColumnInfo = {
   version: 2,
 }
 
+function resolved(
+  info: ColumnInfo,
+  via: ResolvedInfo['via'] = 'convention',
+): Lifecycle {
+  return { info: { ...info, via }, candidates: [info] }
+}
+
 /** v2 config machine present + a pending config row. */
 function mockV2ConfigQueries() {
   queryMock.mockImplementation(async (sql: string) => {
@@ -129,7 +149,7 @@ describe('encrypt cutover — EQL version awareness', () => {
     vi.clearAllMocks()
     queryMock.mockResolvedValue({ rows: [] })
     migrateMocks.progress.mockResolvedValue({ phase: 'backfilled' })
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(V3_INFO)
+    lifecycleMock.mockResolvedValue(resolved(V3_INFO))
   })
 
   it('short-circuits on a backfilled v3 column: guidance, no rename, no config machine, exit 0', async () => {
@@ -169,8 +189,22 @@ describe('encrypt cutover — EQL version awareness', () => {
     exitSpy.mockRestore()
   })
 
+  it('v3 already dropped: terminal phase is "nothing to do", not "finish the backfill"; exit 0', async () => {
+    migrateMocks.progress.mockResolvedValue({ phase: 'dropped' })
+    const exitSpy = spyExit()
+
+    await cutoverCommand({ table: 'users', column: 'email' })
+
+    expect(p.log.info).toHaveBeenCalledWith(
+      expect.stringContaining('already completed'),
+    )
+    expect(p.log.error).not.toHaveBeenCalled()
+    expect(exitSpy).not.toHaveBeenCalled()
+    exitSpy.mockRestore()
+  })
+
   it('uses the RESOLVED encrypted column name, not the naming convention', async () => {
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(V3_CUSTOM_INFO)
+    lifecycleMock.mockResolvedValue(resolved(V3_CUSTOM_INFO, 'hint'))
 
     await cutoverCommand({ table: 'users', column: 'email' })
 
@@ -182,8 +216,29 @@ describe('encrypt cutover — EQL version awareness', () => {
     )
   })
 
+  it('fails closed when EQL columns exist but none is identifiable', async () => {
+    lifecycleMock.mockResolvedValue({
+      info: null,
+      candidates: [
+        { column: 'a_enc', domain: 'eql_v3_text_eq', version: 3 },
+        { column: 'b_enc', domain: 'eql_v3_text_eq', version: 3 },
+      ],
+    })
+    const exitSpy = spyExit()
+
+    await cutoverCommand({ table: 'users', column: 'email' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('Cannot identify which encrypted column'),
+    )
+    expect(p.log.error).toHaveBeenCalledWith(expect.stringContaining('a_enc'))
+    expect(migrateMocks.renameEncryptedColumns).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
   it('still runs the v2 flow for a v2 column (regression pin)', async () => {
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(V2_INFO)
+    lifecycleMock.mockResolvedValue(resolved(V2_INFO))
     mockV2ConfigQueries()
 
     await cutoverCommand({ table: 'users', column: 'email' })
@@ -196,8 +251,7 @@ describe('encrypt cutover — EQL version awareness', () => {
   it('explains a v3-only database instead of a raw relation-does-not-exist error', async () => {
     // Detection missed (e.g. no EQL columns visible) → v2 path — but the
     // config table doesn't exist on this database.
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(null)
-    migrateMocks.listEncryptedColumns.mockResolvedValue([])
+    lifecycleMock.mockResolvedValue({ info: null, candidates: [] })
     queryMock.mockImplementation(async (sql: string) =>
       typeof sql === 'string' && sql.includes('to_regclass')
         ? { rows: [{ exists: null }] }
@@ -220,7 +274,7 @@ describe('encrypt drop — EQL version awareness', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     queryMock.mockResolvedValue({ rows: [] })
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(V3_INFO)
+    lifecycleMock.mockResolvedValue(resolved(V3_INFO))
     migrateMocks.countUnencrypted.mockResolvedValue(0)
   })
 
@@ -246,6 +300,24 @@ describe('encrypt drop — EQL version awareness', () => {
     )
   })
 
+  it('v3: the generated migration re-verifies coverage at APPLY time, atomically', async () => {
+    migrateMocks.progress.mockResolvedValueOnce({ phase: 'backfilled' })
+
+    await dropCommand({ table: 'users', column: 'email' })
+
+    // The CLI-side count goes stale the moment the file is written; the
+    // migration must lock, re-count, and abort without dropping if any
+    // plaintext-only row appeared between generation and application.
+    const sql = writeFileMock.mock.calls[0]?.[1] as string
+    expect(sql).toContain('LOCK TABLE "users" IN ACCESS EXCLUSIVE MODE')
+    expect(sql).toContain('RAISE EXCEPTION')
+    expect(sql).toContain('"email" IS NOT NULL')
+    expect(sql).toContain('"email_encrypted" IS NULL')
+    // The DROP itself runs inside the same DO block (EXECUTE), so
+    // check-and-drop stay atomic even under non-transactional runners.
+    expect(sql).toMatch(/EXECUTE 'ALTER TABLE "users" DROP COLUMN "email"'/)
+  })
+
   it('v3: refuses to generate when rows are still plaintext-only', async () => {
     migrateMocks.progress.mockResolvedValueOnce({ phase: 'backfilled' })
     migrateMocks.countUnencrypted.mockResolvedValueOnce(7)
@@ -266,7 +338,7 @@ describe('encrypt drop — EQL version awareness', () => {
   })
 
   it('v3: gates coverage on the RESOLVED encrypted column name', async () => {
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(V3_CUSTOM_INFO)
+    lifecycleMock.mockResolvedValue(resolved(V3_CUSTOM_INFO, 'hint'))
     migrateMocks.progress.mockResolvedValueOnce({ phase: 'backfilled' })
 
     await dropCommand({ table: 'users', column: 'email' })
@@ -279,6 +351,54 @@ describe('encrypt drop — EQL version awareness', () => {
     )
     const sql = writeFileMock.mock.calls[0]?.[1] as string
     expect(sql).toContain('DROP COLUMN "email"')
+  })
+
+  it("v3: refuses a by-elimination ('sole') match — uniqueness cannot prove the pairing", async () => {
+    // The table's ONE EQL column may encrypt a DIFFERENT field; gating
+    // coverage on it and dropping `email` could destroy the only copy.
+    lifecycleMock.mockResolvedValue(
+      resolved(
+        { column: 'secret_blob', domain: 'eql_v3_text_search', version: 3 },
+        'sole',
+      ),
+    )
+    // No progress stub: the sole-match guard fires before the phase gate
+    // ever consults cs_migrations. (Queuing an unconsumed
+    // mockResolvedValueOnce here would leak into the next test.)
+    const exitSpy = spyExit()
+
+    await dropCommand({ table: 'users', column: 'email' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('nothing confirms it encrypts "email"'),
+    )
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('--encrypted-column secret_blob'),
+    )
+    expect(migrateMocks.countUnencrypted).not.toHaveBeenCalled()
+    expect(writeFileMock).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
+  })
+
+  it('fails closed when EQL columns exist but none is identifiable', async () => {
+    lifecycleMock.mockResolvedValue({
+      info: null,
+      candidates: [
+        { column: 'a_enc', domain: 'eql_v3_text_eq', version: 3 },
+        { column: 'b_enc', domain: 'eql_v3_text_eq', version: 3 },
+      ],
+    })
+    const exitSpy = spyExit()
+
+    await dropCommand({ table: 'users', column: 'email' })
+
+    expect(p.log.error).toHaveBeenCalledWith(
+      expect.stringContaining('Cannot identify which encrypted column'),
+    )
+    expect(writeFileMock).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    exitSpy.mockRestore()
   })
 
   it('v3: rejects when not yet backfilled', async () => {
@@ -296,7 +416,24 @@ describe('encrypt drop — EQL version awareness', () => {
   })
 
   it('v2: unchanged — requires cut-over, no coverage gate, drops <col>_plaintext (regression pin)', async () => {
-    migrateMocks.resolveEncryptedColumn.mockResolvedValue(V2_INFO)
+    lifecycleMock.mockResolvedValue(resolved(V2_INFO))
+    migrateMocks.progress.mockResolvedValueOnce({ phase: 'cut-over' })
+
+    await dropCommand({ table: 'users', column: 'email' })
+
+    const sql = writeFileMock.mock.calls[0]?.[1] as string
+    expect(sql).toContain('DROP COLUMN "email_plaintext"')
+    expect(migrateMocks.countUnencrypted).not.toHaveBeenCalled()
+  })
+
+  it('v2 post-cutover: `email` itself carrying the v2 domain is NOT ambiguity — proceeds down the v2 path', async () => {
+    // After cutover renamed the ciphertext onto `email`, no counterpart is
+    // resolvable BY DESIGN. The fail-closed guard must recognize this state
+    // rather than blocking the one drop the lifecycle actually wants.
+    lifecycleMock.mockResolvedValue({
+      info: null,
+      candidates: [{ column: 'email', domain: 'eql_v2_encrypted', version: 2 }],
+    })
     migrateMocks.progress.mockResolvedValueOnce({ phase: 'cut-over' })
 
     await dropCommand({ table: 'users', column: 'email' })

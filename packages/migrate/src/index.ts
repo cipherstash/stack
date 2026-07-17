@@ -75,7 +75,10 @@ export {
   classifyEqlDomain,
   detectColumnEqlVersion,
   type EncryptedColumnInfo,
+  type EncryptedColumnResolution,
   type EqlVersion,
   listEncryptedColumns,
+  pickEncryptedColumn,
+  type ResolvedEncryptedColumn,
   resolveEncryptedColumn,
 } from './version.js'

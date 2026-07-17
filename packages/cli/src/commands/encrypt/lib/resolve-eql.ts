@@ -1,22 +1,26 @@
 import {
   type EncryptedColumnInfo,
   listEncryptedColumns,
+  pickEncryptedColumn,
+  type ResolvedEncryptedColumn,
   readManifest,
-  resolveEncryptedColumn,
 } from '@cipherstash/migrate'
 import type pg from 'pg'
 
 /**
  * The resolved encryption lifecycle for one plaintext column: which column
- * carries the ciphertext, and which EQL generation its domain type declares.
+ * carries the ciphertext, which EQL generation its domain type declares,
+ * and which rule identified it (`info.via` — destructive commands must not
+ * act on a `'sole'` match; see {@link pickEncryptedColumn}).
  */
 export interface ResolvedLifecycle {
   /** The encrypted counterpart, or `null` when none could be identified. */
-  info: EncryptedColumnInfo | null
+  info: ResolvedEncryptedColumn | null
   /**
-   * Every EQL-domain column on the table — non-empty when resolution failed
-   * because several candidates exist and none is identifiable. Lets the
-   * caller name them instead of erroring blind.
+   * Every EQL-domain column on the table, always populated (it's the same
+   * catalog read resolution picks from). When `info` is `null` and this is
+   * non-empty, resolution failed because none of these candidates is
+   * identifiable — callers name them instead of erroring blind.
    */
   candidates: EncryptedColumnInfo[]
 }
@@ -31,28 +35,61 @@ export interface ResolvedLifecycle {
  *    backfill`, including any `--encrypted-column` override) — used as a
  *    HINT and still validated against the actual domain type.
  * 2. The `<column>_encrypted` convention, validated the same way.
- * 3. The table's sole EQL-domain column, if there is exactly one.
+ * 3. The table's sole EQL-domain column, if there is exactly one — flagged
+ *    `via: 'sole'` because uniqueness cannot prove the pairing.
  *
- * The VERSION always comes from the domain type — the manifest's cached
- * `eqlVersion` is for display paths that have no DB connection.
+ * The VERSION always comes from the domain type. This deliberately diverges
+ * from `encrypt status`, which falls back to the manifest's cached
+ * `eqlVersion`: status may run without DB access, whereas the lifecycle
+ * commands always hold a connection, so live truth wins here.
+ *
+ * A missing manifest is fine (`readManifest` returns `null` on ENOENT) but
+ * any other manifest failure — malformed JSON, schema mismatch, permissions
+ * — propagates: the callers are destructive commands, and silently losing
+ * the recorded column hint must not let them fall through to a guess.
  */
 export async function resolveColumnLifecycle(
   client: pg.ClientBase,
   table: string,
   column: string,
 ): Promise<ResolvedLifecycle> {
-  const manifest = await readManifest().catch(() => null)
+  const manifest = await readManifest()
   const hint = manifest?.tables[table]?.find(
     (entry) => entry.column === column,
   )?.encryptedColumn
 
-  let info = hint
-    ? await resolveEncryptedColumn(client, table, column, hint)
-    : null
+  const candidates = await listEncryptedColumns(client, table)
+  let info = hint ? pickEncryptedColumn(candidates, column, hint) : null
   // A stale hint (column since renamed/retyped) must not mask a resolvable
   // counterpart — fall back to convention + sole-EQL-column resolution.
-  if (!info) info = await resolveEncryptedColumn(client, table, column)
-  if (info) return { info, candidates: [] }
+  if (!info) info = pickEncryptedColumn(candidates, column)
+  return { info, candidates }
+}
 
-  return { info: null, candidates: await listEncryptedColumns(client, table) }
+/**
+ * Explain a failed resolution (`info === null`) to the user, or return
+ * `null` when the failure is fine to fall through to the v2 lifecycle:
+ *
+ * - No EQL columns at all → the v2 phase/config preconditions produce the
+ *   accurate error ("not backfilled", "no pending config", …).
+ * - The plaintext column ITSELF carries the v2 domain → the normal
+ *   post-cutover v2 state (`<col>` was renamed onto the ciphertext), where
+ *   "no counterpart" is expected, not a problem.
+ *
+ * Anything else means EQL columns exist but none is identifiable — the
+ * caller must fail closed with this message rather than guess a lifecycle.
+ */
+export function explainUnresolved(
+  table: string,
+  column: string,
+  candidates: readonly EncryptedColumnInfo[],
+): string | null {
+  if (candidates.length === 0) return null
+  if (candidates.some((c) => c.column === column && c.version === 2)) {
+    return null
+  }
+  const listed = candidates
+    .map((c) => `  - ${c.column} (${c.domain})`)
+    .join('\n')
+  return `Cannot identify which encrypted column corresponds to ${table}.${column}. EQL columns on ${table}:\n${listed}\nRecord the pairing and retry: re-run \`stash encrypt backfill --table ${table} --column ${column} --encrypted-column <name>\` (which writes it to the manifest), or set "encryptedColumn" for this column in .cipherstash/migrations.json.`
 }

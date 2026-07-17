@@ -12,7 +12,7 @@ import { detectDrizzle } from '@/commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { scaffoldDrizzleMigration } from './drizzle-helper.js'
-import { resolveColumnLifecycle } from './lib/resolve-eql.js'
+import { explainUnresolved, resolveColumnLifecycle } from './lib/resolve-eql.js'
 
 /**
  * Options accepted by `stash encrypt cutover`. Swaps the plaintext and
@@ -70,15 +70,39 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     // DOMAIN TYPES (manifest name as a hint; the `<col>_encrypted` naming is
     // a convention, never relied upon) before any phase/config checks so v3
     // users get the real answer, not a confusing precondition error.
-    const { info } = await resolveColumnLifecycle(
+    const { info, candidates } = await resolveColumnLifecycle(
       client,
       options.table,
       options.column,
     )
+    // Fail closed on ambiguity: `info === null` with EQL columns present
+    // means we can't tell WHICH lifecycle applies — running the v2 config
+    // machine against (possibly) v3 columns would only produce a misleading
+    // downstream error. (No EQL columns at all, or the post-cutover v2
+    // same-name state, still falls through to the v2 preconditions below.)
+    const unresolved = explainUnresolved(
+      options.table,
+      options.column,
+      candidates,
+    )
+    if (!info && unresolved) {
+      p.log.error(unresolved)
+      exitCode = 1
+      return
+    }
     const state = await progress(client, options.table, options.column)
 
     if (info?.version === 3) {
       const encryptedColumn = info.column
+      if (state?.phase === 'dropped') {
+        // Terminal phase — the lifecycle already finished. Not an error and
+        // not "finish the backfill": there is nothing left to backfill.
+        p.log.info(
+          `${options.table}.${options.column} has already completed the EQL v3 lifecycle (plaintext dropped). Nothing to cut over.`,
+        )
+        p.outro('Nothing to do for EQL v3.')
+        return
+      }
       if (state?.phase !== 'backfilled') {
         // Not a "nothing to do" — the user isn't ready for ANY next step
         // yet. Exit 1 so scripted pipelines gating on cutover don't read

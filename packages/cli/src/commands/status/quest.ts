@@ -70,15 +70,18 @@ export interface ColumnObservation {
   /** From `eql_v2_configuration`. `null` means not registered. `undefined`
    *  means DB unreachable. */
   eql?: EqlColumnSummary | null
-  /** Whether `<column>_encrypted` exists in `information_schema.columns`.
-   *  Used as a fallback signal that schema-add has been applied even if
+  /** Whether the encrypted counterpart (the manifest's recorded
+   *  `encryptedColumn`, falling back to the `<column>_encrypted`
+   *  convention) exists in `information_schema.columns`. Used as a
+   *  fallback signal that schema-add has been applied even if
    *  cs_migrations doesn't yet track this column. `undefined` when the
    *  caller can't tell. */
   physicalEncryptedTwinExists?: boolean
-  /** The column's EQL generation, from the manifest's cached `eqlVersion`.
-   *  v3 has a 4-objective ladder (no cut-over rename — the app switches to
-   *  the encrypted column by name). `undefined` (unknown / pre-v3 manifest)
-   *  renders the v2 ladder. */
+  /** The column's EQL generation — from the encrypted column's domain type
+   *  when the DB is reachable (self-describing), else the manifest's cached
+   *  `eqlVersion`. v3 has a 4-objective ladder (no cut-over rename — the
+   *  app switches to the encrypted column by name). `undefined` (unknown /
+   *  pre-v3 manifest) renders the v2 ladder. */
   eqlVersion?: 2 | 3
 }
 

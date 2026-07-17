@@ -294,6 +294,9 @@ describe.skipIf(!runIntegration)(
       )
       expect(info?.column).toBe('secret_blob')
       expect(info?.version).toBe(3)
+      // By-elimination provenance: display paths may use this match, but
+      // `encrypt drop` refuses it — uniqueness cannot prove the pairing.
+      expect(info?.via).toBe('sole')
     })
   },
 )

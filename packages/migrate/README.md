@@ -8,7 +8,7 @@ Backs the `stash encrypt` CLI command group, but also exported for direct use �
 
 Each column walks through these phases — the ladder depends on the column's EQL version (auto-detected from its Postgres domain type via `detectColumnEqlVersion`):
 
-```
+```text
 EQL v2: schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
 EQL v3: schema-added → dual-writing → backfilling → backfilled ————————————→ dropped
 ```

@@ -130,40 +130,71 @@ export async function listEncryptedColumns(
 }
 
 /**
- * Find the encrypted counterpart of a plaintext column, trusting the domain
- * types over any naming convention:
+ * Which rule identified the encrypted counterpart. Callers gate on this:
+ * `hint` and `convention` positively assert the plaintext↔ciphertext
+ * pairing; `sole` only proves the column is the table's ONE EQL column —
+ * it may encrypt a *different* field, so irreversible operations (dropping
+ * the plaintext) must not act on it without explicit confirmation.
+ */
+export type EncryptedColumnResolution = 'hint' | 'convention' | 'sole'
+
+/** An {@link EncryptedColumnInfo} plus how it was identified. */
+export interface ResolvedEncryptedColumn extends EncryptedColumnInfo {
+  via: EncryptedColumnResolution
+}
+
+/**
+ * Pick the encrypted counterpart of a plaintext column from an already
+ * fetched candidate list (see {@link listEncryptedColumns}), trusting the
+ * domain types over any naming convention:
  *
  * 1. An explicit `hint` (from `--encrypted-column` or the manifest's recorded
  *    `encryptedColumn`) wins — but only if that column really carries an EQL
- *    domain.
+ *    domain (`via: 'hint'`).
  * 2. Otherwise the `<column>_encrypted` CONVENTION is tried — again validated
- *    against the domain type, never assumed.
+ *    against the domain type, never assumed (`via: 'convention'`).
  * 3. Otherwise, if the table has exactly ONE EQL-domain column, that's the
- *    one — the self-describing types make the convention unnecessary.
+ *    best guess (`via: 'sole'`) — the self-describing types make the
+ *    convention unnecessary, but uniqueness alone cannot prove the pairing;
+ *    check `via` before doing anything destructive.
  *
- * Returns `null` when nothing matches or when several EQL columns exist and
- * none is identifiable (ambiguous — the caller should ask the user, listing
- * `listEncryptedColumns` output).
+ * Pure — callers with several lookups against the same table fetch the
+ * candidates once and pick repeatedly. Returns `null` when nothing matches
+ * or when several EQL columns exist and none is identifiable (ambiguous —
+ * the caller should ask the user, listing the candidates).
+ */
+export function pickEncryptedColumn(
+  candidates: readonly EncryptedColumnInfo[],
+  plaintextColumn: string,
+  hint?: string,
+): ResolvedEncryptedColumn | null {
+  if (candidates.length === 0) return null
+
+  if (hint) {
+    const hinted = candidates.find((c) => c.column === hint)
+    return hinted ? { ...hinted, via: 'hint' } : null
+  }
+
+  const conventional = candidates.find(
+    (c) => c.column === `${plaintextColumn}_encrypted`,
+  )
+  if (conventional) return { ...conventional, via: 'convention' }
+
+  // The plaintext column itself can't be its own encrypted counterpart.
+  const others = candidates.filter((c) => c.column !== plaintextColumn)
+  return others.length === 1 && others[0] ? { ...others[0], via: 'sole' } : null
+}
+
+/**
+ * {@link pickEncryptedColumn} over a live catalog read — fetches the
+ * table's EQL-domain columns and picks from them.
  */
 export async function resolveEncryptedColumn(
   client: ClientBase,
   tableName: string,
   plaintextColumn: string,
   hint?: string,
-): Promise<EncryptedColumnInfo | null> {
+): Promise<ResolvedEncryptedColumn | null> {
   const candidates = await listEncryptedColumns(client, tableName)
-  if (candidates.length === 0) return null
-
-  if (hint) {
-    return candidates.find((c) => c.column === hint) ?? null
-  }
-
-  const conventional = candidates.find(
-    (c) => c.column === `${plaintextColumn}_encrypted`,
-  )
-  if (conventional) return conventional
-
-  // The plaintext column itself can't be its own encrypted counterpart.
-  const others = candidates.filter((c) => c.column !== plaintextColumn)
-  return others.length === 1 ? (others[0] ?? null) : null
+  return pickEncryptedColumn(candidates, plaintextColumn, hint)
 }

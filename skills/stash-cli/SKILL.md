@@ -469,7 +469,7 @@ stash encrypt cutover --table users --column email
 In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape.
 
 > **After cutover, `<col>` holds ciphertext — the read path is not automatic.** Wire reads through the encryption client (`decryptModel(row, table)` for Drizzle, the `encryptedSupabaseV3` wrapper for Supabase — `encryptedSupabase` on the legacy v2 surface, otherwise `decrypt` / `bulkDecryptModels`) before returning values to callers. Skip this and your read paths hand raw EQL payloads to end users. The integration skill has the exact API. **CipherStash Proxy is the one exception** — it decrypts on the wire, so Proxy users need no application change. The cutover plan written by `stash plan` includes this read-path switch as an explicit step.
-
+>
 > **Known gap (v2).** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. (EQL v3 columns sidestep this entirely — no configuration table, no cutover; see above.) Tracked in [issue #585](https://github.com/cipherstash/stack/issues/585).
 
 Flags: `--table`, `--column`, `--proxy-url <url>`, `--migrations-dir <path>`.
