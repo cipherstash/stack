@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { type Manifest, readManifest } from '@cipherstash/migrate'
+import {
+  classifyEqlDomain,
+  type Manifest,
+  readManifest,
+} from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
 import {
@@ -31,13 +35,28 @@ import {
  *  timeout (~75s on most platforms). */
 const CONNECT_TIMEOUT_MS = 2_000
 
-function manifestColumns(
-  manifest: Manifest,
-): { table: string; column: string }[] {
-  const out: { table: string; column: string }[] = []
+interface ManifestColumn {
+  table: string
+  column: string
+  eqlVersion?: 2 | 3
+  encryptedColumn?: string
+}
+
+function manifestColumns(manifest: Manifest): ManifestColumn[] {
+  const out: ManifestColumn[] = []
   for (const [table, cols] of Object.entries(manifest.tables)) {
     for (const col of cols) {
-      out.push({ table, column: col.column })
+      out.push({
+        table,
+        column: col.column,
+        // Cached hints only — when the DB is reachable, the encrypted
+        // column's domain type wins (see gatherObservations); these cover
+        // the DB-unreachable render.
+        ...(col.eqlVersion ? { eqlVersion: col.eqlVersion } : {}),
+        ...(col.encryptedColumn
+          ? { encryptedColumn: col.encryptedColumn }
+          : {}),
+      })
     }
   }
   return out
@@ -112,14 +131,23 @@ export async function gatherObservations(
       const key: `${string}.${string}` = `${c.table}.${c.column}`
       const phaseRow = phases.get(key)
       const eqlInfo = eqlConfig.get(key)
+      // Version resolution mirrors `encrypt status` (renderRow): the
+      // encrypted column's DOMAIN TYPE is self-describing and wins; the
+      // manifest's cached eqlVersion covers the window where the physical
+      // column isn't visible. The recorded encryptedColumn is preferred
+      // over the `<col>_encrypted` naming convention.
+      const cols = physicalCols.get(c.table)
+      const encryptedName = c.encryptedColumn ?? `${c.column}_encrypted`
+      const domain = cols?.get(encryptedName)
+      const eqlVersion =
+        (domain ? classifyEqlDomain(domain) : null) ?? c.eqlVersion
       return {
         table: c.table,
         column: c.column,
+        ...(eqlVersion ? { eqlVersion } : {}),
         phase: phaseRow ? phaseRow.phase : null,
         eql: eqlInfo ? { state: eqlInfo.state } : null,
-        physicalEncryptedTwinExists: (
-          physicalCols.get(c.table) ?? new Set()
-        ).has(`${c.column}_encrypted`),
+        physicalEncryptedTwinExists: cols?.has(encryptedName) ?? false,
       }
     })
 

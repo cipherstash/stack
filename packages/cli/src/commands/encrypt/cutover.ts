@@ -12,6 +12,7 @@ import { detectDrizzle } from '@/commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { scaffoldDrizzleMigration } from './drizzle-helper.js'
+import { explainUnresolved, resolveColumnLifecycle } from './lib/resolve-eql.js'
 
 /**
  * Options accepted by `stash encrypt cutover`. Swaps the plaintext and
@@ -62,10 +63,81 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
   try {
     await client.connect()
 
+    // Cut-over is an EQL v2 concept: v2 hides the swap behind
+    // `eql_v2.rename_encrypted_columns()` + a Proxy config promotion. A v3
+    // column has neither — the application switches to the encrypted column
+    // BY NAME, and the plaintext column is dropped later. Resolve from the
+    // DOMAIN TYPES (manifest name as a hint; the `<col>_encrypted` naming is
+    // a convention, never relied upon) before any phase/config checks so v3
+    // users get the real answer, not a confusing precondition error.
+    const { info, candidates } = await resolveColumnLifecycle(
+      client,
+      options.table,
+      options.column,
+    )
+    // Fail closed on ambiguity: `info === null` with EQL columns present
+    // means we can't tell WHICH lifecycle applies — running the v2 config
+    // machine against (possibly) v3 columns would only produce a misleading
+    // downstream error. (No EQL columns at all, or the post-cutover v2
+    // same-name state, still falls through to the v2 preconditions below.)
+    const unresolved = explainUnresolved(
+      options.table,
+      options.column,
+      candidates,
+    )
+    if (!info && unresolved) {
+      p.log.error(unresolved)
+      exitCode = 1
+      return
+    }
     const state = await progress(client, options.table, options.column)
+
+    if (info?.version === 3) {
+      const encryptedColumn = info.column
+      if (state?.phase === 'dropped') {
+        // Terminal phase — the lifecycle already finished. Not an error and
+        // not "finish the backfill": there is nothing left to backfill.
+        p.log.info(
+          `${options.table}.${options.column} has already completed the EQL v3 lifecycle (plaintext dropped). Nothing to cut over.`,
+        )
+        p.outro('Nothing to do for EQL v3.')
+        return
+      }
+      if (state?.phase !== 'backfilled') {
+        // Not a "nothing to do" — the user isn't ready for ANY next step
+        // yet. Exit 1 so scripted pipelines gating on cutover don't read
+        // an incomplete backfill as success.
+        p.log.error(
+          `Cut-over is not applicable to EQL v3 columns, and ${options.table}.${options.column} hasn't finished backfilling (phase '${state?.phase ?? '—'}'). Finish the backfill first:\n  stash encrypt backfill --table ${options.table} --column ${options.column}`,
+        )
+        exitCode = 1
+        return
+      }
+      p.log.info(
+        `Cut-over is not applicable to EQL v3 columns. ${options.table}.${encryptedColumn} is EQL v3 (${info.domain}): there is no rename step — point your application at ${encryptedColumn} (update your schema/queries), verify reads, then generate the plaintext drop with:\n  stash encrypt drop --table ${options.table} --column ${options.column}`,
+      )
+      p.outro('Nothing to do for EQL v3.')
+      return
+    }
+
     if (state?.phase !== 'backfilled') {
       p.log.error(
         `Cannot cut over: ${options.table}.${options.column} is in phase '${state?.phase ?? '—'}'. Must be 'backfilled'.`,
+      )
+      exitCode = 1
+      return
+    }
+
+    // Guard the v2 config machinery's existence before querying it: on a
+    // v3-only database (v3 is the default install) there is no
+    // `eql_v2_configuration` relation, and an unguarded query surfaces as a
+    // raw "relation does not exist" error instead of an explanation.
+    const configTable = await client.query<{ exists: string | null }>(
+      "SELECT to_regclass('public.eql_v2_configuration')::text AS exists",
+    )
+    if (configTable.rows[0]?.exists == null) {
+      p.log.error(
+        `This database has no EQL v2 configuration table — it looks like an EQL v3-only install. Cut-over only applies to EQL v2 columns; for v3, point your application at the encrypted column by name, then generate the plaintext drop with:\n  stash encrypt drop --table ${options.table} --column ${options.column}`,
       )
       exitCode = 1
       return
@@ -183,8 +255,13 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     exitCode = 1
   } finally {
     await client.end()
+    // In `finally` (not after the try/catch) deliberately: the precondition
+    // guards above `return` from inside `try`, which skips any code placed
+    // after the block — so a trailing `if (exitCode) process.exit(...)`
+    // was unreachable on exactly the failure paths it existed for, and
+    // guard failures exited 0.
+    if (exitCode) process.exit(exitCode)
   }
-  if (exitCode) process.exit(exitCode)
 }
 
 /**

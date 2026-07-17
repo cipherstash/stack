@@ -122,7 +122,7 @@ Commands:
   encrypt status       Show per-column migration status (phase, progress, drift)
   encrypt plan         Diff intent (.cipherstash/migrations.json) vs observed state
   encrypt backfill     Resumably encrypt plaintext into the encrypted column
-  encrypt cutover      Rename swap encrypted → primary column
+  encrypt cutover      Rename swap encrypted → primary column (EQL v2 only)
   encrypt drop         Generate a migration to drop the plaintext column
 
   env                  (experimental) Print production env vars for deployment

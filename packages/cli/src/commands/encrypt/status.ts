@@ -1,4 +1,8 @@
-import { type MigrationPhase, readManifest } from '@cipherstash/migrate'
+import {
+  classifyEqlDomain,
+  type MigrationPhase,
+  readManifest,
+} from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
@@ -64,7 +68,9 @@ export async function statusCommand() {
               intentIndexes: column.indexes,
               state: stateMap.get(key) ?? null,
               eqlColumn: eqlConfig.get(key) ?? null,
-              physicalColumns: physicalCols.get(tableName) ?? new Set(),
+              physicalColumns: physicalCols.get(tableName) ?? new Map(),
+              eqlVersion: column.eqlVersion,
+              encryptedColumn: column.encryptedColumn,
             }),
           )
         }
@@ -86,7 +92,7 @@ export async function statusCommand() {
           intentIndexes: undefined,
           state,
           eqlColumn: eqlConfig.get(key) ?? null,
-          physicalColumns: physicalCols.get(tableName) ?? new Set(),
+          physicalColumns: physicalCols.get(tableName) ?? new Map(),
         }),
       )
     }
@@ -116,13 +122,22 @@ function renderRow(input: {
   tableName: string
   columnName: string
   intentIndexes: string[] | undefined
+  /** From the manifest (recorded at backfill time) — a cached HINT. The
+   * domain type observed in `information_schema` is the source of truth
+   * and wins below: v3 columns have no `eql_v2_configuration` row and no
+   * rename, so the v2 drift flags don't apply. */
+  eqlVersion?: 2 | 3
+  /** The encrypted counterpart's name from the manifest, when recorded.
+   * `<column>_encrypted` is only the conventional fallback. */
+  encryptedColumn?: string
   state: {
     phase: MigrationPhase
     rowsProcessed: number | null
     rowsTotal: number | null
   } | null
   eqlColumn: EqlColumnInfo | null
-  physicalColumns: Set<string>
+  /** Column name → domain type (or null) from `information_schema`. */
+  physicalColumns: ReadonlyMap<string, string | null>
 }): Row {
   const {
     tableName,
@@ -134,7 +149,21 @@ function renderRow(input: {
   } = input
 
   const phase = state?.phase ?? (intentIndexes ? 'schema-added' : '—')
-  const eql = eqlColumn ? eqlColumn.state : '—'
+
+  // Version resolution: the encrypted column's DOMAIN TYPE is
+  // self-describing and wins; the manifest's cached eqlVersion covers the
+  // window where the physical column isn't visible. The manifest's recorded
+  // encryptedColumn is preferred over the naming convention.
+  const encryptedName = input.encryptedColumn ?? `${columnName}_encrypted`
+  const physicalDomain = physicalColumns.get(encryptedName)
+  const physicalVersion = physicalDomain
+    ? classifyEqlDomain(physicalDomain)
+    : null
+  const version = physicalVersion ?? input.eqlVersion ?? null
+
+  // v3 columns have no eql_v2_configuration row by design — show the
+  // version rather than a misleading blank.
+  const eql = eqlColumn ? eqlColumn.state : version === 3 ? 'v3' : '—'
   const indexes = eqlColumn
     ? eqlColumn.indexes.join(', ') || '(none)'
     : intentIndexes?.join(', ') || '—'
@@ -147,12 +176,20 @@ function renderRow(input: {
   // writes covered every row from seeding). Frame per phase.
   const progress = formatProgress(phase, state)
 
+  const isV3 = version === 3
   const flags: string[] = []
-  if (intentIndexes && !eqlColumn) flags.push('not-registered')
-  if (intentIndexes && !physicalColumns.has(`${columnName}_encrypted`)) {
+  // v2-only drift flags: a v3 column is never registered in
+  // `eql_v2_configuration` (no config table exists) and never reaches the
+  // rename that creates `<col>_plaintext`.
+  if (!isV3 && intentIndexes && !eqlColumn) flags.push('not-registered')
+  if (intentIndexes && !physicalColumns.has(encryptedName)) {
     flags.push('encrypted-col-missing')
   }
-  if (phase === 'cut-over' && !physicalColumns.has(`${columnName}_plaintext`)) {
+  if (
+    !isV3 &&
+    phase === 'cut-over' &&
+    !physicalColumns.has(`${columnName}_plaintext`)
+  ) {
     flags.push('plaintext-col-missing')
   }
 

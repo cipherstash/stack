@@ -121,6 +121,29 @@ export async function countUnencrypted(
 }
 
 /**
+ * Count rows whose encrypted column is populated: `encrypted IS NOT NULL`.
+ *
+ * The v3 backfill-verification primitive. EQL v2 verified via
+ * `eql_v2.count_encrypted_with_active_config(...)`, which reads the
+ * `eql_v2_configuration` table — v3 has no configuration table, so the
+ * equivalent check is a plain count of the target column (the concrete
+ * `eql_v3_*` domain's CHECK constraint already guarantees every non-null
+ * value is a valid v3 envelope).
+ */
+export async function countEncrypted(
+  client: ClientBase,
+  tableName: string,
+  encryptedColumn: string,
+): Promise<number> {
+  const enc = quoteIdent(encryptedColumn)
+  const table = qualifyTable(tableName)
+  const result = await client.query<{ count: string }>(
+    `SELECT count(*)::text AS count FROM ${table} WHERE ${enc} IS NOT NULL`,
+  )
+  return Number(result.rows[0]?.count ?? 0)
+}
+
+/**
  * Quote a possibly schema-qualified table name for use in a SQL statement.
  * `"foo"` → `"foo"`; `"public.foo"` → `"public"."foo"`. Use for identifiers
  * that cannot be parameterised.

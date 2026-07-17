@@ -424,7 +424,12 @@ For AI-guided integration that edits your existing schema files in place, prefer
 
 ### Encrypt
 
-The cutover-step toolset: the database-side work that takes an existing plaintext column the rest of the way, **after** the rollout PR is deployed and dual-writes are live. It drives `@cipherstash/migrate`, recording every transition in `cipherstash.cs_migrations` (installed by `eql install`) and reading intent from `.cipherstash/migrations.json`. Internal phase names: `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`.
+The database-side toolset that takes an existing plaintext column the rest of the way, **after** the rollout PR is deployed and dual-writes are live. It drives `@cipherstash/migrate`, recording every transition in `cipherstash.cs_migrations` (installed by `eql install`) and reading intent from `.cipherstash/migrations.json`.
+
+The phase ladder depends on the column's EQL version, which the commands detect from the column's **domain type** (EQL v3 types are self-describing; the `<col>_encrypted` naming is a convention only, never relied upon):
+
+- **EQL v3 (the default):** `schema-added → dual-writing → backfilling → backfilled → dropped`. There is no cut-over — the application switches to the encrypted column by name, then the plaintext column is dropped.
+- **EQL v2:** `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`, where cut-over renames the encrypted twin into the original column name.
 
 #### `encrypt status` / `encrypt plan`
 
@@ -438,6 +443,8 @@ stash encrypt backfill --table users --column email --chunk-size 5000
 ```
 
 Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs converge.
+
+Backfill **auto-detects the target column's EQL version** from its Postgres domain type and records it (plus the version-appropriate target phase) in `.cipherstash/migrations.json`. On an EQL v3 column it finishes by printing the v3 next steps: switch the application to `<col>_encrypted` by name, then `stash encrypt drop` — there is no cut-over.
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
@@ -457,13 +464,13 @@ Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encr
 stash encrypt cutover --table users --column email
 ```
 
-**Preconditions:** the column is in the `backfilled` phase, **and** a pending EQL configuration exists.
+**EQL v2 only** — v3 has no cut-over: the application switches to the encrypted column by name. Running this command on a **backfilled** v3 column reports "not applicable" (exit 0) with the next step; before backfill completes it exits 1 and says to finish the backfill (never "switch now" onto a half-populated column). For v2, the preconditions are: the column is in the `backfilled` phase, **and** a pending EQL configuration exists (on a v3-only database — no `eql_v2_configuration` table — it explains that and exits 1).
 
 In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted` → `<col>`, advances the pending config to `encrypting`, activates it, and appends a `cut_over` event. With a Proxy URL configured (`--proxy-url` or `CIPHERSTASH_PROXY_URL`) it then calls `eql_v2.reload_config()` so Proxy picks up the new shape.
 
 > **After cutover, `<col>` holds ciphertext — the read path is not automatic.** Wire reads through the encryption client (`decryptModel(row, table)` for Drizzle, the `encryptedSupabaseV3` wrapper for Supabase — `encryptedSupabase` on the legacy v2 surface, otherwise `decrypt` / `bulkDecryptModels`) before returning values to callers. Skip this and your read paths hand raw EQL payloads to end users. The integration skill has the exact API. **CipherStash Proxy is the one exception** — it decrypts on the wire, so Proxy users need no application change. The cutover plan written by `stash plan` includes this read-path switch as an explicit step.
-
-> **Known gap.** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. Decoupling this — under EQL v3 there is no configuration table at all — is tracked in [issue #585](https://github.com/cipherstash/stack/issues/585).
+>
+> **Known gap (v2).** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. (EQL v3 columns sidestep this entirely — no configuration table, no cutover; see above.) Tracked in [issue #585](https://github.com/cipherstash/stack/issues/585).
 
 Flags: `--table`, `--column`, `--proxy-url <url>`, `--migrations-dir <path>`.
 
@@ -473,7 +480,7 @@ Flags: `--table`, `--column`, `--proxy-url <url>`, `--migrations-dir <path>`.
 stash encrypt drop --table users --column email
 ```
 
-For columns in the `cut_over` phase. Detects your migration tooling and emits a migration containing `ALTER TABLE <table> DROP COLUMN <col>_plaintext;`. It does **not** apply it — review and run your own migrate command. The `dropped` event is recorded only after a later `encrypt status` confirms the column is gone.
+Version-aware. For **EQL v2** columns in the `cut-over` phase it emits `ALTER TABLE <table> DROP COLUMN <col>_plaintext;` (the post-rename name). For **EQL v3** columns it runs from the `backfilled` phase and drops the ORIGINAL `<col>` — v3 has no rename, so make sure the application reads/writes the encrypted column first. Before generating, the v3 path **verifies live coverage** (refuses if any row still has `<col>` set with the encrypted column NULL — e.g. rows written without dual-writes since the backfill; re-run `encrypt backfill` to fix). Either way it does **not** apply the migration — review and run your own migrate command.
 
 Flags: `--table`, `--column`, `--migrations-dir <path>`.
 

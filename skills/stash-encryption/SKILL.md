@@ -728,7 +728,7 @@ try {
 
 ## Rolling Encryption Out to Production
 
-> **EQL v2 note ([#648](https://github.com/cipherstash/stack/issues/648)).** The backfill/cutover tooling in this section (`stash encrypt *`, `stash db push`, `@cipherstash/migrate`) currently targets **EQL v2 columns** — the `eql_v2_configuration` registry, `eql_v2_encrypted` payload columns, and v2 schemas. v3 support for the rollout lifecycle is tracked in [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648). The *process* below — rollout, deploy gate, cutover — is the model to follow either way; every `eql_v2`-named artifact it mentions is part of that v2-targeting tooling.
+> **EQL version note.** The rollout tooling (`stash encrypt *`, `@cipherstash/migrate`) works with **both EQL versions** and auto-detects the column's version from its Postgres domain type — no flag. The lifecycles differ at the end: **v2** finishes with `stash encrypt cutover` (a rename swap plus a config promotion in `eql_v2_configuration`), then drops `<col>_plaintext`. **v3 has no cut-over and no configuration table** — after backfill you point the application at `<col>_encrypted` *by name*, verify reads, then `stash encrypt drop` generates the drop of the original plaintext `<col>`. Running `encrypt cutover` on a v3 column safely reports "not applicable" with the next step. `stash db push`/`db activate` remain v2-only (they manage `eql_v2_configuration`).
 
 Adding a fresh encrypted column to a table you don't yet write to is the easy case — declare it in the schema, run the migration, start writing. The harder case is taking an **existing plaintext column with live data** and turning it into an encrypted one without dropping a write or returning the wrong value mid-cutover.
 
@@ -796,11 +796,11 @@ Three sources of truth, kept separate on purpose:
 
 `stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing). `stash status` (the quest log) rolls them up into the per-column "what's the next move" view used during a rollout.
 
-> **Note on internal phase names.** The runtime event log uses `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped` as machine-readable phase names. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then cutover, with a deploy gate in between."
+> **Note on internal phase names.** The runtime event log uses machine-readable phase names that depend on the column's EQL version: v3 (the default) runs `schema-added → dual-writing → backfilling → backfilled → dropped` (no cut-over — the app switches to the encrypted column by name), while v2 runs `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then switch reads to encrypted, with a deploy gate in between."
 
 ### CLI sequence for a single column
 
-> **Known limitation:** `stash encrypt cutover` currently requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked separately.
+> **Known limitation (v2):** `stash encrypt cutover` requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked separately. (EQL v3 columns never hit this — cutover doesn't apply to them.)
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.
@@ -912,7 +912,7 @@ await runBackfill({
 })
 ```
 
-Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner. (Like the CLI, `runBackfill` currently targets EQL v2 columns — see the note at the top of this section.)
+Useful when the backfill needs to run in a worker, on a schedule, or alongside an existing job runner. `runBackfill` is version-agnostic — for an EQL v3 column pass an `EncryptionV3` client (from `@cipherstash/stack/v3`) and it writes v3 envelopes straight into the concrete `eql_v3_*` domain column.
 
 ### Invariants the rollout preserves
 

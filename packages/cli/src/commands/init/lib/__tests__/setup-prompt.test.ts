@@ -38,12 +38,16 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     expect(out).toContain('### Converting in place is not supported')
   })
 
-  it('frames the migrate-existing flow as encryption rollout + cutover with a deploy gate', () => {
+  it('frames the migrate-existing flow as rollout + backfill-and-switch with a deploy gate', () => {
     // The whole point of the rewrite. No "phase" jargon; explicit deploy
-    // gate banner; rollout vs cutover named sections.
+    // gate banner; named sections. The switch step is EQL-version-aware:
+    // v3 (the default) has no rename — the app points at the encrypted
+    // column by name; cutover is the v2 rename path.
     const out = renderSetupPrompt(baseCtx)
     expect(out).toMatch(/encryption rollout/i)
-    expect(out).toMatch(/encryption cutover/i)
+    expect(out).toMatch(/backfill and switch/i)
+    expect(out).toMatch(/EQL v3 \(the default\)/)
+    expect(out).toMatch(/encrypt cutover/)
     expect(out).toMatch(/deploy gate/i)
     expect(out).not.toMatch(/phase 1|phase 2|four-deploy/i)
   })
