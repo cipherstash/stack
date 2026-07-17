@@ -1,4 +1,11 @@
 
+## [0.41.0] - 2026-07-17
+
+
+### Miscellaneous
+
+- update Cargo.toml dependencies
+
 ## [0.40.0] - 2026-07-09
 
 
