@@ -545,10 +545,15 @@ export const registry: CommandGroup[] = [
           'admin keys) and is shown exactly once — pipe the output into your',
           'deployment secret store. Creating access keys requires your user to',
           'have the admin role in the workspace.',
+          '',
+          'Stdout carries only the dotenv block (or the --json events);',
+          'progress UI goes to stderr, so `stash env --name x > prod.env`',
+          'and pipes into secret stores are safe.',
         ].join('\n'),
         examples: [
           'env --name my-app-prod',
           'env --name my-app-prod --write',
+          'env --name staging --write .env.staging.local',
           'env --name edge-dev --json',
         ],
         flags: [
@@ -560,13 +565,14 @@ export const registry: CommandGroup[] = [
           },
           {
             name: '--write',
+            value: '[path]',
             description:
-              'Write the vars to .env.production.local (mode 0600) instead of printing them.',
+              'Write the vars to a file (default .env.production.local, mode 0600) instead of printing them. An existing file prompts before overwriting — and is refused non-interactively — before anything is minted.',
           },
           {
             name: '--json',
             description:
-              'Emit a single machine-readable JSON object (or a { status: "error" } envelope) instead of a dotenv block. Implies no prompts.',
+              'Emit machine-readable NDJSON (a { status: "minted" } object, or { status: "written" } with --write — deliberately secret-free since the secrets are in the file; failures are { status: "error" }). Implies no prompts.',
           },
         ],
       },

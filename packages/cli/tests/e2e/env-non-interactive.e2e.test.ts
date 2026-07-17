@@ -3,11 +3,12 @@ import { messages } from '../../src/messages.js'
 import { runPiped } from '../helpers/spawn-piped.js'
 
 /**
- * Non-interactive `stash env`. Only the missing-name failure is exercised:
- * the command resolves the credential name BEFORE loading the device profile
- * or touching the network, so these cases are deterministic, credential-free,
- * and — critically — can never mint real keys on a developer machine that
- * happens to have a live `~/.cipherstash` session.
+ * Non-interactive `stash env`. Only the pre-mint argv failures are exercised:
+ * the command resolves the credential name (and any argv problems) BEFORE
+ * loading the device profile or touching the network, so these cases are
+ * deterministic, credential-free, and — critically — can never mint real
+ * keys on a developer machine that happens to have a live `~/.cipherstash`
+ * session.
  *
  * The happy path (real CTS + ZeroKMS calls) is covered by unit tests with a
  * stubbed fetch; minting live credentials from CI is deliberately not done.
@@ -27,14 +28,17 @@ function firstJsonLine(stdout: string): Record<string, unknown> | undefined {
   return undefined
 }
 
-describe('stash env — non-interactive name resolution', () => {
+describe('stash env — non-interactive argv resolution', () => {
   it('exits 1 (no hang, no mint) in a non-TTY context with no --name', async () => {
     const r = await runPiped(['env'], { timeoutMs: 8000 })
     expect(r.timedOut).toBe(false)
     expect(r.exitCode).toBe(1)
-    expect(r.stdout + r.stderr).toContain(messages.env.missingName)
+    expect(r.stderr).toContain(messages.env.missingName)
     // The actionable fix is named.
-    expect(r.stdout + r.stderr).toContain('--name')
+    expect(r.stderr).toContain('--name')
+    // Stdout is reserved for the dotenv block / JSON events — human error
+    // chrome must land on stderr so `stash env > file` can't capture it.
+    expect(r.stdout).not.toContain(messages.env.missingName)
   })
 
   it('--json with no --name emits a JSON missing_name error and exits 1', async () => {
@@ -43,5 +47,24 @@ describe('stash env — non-interactive name resolution', () => {
     expect(r.exitCode).toBe(1)
     const payload = firstJsonLine(r.stdout)
     expect(payload).toMatchObject({ status: 'error', code: 'missing_name' })
+  })
+
+  it('a valueless --name gets its own diagnostic, not missing_name', async () => {
+    const r = await runPiped(['env', '--name', '--json'], { timeoutMs: 8000 })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(1)
+    const payload = firstJsonLine(r.stdout)
+    expect(payload).toMatchObject({
+      status: 'error',
+      code: 'name_requires_value',
+    })
+  })
+
+  it('a stray positional is rejected with did-you-mean guidance', async () => {
+    const r = await runPiped(['env', 'my-app-prod'], { timeoutMs: 8000 })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(1)
+    expect(r.stderr).toContain(messages.env.unexpectedArgument)
+    expect(r.stderr).toContain('--name my-app-prod')
   })
 })

@@ -533,9 +533,17 @@ async function dispatch(
       break
     case 'env':
       await envCommand({
-        write: flags.write,
+        // parseArgs puts `--write path/x` in values and bare `--write` in
+        // flags — accept both so a path after --write targets that file
+        // instead of silently printing secrets to stdout.
+        write: values.write ?? flags.write,
         json: flags.json,
         name: values.name,
+        // `--name` followed by another flag (or nothing) is booleanised by
+        // parseArgs; surface it as its own error instead of missing_name.
+        nameMissingValue: flags.name === true,
+        // `stash env my-app` would otherwise vanish into `subcommand`.
+        unexpectedArg: subcommand ?? commandArgs[0],
       })
       break
     case 'manifest':

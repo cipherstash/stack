@@ -9,6 +9,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
 
 // env/index.ts imports the native `@cipherstash/auth` binary — replace it
@@ -47,11 +48,19 @@ vi.mock('../../init/utils.js', () => ({
 
 const { envCommand } = await import('../index.js')
 
-/** Sentinel thrown by the stubbed `process.exit` so tests can assert on it. */
-class ExitSignal extends Error {
-  constructor(readonly code: number | undefined) {
-    super(`exit ${code}`)
+/** Run envCommand and return the CliExit it threw (fails if it didn't). */
+async function expectExit(
+  promise: Promise<void>,
+  code: number,
+): Promise<CliExit> {
+  try {
+    await promise
+  } catch (err) {
+    expect(err).toBeInstanceOf(CliExit)
+    expect((err as CliExit).code).toBe(code)
+    return err as CliExit
   }
+  throw new Error(`expected CliExit(${code}), but the command returned`)
 }
 
 /** A happy-path device session: fromProfile → getToken → token data. */
@@ -136,13 +145,9 @@ function stubFetch(
   return fetchSpy
 }
 
-let exitSpy: ReturnType<typeof vi.spyOn>
 let logSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitSignal(code)
-  }) as never)
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 })
 
@@ -158,21 +163,44 @@ function stdout(): string {
   return logSpy.mock.calls.map((c) => c.join(' ')).join('\n')
 }
 
-describe('envCommand — name resolution', () => {
+/** The most recent p.log.error message (first arg; second is the stderr chrome opts). */
+function lastError(): string {
+  return String(clack.log.error.mock.calls.at(-1)?.[0])
+}
+
+describe('envCommand — pre-mint argv failures (all credential-free)', () => {
   it('fails non-interactively without --name, before touching the profile', async () => {
-    await expect(envCommand({})).rejects.toThrow(ExitSignal)
-    expect(exitSpy).toHaveBeenCalledWith(1)
+    await expectExit(envCommand({}), 1)
     expect(clack.log.error).toHaveBeenCalledWith(
       expect.stringContaining(messages.env.missingName),
+      expect.anything(),
     )
     // The failure must be reachable with no profile and no network.
     expect(authMock.DeviceSessionStrategy.fromProfile).not.toHaveBeenCalled()
   })
 
   it('emits the error envelope on the --json stream', async () => {
-    await expect(envCommand({ json: true })).rejects.toThrow(ExitSignal)
+    await expectExit(envCommand({ json: true }), 1)
     const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
     expect(event).toMatchObject({ status: 'error', code: 'missing_name' })
+  })
+
+  it('rejects a valueless --name with its own error, not missing_name', async () => {
+    await expectExit(envCommand({ nameMissingValue: true, json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({
+      status: 'error',
+      code: 'name_requires_value',
+    })
+    expect(authMock.DeviceSessionStrategy.fromProfile).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stray positional with did-you-mean guidance', async () => {
+    await expectExit(envCommand({ unexpectedArg: 'my-app-prod' }), 1)
+    const message = lastError()
+    expect(message).toContain(messages.env.unexpectedArgument)
+    expect(message).toContain('--name my-app-prod')
+    expect(authMock.DeviceSessionStrategy.fromProfile).not.toHaveBeenCalled()
   })
 })
 
@@ -192,6 +220,9 @@ describe('envCommand — happy path', () => {
     expect(block).toContain('Do not commit')
     // The bearer token must never reach stdout.
     expect(block).not.toContain('test-bearer-token')
+    // Stdout is pipe-clean: exactly one console.log — the block itself.
+    // (All chrome goes through the mocked clack, which routes to stderr.)
+    expect(logSpy).toHaveBeenCalledTimes(1)
 
     // Ordering contract: client BEFORE access key (partial failure leaves an
     // inert client, never an unaccounted-for live credential).
@@ -200,8 +231,8 @@ describe('envCommand — happy path', () => {
       urls.findIndex((u) => u.includes('/api/access-keys')),
     )
 
-    // Wire details: bearer auth everywhere; role omitted (server defaults to
-    // member); trailing slashes normalised (no `//` in paths).
+    // Wire details: bearer auth everywhere; the member role is pinned in the
+    // request; trailing slashes normalised (no `//` in paths).
     for (const [url, init] of fetchSpy.mock.calls as [string, RequestInit][]) {
       expect((init.headers as Record<string, string>).authorization).toBe(
         'Bearer test-bearer-token',
@@ -212,8 +243,31 @@ describe('envCommand — happy path', () => {
       String(c[0]).includes('/api/access-keys'),
     ) as [string, RequestInit]
     const body = JSON.parse(String(accessKeyCall[1].body))
-    expect(body).toEqual({ keyName: 'my-app-prod', workspaceId: 'WS123' })
-    expect(body).not.toHaveProperty('role')
+    expect(body).toEqual({
+      keyName: 'my-app-prod',
+      workspaceId: 'WS123',
+      role: 'member',
+    })
+  })
+
+  it('routes all chrome to stderr', async () => {
+    stubSession()
+    stubFetch()
+
+    await envCommand({ name: 'my-app-prod' })
+
+    const stderrOpts = { output: process.stderr }
+    expect(clack.intro).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining(stderrOpts),
+    )
+    expect(clack.spinner).toHaveBeenCalledWith(
+      expect.objectContaining(stderrOpts),
+    )
+    expect(clack.outro).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining(stderrOpts),
+    )
   })
 
   it('emits a single minted object in --json mode', async () => {
@@ -242,12 +296,14 @@ describe('envCommand — failure modes', () => {
     })
     stubFetch()
 
-    await expect(envCommand({ name: 'x' })).rejects.toThrow(ExitSignal)
+    await expectExit(envCommand({ name: 'x' }), 1)
     expect(clack.log.error).toHaveBeenCalledWith(
       expect.stringContaining('Not logged in'),
+      expect.anything(),
     )
     expect(clack.log.info).toHaveBeenCalledWith(
       expect.stringContaining('npx stash auth login'),
+      expect.anything(),
     )
   })
 
@@ -255,10 +311,8 @@ describe('envCommand — failure modes', () => {
     stubSession()
     stubFetch({ accessKey: new Response('forbidden', { status: 403 }) })
 
-    await expect(envCommand({ name: 'my-app-prod' })).rejects.toThrow(
-      ExitSignal,
-    )
-    const message = String(clack.log.error.mock.calls.at(-1)?.[0])
+    await expectExit(envCommand({ name: 'my-app-prod' }), 1)
+    const message = lastError()
     expect(message).toContain('admin')
     expect(message).toContain("ZeroKMS client 'my-app-prod'")
   })
@@ -271,8 +325,8 @@ describe('envCommand — failure modes', () => {
       }),
     })
 
-    await expect(envCommand({ name: 'taken' })).rejects.toThrow(ExitSignal)
-    const message = String(clack.log.error.mock.calls.at(-1)?.[0])
+    await expectExit(envCommand({ name: 'taken' }), 1)
+    const message = lastError()
     expect(message).toContain('Duplicate key error')
     expect(message).toContain('--name')
   })
@@ -281,8 +335,64 @@ describe('envCommand — failure modes', () => {
     stubSession({ workspaceId: 'GONE' })
     stubFetch()
 
-    await expect(envCommand({ name: 'x' })).rejects.toThrow(ExitSignal)
-    expect(String(clack.log.error.mock.calls.at(-1)?.[0])).toContain('GONE')
+    await expectExit(envCommand({ name: 'x' }), 1)
+    expect(lastError()).toContain('GONE')
+  })
+})
+
+describe('envCommand — response validation (nothing minted may print undefined)', () => {
+  it('rejects a workspace entry with no region instead of emitting crn:undefined', async () => {
+    stubSession()
+    stubFetch({
+      workspaces: Response.json([{ id: 'WS123', name: 'mine' }]),
+    })
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({
+      status: 'error',
+      code: 'unexpected_response',
+    })
+    expect(String(event.message)).toContain('region')
+  })
+
+  it('rejects an access-key response with no accessKey field', async () => {
+    stubSession()
+    stubFetch({ accessKey: Response.json({ ok: true }, { status: 201 }) })
+
+    await expectExit(envCommand({ name: 'x', json: true }), 1)
+    const event = JSON.parse(logSpy.mock.calls.at(-1)?.[0] as string)
+    expect(event).toMatchObject({
+      status: 'error',
+      code: 'unexpected_response',
+    })
+  })
+
+  it('refuses to transcode non-base64 client key material', async () => {
+    stubSession()
+    stubFetch({
+      client: Response.json({ id: 'c1', client_key: 'not!!valid==' }),
+    })
+
+    await expectExit(envCommand({ name: 'x' }), 1)
+    expect(lastError()).toContain('unexpected encoding')
+  })
+
+  it('refuses to emit an access key whose returned role is not member', async () => {
+    stubSession()
+    stubFetch({
+      accessKey: Response.json(
+        { accessKey: 'CSAKTid.secret', role: 'admin' },
+        { status: 201 },
+      ),
+    })
+
+    await expectExit(envCommand({ name: 'privileged' }), 1)
+    const message = lastError()
+    expect(message).toContain("'admin'")
+    expect(message).toContain("Revoke 'privileged'")
+    // The over-privileged secret itself must not be printed anywhere.
+    expect(stdout()).not.toContain('CSAKTid.secret')
   })
 })
 
@@ -293,10 +403,6 @@ describe('envCommand — --write', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(dir)
   })
   afterEach(() => {
-    // The file is written 0600; ensure cleanup can always delete it.
-    try {
-      chmodSync(join(dir, '.env.production.local'), 0o600)
-    } catch {}
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -314,19 +420,84 @@ describe('envCommand — --write', () => {
     expect(stdout()).not.toContain('CS_CLIENT_ACCESS_KEY')
   })
 
-  it('refuses to overwrite an existing file non-interactively', async () => {
+  it('honours a custom path passed as the --write value', async () => {
     stubSession()
     stubFetch()
+
+    await envCommand({ name: 'staging', write: '.env.staging.local' })
+
+    const target = join(dir, '.env.staging.local')
+    expect(readFileSync(target, 'utf-8')).toContain('CS_CLIENT_ACCESS_KEY=')
+    expect(statSync(target).mode & 0o777).toBe(0o600)
+  })
+
+  it('re-applies 0600 when overwriting an existing permissive file', async () => {
+    stubSession()
+    stubFetch()
+    const target = join(dir, '.env.production.local')
+    writeFileSync(target, 'OLD=1')
+    chmodSync(target, 0o644)
+    tty.isInteractive.mockReturnValue(true)
+    clack.confirm.mockResolvedValue(true)
+
+    await envCommand({ name: 'x', write: true })
+
+    expect(readFileSync(target, 'utf-8')).toContain('CS_CLIENT_ACCESS_KEY=')
+    expect(statSync(target).mode & 0o777).toBe(0o600)
+  })
+
+  it('refuses an existing file non-interactively BEFORE minting anything', async () => {
+    stubSession()
+    const fetchSpy = stubFetch()
     writeFileSync(join(dir, '.env.production.local'), 'existing')
 
-    await expect(envCommand({ name: 'x', write: true })).rejects.toThrow(
-      ExitSignal,
-    )
+    await expectExit(envCommand({ name: 'x', write: true }), 1)
     expect(readFileSync(join(dir, '.env.production.local'), 'utf-8')).toBe(
       'existing',
     )
-    expect(String(clack.log.error.mock.calls.at(-1)?.[0])).toContain(
-      'refusing to overwrite',
+    expect(lastError()).toContain('refusing to overwrite')
+    // The load-bearing bit: the refusal happened with ZERO server state
+    // created — no fetch, no client, no orphaned shown-once access key.
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('declining the interactive overwrite aborts BEFORE minting, exit 0', async () => {
+    stubSession()
+    const fetchSpy = stubFetch()
+    writeFileSync(join(dir, '.env.production.local'), 'existing')
+    tty.isInteractive.mockReturnValue(true)
+    clack.confirm.mockResolvedValue(false)
+
+    await expectExit(envCommand({ name: 'x', write: true }), 0)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(clack.cancel).toHaveBeenCalledWith(
+      expect.stringContaining('nothing was minted'),
+      expect.anything(),
     )
+  })
+
+  it('--json --write writes the file and emits a secret-free confirmation', async () => {
+    stubSession()
+    stubFetch()
+
+    await envCommand({ name: 'edge-dev', write: true, json: true })
+
+    const target = join(dir, '.env.production.local')
+    expect(readFileSync(target, 'utf-8')).toContain(
+      'CS_CLIENT_ACCESS_KEY=CSAKTkeyid.keysecret',
+    )
+    expect(logSpy).toHaveBeenCalledTimes(1)
+    const event = JSON.parse(logSpy.mock.calls[0][0] as string)
+    expect(event).toEqual({
+      status: 'written',
+      path: target,
+      keyName: 'edge-dev',
+      workspaceCrn: 'crn:ap-southeast-2.aws:WS123',
+      clientId: 'client-uuid-1',
+    })
+    // The secrets live in the 0600 file only — never on the JSON stream.
+    const raw = logSpy.mock.calls[0][0] as string
+    expect(raw).not.toContain('CSAKTkeyid.keysecret')
+    expect(raw).not.toContain('00010203')
   })
 })

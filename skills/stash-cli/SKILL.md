@@ -507,7 +507,8 @@ Flags: `--table`, `--column`, `--migrations-dir <path>`.
 ```bash
 stash env --name my-app-prod           # print the four CS_* vars to stdout
 stash env --name my-app-prod --write   # write .env.production.local (mode 0600)
-stash env --name edge-dev --json       # single JSON object, no prompts
+stash env --name staging --write .env.staging.local   # custom target path
+stash env --name edge-dev --json       # NDJSON events, no prompts
 ```
 
 Mints deployment credentials from the local device-code session (`stash auth
@@ -528,20 +529,30 @@ Things to know:
   output straight into your secret store (`supabase secrets set --env-file`,
   `vercel env add`, `wrangler secret put`, …). `CS_CLIENT_KEY` and
   `CS_CLIENT_ACCESS_KEY` are secrets; never commit them.
-- **The key is member-role, always.** The CLI deliberately cannot mint admin
-  keys — use the dashboard for those. *Creating* a key does, however, require
-  your own user to have the admin role in the workspace (403 otherwise).
+- **Stdout is pipe-clean.** Only the dotenv block (or the `--json` events)
+  goes to stdout; progress UI and prompts go to stderr. `stash env --name x
+  > prod.env` and pipes into dotenv consumers are safe.
+- **The key is member-role, always** — pinned in the request and verified on
+  the response. The CLI deliberately cannot mint admin keys — use the
+  dashboard for those. *Creating* a key does, however, require your own user
+  to have the admin role in the workspace (403 otherwise).
 - **Non-interactive runs require `--name`** — without it the command exits 1
-  with an actionable message before touching the network. In `--json` mode
-  failures arrive as `{ status: "error", code, message }` on stdout.
+  with an actionable message before touching the network, and `--write`
+  refuses to overwrite an existing file (also before anything is minted).
+  In `--json` mode failures arrive as `{ status: "error", code, message }`
+  on stdout.
+- **`--json` + `--write` compose**: the file is written and the JSON
+  confirmation (`{ status: "written", path, … }`) is deliberately
+  secret-free, so captured CI logs never contain the key.
 - Each run mints a **new** credential; a duplicate name is rejected by the
   server — rerun with a different `--name`.
 - This is also the local-dev path for runtimes that can't reach
   `~/.cipherstash` (Supabase Edge Functions run in a container; Workers have
-  no filesystem): mint a key, feed it via `--env-file` or the platform's
-  secret store, and use `@cipherstash/stack/wasm-inline` with explicit config.
+  no filesystem): mint a key, feed it via `supabase functions serve
+  --env-file` or the platform's secret store, and use
+  `@cipherstash/stack/wasm-inline` with explicit config.
 
-Flags: `--name <name>`, `--write`, `--json`.
+Flags: `--name <name>`, `--write [path]`, `--json`.
 
 ## Programmatic API
 

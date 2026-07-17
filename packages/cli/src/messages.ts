@@ -111,11 +111,13 @@ export const messages = {
   },
   env: {
     /**
-     * Stable leader of the non-interactive missing-name error. The e2e suite
-     * asserts on this; the `--name` hint (with the runner-aware invocation)
-     * is appended at the call site.
+     * Stable leaders of the pre-mint argv errors. The e2e suite asserts on
+     * these; the runner-aware hints are appended at the call sites. All
+     * three fire BEFORE any profile or network access.
      */
     missingName: 'A credential name is required in non-interactive mode',
+    nameRequiresValue: '--name requires a value',
+    unexpectedArgument: 'Unexpected argument',
   },
   telemetry: {
     /**
