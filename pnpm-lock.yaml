@@ -472,8 +472,8 @@ importers:
         version: 3.25.76
     devDependencies:
       '@supabase/supabase-js':
-        specifier: ^2.110.1
-        version: 2.110.1
+        specifier: ^2.110.2
+        version: 2.110.2
       execa:
         specifier: ^9.5.2
         version: 9.6.1
@@ -569,14 +569,14 @@ importers:
         specifier: ^1.7.0
         version: 1.7.0
       '@clerk/backend':
-        specifier: 3.11.2
-        version: 3.11.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: 3.11.3
+        version: 3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@supabase/postgrest-js':
-        specifier: 2.110.1
-        version: 2.110.1
+        specifier: 2.110.2
+        version: 2.110.2
       '@supabase/supabase-js':
-        specifier: ^2.110.1
-        version: 2.110.1
+        specifier: ^2.110.2
+        version: 2.110.2
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
@@ -689,11 +689,11 @@ importers:
         specifier: workspace:*
         version: link:../test-kit
       '@supabase/postgrest-js':
-        specifier: 2.110.1
-        version: 2.110.1
+        specifier: 2.110.2
+        version: 2.110.2
       '@supabase/supabase-js':
-        specifier: ^2.110.1
-        version: 2.110.1
+        specifier: ^2.110.2
+        version: 2.110.2
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
@@ -729,8 +729,8 @@ importers:
         version: link:../stack
     devDependencies:
       '@clerk/backend':
-        specifier: 3.11.2
-        version: 3.11.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: 3.11.3
+        version: 3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
@@ -1153,6 +1153,10 @@ packages:
     resolution: {integrity: sha512-HaHAnKzThRpdRi+QJkMo3+Cx/3hJUt+UdbQ62Ikzwwt0zIhUE0+qgG+zgUHjAdYhSbfiUzEWYsLdnBsfQ7yv7g==}
     engines: {node: '>=20.9.0'}
 
+  '@clerk/backend@3.11.3':
+    resolution: {integrity: sha512-takrEE0nliUz39e8Ct1YG471eBcuU2I1ZStRIU9U0UAIuiNAxNTNuaVZSXaZeK4QTuJtdQhoGy8rvzxr/10Btw==}
+    engines: {node: '>=20.9.0'}
+
   '@clerk/nextjs@7.5.15':
     resolution: {integrity: sha512-CNRdvIZ9YHpDLJVng69Ot9qfxF2ycMml0fr8N1LhPLiTDZ//bkBtnK4/XL6sN/aNTygLeoN5nyFIlWDU+enu6w==}
     engines: {node: '>=20.9.0'}
@@ -1170,6 +1174,18 @@ packages:
 
   '@clerk/shared@4.25.1':
     resolution: {integrity: sha512-+FHoFEJ8zGenUymf03gARKEAYOLxOKm6B437tgukxP7oM5ORfI+ZND62W25S8ddVsDLlNTS0VEHlhDm3F+NF0A==}
+    engines: {node: '>=20.9.0'}
+    peerDependencies:
+      react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+      react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+
+  '@clerk/shared@4.25.2':
+    resolution: {integrity: sha512-v7zgDh0eVLl3KzRHbKYTsPQ+4Xcx8A2oiU5iZ9WhME024WudwkjjPJRK12RycY0VA1Sj8i4Pi5zEpecqB/gp1Q==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -2075,31 +2091,31 @@ packages:
   '@stricli/core@1.2.9':
     resolution: {integrity: sha512-vKniyS+0GtarIaUpMRMQ5+Ck9mXeaBqdN/7otznkBTWU0EXfkMJAHt2QdOCmOudR9eciQZQf09DmYm14yfPWzw==}
 
-  '@supabase/auth-js@2.110.1':
-    resolution: {integrity: sha512-8EJUoRoqzAYWkieHrLCrGrxs3cBbRB94xK8GzHe0aSLlSa4mt1enYLCiMgLiKJOF8GNYeX6PLTBNef0XAhILgw==}
+  '@supabase/auth-js@2.110.2':
+    resolution: {integrity: sha512-Qj7a6EDP+AMMQFWqGv+qFa8r6re//dk+qQI5bA0KK+PZmnI3JPu97TDeNt6SMiQ2FkklP79hP2yDFYSnA989OA==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/functions-js@2.110.1':
-    resolution: {integrity: sha512-Pm9HD9Qth6zQO0aOGZ3DxYb6QlCzrkTkP6eUEOvhTlbvcvYRDSCZXIJ5dkDLpqxD+gdrXfWDFOpU9BpRKYjsIQ==}
+  '@supabase/functions-js@2.110.2':
+    resolution: {integrity: sha512-ZjjqrXpxM9/rE+eAtZxiK45EWy9EBoJQ322Q5Y75LccYQNh212neHTgXP/o4MIzmH0LNXT8UzvTZtQOfOzyoeQ==}
     engines: {node: '>=22.0.0'}
 
   '@supabase/phoenix@0.4.4':
     resolution: {integrity: sha512-Gt0pqoXuIqX/8dvG0OKp/wMCobXNH3klNbUPBNyOfN0YA1IswrM3HyWFMOPk1Jy+BRaIyDPcFx4jLBwHNmlyfQ==}
 
-  '@supabase/postgrest-js@2.110.1':
-    resolution: {integrity: sha512-BILNhS40oGlP2bn/VJjh/1hCyrWNMmpGZGcCrPvqd5R3s8gf8Bd5qyKoHZdMwTKynGCuJGjagRXa069abhibMw==}
+  '@supabase/postgrest-js@2.110.2':
+    resolution: {integrity: sha512-++LBmcIMwCtgO4tISQUmo9+2xkRwHQqS8ZKMCnhXLe9P8k8YQRXuMoh/RiSzQSoev8gqet0W7yOboW0cUxnt0Q==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/realtime-js@2.110.1':
-    resolution: {integrity: sha512-JmWCpMoe2iJPNrXIdHqIvf2Mie6NfSuWHS9Ve6YCmLkn1mNl3vrK3a67IukJ5lPjgmAzB+jFagyMz2oSIX+Xnw==}
+  '@supabase/realtime-js@2.110.2':
+    resolution: {integrity: sha512-z3jTOTPgyn6E3r6dVOOQ10He4yAMB2czjFw7xVdX3s16MHElna5rY1gVaePs0NIo6xvtMYbtmOXlFaFt/ePLpg==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/storage-js@2.110.1':
-    resolution: {integrity: sha512-UqJGzhFMiIRBe8vT7a6ZtrN2U5YufH4Tk9nyc9KKfa2TUtV11BkSg/v3lyy/c4A8SbekVH3UywTF0s42zpF4zw==}
+  '@supabase/storage-js@2.110.2':
+    resolution: {integrity: sha512-EhsRSwSnmQefKJsAxoRUZ0hvHr92ECM8DDGAKR5z0HdoJx4heI60PjHUTruVNZxKX6XeobLGDyLud020Bw1iwg==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/supabase-js@2.110.1':
-    resolution: {integrity: sha512-MiJh0THZgyAvTWm91FOLknjH5dYjXRKOdxpuUsyTVZVXIf7FxCShzevIm4KGCubHRU2n25Gyt8PhTXIFzcD9FA==}
+  '@supabase/supabase-js@2.110.2':
+    resolution: {integrity: sha512-r9q9w4ZQ6mOjh36aqUNFSisBF611vzpO8JphBESr2Q1SWvmGFQeI7Jq7Y+PaNMZ6Zszz+S2yTlJStCpnaMSnQg==}
     engines: {node: '>=22.0.0'}
 
   '@swc/helpers@0.5.15':
@@ -4248,7 +4264,16 @@ snapshots:
 
   '@clerk/backend@3.11.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      standardwebhooks: 1.0.0
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - react
+      - react-dom
+
+  '@clerk/backend@3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
@@ -4268,12 +4293,22 @@ snapshots:
 
   '@clerk/react@6.12.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
 
   '@clerk/shared@4.25.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@tanstack/query-core': 5.101.2
+      dequal: 2.0.3
+      glob-to-regexp: 0.4.1
+      js-cookie: 3.0.7
+    optionalDependencies:
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+
+  '@clerk/shared@4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@tanstack/query-core': 5.101.2
       dequal: 2.0.3
@@ -5049,37 +5084,37 @@ snapshots:
 
   '@stricli/core@1.2.9': {}
 
-  '@supabase/auth-js@2.110.1':
+  '@supabase/auth-js@2.110.2':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/functions-js@2.110.1':
+  '@supabase/functions-js@2.110.2':
     dependencies:
       tslib: 2.8.1
 
   '@supabase/phoenix@0.4.4': {}
 
-  '@supabase/postgrest-js@2.110.1':
+  '@supabase/postgrest-js@2.110.2':
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/realtime-js@2.110.1':
+  '@supabase/realtime-js@2.110.2':
     dependencies:
       '@supabase/phoenix': 0.4.4
       tslib: 2.8.1
 
-  '@supabase/storage-js@2.110.1':
+  '@supabase/storage-js@2.110.2':
     dependencies:
       iceberg-js: 0.8.1
       tslib: 2.8.1
 
-  '@supabase/supabase-js@2.110.1':
+  '@supabase/supabase-js@2.110.2':
     dependencies:
-      '@supabase/auth-js': 2.110.1
-      '@supabase/functions-js': 2.110.1
-      '@supabase/postgrest-js': 2.110.1
-      '@supabase/realtime-js': 2.110.1
-      '@supabase/storage-js': 2.110.1
+      '@supabase/auth-js': 2.110.2
+      '@supabase/functions-js': 2.110.2
+      '@supabase/postgrest-js': 2.110.2
+      '@supabase/realtime-js': 2.110.2
+      '@supabase/storage-js': 2.110.2
 
   '@swc/helpers@0.5.15':
     dependencies:
