@@ -2,7 +2,7 @@
  * End-to-end coverage for the `eql_v3_text_search` domain against
  * live Postgres + EQL v3 + ZeroKMS.
  *
- * `cipherstash.EncryptedTextSearch()` is the maximal text domain:
+ * `cipherstash.TextSearch()` is the maximal text domain:
  * equality + order/range (OPE) + free-text search (bloom match) on one
  * column. Pins:
  *   - Round-trip decrypt recovers the source strings.

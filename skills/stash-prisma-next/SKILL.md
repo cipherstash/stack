@@ -1,6 +1,6 @@
 ---
 name: stash-prisma-next
-description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (EncryptedTextSearch, EncryptedDoubleOrd, EncryptedBigIntOrd, EncryptedDateOrd, EncryptedBoolean, EncryptedJson), the one-call cipherstashFromStackV3 wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc), EQL bundle installation via prisma-next migration apply, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
+description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (TextSearch, DoubleOrd, BigIntOrd, DateOrd, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc), EQL bundle installation via prisma-next migration apply, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
 ---
 
 # CipherStash Stack — Prisma Next Integration
@@ -12,7 +12,7 @@ installs the EQL bundle in the same sweep that creates your tables — there is 
 separate `stash eql install` step.
 
 > This is the **EQL v3** surface (the documented one). A legacy EQL v2 surface
-> exists for existing deployments (`cipherstashFromStack` from
+> exists for existing deployments (`cipherstashFromStackV2` from
 > `@cipherstash/prisma-next/stack`, `cipherstash*` operators); everything below
 > is v3. New projects use v3.
 
@@ -27,7 +27,7 @@ capability semantics; this skill covers the Prisma-Next-specific surface.
 - Adding field-level encryption to a Prisma Next project
 - Declaring encrypted columns in `schema.prisma`
 - Querying encrypted columns with the `eql*` operators
-- Wiring the runtime with `cipherstashFromStackV3`
+- Wiring the runtime with `cipherstashFromStack`
 
 ## Installation
 
@@ -51,23 +51,23 @@ The column types are **domain-named** — the name encodes the query capability
 ```prisma
 model User {
   id            String @id
-  email         cipherstash.EncryptedTextSearch()  // eq + range + free-text + ORDER BY
-  salary        cipherstash.EncryptedDoubleOrd()   // eq + range + ORDER BY
-  accountId     cipherstash.EncryptedBigIntOrd()   // eq + range + ORDER BY
-  birthday      cipherstash.EncryptedDateOrd()     // eq + range + ORDER BY
-  emailVerified cipherstash.EncryptedBoolean()     // storage-only (no operators)
-  preferences   cipherstash.EncryptedJson()        // containment (@>)
+  email         cipherstash.TextSearch()  // eq + range + free-text + ORDER BY
+  salary        cipherstash.DoubleOrd()   // eq + range + ORDER BY
+  accountId     cipherstash.BigIntOrd()   // eq + range + ORDER BY
+  birthday      cipherstash.DateOrd()     // eq + range + ORDER BY
+  emailVerified cipherstash.Boolean()     // storage-only (no operators)
+  preferences   cipherstash.Json()        // containment (@>)
 }
 ```
 
 | Column type | Domain | Query capability |
 |---|---|---|
-| `EncryptedTextSearch()` | `eql_v3_text_search` | equality, range, free-text, ORDER BY |
-| `EncryptedDoubleOrd()` | `eql_v3_double_ord` | equality, range, ORDER BY |
-| `EncryptedBigIntOrd()` | `eql_v3_bigint_ord` | equality, range, ORDER BY |
-| `EncryptedDateOrd()` | `eql_v3_date_ord` | equality, range, ORDER BY |
-| `EncryptedBoolean()` | `eql_v3_boolean` | storage-only (no operators) |
-| `EncryptedJson()` | `eql_v3_json` | containment (`@>`) |
+| `TextSearch()` | `eql_v3_text_search` | equality, range, free-text, ORDER BY |
+| `DoubleOrd()` | `eql_v3_double_ord` | equality, range, ORDER BY |
+| `BigIntOrd()` | `eql_v3_bigint_ord` | equality, range, ORDER BY |
+| `DateOrd()` | `eql_v3_date_ord` | equality, range, ORDER BY |
+| `Boolean()` | `eql_v3_boolean` | storage-only (no operators) |
+| `Json()` | `eql_v3_json` | containment (`@>`) |
 
 Choose the column type by the queries you need: a value you only store and
 decrypt (never search) can use a storage-only domain; a value you filter or sort
@@ -87,16 +87,16 @@ export default defineConfig({
 })
 ```
 
-### 3. Wire the runtime with `cipherstashFromStackV3` in `src/db.ts`
+### 3. Wire the runtime with `cipherstashFromStack` in `src/db.ts`
 
 ```typescript
 import 'dotenv/config'
-import { cipherstashFromStackV3 } from '@cipherstash/prisma-next/v3'
+import { cipherstashFromStack } from '@cipherstash/prisma-next/v3'
 import postgres from '@prisma-next/postgres/runtime'
 import type { Contract } from './prisma/contract.d'
 import contractJson from './prisma/contract.json' with { type: 'json' }
 
-const cipherstash = await cipherstashFromStackV3({ contractJson })
+const cipherstash = await cipherstashFromStack({ contractJson })
 
 export const db = postgres<Contract>({
   contractJson,
@@ -105,12 +105,12 @@ export const db = postgres<Contract>({
 })
 ```
 
-`cipherstashFromStackV3({ contractJson })` derives the v3 encryption schemas from
+`cipherstashFromStack({ contractJson })` derives the v3 encryption schemas from
 the contract (one `public.eql_v3_*` domain per column), constructs the
 `@cipherstash/stack` `EncryptionV3` client from your `CS_*` env vars or local
 profile, builds the SDK adapter, and returns ready-to-spread `extensions` and
 `middleware`. A v3 client is v3-only — a contract carrying v2 codec ids is
-rejected at setup (use `cipherstashFromStack` from
+rejected at setup (use `cipherstashFromStackV2` from
 `@cipherstash/prisma-next/stack` for a v2 contract).
 
 ## Install the EQL bundle (part of your migration, not a separate step)
@@ -148,7 +148,7 @@ import {
 await db.orm.public.User.create({
   id: 'user-0',
   email: EncryptedString.from('alice@example.com'),
-  salary: EncryptedNumber.from(100_000),      // EncryptedDoubleOrd column
+  salary: EncryptedNumber.from(100_000),      // DoubleOrd column
   accountId: EncryptedBigInt.from(100_000_000_001n),
   birthday: EncryptedDate.from(new Date('1990-01-01')),
   emailVerified: EncryptedBoolean.from(true),
@@ -161,10 +161,10 @@ console.log(await rows[0]?.email.decrypt())     // 'alice@example.com'
 ```
 
 The envelope for a `double` column is `EncryptedNumber` (JS `number`); the schema
-column type is `EncryptedDoubleOrd`. Envelope ↔ column pairing: `EncryptedString`
-↔ `EncryptedTextSearch`, `EncryptedNumber` ↔ `EncryptedDoubleOrd`,
-`EncryptedBigInt` ↔ `EncryptedBigIntOrd`, `EncryptedDate` ↔ `EncryptedDateOrd`,
-`EncryptedBoolean` ↔ `EncryptedBoolean`, `EncryptedJson` ↔ `EncryptedJson`.
+column type is `DoubleOrd`. Envelope ↔ column pairing: `EncryptedString`
+↔ `TextSearch`, `EncryptedNumber` ↔ `DoubleOrd`,
+`EncryptedBigInt` ↔ `BigIntOrd`, `EncryptedDate` ↔ `DateOrd`,
+`EncryptedBoolean` ↔ `Boolean`, `EncryptedJson` ↔ `Json`.
 
 ## Query operators (`eql*`)
 
@@ -176,7 +176,7 @@ EQL-derived `eql*` vocabulary (the legacy v2 surface keeps `cipherstash*` names)
 |---|---|---|
 | `eqlEq(v)` / `eqlNeq(v)` | equality / inequality | any searchable domain |
 | `eqlIn(vs)` / `eqlNotIn(vs)` | membership | any searchable domain |
-| `eqlMatch(term)` | free-text token match (`eql_v3.contains`) | `EncryptedTextSearch` |
+| `eqlMatch(term)` | free-text token match (`eql_v3.contains`) | `TextSearch` |
 | `eqlGt/eqlGte/eqlLt/eqlLte(v)` | range comparison | an `*Ord` domain |
 | `eqlBetween(lo,hi)` / `eqlNotBetween(lo,hi)` | range window | an `*Ord` domain |
 | `eqlAsc(col)` / `eqlDesc(col)` | ORDER BY (free functions, take the column) | an `*Ord` or `TextSearch` domain |
@@ -211,7 +211,7 @@ Same credential model as the rest of Stack:
   `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY`). See the `stash-cli` and
   `stash-encryption` skills for how to obtain them from your device session.
 
-`cipherstashFromStackV3` resolves `CS_*` when present, else the local profile.
+`cipherstashFromStack` resolves `CS_*` when present, else the local profile.
 
 ## Bundling
 
@@ -224,16 +224,16 @@ use `@cipherstash/stack/wasm-inline`.
 
 | Subpath | Purpose |
 |---|---|
-| `@cipherstash/prisma-next/v3` | The v3 surface: `cipherstashFromStackV3`, the SDK adapter, envelopes/middleware |
+| `@cipherstash/prisma-next/v3` | The v3 surface: `cipherstashFromStack`, the SDK adapter, envelopes/middleware |
 | `@cipherstash/prisma-next/control` | The extension pack for `extensionPacks: [...]` |
 | `@cipherstash/prisma-next/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
-| `@cipherstash/prisma-next/stack` | Legacy EQL v2 one-call setup (`cipherstashFromStack`) |
+| `@cipherstash/prisma-next/stack` | Legacy EQL v2 one-call setup (`cipherstashFromStackV2`) |
 
 ## Gotchas
 
 - **EQL installs via `prisma-next migration apply`, never `stash eql install`.**
 - **Column type (schema, domain-named) ≠ runtime envelope (value, primitive-named).**
-  `EncryptedDoubleOrd` column ↔ `EncryptedNumber.from(...)` value.
-- **A v3 client rejects a v2 contract** at `cipherstashFromStackV3`. Regenerate the
+  `DoubleOrd` column ↔ `EncryptedNumber.from(...)` value.
+- **A v3 client rejects a v2 contract** at `cipherstashFromStack`. Regenerate the
   contract (`prisma-next contract emit`) after switching a column to a v3 type.
 - **Never log or read `~/.cipherstash`** or `.env*` credential files (see `stash-cli`).

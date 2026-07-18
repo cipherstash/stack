@@ -376,10 +376,10 @@ model User {
 })
 
 describe('PSL interpretation: v3 argument-less constructors (static typeParams)', () => {
-  it('lowers cipherstash.EncryptedTextSearch() to the static v3 descriptor', () => {
+  it('lowers cipherstash.TextSearch() to the static v3 descriptor', () => {
     const result = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedTextSearch()
+  email cipherstash.TextSearch()
 }
 `)
     expect(result.ok).toBe(true)
@@ -403,10 +403,10 @@ describe('PSL interpretation: v3 argument-less constructors (static typeParams)'
     )
   })
 
-  it('lowers cipherstash.EncryptedBoolean() to the storage-only v3 descriptor', () => {
+  it('lowers cipherstash.Boolean() to the storage-only v3 descriptor', () => {
     const result = interpret(`model User {
   id Int @id
-  enabled cipherstash.EncryptedBoolean()
+  enabled cipherstash.Boolean()
 }
 `)
     expect(result.ok).toBe(true)
@@ -429,10 +429,10 @@ describe('PSL interpretation: v3 argument-less constructors (static typeParams)'
     )
   })
 
-  it('lowers cipherstash.EncryptedJson() with searchableJson-only capabilities', () => {
+  it('lowers cipherstash.Json() with searchableJson-only capabilities', () => {
     const result = interpret(`model User {
   id Int @id
-  payload cipherstash.EncryptedJson()
+  payload cipherstash.Json()
 }
 `)
     expect(result.ok).toBe(true)
@@ -459,7 +459,7 @@ describe('PSL interpretation: v3 argument-less constructors (static typeParams)'
   it('rejects options on a v3 constructor (they take no arguments)', () => {
     const result = interpret(`model User {
   id Int @id
-  email cipherstash.EncryptedTextSearch({ equality: false })
+  email cipherstash.TextSearch({ equality: false })
 }
 `)
     expect(result.ok).toBe(false)

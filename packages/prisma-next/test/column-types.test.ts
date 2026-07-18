@@ -40,16 +40,16 @@ describe('v3 TS factories', () => {
     }
   })
 
-  it('encryptedBigIntOrd() emits public.eql_v3_bigint_ord with bigint castAs', () => {
-    expect(columnTypes.encryptedBigIntOrd()).toMatchObject({
+  it('bigIntOrd() emits public.eql_v3_bigint_ord with bigint castAs', () => {
+    expect(columnTypes.bigIntOrd()).toMatchObject({
       codecId: 'cipherstash/eql-v3/eql_v3_bigint_ord@1',
       nativeType: 'public.eql_v3_bigint_ord',
       typeParams: { castAs: 'bigint' },
     })
   })
 
-  it('encryptedTextSearch() emits public.eql_v3_text_search with full capabilities', () => {
-    expect(columnTypes.encryptedTextSearch()).toEqual({
+  it('textSearch() emits public.eql_v3_text_search with full capabilities', () => {
+    expect(columnTypes.textSearch()).toEqual({
       codecId: 'cipherstash/eql-v3/eql_v3_text_search@1',
       nativeType: 'public.eql_v3_text_search',
       typeParams: {
@@ -63,8 +63,8 @@ describe('v3 TS factories', () => {
     })
   })
 
-  it('encryptedJson() emits public.eql_v3_json with searchableJson-only capabilities', () => {
-    expect(columnTypes.encryptedJson()).toEqual({
+  it('json() emits public.eql_v3_json with searchableJson-only capabilities', () => {
+    expect(columnTypes.json()).toEqual({
       codecId: 'cipherstash/eql-v3/eql_v3_json@1',
       nativeType: 'public.eql_v3_json',
       typeParams: {
@@ -84,8 +84,8 @@ describe('v3 TS factories', () => {
     // instance would make one caller's mutation alter every later
     // contract (call-order-dependent output). `v3Authored` shallow-copies
     // the capabilities block per call, pinned here.
-    const first = columnTypes.encryptedTextSearch()
-    const second = columnTypes.encryptedTextSearch()
+    const first = columnTypes.textSearch()
+    const second = columnTypes.textSearch()
     expect(second).not.toBe(first)
     expect(second.typeParams.capabilities).not.toBe(
       first.typeParams.capabilities,
@@ -106,18 +106,19 @@ describe('v3 TS factories', () => {
       orderAndRange: true,
       freeTextSearch: true,
     })
-    expect(columnTypes.encryptedTextSearch().typeParams.capabilities).toEqual({
+    expect(columnTypes.textSearch().typeParams.capabilities).toEqual({
       equality: true,
       orderAndRange: true,
       freeTextSearch: true,
     })
   })
 
-  it('exposes no *OrdOre factories and no v3 encryptedString', () => {
+  it('exposes no *OrdOre factories and no v3 string factory', () => {
     const exported = columnTypes as Record<string, unknown>
-    expect(exported['encryptedBigIntOrdOre']).toBeUndefined()
-    expect(exported['encryptedTextOrdOre']).toBeUndefined()
-    expect(exported['encryptedString']).toBeUndefined()
+    expect(exported['bigIntOrdOre']).toBeUndefined()
+    expect(exported['textOrdOre']).toBeUndefined()
+    // v3 text uses `text`/`textEq`/`textSearch`/… — there is no `string`.
+    expect(exported['string']).toBeUndefined()
   })
 })
 

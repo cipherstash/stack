@@ -8,7 +8,7 @@
  * with a single async factory that returns ready-to-spread arrays for
  * `postgres<Contract>({...})`:
  *
- *   const cipherstash = await cipherstashFromStack({ contractJson })
+ *   const cipherstash = await cipherstashFromStackV2({ contractJson })
  *
  *   const db = postgres<Contract>({
  *     contractJson,
@@ -24,7 +24,7 @@
  * bundle's installed configuration disagrees with.
  *
  * This is the **EQL v2** entry point. For an EQL v3 contract
- * (`cipherstash/eql-v3/*` codec ids) use `cipherstashFromStackV3`
+ * (`cipherstash/eql-v3/*` codec ids) use `cipherstashFromStack`
  * (`./from-stack-v3.ts`) — v2 and v3 are separate entry points that
  * are never co-registered in one client (decision 1b).
  */
@@ -72,7 +72,7 @@ export interface CipherstashFromStackResult {
   readonly encryptionClient: EncryptionClient
 }
 
-export async function cipherstashFromStack(
+export async function cipherstashFromStackV2(
   opts: CipherstashFromStackOptions,
 ): Promise<CipherstashFromStackResult> {
   const derived = deriveStackSchemas(opts.contractJson)
@@ -80,9 +80,9 @@ export async function cipherstashFromStack(
   const [first, ...rest] = schemas
   if (first === undefined) {
     throw new Error(
-      'cipherstashFromStack: no cipherstash columns found in contract.json AND no override `schemas` supplied. ' +
+      'cipherstashFromStackV2: no cipherstash columns found in contract.json AND no override `schemas` supplied. ' +
         "`@cipherstash/stack`'s `Encryption({ schemas })` requires at least one `EncryptedTable`. " +
-        'Check that prisma/schema.prisma declares at least one `cipherstash.Encrypted*()` column and that ' +
+        'Check that prisma/schema.prisma declares at least one `cipherstash.Encrypted*V2()` column and that ' +
         '`pnpm emit` has been run since the last edit.',
     )
   }
@@ -188,7 +188,7 @@ function divergence(
   hint: string,
 ): never {
   throw new Error(
-    `cipherstashFromStack: schema divergence on ${loc}. Contract ${contractSide} but override ${overrideSide}. ${hint}`,
+    `cipherstashFromStackV2: schema divergence on ${loc}. Contract ${contractSide} but override ${overrideSide}. ${hint}`,
   )
 }
 

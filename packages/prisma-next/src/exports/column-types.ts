@@ -10,7 +10,7 @@
  * `{ castAs, capabilities }` typeParams block — identical to what its PSL
  * counterpart lowers to, so PSL- and TS-authored contracts emit
  * byte-identical `contract.json`. There are NO options: the factory IS the
- * capability set (`encryptedTextSearch` vs `encryptedText`, and so on).
+ * capability set (`textSearch` vs `text`, and so on).
  *
  * ## v2: legacy `*V2` aliases
  *
@@ -120,50 +120,50 @@ function v3Authored<C extends AnyEncryptedV3Column>(
 }
 
 // Each factory has a DISTINCT return type (V3ColumnDescriptor<EncryptedXColumn>);
-// `encryptedBigIntOrd()` is not assignable to `encryptedText()` and vice-versa.
+// `bigIntOrd()` is not assignable to `text()` and vice-versa.
 // Note the stack factory names: bigint is `types.Bigint*` (not `BigInt*`).
 // text family
-export const encryptedText = v3Authored(types.Text)
-export const encryptedTextEq = v3Authored(types.TextEq)
-export const encryptedTextOrd = v3Authored(types.TextOrd)
-export const encryptedTextMatch = v3Authored(types.TextMatch)
-export const encryptedTextSearch = v3Authored(types.TextSearch)
+export const text = v3Authored(types.Text)
+export const textEq = v3Authored(types.TextEq)
+export const textOrd = v3Authored(types.TextOrd)
+export const textMatch = v3Authored(types.TextMatch)
+export const textSearch = v3Authored(types.TextSearch)
 // integer
-export const encryptedInteger = v3Authored(types.Integer)
-export const encryptedIntegerEq = v3Authored(types.IntegerEq)
-export const encryptedIntegerOrd = v3Authored(types.IntegerOrd)
+export const integer = v3Authored(types.Integer)
+export const integerEq = v3Authored(types.IntegerEq)
+export const integerOrd = v3Authored(types.IntegerOrd)
 // smallint
-export const encryptedSmallint = v3Authored(types.Smallint)
-export const encryptedSmallintEq = v3Authored(types.SmallintEq)
-export const encryptedSmallintOrd = v3Authored(types.SmallintOrd)
+export const smallint = v3Authored(types.Smallint)
+export const smallintEq = v3Authored(types.SmallintEq)
+export const smallintOrd = v3Authored(types.SmallintOrd)
 // bigint
-export const encryptedBigInt = v3Authored(types.Bigint)
-export const encryptedBigIntEq = v3Authored(types.BigintEq)
-export const encryptedBigIntOrd = v3Authored(types.BigintOrd)
+export const bigInt = v3Authored(types.Bigint)
+export const bigIntEq = v3Authored(types.BigintEq)
+export const bigIntOrd = v3Authored(types.BigintOrd)
 // numeric
-export const encryptedNumeric = v3Authored(types.Numeric)
-export const encryptedNumericEq = v3Authored(types.NumericEq)
-export const encryptedNumericOrd = v3Authored(types.NumericOrd)
+export const numeric = v3Authored(types.Numeric)
+export const numericEq = v3Authored(types.NumericEq)
+export const numericOrd = v3Authored(types.NumericOrd)
 // real
-export const encryptedReal = v3Authored(types.Real)
-export const encryptedRealEq = v3Authored(types.RealEq)
-export const encryptedRealOrd = v3Authored(types.RealOrd)
+export const real = v3Authored(types.Real)
+export const realEq = v3Authored(types.RealEq)
+export const realOrd = v3Authored(types.RealOrd)
 // double
-export const encryptedDouble = v3Authored(types.Double)
-export const encryptedDoubleEq = v3Authored(types.DoubleEq)
-export const encryptedDoubleOrd = v3Authored(types.DoubleOrd)
+export const double = v3Authored(types.Double)
+export const doubleEq = v3Authored(types.DoubleEq)
+export const doubleOrd = v3Authored(types.DoubleOrd)
 // date
-export const encryptedDate = v3Authored(types.Date)
-export const encryptedDateEq = v3Authored(types.DateEq)
-export const encryptedDateOrd = v3Authored(types.DateOrd)
+export const date = v3Authored(types.Date)
+export const dateEq = v3Authored(types.DateEq)
+export const dateOrd = v3Authored(types.DateOrd)
 // timestamp
-export const encryptedTimestamp = v3Authored(types.Timestamp)
-export const encryptedTimestampEq = v3Authored(types.TimestampEq)
-export const encryptedTimestampOrd = v3Authored(types.TimestampOrd)
+export const timestamp = v3Authored(types.Timestamp)
+export const timestampEq = v3Authored(types.TimestampEq)
+export const timestampOrd = v3Authored(types.TimestampOrd)
 // boolean (storage-only)
-export const encryptedBoolean = v3Authored(types.Boolean)
+export const boolean = v3Authored(types.Boolean)
 // json (encrypted JSONB, ste_vec containment)
-export const encryptedJson = v3Authored(types.Json)
+export const json = v3Authored(types.Json)
 
 // ---------------------------------------------------------------------------
 // v2 legacy aliases (verbatim pre-rename bodies, now named *V2)

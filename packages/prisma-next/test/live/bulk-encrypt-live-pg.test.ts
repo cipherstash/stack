@@ -1,6 +1,6 @@
 /**
  * Live-PG bulk-encrypt middleware: the REAL `bulkEncryptMiddlewareV3`
- * instance wired by `cipherstashFromStackV3` (real `EncryptionV3`
+ * instance wired by `cipherstashFromStack` (real `EncryptionV3`
  * client, not a fake) drives a multi-row INSERT. Proves end-to-end:
  * the AST walk stamps `(table, column)` routing keys, the per-column
  * batch makes ONE bulkEncrypt crossing, the param slots are replaced

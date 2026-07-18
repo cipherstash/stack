@@ -3,9 +3,9 @@
  * `@cipherstash/stack` EQL v3 client — the v3-only sibling of
  * `./from-stack.ts` (decision 1b: v2 and v3 are SEPARATE entry points
  * that are never co-registered in one client; the v2
- * `cipherstashFromStack` is untouched by this module).
+ * `cipherstashFromStackV2` is untouched by this module).
  *
- *   const cipherstash = await cipherstashFromStackV3({ contractJson })
+ *   const cipherstash = await cipherstashFromStack({ contractJson })
  *
  *   const db = postgres<Contract>({
  *     contractJson,
@@ -73,14 +73,14 @@ export interface CipherstashFromStackV3Result {
   readonly encryptionClient: TypedEncryptionClient<readonly AnyV3Table[]>
 }
 
-export async function cipherstashFromStackV3(
+export async function cipherstashFromStack(
   opts: CipherstashFromStackV3Options,
 ): Promise<CipherstashFromStackV3Result> {
   const foreignIds = collectNonV3CipherstashCodecIds(opts.contractJson)
   if (foreignIds.length > 0) {
     throw new Error(
-      `cipherstashFromStackV3: contract.json contains non-v3 cipherstash codec ids [${foreignIds.join(', ')}]. ` +
-        'A v3 client is v3-only; use cipherstashFromStack for a v2 contract. ' +
+      `cipherstashFromStack: contract.json contains non-v3 cipherstash codec ids [${foreignIds.join(', ')}]. ` +
+        'A v3 client is v3-only; use cipherstashFromStackV2 for a v2 contract. ' +
         'Mixed v2+v3 cipherstash columns in one client are unsupported.',
     )
   }
@@ -88,9 +88,9 @@ export async function cipherstashFromStackV3(
   const derived = deriveStackSchemasV3(opts.contractJson)
   if (derived.length === 0) {
     throw new Error(
-      'cipherstashFromStackV3: no v3 cipherstash columns found in contract.json. ' +
-        'Declare at least one v3 `cipherstash.Encrypted*()` column in prisma/schema.prisma and re-emit the contract ' +
-        '(or use cipherstashFromStack if this is a v2 contract).',
+      'cipherstashFromStack: no v3 cipherstash columns found in contract.json. ' +
+        'Declare at least one v3 `cipherstash.*()` column (e.g. `cipherstash.TextSearch()`) in prisma/schema.prisma ' +
+        'and re-emit the contract (or use cipherstashFromStackV2 if this is a v2 contract).',
     )
   }
 

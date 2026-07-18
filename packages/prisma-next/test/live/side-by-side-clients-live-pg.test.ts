@@ -1,7 +1,7 @@
 /**
- * Live-PG v2/v3 coexistence: a v2 client (`cipherstashFromStack`, v2
+ * Live-PG v2/v3 coexistence: a v2 client (`cipherstashFromStackV2`, v2
  * contract, `public.eql_v2_encrypted` composite wire) and a v3 client
- * (`cipherstashFromStackV3`, v3 contract, plain-JSONB domain wire)
+ * (`cipherstashFromStack`, v3 contract, plain-JSONB domain wire)
  * running in the SAME process against the SAME database — each with
  * its own table, registry, descriptor, and middleware. Decision 1b:
  * the two generations never share a client; this suite proves the two
@@ -29,7 +29,7 @@ import { CIPHERSTASH_V3_EXTENSION_VERSION } from '../../src/extension-metadata/c
 import { deriveStackSchemas } from '../../src/stack/derive-schemas'
 import {
   type CipherstashFromStackResult,
-  cipherstashFromStack,
+  cipherstashFromStackV2,
 } from '../../src/stack/from-stack'
 import { createCipherstashSdk } from '../../src/stack/sdk-adapter'
 import {
@@ -138,14 +138,14 @@ describeLivePg('v2 and v3 clients side by side against live Postgres', () => {
     await sql.unsafe(
       `CREATE TABLE "${V2_TABLE}" (id text PRIMARY KEY, email ${EQL_V2_ENCRYPTED_TYPE})`,
     )
-    v2 = await cipherstashFromStack({ contractJson: v2Contract })
+    v2 = await cipherstashFromStackV2({ contractJson: v2Contract })
     v2Sdk = createCipherstashSdk(
       v2.encryptionClient,
       deriveStackSchemas(v2Contract),
     )
     const v2Middleware = v2.middleware[0]
     if (!v2Middleware)
-      throw new Error('cipherstashFromStack returned no middleware')
+      throw new Error('cipherstashFromStackV2 returned no middleware')
     await insertEncryptedRows(sql, v2Middleware, V2_TABLE, [
       {
         id: 'v2-row',

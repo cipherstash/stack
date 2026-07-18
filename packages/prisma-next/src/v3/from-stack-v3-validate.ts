@@ -1,5 +1,5 @@
 /**
- * v3 override validation for `cipherstashFromStackV3`.
+ * v3 override validation for `cipherstashFromStack`.
  *
  * Compares EXACT domain identity (`getEqlType()` → `public.eql_v3_*`),
  * not the v2 rule of cast_as + installed-index-set equivalence:
@@ -32,7 +32,7 @@ export function assertV3SchemasAgree(
     const overrideDomain = overrideDomains.get(column)
     if (derivedDomain !== overrideDomain) {
       throw new Error(
-        `cipherstashFromStackV3: schema divergence on column "${derived.tableName}"."${column}". ` +
+        `cipherstashFromStack: schema divergence on column "${derived.tableName}"."${column}". ` +
           `Contract domain "${derivedDomain ?? '(missing)'}" but override domain "${overrideDomain ?? '(missing)'}". ` +
           'Overrides must match the contract exactly on contract-declared tables — ' +
           'fix prisma/schema.prisma and re-emit rather than overriding.',

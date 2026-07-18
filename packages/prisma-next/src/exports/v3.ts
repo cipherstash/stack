@@ -6,7 +6,7 @@
  *
  * Most consumers want exactly one symbol from here:
  *
- *   const cipherstash = await cipherstashFromStackV3({ contractJson })
+ *   const cipherstash = await cipherstashFromStack({ contractJson })
  *
  * The remaining exports are the primitives that factory composes —
  * schema derivation, the SDK adapter, the runtime descriptor, the
@@ -14,7 +14,7 @@
  * advanced users interposing custom logic (multi-tenant SDK routing,
  * a non-stack `CipherstashSdk` implementation, …).
  *
- * Bundle note: this entry re-exports `cipherstashFromStackV3`, which
+ * Bundle note: this entry re-exports `cipherstashFromStack`, which
  * imports `@cipherstash/stack`. Consumers who need an SDK-free runtime
  * plane (custom `CipherstashSdk`) should import from `./runtime`
  * instead — its v3 exports carry no `@cipherstash/stack` client
@@ -34,7 +34,7 @@ export type {
   CipherstashFromStackV3Options,
   CipherstashFromStackV3Result,
 } from '../stack/from-stack-v3'
-export { cipherstashFromStackV3 } from '../stack/from-stack-v3'
+export { cipherstashFromStack } from '../stack/from-stack-v3'
 // User-facing value envelopes (version-neutral classes + the v3-only
 // EncryptedNumber).
 export * from '../v3/barrel'
