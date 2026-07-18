@@ -373,6 +373,9 @@ importers:
 
   packages/prisma-next:
     dependencies:
+      '@cipherstash/eql':
+        specifier: ^3.0.0
+        version: 3.0.0
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
@@ -410,9 +413,6 @@ importers:
         specifier: ^2.2.3
         version: 2.2.3
     devDependencies:
-      '@cipherstash/eql':
-        specifier: 3.0.0
-        version: 3.0.0
       '@cipherstash/test-kit':
         specifier: workspace:*
         version: link:../test-kit

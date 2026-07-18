@@ -85,6 +85,7 @@
 		"clean": "rm -rf dist coverage .tmp-output"
 	},
 	"dependencies": {
+		"@cipherstash/eql": "^3.0.0",
 		"@cipherstash/stack": "workspace:*",
 		"@prisma-next/contract": "0.14.0",
 		"@prisma-next/family-sql": "0.14.0",
@@ -99,7 +100,6 @@
 		"arktype": "^2.2.3"
 	},
 	"devDependencies": {
-		"@cipherstash/eql": "3.0.0",
 		"@cipherstash/test-kit": "workspace:*",
 		"@prisma-next/adapter-postgres": "0.14.0",
 		"@prisma-next/cli": "0.14.0",

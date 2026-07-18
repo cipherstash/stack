@@ -2,13 +2,14 @@
 /**
  * CipherStash v3 baseline migration — install the EQL v3 bundle.
  *
- * The install SQL is sourced at EMIT time from `@cipherstash/eql/sql`
- * (see `../../src/migration/eql-bundle-v3.ts` — the same source the
- * stack's `installEqlV3IfNeeded` uses) and baked into `ops.json`
- * byte-for-byte. The bundle creates the 40 `public.eql_v3_*` storage
- * domains, the `eql_v3` operator-function schema (`eql_v3.eq`,
- * `eql_v3.ord_term`, …), the `eql_v3.query_*` operand domains, and the
- * `eql_v3_internal` helper schema.
+ * The install SQL is NOT baked into `ops.json`. The committed op carries
+ * `RUNTIME_EQL_SQL_SENTINEL`; `src/exports/control.ts` injects
+ * `readInstallSql()` from the installed `@cipherstash/eql` at descriptor-build
+ * time (see `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so an
+ * EQL patch/minor flows through npm with no re-emit or re-release. The bundle
+ * creates the 40 `public.eql_v3_*` storage domains, the `eql_v3`
+ * operator-function schema (`eql_v3.eq`, `eql_v3.ord_term`, …), the
+ * `eql_v3.query_*` operand domains, and the `eql_v3_internal` helper schema.
  *
  * This is the SECOND migration in the cipherstash contract space, and
  * it is an **invariant-only edge**: the v3 bundle declares no
@@ -32,7 +33,7 @@ import {
 } from '@prisma-next/target-postgres/migration'
 import { CIPHERSTASH_V3_INVARIANTS } from '../../src/extension-metadata/constants-v3'
 import {
-  readInstallSql,
+  RUNTIME_EQL_SQL_SENTINEL,
   releaseManifest,
 } from '../../src/migration/eql-bundle-v3'
 
@@ -67,7 +68,15 @@ export default class M extends Migration {
         invariantId: CIPHERSTASH_V3_INVARIANTS.installBundle,
         target: { id: 'postgres' },
         precheck: [],
-        execute: [{ description: INSTALL_LABEL, sql: readInstallSql() }],
+        // Placeholder only — the real install SQL is injected at descriptor
+        // build time from the installed `@cipherstash/eql` (see
+        // `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so the
+        // ~1.7 MB bundle is NOT baked into `ops.json` and an EQL patch/minor
+        // needs no re-emit or re-release. Safe because this is an
+        // invariant-only self-edge: the SQL never moves the contract hash.
+        execute: [
+          { description: INSTALL_LABEL, sql: RUNTIME_EQL_SQL_SENTINEL },
+        ],
         postcheck: [
           {
             description: 'verify the "eql_v3" operator schema exists',

@@ -66,6 +66,7 @@ import {
   cipherstashStringCodecHooks,
 } from '../migration/cipherstash-codec'
 import { cipherstashV3CodecControlHooks } from '../migration/cipherstash-codec-v3'
+import { withRuntimeEqlSql } from '../migration/eql-bundle-v3'
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
@@ -86,7 +87,12 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
     {
       dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
       metadata: v3BaselineMetadata,
-      ops: v3BaselineOps,
+      // The committed `ops.json` carries a placeholder in place of the ~1.7 MB
+      // install SQL; inject it here from the installed `@cipherstash/eql` so an
+      // EQL patch/minor flows through without re-emitting the migration. Safe
+      // because this is an invariant-only self-edge — the SQL never touches the
+      // contract hash and `contractSpaceFromJson` does not integrity-check ops.
+      ops: withRuntimeEqlSql(v3BaselineOps),
     },
   ],
   headRef,
