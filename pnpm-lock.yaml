@@ -242,6 +242,9 @@ importers:
       '@cipherstash/auth':
         specifier: catalog:repo
         version: 0.42.0(@cipherstash/auth-darwin-arm64@0.42.0)(@cipherstash/auth-darwin-x64@0.42.0)(@cipherstash/auth-linux-arm64-gnu@0.42.0)(@cipherstash/auth-linux-x64-gnu@0.42.0)(@cipherstash/auth-linux-x64-musl@0.42.0)(@cipherstash/auth-win32-x64-msvc@0.42.0)
+      '@cipherstash/eql':
+        specifier: 3.0.0
+        version: 3.0.0
       '@cipherstash/migrate':
         specifier: workspace:*
         version: link:../migrate
@@ -267,9 +270,6 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
-      '@cipherstash/eql':
-        specifier: 3.0.0
-        version: 3.0.0
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack

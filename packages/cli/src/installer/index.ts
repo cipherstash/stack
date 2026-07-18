@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { readInstallSql } from '@cipherstash/eql/sql'
 import pg from 'pg'
 import {
   EQL_SCHEMA_NAME,
@@ -8,6 +9,29 @@ import {
   SUPABASE_PERMISSIONS_SQL,
   SUPABASE_PERMISSIONS_SQL_V3,
 } from './grants.js'
+
+/**
+ * The EQL **v3** install SQL, read from `@cipherstash/eql` at runtime — the
+ * single source of truth (the same `readInstallSql()` the stack and prisma-next
+ * consume). We deliberately do NOT vendor a copy into the repo:
+ *   - a ~44k-line plpgsql artifact in the tree made GitHub classify the whole
+ *     repo as plpgsql (CIP-3518);
+ *   - a vendored copy silently drifts from the pinned package on every bump.
+ * Reading it here means a `@cipherstash/eql` version bump flows straight through.
+ * There is no Supabase / no-operator-family variant for v3: the bundle installs
+ * everywhere from one artifact (its superuser-only operator-class statements run
+ * inside a `DO` block that catches `insufficient_privilege` and skips).
+ */
+function readV3InstallSql(): string {
+  try {
+    return readInstallSql()
+  } catch (error) {
+    throw new Error(
+      'Failed to read the EQL v3 install SQL from `@cipherstash/eql`. Reinstall dependencies (the package ships the bundle in `dist/sql/`).',
+      { cause: error },
+    )
+  }
+}
 
 // EQL release, pinned to match the EQL payload format this package emits.
 // Bump in lockstep with @cipherstash/protect-ffi.
@@ -320,8 +344,9 @@ export class EQLInstaller {
     const excludeOperatorFamily = options?.excludeOperatorFamily || supabase
 
     if (latest && eqlVersion === 3) {
-      // No public v3 release artifacts exist yet — the v3 bundles are vendored
-      // from the generated monolith (see scripts/build-eql-v3-sql.mjs).
+      // The v3 bundle is read from the pinned `@cipherstash/eql` package (see
+      // `readV3InstallSql`), not fetched from a GitHub release, so `--latest`
+      // (which downloads a release asset) has no v3 target.
       // Gating --latest behind --eql-version 2 is tracked in #585.
       throw new Error(
         '`--latest` is not supported for EQL v3 yet: no public v3 release artifacts exist. Use the bundled install.',
@@ -394,6 +419,9 @@ export class EQLInstaller {
     supabase: boolean
     eqlVersion: EqlVersion
   }): string {
+    // v3 is read from `@cipherstash/eql` at runtime; only v2 is vendored.
+    if (options.eqlVersion === 3) return readV3InstallSql()
+
     const filename = resolveBundledFilename(options)
 
     try {
@@ -455,8 +483,12 @@ function resolveBundledFilename(options: {
   supabase: boolean
   eqlVersion?: EqlVersion
 }): string {
+  // v3 is not vendored — it's read from `@cipherstash/eql` at runtime (see
+  // `readV3InstallSql`), so callers route it away before reaching here.
   if ((options.eqlVersion ?? DEFAULT_EQL_VERSION) === 3) {
-    return 'cipherstash-encrypt-v3.sql'
+    throw new Error(
+      'resolveBundledFilename is v2-only; v3 SQL comes from `@cipherstash/eql`.',
+    )
   }
   if (options.supabase) return 'cipherstash-encrypt-supabase.sql'
   if (options.excludeOperatorFamily)
@@ -474,10 +506,14 @@ export function loadBundledEqlSql(
     eqlVersion?: EqlVersion
   } = {},
 ): string {
+  const eqlVersion = options.eqlVersion ?? DEFAULT_EQL_VERSION
+  // v3 is read from `@cipherstash/eql` at runtime; only v2 is vendored.
+  if (eqlVersion === 3) return readV3InstallSql()
+
   const filename = resolveBundledFilename({
     excludeOperatorFamily: options.excludeOperatorFamily ?? false,
     supabase: options.supabase ?? false,
-    eqlVersion: options.eqlVersion ?? DEFAULT_EQL_VERSION,
+    eqlVersion,
   })
 
   try {
