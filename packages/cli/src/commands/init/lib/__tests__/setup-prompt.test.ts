@@ -409,3 +409,50 @@ describe('renderSetupPrompt — no db push recommendations', () => {
     }
   })
 })
+
+describe('renderSetupPrompt — honours what the handoff actually wrote', () => {
+  for (const mode of ['implement', 'plan'] as const) {
+    it(`claude-code with no skills points at neither a skills dir nor AGENTS.md (${mode})`, () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'claude-code',
+        installedSkills: [],
+      })
+      // Nothing was written, so don't send the agent to files that don't exist.
+      expect(out).not.toContain('.claude/skills/')
+      expect(out).not.toContain('Read the skills')
+      // It may NAME AGENTS.md to say it was NOT written, but must not point the
+      // agent at it as a rules source (this handoff never writes one).
+      expect(out).not.toMatch(
+        /(?:rules are in|doctrine in|[Rr]ead)[^\n]*AGENTS\.md/,
+      )
+      expect(out).toContain('No skills or `AGENTS.md` were written')
+      expect(out).toContain('cipherstash.com/docs')
+    })
+
+    it(`codex with no skills points at AGENTS.md, not .codex/skills/ (${mode})`, () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'codex',
+        installedSkills: [],
+      })
+      expect(out).not.toContain('.codex/skills/')
+      expect(out).toContain('AGENTS.md')
+    })
+
+    it(`claude-code with skills does not claim the doctrine is in AGENTS.md (${mode})`, () => {
+      // The Claude handoff never writes AGENTS.md — the doctrine is in the
+      // installed skills.
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'claude-code',
+        installedSkills: ['stash-encryption'],
+      })
+      expect(out).toContain('.claude/skills/')
+      expect(out).not.toContain('AGENTS.md')
+    })
+  }
+})

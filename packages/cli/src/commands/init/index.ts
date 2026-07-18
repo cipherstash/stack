@@ -103,13 +103,18 @@ export async function initCommand(
     // Only claim what actually happened. Auth throws on failure (reaching here
     // means it succeeded); the database step *resolves* a URL but never opens a
     // connection, so don't claim "verified"; the client scaffold is skipped for
-    // Prisma Next (no `clientFilePath` on state).
+    // Prisma Next (no `clientFilePath` on state). `schemaGenerated` is true only
+    // when a placeholder was actually written — when an existing client file is
+    // kept, `clientFilePath` is still set but nothing was scaffolded, so don't
+    // claim we did.
     const checkmarks: string[] = [
       '✓ Authenticated to CipherStash',
       '✓ Database URL resolved',
     ]
-    if (state.clientFilePath) {
+    if (state.schemaGenerated) {
       checkmarks.push('✓ Encryption client scaffolded')
+    } else if (state.clientFilePath) {
+      checkmarks.push('✓ Encryption client kept (existing file)')
     }
     if (state.stackInstalled) {
       checkmarks.push('✓ `@cipherstash/stack` installed')
