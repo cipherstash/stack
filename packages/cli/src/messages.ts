@@ -59,6 +59,13 @@ export const messages = {
   },
   eql: {
     unknownSubcommand: 'Unknown eql subcommand',
+    /**
+     * Stable leader of the guard shown when `stash eql install` runs in a
+     * Prisma Next project — Prisma Next owns EQL installation via its own
+     * migration system, so the standalone installer is the wrong tool. The
+     * actionable command + `--force` note are appended at the call site.
+     */
+    prismaNextDetected: 'This looks like a Prisma Next project',
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',

@@ -92,7 +92,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
-- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-supply-chain-security`)
+- `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma-next`, `stash-supply-chain-security`)
 
 ## Agent Skills — these ship to customers
 
@@ -115,7 +115,7 @@ nothing type-checks them, and the damage lands in a customer's repo, not ours.
 |---|---|
 | `packages/cli` commands, flags, or prompts | `skills/stash-cli` |
 | `packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
-| Drizzle / Supabase / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-dynamodb` |
+| Drizzle / Supabase / Prisma Next / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-prisma-next`, `skills/stash-dynamodb` |
 | The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
 | pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
 | The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |

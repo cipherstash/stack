@@ -13,7 +13,25 @@ import { findBundledDir } from './bundled-paths.js'
 export const SKILL_MAP: Record<Integration, readonly string[]> = {
   drizzle: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
   supabase: ['stash-encryption', 'stash-supabase', 'stash-cli'],
+  'prisma-next': ['stash-encryption', 'stash-prisma-next', 'stash-cli'],
   postgresql: ['stash-encryption', 'stash-cli'],
+}
+
+/** The skills every integration gets — the safe fallback for an unmapped one. */
+const BASE_SKILLS: readonly string[] = ['stash-encryption', 'stash-cli']
+
+/**
+ * Skills for an integration, resilient to an unmapped one. `SKILL_MAP` is
+ * typed `Record<Integration, …>`, but the build (`tsup`) transpiles without
+ * type-checking — so a new `Integration` variant added without a `SKILL_MAP`
+ * entry would ship as `undefined` and crash both consumers (`installSkills`,
+ * the AGENTS.md builder) with "not iterable". Degrade to the base skill set
+ * instead: the user still gets `stash-encryption` + `stash-cli`, never a
+ * stack trace. (Regression-guarded by a test asserting SKILL_MAP has a
+ * non-empty entry for every value in a maintained `ALL_INTEGRATIONS` list.)
+ */
+export function skillsFor(integration: Integration): readonly string[] {
+  return SKILL_MAP[integration] ?? BASE_SKILLS
 }
 
 /**
@@ -34,7 +52,7 @@ export function installSkills(
   destDir: string,
   integration: Integration,
 ): string[] {
-  const skills = SKILL_MAP[integration]
+  const skills = skillsFor(integration)
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) {
     p.log.warn(
