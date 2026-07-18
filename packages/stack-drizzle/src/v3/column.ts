@@ -109,6 +109,21 @@ export function makeEqlV3Column<C extends AnyEncryptedV3Column>(builder: C) {
   // via the search_path (the domains live in `public`, always in-path), and it
   // also matches what drizzle-kit introspection reads back for a `push` diff, so
   // the two sides no longer disagree.
+  //
+  // Stripping the schema is only safe BECAUSE every domain lives in `public`:
+  // `stripDomainSchema`/`qualifyDomain` are inverses over exactly that set. If a
+  // domain ever lived elsewhere, `stripDomainSchema` would pass its qualified
+  // name through untouched and drizzle-kit would emit the invalid dotted
+  // identifier again — silently. Assert the invariant so that day fails loudly at
+  // column construction instead of shipping a broken migration.
+  if (!domain.startsWith(`${EQL_V3_DOMAIN_SCHEMA}.`)) {
+    throw new Error(
+      `EQL v3 domain "${domain}" is not in the "${EQL_V3_DOMAIN_SCHEMA}" schema. ` +
+        'drizzle-kit cannot emit a schema-qualified custom type as valid DDL, so ' +
+        'the bare domain name is emitted and resolved via search_path — which only ' +
+        `works when the domain lives in "${EQL_V3_DOMAIN_SCHEMA}".`,
+    )
+  }
   const sqlType = stripDomainSchema(domain)
 
   // What is stored/inserted/selected is the ENCRYPTED EQL v3 jsonb envelope

@@ -40,6 +40,18 @@ describe('makeEqlV3Column', () => {
     }
   })
 
+  it('throws for a domain outside the public schema instead of emitting bad DDL', () => {
+    // stripDomainSchema/qualifyDomain are inverses only over public-schema
+    // domains. A non-public qualified name would pass stripDomainSchema through
+    // untouched and drizzle-kit would emit the invalid dotted identifier again —
+    // silently. The guard turns that into a loud construction-time failure.
+    const rogue = {
+      getEqlType: () => 'other_schema.eql_v3_text_eq',
+      getName: () => 'nickname',
+    } as unknown as Parameters<typeof makeEqlV3Column>[0]
+    expect(() => makeEqlV3Column(rogue)).toThrow(EQL_V3_DOMAIN_SCHEMA)
+  })
+
   it('recovers the stashed builder before and after pgTable processing', () => {
     const col = makeEqlV3Column(v3Types.TextEq('nickname'))
     expect(isEqlV3Column(col)).toBe(true)
