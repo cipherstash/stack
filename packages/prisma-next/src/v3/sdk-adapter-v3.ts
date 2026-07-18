@@ -244,10 +244,13 @@ export function createCipherstashV3Sdk(
       // this mirrors stack-drizzle's JSON containment usage exactly.
       await Promise.all(
         jsonTerms.map(async (slot) => {
-          // Cast rationale: see the scalar branch above.
-          // biome-ignore lint/plugin: deliberate bridge into the structural `never`-operand surface (rationale above)
+          // Cast rationale: see the scalar branch above. The two operands sit
+          // on separate argument lines, so each cast needs its own ignore —
+          // a single comment above the call reaches neither.
           const result = await client.encryptQuery(
+            // biome-ignore lint/plugin: deliberate bridge into the structural `never`-operand surface (rationale above)
             slot.plaintext as never,
+            // biome-ignore lint/plugin: deliberate bridge into the structural `never`-operand surface (rationale above)
             { table, column, queryType: 'searchableJson' } as never,
           )
           const term = unwrap(result, 'encryptQuery(searchableJson)')
