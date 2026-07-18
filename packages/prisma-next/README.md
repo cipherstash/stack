@@ -10,9 +10,9 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 
 - 🔒 Six encrypted column types — `string`, `double`, `bigint`, `date`, `boolean`, `json`
 - 🔍 Searchable encryption — equality, free-text search, range, order, JSON path and containment
-- 🎯 17 type-safe query operators (`cipherstashEq`, `cipherstashIlike`, `cipherstashGt`, `cipherstashAsc`, …)
+- 🎯 Type-safe query operators — EQL v3 uses the EQL-derived `eql*` vocabulary (`eqlEq`, `eqlMatch`, `eqlGt`, `eqlAsc`, …); the legacy v2 surface keeps its `cipherstash*` names
 - ⚡ Bulk encrypt / bulk decrypt coalescing — one SDK round-trip per `(table, column)` group per query
-- 🧩 One-call setup via `cipherstashFromStack({ contractJson })` — no duplicate stack schema to maintain
+- 🧩 One-call setup via `cipherstashFromStackV3({ contractJson })` (v2: `cipherstashFromStack`) — no duplicate stack schema to maintain
 - 🛡️ Plaintext redaction on every implicit serialisation path (`toJSON`, `toString`, `util.inspect`, …)
 
 ## Installation
@@ -91,7 +91,8 @@ See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encr
 
 | Subpath          | Purpose                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `./stack`        | One-call setup against `@cipherstash/stack`: `cipherstashFromStack`, `deriveStackSchemas`, `createCipherstashSdk` |
+| `./v3`           | The complete EQL v3 surface: `cipherstashFromStackV3`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, envelopes, middleware, SDK adapter |
+| `./stack`        | One-call setup against `@cipherstash/stack` (EQL v2): `cipherstashFromStack`, `deriveStackSchemas`, `createCipherstashSdk` |
 | `./control`      | `SqlControlExtensionDescriptor` (contract space + pack meta + codec lifecycle hooks)                   |
 | `./runtime`      | Six envelope classes + `CipherstashSdk` + codec runtime + `decryptAll` + four free-standing helpers    |
 | `./middleware`   | `bulkEncryptMiddleware(sdk)`                                                                           |

@@ -38,6 +38,12 @@ import baselineMetadata from '../../migrations/20260601T0000_install_eql_bundle/
 import baselineOps from '../../migrations/20260601T0000_install_eql_bundle/ops.json' with {
   type: 'json',
 }
+import v3BaselineMetadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
+  type: 'json',
+}
+import v3BaselineOps from '../../migrations/20260601T0100_install_eql_v3_bundle/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import contractJson from '../contract.json' with { type: 'json' }
 import {
@@ -49,6 +55,7 @@ import {
   CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_STRING_CODEC_ID,
 } from '../extension-metadata/constants'
+import { CIPHERSTASH_V3_BASELINE_MIGRATION_NAME } from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
 import {
   cipherstashBigIntCodecHooks,
@@ -58,6 +65,7 @@ import {
   cipherstashJsonCodecHooks,
   cipherstashStringCodecHooks,
 } from '../migration/cipherstash-codec'
+import { cipherstashV3CodecControlHooks } from '../migration/cipherstash-codec-v3'
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
@@ -66,6 +74,19 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
       dirName: CIPHERSTASH_BASELINE_MIGRATION_NAME,
       metadata: baselineMetadata,
       ops: baselineOps,
+    },
+    // The v3 bundle baseline — an invariant-only edge (`from === to`;
+    // the bundle creates `public.eql_v3_*` domains + `eql_v3.*`
+    // functions but no contract-space storage). The v3 codec ids ARE
+    // registered in `controlPlaneHooks` below, but with the identity
+    // `expandNativeType` ONLY (the planner requires the hook to exist
+    // for `typeParams`-carrying columns) — no `onFieldEvent`, which is
+    // what guarantees v3 columns emit no `add_search_config` /
+    // `remove_search_config` ops.
+    {
+      dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+      metadata: v3BaselineMetadata,
+      ops: v3BaselineOps,
     },
   ],
   headRef,
@@ -93,6 +114,9 @@ const cipherstashExtensionDescriptor: SqlControlExtensionDescriptor<'postgres'> 
       codecTypes: {
         ...cipherstashPackMeta.types.codecTypes,
         controlPlaneHooks: {
+          // v3: identity expandNativeType only, no onFieldEvent — see
+          // `../migration/cipherstash-codec-v3.ts`.
+          ...cipherstashV3CodecControlHooks,
           [CIPHERSTASH_STRING_CODEC_ID]: cipherstashStringCodecHooks,
           [CIPHERSTASH_DOUBLE_CODEC_ID]: cipherstashDoubleCodecHooks,
           [CIPHERSTASH_BIGINT_CODEC_ID]: cipherstashBigIntCodecHooks,

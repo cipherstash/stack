@@ -60,6 +60,10 @@
 			"types": "./dist/stack.d.ts",
 			"import": "./dist/stack.js"
 		},
+		"./v3": {
+			"types": "./dist/v3.d.ts",
+			"import": "./dist/v3.js"
+		},
 		"./package.json": "./package.json"
 	},
 	"types": "./dist/control.d.ts",
@@ -73,6 +77,8 @@
 		"dev": "tsup --watch",
 		"test": "vitest run",
 		"test:coverage": "vitest run --coverage",
+		"test:live": "vitest run test/live --fileParallelism=false",
+		"test:integration": "vitest run --config integration/vitest.config.ts",
 		"typecheck": "tsc --project tsconfig.json --noEmit",
 		"lint": "biome check . --error-on-warnings",
 		"lint:fix": "biome check --write .",
@@ -93,6 +99,8 @@
 		"arktype": "^2.2.3"
 	},
 	"devDependencies": {
+		"@cipherstash/eql": "3.0.0",
+		"@cipherstash/test-kit": "workspace:*",
 		"@prisma-next/adapter-postgres": "0.14.0",
 		"@prisma-next/cli": "0.14.0",
 		"@prisma-next/driver-postgres": "0.14.0",
@@ -102,7 +110,10 @@
 		"@prisma-next/sql-contract-ts": "0.14.0",
 		"@prisma-next/sql-schema-ir": "0.14.0",
 		"@prisma-next/target-postgres": "0.14.0",
+		"dotenv": "17.4.2",
+		"fast-check": "^4.8.0",
 		"pathe": "^2.0.3",
+		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
 		"vitest": "catalog:repo"

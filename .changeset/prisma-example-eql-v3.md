@@ -1,0 +1,5 @@
+---
+'@cipherstash/prisma-next-example': minor
+---
+
+Convert the example app to EQL v3. Every column is now a concrete `public.eql_v3_*` domain authored with the per-domain constructors (`EncryptedTextSearch`, `EncryptedDoubleOrd`, `EncryptedBigIntOrd`, `EncryptedDateOrd`, `EncryptedBoolean`, `EncryptedJson`), wired through `cipherstashFromStackV3({ contractJson })`. The e2e harness runs the full v3 surface against live Postgres + ZeroKMS with no skips: the `eql*` operator vocabulary (equality/range plus `eqlMatch` free-text token search), `eqlAsc`/`eqlDesc` order-term sorting, encrypted JSON containment (`eqlJsonContains` — the v2 `cipherstashJsonb*` helpers do not exist in v3), lossless `bigint` beyond `Number.MAX_SAFE_INTEGER`, and the storage-only `eql_v3_boolean` refusal (`EncryptionOperatorError`) pinned as a feature. Migrations regenerate from the v3 contract: the initial app migration creates the `users` table against the v3 domains with zero `add_search_config` ops, and the cipherstash space carries both bundle baselines (v2 + v3).

@@ -1,47 +1,49 @@
 /**
- * End-to-end mixed-codec query against live Postgres + EQL bundle
- * + ZeroKMS.
+ * End-to-end mixed-domain query against live Postgres + EQL v3 +
+ * ZeroKMS.
  *
- * Pins the cross-codec invariants:
- *   - A single query that touches multiple cipherstash columns of
- *     different types in WHERE + ORDER BY succeeds end-to-end.
- *   - Bulk-encrypt batches every search-term envelope into the
- *     minimum number of SDK round-trips — one `bulkEncrypt` per
- *     `(table, column)` group (also covered by the bulk-encrypt
- *     middleware unit tests in
- *     `packages/prisma-next/test/bulk-encrypt-middleware.test.ts`).
+ * Pins the cross-domain invariants:
+ *   - A single query that touches multiple cipherstash v3 columns of
+ *     different domains in WHERE + ORDER BY succeeds end-to-end.
+ *   - The bulk-encrypt middleware batches every operand into the
+ *     minimum number of framework-SDK crossings — one `bulkEncrypt`
+ *     seam call per `(table, column)` group. (Inside the v3 SDK
+ *     adapter, WHERE operands route through `encryptQuery` as
+ *     ciphertext-free query terms; the seam count is what the
+ *     middleware controls and what this suite observes.)
  *
- * Round-trip counts are observed by wrapping a fresh `CipherstashSdk`
- * (built from `cipherstashFromStack({ contractJson }).encryptionClient`)
- * with a counting decorator and threading the wrapped instance into a
- * private `db` runtime. Concretely:
+ * Crossing counts are observed by wrapping a fresh `CipherstashSdk`
+ * (built from `cipherstashFromStackV3({ contractJson }).encryptionClient`
+ * via `createCipherstashV3Sdk`) with a counting decorator and threading
+ * the wrapped instance into a private `db` runtime. Concretely:
  *
- *   - WHERE clause touches `email` (string) + `salary` (double) +
- *     `birthday` (date) + `emailVerified` (boolean) — four cipher
- *     columns, so **4 bulkEncrypt calls** for the search terms.
+ *   - WHERE touches `email` (text_search) + `salary` (double_ord) +
+ *     `birthday` (date_ord) — three cipher columns, so **3 bulkEncrypt
+ *     seam calls** for the search terms. (`emailVerified` cannot
+ *     appear: `eql_v3_boolean` is storage-only — see bool.e2e.test.ts.)
  *   - The query is a read so no row-write envelopes are encrypted.
  *   - The result rows carry encrypted values across six columns; a
  *     follow-up `decryptAll(rows)` produces **6 bulkDecrypt calls**
  *     (one per `(table, column)` group spanning the result set).
  */
 
-import { bulkEncryptMiddleware } from '@cipherstash/prisma-next/middleware'
 import {
-  cipherstashAsc,
-  createCipherstashRuntimeDescriptor,
+  bulkEncryptMiddlewareV3,
+  createCipherstashV3RuntimeDescriptor,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
+  eqlAsc,
 } from '@cipherstash/prisma-next/runtime'
 import {
-  cipherstashFromStack,
-  createCipherstashSdk,
-  deriveStackSchemas,
-} from '@cipherstash/prisma-next/stack'
+  cipherstashFromStackV3,
+  createCipherstashV3Sdk,
+  deriveStackSchemasV3,
+} from '@cipherstash/prisma-next/v3'
 import postgres from '@prisma-next/postgres/runtime'
 import { and } from '@prisma-next/sql-orm-client'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -84,7 +86,7 @@ function seedRow(s: (typeof SEED)[number]) {
   return {
     id: s.id,
     email: EncryptedString.from(s.email),
-    salary: EncryptedDouble.from(s.salary),
+    salary: EncryptedNumber.from(s.salary),
     accountId: EncryptedBigInt.from(1_000_000n),
     birthday: EncryptedDate.from(s.birthday),
     emailVerified: EncryptedBoolean.from(s.emailVerified),
@@ -94,10 +96,10 @@ function seedRow(s: (typeof SEED)[number]) {
 
 /**
  * Build a counting wrapper around a base SDK so we can observe
- * `bulkEncrypt` / `bulkDecrypt` call counts independent of the
+ * `bulkEncrypt` / `bulkDecrypt` seam-call counts independent of the
  * harness's shared `db` instance.
  */
-function wrapWithCounting(base: ReturnType<typeof createCipherstashSdk>) {
+function wrapWithCounting(base: ReturnType<typeof createCipherstashV3Sdk>) {
   let bulkEncryptCalls = 0
   let bulkDecryptCalls = 0
   return {
@@ -127,8 +129,8 @@ function wrapWithCounting(base: ReturnType<typeof createCipherstashSdk>) {
   }
 }
 
-describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
-  // Use a private `db` instance with a counting SDK so the round-trip
+describe('Mixed-domain e2e (live PG + EQL v3 + ZeroKMS)', () => {
+  // Use a private `db` instance with a counting SDK so the crossing
   // assertions are insulated from any other test file that may have
   // mutated the harness's shared client.
   const url =
@@ -139,19 +141,19 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
   let runtime: { close(): Promise<void> } | undefined
 
   beforeAll(async () => {
-    // Reuse the encryption client from `cipherstashFromStack` so the
+    // Reuse the encryption client from `cipherstashFromStackV3` so the
     // counting wrapper observes the same ZeroKMS workspace + schema
-    // surface the example app would in production. Re-derive the stack
-    // schemas from `contractJson` to satisfy `createCipherstashSdk`'s
-    // `(client, schemas)` contract.
-    const { encryptionClient } = await cipherstashFromStack({ contractJson })
-    const schemas = deriveStackSchemas(contractJson)
-    const baseSdk = createCipherstashSdk(encryptionClient, schemas)
+    // surface the example app would in production. Re-derive the v3
+    // stack schemas from `contractJson` to satisfy
+    // `createCipherstashV3Sdk`'s `(client, schemas)` contract.
+    const { encryptionClient } = await cipherstashFromStackV3({ contractJson })
+    const schemas = deriveStackSchemasV3(contractJson)
+    const baseSdk = createCipherstashV3Sdk(encryptionClient, schemas)
     counting = wrapWithCounting(baseSdk)
     db = postgres<Contract>({
       contractJson,
-      extensions: [createCipherstashRuntimeDescriptor({ sdk: counting.sdk })],
-      middleware: [bulkEncryptMiddleware(counting.sdk)],
+      extensions: [createCipherstashV3RuntimeDescriptor({ sdk: counting.sdk })],
+      middleware: [bulkEncryptMiddlewareV3(counting.sdk)],
     })
     runtime = (await db.connect({ url })) as { close(): Promise<void> }
     await truncateUsers()
@@ -165,41 +167,41 @@ describe('Mixed-codec e2e (live PG + EQL + ZeroKMS)', () => {
     }
   })
 
-  it('executes a four-column WHERE + ordered read end-to-end', async () => {
+  it('executes a three-column WHERE + order-term read end-to-end', async () => {
     const rows = await db.orm.public.User.where((u) =>
       and(
-        u.email.cipherstashIlike('%@example.com'),
-        u.salary.cipherstashGt(75_000),
-        u.birthday.cipherstashLt(new Date('2000-01-01')),
-        u.emailVerified.cipherstashInArray([true]),
+        u.email.eqlMatch('example.com'),
+        u.salary.eqlGt(75_000),
+        u.birthday.eqlLt(new Date('2000-01-01')),
       ),
     )
-      .orderBy((u) => cipherstashAsc(u.salary))
+      .orderBy((u) => eqlAsc(u.salary))
       .all()
 
-    // Only bob (e2e-mixed-1) survives all four predicates: alice's
-    // salary is below the 75k cutoff, carol is unverified, and
-    // dave's email `dave@otherorg.test` doesn't match `%@example.com`.
-    expect(rows.map((r) => r.id)).toEqual(['e2e-mixed-1'])
+    // carol (90k) and bob (110k) survive all three predicates, ordered
+    // by ascending encrypted salary; alice's salary is below the 75k
+    // cutoff and dave's email `dave@otherorg.test` carries no
+    // example.com token.
+    expect(rows.map((r) => r.id)).toEqual(['e2e-mixed-2', 'e2e-mixed-1'])
   })
 
-  it('groups search-term encrypts: one bulkEncrypt per (table, column)', async () => {
+  it('groups operand encrypts: one bulkEncrypt seam call per (table, column)', async () => {
     counting.counts.reset()
     await db.orm.public.User.where((u) =>
       and(
-        u.email.cipherstashIlike('%@example.com'),
-        u.salary.cipherstashGt(75_000),
-        u.birthday.cipherstashLt(new Date('2000-01-01')),
-        u.emailVerified.cipherstashInArray([true]),
+        u.email.eqlMatch('example.com'),
+        u.salary.eqlGt(75_000),
+        u.birthday.eqlLt(new Date('2000-01-01')),
       ),
     )
-      .orderBy((u) => cipherstashAsc(u.salary))
+      .orderBy((u) => eqlAsc(u.salary))
       .all()
-    // Four distinct (users, <column>) groups in the WHERE — one
-    // `bulkEncrypt` round-trip per group. ORDER BY is a column ref
-    // (no envelope to encrypt). No row writes, so no additional
-    // bulk-encrypt calls beyond the search-term batches.
-    expect(counting.counts.bulkEncrypt).toBe(4)
+    // Three distinct (users, <column>) groups in the WHERE — one
+    // framework-SDK `bulkEncrypt` crossing per group (each routed to
+    // `encryptQuery` inside the v3 adapter). ORDER BY is an order-term
+    // extraction over the column itself (no operand to encrypt). No
+    // row writes, so no additional crossings.
+    expect(counting.counts.bulkEncrypt).toBe(3)
   })
 
   it('groups result decrypts: one bulkDecrypt per (table, column)', async () => {

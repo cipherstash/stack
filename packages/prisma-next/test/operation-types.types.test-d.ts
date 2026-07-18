@@ -7,28 +7,35 @@
  * matching behaviour can be exercised against a synthetic
  * `CodecTypes` table without pulling in the full ORM model accessor.
  *
- * The tests pin two surface contracts:
+ * The tests pin three surface contracts:
  *
- *   1. **Codec-id dispatch (positive/negative)** for the legacy and
- *      single-codec entries (`cipherstashEq`, `cipherstashIlike`,
- *      `cipherstashNotIlike`, `cipherstashJsonbPathExists`):
+ *   1. **Codec-id dispatch (positive/negative)** for the legacy
+ *      single-codec entries (`cipherstashEq`, `cipherstashIlike`):
  *      the operator must surface on its target codec id and on no
  *      other.
  *
  *   2. **Trait dispatch (positive/negative)** for the multi-codec
  *      entries (`cipherstashNe`, `cipherstashInArray`,
- *      `cipherstashNotInArray`, `cipherstashGt`, `cipherstashGte`,
- *      `cipherstashLt`, `cipherstashLte`, `cipherstashBetween`,
- *      `cipherstashNotBetween`): the operator must surface on every
- *      cipherstash codec whose trait set carries the gating trait
+ *      `cipherstashNotInArray`, `cipherstashNotIlike`,
+ *      `cipherstashGt`, `cipherstashGte`, `cipherstashLt`,
+ *      `cipherstashLte`, `cipherstashBetween`, `cipherstashNotBetween`,
+ *      `cipherstashJsonbPathExists`): the operator must surface on
+ *      every cipherstash codec whose trait set carries the gating trait
  *      and on no codec without it (notably `pg/text@1`, which is the
  *      regression-pinning negative case for the wrong-SQL `eq`
  *      footgun).
+ *
+ *   3. **Generation split** for the v3 `eql*` entries (against the
+ *      REAL `CodecTypes` table): every `eql*` operator dispatches on a
+ *      `cipherstash:v3-*` marker only v3 entries carry, and no v2
+ *      `cipherstash*` operator surfaces on a v3 column — both
+ *      directions of the disjoint-name-set correspondence.
  *
  * AGENTS.md permits `@ts-expect-error` exclusively in negative
  * type-test files; this is one of them.
  */
 
+import type { CodecTypes as RealCodecTypes } from '../src/types/codec-types'
 import type { QueryOperationTypes } from '../src/types/operation-types'
 
 // -- Synthetic CodecTypes table ----------------------------------------------
@@ -134,7 +141,7 @@ type _ilike_string_pos = Expect<M<'cipherstashIlike', 'cipherstash/string@1'>>
 // @ts-expect-error cipherstashIlike must not surface on cipherstash/double@1.
 type _ilike_double_neg = Expect<M<'cipherstashIlike', 'cipherstash/double@1'>>
 
-// -- cipherstashNotIlike (string only — single-codec dispatch) ---------------
+// -- cipherstashNotIlike (free-text-search trait dispatch) --------------------
 
 type _notilike_string_pos = Expect<
   M<'cipherstashNotIlike', 'cipherstash/string@1'>
@@ -216,7 +223,7 @@ type _between_boolean_neg = Expect<
 // @ts-expect-error cipherstashNotBetween must not surface on pg/text@1.
 type _notbetween_text_neg = Expect<M<'cipherstashNotBetween', 'pg/text@1'>>
 
-// -- cipherstashJsonbPathExists (json only — single-codec dispatch) ---------
+// -- cipherstashJsonbPathExists (searchable-json trait dispatch) --------------
 
 type _jpe_json_pos = Expect<
   M<'cipherstashJsonbPathExists', 'cipherstash/json@1'>
@@ -228,9 +235,145 @@ type _jpe_string_neg = Expect<
 // @ts-expect-error cipherstashJsonbPathExists must not surface on pg/text@1.
 type _jpe_text_neg = Expect<M<'cipherstashJsonbPathExists', 'pg/text@1'>>
 
+// -- EQL v3 dispatch (against the REAL CodecTypes table) ---------------------
+//
+// The v3 assertions run against the real `CodecTypes` export (which
+// carries the 40 v3 entries plus the `cipherstash:v3-*` type-level
+// markers) rather than the synthetic table above, so drift in the real
+// table breaks this file. Pins the generation-split contracts (the v2
+// `cipherstash*` and v3 `eql*` method-name sets are disjoint — PR #655
+// review):
+//
+//   - every `eql*` operator surfaces exactly on the v3 columns whose
+//     marker tier carries its capability, and on NO v2 codec;
+//   - no v2 `cipherstash*` operator surfaces on any v3 column — v3
+//     entries carry only `cipherstash:v3-*` markers, never the shared
+//     v2 trait strings or the legacy codec-id pin;
+//   - storage-only v3 domains (boolean, bare `eql_v3_text`) surface
+//     NO operators at all;
+//   - the retired names (`cipherstashJsonContains`, and any negated
+//     match) are gone from the operation table entirely.
+
+type RealOps = QueryOperationTypes<RealCodecTypes>
+type M3<N extends keyof RealOps, C extends string> = OpMatchesField<
+  RealOps[N],
+  C,
+  RealCodecTypes
+>
+
+// Retired names must not re-enter the table: `cipherstashJsonContains`
+// was renamed to `eqlJsonContains`, and a negated match must not exist
+// under either vocabulary (bloom negation false-negatives).
+type RetiredNames = Extract<
+  keyof RealOps,
+  'cipherstashJsonContains' | 'eqlNotMatch'
+>
+type _RetiredNamesAbsent = [RetiredNames] extends [never]
+  ? true
+  : ['operation table resurrects retired names', RetiredNames]
+const _retiredNamesAbsent: _RetiredNamesAbsent = true
+void _retiredNamesAbsent
+
+// v3 positives: each marker tier surfaces its operator family.
+type _v3_eq_search_pos = Expect<
+  M3<'eqlEq', 'cipherstash/eql-v3/eql_v3_text_search@1'>
+>
+type _v3_eq_bigint_eq_pos = Expect<
+  M3<'eqlEq', 'cipherstash/eql-v3/eql_v3_bigint_eq@1'>
+>
+type _v3_in_texteq_pos = Expect<
+  M3<'eqlIn', 'cipherstash/eql-v3/eql_v3_text_eq@1'>
+>
+type _v3_match_search_pos = Expect<
+  M3<'eqlMatch', 'cipherstash/eql-v3/eql_v3_text_search@1'>
+>
+type _v3_match_textmatch_pos = Expect<
+  M3<'eqlMatch', 'cipherstash/eql-v3/eql_v3_text_match@1'>
+>
+type _v3_gt_ord_pos = Expect<
+  M3<'eqlGt', 'cipherstash/eql-v3/eql_v3_double_ord@1'>
+>
+type _v3_jsoncontains_json_pos = Expect<
+  M3<'eqlJsonContains', 'cipherstash/eql-v3/eql_v3_json@1'>
+>
+
+// v3 negatives: capability tiers gate visibility.
+type _v3_eq_boolean_neg = Expect<
+  // @ts-expect-error eqlEq must not surface on storage-only eql_v3_boolean.
+  M3<'eqlEq', 'cipherstash/eql-v3/eql_v3_boolean@1'>
+>
+type _v3_eq_text_storage_neg = Expect<
+  // @ts-expect-error eqlEq must not surface on storage-only eql_v3_text.
+  M3<'eqlEq', 'cipherstash/eql-v3/eql_v3_text@1'>
+>
+type _v3_match_texteq_neg = Expect<
+  // @ts-expect-error eqlMatch must not surface on eql_v3_text_eq (no free-text index).
+  M3<'eqlMatch', 'cipherstash/eql-v3/eql_v3_text_eq@1'>
+>
+type _v3_gt_eqonly_neg = Expect<
+  // @ts-expect-error eqlGt must not surface on eql_v3_double_eq (no order/range).
+  M3<'eqlGt', 'cipherstash/eql-v3/eql_v3_double_eq@1'>
+>
+type _v3_in_boolean_neg = Expect<
+  // @ts-expect-error eqlIn must not surface on storage-only eql_v3_boolean.
+  M3<'eqlIn', 'cipherstash/eql-v3/eql_v3_boolean@1'>
+>
+
+// Generation split, v3→v2 direction: `eql*` never surfaces on a v2 codec.
+type _v3_eq_v2string_neg = Expect<
+  // @ts-expect-error eqlEq must not surface on the v2 string codec.
+  M3<'eqlEq', 'cipherstash/string@1'>
+>
+type _v3_match_v2string_neg = Expect<
+  // @ts-expect-error eqlMatch must not surface on the v2 string codec.
+  M3<'eqlMatch', 'cipherstash/string@1'>
+>
+type _v3_jsoncontains_v2json_neg = Expect<
+  // @ts-expect-error eqlJsonContains must not surface on the v2 json codec.
+  M3<'eqlJsonContains', 'cipherstash/json@1'>
+>
+
+// Generation split, v2→v3 direction: `cipherstash*` never surfaces on a
+// v3 column (v3 entries carry no shared v2 trait and no legacy codec id).
+type _v2_eq_v3search_neg = Expect<
+  // @ts-expect-error v2 cipherstashEq must not surface on eql_v3_text_search.
+  M3<'cipherstashEq', 'cipherstash/eql-v3/eql_v3_text_search@1'>
+>
+type _v2_ilike_v3search_neg = Expect<
+  // @ts-expect-error v2 cipherstashIlike must not surface on eql_v3_text_search.
+  M3<'cipherstashIlike', 'cipherstash/eql-v3/eql_v3_text_search@1'>
+>
+type _v2_gt_v3ord_neg = Expect<
+  // @ts-expect-error v2 cipherstashGt must not surface on eql_v3_double_ord.
+  M3<'cipherstashGt', 'cipherstash/eql-v3/eql_v3_double_ord@1'>
+>
+type _v2_jpe_v3json_neg = Expect<
+  // @ts-expect-error v2-only cipherstashJsonbPathExists must not surface on eql_v3_json.
+  M3<'cipherstashJsonbPathExists', 'cipherstash/eql-v3/eql_v3_json@1'>
+>
+
 // -- Anchor unused type aliases so noUnusedLocals stays happy ---------------
 
 export type _Anchors = [
+  _v3_eq_search_pos,
+  _v3_eq_bigint_eq_pos,
+  _v3_in_texteq_pos,
+  _v3_match_search_pos,
+  _v3_match_textmatch_pos,
+  _v3_gt_ord_pos,
+  _v3_jsoncontains_json_pos,
+  _v3_eq_boolean_neg,
+  _v3_eq_text_storage_neg,
+  _v3_match_texteq_neg,
+  _v3_gt_eqonly_neg,
+  _v3_in_boolean_neg,
+  _v3_eq_v2string_neg,
+  _v3_match_v2string_neg,
+  _v3_jsoncontains_v2json_neg,
+  _v2_eq_v3search_neg,
+  _v2_ilike_v3search_neg,
+  _v2_gt_v3ord_neg,
+  _v2_jpe_v3json_neg,
   _eq_string_pos,
   _eq_double_neg,
   _eq_text_neg,

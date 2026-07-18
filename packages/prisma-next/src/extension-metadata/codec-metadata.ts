@@ -26,7 +26,13 @@ import type { JsonValue } from '@prisma-next/contract/types'
 import {
   type AnyCodecDescriptor,
   CodecImpl,
+  type CodecTrait,
 } from '@prisma-next/framework-components/codec'
+import {
+  envelopeTypeNameForCastAs,
+  V3_DOMAIN_META_BY_CODEC_ID,
+  type V3DomainMeta,
+} from '../v3/catalog'
 import {
   CIPHERSTASH_BIGINT_CODEC_ID,
   CIPHERSTASH_BOOLEAN_CODEC_ID,
@@ -37,6 +43,7 @@ import {
   CIPHERSTASH_STRING_CODEC_ID,
   EQL_V2_ENCRYPTED_TYPE,
 } from './constants'
+import { v3TraitsForCapabilities } from './constants-v3'
 
 function makeMetadataDescriptor(
   codecId: string,
@@ -132,3 +139,68 @@ export const cipherstashJsonCodecMetadata = new CipherstashCodecMetadata(
   makeMetadataDescriptor(CIPHERSTASH_JSON_CODEC_ID, 'EncryptedJson'),
   'EncryptedJson',
 )
+
+// ---------------------------------------------------------------------------
+// EQL v3 — one metadata codec per catalog domain (all 40), DERIVED from the
+// catalog (never hand-listed) so pack-meta can never drift from what the
+// runtime registers. Mirrors the truthful metadata of the runtime auxiliary
+// descriptors in `../v3/codec-runtime-v3.ts` (traits from capabilities,
+// concrete `public.eql_v3_*` native type, `isParameterized: true` for the
+// static `{ castAs, capabilities }` typeParams block v3 authoring emits) —
+// minus the SDK-bound encode/decode, which pack-meta consumers never call.
+// The catalog import stays SDK/envelope-free, preserving the control-vs-
+// runtime bundling split this module's header describes.
+// ---------------------------------------------------------------------------
+
+function makeV3MetadataDescriptor(
+  codecId: string,
+  meta: V3DomainMeta,
+  typeName: string,
+): AnyCodecDescriptor {
+  return {
+    codecId,
+    // Type-level adapter into the framework's closed `CodecTrait` union —
+    // same rationale as `v3CodecTraits` in `../v3/codec-runtime-v3.ts`.
+    traits: v3TraitsForCapabilities(meta.capabilities) as readonly CodecTrait[],
+    targetTypes: [meta.nativeType],
+    meta: { db: { sql: { postgres: { nativeType: meta.nativeType } } } },
+    paramsSchema: {
+      '~standard': {
+        version: 1,
+        vendor: 'cipherstash',
+        validate: (value: unknown) => ({ value }),
+      },
+    },
+    isParameterized: true,
+    renderOutputType: () => typeName,
+    factory: () => () => {
+      throw new Error(
+        'cipherstash codec: metadata descriptor factory is not callable',
+      )
+    },
+  }
+}
+
+/** All 40 v3 metadata codecs, in catalog order. */
+export const cipherstashV3CodecMetadataInstances: readonly CipherstashCodecMetadata[] =
+  [...V3_DOMAIN_META_BY_CODEC_ID.entries()].map(([codecId, meta]) => {
+    const typeName = envelopeTypeNameForCastAs(meta.castAs)
+    return new CipherstashCodecMetadata(
+      makeV3MetadataDescriptor(codecId, meta, typeName),
+      typeName,
+    )
+  })
+
+/** Pack-meta `types.storage` rows for the v3 codecs — one per domain,
+ * each targeting its own concrete `public.eql_v3_*` native type. */
+export const cipherstashV3StorageRows: ReadonlyArray<{
+  readonly typeId: string
+  readonly familyId: 'sql'
+  readonly targetId: 'postgres'
+  readonly nativeType: string
+}> = [...V3_DOMAIN_META_BY_CODEC_ID.entries()].map(([codecId, meta]) => ({
+  typeId: codecId,
+  familyId: 'sql',
+  targetId: 'postgres',
+  nativeType: meta.nativeType,
+}))

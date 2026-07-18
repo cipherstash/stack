@@ -1,27 +1,28 @@
 /**
- * End-to-end round-trip for `EncryptedDate` against live
- * Postgres + EQL bundle + ZeroKMS.
+ * End-to-end round-trip for the `eql_v3_date_ord` domain against
+ * live Postgres + EQL v3 + ZeroKMS.
  *
  * Pins:
  *   - INSERT + decrypt round-trip recovers the source `Date`.
- *   - `cipherstashGt(<date>)` returns rows whose date is later.
- *   - `cipherstashAsc` orders by calendar date.
- *   - `cipherstashBetween` filters a closed interval.
+ *   - `eqlGt(<date>)` returns rows whose date is later.
+ *   - `eqlBetween` filters a closed interval.
+ *   - `eqlAsc` / `eqlDesc` order by calendar date
+ *     via the encrypted order term (`eql_v3.ord_term(col)`).
  *
- * Encoded form is ISO 8601 (`.toISOString()`); both ZeroKMS and the
- * EQL bundle accept the textual form for `cast_as: 'date'`.
+ * protect-ffi's eqlVersion-3 wire accepts `Date` plaintexts natively
+ * for `cast_as: 'date'` (calendar-day precision).
  */
 
 import {
-  cipherstashAsc,
-  cipherstashDesc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
+  eqlAsc,
+  eqlDesc,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
@@ -37,7 +38,7 @@ function seedRow(s: (typeof SEED)[number]) {
   return {
     id: s.id,
     email: EncryptedString.from(`${s.id}@example.com`),
-    salary: EncryptedDouble.from(50_000),
+    salary: EncryptedNumber.from(50_000),
     accountId: EncryptedBigInt.from(1_000_000n),
     birthday: EncryptedDate.from(s.birthday),
     emailVerified: EncryptedBoolean.from(true),
@@ -45,7 +46,7 @@ function seedRow(s: (typeof SEED)[number]) {
   }
 }
 
-describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
+describe('EncryptedDate (eql_v3_date_ord) e2e (live PG + EQL v3 + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
@@ -61,9 +62,8 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
       const r = byId.get(s.id)
       expect(r, `seed row ${s.id} present`).toBeDefined()
       const got = r ? await r.birthday.decrypt() : undefined
-      // The cipherstash date codec round-trips through `cast_as: 'date'`
-      // which is calendar-day-precision; comparing day-equivalence is
-      // the meaningful assertion.
+      // `cast_as: 'date'` is calendar-day precision; comparing
+      // day-equivalence is the meaningful assertion.
       expect(got).toBeInstanceOf(Date)
       expect((got as Date).toISOString().slice(0, 10)).toBe(
         s.birthday.toISOString().slice(0, 10),
@@ -71,26 +71,23 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
     }
   })
 
-  it('cipherstashGt filters dates after the cutoff', async () => {
+  it('eqlGt filters dates after the cutoff', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.birthday.cipherstashGt(new Date('1995-01-01')),
+      u.birthday.eqlGt(new Date('1995-01-01')),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-date-2', 'e2e-date-3'])
   })
 
-  it('cipherstashBetween filters a closed date interval', async () => {
+  it('eqlBetween filters a closed date interval', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.birthday.cipherstashBetween(
-        new Date('1985-01-01'),
-        new Date('2005-12-31'),
-      ),
+      u.birthday.eqlBetween(new Date('1985-01-01'), new Date('2005-12-31')),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-date-1', 'e2e-date-2'])
   })
 
-  it('cipherstashAsc orders by calendar date (bare-column ORDER BY)', async () => {
+  it('eqlAsc orders by calendar date via the encrypted order term', async () => {
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashAsc(u.birthday),
+      eqlAsc(u.birthday),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-date-0',
@@ -100,9 +97,9 @@ describe('EncryptedDate e2e (live PG + EQL + ZeroKMS)', () => {
     ])
   })
 
-  it('cipherstashDesc reverses the date order', async () => {
+  it('eqlDesc reverses the date order', async () => {
     const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashDesc(u.birthday),
+      eqlDesc(u.birthday),
     ).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-date-3',

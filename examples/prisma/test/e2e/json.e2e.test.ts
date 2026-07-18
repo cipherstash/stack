@@ -1,52 +1,34 @@
 /**
- * End-to-end round-trip for `EncryptedJson` against live
- * Postgres + EQL bundle + ZeroKMS.
+ * End-to-end round-trip for the `eql_v3_json` domain against live
+ * Postgres + EQL v3 + ZeroKMS.
+ *
+ * v3 searchable JSON is containment-only: the ste_vec index answers
+ * encrypted jsonb `@>` via `eqlJsonContains`, with the operand
+ * minted as a ciphertext-free `eql_v3.query_jsonb` term. The v2
+ * `cipherstashJsonbPathQueryFirst` / `cipherstashJsonbGet` /
+ * `cipherstashJsonbPathExists` helpers do not exist in v3 (and with
+ * them goes the v2 suite's "selector hashing" known-limitation skip —
+ * containment works end-to-end).
  *
  * Pins:
  *   - INSERT + decrypt round-trip recovers the source JSON object.
- *   - `cipherstashJsonbPathExists('$.<key>')` filters rows by
- *     STE-VEC selector membership.
- *
- * # Known limitation: STE-VEC selectors require client-side hashing
- *
- * The cipherstash JSON codec stores values with an STE-VEC index;
- * each JSON path is represented in the index as a *hashed* selector
- * computed by the CipherStash client at write time. The
- * `eql_v2.jsonb_path_exists` function expects that same hashed
- * selector at query time — passing a raw JSONpath string
- * (`'$.theme'`) probes the index for a path that has not been
- * hashed, so the lookup misses every row.
- *
- * The framework's current operator lowering binds the JSONpath as a
- * plain `pg/text@1` `ParamRef`. The wire result is a syntactically
- * valid call that the EQL function accepts and runs, but no rows
- * match because the encrypted index entries are keyed by hashed
- * selectors, not the raw path. Bridging this requires either:
- *
- *   - a client-side hashing step before the SQL fires (a new
- *     middleware that observes JSON-path arguments and rewrites them
- *     via the SDK's `selector(...)` API), or
- *   - an EQL-side overload that accepts plaintext paths and hashes
- *     them server-side.
- *
- * Both routes are tracked as a follow-up at
- * https://linear.app/prisma-company/issue/TML-2504. The test below
- * pins the round-trip + decrypt behaviour (which works today) and
- * the JSON SELECT-expression helpers' availability; the predicate
- * side is marked as a known limitation with a `.skip` and a pointer
- * to this comment, so the regression status is visible at a glance.
+ *   - `eqlJsonContains` selects by top-level, multi-key,
+ *     nested-array, and nested-object containment (exact jsonb `@>`
+ *     semantics, no false positives).
+ *   - Negative cases: non-matching needles select zero rows.
+ *   - The empty-object needle (`doc @> '{}'` — true for EVERY row) is
+ *     rejected loudly instead of silently selecting the whole table.
  */
 
 import {
-  cipherstashJsonbGet,
-  cipherstashJsonbPathQueryFirst,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
+  EncryptionOperatorError,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
@@ -54,15 +36,29 @@ import { db, ensureConnected, truncateUsers } from './harness'
 const SEED = [
   {
     id: 'e2e-json-0',
-    preferences: { theme: 'dark', notifications: true, locale: 'en-US' },
+    preferences: {
+      theme: 'dark',
+      notifications: true,
+      locale: 'en-US',
+      tags: ['alpha', 'beta'],
+    },
   },
   {
     id: 'e2e-json-1',
-    preferences: { theme: 'light', notifications: false, locale: 'de-DE' },
+    preferences: {
+      theme: 'light',
+      notifications: false,
+      locale: 'de-DE',
+      tags: ['beta'],
+    },
   },
   {
     id: 'e2e-json-2',
-    preferences: { theme: 'system', notifications: true },
+    preferences: {
+      theme: 'dark',
+      notifications: true,
+      nested: { level: 3, admin: true },
+    },
   },
 ] as const
 
@@ -70,7 +66,7 @@ function seedRow(s: (typeof SEED)[number]) {
   return {
     id: s.id,
     email: EncryptedString.from(`${s.id}@example.com`),
-    salary: EncryptedDouble.from(50_000),
+    salary: EncryptedNumber.from(50_000),
     accountId: EncryptedBigInt.from(1_000_000n),
     birthday: EncryptedDate.from(new Date('1990-01-01')),
     emailVerified: EncryptedBoolean.from(true),
@@ -78,7 +74,7 @@ function seedRow(s: (typeof SEED)[number]) {
   }
 }
 
-describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
+describe('EncryptedJson (eql_v3_json) e2e (live PG + EQL v3 + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
@@ -97,35 +93,60 @@ describe('EncryptedJson e2e (live PG + EQL + ZeroKMS)', () => {
     }
   })
 
-  it.skip('cipherstashJsonbPathExists filters by JSON path (KNOWN LIMITATION: needs client-side selector hashing)', async () => {
+  it('eqlJsonContains selects by top-level key/value containment', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.preferences.cipherstashJsonbPathExists('$.locale'),
+      u.preferences.eqlJsonContains({ theme: 'dark' }),
     ).all()
+    expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-2'])
+  })
+
+  it('eqlJsonContains requires ALL needle keys (multi-key containment)', async () => {
+    const rows = await db.orm.public.User.where((u) =>
+      u.preferences.eqlJsonContains({
+        theme: 'dark',
+        locale: 'en-US',
+      }),
+    ).all()
+    expect(rows.map((r) => r.id)).toEqual(['e2e-json-0'])
+  })
+
+  it('eqlJsonContains matches array-element containment', async () => {
+    const rows = await db.orm.public.User.where((u) =>
+      u.preferences.eqlJsonContains({ tags: ['beta'] }),
+    ).all()
+    // jsonb `@>`: ['alpha','beta'] ⊇ ['beta'] and ['beta'] ⊇ ['beta'].
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-json-0', 'e2e-json-1'])
   })
 
-  it('exposes cipherstashJsonbPathQueryFirst as a typed SELECT-expression helper', () => {
-    // Type-level: the helper accepts an `Expression<ScopeField>` and
-    // returns an `Expression` typed as `cipherstash/json@1`. Wiring
-    // it into a `db.sql.public.users.select(...)` projection exercises the
-    // typed surface; the live SQL execution is held back until the
-    // STE-VEC selector hashing gap closes (see file docblock).
-    const projection = db.sql.public.users
-      .select((f) => ({
-        id: f.id,
-        themeNode: cipherstashJsonbPathQueryFirst(f.preferences, '$.theme'),
-      }))
-      .build()
-    expect(projection).toBeDefined()
+  it('eqlJsonContains matches nested-object containment', async () => {
+    const rows = await db.orm.public.User.where((u) =>
+      u.preferences.eqlJsonContains({ nested: { admin: true } }),
+    ).all()
+    expect(rows.map((r) => r.id)).toEqual(['e2e-json-2'])
   })
 
-  it('exposes cipherstashJsonbGet as a typed SELECT-expression helper', () => {
-    const projection = db.sql.public.users
-      .select((f) => ({
-        id: f.id,
-        themeNode: cipherstashJsonbGet(f.preferences, 'theme'),
-      }))
-      .build()
-    expect(projection).toBeDefined()
+  it('eqlJsonContains returns zero rows for non-matching needles', async () => {
+    const wrongValue = await db.orm.public.User.where((u) =>
+      u.preferences.eqlJsonContains({ theme: 'sepia' }),
+    ).all()
+    expect(wrongValue).toHaveLength(0)
+
+    const wrongKey = await db.orm.public.User.where((u) =>
+      u.preferences.eqlJsonContains({ timezone: 'UTC' }),
+    ).all()
+    expect(wrongKey).toHaveLength(0)
+
+    const partialNested = await db.orm.public.User.where((u) =>
+      u.preferences.eqlJsonContains({
+        nested: { level: 3, admin: false },
+      }),
+    ).all()
+    expect(partialNested).toHaveLength(0)
+  })
+
+  it('rejects the match-everything empty-object needle loudly', () => {
+    expect(() =>
+      db.orm.public.User.where((u) => u.preferences.eqlJsonContains({})),
+    ).toThrow(EncryptionOperatorError)
   })
 })

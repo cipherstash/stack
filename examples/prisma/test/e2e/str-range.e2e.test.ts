@@ -1,29 +1,32 @@
 /**
- * End-to-end round-trip for `EncryptedString` authored with
- * `orderAndRange: true` against live Postgres + EQL bundle +
- * ZeroKMS.
+ * End-to-end coverage for the `eql_v3_text_search` domain against
+ * live Postgres + EQL v3 + ZeroKMS.
  *
- * The example schema authors `email` with the default no-args
- * constructor (`cipherstash.EncryptedString()`), which opts every
- * flag (`equality`, `freeTextSearch`, `orderAndRange`) into `true`.
- * Pins:
- *   - `cipherstashGt('m')` filters lexicographically.
- *   - `cipherstashAsc(u.email)` orders alphabetically.
- *   - `cipherstashIlike('%@example.com')` still works alongside the
- *     range queries (free-text-search trait coexists with
- *     order-and-range on the same column).
+ * `cipherstash.EncryptedTextSearch()` is the maximal text domain:
+ * equality + order/range (OPE) + free-text search (bloom match) on one
+ * column. Pins:
+ *   - Round-trip decrypt recovers the source strings.
+ *   - `eqlEq` selects exactly the matching row.
+ *   - `eqlGt('m')` filters lexicographically.
+ *   - `eqlAsc` / `eqlDesc` order alphabetically
+ *     via the encrypted order term.
+ *   - `eqlMatch` — bloom-filter TOKEN containment
+ *     (`eql_v3.contains`), not SQL ILIKE — coexists with the
+ *     order-and-range operators on the same column.
  */
 
+import 'dotenv/config'
+
 import {
-  cipherstashAsc,
-  cipherstashDesc,
   decryptAll,
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
+  EncryptedNumber,
   EncryptedString,
+  eqlAsc,
+  eqlDesc,
 } from '@cipherstash/prisma-next/runtime'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { db, ensureConnected, truncateUsers } from './harness'
@@ -39,7 +42,7 @@ function seedRow(s: (typeof SEED)[number]) {
   return {
     id: s.id,
     email: EncryptedString.from(s.email),
-    salary: EncryptedDouble.from(50_000),
+    salary: EncryptedNumber.from(50_000),
     accountId: EncryptedBigInt.from(1_000_000n),
     birthday: EncryptedDate.from(new Date('1990-01-01')),
     emailVerified: EncryptedBoolean.from(true),
@@ -47,7 +50,7 @@ function seedRow(s: (typeof SEED)[number]) {
   }
 }
 
-describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
+describe('EncryptedString (eql_v3_text_search) e2e (live PG + EQL v3 + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()
@@ -66,17 +69,20 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
     }
   })
 
-  it('cipherstashGt filters lexicographically', async () => {
+  it('eqlEq selects exactly the matching row', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.email.cipherstashGt('m'),
+      u.email.eqlEq('mallory@example.com'),
     ).all()
+    expect(rows.map((r) => r.id)).toEqual(['e2e-str-2'])
+  })
+
+  it('eqlGt filters lexicographically', async () => {
+    const rows = await db.orm.public.User.where((u) => u.email.eqlGt('m')).all()
     expect(rows.map((r) => r.id).sort()).toEqual(['e2e-str-2', 'e2e-str-3'])
   })
 
-  it('cipherstashAsc orders alphabetically (bare-column ORDER BY on string)', async () => {
-    const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashAsc(u.email),
-    ).all()
+  it('eqlAsc orders alphabetically via the encrypted order term', async () => {
+    const rows = await db.orm.public.User.orderBy((u) => eqlAsc(u.email)).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-str-0',
       'e2e-str-1',
@@ -85,10 +91,8 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
     ])
   })
 
-  it('cipherstashDesc reverses the alphabetical order', async () => {
-    const rows = await db.orm.public.User.orderBy((u) =>
-      cipherstashDesc(u.email),
-    ).all()
+  it('eqlDesc reverses the alphabetical order', async () => {
+    const rows = await db.orm.public.User.orderBy((u) => eqlDesc(u.email)).all()
     expect(rows.map((r) => r.id)).toEqual([
       'e2e-str-3',
       'e2e-str-2',
@@ -97,14 +101,21 @@ describe('EncryptedString orderAndRange e2e (live PG + EQL + ZeroKMS)', () => {
     ])
   })
 
-  it('cipherstashIlike coexists with order-and-range on the same column', async () => {
+  it('eqlMatch (bloom token containment) coexists with order-and-range', async () => {
     const rows = await db.orm.public.User.where((u) =>
-      u.email.cipherstashIlike('%@example.com'),
+      u.email.eqlMatch('example.com'),
     ).all()
     expect(rows.map((r) => r.id).sort()).toEqual([
       'e2e-str-0',
       'e2e-str-1',
       'e2e-str-2',
     ])
+  })
+
+  it('eqlMatch misses tokens absent from the ciphertext index', async () => {
+    const rows = await db.orm.public.User.where((u) =>
+      u.email.eqlMatch('nonexistent-token'),
+    ).all()
+    expect(rows).toHaveLength(0)
   })
 })

@@ -36,7 +36,7 @@
  * the current source.
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'pathe'
 import { describe, expect, it } from 'vitest'
@@ -44,7 +44,12 @@ import { describe, expect, it } from 'vitest'
 const PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const DIST = join(PACKAGE_ROOT, 'dist')
 
-const ENTRY_FILES = ['control.js', 'runtime.js', 'middleware.js'] as const
+const ENTRY_FILES = [
+  'control.js',
+  'runtime.js',
+  'middleware.js',
+  'v3.js',
+] as const
 
 /**
  * Forbidden in `control.js` and its transitive chunk graph.
@@ -104,26 +109,98 @@ const RUNTIME_FORBIDDEN = [
  * which uses content-named `constants-<hash>.mjs`). The cross-plane
  * shared chunk in our output carries pure literal constants (codec
  * id, native types, invariant ids) — sharing them is safe and
- * desirable. `ALLOWED_SHARED_CHUNK_CONTENT_MARKERS` below guards that
+ * desirable. `ALLOWED_SHARED_CHUNK_MARKER_SETS` below guards that
  * the matched chunk's body does not also smuggle runtime-plane logic
  * across the boundary.
  */
 const SHARED_CHUNK_PATTERN = /^chunk-[A-Za-z0-9_-]+\.js$/
 
 /**
- * Identifiers that uniquely fingerprint the shared constants chunk:
- * every shared chunk we accept must export every one of these. If a
- * `chunk-*.js` is shared between planes but does NOT include all of
- * these markers, it is not the constants chunk and the test rightly
+ * Identifiers that uniquely fingerprint an allowed shared chunk: every
+ * shared chunk we accept must export every marker of at least one set.
+ * If a `chunk-*.js` is shared between planes but does NOT match a set,
+ * it is not one of the known-safe metadata chunks and the test rightly
  * fails.
+ *
+ * Three safe-to-share chunks exist today:
+ *
+ *   - the v2 constants chunk (pure codec-id / native-type / invariant
+ *     literals);
+ *   - the v3 constants chunk (`src/extension-metadata/constants-v3.ts`
+ *     — the pinned v3 codec-id tuple, invariant ids, baseline
+ *     migration name, space id, and the pure `v3TraitsForCapabilities`
+ *     mapper over trait literals). The control plane reaches it through
+ *     the v3 baseline migration wiring in `control.ts`, the runtime
+ *     plane through the v3 codec descriptors;
+ *   - the v3 catalog chunk (`src/v3/catalog.ts` — per-domain metadata
+ *     derived from the stack's `DOMAIN_REGISTRY`: codec ids, castAs,
+ *     capabilities, index names). The control plane reaches it through
+ *     the v3 authoring constructors, the runtime plane through the v3
+ *     codec descriptors / operators; it carries no SDK, codec, wire, or
+ *     migration behaviour.
  */
-const ALLOWED_SHARED_CHUNK_CONTENT_MARKERS = [
-  'CIPHERSTASH_STRING_CODEC_ID',
-  'CIPHERSTASH_DOUBLE_CODEC_ID',
-  'CIPHERSTASH_BIGINT_CODEC_ID',
-  'CIPHERSTASH_DATE_CODEC_ID',
-  'CIPHERSTASH_BOOLEAN_CODEC_ID',
-  'CIPHERSTASH_JSON_CODEC_ID',
+const ALLOWED_SHARED_CHUNK_MARKER_SETS: ReadonlyArray<readonly string[]> = [
+  // v2 constants chunk
+  [
+    'CIPHERSTASH_STRING_CODEC_ID',
+    'CIPHERSTASH_DOUBLE_CODEC_ID',
+    'CIPHERSTASH_BIGINT_CODEC_ID',
+    'CIPHERSTASH_DATE_CODEC_ID',
+    'CIPHERSTASH_BOOLEAN_CODEC_ID',
+    'CIPHERSTASH_JSON_CODEC_ID',
+  ],
+  // v3 constants chunk
+  [
+    'CIPHERSTASH_V3_CODEC_IDS',
+    'CIPHERSTASH_V3_BASELINE_MIGRATION_NAME',
+    'v3TraitsForCapabilities',
+  ],
+  // v3 catalog chunk
+  ['V3_DOMAIN_META_BY_CODEC_ID', 'V3_FACTORY_BY_NATIVE_TYPE', 'toV3CodecId'],
+] as const
+
+/**
+ * Fingerprints of the v2 WIRE plane — the composite-literal codec
+ * (`encodeEqlV2EncryptedWire` produces the `("...")` wire) and the v2
+ * cell-codec factory built on it. A v3 consumer must never load either:
+ * the v3 wire is plain JSONB (`v3ToDriver`), and mixing the two wire
+ * planes in one module graph is exactly the confusion decision 1b
+ * (a client is v2 or v3, never both) exists to prevent.
+ *
+ * Marker choice notes: `bulkEncryptMiddleware` and `cipherstashFromStack`
+ * are NOT usable as v2 markers — they are substrings of their v3
+ * siblings (`bulkEncryptMiddlewareV3`, `cipherstashFromStackV3`), so a
+ * substring scan would false-positive on every v3 chunk.
+ */
+const V2_WIRE_MARKERS = [
+  'encodeEqlV2EncryptedWire',
+  'makeCipherstashCellCodec',
+] as const
+
+/**
+ * Fingerprints of the v3 WIRE plane — the plain-JSONB cell codec, the
+ * per-domain descriptor factory, and the v3 bulk-encrypt middleware.
+ * A v2-only consumer (the `./middleware` entry) must never load these.
+ */
+const V3_WIRE_MARKERS = [
+  'CipherstashV3CellCodec',
+  'createV3CodecDescriptors',
+  'bulkEncryptMiddlewareV3',
+] as const
+
+/**
+ * The six v2 codec-RUNTIME factories (all built on the composite wire's
+ * `makeCipherstashCellCodec`). Distinct from {@link V2_WIRE_MARKERS} so
+ * the v3-graph scans can name exactly which factory leaked, and safe as
+ * substrings: no v3 identifier contains any of them.
+ */
+const V2_CODEC_FACTORY_MARKERS = [
+  'createCipherstashStringCodec',
+  'createCipherstashDoubleCodec',
+  'createCipherstashBigIntCodec',
+  'createCipherstashDateCodec',
+  'createCipherstashBooleanCodec',
+  'createCipherstashJsonCodec',
 ] as const
 
 interface ChunkFile {
@@ -183,9 +260,48 @@ function isAllowedSharedChunk(chunk: string): boolean {
     return false
   }
   const body = readChunk(chunk).body
-  return ALLOWED_SHARED_CHUNK_CONTENT_MARKERS.every((marker) =>
-    body.includes(marker),
+  return ALLOWED_SHARED_CHUNK_MARKER_SETS.some((markers) =>
+    markers.every((marker) => body.includes(marker)),
   )
+}
+
+/**
+ * Scan an entry's COMPLETE import graph (entry body + every transitive
+ * chunk) for forbidden markers, returning `"<chunk> → <marker>"`
+ * diagnostics so a failure names the offending chunk, not just the
+ * entry. `exempt` skips known-safe chunks (with the invariant that the
+ * exemption itself is pinned elsewhere — see the call sites).
+ */
+function findLeaksInGraph(
+  entry: string,
+  forbidden: readonly string[],
+  exempt: (chunk: ChunkFile) => boolean = () => false,
+): string[] {
+  const leaks: string[] = []
+  for (const [file, chunk] of collectGraph(entry)) {
+    if (exempt(chunk)) continue
+    for (const marker of forbidden) {
+      if (chunk.body.includes(marker)) {
+        leaks.push(`${file} → ${marker}`)
+      }
+    }
+  }
+  return leaks
+}
+
+/**
+ * The version-neutral execution chunk — envelope base/classes, routing,
+ * abort, `stampRoutingKeysFromAst` — is legitimately reachable from
+ * EVERY entry (the v3 middleware imports the shared routing walk), and
+ * it currently also DEFINES the v2 wire encoder. Identified by CONTENT
+ * (it is the one chunk that defines the envelope base class), never by
+ * tsup's hash-named file. It is exempted ONLY from the v2-wire-marker
+ * scan of the v3 graph; the per-chunk "no chunk mixes the two wires"
+ * test below still pins that this chunk never gains a v3 wire marker,
+ * so the exemption cannot hide a fused chunk.
+ */
+function definesVersionNeutralExecutionChunk(chunk: ChunkFile): boolean {
+  return /var EncryptedEnvelopeBase\s*=/.test(chunk.body)
 }
 
 describe('bundling isolation', () => {
@@ -228,6 +344,92 @@ describe('bundling isolation', () => {
       unexpectedShared,
       `control & runtime share unexpected chunks: ${unexpectedShared.join(', ')}`,
     ).toEqual([])
+  })
+
+  it('v3.js does not pull contract-space artefacts', () => {
+    const entry = readChunk('v3.js')
+    const leaks = findLeaksInEntry(entry, RUNTIME_FORBIDDEN)
+    expect(leaks, `v3 entry leaks: ${leaks.join(', ')}`).toEqual([])
+  })
+
+  it('no chunk in the v3 graph references the v2 composite-literal wire (version-neutral execution chunk exempted)', () => {
+    // COMPLETE-graph scan, not just the entry body: a cross-plane leak
+    // usually arrives through a transitive chunk import, which an
+    // entry-body substring check never sees. `v3.js` legitimately
+    // shares the version-neutral execution chunk (envelope
+    // base/classes, routing, abort, `stampRoutingKeysFromAst`) with the
+    // v2 entries — that chunk currently also DEFINES the v2 wire
+    // encoder, so it is exempted here by content and pinned against v3
+    // contamination by the per-chunk disjointness test below.
+    const leaks = findLeaksInGraph(
+      'v3.js',
+      V2_WIRE_MARKERS,
+      definesVersionNeutralExecutionChunk,
+    )
+    expect(leaks, `v3 graph leaks v2 wire: ${leaks.join(', ')}`).toEqual([])
+  })
+
+  it('no chunk in the v3 graph references any v2 codec-runtime factory', () => {
+    // All six `createCipherstash*Codec` factories (built on the
+    // composite wire), against every chunk in the v3 graph — including
+    // the version-neutral execution chunk, which must never grow one.
+    const leaks = findLeaksInGraph('v3.js', V2_CODEC_FACTORY_MARKERS)
+    expect(
+      leaks,
+      `v3 graph reaches v2 codec-runtime factories: ${leaks.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it('no chunk in the middleware.js graph (v2 bulk-encrypt entry) references the v3 wire plane', () => {
+    const leaks = findLeaksInGraph('middleware.js', V3_WIRE_MARKERS)
+    expect(
+      leaks,
+      `middleware graph leaks v3 wire: ${leaks.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it('no code-split chunk mixes the v2 composite wire with the v3 JSONB wire', () => {
+    // Chunk-level two-wires-never-co-located pin. A chunk "references a
+    // wire plane" when any of that plane's marker identifiers appears in
+    // its body — which covers both defining the symbol and importing it
+    // by name from another chunk (`import { encodeEqlV2EncryptedWire }
+    // from "./chunk-*.js"`). Entry files are exempt: `runtime.js` and
+    // `stack.js` deliberately aggregate the v2 AND v3 public API (each
+    // client picks one at construction time); the invariant is that no
+    // shared IMPLEMENTATION chunk fuses the two wire codecs, which is
+    // what would let one wire's encode path silently reach the other's
+    // consumers.
+    const chunkFiles = readdirSync(DIST).filter((f) =>
+      SHARED_CHUNK_PATTERN.test(f),
+    )
+    expect(chunkFiles.length).toBeGreaterThan(0)
+    const mixed = chunkFiles.filter((file) => {
+      const body = readChunk(file).body
+      const referencesV2Wire = V2_WIRE_MARKERS.some((m) => body.includes(m))
+      const referencesV3Wire = V3_WIRE_MARKERS.some((m) => body.includes(m))
+      return referencesV2Wire && referencesV3Wire
+    })
+    expect(
+      mixed,
+      `chunk(s) mix v2 and v3 wire planes: ${mixed.join(', ')}`,
+    ).toEqual([])
+  })
+
+  it('v3-wire chunks reachable from runtime.js never reference the v2 composite encoder', () => {
+    // The plan's original Task-10 assertion, made chunk-name-agnostic:
+    // identify v3 chunks by CONTENT (they carry a v3 wire marker), not
+    // by tsup's hash-named files.
+    const runtimeChunks = collectGraph('runtime.js')
+    for (const [file, chunk] of runtimeChunks) {
+      if (file === 'runtime.js') continue
+      const isV3WireChunk = V3_WIRE_MARKERS.some((m) => chunk.body.includes(m))
+      if (!isV3WireChunk) continue
+      const leaks = V2_WIRE_MARKERS.filter((m) => chunk.body.includes(m))
+      expect(
+        leaks,
+        `v3 chunk ${file} references v2 wire: ${leaks.join(', ')}`,
+      ).toEqual([])
+    }
   })
 
   it('control vs middleware chunk graphs are disjoint (modulo shared constants chunk)', () => {

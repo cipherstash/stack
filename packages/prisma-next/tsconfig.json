@@ -5,6 +5,11 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
+    // Mirrors `packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
+    // conditional exports, and bundler resolution omits `node` by
+    // default. Needed because the `@/*` mapping below pulls stack
+    // SOURCE (which imports protect-ffi types) into this program.
+    "customConditions": ["node"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
@@ -16,8 +21,32 @@
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "rootDir": "."
+    // No `rootDir` pin: the integration suite (like stack-drizzle's)
+    // pulls `@cipherstash/test-kit` SOURCE and the repo-root
+    // `vitest.shared.ts` into the program, which live outside this
+    // package. `noEmit` is set, so rootDir would only manufacture
+    // TS6059 errors here.
+    "baseUrl": ".",
+    "paths": {
+      // Resolve every consumed stack subpath to SOURCE, not `dist`
+      // (mirrors `packages/test-kit/tsconfig.json`). Without these,
+      // `pnpm typecheck` only works after `pnpm build` — and on a
+      // fresh/stale checkout the dist d.ts resolves partially, which
+      // surfaces as implicit-`any` noise far from the real cause
+      // (#684). The matching runtime aliases live in `vitest.shared.ts`.
+      "@cipherstash/stack": ["../stack/src/index.ts"],
+      "@cipherstash/stack/client": ["../stack/src/client.ts"],
+      "@cipherstash/stack/types": ["../stack/src/types-public.ts"],
+      "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
+      "@cipherstash/stack/schema": ["../stack/src/schema/index.ts"],
+      "@cipherstash/stack/v3": ["../stack/src/encryption/v3.ts"],
+      "@cipherstash/stack/adapter-kit": ["../stack/src/adapter-kit.ts"],
+      // Resolving stack to source means we also inherit stack's OWN
+      // internal alias (`@/…` inside stack sources) — and test-kit's
+      // sources (pulled in by the integration suite) use it too.
+      "@/*": ["../stack/src/*"]
+    }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "integration/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }

@@ -2,10 +2,10 @@
  * PSL→ColumnTypeDescriptor lowering for the date, boolean, and JSON
  * cipherstash constructors:
  *
- *   - `cipherstash.EncryptedDate`    — `{ equality, orderAndRange }`
- *   - `cipherstash.EncryptedBoolean` — `{ equality }` only;
+ *   - `cipherstash.EncryptedDateV2`    — `{ equality, orderAndRange }`
+ *   - `cipherstash.EncryptedBooleanV2` — `{ equality }` only;
  *     `orderAndRange` is rejected with `PSL_INVALID_ATTRIBUTE_ARGUMENT`.
- *   - `cipherstash.EncryptedJson`    — `{ searchableJson }`;
+ *   - `cipherstash.EncryptedJsonV2`    — `{ searchableJson }`;
  *     `equality` is rejected with `PSL_INVALID_ATTRIBUTE_ARGUMENT`.
  *
  * Empty `{}` (and the no-args form) defaults the codec's flag(s) to
@@ -85,11 +85,11 @@ const asStorage = (storage: unknown): StorageView => {
   }
 }
 
-describe('PSL interpretation: cipherstash.EncryptedDate constructor', () => {
+describe('PSL interpretation: cipherstash.EncryptedDateV2 constructor', () => {
   it('lowers full args to a column with cipherstash/date@1 codec, eql_v2_encrypted nativeType', () => {
     const result = interpret(`model Event {
   id Int @id
-  occurredOn cipherstash.EncryptedDate({ equality: true, orderAndRange: true })
+  occurredOn cipherstash.EncryptedDateV2({ equality: true, orderAndRange: true })
 }
 `)
     expect(result.ok).toBe(true)
@@ -106,7 +106,7 @@ describe('PSL interpretation: cipherstash.EncryptedDate constructor', () => {
   it('defaults both flags to true with no arguments', () => {
     const result = interpret(`model Event {
   id Int @id
-  occurredOn cipherstash.EncryptedDate()
+  occurredOn cipherstash.EncryptedDateV2()
 }
 `)
     expect(result.ok).toBe(true)
@@ -120,11 +120,11 @@ describe('PSL interpretation: cipherstash.EncryptedDate constructor', () => {
   })
 })
 
-describe('PSL interpretation: cipherstash.EncryptedBoolean constructor', () => {
+describe('PSL interpretation: cipherstash.EncryptedBooleanV2 constructor', () => {
   it('lowers full args to a column with cipherstash/boolean@1 codec, equality typeParam', () => {
     const result = interpret(`model Feature {
   id Int @id
-  enabled cipherstash.EncryptedBoolean({ equality: true })
+  enabled cipherstash.EncryptedBooleanV2({ equality: true })
 }
 `)
     expect(result.ok).toBe(true)
@@ -141,7 +141,7 @@ describe('PSL interpretation: cipherstash.EncryptedBoolean constructor', () => {
   it('defaults equality to true with no arguments', () => {
     const result = interpret(`model Feature {
   id Int @id
-  enabled cipherstash.EncryptedBoolean()
+  enabled cipherstash.EncryptedBooleanV2()
 }
 `)
     expect(result.ok).toBe(true)
@@ -157,7 +157,7 @@ describe('PSL interpretation: cipherstash.EncryptedBoolean constructor', () => {
   it('rejects orderAndRange (not a boolean codec flag)', () => {
     const result = interpret(`model Feature {
   id Int @id
-  enabled cipherstash.EncryptedBoolean({ orderAndRange: true })
+  enabled cipherstash.EncryptedBooleanV2({ orderAndRange: true })
 }
 `)
     expect(result.ok).toBe(false)
@@ -173,11 +173,11 @@ describe('PSL interpretation: cipherstash.EncryptedBoolean constructor', () => {
   })
 })
 
-describe('PSL interpretation: cipherstash.EncryptedJson constructor', () => {
+describe('PSL interpretation: cipherstash.EncryptedJsonV2 constructor', () => {
   it('lowers full args to a column with cipherstash/json@1 codec, searchableJson typeParam', () => {
     const result = interpret(`model Audit {
   id Int @id
-  payload cipherstash.EncryptedJson({ searchableJson: true })
+  payload cipherstash.EncryptedJsonV2({ searchableJson: true })
 }
 `)
     expect(result.ok).toBe(true)
@@ -194,7 +194,7 @@ describe('PSL interpretation: cipherstash.EncryptedJson constructor', () => {
   it('defaults searchableJson to true with no arguments', () => {
     const result = interpret(`model Audit {
   id Int @id
-  payload cipherstash.EncryptedJson()
+  payload cipherstash.EncryptedJsonV2()
 }
 `)
     expect(result.ok).toBe(true)
@@ -210,7 +210,7 @@ describe('PSL interpretation: cipherstash.EncryptedJson constructor', () => {
   it('rejects equality (not a json codec flag)', () => {
     const result = interpret(`model Audit {
   id Int @id
-  payload cipherstash.EncryptedJson({ equality: true })
+  payload cipherstash.EncryptedJsonV2({ equality: true })
 }
 `)
     expect(result.ok).toBe(false)

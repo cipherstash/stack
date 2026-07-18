@@ -18,44 +18,54 @@
               "accountId": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/bigint@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_bigint_ord@1",
                   "kind": "scalar",
                   "typeParams": {
-                    "equality": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "bigint"
                   }
                 }
               },
               "birthday": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/date@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_date_ord@1",
                   "kind": "scalar",
                   "typeParams": {
-                    "equality": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "date"
                   }
                 }
               },
               "email": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/string@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_text_search@1",
                   "kind": "scalar",
                   "typeParams": {
-                    "equality": true,
-                    "freeTextSearch": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "freeTextSearch": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "string"
                   }
                 }
               },
               "emailVerified": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/boolean@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_boolean@1",
                   "kind": "scalar",
                   "typeParams": {
-                    "equality": true
+                    "capabilities": {},
+                    "castAs": "boolean"
                   }
                 }
               },
@@ -69,21 +79,27 @@
               "preferences": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/json@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_json@1",
                   "kind": "scalar",
                   "typeParams": {
-                    "searchableJson": true
+                    "capabilities": {
+                      "searchableJson": true
+                    },
+                    "castAs": "json"
                   }
                 }
               },
               "salary": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/double@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_double_ord@1",
                   "kind": "scalar",
                   "typeParams": {
-                    "equality": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "number"
                   }
                 }
               }
@@ -129,39 +145,49 @@
             "users": {
               "columns": {
                 "accountid": {
-                  "codecId": "cipherstash/bigint@1",
-                  "nativeType": "eql_v2_encrypted",
+                  "codecId": "cipherstash/eql-v3/eql_v3_bigint_ord@1",
+                  "nativeType": "public.eql_v3_bigint_ord",
                   "nullable": false,
                   "typeParams": {
-                    "equality": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "bigint"
                   }
                 },
                 "birthday": {
-                  "codecId": "cipherstash/date@1",
-                  "nativeType": "eql_v2_encrypted",
+                  "codecId": "cipherstash/eql-v3/eql_v3_date_ord@1",
+                  "nativeType": "public.eql_v3_date_ord",
                   "nullable": false,
                   "typeParams": {
-                    "equality": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "date"
                   }
                 },
                 "email": {
-                  "codecId": "cipherstash/string@1",
-                  "nativeType": "eql_v2_encrypted",
+                  "codecId": "cipherstash/eql-v3/eql_v3_text_search@1",
+                  "nativeType": "public.eql_v3_text_search",
                   "nullable": false,
                   "typeParams": {
-                    "equality": true,
-                    "freeTextSearch": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "freeTextSearch": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "string"
                   }
                 },
                 "emailverified": {
-                  "codecId": "cipherstash/boolean@1",
-                  "nativeType": "eql_v2_encrypted",
+                  "codecId": "cipherstash/eql-v3/eql_v3_boolean@1",
+                  "nativeType": "public.eql_v3_boolean",
                   "nullable": false,
                   "typeParams": {
-                    "equality": true
+                    "capabilities": {},
+                    "castAs": "boolean"
                   }
                 },
                 "id": {
@@ -170,20 +196,26 @@
                   "nullable": false
                 },
                 "preferences": {
-                  "codecId": "cipherstash/json@1",
-                  "nativeType": "eql_v2_encrypted",
+                  "codecId": "cipherstash/eql-v3/eql_v3_json@1",
+                  "nativeType": "public.eql_v3_json",
                   "nullable": false,
                   "typeParams": {
-                    "searchableJson": true
+                    "capabilities": {
+                      "searchableJson": true
+                    },
+                    "castAs": "json"
                   }
                 },
                 "salary": {
-                  "codecId": "cipherstash/double@1",
-                  "nativeType": "eql_v2_encrypted",
+                  "codecId": "cipherstash/eql-v3/eql_v3_double_ord@1",
+                  "nativeType": "public.eql_v3_double_ord",
                   "nullable": false,
                   "typeParams": {
-                    "equality": true,
-                    "orderAndRange": true
+                    "capabilities": {
+                      "equality": true,
+                      "orderAndRange": true
+                    },
+                    "castAs": "number"
                   }
                 }
               },
@@ -202,7 +234,7 @@
         "kind": "postgres-schema"
       }
     },
-    "storageHash": "sha256:b8c4febc9397cf1b68293cdb3b2afe9f568db6967f428e3f207e32575a2bc2fa"
+    "storageHash": "sha256:deb36a1ab7e51717f5ca822a32ff09a18cf3a0aaf1189262852c8953adba1720"
   },
   "capabilities": {
     "postgres": {

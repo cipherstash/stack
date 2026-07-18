@@ -8,7 +8,7 @@
  *
  *   - Single-codec entries (`cipherstashEq`, `cipherstashIlike`,
  *     `cipherstashNotIlike`, `cipherstashJsonbPathExists`) declare
- *     `self: { codecId: '<id>' }`. The framework's `OpMatchesField`
+ *     `self: { codecId: '<id>' }` (v2 legacy registrations). The framework's `OpMatchesField`
  *     direct-codec-id branch surfaces the method on columns whose
  *     codec id is the literal — no consumer-side `CodecTypes`
  *     augmentation needed.
@@ -84,6 +84,20 @@ type FreeTextSearchTraits = readonly ['cipherstash:free-text-search']
 type SearchableJsonTraits = readonly ['cipherstash:searchable-json']
 
 /**
+ * v3 TYPE-LEVEL marker traits (no runtime counterpart) — carried only
+ * by the v3 codec entries in `codec-types.ts` (see the vocabulary
+ * comment there). The v2 and v3 surfaces have DISJOINT method names
+ * (`cipherstash*` vs the EQL-derived `eql*`), so every v3 operator
+ * dispatches on a v3 marker and every v2 operator on the shared v2
+ * trait (or legacy codec-id pin) — type-level visibility stays exactly
+ * aligned with what each column's runtime can actually execute.
+ */
+type V3EqualityMarker = readonly ['cipherstash:v3-equality']
+type V3OrderAndRangeMarker = readonly ['cipherstash:v3-order-and-range']
+type V3FreeTextSearchMarker = readonly ['cipherstash:v3-free-text-search']
+type V3SearchableJsonMarker = readonly ['cipherstash:v3-searchable-json']
+
+/**
  * Schematic constraint on `self` for a multi-codec cipherstash
  * predicate. The runtime impl reads `self.returnType.codecId` and
  * dispatches to the matching `Encrypted*` envelope — accepting any
@@ -123,17 +137,24 @@ type AnyExpressionLike = Expression<{
 export type QueryOperationTypes<CT extends CodecTypesBase> =
   CT extends CodecTypesBase
     ? {
+        // -------------------------------------------------------------
+        // v2 legacy surface (`cipherstash*`). `cipherstashEq` /
+        // `cipherstashIlike` are codec-id-pinned to the v2 string codec
+        // (legacy single-codec registrations); the rest dispatch on the
+        // shared v2 traits, which v3 codec entries no longer carry —
+        // so none of these surface on a v3 column.
+        // -------------------------------------------------------------
         readonly cipherstashEq: {
           readonly self: { readonly codecId: CipherstashStringCodec }
           readonly impl: (
-            self: CodecExpression<CipherstashStringCodec, boolean, CT>,
-            other: CodecExpression<'pg/text@1', boolean, CT>,
+            self: AnyExpressionLike,
+            other: unknown,
           ) => PgBoolReturn
         }
         readonly cipherstashIlike: {
           readonly self: { readonly codecId: CipherstashStringCodec }
           readonly impl: (
-            self: CodecExpression<CipherstashStringCodec, boolean, CT>,
+            self: AnyExpressionLike,
             pattern: CodecExpression<'pg/text@1', boolean, CT>,
           ) => PgBoolReturn
         }
@@ -212,6 +233,108 @@ export type QueryOperationTypes<CT extends CodecTypesBase> =
         readonly cipherstashJsonbPathExists: {
           readonly self: { readonly traits: SearchableJsonTraits }
           readonly impl: (self: AnyExpressionLike, path: string) => PgBoolReturn
+        }
+        // -------------------------------------------------------------
+        // v3 surface (`eql*`, EQL-derived vocabulary — PR #655 review).
+        // Every entry dispatches on a `cipherstash:v3-*` marker, which
+        // only v3 codec entries carry, so nothing here surfaces on a
+        // v2 column (whose runtime has no `eql*` method to dispatch) —
+        // and, symmetrically, the v2 entries above never surface on v3
+        // columns. The comparand is `unknown` because each operator
+        // spans every capable domain family (bigint, date, numeric, …)
+        // and the runtime coerces + encrypts per the column's castAs.
+        // -------------------------------------------------------------
+        readonly eqlEq: {
+          readonly self: { readonly traits: V3EqualityMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlNeq: {
+          readonly self: { readonly traits: V3EqualityMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlIn: {
+          readonly self: { readonly traits: V3EqualityMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            values: readonly unknown[],
+          ) => PgBoolReturn
+        }
+        readonly eqlNotIn: {
+          readonly self: { readonly traits: V3EqualityMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            values: readonly unknown[],
+          ) => PgBoolReturn
+        }
+        readonly eqlGt: {
+          readonly self: { readonly traits: V3OrderAndRangeMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlGte: {
+          readonly self: { readonly traits: V3OrderAndRangeMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlLt: {
+          readonly self: { readonly traits: V3OrderAndRangeMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlLte: {
+          readonly self: { readonly traits: V3OrderAndRangeMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            other: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlBetween: {
+          readonly self: { readonly traits: V3OrderAndRangeMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            low: unknown,
+            high: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlNotBetween: {
+          readonly self: { readonly traits: V3OrderAndRangeMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            low: unknown,
+            high: unknown,
+          ) => PgBoolReturn
+        }
+        // Fuzzy free-text token match (`eql_v3.contains`) — NOT SQL
+        // pattern matching; needles are guarded at lowering time
+        // (wildcards, short needles). No negated form: the bloom test
+        // may false-positive, so its negation would false-negative.
+        readonly eqlMatch: {
+          readonly self: { readonly traits: V3FreeTextSearchMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            needle: unknown,
+          ) => PgBoolReturn
+        }
+        // v3-only: encrypted jsonb `@>` containment on `eql_v3_json`
+        // columns.
+        readonly eqlJsonContains: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            needle: unknown,
+          ) => PgBoolReturn
         }
       }
     : never

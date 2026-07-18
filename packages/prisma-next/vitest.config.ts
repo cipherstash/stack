@@ -1,9 +1,12 @@
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // Integration suites run only under `test:integration` (own config +
+    // CI job) — same split as stack-drizzle / stack-supabase.
+    exclude: [...configDefaults.exclude, 'integration/**'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
