@@ -223,7 +223,8 @@ export function runnerArgv(pm: PackageManager): {
  *   npm  → `npx --no-install` (never surprise-download a dep that should exist)
  *   pnpm → `pnpm exec`
  *   yarn → `yarn` (works for yarn 1 and berry: `yarn <bin>`)
- *   bun  → `bun x` (binary-runner mode, not the `bunx` dlx alias)
+ *   bun  → `bun x --no-install` (binary-runner mode, not the `bunx` dlx alias;
+ *          `--no-install` keeps it from auto-fetching a missing binary from npm)
  */
 export function execCommand(pm: PackageManager): string {
   switch (pm) {
@@ -234,7 +235,7 @@ export function execCommand(pm: PackageManager): string {
     case 'yarn':
       return 'yarn'
     case 'bun':
-      return 'bun x'
+      return 'bun x --no-install'
   }
 }
 
@@ -255,7 +256,7 @@ export function execArgv(pm: PackageManager): {
     case 'yarn':
       return { command: 'yarn', prefixArgs: [] }
     case 'bun':
-      return { command: 'bun', prefixArgs: ['x'] }
+      return { command: 'bun', prefixArgs: ['x', '--no-install'] }
   }
 }
 

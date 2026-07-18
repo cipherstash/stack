@@ -40,7 +40,14 @@ vi.mock('node:child_process', () => ({ spawnSync: spawnMock }))
 // throw without touching everything else. `beforeEach` restores the delegating
 // default after `clearAllMocks`.
 const fsWrite = vi.hoisted(() => ({
-  real: undefined as unknown as typeof import('node:fs').writeFileSync,
+  // Populated by the `node:fs` mock factory below (which always runs before any
+  // test). The placeholder throws rather than being a type-erased `undefined`,
+  // so a missed initialisation fails loudly instead of calling `undefined()`.
+  real: (() => {
+    throw new Error(
+      'fsWrite.real not initialised: node:fs mock factory did not run',
+    )
+  }) as typeof import('node:fs').writeFileSync,
   spy: vi.fn(),
 }))
 vi.mock('node:fs', async (importOriginal) => {
