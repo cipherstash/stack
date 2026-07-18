@@ -63,7 +63,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
   it('injects readInstallSql() from @cipherstash/eql into the descriptor at build time', () => {
     // control.ts swaps the placeholder for the install SQL of the pinned
     // @cipherstash/eql, so the applied SQL always matches the resolved version.
-    const v3Baseline = cipherstashDescriptor.contractSpace.migrations[1]!
+    const v3Baseline = cipherstashDescriptor.contractSpace!.migrations[1]!
     const op = (
       v3Baseline.ops as ReadonlyArray<{
         readonly id: string

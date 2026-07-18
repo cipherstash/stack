@@ -32,7 +32,9 @@
  */
 import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
 
-export { releaseManifest }
+// Re-exported for the live-test helpers, which read the same install SQL to set
+// up their databases (`test/live/helpers/eql-v3.ts`, `migration-apply-live-pg`).
+export { readInstallSql, releaseManifest }
 
 /**
  * Placeholder the committed v3 baseline op carries in `execute[].sql` in place
