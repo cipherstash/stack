@@ -5,10 +5,10 @@
  * The install SQL is NOT baked into `ops.json`. The committed op carries
  * `RUNTIME_EQL_SQL_SENTINEL`; `src/exports/control.ts` injects
  * `readInstallSql()` from the installed `@cipherstash/eql` at descriptor-build
- * time (see `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so an
- * EQL patch/minor flows through npm with no re-emit or re-release. The bundle
- * creates the 40 `public.eql_v3_*` storage domains, the `eql_v3`
- * operator-function schema (`eql_v3.eq`, `eql_v3.ord_term`, …), the
+ * time (see `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so
+ * bumping the pinned `@cipherstash/eql` needs no re-emit of this ~1.7 MB
+ * `ops.json`. The bundle creates the 40 `public.eql_v3_*` storage domains, the
+ * `eql_v3` operator-function schema (`eql_v3.eq`, `eql_v3.ord_term`, …), the
  * `eql_v3.query_*` operand domains, and the `eql_v3_internal` helper schema.
  *
  * This is the SECOND migration in the cipherstash contract space, and
@@ -71,8 +71,8 @@ export default class M extends Migration {
         // Placeholder only — the real install SQL is injected at descriptor
         // build time from the installed `@cipherstash/eql` (see
         // `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so the
-        // ~1.7 MB bundle is NOT baked into `ops.json` and an EQL patch/minor
-        // needs no re-emit or re-release. Safe because this is an
+        // ~1.7 MB bundle is NOT baked into `ops.json` and bumping the pinned
+        // `@cipherstash/eql` needs no re-emit. Safe because this is an
         // invariant-only self-edge: the SQL never moves the contract hash.
         execute: [
           { description: INSTALL_LABEL, sql: RUNTIME_EQL_SQL_SENTINEL },

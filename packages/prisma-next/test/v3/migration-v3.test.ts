@@ -26,7 +26,10 @@ import {
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
-import { RUNTIME_EQL_SQL_SENTINEL } from '../../src/migration/eql-bundle-v3'
+import {
+  RUNTIME_EQL_SQL_SENTINEL,
+  withRuntimeEqlSql,
+} from '../../src/migration/eql-bundle-v3'
 
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
   it('installs under the v3 invariant with a single data-class rawSql op', () => {
@@ -47,16 +50,18 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
         readonly execute?: ReadonlyArray<{ readonly sql: string }>
       }>
     )[0]!
-    // The ~1.7 MB bundle must not be committed here — an EQL patch/minor should
-    // not require re-emitting this file. The op carries the sentinel instead.
+    // The ~1.7 MB bundle must not be committed here — bumping @cipherstash/eql
+    // should not require re-emitting this file. The op carries the sentinel.
     expect(op.execute?.[0]?.sql).toBe(RUNTIME_EQL_SQL_SENTINEL)
     expect(op.execute?.[0]?.sql).not.toContain('CREATE')
     expect(JSON.stringify(v3Ops).length).toBeLessThan(5_000)
+    // @cipherstash/eql is pinned exact (matching @cipherstash/stack, which
+    // encodes the v3 domain types against this same release).
     expect(releaseManifest.eqlVersion).toBe('3.0.0')
   })
 
   it('injects readInstallSql() from @cipherstash/eql into the descriptor at build time', () => {
-    // control.ts swaps the placeholder for the install SQL of the INSTALLED
+    // control.ts swaps the placeholder for the install SQL of the pinned
     // @cipherstash/eql, so the applied SQL always matches the resolved version.
     const v3Baseline = cipherstashDescriptor.contractSpace.migrations[1]!
     const op = (
@@ -67,6 +72,30 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     ).find((o) => o.id === 'cipherstash.install-eql-v3-bundle')!
     expect(op.execute?.[0]?.sql).toBe(readInstallSql())
     expect(op.execute?.[0]?.sql).toContain('EQL v3 schema creation')
+  })
+
+  it('withRuntimeEqlSql throws if no op carries the sentinel (drift guard)', () => {
+    // Matching on the sentinel string (not an op id) makes injection immune to
+    // op-id/label drift; a missing sentinel means the emit source and injector
+    // diverged, so fail loudly rather than apply the inert comment as install.
+    expect(() =>
+      withRuntimeEqlSql([{ execute: [{ sql: 'SELECT 1' }] }]),
+    ).toThrow(/RUNTIME_EQL_SQL_SENTINEL/)
+    // A non-lossy swap: only the sentinel step's `sql` changes; sibling steps
+    // and extra fields on the matched op are preserved.
+    const [op] = withRuntimeEqlSql([
+      {
+        id: 'cipherstash.install-eql-v3-bundle',
+        execute: [
+          { description: 'keep me', sql: RUNTIME_EQL_SQL_SENTINEL },
+          { description: 'sibling', sql: 'SELECT 2' },
+        ],
+      },
+    ])
+    expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
+    expect(op.execute[0].description).toBe('keep me')
+    expect(op.execute[0].sql).toBe(readInstallSql())
+    expect(op.execute[1]).toEqual({ description: 'sibling', sql: 'SELECT 2' })
   })
 
   it('emits no add_search_config / remove_search_config ops', () => {
