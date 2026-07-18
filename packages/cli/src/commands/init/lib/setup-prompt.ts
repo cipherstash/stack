@@ -1,5 +1,5 @@
 import type { HandoffChoice, InitMode, Integration } from '../types.js'
-import { type PackageManager, runnerCommand } from '../utils.js'
+import { execCommand, type PackageManager, runnerCommand } from '../utils.js'
 import type { PlanStep } from './parse-plan.js'
 
 export const PLAN_REL_PATH = '.cipherstash/plan.md'
@@ -65,27 +65,6 @@ function migrationCommands(
     }
   }
   return undefined
-}
-
-/**
- * Map the package manager to the right "run a binary from node_modules" form.
- *   npm  → `npx --no-install` (avoid surprise downloads when the dep should
- *           already be installed)
- *   pnpm → `pnpm exec`
- *   yarn → `yarn` (yarn 1) or `yarn run` — `yarn <bin>` works for both
- *   bun  → `bun x` (binary-runner mode, not the dlx alias)
- */
-function execCommand(pm: PackageManager): string {
-  switch (pm) {
-    case 'npm':
-      return 'npx --no-install'
-    case 'pnpm':
-      return 'pnpm exec'
-    case 'yarn':
-      return 'yarn'
-    case 'bun':
-      return 'bun x'
-  }
 }
 
 function bullet(line: string): string {

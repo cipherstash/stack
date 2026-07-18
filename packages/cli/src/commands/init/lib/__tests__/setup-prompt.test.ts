@@ -110,7 +110,7 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     const yarn = renderSetupPrompt({ ...baseCtx, packageManager: 'yarn' })
 
     expect(npm).toContain('npx --no-install drizzle-kit generate')
-    expect(bun).toContain('bun x drizzle-kit generate')
+    expect(bun).toContain('bun x --no-install drizzle-kit generate')
     expect(yarn).toContain('yarn drizzle-kit generate')
   })
 

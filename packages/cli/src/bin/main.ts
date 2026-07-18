@@ -108,6 +108,7 @@ Commands:
   telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
 
   eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
+  eql migration        Generate an EQL v3 install migration for your ORM (Drizzle)
   eql upgrade          Upgrade EQL extensions to the latest version
   eql status           Show EQL installation status
 
@@ -232,6 +233,20 @@ async function runEqlCommand(
     case 'install':
       await runInstall(flags, values)
       break
+    case 'migration': {
+      const { eqlMigrationCommand } = await import(
+        '../commands/eql/migration.js'
+      )
+      await eqlMigrationCommand({
+        drizzle: flags.drizzle,
+        prisma: flags.prisma,
+        supabase: flags.supabase,
+        name: values.name,
+        out: values.out,
+        dryRun: flags['dry-run'],
+      })
+      break
+    }
     case 'upgrade':
       await runUpgrade(flags, values)
       break

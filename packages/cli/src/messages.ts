@@ -66,6 +66,23 @@ export const messages = {
      * actionable command + `--force` note are appended at the call site.
      */
     prismaNextDetected: 'This looks like a Prisma Next project',
+    /** `stash eql migration` with no `--drizzle`/`--prisma` target. */
+    migrationNeedsTarget:
+      'Specify a target: `stash eql migration --drizzle` (or `--prisma`).',
+    /** More than one target passed to `stash eql migration`. */
+    migrationOneTarget:
+      'Pass exactly one target: `--drizzle` or `--prisma`, not both.',
+    /**
+     * `--prisma` is registered but its Prisma Next emitter isn't built yet —
+     * it's a follow-up (tracked in #690) that will emit the install migration
+     * in the framework `Migration` shape and let prisma-next drop its baked
+     * install baseline. Fail with a pointer rather than a silent no-op.
+     */
+    migrationPrismaUnavailable:
+      '`stash eql migration --prisma` is not available yet — the Prisma Next emitter is a follow-up (tracked in cipherstash/stack#690). Use `--drizzle` today.',
+    /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
+    migrationBadName:
+      'Migration name must contain only letters, numbers, dashes, and underscores.',
   },
   db: {
     unknownSubcommand: 'Unknown db subcommand',

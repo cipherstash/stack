@@ -334,6 +334,7 @@ Flags below are the decision-relevant ones. Run `stash <command> --help` for the
 
 ```bash
 stash eql install
+stash eql migration --drizzle
 stash eql upgrade
 stash eql status
 ```
@@ -359,13 +360,33 @@ Gets a project from zero to installed EQL. It loads an existing `stash.config.ts
 
 `--migration`, `--direct`, and `--migrations-dir` require an explicit `--supabase`; they never auto-enable it.
 
-**EQL v3 installs via the direct path only.** Passing `--eql-version 3` with an explicit `--drizzle`, `--migration`, `--migrations-dir`, or `--latest` is an error. When Drizzle or a Supabase migrations directory is merely *auto-detected*, v3 falls back to a direct install and prints a notice.
+**`eql install` for EQL v3 runs the direct path only.** Passing `--eql-version 3` with an explicit `--drizzle`, `--migration`, `--migrations-dir`, or `--latest` is an error. When Drizzle or a Supabase migrations directory is merely *auto-detected*, v3 falls back to a direct install and prints a notice. To get a **v3 install as a migration** (preferred for real projects), use `eql migration` (below) instead of `eql install --drizzle`.
 
 **`--database-url` is a one-shot.** It installs against that database and leaves the project untouched — no config is loaded, and none is scaffolded, nor is an encryption client. This lets `npx stash eql install --database-url postgres://...` run in a bare project with no CipherStash dependencies. It also means the flag always wins: loading a config could pick up a parent-directory `databaseUrl` literal and install against the wrong database.
 
 **`eql install --supabase --migration`** writes `supabase/migrations/00000000000000_cipherstash_eql.sql`. The all-zero timestamp guarantees it runs before any user migration referencing `eql_v2_encrypted`. Apply with `supabase db reset` (local) or `supabase migration up` (remote).
 
 Direct installs (`--supabase --direct`) do **not** survive `supabase db reset` — the reset drops the database and replays only files in `supabase/migrations/`. Use `--migration` if you reset.
+
+#### `eql migration`
+
+Generates an **EQL v3 install migration** for your ORM, instead of running SQL directly against the database (`eql install`). Migration-first is the preferred path: the install lands in your migration history and ships to every environment through the ORM's own migrate step. v3 only — there is no `--eql-version` here.
+
+```bash
+stash eql migration --drizzle              # Drizzle custom migration in drizzle/
+stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authenticated/service_role
+```
+
+| Flag | Description |
+|---|---|
+| `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`. |
+| `--prisma` | Emit a Prisma Next migration. **Not available yet** — the emitter is a follow-up (tracked in GitHub issue #690); fails with a pointer for now. Use `--drizzle` today. |
+| `--supabase` | Append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`). Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
+| `--name <name>` | Migration name (Drizzle). Default `install-eql`. |
+| `--out <path>` | Output directory (Drizzle). Default `drizzle`. |
+| `--dry-run` | Show what would happen without writing anything. |
+
+Pass exactly one of `--drizzle` / `--prisma`. The generated migration also installs the `cs_migrations` tracking schema, so one `drizzle-kit migrate` covers everything `stash encrypt …` needs.
 
 #### `eql upgrade`
 

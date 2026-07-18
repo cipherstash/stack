@@ -23,6 +23,7 @@ describe('stash CLI — non-interactive smoke', () => {
     // copy strings, so they stay inline.
     expect(r.output).toContain('init')
     expect(r.output).toContain('eql install')
+    expect(r.output).toContain('eql migration')
     expect(r.output).toContain('eql upgrade')
     expect(r.output).toContain('eql status')
     // The dotenv "injected env" banner regression guard lives in the

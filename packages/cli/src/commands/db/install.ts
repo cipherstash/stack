@@ -413,7 +413,7 @@ function resolveProviderOptions(
   return { supabase, drizzle, excludeOperatorFamily }
 }
 
-function printNextSteps(): void {
+export function printNextSteps(): void {
   p.note(
     [
       'Your project is set up. To encrypt your first column, pick the path',
@@ -887,7 +887,7 @@ async function writeSupabaseMigrationFile(
  * Find the most recently generated migration file matching the given name.
  * Drizzle-kit generates flat SQL files like `0000_install-eql.sql`.
  */
-async function findGeneratedMigration(
+export async function findGeneratedMigration(
   outDir: string,
   migrationName: string,
 ): Promise<string> {
@@ -915,7 +915,7 @@ async function findGeneratedMigration(
 /**
  * Attempt to clean up a generated migration file on failure.
  */
-function cleanupMigrationFile(filePath: string | undefined): void {
+export function cleanupMigrationFile(filePath: string | undefined): void {
   if (!filePath) return
 
   try {
