@@ -1,3 +1,4 @@
+import { stripDomainSchema } from '@cipherstash/stack/adapter-kit'
 import {
   type AnyEncryptedV3Column,
   types as v3Types,
@@ -5,6 +6,22 @@ import {
 import type { Encrypted } from '@cipherstash/stack/types'
 import { customType } from 'drizzle-orm/pg-core'
 import { v3FromDriver, v3ToDriver } from './codec.js'
+
+/** The schema the concrete `eql_v3_*` domains are created in. */
+const EQL_V3_DOMAIN_SCHEMA = 'public'
+
+/**
+ * Re-attach the `public.` schema to a bare domain name, leaving an
+ * already-qualified name untouched. Recovery keys (`buildersByDomain`,
+ * {@link EQL_V3_DOMAINS}) are the qualified `public.eql_v3_*` identities, but a
+ * live column now reports its type UNqualified (see {@link makeEqlV3Column}), so
+ * the value read back off a column has to be re-qualified before it can match.
+ * A name that already carries a schema (a test double, an introspected snapshot)
+ * passes through unchanged.
+ */
+function qualifyDomain(sqlType: string): string {
+  return sqlType.includes('.') ? sqlType : `${EQL_V3_DOMAIN_SCHEMA}.${sqlType}`
+}
 
 const buildersByDomain: ReadonlyMap<
   string,
@@ -70,15 +87,44 @@ function getSqlType(column: unknown): string | undefined {
     typeof columnAny.getSQLType === 'function'
       ? columnAny.getSQLType()
       : undefined
-  if (typeof sqlType === 'string') return sqlType
+  // Re-qualify: a live column reports its type bare (see `makeEqlV3Column`), but
+  // the recovery keys are the qualified `public.eql_v3_*` identities.
+  if (typeof sqlType === 'string') return qualifyDomain(sqlType)
   const dt = columnAny.dataType
   const domain = typeof dt === 'function' ? dt() : (columnAny.sqlName ?? dt)
-  return typeof domain === 'string' ? domain : undefined
+  return typeof domain === 'string' ? qualifyDomain(domain) : undefined
 }
 
 export function makeEqlV3Column<C extends AnyEncryptedV3Column>(builder: C) {
   const domain = builder.getEqlType()
   const name = builder.getName()
+
+  // The SQL type drizzle emits is the domain name WITHOUT its `public.` schema.
+  // drizzle-kit renders a customType's `dataType()` by wrapping the whole string
+  // in one pair of double quotes, so a qualified `public.eql_v3_text_search`
+  // becomes the invalid identifier `"public.eql_v3_text_search"` (Postgres reads
+  // it as a single type name containing a dot, not schema.type) — the DDL then
+  // fails with `type "public.eql_v3_text_search" does not exist`. Emitting the
+  // bare `eql_v3_text_search` yields a valid `"eql_v3_text_search"` that resolves
+  // via the search_path (the domains live in `public`, always in-path), and it
+  // also matches what drizzle-kit introspection reads back for a `push` diff, so
+  // the two sides no longer disagree.
+  //
+  // Stripping the schema is only safe BECAUSE every domain lives in `public`:
+  // `stripDomainSchema`/`qualifyDomain` are inverses over exactly that set. If a
+  // domain ever lived elsewhere, `stripDomainSchema` would pass its qualified
+  // name through untouched and drizzle-kit would emit the invalid dotted
+  // identifier again — silently. Assert the invariant so that day fails loudly at
+  // column construction instead of shipping a broken migration.
+  if (!domain.startsWith(`${EQL_V3_DOMAIN_SCHEMA}.`)) {
+    throw new Error(
+      `EQL v3 domain "${domain}" is not in the "${EQL_V3_DOMAIN_SCHEMA}" schema. ` +
+        'drizzle-kit cannot emit a schema-qualified custom type as valid DDL, so ' +
+        'the bare domain name is emitted and resolved via search_path — which only ' +
+        `works when the domain lives in "${EQL_V3_DOMAIN_SCHEMA}".`,
+    )
+  }
+  const sqlType = stripDomainSchema(domain)
 
   // What is stored/inserted/selected is the ENCRYPTED EQL v3 jsonb envelope
   // (produced by `client.encrypt` / `bulkEncryptModels`), NOT the column's
@@ -86,7 +132,7 @@ export function makeEqlV3Column<C extends AnyEncryptedV3Column>(builder: C) {
   // encrypted `Encrypted`, and a select yields one, ready for `decryptModel`.
   const column = customType<{ data: Encrypted; driverData: string | null }>({
     dataType() {
-      return domain
+      return sqlType
     },
     toDriver(value: Encrypted): string | null {
       return v3ToDriver(value)
