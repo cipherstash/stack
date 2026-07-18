@@ -380,7 +380,7 @@ stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authentic
 | Flag | Description |
 |---|---|
 | `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`. |
-| `--prisma` | **Not supported.** Prisma Next installs EQL v3 through its own migration system — run `prisma-next migration apply` instead. The flag fails with a pointer. |
+| `--prisma` | Emit a Prisma Next migration. **Not available yet** — the emitter is a follow-up (tracked in GitHub issue #690); fails with a pointer for now. Use `--drizzle` today. |
 | `--supabase` | Append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`). Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
 | `--name <name>` | Migration name (Drizzle). Default `install-eql`. |
 | `--out <path>` | Output directory (Drizzle). Default `drizzle`. |

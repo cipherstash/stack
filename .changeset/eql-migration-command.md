@@ -17,6 +17,6 @@ the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers
 everything `stash encrypt …` needs. `--supabase` appends the `eql_v3` +
 `eql_v3_internal` role grants for PostgREST/RLS access.
 
-`--prisma` is registered but not supported — Prisma Next installs EQL v3 through
-its own migration system (`prisma-next migration apply`), so the command points
-users there instead of emitting a migration.
+`--prisma` is registered but not available yet — the Prisma Next migration
+emitter is a follow-up (tracked in cipherstash/stack#690) that will let
+prisma-next drop its baked install baseline. It fails with a pointer for now.
