@@ -394,7 +394,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--prisma',
             description:
-              'Emit a Prisma Next migration (ships with prisma-next EQL v3 support; not available yet).',
+              'Not supported — Prisma Next installs EQL v3 via its own migration system (`prisma-next migration apply`); fails with a pointer.',
           },
           {
             name: '--supabase',

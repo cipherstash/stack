@@ -94,9 +94,9 @@ export async function eqlMigrationCommand(
   }
 
   if (options.prisma) {
-    // The prisma-next emitter ships stacked on the prisma-next EQL v3 work
-    // (PR #655); it can't install a v3 schema that doesn't exist on that
-    // surface yet. Fail loudly with a pointer rather than emit a broken file.
+    // Prisma Next installs EQL v3 through its own migration system
+    // (`prisma-next migration apply`, shipped in #655), so this command has
+    // nothing to emit for it. Fail loudly with a pointer rather than a no-op.
     p.log.error(messages.eql.migrationPrismaUnavailable)
     throw new CliExit(1)
   }

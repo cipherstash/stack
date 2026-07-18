@@ -73,13 +73,13 @@ export const messages = {
     migrationOneTarget:
       'Pass exactly one target: `--drizzle` or `--prisma`, not both.',
     /**
-     * `--prisma` isn't wired yet — Prisma Next installs EQL v3 through its own
-     * migration system (`prisma-next migration apply`), so the CLI emitter is
-     * not needed there today. Points at the tracking issue so the failure is
-     * actionable.
+     * `--prisma` is registered but has nothing to emit: Prisma Next installs
+     * EQL v3 through its own migration system (`prisma-next migration apply`),
+     * so this command doesn't generate a Prisma migration. The message points
+     * users at the path that does the work.
      */
     migrationPrismaUnavailable:
-      '`stash eql migration --prisma` is not available yet — Prisma Next installs EQL v3 via its own migration system (`prisma-next migration apply`, see cipherstash/stack#690). Use `--drizzle` today.',
+      '`stash eql migration --prisma` is not supported — Prisma Next installs EQL v3 through its own migration system. Run `prisma-next migration apply` instead. Use `--drizzle` for a Drizzle project.',
     /** `--name` carried characters outside `[A-Za-z0-9_-]`. */
     migrationBadName:
       'Migration name must contain only letters, numbers, dashes, and underscores.',
