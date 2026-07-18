@@ -82,7 +82,7 @@ export async function cipherstashFromStackV2(
     throw new Error(
       'cipherstashFromStackV2: no cipherstash columns found in contract.json AND no override `schemas` supplied. ' +
         "`@cipherstash/stack`'s `Encryption({ schemas })` requires at least one `EncryptedTable`. " +
-        'Check that prisma/schema.prisma declares at least one `cipherstash.Encrypted*()` column and that ' +
+        'Check that prisma/schema.prisma declares at least one `cipherstash.Encrypted*V2()` column and that ' +
         '`pnpm emit` has been run since the last edit.',
     )
   }

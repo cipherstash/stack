@@ -89,8 +89,8 @@ export async function cipherstashFromStack(
   if (derived.length === 0) {
     throw new Error(
       'cipherstashFromStack: no v3 cipherstash columns found in contract.json. ' +
-        'Declare at least one v3 `cipherstash.Encrypted*()` column in prisma/schema.prisma and re-emit the contract ' +
-        '(or use cipherstashFromStackV2 if this is a v2 contract).',
+        'Declare at least one v3 `cipherstash.*()` column (e.g. `cipherstash.TextSearch()`) in prisma/schema.prisma ' +
+        'and re-emit the contract (or use cipherstashFromStackV2 if this is a v2 contract).',
     )
   }
 

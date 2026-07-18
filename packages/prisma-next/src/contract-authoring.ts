@@ -13,7 +13,7 @@
  *   `typeParams: { castAs, capabilities }`.
  *
  * There are NO options: the constructor IS the capability set. The name is
- * the mechanical `Encrypted<Stem><Suffix>` transform of the bare domain with
+ * the mechanical PascalCase `<Stem><Suffix>` transform of the bare domain with
  * its `eql_v3_` prefix stripped (`eql_v3_bigint_ord` → `BigIntOrd`);
  * the codec id keeps the registry key VERBATIM (never name-transformed).
  *

@@ -47,12 +47,12 @@ export default defineConfig({
 ```typescript
 // src/db.ts
 import "dotenv/config"
-import { cipherstashFromStackV2 } from "@cipherstash/prisma-next/stack"
+import { cipherstashFromStack } from "@cipherstash/prisma-next/v3"
 import postgres from "@prisma-next/postgres/runtime"
 import type { Contract } from "./prisma/contract.d"
 import contractJson from "./prisma/contract.json" with { type: "json" }
 
-const cipherstash = await cipherstashFromStackV2({ contractJson })
+const cipherstash = await cipherstashFromStack({ contractJson })
 
 export const db = postgres<Contract>({
   contractJson,
