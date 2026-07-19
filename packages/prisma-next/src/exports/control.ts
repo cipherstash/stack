@@ -66,6 +66,12 @@ import {
   cipherstashStringCodecHooks,
 } from '../migration/cipherstash-codec'
 import { cipherstashV3CodecControlHooks } from '../migration/cipherstash-codec-v3'
+import { withRuntimeEqlSqlPackage } from '../migration/eql-bundle-v3'
+
+const v3BaselineRuntimePackage = withRuntimeEqlSqlPackage(
+  v3BaselineMetadata,
+  v3BaselineOps,
+)
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
@@ -85,8 +91,13 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
     // `remove_search_config` ops.
     {
       dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
-      metadata: v3BaselineMetadata,
-      ops: v3BaselineOps,
+      metadata: v3BaselineRuntimePackage.metadata,
+      // The committed `ops.json` carries a placeholder in place of the ~1.7 MB
+      // install SQL; inject it here from the installed `@cipherstash/eql` so
+      // bumping the pinned EQL version needs no re-emit of the migration. The
+      // helper also recomputes the content-addressed migration hash from the
+      // injected ops so the descriptor can be materialised and verified.
+      ops: v3BaselineRuntimePackage.ops,
     },
   ],
   headRef,
