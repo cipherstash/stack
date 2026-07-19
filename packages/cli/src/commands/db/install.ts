@@ -169,7 +169,28 @@ async function resolveInstallContext(
   return { databaseUrl, clientPath }
 }
 
-export async function installCommand(options: InstallOptions) {
+/**
+ * What `installCommand` actually did — so callers (notably `stash init`'s
+ * completion gate) can tell "EQL is now in the database" from "a migration
+ * file was written but nothing was applied yet".
+ *
+ * - `installed` / `already-installed`: EQL is present in the target database.
+ * - `migration-generated`: a migration file was written (Drizzle, or the
+ *   Supabase `--migration` mode); the user still has to APPLY it
+ *   (`drizzle-kit migrate` / `supabase db push`) before EQL exists in the DB.
+ * - `dry-run`: nothing was changed.
+ *
+ * Terminal error paths call `process.exit(1)` and never return an outcome.
+ */
+export type InstallOutcome =
+  | 'installed'
+  | 'already-installed'
+  | 'migration-generated'
+  | 'dry-run'
+
+export async function installCommand(
+  options: InstallOptions,
+): Promise<InstallOutcome> {
   p.intro(runnerCommand(detectPackageManager(), 'stash eql install'))
 
   // Validate mutually-exclusive / supabase-required flags BEFORE doing any
@@ -238,7 +259,9 @@ export async function installCommand(options: InstallOptions) {
       supabase: resolved.supabase,
       excludeOperatorFamily: resolved.excludeOperatorFamily,
     })
-    return
+    // A Drizzle migration file was written — NOT applied. EQL only lands in
+    // the database once the user runs `drizzle-kit migrate`.
+    return 'migration-generated'
   }
 
   // Supabase non-Drizzle path: pick between writing a migration file and
@@ -270,7 +293,9 @@ export async function installCommand(options: InstallOptions) {
         force: options.force,
         dryRun: options.dryRun,
       })
-      return
+      // Migration file written, not applied — the user runs it via their
+      // Supabase migration workflow (`supabase db push`).
+      return 'migration-generated'
     }
     // mode === 'direct' — fall through to existing direct-install behavior.
   }
@@ -282,7 +307,7 @@ export async function installCommand(options: InstallOptions) {
       : `Would use bundled EQL${eqlVersion === 3 ? ' v3' : ''} install script`
     p.note(`${source}\nWould execute the SQL against the database`, 'Dry Run')
     p.outro('Dry run complete.')
-    return
+    return 'dry-run'
   }
 
   const installer = new EQLInstaller({
@@ -331,7 +356,7 @@ export async function installCommand(options: InstallOptions) {
     if (installed) {
       p.log.info('Use --force to re-run the install script.')
       p.outro('Nothing to do.')
-      return
+      return 'already-installed'
     }
   }
 
@@ -370,6 +395,7 @@ export async function installCommand(options: InstallOptions) {
 
   printNextSteps()
   p.outro('Done!')
+  return 'installed'
 }
 
 /**

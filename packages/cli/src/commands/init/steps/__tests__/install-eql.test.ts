@@ -60,6 +60,7 @@ describe('installEqlStep', () => {
     // prompt. init must proceed with the default (install) rather than abort,
     // and still scaffold stash.config.ts via the EQL install.
     vi.mocked(isInteractive).mockReturnValue(false)
+    vi.mocked(installCommand).mockResolvedValueOnce('installed')
 
     const result = await installEqlStep.run(baseState, provider)
 
@@ -69,5 +70,37 @@ describe('installEqlStep', () => {
       'ensure',
     )
     expect(result.eqlInstalled).toBe(true)
+    expect(result.eqlMigrationPending).toBeFalsy()
+  })
+
+  it('treats an already-installed database as EQL installed', async () => {
+    vi.mocked(installCommand).mockResolvedValueOnce('already-installed')
+
+    const result = await installEqlStep.run(baseState, provider)
+
+    expect(result.eqlInstalled).toBe(true)
+    expect(result.eqlMigrationPending).toBeFalsy()
+  })
+
+  it('maps a generated Drizzle migration to eqlMigrationPending, NOT eqlInstalled', async () => {
+    // The Drizzle path only WRITES a v2 migration — EQL isn't in the DB until
+    // the user runs `drizzle-kit migrate`. `installEqlStep` must carry that
+    // distinction through so `initCommand` doesn't claim "EQL installed".
+    // This is the seam the differential review flagged (PR #687): the step
+    // used to return `eqlInstalled: true` for every non-throwing outcome.
+    const drizzleState = {
+      integration: 'drizzle',
+      databaseUrl: 'postgresql://localhost:5432/app',
+    } as unknown as InitState
+    vi.mocked(installCommand).mockResolvedValueOnce('migration-generated')
+
+    const result = await installEqlStep.run(drizzleState, {
+      name: 'drizzle',
+    } as unknown as InitProvider)
+
+    // Pinned to v2 for the Drizzle migration path (v3 rejects --drizzle).
+    expect(vi.mocked(installCommand).mock.calls[0][0].eqlVersion).toBe('2')
+    expect(result.eqlInstalled).toBe(false)
+    expect(result.eqlMigrationPending).toBe(true)
   })
 })

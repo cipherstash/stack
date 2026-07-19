@@ -114,4 +114,63 @@ describe('initCommand — honest summary', () => {
       'Setup complete',
     )
   })
+
+  it('reports a generated Drizzle migration honestly — not installed, not incomplete', async () => {
+    // Differential review (PR #687): the Drizzle flow GENERATES an EQL
+    // migration; `installEqlStep` returns eqlMigrationPending (not
+    // eqlInstalled). The summary must neither claim "✓ EQL extension
+    // installed" nor hard-fail as "Setup incomplete" — it should say a
+    // migration was generated and point at `drizzle-kit migrate`, then exit 0.
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      integration: 'drizzle',
+      eqlInstalled: false,
+      eqlMigrationPending: true,
+    }))
+
+    await expect(initCommand({}, {})).resolves.toBeUndefined()
+
+    const summary = vi
+      .mocked(p.note)
+      .mock.calls.find(([, title]) => title === 'Setup complete')
+    expect(summary).toBeDefined()
+    const body = summary?.[0] as string
+    expect(body).toContain('EQL migration generated')
+    expect(body).toContain('drizzle-kit migrate')
+    expect(body).not.toContain('✓ EQL extension installed')
+  })
+
+  it('summary says "kept (existing file)" when an existing client is kept', async () => {
+    // The three-way encryption-client checkmark fork was untested — the keep
+    // path (`build-schema` sets clientFilePath + schemaGenerated: false) now
+    // produces a different string with nothing locking it. This fails against
+    // the pre-change code, which always claimed "scaffolded".
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      eqlInstalled: true,
+      clientFilePath: './src/encryption/index.ts',
+      schemaGenerated: false,
+    }))
+
+    await initCommand({}, {})
+    expect(vi.mocked(p.note)).toHaveBeenCalledWith(
+      expect.stringContaining('✓ Encryption client kept (existing file)'),
+      'Setup complete',
+    )
+  })
+
+  it('summary says "scaffolded" when a placeholder was written', async () => {
+    eqlRun.mockImplementationOnce(async (s: InitState) => ({
+      ...s,
+      eqlInstalled: true,
+      clientFilePath: './src/encryption/index.ts',
+      schemaGenerated: true,
+    }))
+
+    await initCommand({}, {})
+    expect(vi.mocked(p.note)).toHaveBeenCalledWith(
+      expect.stringContaining('✓ Encryption client scaffolded'),
+      'Setup complete',
+    )
+  })
 })

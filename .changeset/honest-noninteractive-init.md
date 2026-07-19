@@ -13,9 +13,13 @@ setup that didn't fully complete.
   Interactive runs still offer to align. A *newer* install stays a warn (the
   install is likely fine; update the CLI instead).
 - **No false "Setup complete".** If the EQL extension isn't installed at the
-  end (and the integration isn't Prisma Next, which installs it via
-  `migration apply`), the summary reads "Setup incomplete" and init exits
-  non-zero, pointing at `stash eql install`.
+  end — and the integration isn't one that installs it out-of-band — the
+  summary reads "Setup incomplete" and init exits non-zero, pointing at
+  `stash eql install`. Integrations that install EQL via a migration are
+  reported honestly rather than as failures: Prisma Next (installs it via
+  `migration apply`) and the Drizzle flow, which *generates* an EQL migration
+  and now says "EQL migration generated — apply it with `drizzle-kit migrate`"
+  instead of claiming the extension is already installed.
 - **Honest checkmarks.** The summary no longer claims "Database connection
   verified" (init resolves a URL but doesn't open a connection) — it now says
   "Database URL resolved" — and only shows "Encryption client scaffolded" when

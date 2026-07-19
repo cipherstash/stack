@@ -120,15 +120,34 @@ export async function initCommand(
       checkmarks.push('✓ `@cipherstash/stack` installed')
     }
     if (state.cliInstalled) checkmarks.push('✓ `stash` CLI installed')
-    if (state.eqlInstalled) checkmarks.push('✓ EQL extension installed')
+    if (state.eqlInstalled) {
+      checkmarks.push('✓ EQL extension installed')
+    } else if (state.eqlMigrationPending) {
+      // The Drizzle flow (and Supabase `--migration` mode) GENERATES an EQL
+      // migration rather than applying it — EQL isn't in the database until
+      // the user runs the migration. That's the intended, honest end state
+      // for these flows (applying is the ORM/migration tool's job), so it's
+      // NOT an incomplete setup — but we must not claim "installed" either.
+      const applyCmd =
+        state.integration === 'supabase'
+          ? 'supabase db push'
+          : 'drizzle-kit migrate'
+      checkmarks.push(
+        `○ EQL migration generated — apply it with \`${applyCmd}\``,
+      )
+    }
 
-    // EQL is required for encryption. Prisma Next installs it via `migration
-    // apply` (so `eqlInstalled` is false by design there); every other
-    // integration needs it installed here. If it's missing, setup is NOT
-    // complete — say so and exit non-zero so automation can't read a false
-    // success from a run where encryption would fail at query time.
+    // EQL is required for encryption. Some integrations install it out-of-band
+    // and legitimately leave `eqlInstalled` false here: Prisma Next installs it
+    // via `migration apply`, and the Drizzle flow generates a migration the
+    // user applies with `drizzle-kit migrate` (`eqlMigrationPending`). Only a
+    // run that neither installed EQL nor generated a migration to install it is
+    // genuinely incomplete — say so and exit non-zero so automation can't read
+    // a false success from a run where encryption would fail at query time.
     const eqlPending =
-      !state.eqlInstalled && state.integration !== 'prisma-next'
+      !state.eqlInstalled &&
+      !state.eqlMigrationPending &&
+      state.integration !== 'prisma-next'
     if (eqlPending) {
       checkmarks.push('✗ EQL extension NOT installed')
       p.note(checkmarks.join('\n'), messages.init.setupIncomplete)
