@@ -8,7 +8,14 @@
  * invariant-only: the v3 bundle creates `public.eql_v3_*` domains + `eql_v3.*`
  * functions but no contract-space storage, so `from === to === <v2 baseline head>`.
  */
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
+import {
+  materialiseMigrationPackage,
+  readMigrationPackage,
+} from '@prisma-next/migration-tools/io'
 import { describe, expect, it } from 'vitest'
 import v2Metadata from '../../migrations/20260601T0000_install_eql_bundle/migration.json' with {
   type: 'json',
@@ -30,6 +37,16 @@ import {
   RUNTIME_EQL_SQL_SENTINEL,
   withRuntimeEqlSql,
 } from '../../src/migration/eql-bundle-v3'
+
+function runtimeV3Baseline() {
+  const migration = cipherstashDescriptor.contractSpace?.migrations.find(
+    ({ dirName }) => dirName === CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+  )
+  if (!migration) {
+    throw new Error('runtime descriptor is missing the EQL v3 baseline')
+  }
+  return migration
+}
 
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
   it('installs under the v3 invariant with a single data-class rawSql op', () => {
@@ -63,15 +80,37 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
   it('injects readInstallSql() from @cipherstash/eql into the descriptor at build time', () => {
     // control.ts swaps the placeholder for the install SQL of the pinned
     // @cipherstash/eql, so the applied SQL always matches the resolved version.
-    const v3Baseline = cipherstashDescriptor.contractSpace!.migrations[1]!
+    const v3Baseline = runtimeV3Baseline()
     const op = (
       v3Baseline.ops as ReadonlyArray<{
         readonly id: string
         readonly execute?: ReadonlyArray<{ readonly sql: string }>
       }>
-    ).find((o) => o.id === 'cipherstash.install-eql-v3-bundle')!
+    ).find((o) => o.id === 'cipherstash.install-eql-v3-bundle')
+    if (!op) throw new Error('runtime descriptor is missing the EQL v3 op')
     expect(op.execute?.[0]?.sql).toBe(readInstallSql())
     expect(op.execute?.[0]?.sql).toContain('EQL v3 schema creation')
+  })
+
+  it('materialises the runtime descriptor package and verifies it on read', async () => {
+    // Round-trip property: the exact package Prisma Next receives from the
+    // descriptor must survive its canonical disk writer + integrity-checking
+    // reader. This pins the migration hash to the injected SQL, not the
+    // sentinel committed in the maintainer artefact.
+    const v3Baseline = runtimeV3Baseline()
+    expect(v3Baseline.metadata.migrationHash).not.toBe(v3Metadata.migrationHash)
+
+    const root = await mkdtemp(join(tmpdir(), 'prisma-next-eql-v3-'))
+    try {
+      await materialiseMigrationPackage(root, v3Baseline)
+      const reloaded = await readMigrationPackage(
+        join(root, v3Baseline.dirName),
+      )
+      expect(reloaded.metadata).toEqual(v3Baseline.metadata)
+      expect(reloaded.ops).toEqual(v3Baseline.ops)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('withRuntimeEqlSql throws if no op carries the sentinel (drift guard)', () => {

@@ -5,10 +5,11 @@
  * The install SQL is NOT baked into `ops.json`. The committed op carries
  * `RUNTIME_EQL_SQL_SENTINEL`; `src/exports/control.ts` injects
  * `readInstallSql()` from the installed `@cipherstash/eql` at descriptor-build
- * time (see `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so
- * bumping the pinned `@cipherstash/eql` needs no re-emit of this ~1.7 MB
- * `ops.json`. The bundle creates the 40 `public.eql_v3_*` storage domains, the
- * `eql_v3` operator-function schema (`eql_v3.eq`, `eql_v3.ord_term`, …), the
+ * time and recomputes the migration hash from those runtime ops (see
+ * `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSqlPackage`), so bumping
+ * the pinned `@cipherstash/eql` needs no re-emit of this ~1.7 MB `ops.json`.
+ * The bundle creates the 40 `public.eql_v3_*` storage domains, the `eql_v3`
+ * operator-function schema (`eql_v3.eq`, `eql_v3.ord_term`, …), the
  * `eql_v3.query_*` operand domains, and the `eql_v3_internal` helper schema.
  *
  * This is the SECOND migration in the cipherstash contract space, and

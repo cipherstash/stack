@@ -31,6 +31,12 @@
  * invariant.
  */
 import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
+import type {
+  MigrationOperationClass,
+  MigrationPlanOperation,
+} from '@prisma-next/framework-components/control'
+import { computeMigrationHash } from '@prisma-next/migration-tools/hash'
+import type { MigrationMetadata } from '@prisma-next/migration-tools/metadata'
 
 // Re-exported for the live-test helpers, which read the same install SQL to set
 // up their databases (`test/live/helpers/eql-v3.ts`, `migration-apply-live-pg`).
@@ -67,6 +73,27 @@ function readV3InstallSql(): string {
 
 type ExecuteStep = { readonly sql?: unknown }
 type OpLike = { readonly execute?: ReadonlyArray<ExecuteStep> }
+type HashableOpLike = OpLike & {
+  readonly id: string
+  readonly label: string
+  readonly operationClass: string
+  readonly invariantId?: string
+}
+type RuntimeMigrationMetadata<TMetadata extends MigrationMetadata> = Omit<
+  TMetadata,
+  'migrationHash'
+> & { readonly migrationHash: string }
+
+function isMigrationOperationClass(
+  value: string,
+): value is MigrationOperationClass {
+  return (
+    value === 'additive' ||
+    value === 'widening' ||
+    value === 'destructive' ||
+    value === 'data'
+  )
+}
 
 /**
  * Return `ops` with every placeholder install-SQL step ({@link
@@ -102,4 +129,42 @@ export function withRuntimeEqlSql<T extends OpLike>(ops: readonly T[]): T[] {
         }
       : op,
   )
+}
+
+/**
+ * Build the complete runtime migration package payload atomically. Replacing
+ * the sentinel changes the content-addressed identity of the migration, so the
+ * metadata hash MUST be recomputed from the injected operations before the
+ * descriptor can materialise the package into a user's migration directory.
+ * Keeping both values behind one helper prevents callers from updating the ops
+ * while accidentally retaining the sentinel-derived hash.
+ */
+export function withRuntimeEqlSqlPackage<
+  TMetadata extends MigrationMetadata,
+  TOp extends HashableOpLike,
+>(
+  metadata: TMetadata,
+  ops: readonly TOp[],
+): {
+  readonly metadata: RuntimeMigrationMetadata<TMetadata>
+  readonly ops: TOp[]
+} {
+  const runtimeOps = withRuntimeEqlSql(ops)
+  const hashOps = runtimeOps.map((op): MigrationPlanOperation => {
+    if (!isMigrationOperationClass(op.operationClass)) {
+      throw new Error(
+        `withRuntimeEqlSqlPackage: invalid migration operation class ${JSON.stringify(op.operationClass)}`,
+      )
+    }
+    // Preserve the target-specific fields consumed by canonical JSON hashing
+    // while narrowing the emitted JSON's widened operationClass string.
+    return { ...op, operationClass: op.operationClass }
+  })
+  return {
+    metadata: {
+      ...metadata,
+      migrationHash: computeMigrationHash(metadata, hashOps),
+    },
+    ops: runtimeOps,
+  }
 }

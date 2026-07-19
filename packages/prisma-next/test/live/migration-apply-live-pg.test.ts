@@ -1,25 +1,24 @@
 /**
  * Live-PG apply of the v3 baseline migration bundle.
  *
- * `installEqlV3IfNeeded` applies `readInstallSql()` — and this suite
- * pins that those are byte-for-byte the SQL baked into the shipped
- * migration's `ops.json` (`migrations/20260601T0100_install_eql_v3_bundle`),
- * so a green run here IS a green apply of the customer-facing
+ * `installEqlV3IfNeeded` applies `readInstallSql()` — and this suite pins that
+ * those are byte-for-byte the SQL injected into the shipped control descriptor
+ * at runtime, so a green run here IS a green apply of the customer-facing
  * migration op. After install it verifies the observable contract: the
- * `public.eql_v3_*` storage domains and the `eql_v3` operator schema
- * exist, the op carries the `cipherstash:install-eql-v3-bundle-v1`
- * invariant, the op's own postchecks hold against the live database,
- * and no v2-style `add_search_config` was executed (v3 needs no
- * per-column search configuration).
+ * `public.eql_v3_*` storage domains and the `eql_v3` operator schema exist, the
+ * op carries the `cipherstash:install-eql-v3-bundle-v1` invariant, the op's own
+ * postchecks hold against the live database, and no v2-style
+ * `add_search_config` was executed (v3 needs no per-column search configuration).
  */
 
 import 'dotenv/config'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'pathe'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
-import { CIPHERSTASH_V3_INVARIANTS } from '../../src/extension-metadata/constants-v3'
+import cipherstashDescriptor from '../../src/exports/control'
+import {
+  CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+  CIPHERSTASH_V3_INVARIANTS,
+} from '../../src/extension-metadata/constants-v3'
 import {
   readInstallSql,
   releaseManifest,
@@ -27,12 +26,6 @@ import {
 import { installEqlV3IfNeeded, uninstallEqlV3 } from './helpers/eql-v3'
 import { liveConnection } from './helpers/harness'
 import { describeLivePg } from './helpers/live-gate'
-
-const MIGRATION_DIR = join(
-  dirname(dirname(dirname(fileURLToPath(import.meta.url)))),
-  'migrations',
-  '20260601T0100_install_eql_v3_bundle',
-)
 
 interface MigrationOp {
   readonly id: string
@@ -48,14 +41,14 @@ interface MigrationOp {
   }>
 }
 
-function readOpsFixture(): MigrationOp {
-  const ops = JSON.parse(
-    readFileSync(join(MIGRATION_DIR, 'ops.json'), 'utf8'),
-  ) as MigrationOp[]
-  const op = ops[0]
-  if (ops.length !== 1 || !op) {
+function readRuntimeDescriptorOp(): MigrationOp {
+  const migration = cipherstashDescriptor.contractSpace?.migrations.find(
+    ({ dirName }) => dirName === CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+  )
+  const op = migration?.ops[0] as MigrationOp | undefined
+  if (migration?.ops.length !== 1 || !op) {
     throw new Error(
-      `expected exactly one op in the v3 baseline migration, got ${ops.length}`,
+      `expected exactly one op in the v3 baseline migration, got ${migration?.ops.length ?? 0}`,
     )
   }
   return op
@@ -79,14 +72,14 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
     if (sql) await sql.end()
   })
 
-  it('the applied SQL is byte-for-byte the shipped migration op, carrying the v3 invariant', () => {
-    const op = readOpsFixture()
+  it('the applied SQL is byte-for-byte the runtime descriptor op, carrying the v3 invariant', () => {
+    const op = readRuntimeDescriptorOp()
     expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
     expect(op.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
     expect(op.operationClass).toBe('data')
     expect(op.execute).toHaveLength(1)
-    // Byte identity: what installEqlV3IfNeeded just applied IS the
-    // migration bundle a customer's `prisma-next migrate` applies.
+    // Byte identity: what installEqlV3IfNeeded just applied IS the migration
+    // bundle the control descriptor gives to `prisma-next migrate`.
     expect(op.execute[0]?.sql).toBe(readInstallSql())
   })
 
@@ -117,7 +110,7 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
   }, 60_000)
 
   it("the migration op's own postchecks hold against the live database", async () => {
-    const op = readOpsFixture()
+    const op = readRuntimeDescriptorOp()
     expect(op.postcheck.length).toBeGreaterThan(0)
     for (const check of op.postcheck) {
       const rows = (await sql.unsafe(check.sql)) as unknown as Array<

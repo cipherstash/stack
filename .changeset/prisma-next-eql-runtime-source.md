@@ -11,7 +11,8 @@ two must move together, so an EQL upgrade is a coordinated version bump, not a
 float. The v3 baseline migration no longer embeds the ~1.7 MB install bundle in
 its `ops.json`: the committed op carries a placeholder, and the extension
 descriptor injects `readInstallSql()` from the installed `@cipherstash/eql` when
-it is built.
+it is built, and recomputes the content-addressed migration hash from the
+injected operations before Prisma Next materialises the package.
 
 The win over baking: bumping the pinned `@cipherstash/eql` no longer requires
 re-running the maintainer emit loop to regenerate a 1.7 MB `ops.json` — it is a
