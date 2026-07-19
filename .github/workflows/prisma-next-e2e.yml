@@ -34,8 +34,11 @@ jobs:
     # Skip cleanly on fork PRs where secrets aren't available. The
     # global-setup hook in the suite hard-errors when `CS_WORKSPACE_CRN`
     # is unset; gating at the job level produces a clean "skipped"
-    # status instead of a noisy failure.
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # status instead of a noisy failure. Dependabot PRs skip too — they run
+    # under the Dependabot secret store, so a secret-consuming live suite can
+    # fail on a change Dependabot cannot fix; `tests.yml` + lockfile checks are
+    # the real signal for a dependency bump.
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
 
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}

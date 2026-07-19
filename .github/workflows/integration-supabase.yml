@@ -64,7 +64,11 @@ jobs:
       cancel-in-progress: false
     # Fork PRs have no secrets. Skip cleanly rather than fail loudly on something
     # the contributor cannot fix — `tests.yml` still gives them a green signal.
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # Dependabot PRs skip for the same reason: they run under the Dependabot
+    # secret store (a distinct, narrower set), so a secret-consuming live suite
+    # can fail on a change Dependabot cannot fix. A dependency bump's real
+    # signal is `tests.yml` + the lockfile checks.
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]') }}
 
     strategy:
       # A one-element matrix, not a cross-product: the Supabase adapter only ever
