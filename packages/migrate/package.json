@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/migrate",
-  "version": "1.0.0-rc.0",
+  "version": "1.0.0-rc.1",
   "description": "Plaintext-to-encrypted column migration for CipherStash: resumable backfill, per-column state, and EQL lifecycle orchestration.",
   "repository": {
     "type": "git",
