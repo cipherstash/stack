@@ -584,8 +584,8 @@ importers:
         specifier: ^1.7.0
         version: 1.7.0
       '@clerk/backend':
-        specifier: 3.11.3
-        version: 3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: 3.11.4
+        version: 3.11.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@supabase/postgrest-js':
         specifier: 2.110.2
         version: 2.110.2
@@ -744,8 +744,8 @@ importers:
         version: link:../stack
     devDependencies:
       '@clerk/backend':
-        specifier: 3.11.3
-        version: 3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+        specifier: 3.11.4
+        version: 3.11.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       typescript:
         specifier: catalog:repo
         version: 5.9.3
@@ -1166,6 +1166,10 @@ packages:
 
   '@clerk/backend@3.11.3':
     resolution: {integrity: sha512-takrEE0nliUz39e8Ct1YG471eBcuU2I1ZStRIU9U0UAIuiNAxNTNuaVZSXaZeK4QTuJtdQhoGy8rvzxr/10Btw==}
+    engines: {node: '>=20.9.0'}
+
+  '@clerk/backend@3.11.4':
+    resolution: {integrity: sha512-w4SaKIMuXYJY9bU70ZHxNZtam0GYWlT0IIN7QHsZ1p9LC+v6P/JyHqVK9PNiXjcjVTZymMxkm5d9N6//9MBDzg==}
     engines: {node: '>=20.9.0'}
 
   '@clerk/nextjs@7.5.16':
@@ -3524,8 +3528,8 @@ packages:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
 
-  shell-quote@1.9.0:
-    resolution: {integrity: sha512-Iov+JwFv/2HcTpcwNMKd8+IWNb8tboQJNQTkAY/LLVK7gGH9jy+LGkVqPxfekHl+yMmiqXszdGWXgkfml7hjqA==}
+  shell-quote@1.10.0:
+    resolution: {integrity: sha512-w1aiOKwKuRgtwAReIIj89puqg+I7GvX4IbLrvmhXbzQsj1+Zwi4VO3+fa6ZF91TWSjIxoEkKnMeHcLEODK5ZXA==}
     engines: {node: '>= 0.4'}
 
   side-channel-list@1.0.1:
@@ -4262,6 +4266,15 @@ snapshots:
       sisteransi: 1.0.5
 
   '@clerk/backend@3.11.3(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+    dependencies:
+      '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      standardwebhooks: 1.0.0
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - react
+      - react-dom
+
+  '@clerk/backend@3.11.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
       '@clerk/shared': 4.25.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       standardwebhooks: 1.0.0
@@ -5668,7 +5681,7 @@ snapshots:
       debug: 4.4.3
       env-paths: 3.0.0
       semver: 7.8.5
-      shell-quote: 1.9.0
+      shell-quote: 1.10.0
       which: 4.0.0
     transitivePeerDependencies:
       - supports-color
@@ -6386,7 +6399,7 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shell-quote@1.9.0:
+  shell-quote@1.10.0:
     optional: true
 
   side-channel-list@1.0.1:
