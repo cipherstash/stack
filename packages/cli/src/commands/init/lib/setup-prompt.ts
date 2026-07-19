@@ -124,6 +124,45 @@ function renderSkillIndex(installedSkills: string[]): string {
 }
 
 /**
+ * The "## Skills loaded" section, honouring what the handoff actually wrote —
+ * so the prompt never points the agent at files that don't exist:
+ *
+ *   - No skills installed (a stripped CLI build): don't reference any skill
+ *     directory; point only at whatever durable rules the handoff wrote
+ *     (`AGENTS.md` for codex / agents-md; nothing for claude-code, so send the
+ *     agent to the docs).
+ *   - claude-code: the doctrine lives in the installed skills, not `AGENTS.md`
+ *     (this handoff never writes one) — so don't name `AGENTS.md`.
+ */
+function skillsLoadedLines(
+  handoff: HandoffChoice,
+  installedSkills: string[],
+): string[] {
+  const wroteAgentsMd = handoff === 'codex' || handoff === 'agents-md'
+  if (installedSkills.length === 0) {
+    return [
+      '## Rules',
+      '',
+      wroteAgentsMd
+        ? 'No skills were installed (stripped build) — the durable rules are in `AGENTS.md`; read it before answering API or pattern questions.'
+        : 'No skills or `AGENTS.md` were written (stripped build) — consult https://cipherstash.com/docs for the encryption API, schema rules, and the rollout/cutover lifecycle.',
+    ]
+  }
+  const doctrine = wroteAgentsMd
+    ? 'Read the skills before answering API or pattern questions. The doctrine in `AGENTS.md` covers the invariants that apply regardless of which flow you take — never log plaintext, never `.notNull()` on creation, etc.'
+    : 'Read the skills before answering API or pattern questions — they carry the invariants that apply regardless of which flow you take: never log plaintext, never `.notNull()` on creation, etc.'
+  return [
+    '## Skills loaded',
+    '',
+    `Reusable rules and worked examples live in ${rulesLocation(handoff)}:`,
+    '',
+    renderSkillIndex(installedSkills),
+    '',
+    doctrine,
+  ]
+}
+
+/**
  * Render the project-specific action prompt. Dispatches to the plan-mode or
  * implement-mode renderer based on `ctx.mode`. Both produce the same shape
  * (orient → describe options → tell the agent what its first response is)
@@ -206,13 +245,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '',
     ...setupChecklist(ctx),
     '',
-    '## Skills loaded',
-    '',
-    `Reusable rules and worked examples live in ${rulesLocation(ctx.handoff)}:`,
-    '',
-    renderSkillIndex(ctx.installedSkills),
-    '',
-    'Read the skills before answering API or pattern questions. The doctrine in `AGENTS.md` (or its inlined equivalent) covers the invariants that apply regardless of which flow you take — never log plaintext, never `.notNull()` on creation, etc.',
+    ...skillsLoadedLines(ctx.handoff, ctx.installedSkills),
     '',
     '## The two options',
     '',
@@ -262,7 +295,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '',
     '## Your first response',
     '',
-    `Before any edits, send the user a short orientation message. Confirm setup is complete, list the skills loaded with one-line purposes, summarise the two options in your own words, and end with a clear question — *"Which would you like to do? You can name a specific table+column or describe what you're trying to protect."* Reference concrete tables/columns from \`.cipherstash/context.json\` when it helps. Mention that they can run \`${cli} status\` at any time to see where each rollout is.`,
+    `Before any edits, send the user a short orientation message. Confirm setup is complete, list the skills loaded (if any) with one-line purposes, summarise the two options in your own words, and end with a clear question — *"Which would you like to do? You can name a specific table+column or describe what you're trying to protect."* Reference concrete tables/columns from \`.cipherstash/context.json\` when it helps. Mention that they can run \`${cli} status\` at any time to see where each rollout is.`,
     '',
     'Once the user answers, execute the relevant flow. Show diffs / generated SQL before applying. Pause for review at every database-mutating step.',
     '',
@@ -338,13 +371,7 @@ function planSharedSetupBlock(ctx: SetupPromptContext): string[] {
     '',
     ...setupChecklist(ctx),
     '',
-    '## Skills loaded',
-    '',
-    `Reusable rules and worked examples live in ${rulesLocation(ctx.handoff)}:`,
-    '',
-    renderSkillIndex(ctx.installedSkills),
-    '',
-    'Read the skills before answering API or pattern questions. The doctrine in `AGENTS.md` (or its inlined equivalent) covers the invariants that apply regardless of which flow you take — never log plaintext, never `.notNull()` on creation, etc.',
+    ...skillsLoadedLines(ctx.handoff, ctx.installedSkills),
     '',
   ]
 }
@@ -476,7 +503,7 @@ function renderRolloutPlanPrompt(ctx: SetupPromptContext): string {
     ...planSharedNotDoBlock(ctx),
     '## Your first response',
     '',
-    `Send the user a short orientation message before writing anything. Confirm setup is complete, list the skills loaded with one-line purposes, explain what an encryption rollout is in your own words, and end with a clear question — *"Which table(s) and column(s) would you like the rollout plan to cover? You can name them or describe what you're trying to protect."* Reference concrete tables/columns from \`.cipherstash/context.json\` when it helps.`,
+    `Send the user a short orientation message before writing anything. Confirm setup is complete, list the skills loaded (if any) with one-line purposes, explain what an encryption rollout is in your own words, and end with a clear question — *"Which table(s) and column(s) would you like the rollout plan to cover? You can name them or describe what you're trying to protect."* Reference concrete tables/columns from \`.cipherstash/context.json\` when it helps.`,
     '',
     `Once the user answers, write \`${PLAN_REL_PATH}\`. Show the plan in chat as well so the user can react inline. After the plan is approved, tell the user to run \`${cli} impl\` to execute it.`,
     '',

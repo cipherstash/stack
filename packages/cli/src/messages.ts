@@ -156,6 +156,17 @@ export const messages = {
     completeRolloutConfirmed:
       'Proceeding with --yes: the production-deploy gate is skipped',
   },
+  init: {
+    /**
+     * Honest non-interactive init. These exit non-zero so automation never
+     * reads a false success — the e2e suite asserts on the leaders.
+     */
+    setupIncomplete: 'Setup incomplete',
+    eqlNotInstalled: 'EQL is not installed — encryption queries will fail.',
+    /** Shown when a non-interactive run hits version skew it won't reconcile. */
+    skewNonInteractive:
+      'Version skew on already-installed packages — refusing to proceed non-interactively. Align the packages (below) and re-run, or run init interactively.',
+  },
   telemetry: {
     /**
      * The one-time first-run notice. Printed to stderr so it never pollutes

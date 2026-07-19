@@ -90,8 +90,9 @@ export const installEqlStep: InitStep = {
       return { ...state, eqlInstalled: false }
     }
 
+    let outcome: Awaited<ReturnType<typeof installCommand>>
     try {
-      await installCommand({
+      outcome = await installCommand({
         supabase: supabase || undefined,
         drizzle: drizzle || undefined,
         databaseUrl: state.databaseUrl,
@@ -115,6 +116,16 @@ export const installEqlStep: InitStep = {
       return { ...state, eqlInstalled: false }
     }
 
+    // The Drizzle path (and Supabase `--migration` mode) only WRITES a
+    // migration file — EQL isn't in the database until the user applies it.
+    // Report that honestly rather than claiming the extension is installed;
+    // the init summary turns this into "migration generated, apply it".
+    if (outcome === 'migration-generated') {
+      return { ...state, eqlInstalled: false, eqlMigrationPending: true }
+    }
+
+    // 'installed' | 'already-installed' — the extension is present in the DB.
+    // ('dry-run' never happens from init; it doesn't pass dryRun.)
     return { ...state, eqlInstalled: true }
   },
 }

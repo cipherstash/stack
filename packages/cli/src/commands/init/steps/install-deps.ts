@@ -1,6 +1,8 @@
 import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
+import { CliExit } from '../../../cli/exit.js'
 import { isInteractive } from '../../../config/tty.js'
+import { messages } from '../../../messages.js'
 import {
   compareVersions,
   expectedVersion,
@@ -146,9 +148,12 @@ function splitProdDev(packages: readonly string[]): {
  * before any prompt or early exit, so no path (decline, partial failure,
  * everything-already-present) proceeds silently on a stale or placeholder
  * install. Interactively, init offers to align the skewed packages to this
- * release in the same confirm as the missing installs; non-interactively it
- * NEVER mutates an existing install — it warns, prints the exact align
- * commands, and proceeds.
+ * release in the same confirm as the missing installs. Non-interactively it
+ * still NEVER mutates an existing install without consent — but rather than
+ * proceeding on a `behind` skew (which would scaffold against packages older
+ * than this CLI expects and then report a false success), it REFUSES with a
+ * non-zero exit and the exact align commands (M4). An `ahead` skew is not
+ * fatal — the install is likely fine and the fix is updating the CLI.
  *
  * When everything is already present at matching versions this logs a
  * success line and moves on with no prompts.
@@ -191,6 +196,22 @@ export const installDepsStep: InitStep = {
     )
     if (skewed.length > 0) {
       p.log.warn(`Version skew detected:\n  ${skewLines(skewed)}`)
+    }
+
+    // A non-interactive run can't reconcile a `behind` skew: it won't mutate an
+    // existing install without consent (the #661/#666 rule), so proceeding
+    // would scaffold config/client against packages older than this CLI
+    // expects and then report a false success. Refuse with a non-zero exit and
+    // the exact align commands, instead of warning-and-continuing. (Interactive
+    // runs still offer to align — see below. `ahead` skew is handled
+    // separately: the install is likely fine, so it warns and proceeds.)
+    if (skewed.length > 0 && !isInteractive()) {
+      p.note(
+        `Align these packages, then re-run init:\n  ${alignCommands.join('\n  ')}`,
+        'Version skew',
+      )
+      p.log.error(messages.init.skewNonInteractive)
+      throw new CliExit(1)
     }
 
     // What's missing outright (pinned, prod/dev split).

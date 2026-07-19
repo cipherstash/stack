@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { CliExit } from '../../../../cli/exit.js'
 import type { InitProvider, InitState } from '../../types.js'
 
 const execSyncMock = vi.hoisted(() => vi.fn())
@@ -199,7 +200,7 @@ describe('installDepsStep', () => {
     )
   })
 
-  it('non-interactive: warns on skew, prints align commands, never mutates', async () => {
+  it('non-interactive: REFUSES on skew (exit 1), prints align commands, never mutates', async () => {
     vi.mocked(isInteractive).mockReturnValue(false)
     present('@cipherstash/stack', 'stash')
     resolvedVersions({
@@ -207,7 +208,12 @@ describe('installDepsStep', () => {
       stash: FIXTURE_VERSIONS.stash,
     })
 
-    const result = await installDepsStep.run(baseState, provider)
+    // M4: a non-interactive run can't reconcile a `behind` skew (won't mutate
+    // without consent), so it refuses with a non-zero exit rather than
+    // proceeding and reporting a false success.
+    await expect(
+      installDepsStep.run(baseState, provider),
+    ).rejects.toBeInstanceOf(CliExit)
 
     expect(p.log.warn).toHaveBeenCalledWith(
       expect.stringContaining('@cipherstash/stack: installed 0.19.0'),
@@ -217,9 +223,8 @@ describe('installDepsStep', () => {
       expect.stringContaining('npm install @cipherstash/stack@9.9.9-test.1'),
       'Version skew',
     )
+    // Never mutates — the #661/#666 principle survives the refusal.
     expect(execSyncMock).not.toHaveBeenCalled()
-    expect(result.stackInstalled).toBe(true)
-    expect(result.cliInstalled).toBe(true)
   })
 
   it('a NEWER install gets an update-stash warning, never a downgrade command', async () => {
@@ -284,7 +289,11 @@ describe('installDepsStep', () => {
       stash: FIXTURE_VERSIONS.stash,
     })
 
-    await installDepsStep.run(baseState, provider)
+    // An unreadable manifest classifies as `behind` skew, so a non-interactive
+    // run refuses (exit 1) after warning — same as any other skew.
+    await expect(
+      installDepsStep.run(baseState, provider),
+    ).rejects.toBeInstanceOf(CliExit)
 
     expect(p.log.warn).toHaveBeenCalledWith(
       expect.stringContaining(
