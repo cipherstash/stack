@@ -1,5 +1,235 @@
 # @cipherstash/cli
 
+## 1.0.0-rc.3
+
+### Minor Changes
+
+- 0811330: Add `stash eql migration` — generate an EQL **v3** install migration for your ORM
+  instead of running the SQL directly against the database (`stash eql install`).
+  Migration-first is the preferred path: the install lands in your migration history
+  and ships to every environment through the ORM's own migrate step.
+
+  ```bash
+  stash eql migration --drizzle              # Drizzle custom migration
+  stash eql migration --drizzle --supabase   # also grants eql_v3 to anon/authenticated/service_role
+  ```
+
+  The migration carries the CLI's bundled v3 install SQL (one source of truth) plus
+  the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers
+  everything `stash encrypt …` needs. `--supabase` appends the `eql_v3` +
+  `eql_v3_internal` role grants for PostgREST/RLS access.
+
+  `--prisma` is registered but not available yet — the Prisma Next migration
+  emitter is a follow-up (tracked in cipherstash/stack#690) that will let
+  prisma-next drop its baked install baseline. It fails with a pointer for now.
+
+- d20e48a: `stash init` is honest non-interactively — it no longer reports success for a
+  setup that didn't fully complete.
+
+  - **Fails on version skew.** A non-interactive run can't reconcile an
+    already-installed `@cipherstash/*` package that's _older_ than this CLI
+    expects (it won't mutate an install without consent), so instead of warning
+    and proceeding — scaffolding against mismatched packages and then claiming
+    success — it now refuses with a non-zero exit and the exact align command.
+    Interactive runs still offer to align. A _newer_ install stays a warn (the
+    install is likely fine; update the CLI instead).
+  - **No false "Setup complete".** If the EQL extension isn't installed at the
+    end — and the integration isn't one that installs it out-of-band — the
+    summary reads "Setup incomplete" and init exits non-zero, pointing at
+    `stash eql install`. Integrations that install EQL via a migration are
+    reported honestly rather than as failures: Prisma Next (installs it via
+    `migration apply`) and the Drizzle flow, which _generates_ an EQL migration
+    and now says "EQL migration generated — apply it with `drizzle-kit migrate`"
+    instead of claiming the extension is already installed.
+  - **Honest checkmarks.** The summary no longer claims "Database connection
+    verified" (init resolves a URL but doesn't open a connection) — it now says
+    "Database URL resolved" — and only shows "Encryption client scaffolded" when
+    a client was actually written (skipped for Prisma Next).
+  - **No false "skills loaded".** The agent handoff prompt only points at the
+    skills directory when skills were actually copied (a stripped build installs
+    none), instead of telling the agent to read files that aren't there.
+
+- 3a86939: EQL v3 support for the encryption rollout lifecycle (#648). The `stash
+encrypt *` commands (and `@cipherstash/migrate` underneath) now resolve a
+  column's EQL version and its encrypted counterpart from the **Postgres domain
+  types** — the EQL v3 types are self-describing, so the `<col>_encrypted`
+  naming is a convention only, never enforced or relied upon — and follow the
+  right lifecycle, no new flags:
+
+  - **`encrypt backfill`** works on v3 columns unchanged (the engine was always
+    version-agnostic; pass an `EncryptionV3` client and real v3 envelopes land
+    in the concrete `eql_v3_*` domain column — verified live against a real
+    database, including the domain CHECK and a decrypt round-trip). The
+    manifest records the detected version, the encrypted column's name, and the
+    v3 target phase, and the command prints v3-appropriate next steps.
+  - **`encrypt cutover`** on a backfilled v3 column reports "not applicable"
+    (exit 0) with guidance: v3 has no rename cut-over — the application
+    switches to the encrypted column by name. Before backfill completes it
+    exits 1 and says to finish the backfill instead of instructing the switch.
+    On a database with no `eql_v2_configuration` table (a v3-only install) the
+    v2 path now explains that instead of surfacing a raw Postgres error.
+  - **`encrypt drop`** is version-aware: v3 runs from the `backfilled` phase,
+    **verifies live coverage** (refuses to generate the migration while any row
+    still has the plaintext set and the encrypted column NULL — the
+    `countUnencrypted` check), and drops the ORIGINAL plaintext column (there
+    is no `<col>_plaintext` under v3); v2 behaviour is unchanged. The generated
+    v3 migration **re-verifies coverage at apply time** — it locks the table,
+    re-counts, and aborts without dropping if plaintext-only rows appeared
+    after generation. And because dropping is the one irreversible step, it
+    requires a positively asserted plaintext↔ciphertext pairing (the
+    manifest's recorded `encryptedColumn` or the naming convention): a match
+    found only by being the table's sole EQL column is refused with
+    instructions, and an ambiguous table (several EQL columns, none
+    identifiable) fails closed listing the candidates — as does `cutover`.
+  - **`encrypt status`** classifies each column from the observed domain type
+    (manifest as fallback), shows `v3` in the EQL column, and no longer raises
+    the v2-only `not-registered` / `plaintext-col-missing` drift flags for v3
+    columns. `stash status`'s quest ladder and the `stash init` agent handoff
+    prompt teach the version-appropriate next step (no more "run cutover" on
+    v3 columns).
+  - New `@cipherstash/migrate` exports: `classifyEqlDomain`,
+    `resolveEncryptedColumn`, `pickEncryptedColumn`, `listEncryptedColumns`
+    (domain-type resolution — case-exact for quoted/mixed-case table names),
+    `countEncrypted` / `countUnencrypted` (coverage counts), and manifest
+    `eqlVersion` + `encryptedColumn` fields. `EqlVersion` is numeric (`2 | 3`),
+    matching the manifest and the installer. Resolved columns carry `via:
+'hint' | 'convention' | 'sole'` so callers can tell a positively asserted
+    pairing from a by-elimination guess.
+  - Fixed: `encrypt cutover`/`encrypt drop` precondition failures now actually
+    exit 1 — the early-return guards previously skipped the exit-code path
+    entirely, so failed preconditions exited 0. (This also applies to v2
+    preconditions: scripted pipelines that relied on the erroneous exit 0 will
+    now see the documented exit 1.)
+
+  The `stash-cli` and `stash-encryption` skills and the `@cipherstash/migrate`
+  README document the two lifecycles (v2: backfill → cutover → drop;
+  v3: backfill → switch-by-name → drop).
+
+- b0634df: `stash plan --complete-rollout` is now automatable and has an honest exit code.
+  It skips the production-deploy gate, so it needs explicit consent — previously
+  that was an interactive prompt with no bypass, so a non-interactive run
+  auto-cancelled (default-no) and exited **0** without drafting a plan, leaving
+  automation to assume a plan existed.
+
+  - New `--yes` flag confirms the gate-skip without a prompt (for CI/agents).
+  - Without `--yes`, a non-interactive `--complete-rollout` run now **refuses
+    with a non-zero exit** and points at `--yes`, instead of silently succeeding.
+  - Interactive behaviour is unchanged (default-no confirm).
+
+- f188c7a: `stash env` now works: it mints deployment credentials from your device-code
+  session and prints them as env vars — no dashboard copy-paste. The command
+  creates a fresh ZeroKMS client and a member-role CipherStash access key (named
+  via `--name`; the role is pinned in the request and verified on the response —
+  the CLI deliberately cannot mint admin keys), then emits `CS_WORKSPACE_CRN`,
+  `CS_CLIENT_ID`, `CS_CLIENT_KEY`, and `CS_CLIENT_ACCESS_KEY`.
+
+  Output goes to stdout by default — and stdout is pipe-clean (progress UI is on
+  stderr), so `stash env --name x > prod.env` and pipes into secret stores are
+  safe. `--write [path]` writes a file instead (default `.env.production.local`,
+  enforced mode 0600 even when overwriting), confirming before overwriting and
+  refusing non-interactively — always _before_ anything is minted, so a refusal
+  never discards the shown-exactly-once access key. `--json` emits NDJSON; with
+  `--write` the confirmation event is deliberately secret-free. API responses
+  are schema-validated so a service change can never print `undefined` into a
+  credentials file. Creating access keys requires the admin role in the
+  workspace.
+
+  This is also the supported credential path for WASM/edge local development
+  (Supabase Edge Functions, Cloudflare Workers, Deno), where the runtime cannot
+  read the `~/.cipherstash` device profile: mint a key and feed it via
+  `supabase functions serve --env-file` or the platform's secret store.
+
+  The `STASH_EXPERIMENTAL_ENV_CMD` gate is removed.
+
+- 8872d1e: `stash init`, `stash plan`, and `stash impl` no longer crash on a Prisma Next
+  project. `SKILL_MAP` was missing a `prisma-next` entry, so the skills-install
+  and AGENTS.md-builder steps hit `SKILL_MAP[integration]` → `undefined` and threw
+  "not iterable" for any repo the CLI detected as Prisma Next. The entry is added
+  and both consumers now resolve skills through a `skillsFor()` helper that
+  degrades an unmapped integration to the base skill set instead of crashing
+  (`tsup` ships without type-checking, so the `Record<Integration>` type alone
+  didn't protect the build).
+
+  Ships a new **`stash-prisma-next`** agent skill documenting the EQL v3 Prisma
+  Next surface — the domain-named encrypted column types (`EncryptedTextSearch`,
+  `EncryptedDoubleOrd`, …), `cipherstashFromStackV3` wiring, the runtime value
+  envelopes, the `eql*` query operators, and EQL installation via
+  `prisma-next migration apply`. It is installed for Prisma Next projects and
+  inlined into `AGENTS.md` for editor agents.
+
+  `stash eql install` now refuses to run in a Prisma Next project (pointing you
+  at `prisma-next migration apply`, which owns EQL installation) unless you pass
+  `--force` — closing the manual-invocation hole that `stash init --prisma-next`
+  already avoided.
+
+### Patch Changes
+
+- 8b2551a: Fix "Failed to load native binding" on project-local installs of the CLI/SDK
+  (npm). `@cipherstash/auth` was pinned at 0.41.0 while the six
+  `@cipherstash/auth-*` platform bindings declared in stack/stash/wizard's
+  optionalDependencies were pinned at 0.42.0. Because auth pins its bindings as
+  exact-version optional peer dependencies, the skew made npm nest per-consumer
+  binding copies that the hoisted `auth` package could not resolve — any command
+  or import touching auth then died at startup. All seven packages now move in
+  lockstep at 0.42.0, Dependabot is barred from bumping any of them
+  independently, and a supply-chain CI test fails on any future skew.
+- b8cb599: Fix invalid DDL from `drizzle-kit generate`/`push` for EQL v3 encrypted columns.
+  A v3 column declared its SQL type as the schema-qualified domain
+  (`public.eql_v3_text_search`), but drizzle-kit wraps a custom type's whole name
+  in a single pair of double quotes — emitting `"public.eql_v3_text_search"`, which
+  Postgres reads as one dotted identifier and rejects with `type
+"public.eql_v3_text_search" does not exist`. Generated migrations had to be
+  hand-repaired.
+
+  The v3 column now emits the **unqualified** domain (`eql_v3_text_search`), which
+  drizzle-kit renders as the valid `"eql_v3_text_search"` and which resolves via the
+  search path (the domains live in `public`). This matches how the v2
+  `encryptedType` surface already declares its type, and how drizzle-kit reads the
+  type back during a `push` introspection diff, so the two sides no longer disagree.
+  Builder recovery still yields the canonical `public.eql_v3_*` identity, so
+  operators and schema extraction are unchanged.
+
+  The bundled `stash-drizzle` skill is updated to describe the unqualified generated
+  type and the search-path requirement (hence the `stash` bump — the skill ships in
+  its tarball).
+
+- 175eeb7: The EQL **v3** install SQL is now read from the `@cipherstash/eql` package at
+  runtime instead of a copy vendored into this repo. `@cipherstash/eql` becomes a
+  runtime dependency of `stash`, and a version bump now flows straight through — no
+  re-vendor step, no drift between the pin and the shipped bundle.
+
+  This removes ~44k lines of generated plpgsql from the repository (which had made
+  GitHub classify the whole repo as plpgsql — CIP-3518) along with the
+  `gen:eql-v3-sql` vendor script and its CI drift-check.
+
+  No behaviour change: v3 installs the same one-artifact bundle (which self-adapts to
+  non-superuser environments like Supabase), and the v2 path is unchanged.
+
+- 4923c0a: **Breaking (v3 authoring surface):** the EQL v3 PSL column constructors drop
+  the `Encrypted` prefix to line up with the stack / Drizzle `types.*` catalog —
+  the `cipherstash.` namespace already disambiguates. So
+  `cipherstash.EncryptedTextSearch()` → `cipherstash.TextSearch()`,
+  `cipherstash.EncryptedDoubleOrd()` → `cipherstash.DoubleOrd()`,
+  `cipherstash.EncryptedBoolean()` → `cipherstash.Boolean()`, etc.
+
+  The v3 one-call setup function is renamed `cipherstashFromStackV3` →
+  `cipherstashFromStack` (v3 is the default), and the existing v2 setup function
+  becomes `cipherstashFromStackV2`.
+
+  The camelCase TS-authoring factory exports move in lockstep:
+  `encryptedTextSearch` → `textSearch`, `encryptedDoubleOrd` → `doubleOrd`, etc.
+  (a property test enforces the PSL and TS names agree modulo first-letter case).
+
+  Unchanged: the runtime value envelopes (`EncryptedString`, `EncryptedNumber`,
+  `EncryptedBoolean`, …), the `cipherstash.*V2` legacy column constructors, the
+  generated `contract.json` / codec ids, and the `eql*` query operators.
+
+  The `stash-prisma-next` skill is updated to the new names (skills ship in the
+  `stash` tarball).
+
+- Updated dependencies [3a86939]
+  - @cipherstash/migrate@1.0.0-rc.1
+
 ## 1.0.0-rc.2
 
 ### Patch Changes
