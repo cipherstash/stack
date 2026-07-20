@@ -157,6 +157,27 @@ export function deepClone<T>(obj: T): T {
   )
 }
 
+/**
+ * The storage payloads this adapter splits into DynamoDB attributes, across
+ * both wire versions.
+ *
+ * `EncryptedValue` from `@/types` cannot describe these: its union is
+ * `EncryptedScalar | EncryptedSteVec`, both v2-only, so it has no member
+ * matching an untagged v3 scalar and reading `c`/`hm` off it does not compile
+ * once the `k: 'ct'` narrowing is gone. The mapping only ever touches four
+ * keys, so state them structurally.
+ */
+type StoredEqlPayload = {
+  /** Absent on v3 scalars; `'ct'` on v2 scalars; `'sv'` on JSON in both. */
+  k?: 'ct' | 'sv'
+  /** Scalar ciphertext. */
+  c?: unknown
+  /** Deterministic equality term — the only one DynamoDB can query. */
+  hm?: unknown
+  /** ste_vec entries for a JSON document. */
+  sv?: unknown
+}
+
 export function toEncryptedDynamoItem(
   encrypted: Record<string, unknown>,
   encryptedAttrs: string[],
@@ -177,7 +198,7 @@ export function toEncryptedDynamoItem(
         typeof attrValue === 'object' &&
         'c' in (attrValue as object))
     ) {
-      const encryptPayload = attrValue as EncryptedValue
+      const encryptPayload = attrValue as StoredEqlPayload
 
       // A JSON document, in either wire version, keeps its `k: 'sv'` tag. Its
       // index terms live *inside* the `sv` entries, so the whole array is
