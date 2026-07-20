@@ -51,7 +51,7 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 | Import | `@cipherstash/stack/v3` | `@cipherstash/stack` + `@cipherstash/stack/schema` |
 | Schema | `encryptedTable` + `types.*` | `encryptedTable` + `encryptedColumn` |
 | Client | `EncryptionV3({ schemas })` | `Encryption({ schemas })` |
-| Nested fields | **Not supported** | `encryptedField` |
+| Nested fields | **Not yet** (deferred) | `encryptedField` |
 
 There is no data migration between them: DynamoDB has no EQL extension to install and no schema to alter. But the two write **different wire formats**, so a table populated under v2 cannot be read back with a v3 schema, or vice versa. Pick one per table and stay on it.
 
@@ -64,7 +64,9 @@ EQL v2's `encryptedField` encrypts *selected leaves in place*. The item keeps it
 { "profile": { "ssn__source": "<ciphertext>", "city": "Sydney" } }
 ```
 
-EQL v3 has no `encryptedField` — a nested group is a compile error, since a v3 column map holds only `types.*` domains. Its equivalent is `types.Json`, which encrypts the **whole subtree as a single value**:
+EQL v3 has no `encryptedField` yet — a nested group is a compile error, since a v3 column map holds only `types.*` domains. This is deferred work rather than a closed design decision (`packages/stack/src/eql/v3/columns.ts`: "Nested fields are deferred to later increments"), so check the current release before assuming it is still missing.
+
+The nearest v3 equivalent today is `types.Json`, which encrypts the **whole subtree as a single value**:
 
 ```jsonc
 // schema: profile: types.Json("profile")
