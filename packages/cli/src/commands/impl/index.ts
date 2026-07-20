@@ -230,7 +230,13 @@ export async function implCommand(
     } else {
       // No plan on disk. Branch on flag / TTY / interactive.
       if (continueWithoutPlan) {
-        await confirmContinueWithoutPlan()
+        // The flag *is* the consent. Re-prompting for it non-interactively
+        // is the same hang this gate exists to close (clack `confirm` reads
+        // /dev/tty), and `confirmContinueWithoutPlan` is default-no, so a
+        // prompt that did resolve would cancel a run the user asked for.
+        if (isTTY) {
+          await confirmContinueWithoutPlan()
+        }
       } else if (!isTTY) {
         p.log.error(
           `No plan at \`${PLAN_REL_PATH}\`. Run \`${cli} plan\` first, or pass --continue-without-plan to skip planning.`,

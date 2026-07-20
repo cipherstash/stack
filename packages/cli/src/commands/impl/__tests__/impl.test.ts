@@ -143,6 +143,24 @@ describe('implCommand — CI detection with a TTY attached', () => {
     })
   }
 
+  it('does not re-confirm --continue-without-plan under CI when no plan exists', async () => {
+    // The flag is the consent. Prompting again under CI blocks on /dev/tty,
+    // and the confirm is default-no, so a resolved prompt would cancel a run
+    // the user explicitly asked for.
+    vi.stubEnv('CI', '1')
+    fs.rmSync(path.join(tmpDir, '.cipherstash', 'plan.md'))
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await expect(
+      implCommand({ 'continue-without-plan': true }, {}),
+    ).resolves.toBeUndefined()
+
+    expect(confirmMock).not.toHaveBeenCalled()
+    expect(runSpy).not.toHaveBeenCalled()
+  })
+
   it('is interactive when CI is unset and stdin is a TTY', async () => {
     vi.stubEnv('CI', '')
     const runSpy = vi
