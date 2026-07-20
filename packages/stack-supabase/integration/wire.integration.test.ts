@@ -212,6 +212,10 @@ function from(): any {
     stubEncryptionClient(),
     makePostgrestClient(),
     ALL_COLUMNS,
+    // This suite constructs the builder directly rather than through
+    // encryptedSupabaseV3(), so supply the EQL 3.0.2 query-domain boundary
+    // that the public factory normally derives from introspection.
+    true,
   )
 }
 
