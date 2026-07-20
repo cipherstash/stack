@@ -508,7 +508,7 @@ In one transaction it renames `<col>` → `<col>_plaintext` and `<col>_encrypted
 
 > **After cutover, `<col>` holds ciphertext — the read path is not automatic.** Wire reads through the encryption client (`decryptModel(row, table)` for Drizzle, the `encryptedSupabaseV3` wrapper for Supabase — `encryptedSupabase` on the legacy v2 surface, otherwise `decrypt` / `bulkDecryptModels`) before returning values to callers. Skip this and your read paths hand raw EQL payloads to end users. The integration skill has the exact API. **CipherStash Proxy is the one exception** — it decrypts on the wire, so Proxy users need no application change. The cutover plan written by `stash plan` includes this read-path switch as an explicit step.
 >
-> **Known gap (v2).** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. (EQL v3 columns sidestep this entirely — no configuration table, no cutover; see above.) Tracked in [issue #585](https://github.com/cipherstash/stack/issues/585).
+> **Known gap (v2).** The pending-configuration precondition is satisfied by `stash db push`. SDK-only users (who otherwise never need `db push`) must therefore run it once before `encrypt cutover`. This gap is specific to the legacy v2 path and is not being decoupled — EQL v3 columns sidestep it entirely (no configuration table, no cut-over; see above), which is how [issue #585](https://github.com/cipherstash/stack/issues/585) was resolved when v3 became the default.
 
 Flags: `--table`, `--column`, `--proxy-url <url>`, `--migrations-dir <path>`.
 
@@ -604,7 +604,7 @@ await installer.getInstalledVersion()               // string | 'unknown' | null
 await installer.install({ supabase: true })         // executes in a transaction
 ```
 
-`isInstalled`, `getInstalledVersion`, and `install` all accept `eqlVersion?: 2 | 3` (default `2`), selecting the `eql_v2` or `eql_v3` schema. `install` also takes `excludeOperatorFamily`, `supabase`, and `latest` (v2 only).
+`isInstalled`, `getInstalledVersion`, and `install` all accept `eqlVersion?: 2 | 3` (default `3`, matching the CLI's `--eql-version` default), selecting the `eql_v3` or `eql_v2` schema. `install` also takes `excludeOperatorFamily`, `supabase`, and `latest` (v2 only).
 
 ```typescript
 type PermissionCheckResult = {

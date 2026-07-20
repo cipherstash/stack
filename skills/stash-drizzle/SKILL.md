@@ -365,9 +365,9 @@ if (!decrypted.failure) {
 
 The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads + drop — under EQL v2 the switch is a rename, under v3 it is an application-side change). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
-> **⚠️ v3 backfill tooling status.** The CLI backfill/cutover tooling (`stash encrypt backfill`, `stash encrypt cutover`, and the underlying `@cipherstash/migrate`) currently targets **EQL v2 columns**. v3 compatibility is tracked in [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648). The lifecycle below (schema-add → dual-write → deploy gate → backfill → cutover → drop) is the correct shape for v3 either way — until #648 lands, run the backfill/rename steps with your own scripts (encrypt with `bulkEncryptModels`, write in chunks) instead of the `stash encrypt` commands.
+> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a v3 column reports "not applicable" and exits 0.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -474,8 +474,6 @@ Once dual-writes are live in production and `cs_migrations` records `dual_writin
 
 #### Backfill: encrypt the historical rows
 
-> Until [#648](https://github.com/cipherstash/stack/issues/648) lands, the commands in this step target v2 columns — for v3 columns, replicate the same shape with a script (chunked `bulkEncryptModels` + UPDATE inside transactions, resumable and idempotent).
-
 ```bash
 stash encrypt backfill --table users --column email
 # (Interactive: answer 'yes' to the dual-write confirmation prompt.)
@@ -486,9 +484,18 @@ Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination ord
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-> **SDK-only note:** `stash encrypt cutover` currently requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`.
+> **SDK-only note (EQL v2 only):** `stash encrypt cutover` requires a pending EQL configuration set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. EQL v3 columns never hit this — cut-over doesn't apply to them.
 
-#### Cutover: rename swap and activate
+#### Switch reads to the encrypted column
+
+**EQL v3 (the schema above): there is no cut-over.** The encrypted column keeps
+its own name — you switch the application to it by name, verify reads, then drop
+the plaintext column. Point your queries at `email_encrypted`, deploy, and
+confirm reads decrypt correctly; then skip ahead to the drop step. Running
+`stash encrypt cutover` on a v3 column reports "not applicable" and exits 0.
+
+The rest of this subsection is the **EQL v2** path (a `eql_v2_encrypted` twin),
+kept for existing v2 deployments.
 
 First, update the Drizzle schema to the post-cutover shape — switch `email` to the encrypted type and remove the `email_encrypted` column.
 
@@ -547,17 +554,22 @@ Once read paths are updated and you're confident reads are decrypting correctly,
 stash encrypt drop --table users --column email
 ```
 
-The CLI emits a Drizzle migration file with `ALTER TABLE users DROP COLUMN email_plaintext;`. Review and apply with `drizzle-kit migrate`. Update the schema to remove `email_plaintext`:
+The CLI emits a Drizzle migration file with the drop. **Which column it drops depends on the EQL version**, which the CLI auto-detects:
+
+- **v3** — drops the original plaintext column, `ALTER TABLE users DROP COLUMN email;`. There was no rename, so no `email_plaintext` exists. Requires the column to be in the `backfilled` phase, plus a live coverage check.
+- **v2** — drops the post-rename leftover, `ALTER TABLE users DROP COLUMN email_plaintext;`. Requires the `cut-over` phase.
+
+Review and apply with `drizzle-kit migrate`, then update the schema to its final shape — the encrypted column is the only one left:
 
 ```typescript
-// src/db/schema.ts (final)
+// src/db/schema.ts (final, EQL v3)
 export const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-  email: types.TextSearch('email'),
+  email_encrypted: types.TextSearch('email_encrypted'),
 })
 ```
 
-Also remove the dual-write code from app paths — `email_plaintext` is gone; only `email` (encrypted) is written now.
+Also remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now.
 
 ### Inspecting progress at any time
 
