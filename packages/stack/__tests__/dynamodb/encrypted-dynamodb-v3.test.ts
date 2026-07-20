@@ -15,12 +15,14 @@
  * Requires CipherStash credentials (`CS_*`), like the rest of this suite.
  */
 import 'dotenv/config'
+import fc from 'fast-check'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { encryptedDynamoDB } from '@/dynamodb'
 import { toItemWithEqlPayloads } from '@/dynamodb/helpers'
 import type { EncryptedDynamoDBInstance } from '@/dynamodb/types'
 import type { EncryptionClient } from '@/encryption'
 import { EncryptionV3 } from '@/encryption/v3'
+import type { JsonValue } from '@/eql/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 
@@ -38,7 +40,10 @@ type User = {
   name?: string
   age?: number
   bio?: string
-  meta?: Record<string, unknown>
+  // `Record<string, unknown>` would not compile against a `types.Json` column:
+  // `unknown` is not a `JsonValue`. Naming the real element type is the point of
+  // the v3 overload — it catches a model that claims to hold non-JSON.
+  meta?: Record<string, JsonValue>
   role?: string
 }
 
@@ -61,7 +66,7 @@ beforeAll(async () => {
 
 describe('encryptModel with a v3 table', () => {
   it('splits an equality domain into __source and __hmac', async () => {
-    const result = await typedDynamo.encryptModel<User>(
+    const result = await typedDynamo.encryptModel(
       { pk: 'user#1', email: 'alice@example.com', role: 'admin' },
       users,
     )
@@ -80,7 +85,7 @@ describe('encryptModel with a v3 table', () => {
   })
 
   it('regression: a v3 scalar is split, not written out as a raw map', async () => {
-    const result = await typedDynamo.encryptModel<User>(
+    const result = await typedDynamo.encryptModel(
       { pk: 'user#2', name: 'Bob' },
       users,
     )
@@ -96,7 +101,7 @@ describe('encryptModel with a v3 table', () => {
   })
 
   it('gives an ordering domain a __source but no __hmac', async () => {
-    const result = await typedDynamo.encryptModel<User>(
+    const result = await typedDynamo.encryptModel(
       { pk: 'user#3', age: 42 },
       users,
     )
@@ -110,7 +115,7 @@ describe('encryptModel with a v3 table', () => {
   })
 
   it('keeps only the equality term of a TextSearch domain', async () => {
-    const result = await typedDynamo.encryptModel<User>(
+    const result = await typedDynamo.encryptModel(
       { pk: 'user#4', bio: 'a long biography' },
       users,
     )
@@ -126,7 +131,7 @@ describe('encryptModel with a v3 table', () => {
   })
 
   it('stores a Json domain as a ste_vec array', async () => {
-    const result = await typedDynamo.encryptModel<User>(
+    const result = await typedDynamo.encryptModel(
       { pk: 'user#5', meta: { a: 1, b: { c: 'deep' } } },
       users,
     )
@@ -134,7 +139,7 @@ describe('encryptModel with a v3 table', () => {
     if (result.failure) throw new Error(result.failure.message)
 
     expect(Array.isArray(result.data.meta__source)).toBe(true)
-    expect((result.data.meta__source as unknown[]).length).toBeGreaterThan(0)
+    expect(result.data.meta__source.length).toBeGreaterThan(0)
   })
 })
 
@@ -150,13 +155,10 @@ describe('round trips with a v3 table', () => {
       role: 'admin',
     }
 
-    const encrypted = await typedDynamo.encryptModel<User>(original, users)
+    const encrypted = await typedDynamo.encryptModel(original, users)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    const decrypted = await typedDynamo.decryptModel<User>(
-      encrypted.data,
-      users,
-    )
+    const decrypted = await typedDynamo.decryptModel(encrypted.data, users)
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
     expect(decrypted.data).toEqual(original)
@@ -170,13 +172,10 @@ describe('round trips with a v3 table', () => {
       meta: { z: 1 },
     }
 
-    const encrypted = await nominalDynamo.encryptModel<User>(original, users)
+    const encrypted = await nominalDynamo.encryptModel(original, users)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    const decrypted = await nominalDynamo.decryptModel<User>(
-      encrypted.data,
-      users,
-    )
+    const decrypted = await nominalDynamo.decryptModel(encrypted.data, users)
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
     expect(decrypted.data).toEqual(original)
@@ -185,17 +184,59 @@ describe('round trips with a v3 table', () => {
   it('produces items either client can decrypt — the wire format is the same', async () => {
     const original: User = { pk: 'user#8', email: 'grace@example.com' }
 
-    const encrypted = await typedDynamo.encryptModel<User>(original, users)
+    const encrypted = await typedDynamo.encryptModel(original, users)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    const decrypted = await nominalDynamo.decryptModel<User>(
-      encrypted.data,
-      users,
-    )
+    const decrypted = await nominalDynamo.decryptModel(encrypted.data, users)
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
     expect(decrypted.data).toEqual(original)
   })
+
+  /**
+   * The one LIVE property. Its pure siblings (`properties.test.ts`) cover the
+   * attribute mapping in both directions with a fake ciphertext; this closes the
+   * loop over the real thing — every run is a ZeroKMS encrypt + decrypt, so it
+   * is capped hard at 15 runs. It is the only check that the split/rebuild
+   * survives contact with actual ciphertext across all five domains at once.
+   */
+  it('property: round-trips arbitrary multi-domain items through ZeroKMS', async () => {
+    const jsonLeaf = fc.oneof(fc.string(), fc.integer(), fc.boolean())
+    const userArb = fc.record({
+      pk: fc.string({ minLength: 1 }),
+      email: fc.string(),
+      name: fc.string(),
+      age: fc.integer(),
+      bio: fc.string(),
+      meta: fc.dictionary(
+        fc.string({ minLength: 1 }),
+        fc.oneof(
+          jsonLeaf,
+          fc.dictionary(fc.string({ minLength: 1 }), jsonLeaf, { maxKeys: 2 }),
+        ),
+        { minKeys: 1, maxKeys: 3 },
+      ),
+      role: fc.string(),
+    })
+
+    await fc.assert(
+      fc.asyncProperty(userArb, async (original) => {
+        const encrypted = await typedDynamo.encryptModel(original, users)
+        if (encrypted.failure) throw new Error(encrypted.failure.message)
+
+        const decrypted = await typedDynamo.decryptModel(encrypted.data, users)
+        if (decrypted.failure) throw new Error(decrypted.failure.message)
+
+        expect(decrypted.data).toEqual(original)
+      }),
+      // Deliberately small: each run is a real ZeroKMS round trip. The pure
+      // properties in `properties.test.ts` cover the attribute mapping
+      // exhaustively and for free; this one only needs to establish that the
+      // mapping composed with real encryption is identity-preserving over
+      // arbitrary items, which a handful of runs does.
+      { numRuns: 5 },
+    )
+  }, 120000)
 })
 
 describe('bulk operations with a v3 table', () => {
@@ -205,7 +246,7 @@ describe('bulk operations with a v3 table', () => {
       { pk: 'user#10', email: 'b@example.com', age: 3 },
     ]
 
-    const encrypted = await typedDynamo.bulkEncryptModels<User>(items, users)
+    const encrypted = await typedDynamo.bulkEncryptModels(items, users)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
     expect(encrypted.data).toHaveLength(2)
@@ -214,10 +255,7 @@ describe('bulk operations with a v3 table', () => {
       expect(item).toHaveProperty('email__hmac')
     }
 
-    const decrypted = await typedDynamo.bulkDecryptModels<User>(
-      encrypted.data,
-      users,
-    )
+    const decrypted = await typedDynamo.bulkDecryptModels(encrypted.data, users)
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
     expect(decrypted.data).toEqual(items)
@@ -229,10 +267,10 @@ describe('bulk operations with a v3 table', () => {
       { pk: 'user#12', name: 'D' },
     ]
 
-    const encrypted = await nominalDynamo.bulkEncryptModels<User>(items, users)
+    const encrypted = await nominalDynamo.bulkEncryptModels(items, users)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    const decrypted = await nominalDynamo.bulkDecryptModels<User>(
+    const decrypted = await nominalDynamo.bulkDecryptModels(
       encrypted.data,
       users,
     )
@@ -271,7 +309,7 @@ describe('nested attributes with a v3 table', () => {
   })
 
   it('splits nested attributes in place, leaving plaintext siblings alone', async () => {
-    const result = await nestedDynamo.encryptModel<NestedUser>(
+    const result = await nestedDynamo.encryptModel(
       {
         pk: 'u#1',
         profile: { ssn: '123-45-6789', note: 'hi', city: 'Sydney' },
@@ -297,23 +335,17 @@ describe('nested attributes with a v3 table', () => {
       profile: { ssn: '123-45-6789', note: 'hi', city: 'Sydney' },
     }
 
-    const encrypted = await nestedDynamo.encryptModel<NestedUser>(
-      original,
-      nested,
-    )
+    const encrypted = await nestedDynamo.encryptModel(original, nested)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    const decrypted = await nestedDynamo.decryptModel<NestedUser>(
-      encrypted.data,
-      nested,
-    )
+    const decrypted = await nestedDynamo.decryptModel(encrypted.data, nested)
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
     expect(decrypted.data).toEqual(original)
   })
 
   it('rebuilds the nested identifier from its registered dotted name', async () => {
-    const encrypted = await nestedDynamo.encryptModel<NestedUser>(
+    const encrypted = await nestedDynamo.encryptModel(
       { pk: 'u#3', profile: { ssn: '123-45-6789' } },
       nested,
     )
@@ -329,7 +361,7 @@ describe('nested attributes with a v3 table', () => {
   it('makes a nested equality attribute queryable by __hmac', async () => {
     const ssn = '999-88-7777'
 
-    const stored = await nestedDynamo.encryptModel<NestedUser>(
+    const stored = await nestedDynamo.encryptModel(
       { pk: 'u#4', profile: { ssn } },
       nested,
     )
@@ -352,13 +384,10 @@ describe('nested attributes with a v3 table', () => {
       { pk: 'u#6', profile: { note: 'b' } },
     ]
 
-    const encrypted = await nestedDynamo.bulkEncryptModels<NestedUser>(
-      items,
-      nested,
-    )
+    const encrypted = await nestedDynamo.bulkEncryptModels(items, nested)
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    const decrypted = await nestedDynamo.bulkDecryptModels<NestedUser>(
+    const decrypted = await nestedDynamo.bulkDecryptModels(
       encrypted.data,
       nested,
     )
@@ -432,7 +461,7 @@ describe('the __hmac key-condition path with a v3 table', () => {
   it('mints, via encryptQuery, the same HMAC the item is stored under', async () => {
     const email = 'heidi@example.com'
 
-    const stored = await typedDynamo.encryptModel<User>(
+    const stored = await typedDynamo.encryptModel(
       { pk: 'user#13', email },
       users,
     )
@@ -453,14 +482,8 @@ describe('the __hmac key-condition path with a v3 table', () => {
   it('is deterministic across separate encryptions of the same value', async () => {
     const email = 'ivan@example.com'
 
-    const first = await typedDynamo.encryptModel<User>(
-      { pk: 'a', email },
-      users,
-    )
-    const second = await typedDynamo.encryptModel<User>(
-      { pk: 'b', email },
-      users,
-    )
+    const first = await typedDynamo.encryptModel({ pk: 'a', email }, users)
+    const second = await typedDynamo.encryptModel({ pk: 'b', email }, users)
     if (first.failure) throw new Error(first.failure.message)
     if (second.failure) throw new Error(second.failure.message)
 
@@ -476,12 +499,12 @@ describe('audit metadata with a v3 table', () => {
     const item: User = { pk: 'user#14', email: 'judy@example.com' }
 
     const encrypted = await nominalDynamo
-      .encryptModel<User>(item, users)
+      .encryptModel(item, users)
       .audit({ metadata })
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
     const decrypted = await nominalDynamo
-      .decryptModel<User>(encrypted.data, users)
+      .decryptModel(encrypted.data, users)
       .audit({ metadata })
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
@@ -492,7 +515,7 @@ describe('audit metadata with a v3 table', () => {
     const item: User = { pk: 'user#15', email: 'ken@example.com' }
 
     const encrypted = await typedDynamo
-      .encryptModel<User>(item, users)
+      .encryptModel(item, users)
       .audit({ metadata })
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
@@ -500,7 +523,7 @@ describe('audit metadata with a v3 table', () => {
     // surface. The chain must still resolve correctly — the metadata is simply
     // not forwarded. Use the nominal client if decrypt audit matters.
     const decrypted = await typedDynamo
-      .decryptModel<User>(encrypted.data, users)
+      .decryptModel(encrypted.data, users)
       .audit({ metadata })
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 

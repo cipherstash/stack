@@ -24,7 +24,7 @@ import { encryptedColumn, encryptedField, encryptedTable } from '@/schema'
 const users = encryptedTable('users', {
   email: encryptedColumn('email').equality(),
   name: encryptedColumn('name'),
-  doc: encryptedColumn('doc').dataType('json').searchableJson('users/doc'),
+  doc: encryptedColumn('doc').dataType('json').searchableJson(),
   example: {
     protected: encryptedField('example.protected'),
   },
@@ -38,6 +38,29 @@ type User = {
   role?: string
   example?: { protected?: string | null; notProtected?: string }
 }
+
+/**
+ * The attribute map `encryptModel` actually writes for the v2 `users` table.
+ *
+ * The v2 overload still returns the INPUT model type. Unlike v3, a v2 column
+ * does not carry its index configuration in the type, so the `__source` /
+ * `__hmac` split cannot be derived the way `EncryptedAttributes` derives it for
+ * a v3 table — see the note on `EncryptedDynamoDBInstance.encryptModel`.
+ * Naming the wire shape here, rather than widening `User` with an index
+ * signature, keeps these assertions honest about what is actually stored.
+ */
+type StoredUser = {
+  pk: string
+  role?: string
+  email__source?: string
+  email__hmac?: string
+  name__source?: string
+  doc__source?: unknown[]
+  example?: { protected__source?: string; notProtected?: string }
+}
+
+/** Read a v2 encrypt result as the attribute map it really is. */
+const storedAttrs = (item: User): StoredUser => item as StoredUser
 
 let client: EncryptionClient
 let dynamo: EncryptedDynamoDBInstance
@@ -70,11 +93,15 @@ describe('encryptModel', () => {
     ])
     expect(result.data.pk).toBe('user#1')
     expect(result.data.role).toBe('admin')
-    expect(typeof result.data.email__source).toBe('string')
-    expect(typeof result.data.email__hmac).toBe('string')
+    expect(typeof storedAttrs(result.data).email__source).toBe('string')
+    expect(typeof storedAttrs(result.data).email__hmac).toBe('string')
     // Neither stored attribute leaks the plaintext.
-    expect(result.data.email__source).not.toContain('alice@example.com')
-    expect(result.data.email__hmac).not.toContain('alice@example.com')
+    expect(storedAttrs(result.data).email__source).not.toContain(
+      'alice@example.com',
+    )
+    expect(storedAttrs(result.data).email__hmac).not.toContain(
+      'alice@example.com',
+    )
   })
 
   it('gives a non-equality column a __source but no __hmac', async () => {
@@ -97,8 +124,10 @@ describe('encryptModel', () => {
 
     if (result.failure) throw new Error(result.failure.message)
 
-    expect(Array.isArray(result.data.doc__source)).toBe(true)
-    expect((result.data.doc__source as unknown[]).length).toBeGreaterThan(0)
+    expect(Array.isArray(storedAttrs(result.data).doc__source)).toBe(true)
+    expect(
+      (storedAttrs(result.data).doc__source as unknown[]).length,
+    ).toBeGreaterThan(0)
   })
 
   it('encrypts a nested field in place, keeping siblings plaintext', async () => {
@@ -258,7 +287,9 @@ describe('the __hmac key-condition path', () => {
     // This equality is the whole DynamoDB query story: a caller puts
     // `term.data.hm` into `KeyConditionExpression: "email__hmac = :e"` and it
     // matches the attribute written at encrypt time.
-    expect((term.data as { hm: string }).hm).toBe(stored.data.email__hmac)
+    expect((term.data as { hm: string }).hm).toBe(
+      storedAttrs(stored.data).email__hmac,
+    )
   })
 
   it('mints a different HMAC for a different plaintext', async () => {
@@ -275,7 +306,9 @@ describe('the __hmac key-condition path', () => {
     )
     if (stored.failure) throw new Error(stored.failure.message)
 
-    expect((term.data as { hm: string }).hm).not.toBe(stored.data.email__hmac)
+    expect((term.data as { hm: string }).hm).not.toBe(
+      storedAttrs(stored.data).email__hmac,
+    )
   })
 
   it('is deterministic across separate encryptions of the same value', async () => {
@@ -286,9 +319,13 @@ describe('the __hmac key-condition path', () => {
     if (first.failure) throw new Error(first.failure.message)
     if (second.failure) throw new Error(second.failure.message)
 
-    expect(first.data.email__hmac).toBe(second.data.email__hmac)
+    expect(storedAttrs(first.data).email__hmac).toBe(
+      storedAttrs(second.data).email__hmac,
+    )
     // ...while the ciphertext itself is not deterministic.
-    expect(first.data.email__source).not.toBe(second.data.email__source)
+    expect(storedAttrs(first.data).email__source).not.toBe(
+      storedAttrs(second.data).email__source,
+    )
   })
 })
 

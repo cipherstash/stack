@@ -453,14 +453,31 @@ const dynamo = encryptedDynamoDB({
 
 `table` is either an EQL v3 table (`types.*` domains) or an EQL v2 one.
 
-| Method | Signature | Returns |
+Each method is overloaded on the table's EQL version.
+
+**EQL v3** — the item is checked against the table's column domains, and the result is typed as the attribute map that is actually stored: a declared column `email` becomes `email__source` (plus `email__hmac` if its domain mints one), NOT `email`.
+
+| Method | Signature | Resolves to |
 |---|---|---|
-| `encryptModel` | `(item: T, table)` | `EncryptModelOperation<T>` |
-| `bulkEncryptModels` | `(items: T[], table)` | `BulkEncryptModelsOperation<T>` |
-| `decryptModel` | `(item: Record<string, unknown>, table)` | `DecryptModelOperation<T>` (resolves to `Decrypted<T>`) |
-| `bulkDecryptModels` | `(items: Record<string, unknown>[], table)` | `BulkDecryptModelsOperation<T>` (resolves to `Decrypted<T>[]`) |
+| `encryptModel` | `(item, v3Table)` | `EncryptedAttributes<Table, T>` |
+| `bulkEncryptModels` | `(items, v3Table)` | `EncryptedAttributes<Table, T>[]` |
+| `decryptModel` | `(storedItem, v3Table)` | `DecryptedAttributes<Table, T>` — `__source` folded back to the column, `__hmac` dropped |
+| `bulkDecryptModels` | `(storedItems, v3Table)` | `DecryptedAttributes<Table, T>[]` |
+
+Let `T` be inferred from the argument; do not pass explicit type arguments on the v3 path.
+
+**EQL v2** — unchanged. `T` is the model you pass in, so the result type does NOT reflect the `__source` / `__hmac` split; declare a type of your own to read those attributes.
+
+| Method | Signature | Resolves to |
+|---|---|---|
+| `encryptModel` | `(item: T, v2Table)` | `T` |
+| `bulkEncryptModels` | `(items: T[], v2Table)` | `T[]` |
+| `decryptModel` | `(item: Record<string, unknown>, v2Table)` | `T` |
+| `bulkDecryptModels` | `(items: Record<string, unknown>[], v2Table)` | `T[]` |
 
 All operations are thenable (awaitable) and support `.audit({ metadata })` chaining. See the note in Setup about decrypt-side audit metadata and the `EncryptionV3` client.
+
+Types exported from `@cipherstash/stack/dynamodb`: `EncryptedDynamoDBInstance`, `EncryptedDynamoDBConfig`, `EncryptedDynamoDBError`, `AnyEncryptedTable`, `DynamoDBEncryptionClient`, `EncryptedAttributes`, `DecryptedAttributes`, `AuditConfig`.
 
 ### Querying Encrypted Attributes
 

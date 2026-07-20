@@ -64,7 +64,13 @@ export function encryptedDynamoDB(
 ): EncryptedDynamoDBInstance {
   const { encryptionClient, options } = config
 
-  return {
+  // The public interface is OVERLOADED per wire version (a v3 overload that
+  // knows the storage split, a v2 one that does not). A single generic
+  // implementation signature cannot be inferred as satisfying both arms, so the
+  // instance is built against the erased shape and asserted once, here. Nothing
+  // about the runtime differs between the overloads — the table decides
+  // everything, and it does so at runtime.
+  const instance = {
     encryptModel<T extends Record<string, unknown>>(
       item: T,
       table: AnyEncryptedTable,
@@ -113,9 +119,16 @@ export function encryptedDynamoDB(
       )
     },
   }
+
+  return instance as EncryptedDynamoDBInstance
 }
 
+export type { AuditConfig } from './operations/base-operation'
 export type {
+  AnyEncryptedTable,
+  DecryptedAttributes,
+  DynamoDBEncryptionClient,
+  EncryptedAttributes,
   EncryptedDynamoDBConfig,
   EncryptedDynamoDBError,
   EncryptedDynamoDBInstance,

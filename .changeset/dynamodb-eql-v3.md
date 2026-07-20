@@ -38,3 +38,13 @@ Notes on capability:
 
 The DynamoDB adapter also gains its first test coverage — 74 tests across the
 v2 and v3 paths, where it previously had none.
+
+The v3 overloads are strongly typed. `encryptModel` / `bulkEncryptModels` check
+the input model against the table's column domains, and return the DynamoDB
+attribute map that is actually written — the new exported `EncryptedAttributes`
+type, where a declared column `email` becomes `email__source` (plus
+`email__hmac` for the equality domains that mint one) rather than surviving as
+`email`. `decryptModel` / `bulkDecryptModels` invert it via `DecryptedAttributes`.
+`AnyEncryptedTable`, `DynamoDBEncryptionClient` and `AuditConfig` are now
+exported from `@cipherstash/stack/dynamodb` so these signatures can be named.
+The EQL v2 overloads are unchanged.

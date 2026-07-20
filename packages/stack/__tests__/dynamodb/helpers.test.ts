@@ -25,7 +25,7 @@ const users = encryptedTable('users', {
   email: encryptedColumn('email').equality(),
   name: encryptedColumn('name'),
   blob: encryptedColumn('blob').dataType('json'),
-  doc: encryptedColumn('doc').dataType('json').searchableJson('users/doc'),
+  doc: encryptedColumn('doc').dataType('json').searchableJson(),
   example: {
     protected: encryptedField('example.protected'),
   },

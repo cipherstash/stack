@@ -1,8 +1,16 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import type { EncryptionClient } from '@/encryption'
-import type { AnyV3Table } from '@/eql/v3'
+import type {
+  AnyV3Table,
+  EncryptedTable as EncryptedV3Table,
+  InferPlaintext,
+  PlaintextForColumn,
+  QueryTypesForColumn,
+  V3ModelInput,
+} from '@/eql/v3'
 import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { EncryptedValue } from '@/types'
+import type { ciphertextAttrSuffix, searchTermAttrSuffix } from './helpers'
 import type { BulkDecryptModelsOperation } from './operations/bulk-decrypt-models'
 import type { BulkEncryptModelsOperation } from './operations/bulk-encrypt-models'
 import type { DecryptModelOperation } from './operations/decrypt-model'
@@ -39,8 +47,8 @@ export type AnyEncryptedTable =
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown
   bulkEncryptModels(input: never, table: never): unknown
-  decryptModel(input: never, table?: never): unknown
-  bulkDecryptModels(input: never, table?: never): unknown
+  decryptModel(input: never, table: never): unknown
+  bulkDecryptModels(input: never, table: never): unknown
 }
 
 type ChainableEncryptOperation<T> = {
@@ -105,24 +113,174 @@ export interface EncryptedDynamoDBError extends Error {
   details?: Record<string, unknown>
 }
 
+// ---------------------------------------------------------------------------
+// The DynamoDB storage split, at the type level
+// ---------------------------------------------------------------------------
+
+/** The `__source` / `__hmac` suffixes, read off the runtime constants so the
+ * types cannot drift from the mapping in `helpers.ts`. */
+type CiphertextSuffix = typeof ciphertextAttrSuffix
+type SearchTermSuffix = typeof searchTermAttrSuffix
+
+/** The column map a v3 table was declared with. */
+type V3Columns<Table extends AnyV3Table> =
+  Table extends EncryptedV3Table<infer C> ? C : never
+
+/**
+ * What `toEncryptedDynamoItem` writes into `<attr>__source` for a column: the
+ * `sv` array for a JSON document, the base64 ciphertext `c` for every scalar.
+ */
+type SourceAttribute<C> =
+  'searchableJson' extends QueryTypesForColumn<C> ? unknown[] : string
+
+/**
+ * Does this column mint the `hm` term that becomes `<attr>__hmac`?
+ *
+ * Mirrors `indexesForCapabilities` (eql/v3/columns.ts) exactly: `hm` comes from
+ * the `unique` index, which is emitted when a domain is equality-capable AND is
+ * either not an ordering domain or is text (text equality is always HMAC-based,
+ * numeric/date ordering domains answer equality via their ordering term and
+ * emit no `unique`). A JSON document keeps its terms inside `sv`, so it has no
+ * separate search-term attribute.
+ *
+ * Derived from the public `QueryTypesForColumn` / `PlaintextForColumn` rather
+ * than the internal domain literal, so it stays inside the v3 barrel's API.
+ */
+type HasSearchTerm<C> =
+  'searchableJson' extends QueryTypesForColumn<C>
+    ? false
+    : 'equality' extends QueryTypesForColumn<C>
+      ? 'orderAndRange' extends QueryTypesForColumn<C>
+        ? [PlaintextForColumn<C>] extends [string]
+          ? true
+          : false
+        : true
+      : false
+
+/** Flatten an intersection into a single object type for readable errors. */
+type Simplify<T> = { [K in keyof T]: T[K] }
+
+/**
+ * The DynamoDB attribute map `encryptModel` actually returns for a v3 table.
+ *
+ * A declared column `email` does NOT survive as `email`: the adapter deletes it
+ * and writes `email__source` (plus `email__hmac` for equality domains). Typing
+ * the result as the input model — what the v2 overload still does — is a lie
+ * that type-checks `result.data.email` (always `undefined` at runtime) and
+ * rejects `result.data.email__source` (the value you actually want).
+ *
+ * Keys that name no column pass through untouched — partition/sort keys, GSI
+ * attributes, anything else on the item.
+ *
+ * LIMITATION: a v3 column declared under a dotted path (`'profile.ssn'`) is
+ * split *inside* the nested `profile` map at runtime. The model key is
+ * `profile`, not `profile.ssn`, so it passes through here unchanged and the
+ * nested split is not modelled.
+ */
+export type EncryptedAttributes<Table extends AnyV3Table, T> = Simplify<
+  {
+    [K in keyof T as K extends keyof V3Columns<Table> & string
+      ? `${K}${CiphertextSuffix}`
+      : K]: K extends keyof V3Columns<Table>
+      ? SourceAttribute<V3Columns<Table>[K]>
+      : T[K]
+  } & {
+    // Optional: the term is only written when the encrypted value produced one,
+    // so a null/absent field leaves the attribute off the item entirely.
+    [K in keyof T as K extends keyof V3Columns<Table> & string
+      ? HasSearchTerm<V3Columns<Table>[K]> extends true
+        ? `${K}${SearchTermSuffix}`
+        : never
+      : never]?: string
+  }
+>
+
+/**
+ * The inverse of {@link EncryptedAttributes}: the plaintext model
+ * `decryptModel` returns for an item read back out of DynamoDB.
+ *
+ * `<col>__source` folds back to `col` with the column's plaintext type,
+ * `<col>__hmac` is dropped (it is a query term, not data), and every other
+ * attribute passes through. Declared this way — rather than taking the
+ * plaintext model as the input parameter — so `T` is inferred from the argument
+ * a caller actually has: the stored attribute map.
+ */
+export type DecryptedAttributes<Table extends AnyV3Table, T> = Simplify<{
+  [K in keyof T as K extends `${infer Base}${SearchTermSuffix}`
+    ? Base extends keyof V3Columns<Table>
+      ? never
+      : K
+    : K extends `${infer Base}${CiphertextSuffix}`
+      ? Base extends keyof V3Columns<Table>
+        ? Base
+        : K
+      : K]: K extends `${infer Base}${CiphertextSuffix}`
+    ? Base extends keyof InferPlaintext<Table>
+      ? InferPlaintext<Table>[Base]
+      : T[K]
+    : T[K]
+}>
+
 export interface EncryptedDynamoDBInstance {
+  /**
+   * EQL v3: the input model is checked against the table's column types, and
+   * the result is the {@link EncryptedAttributes} storage split.
+   */
+  encryptModel<Table extends AnyV3Table, T extends Record<string, unknown>>(
+    item: V3ModelInput<Table, T>,
+    table: Table,
+  ): EncryptModelOperation<EncryptedAttributes<Table, T>>
+  /**
+   * EQL v2. Unchanged, so existing callers keep compiling — v2 columns do not
+   * carry their index configuration in the type, so the storage split cannot be
+   * derived. The returned `T` is the INPUT model, not what is on the wire; read
+   * `<attr>__source` / `<attr>__hmac` through a type of your own.
+   */
   encryptModel<T extends Record<string, unknown>>(
     item: T,
-    table: AnyEncryptedTable,
+    table: EncryptedTable<EncryptedTableColumn>,
   ): EncryptModelOperation<T>
 
+  /** EQL v3. See {@link EncryptedDynamoDBInstance.encryptModel}. */
+  bulkEncryptModels<
+    Table extends AnyV3Table,
+    T extends Record<string, unknown>,
+  >(
+    items: Array<V3ModelInput<Table, T>>,
+    table: Table,
+  ): BulkEncryptModelsOperation<EncryptedAttributes<Table, T>>
+  /** EQL v2. See {@link EncryptedDynamoDBInstance.encryptModel}. */
   bulkEncryptModels<T extends Record<string, unknown>>(
     items: T[],
-    table: AnyEncryptedTable,
+    table: EncryptedTable<EncryptedTableColumn>,
   ): BulkEncryptModelsOperation<T>
 
+  /**
+   * EQL v3: `item` is the stored attribute map (`<col>__source` /
+   * `<col>__hmac`), and the result is the {@link DecryptedAttributes} plaintext
+   * model it folds back to.
+   */
+  decryptModel<Table extends AnyV3Table, T extends Record<string, unknown>>(
+    item: T,
+    table: Table,
+  ): DecryptModelOperation<DecryptedAttributes<Table, T>>
+  /** EQL v2. Unchanged. */
   decryptModel<T extends Record<string, unknown>>(
     item: Record<string, EncryptedValue | unknown>,
-    table: AnyEncryptedTable,
+    table: EncryptedTable<EncryptedTableColumn>,
   ): DecryptModelOperation<T>
 
+  /** EQL v3. See {@link EncryptedDynamoDBInstance.decryptModel}. */
+  bulkDecryptModels<
+    Table extends AnyV3Table,
+    T extends Record<string, unknown>,
+  >(
+    items: T[],
+    table: Table,
+  ): BulkDecryptModelsOperation<DecryptedAttributes<Table, T>>
+  /** EQL v2. Unchanged. */
   bulkDecryptModels<T extends Record<string, unknown>>(
     items: Record<string, EncryptedValue | unknown>[],
-    table: AnyEncryptedTable,
+    table: EncryptedTable<EncryptedTableColumn>,
   ): BulkDecryptModelsOperation<T>
 }
