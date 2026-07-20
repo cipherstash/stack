@@ -115,6 +115,176 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(rewritten).toEqual([])
   })
 
+  // Every concrete `eql_v3_*` domain shipped by `@cipherstash/stack/eql/v3`
+  // (see `packages/stack/src/eql/v3/columns.ts`). Eight scalar bases carry the
+  // four storage/eq/ord flavours; text adds `_match`/`_search`; boolean and json
+  // stand alone.
+  const V3_SCALAR_BASES = [
+    'integer',
+    'smallint',
+    'bigint',
+    'numeric',
+    'real',
+    'double',
+    'date',
+    'timestamp',
+  ]
+  const V3_DOMAINS = [
+    ...V3_SCALAR_BASES.flatMap((base) =>
+      ['', '_eq', '_ord', '_ord_ore'].map(
+        (flavour) => `eql_v3_${base}${flavour}`,
+      ),
+    ),
+    'eql_v3_text',
+    'eql_v3_text_eq',
+    'eql_v3_text_match',
+    'eql_v3_text_ord',
+    'eql_v3_text_ord_ore',
+    'eql_v3_text_search',
+    'eql_v3_boolean',
+    'eql_v3_json',
+  ]
+
+  it.each(V3_DOMAINS)('rewrites an ALTER COLUMN to %s', async (domain) => {
+    const filePath = path.join(tmpDir, '0007_v3.sql')
+    fs.writeFileSync(
+      filePath,
+      `ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."${domain}";\n`,
+    )
+
+    const rewritten = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([filePath])
+    const updated = fs.readFileSync(filePath, 'utf-8')
+    expect(updated).toContain(
+      `ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."${domain}";`,
+    )
+    expect(updated).toContain('ALTER TABLE "users" DROP COLUMN "email";')
+    expect(updated).toContain(
+      'ALTER TABLE "users" RENAME COLUMN "email__cipherstash_tmp" TO "email";',
+    )
+    expect(updated).not.toContain('SET DATA TYPE')
+  })
+
+  // The mangled forms are the cross product of what `dataType()` returns and
+  // which drizzle-kit era renders it. Verified against drizzle-kit 0.24.2,
+  // 0.28.1, 0.30.6, 0.31.0, 0.31.1 and 0.31.10 via `drizzle-kit/api`'s
+  // `generateMigration`: the `"undefined".` prefix appears in **0.31.0 and
+  // later** — 0.30.6 and earlier emit the plain form. (Issue #693 and PR #688
+  // both describe it as an *older*-drizzle-kit artifact; that is backwards.)
+  const MANGLED_FORMS: Array<[label: string, emitted: string]> = [
+    // dataType() → bare `eql_v3_text_search` (what stack emits post-#688)
+    ['plain, drizzle-kit <=0.30.6', 'eql_v3_text_search'],
+    [
+      '"undefined"-prefixed, drizzle-kit >=0.31.0',
+      '"undefined"."eql_v3_text_search"',
+    ],
+    // dataType() → qualified `public.eql_v3_text_search` (stack pre-#688)
+    ['dotted, drizzle-kit <=0.30.6', 'public.eql_v3_text_search'],
+    [
+      'dotted inside "undefined", drizzle-kit >=0.31.0',
+      '"undefined"."public.eql_v3_text_search"',
+    ],
+    // dataType() → pre-quoted `"public"."eql_v3_text_search"`
+    ['pre-quoted, drizzle-kit <=0.30.6', '"public"."eql_v3_text_search"'],
+    [
+      'pre-quoted inside "undefined", drizzle-kit >=0.31.0',
+      '"undefined".""public"."eql_v3_text_search""',
+    ],
+    // Not observed from any released drizzle-kit, but the CREATE TABLE path
+    // renders this shape — guard it in case ALTER converges on it.
+    ['bare-quoted (speculative)', '"eql_v3_text_search"'],
+  ]
+
+  it.each(MANGLED_FORMS)('rewrites the v3 %s form', async (_label, emitted) => {
+    const filePath = path.join(tmpDir, '0008_form.sql')
+    fs.writeFileSync(
+      filePath,
+      `ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE ${emitted};\n`,
+    )
+
+    await rewriteEncryptedAlterColumns(tmpDir)
+
+    const updated = fs.readFileSync(filePath, 'utf-8')
+    expect(updated).toContain(
+      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+    )
+    expect(updated).not.toContain('SET DATA TYPE')
+  })
+
+  it.each([
+    ['dotted, drizzle-kit <=0.30.6', 'public.eql_v2_encrypted'],
+    [
+      'dotted inside "undefined", drizzle-kit >=0.31.0',
+      '"undefined"."public.eql_v2_encrypted"',
+    ],
+  ])('rewrites the previously unmatched v2 %s form', async (_label, emitted) => {
+    const filePath = path.join(tmpDir, '0009_v2form.sql')
+    fs.writeFileSync(
+      filePath,
+      `ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE ${emitted};\n`,
+    )
+
+    await rewriteEncryptedAlterColumns(tmpDir)
+
+    const updated = fs.readFileSync(filePath, 'utf-8')
+    expect(updated).toContain(
+      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v2_encrypted";',
+    )
+    expect(updated).not.toContain('SET DATA TYPE')
+  })
+
+  it('names the target domain in the guidance comment', async () => {
+    const filePath = path.join(tmpDir, '0010_comment.sql')
+    fs.writeFileSync(
+      filePath,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_integer_ord";\n',
+    )
+
+    await rewriteEncryptedAlterColumns(tmpDir)
+
+    const updated = fs.readFileSync(filePath, 'utf-8')
+    expect(updated).toContain('-- eql_v3_integer_ord.')
+    expect(updated).not.toContain('eql_v2_encrypted')
+  })
+
+  it('rewrites each statement to its own domain when v2 and v3 are mixed', async () => {
+    const filePath = path.join(tmpDir, '0011_mixed.sql')
+    fs.writeFileSync(
+      filePath,
+      [
+        'ALTER TABLE "a" ALTER COLUMN "x" SET DATA TYPE eql_v2_encrypted;',
+        'ALTER TABLE "a" ALTER COLUMN "y" SET DATA TYPE "undefined"."eql_v3_json";',
+      ].join('\n'),
+    )
+
+    await rewriteEncryptedAlterColumns(tmpDir)
+
+    const updated = fs.readFileSync(filePath, 'utf-8')
+    expect(updated).toContain(
+      'ALTER TABLE "a" ADD COLUMN "x__cipherstash_tmp" "public"."eql_v2_encrypted";',
+    )
+    expect(updated).toContain(
+      'ALTER TABLE "a" ADD COLUMN "y__cipherstash_tmp" "public"."eql_v3_json";',
+    )
+  })
+
+  it.each([
+    ['a plaintext type', 'text'],
+    ['jsonb', 'jsonb'],
+    ['a lookalike from another EQL major', 'eql_v4_text_search'],
+    ['a lookalike prefix', 'not_eql_v3_text_search'],
+  ])('leaves an ALTER COLUMN to %s untouched', async (_label, type) => {
+    const original = `ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE ${type};\n`
+    const filePath = path.join(tmpDir, '0012_other.sql')
+    fs.writeFileSync(filePath, original)
+
+    const rewritten = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([])
+    expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
+  })
+
   it('handles multiple ALTER statements in one file', async () => {
     const original = [
       'ALTER TABLE "a" ALTER COLUMN "x" SET DATA TYPE eql_v2_encrypted;',

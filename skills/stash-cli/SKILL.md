@@ -388,6 +388,8 @@ stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authentic
 
 Pass exactly one of `--drizzle` / `--prisma`. The generated migration also installs the `cs_migrations` tracking schema, so one `drizzle-kit migrate` covers everything `stash encrypt …` needs.
 
+After writing the migration, `--drizzle` sweeps the output directory for sibling migrations containing an in-place `ALTER COLUMN … SET DATA TYPE <eql_v2_encrypted | eql_v3_*>` — drizzle-kit emits these when you change a plaintext column to an encrypted one, and Postgres rejects them (there is no cast from `text`/`numeric` to an EQL type). Each is rewritten into an `ADD COLUMN` + backfill-comment + `DROP` + `RENAME` sequence and the rewritten files are listed. The rewrite **drops the plaintext column**, so it is safe on an empty table; on a populated production table use the staged `stash encrypt` path (add → backfill → cutover → drop) instead.
+
 #### `eql upgrade`
 
 The install SQL is idempotent. `upgrade` checks the current version, re-runs it, and reports the new one. If EQL isn't installed it points you at `eql install`. Same `--supabase`, `--exclude-operator-family`, `--eql-version`, `--latest`, `--dry-run`, `--database-url` flags.

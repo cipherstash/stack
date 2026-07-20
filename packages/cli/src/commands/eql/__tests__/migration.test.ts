@@ -208,6 +208,48 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(written).toContain('cs_migrations')
   })
 
+  // drizzle-kit emits an un-runnable in-place `ALTER COLUMN ... SET DATA TYPE`
+  // when a plaintext column is changed to an encrypted one. `eql install
+  // --drizzle` has always swept the out directory for these; the v3
+  // migration-first path must do the same, or a v3 user is left with a broken
+  // migration and nothing to fix it (#693).
+  it('rewrites a sibling migration with a broken v3 ALTER COLUMN', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    const sibling = join(out, '0001_encrypt-email.sql')
+    writeFileSync(
+      sibling,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    const rewritten = readFileSync(sibling, 'utf-8')
+    expect(rewritten).toContain(
+      'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_search";',
+    )
+    expect(rewritten).not.toContain('SET DATA TYPE')
+  })
+
+  it('does not rewrite the EQL install migration it just generated', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    const generated = join(out, '0000_install-eql.sql')
+    spawnMock.mockImplementation(() => {
+      writeFileSync(generated, '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    // Untouched by the sweep: still the EQL v3 install bundle, verbatim.
+    expect(readFileSync(generated, 'utf-8')).toContain('EQL v3 schema creation')
+  })
+
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {
     spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
     await expect(

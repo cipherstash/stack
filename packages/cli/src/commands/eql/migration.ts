@@ -9,6 +9,7 @@ import {
   findGeneratedMigration,
   printNextSteps,
 } from '@/commands/db/install.js'
+import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
 import {
   detectPackageManager,
   execArgv,
@@ -209,6 +210,32 @@ async function generateDrizzleEqlMigration(
     cleanupMigrationFile(migrationPath)
     p.outro('Migration aborted.')
     throw new CliExit(1)
+  }
+
+  // Step 4 — sweep for sibling migrations drizzle-kit emitted with an in-place
+  // `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`. Those fail in Postgres
+  // (no implicit cast from text/numeric to an EQL domain), so rewrite them into
+  // the ADD/backfill/DROP/RENAME sequence that works on empty and populated
+  // tables alike. `eql install --drizzle` has always done this for v2; without
+  // it here the v3 migration-first path leaves the user with broken SQL and no
+  // repair (#693).
+  try {
+    const rewritten = await rewriteEncryptedAlterColumns(outDir, {
+      skip: migrationPath,
+    })
+    if (rewritten.length > 0) {
+      p.log.info(
+        `Rewrote ${rewritten.length} migration file(s) to use safe ADD+migrate+DROP for encrypted columns:`,
+      )
+      for (const file of rewritten) p.log.step(`  - ${file}`)
+    }
+  } catch (error) {
+    // Advisory: the install migration itself is already written and valid.
+    p.log.warn(
+      `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
   }
 
   p.log.success(`Migration created: ${migrationPath}`)
