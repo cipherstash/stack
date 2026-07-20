@@ -1,12 +1,36 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
-import type { EncryptedDynamoDBError } from './types'
+import type { AnyEncryptedTable, EncryptedDynamoDBError } from './types'
 
 export const ciphertextAttrSuffix = '__source'
 export const searchTermAttrSuffix = '__hmac'
+
+/**
+ * Which EQL wire version to synthesize when rebuilding an envelope from the
+ * stored `__source` attribute.
+ *
+ * v2 columns are `EncryptedColumn` instances from `@/schema`; v3 columns are
+ * the concrete-domain classes from `@/eql/v3`, which are the only ones carrying
+ * `getQueryCapabilities`. That method is the discriminator used elsewhere in
+ * the codebase (see `encryption/helpers/infer-index-type.ts`), so reuse it
+ * rather than inventing a second signal.
+ *
+ * A v2 table's builders may nest (`encryptedField` groups columns under an
+ * object), so walk one level rather than assuming a flat map. v3 has no nested
+ * columns at all.
+ */
+export function isV3Table(table: AnyEncryptedTable): boolean {
+  return Object.values(table.columnBuilders).some(isV3Column)
+}
+
+function isV3Column(builder: unknown): boolean {
+  if (builder === null || typeof builder !== 'object') return false
+  if ('getQueryCapabilities' in builder) return true
+  // A v2 nested group: `{ ssn: encryptedField(...), address: { ... } }`.
+  return Object.values(builder as Record<string, unknown>).some(isV3Column)
+}
 
 export class EncryptedDynamoDBErrorImpl
   extends Error
@@ -69,6 +93,51 @@ export function handleError(
   return dynamoError
 }
 
+/**
+ * Resolve a decrypt call against either client shape.
+ *
+ * The nominal `EncryptionClient` returns a chainable operation that carries
+ * `.audit()`; the `TypedEncryptionClient` from `EncryptionV3` returns a plain
+ * `Promise<Result<…>>`. Chain the audit metadata when the client can carry it,
+ * otherwise await the promise directly — a typed client has no audit surface
+ * on decrypt, so the metadata has nowhere to go.
+ */
+export async function resolveDecryptResult<T>(
+  operation: unknown,
+  auditData: { metadata?: Record<string, unknown> },
+): Promise<
+  { data: T; failure?: never } | { data?: never; failure: DecryptFailure }
+> {
+  const chainable = operation as {
+    audit?: (data: { metadata?: Record<string, unknown> }) => unknown
+  }
+
+  const resolved =
+    typeof chainable?.audit === 'function'
+      ? await chainable.audit(auditData)
+      : await operation
+
+  return resolved as
+    | { data: T; failure?: never }
+    | { data?: never; failure: DecryptFailure }
+}
+
+type DecryptFailure = { message: string; code?: string }
+
+/**
+ * Rethrow a Result failure as an `Error` that preserves the FFI error code.
+ * `withResult`'s `ensureError` wraps non-Error objects, which would otherwise
+ * lose the code before `handleError` can read it.
+ */
+export function throwPreservingCode(failure: {
+  message: string
+  code?: string
+}): never {
+  const error = new Error(failure.message) as Error & { code?: string }
+  error.code = failure.code
+  throw error
+}
+
 export function deepClone<T>(obj: T): T {
   if (obj === null || typeof obj !== 'object') {
     return obj
@@ -109,18 +178,31 @@ export function toEncryptedDynamoItem(
         'c' in (attrValue as object))
     ) {
       const encryptPayload = attrValue as EncryptedValue
-      if (encryptPayload?.k === 'ct' && encryptPayload.c) {
+
+      // A JSON document, in either wire version, keeps its `k: 'sv'` tag. Its
+      // index terms live *inside* the `sv` entries, so the whole array is
+      // stored and there is no separate search-term attribute to split out.
+      if (encryptPayload?.k === 'sv' && encryptPayload.sv) {
         const result: Record<string, unknown> = {}
+        result[`${attrName}${ciphertextAttrSuffix}`] = encryptPayload.sv
+        return result
+      }
+
+      // Scalars. v2 tags every payload `k: 'ct'`; v3 scalars carry NO `k`
+      // discriminator at all, so the presence of a ciphertext is the signal —
+      // gating on `k === 'ct'` would drop every v3 scalar through to the
+      // nested-object branch below and write it out as a raw map.
+      if (encryptPayload?.c) {
+        const result: Record<string, unknown> = {}
+        // `hm` is the deterministic equality term, and the only one a DynamoDB
+        // key condition can use. Ordering terms (`op`/`ob`) and the match
+        // bloom filter (`bf`) have no DynamoDB query surface, so they are not
+        // stored — the value stays decryptable, it is just not orderable or
+        // text-searchable inside DynamoDB.
         if (encryptPayload.hm) {
           result[`${attrName}${searchTermAttrSuffix}`] = encryptPayload.hm
         }
         result[`${attrName}${ciphertextAttrSuffix}`] = encryptPayload.c
-        return result
-      }
-
-      if (encryptPayload?.k === 'sv' && encryptPayload.sv) {
-        const result: Record<string, unknown> = {}
-        result[`${attrName}${ciphertextAttrSuffix}`] = encryptPayload.sv
         return result
       }
     }
@@ -154,8 +236,10 @@ export function toEncryptedDynamoItem(
 
 export function toItemWithEqlPayloads(
   decrypted: Record<string, EncryptedValue | unknown>,
-  encryptionSchema: EncryptedTable<EncryptedTableColumn>,
+  encryptionSchema: AnyEncryptedTable,
 ): Record<string, unknown> {
+  const v = isV3Table(encryptionSchema) ? 3 : 2
+
   function processValue(
     attrName: string,
     attrValue: unknown,
@@ -180,10 +264,11 @@ export function toItemWithEqlPayloads(
       (encryptedAttrs.includes(columnName) || isNested)
     ) {
       const i = { c: columnName, t: encryptConfig.tableName }
-      const v = 2
 
       // Nested values are not searchable, so we can just return the standard EQL payload.
       // Worth noting, that encryptConfig.columns[columnName] will be undefined if isNested is true.
+      // A v3 column builds the same `{ cast_as, indexes }` shape as a v2 one,
+      // so this detection needs no version branch.
       if (
         !isNested &&
         encryptConfig.columns[columnName].cast_as === 'json' &&
@@ -193,17 +278,22 @@ export function toItemWithEqlPayloads(
           [columnName]: {
             i,
             v,
+            // Mandatory in both versions — a v3 ste_vec document without it
+            // fails deserialization with "missing field `k`".
             k: 'sv',
             sv: attrValue,
           },
         }
       }
 
+      // v3 scalars are untagged; only v2 carries `k: 'ct'`. Both versions
+      // require `v` and `i` — a payload missing either is not recognized as
+      // encrypted and is returned to the caller verbatim rather than erroring.
       return {
         [columnName]: {
           i,
           v,
-          k: 'ct',
+          ...(v === 2 ? { k: 'ct' } : {}),
           c: attrValue,
         },
       }

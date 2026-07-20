@@ -1,6 +1,6 @@
 ---
 name: stash-dynamodb
-description: Integrate CipherStash encryption with Amazon DynamoDB using @cipherstash/stack/dynamodb. Covers the encryptedDynamoDB helper for encrypting items before PutItem and decrypting after GetItem, bulk encrypt/decrypt for BatchWrite and BatchGet, querying with encrypted partition and sort keys via HMAC attributes, nested object encryption, audit logging, and the DynamoDB attribute naming conventions (__source/__hmac). Use when adding encryption to a DynamoDB project, encrypting items before writes, decrypting items after reads, or querying encrypted DynamoDB attributes.
+description: Integrate CipherStash encryption with Amazon DynamoDB using @cipherstash/stack/dynamodb. Covers the encryptedDynamoDB helper for encrypting items before PutItem and decrypting after GetItem with EQL v3 (types.* domains) or EQL v2 schemas, bulk encrypt/decrypt for BatchWrite and BatchGet, querying with encrypted partition and sort keys via HMAC attributes, nested object encryption, audit logging, and the DynamoDB attribute naming conventions (__source/__hmac). Use when adding encryption to a DynamoDB project, encrypting items before writes, decrypting items after reads, or querying encrypted DynamoDB attributes.
 ---
 
 # CipherStash Stack - DynamoDB Integration
@@ -36,67 +36,110 @@ CipherStash encrypts each attribute into two DynamoDB attributes:
 | Original Attribute | Stored As | Purpose |
 |---|---|---|
 | `email` | `email__source` | Encrypted ciphertext |
-| `email` | `email__hmac` | HMAC for equality lookups (only if `.equality()` index is set) |
+| `email` | `email__hmac` | HMAC for equality lookups (only for equality-capable columns) |
 
 Non-encrypted attributes pass through unchanged. On decryption, the `__source` and `__hmac` attributes are recombined back into the original attribute name with the plaintext value.
+
+**Only equality is usable on DynamoDB.** Ordering terms and free-text bloom filters have no DynamoDB query surface, so they are not stored. A column in an ordering or free-text domain still encrypts and decrypts correctly — it just cannot back a key condition.
+
+## Choosing a Schema Version
+
+`encryptedDynamoDB` accepts both EQL v3 and EQL v2 tables. **Use EQL v3 for new projects.**
+
+| | EQL v3 (recommended) | EQL v2 (existing deployments) |
+|---|---|---|
+| Import | `@cipherstash/stack/v3` | `@cipherstash/stack` + `@cipherstash/stack/schema` |
+| Schema | `encryptedTable` + `types.*` | `encryptedTable` + `encryptedColumn` |
+| Client | `EncryptionV3({ schemas })` | `Encryption({ schemas })` |
+| Nested fields | **Not supported** | `encryptedField` |
+
+There is no data migration between them: DynamoDB has no EQL extension to install and no schema to alter. But the two write **different wire formats**, so a table populated under v2 cannot be read back with a v3 schema, or vice versa. Pick one per table and stay on it.
+
+If you need nested object encryption, you must use EQL v2 — v3 has no `encryptedField` equivalent.
 
 ## Rolling Encryption Out to Production
 
 DynamoDB encryption is **single-deploy**. There is no rollout/cutover split — unlike the Postgres path, DynamoDB has no row-level rename swap and no shared-state proxy. The application owns every write, so adding encryption is an application-side change that ships in one PR:
 
 1. Declare the encrypted schema (see Setup below).
-2. Wrap your DynamoDB client with `encryptedDynamoDB` (or call `encryptItem` / `decryptItem` directly at write/read sites).
+2. Build an `encryptedDynamoDB` helper and call `encryptModel` / `decryptModel` at your write and read sites.
 3. Ship the change.
 
-For tables with **existing populated items**, the `__source` and `__hmac` attributes are added by the next write that touches each item. If you need every existing item encrypted at once (e.g. because a query uses `email__hmac` and would miss legacy items), run a one-shot script that reads every item, calls `encryptItem`, and writes it back. Idempotent: re-running an already-encrypted item is a no-op as long as the schema hasn't changed.
+For tables with **existing populated items**, the `__source` and `__hmac` attributes are added by the next write that touches each item. If you need every existing item encrypted at once (e.g. because a query uses `email__hmac` and would miss legacy items), run a one-shot script that reads every item, calls `encryptModel`, and writes it back. Idempotent: re-running an already-encrypted item is a no-op as long as the schema hasn't changed.
 
 > **Where am I?** Run `stash status` (or `bunx`/`pnpm dlx`/`yarn dlx` per your runner) for a project-wide view across both Postgres and DynamoDB integrations. DynamoDB columns surface in the quest log as already-complete since there is no staged lifecycle to track.
 
 ## Setup
 
-### 1. Define Encrypted Schema
+### 1. Define Encrypted Schema (EQL v3)
+
+Each `types.*` factory is a concrete domain with fixed query capabilities. There are no chainable index methods — the type *is* the capability.
 
 ```typescript
-import { encryptedTable, encryptedColumn, encryptedField } from "@cipherstash/stack/schema"
+import { encryptedTable, types } from "@cipherstash/stack/v3"
 
 const users = encryptedTable("users", {
-  email: encryptedColumn("email").equality(),   // searchable via HMAC
-  name: encryptedColumn("name"),                // encrypt-only, no search
-  phone: encryptedColumn("phone"),              // encrypt-only
-  metadata: encryptedColumn("metadata").dataType("json"), // encrypt-only JSON (use .searchableJson() for queryable JSON)
+  email: types.TextEq("email"),      // equality -> queryable via email__hmac
+  name: types.Text("name"),          // storage only
+  phone: types.Text("phone"),        // storage only
+  age: types.IntegerOrd("age"),      // decryptable, NOT queryable on DynamoDB
+  metadata: types.Json("metadata"),  // JSON document
 })
 ```
 
-> **Note:** `encryptedColumn` also supports `.orderAndRange()`, `.freeTextSearch()`, and `.searchableJson()` index methods, but only `.equality()` produces HMAC values usable for DynamoDB key condition queries.
+Which domains give you a `__hmac` attribute you can query on:
 
-Nested objects are supported with `encryptedField`:
+| Domain family | `__hmac` written? | Notes |
+|---|---|---|
+| `types.TextEq`, `IntegerEq`, `BigintEq`, `DateEq`, `TimestampEq`, `NumericEq`, `RealEq`, `DoubleEq`, `SmallintEq` | Yes | The equality domains — use these for anything you query |
+| `types.TextOrd`, `TextOrdOre`, `TextSearch` | Yes | Text equality is HMAC-based even on ordering/search domains |
+| `types.IntegerOrd`, `DateOrd`, `TimestampOrd`, and the other non-text `*Ord`/`*OrdOre` | **No** | Equality resolves through an ordering term in Postgres, which DynamoDB cannot use |
+| `types.Text`, `Integer`, `Boolean`, and the other bare domains | No | Storage only |
+| `types.Json` | No | Index terms live inside the ste_vec array; not splittable into an attribute |
 
-```typescript
-const users = encryptedTable("users", {
-  email: encryptedColumn("email").equality(),
-  profile: {
-    ssn: encryptedField("profile.ssn"),
-    address: {
-      street: encryptedField("profile.address.street"),
-    },
-  },
-})
-```
+> **Rule of thumb:** if an attribute will appear in a `KeyConditionExpression`, declare it with an `*Eq` domain.
 
 ### 2. Initialize Clients
 
 ```typescript
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb"
-import { Encryption } from "@cipherstash/stack"
+import { EncryptionV3 } from "@cipherstash/stack/v3"
 import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
 
 const dynamoClient = new DynamoDBClient({ region: "us-east-1" })
 const docClient = DynamoDBDocumentClient.from(dynamoClient)
 
+const encryptionClient = await EncryptionV3({ schemas: [users] })
+const dynamo = encryptedDynamoDB({ encryptionClient })
+```
+
+> **Audit metadata on decrypt:** the client from `EncryptionV3` has no audit
+> surface on its decrypt methods, so `.audit()` on `decryptModel` /
+> `bulkDecryptModels` resolves normally but the metadata is not recorded. If you
+> need audited decrypts, build the client with `Encryption({ schemas: [users],
+> config: { eqlVersion: 3 } })` instead — same v3 wire format, chainable decrypt.
+
+### EQL v2 Schema (existing deployments)
+
+```typescript
+import { encryptedTable, encryptedColumn, encryptedField } from "@cipherstash/stack/schema"
+import { Encryption } from "@cipherstash/stack"
+
+const users = encryptedTable("users", {
+  email: encryptedColumn("email").equality(),   // searchable via HMAC
+  name: encryptedColumn("name"),                // encrypt-only, no search
+  metadata: encryptedColumn("metadata").dataType("json"),
+  profile: {                                     // nested objects: v2 only
+    ssn: encryptedField("profile.ssn"),
+  },
+})
+
 const encryptionClient = await Encryption({ schemas: [users] })
 const dynamo = encryptedDynamoDB({ encryptionClient })
 ```
+
+> **Note:** `encryptedColumn` also supports `.orderAndRange()`, `.freeTextSearch()`, and `.searchableJson()` index methods, but only `.equality()` produces HMAC values usable for DynamoDB key condition queries.
 
 ### Optional: Logger and Error Handler
 
@@ -228,19 +271,19 @@ When an encrypted attribute is the partition key (e.g., `email__hmac`):
 ```typescript
 import { QueryCommand } from "@aws-sdk/lib-dynamodb"
 
-// 1. Encrypt the search value to get the HMAC
-const queryResult = await encryptionClient.encryptQuery([{
-  value: "alice@example.com",
-  column: users.email,
+// 1. Encrypt the search value to get the HMAC.
+//    On an EQL v3 equality domain this mints the bare term — `{ v, i, hm }`
+//    with no ciphertext — so `hm` is used directly.
+const queryResult = await encryptionClient.encryptQuery("alice@example.com", {
   table: users,
-  queryType: "equality",
-}])
+  column: users.email,
+})
 
 if (queryResult.failure) {
   throw new Error(`Query encryption failed: ${queryResult.failure.message}`)
 }
 
-const emailHmac = queryResult.data[0]?.hm
+const emailHmac = queryResult.data.hm
 
 // 2. Use the HMAC in a DynamoDB query
 const result = await docClient.send(new QueryCommand({
@@ -316,7 +359,7 @@ For each encrypted field with an equality index, two attributes are stored:
 - `{field}__source` - The encrypted ciphertext (binary/string)
 - `{field}__hmac` - Deterministic HMAC for equality lookups
 
-Fields without `.equality()` only get `__source` (no HMAC, so they can't be queried).
+Fields without equality capability only get `__source` (no HMAC, so they can't be queried) — that means EQL v2 columns without `.equality()`, and EQL v3 columns outside the domains listed in the table above.
 
 ### Key Schema Design
 
@@ -361,7 +404,8 @@ if (result.failure) {
 import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
 
 const dynamo = encryptedDynamoDB({
-  encryptionClient,  // EncryptionClient instance
+  // From EncryptionV3(...) or Encryption(...)
+  encryptionClient,
   options: {         // optional
     logger: { error: (message, error) => void },
     errorHandler: (error) => void,
@@ -371,56 +415,59 @@ const dynamo = encryptedDynamoDB({
 
 ### Instance Methods
 
+`table` is either an EQL v3 table (`types.*` domains) or an EQL v2 one.
+
 | Method | Signature | Returns |
 |---|---|---|
-| `encryptModel` | `(item: T, table: EncryptedTable)` | `EncryptModelOperation<T>` |
-| `bulkEncryptModels` | `(items: T[], table: EncryptedTable)` | `BulkEncryptModelsOperation<T>` |
-| `decryptModel` | `(item: Record<string, EncryptedValue \| unknown>, table: EncryptedTable)` | `DecryptModelOperation<T>` (resolves to `Decrypted<T>`) |
-| `bulkDecryptModels` | `(items: Record<string, EncryptedValue \| unknown>[], table: EncryptedTable)` | `BulkDecryptModelsOperation<T>` (resolves to `Decrypted<T>[]`) |
+| `encryptModel` | `(item: T, table)` | `EncryptModelOperation<T>` |
+| `bulkEncryptModels` | `(items: T[], table)` | `BulkEncryptModelsOperation<T>` |
+| `decryptModel` | `(item: Record<string, unknown>, table)` | `DecryptModelOperation<T>` (resolves to `Decrypted<T>`) |
+| `bulkDecryptModels` | `(items: Record<string, unknown>[], table)` | `BulkDecryptModelsOperation<T>` (resolves to `Decrypted<T>[]`) |
 
-All operations are thenable (awaitable) and support `.audit({ metadata })` chaining.
+All operations are thenable (awaitable) and support `.audit({ metadata })` chaining. See the note in Setup about decrypt-side audit metadata and the `EncryptionV3` client.
 
 ### Querying Encrypted Attributes
 
 Use the encryption client directly (not the DynamoDB helper):
 
 ```typescript
-// Single value form (recommended for DynamoDB lookups):
+// EQL v3 — the domain fixes the query type, so no `queryType` is needed:
 const result = await encryptionClient.encryptQuery(
   "search-value",
-  { column: schema.fieldName, table: schema, queryType: "equality" }
+  { table: users, column: users.email }
 )
-const hmac = result.data?.hm
+const hmac = result.data?.hm  // Use this in DynamoDB key conditions
 
-// Batch array form:
-const batchResult = await encryptionClient.encryptQuery([{
-  value: "search-value",
-  column: schema.fieldName,
-  table: schema,
-  queryType: "equality",
-}])
-const hmac = batchResult.data[0]?.hm  // Use this in DynamoDB key conditions
+// EQL v2 — pass queryType explicitly:
+const v2Result = await encryptionClient.encryptQuery(
+  "search-value",
+  { table: users, column: users.email, queryType: "equality" }
+)
+const v2Hmac = v2Result.data?.hm
 ```
+
+> On a `types.TextSearch` column `encryptQuery` returns `hm` alongside ordering
+> and bloom-filter terms regardless of `queryType`. Only `hm` is meaningful for
+> DynamoDB — a free-text query cannot be expressed as a key condition.
 
 ## Complete Example
 
 ```typescript
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient, PutCommand, GetCommand, QueryCommand } from "@aws-sdk/lib-dynamodb"
-import { Encryption } from "@cipherstash/stack"
+import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
 import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
-import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
 
 // Schema
 const users = encryptedTable("users", {
-  email: encryptedColumn("email").equality(),
-  name: encryptedColumn("name"),
+  email: types.TextEq("email"),
+  name: types.Text("name"),
 })
 
 // Clients
 const dynamoClient = new DynamoDBClient({ region: "us-east-1" })
 const docClient = DynamoDBDocumentClient.from(dynamoClient)
-const encryptionClient = await Encryption({ schemas: [users] })
+const encryptionClient = await EncryptionV3({ schemas: [users] })
 const dynamo = encryptedDynamoDB({ encryptionClient })
 
 // Write
@@ -441,13 +488,11 @@ if (!decResult.failure) {
 }
 
 // Query by encrypted email (via HMAC)
-const queryEnc = await encryptionClient.encryptQuery([{
-  value: "alice@example.com",
-  column: users.email,
+const queryEnc = await encryptionClient.encryptQuery("alice@example.com", {
   table: users,
-  queryType: "equality",
-}])
-const hmac = queryEnc.data[0]?.hm
+  column: users.email,
+})
+const hmac = queryEnc.data?.hm
 
 const queryResult = await docClient.send(new QueryCommand({
   TableName: "Users",

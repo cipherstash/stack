@@ -86,7 +86,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — `encryptedSupabase` (v2) and `encryptedSupabaseV3` (v3). Split out of `@cipherstash/stack`.
 - `packages/schema`: Schema builder utilities and types (`encryptedTable`, `encryptedColumn`, `encryptedField`)
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
-- `packages/protect-dynamodb`: DynamoDB helpers (`encryptedDynamoDB`)
+- `packages/protect-dynamodb`: DynamoDB helpers (`protectDynamoDB`), built on `@cipherstash/protect`. A fork of the shipping adapter, kept for existing consumers of the standalone package; EQL v2 only. The maintained implementation is `packages/stack/src/dynamodb` (`encryptedDynamoDB`)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `packages/bench`: Performance / index-engagement benchmarks (private, not published)
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
@@ -147,7 +147,7 @@ Three rules to remember when editing CI or pnpm config:
 ## Key Concepts and APIs
 
 - **Initialization**: `EncryptionV3({ schemas })` returns the typed EQL v3 client. (`Encryption({ schemas })` is the legacy v2 client.) Provide at least one `encryptedTable`.
-- **Schema (EQL v3, the documented approach)**: Define tables/columns with `encryptedTable` and the `types.*` concrete-domain factories from `@cipherstash/stack/eql/v3` (`types.TextSearch`, `types.IntegerOrd`, `types.Json`, …) — each domain's query capabilities are fixed by its type; there are no chainable capability tuners. Build the client with `EncryptionV3` from `@cipherstash/stack/v3`. (Legacy EQL v2 — `Encryption` + `encryptedColumn(...).equality().freeTextSearch().orderAndRange().searchableJson()` from `@cipherstash/stack/schema` — remains for existing deployments and is what DynamoDB (`encryptedField`) still requires; see #657.)
+- **Schema (EQL v3, the documented approach)**: Define tables/columns with `encryptedTable` and the `types.*` concrete-domain factories from `@cipherstash/stack/eql/v3` (`types.TextSearch`, `types.IntegerOrd`, `types.Json`, …) — each domain's query capabilities are fixed by its type; there are no chainable capability tuners. Build the client with `EncryptionV3` from `@cipherstash/stack/v3`. (Legacy EQL v2 — `Encryption` + `encryptedColumn(...).equality().freeTextSearch().orderAndRange().searchableJson()` from `@cipherstash/stack/schema` — remains for existing deployments. DynamoDB accepts both v3 and v2 tables; only v2 supports nested fields via `encryptedField`.)
 - **Operations** (all return Result-like objects and support chaining `.withLockContext(lockContext)` and `.audit()` when applicable):
   - `encrypt(plaintext, { table, column })`
   - `decrypt(encryptedPayload)`
