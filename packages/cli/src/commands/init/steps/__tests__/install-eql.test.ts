@@ -4,6 +4,17 @@ import type { InitProvider, InitState } from '../../types.js'
 // installCommand is the unit under test's collaborator — mock it so we assert
 // what init asks for without touching a database.
 vi.mock('../../../db/install.js', () => ({ installCommand: vi.fn() }))
+// The Drizzle branch generates a v3 migration instead of calling installCommand.
+vi.mock('../../../eql/migration.js', () => ({
+  eqlMigrationCommand: vi.fn(async () => undefined),
+}))
+// `eql install` normally scaffolds these; the Drizzle branch does it itself.
+vi.mock('../../../db/config-scaffold.js', () => ({
+  offerStashConfig: vi.fn(async () => 'src/encryption/index.ts'),
+}))
+vi.mock('../../../db/client-scaffold.js', () => ({
+  ensureEncryptionClient: vi.fn(),
+}))
 // `stash` must appear installed so the precondition guard doesn't short-circuit.
 vi.mock('../../utils.js', () => ({ isPackageInstalled: vi.fn(() => true) }))
 // Toggle interactivity per test (defaults to interactive in beforeEach).
@@ -20,8 +31,17 @@ vi.mock('@clack/prompts', () => ({
 
 import * as p from '@clack/prompts'
 import { isInteractive } from '../../../../config/tty.js'
+import { ensureEncryptionClient } from '../../../db/client-scaffold.js'
+import { offerStashConfig } from '../../../db/config-scaffold.js'
 import { installCommand } from '../../../db/install.js'
+import { eqlMigrationCommand } from '../../../eql/migration.js'
 import { installEqlStep } from '../install-eql.js'
+
+const drizzleState = {
+  integration: 'drizzle',
+  databaseUrl: 'postgresql://localhost:5432/app',
+} as unknown as InitState
+const drizzleProvider = { name: 'drizzle' } as unknown as InitProvider
 
 const baseState = {
   integration: 'postgresql',
@@ -82,25 +102,93 @@ describe('installEqlStep', () => {
     expect(result.eqlMigrationPending).toBeFalsy()
   })
 
-  it('maps a generated Drizzle migration to eqlMigrationPending, NOT eqlInstalled', async () => {
-    // The Drizzle path only WRITES a v2 migration — EQL isn't in the DB until
-    // the user runs `drizzle-kit migrate`. `installEqlStep` must carry that
-    // distinction through so `initCommand` doesn't claim "EQL installed".
-    // This is the seam the differential review flagged (PR #687): the step
-    // used to return `eqlInstalled: true` for every non-throwing outcome.
-    const drizzleState = {
-      integration: 'drizzle',
-      databaseUrl: 'postgresql://localhost:5432/app',
-    } as unknown as InitState
-    vi.mocked(installCommand).mockResolvedValueOnce('migration-generated')
+  it('never pins EQL v2 for the non-Drizzle paths', async () => {
+    await installEqlStep.run(baseState, provider)
 
-    const result = await installEqlStep.run(drizzleState, {
-      name: 'drizzle',
-    } as unknown as InitProvider)
+    // `undefined` means "take the v3 default" in resolveEqlVersion.
+    expect(
+      vi.mocked(installCommand).mock.calls[0][0].eqlVersion,
+    ).toBeUndefined()
+  })
 
-    // Pinned to v2 for the Drizzle migration path (v3 rejects --drizzle).
-    expect(vi.mocked(installCommand).mock.calls[0][0].eqlVersion).toBe('2')
-    expect(result.eqlInstalled).toBe(false)
-    expect(result.eqlMigrationPending).toBe(true)
+  describe('Drizzle', () => {
+    it('generates an EQL v3 migration instead of running `eql install` (the v2 pin is gone)', async () => {
+      // Regression guard for the defect: init used to pass `eqlVersion: '2'` to
+      // installCommand, making `stash init --drizzle` the ONLY flow that
+      // provisioned a v2 database — while the stash-drizzle skill installed
+      // into the same project documents the v3 surface. The Drizzle flow must
+      // now go through `stash eql migration --drizzle`, which is v3.
+      await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(installCommand).not.toHaveBeenCalled()
+      expect(eqlMigrationCommand).toHaveBeenCalledTimes(1)
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0]).toMatchObject({
+        drizzle: true,
+        embedded: true,
+      })
+    })
+
+    it('maps a generated migration to eqlMigrationPending, NOT eqlInstalled', async () => {
+      // The migration is only WRITTEN — EQL isn't in the DB until the user runs
+      // `drizzle-kit migrate`. `installEqlStep` must carry that distinction
+      // through so `initCommand` doesn't claim "EQL installed" (PR #687).
+      const result = await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(result.eqlMigrationPending).toBe(true)
+    })
+
+    it('scaffolds stash.config.ts + the client, which `eql install` would have done (#581)', async () => {
+      // The Drizzle branch bypasses installCommand, so it owns the scaffolding
+      // that `scaffoldConfig: 'ensure'` used to provide. Without this, init
+      // would finish with no config and every downstream command would
+      // dead-end on 'Could not find stash.config.ts'.
+      await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(offerStashConfig).toHaveBeenCalledWith({ ensure: true })
+      expect(ensureEncryptionClient).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards --supabase so a Drizzle-on-Supabase project gets the role grants', async () => {
+      await installEqlStep.run(
+        { ...drizzleState, integration: 'drizzle' } as InitState,
+        { name: 'supabase' } as unknown as InitProvider,
+      )
+
+      expect(vi.mocked(eqlMigrationCommand).mock.calls[0][0].supabase).toBe(
+        true,
+      )
+    })
+
+    it('degrades to "not installed" (never crashes init) when drizzle-kit is missing', async () => {
+      // eqlMigrationCommand throws CliExit when drizzle-kit isn't installed or
+      // configured. init must absorb that and report honestly — a thrown
+      // CliExit here would abort the whole run after the user has already
+      // authenticated and had their client scaffolded.
+      vi.mocked(eqlMigrationCommand).mockRejectedValueOnce(new Error('boom'))
+
+      const result = await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(result.eqlInstalled).toBe(false)
+      expect(result.eqlMigrationPending).toBeFalsy()
+    })
+
+    it('does not leak the database URL when the migration fails', async () => {
+      // Same reasoning as the `eql install` catch: errors on this path can
+      // carry a connection string with credentials.
+      vi.mocked(eqlMigrationCommand).mockRejectedValueOnce(
+        new Error('connect postgresql://user:hunter2@localhost:5432/app'),
+      )
+
+      await installEqlStep.run(drizzleState, drizzleProvider)
+
+      const logged = [
+        ...vi.mocked(p.log.error).mock.calls,
+        ...vi.mocked(p.note).mock.calls,
+      ]
+        .flat()
+        .join('\n')
+      expect(logged).not.toContain('hunter2')
+    })
   })
 })
