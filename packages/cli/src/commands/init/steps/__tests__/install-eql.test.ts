@@ -19,6 +19,7 @@ vi.mock('@clack/prompts', () => ({
 }))
 
 import * as p from '@clack/prompts'
+import { CliExit } from '../../../../cli/exit.js'
 import { isInteractive } from '../../../../config/tty.js'
 import { installCommand } from '../../../db/install.js'
 import { installEqlStep } from '../install-eql.js'
@@ -102,5 +103,37 @@ describe('installEqlStep', () => {
     expect(vi.mocked(installCommand).mock.calls[0][0].eqlVersion).toBe('2')
     expect(result.eqlInstalled).toBe(false)
     expect(result.eqlMigrationPending).toBe(true)
+  })
+
+  it('re-throws CliExit instead of reframing it as a connection failure', async () => {
+    // `installCommand` throws CliExit for hard stops it has ALREADY reported on
+    // with its own actionable error (e.g. an unsafe `--name`). The broad catch
+    // below it must not swallow that: doing so prints "check your database
+    // connection" for a problem that has nothing to do with the database, and
+    // lets init continue past a hard stop. Re-throwing unwinds to `run()`,
+    // which records the outcome and exits with the carried code.
+    vi.mocked(installCommand).mockRejectedValueOnce(new CliExit(1))
+
+    await expect(
+      installEqlStep.run(baseState, provider),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(p.log.error).not.toHaveBeenCalled()
+  })
+
+  it('still swallows a non-CliExit failure and lets init continue', async () => {
+    // The contrast that gives the test above its meaning: an ordinary throw is
+    // reported generically and init carries on. The message is deliberately
+    // generic — Postgres client errors routinely carry the connection string,
+    // credentials included, so the underlying error is never echoed.
+    vi.mocked(installCommand).mockRejectedValueOnce(
+      new Error('connect ECONNREFUSED'),
+    )
+
+    const result = await installEqlStep.run(baseState, provider)
+
+    expect(result.eqlInstalled).toBe(false)
+    expect(p.log.error).toHaveBeenCalledWith(
+      'EQL install failed — check your database connection and try again.',
+    )
   })
 })

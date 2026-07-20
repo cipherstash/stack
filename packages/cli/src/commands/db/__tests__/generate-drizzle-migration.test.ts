@@ -33,6 +33,15 @@ vi.mock('@clack/prompts', () => ({
 const spawnMock = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ spawnSync: spawnMock }))
 
+// Pin the package manager so the argv assertion below is exact. Detection reads
+// the lockfile in cwd and npm_config_user_agent, both of which vary by how the
+// suite was launched. The runner MAPPING stays real — `pnpm` + `['dlx', …]` is
+// part of what's being asserted, so mocking it would defeat the test.
+vi.mock('@/commands/init/utils.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/commands/init/utils.js')>()),
+  detectPackageManager: () => 'pnpm',
+}))
+
 const { generateDrizzleMigration } = await import('../install.js')
 
 const spinner = p.spinner()
@@ -98,14 +107,20 @@ describe('generateDrizzleMigration', () => {
 
     expect(spawnMock).toHaveBeenCalledTimes(1)
     const [command, argv] = spawnMock.mock.calls[0]
-    // argv array, never a shell string — name/out are discrete inert tokens.
-    expect(typeof command).toBe('string')
-    expect(Array.isArray(argv)).toBe(true)
-    expect(argv).toContain('drizzle-kit')
-    expect(argv).toContain('--name=add-eql')
-    // DEFECT 2: --out must actually be passed, so drizzle-kit writes where we
-    // then look.
-    expect(argv).toContain(`--out=${out}`)
+    // The whole argv, exactly — not `toContain` checks, which would still pass
+    // if the runner prefix (`dlx`) were dropped and drizzle-kit ran under the
+    // wrong resolver. DEFECT 1: name and out are discrete inert tokens in an
+    // array, never interpolated into a shell string. DEFECT 2: `--out` is
+    // actually passed, so drizzle-kit writes where step 2 then looks.
+    expect(command).toBe('pnpm')
+    expect(argv).toEqual([
+      'dlx',
+      'drizzle-kit',
+      'generate',
+      '--custom',
+      '--name=add-eql',
+      `--out=${out}`,
+    ])
 
     const written = readFileSync(join(out, '0000_add-eql.sql'), 'utf-8')
     expect(written).toContain('cs_migrations')

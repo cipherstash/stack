@@ -20,10 +20,12 @@ import { isPackageInstalled } from '../utils.js'
  * picks the Supabase migration / direct mode itself based on `--supabase` and
  * project layout — we don't pre-decide it here.
  *
- * `installCommand` may `process.exit(1)` on a hard failure (mutually-exclusive
- * flag clash, scaffold cancellation). That's fine — by that point the user
- * has already authenticated and written the encryption client, and a clean
- * exit is preferable to a half-installed setup.
+ * `installCommand` ends init on a hard failure (mutually-exclusive flag clash,
+ * scaffold cancellation, an unsafe `--name`) — either by calling
+ * `process.exit(1)` directly or by throwing `CliExit`, which the catch below
+ * re-throws. That's fine — by that point the user has already authenticated
+ * and written the encryption client, and a clean exit is preferable to a
+ * half-installed setup.
  */
 export const installEqlStep: InitStep = {
   id: 'install-eql',
