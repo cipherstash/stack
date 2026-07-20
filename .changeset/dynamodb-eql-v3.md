@@ -28,9 +28,9 @@ Notes on capability:
   that mint an `hm` term — the `*Eq` family, plus `TextOrd`/`TextOrdOre`/
   `TextSearch`. Ordering and bloom-filter terms have no DynamoDB query surface
   and are not stored, so those columns remain decryptable but not queryable.
-- EQL v3 has no `encryptedField` equivalent yet (deferred, not decided
-  against), so per-leaf nested object encryption still requires an EQL v2
-  table. v3 can encrypt a whole subtree with `types.Json`.
+- EQL v3 has no `encryptedField` authoring form, so per-leaf nested object
+  encryption currently requires an EQL v2 table. v3 can encrypt a whole
+  subtree with `types.Json`.
 - Audit metadata on `decryptModel` / `bulkDecryptModels` requires the nominal
   client; the `EncryptionV3` client has no audit surface on decrypt.
 

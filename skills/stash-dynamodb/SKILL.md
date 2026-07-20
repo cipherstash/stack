@@ -64,9 +64,9 @@ EQL v2's `encryptedField` encrypts *selected leaves in place*. The item keeps it
 { "profile": { "ssn__source": "<ciphertext>", "city": "Sydney" } }
 ```
 
-EQL v3 has no `encryptedField` yet — a nested group is a compile error, since a v3 column map holds only `types.*` domains. This is deferred work rather than a closed design decision (`packages/stack/src/eql/v3/columns.ts`: "Nested fields are deferred to later increments"), so check the current release before assuming it is still missing.
+EQL v3 has no `encryptedField` authoring form — a nested group is a compile error, since a v3 column map holds only `types.*` domains.
 
-The nearest v3 equivalent today is `types.Json`, which encrypts the **whole subtree as a single value**:
+The nearest v3 equivalent is `types.Json`, which encrypts the **whole subtree as a single value**:
 
 ```jsonc
 // schema: profile: types.Json("profile")
