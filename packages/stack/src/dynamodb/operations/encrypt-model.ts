@@ -1,4 +1,5 @@
 import { type Result, withResult } from '@byteslice/result'
+import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
 import { logger } from '@/utils/logger'
 import {
   deepClone,
@@ -50,7 +51,14 @@ export class EncryptModelOperation<
         }
 
         const data = deepClone(encryptResult.data)
-        const encryptedAttrs = Object.keys(this.table.build().columns)
+        // Property names, NOT `build().columns` keys: for v3 those are the DB
+        // column names, which differ whenever a column is declared
+        // `emailAddress: types.TextEq('email_address')`. The encrypted model
+        // coming back from the client is keyed by property name, so matching on
+        // config keys silently missed the attribute entirely.
+        const { columnPaths: encryptedAttrs } = resolveEncryptColumnMap(
+          this.table,
+        )
 
         return toEncryptedDynamoItem(data, encryptedAttrs) as T
       },

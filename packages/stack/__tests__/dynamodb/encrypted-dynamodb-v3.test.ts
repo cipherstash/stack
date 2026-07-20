@@ -368,6 +368,66 @@ describe('nested attributes with a v3 table', () => {
   })
 })
 
+describe('a v3 column whose property differs from its DB name', () => {
+  // Regression: `encryptedAttrs` was derived from `build().columns`, which for
+  // v3 is keyed by DB name, while the encrypted model is keyed by property
+  // name. They never matched, so the attribute was never split — no __source,
+  // no __hmac, and the payload's `i` block was mangled to `i__source`. Decrypt
+  // still round-tripped, so nothing surfaced it; only a key condition that
+  // silently matched nothing would have.
+  const renamed = encryptedTable('users_v3_renamed', {
+    emailAddress: types.TextEq('email_address'),
+  })
+
+  let renamedDynamo: EncryptedDynamoDBInstance
+  let renamedClient: EncryptionClient
+
+  beforeAll(async () => {
+    renamedClient = await Encryption({
+      schemas: [renamed] as never,
+      config: { eqlVersion: 3 },
+    })
+    renamedDynamo = encryptedDynamoDB({ encryptionClient: renamedClient })
+  })
+
+  it('splits the attribute under its property name, with an __hmac', async () => {
+    const result = await renamedDynamo.encryptModel(
+      { id: '1', emailAddress: 'a@b.com' },
+      renamed,
+    )
+    if (result.failure) throw new Error(result.failure.message)
+
+    expect(Object.keys(result.data).sort()).toEqual([
+      'emailAddress__hmac',
+      'emailAddress__source',
+      'id',
+    ])
+    // The payload's identifier block must never leak into an attribute.
+    expect(JSON.stringify(result.data)).not.toContain('i__source')
+  })
+
+  it('round-trips, and the query term matches the stored __hmac', async () => {
+    const original = { id: '2', emailAddress: 'c@d.com' }
+
+    const encrypted = await renamedDynamo.encryptModel(original, renamed)
+    if (encrypted.failure) throw new Error(encrypted.failure.message)
+
+    const decrypted = await renamedDynamo.decryptModel(encrypted.data, renamed)
+    if (decrypted.failure) throw new Error(decrypted.failure.message)
+    expect(decrypted.data).toEqual(original)
+
+    const term = await renamedClient.encryptQuery('c@d.com', {
+      table: renamed as never,
+      column: renamed.emailAddress as never,
+    })
+    if (term.failure) throw new Error(term.failure.message)
+
+    expect((term.data as { hm: string }).hm).toBe(
+      (encrypted.data as Record<string, unknown>).emailAddress__hmac,
+    )
+  })
+})
+
 describe('the __hmac key-condition path with a v3 table', () => {
   it('mints, via encryptQuery, the same HMAC the item is stored under', async () => {
     const email = 'heidi@example.com'

@@ -15,6 +15,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  deepClone,
   isV3Table,
   toEncryptedDynamoItem,
   toItemWithEqlPayloads,
@@ -203,5 +204,78 @@ describe('toItemWithEqlPayloads for a v3 table', () => {
       email: { i: { c: 'email', t: 'users' }, v: 3, c: 'email-ct' },
       role: 'admin',
     })
+  })
+})
+
+describe('regressions found in review', () => {
+  it('does not mistake a nested plaintext object with a `c` key for a payload', () => {
+    // `c` is an ordinary attribute name (country, currency, count). Treating
+    // it as a ciphertext rewrote the object to `<attr>__source` and DISCARDED
+    // every sibling key — silent data loss on a PutCommand.
+    const item = { shipping: { address: { c: 'AU', street: '1 Main St' } } }
+
+    expect(toEncryptedDynamoItem(item, encryptedAttrs)).toEqual(item)
+  })
+
+  it('does not drop a plaintext attribute that merely ends in __hmac', () => {
+    const item = { pk: 'u#1', signature__hmac: 'an app-level hmac' }
+
+    expect(toItemWithEqlPayloads(item, users)).toEqual(item)
+  })
+
+  it('does not treat an unregistered nested __source attribute as an envelope', () => {
+    const item = { grp: { unrelated__source: 'plaintext' } }
+
+    expect(toItemWithEqlPayloads(item, users)).toEqual(item)
+  })
+
+  it('identifies a column by its DB name when it differs from the property', () => {
+    // `emailAddress: types.TextEq('email_address')` — matching must happen on
+    // the property name, identification on the DB name.
+    const t = encryptedTable('t', {
+      emailAddress: types.TextEq('email_address'),
+    })
+
+    const stored = toEncryptedDynamoItem(
+      {
+        emailAddress: {
+          v: 3,
+          i: { t: 't', c: 'email_address' },
+          c: 'CT',
+          hm: 'H',
+        },
+      },
+      Object.keys(t.buildColumnKeyMap()),
+    )
+    expect(stored).toEqual({
+      emailAddress__source: 'CT',
+      emailAddress__hmac: 'H',
+    })
+
+    expect(toItemWithEqlPayloads(stored, t)).toEqual({
+      emailAddress: { i: { c: 'email_address', t: 't' }, v: 3, c: 'CT' },
+    })
+  })
+})
+
+describe('deepClone preserves structured values', () => {
+  it('preserves Date instances — the whole Timestamp domain family depends on it', () => {
+    const at = new Date('2020-01-02T03:04:05.000Z')
+
+    expect(deepClone(at)).toBeInstanceOf(Date)
+    expect(deepClone({ at }).at.getTime()).toBe(at.getTime())
+  })
+
+  it('preserves Map, Set and typed arrays', () => {
+    expect(deepClone(new Map([['a', 1]])).get('a')).toBe(1)
+    expect(deepClone(new Set([1, 2])).has(2)).toBe(true)
+    expect(deepClone(new Uint8Array([1, 2]))).toBeInstanceOf(Uint8Array)
+  })
+
+  it('does not blow the stack on a circular reference', () => {
+    const o: Record<string, unknown> = { a: 1 }
+    o.self = o
+
+    expect(() => deepClone(o)).not.toThrow()
   })
 })

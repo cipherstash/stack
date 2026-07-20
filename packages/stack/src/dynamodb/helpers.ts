@@ -1,5 +1,7 @@
 import type { ProtectErrorCode } from '@cipherstash/protect-ffi'
 import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
+import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
+import type { AnyV3Table } from '@/eql/v3'
 import type { EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
 import type { AnyEncryptedTable, EncryptedDynamoDBError } from './types'
@@ -11,25 +13,15 @@ export const searchTermAttrSuffix = '__hmac'
  * Which EQL wire version to synthesize when rebuilding an envelope from the
  * stored `__source` attribute.
  *
- * v2 columns are `EncryptedColumn` instances from `@/schema`; v3 columns are
- * the concrete-domain classes from `@/eql/v3`, which are the only ones carrying
- * `getQueryCapabilities`. That method is the discriminator used elsewhere in
- * the codebase (see `encryption/helpers/infer-index-type.ts`), so reuse it
- * rather than inventing a second signal.
- *
- * A v2 table's builders may nest (`encryptedField` groups columns under an
- * object), so walk one level rather than assuming a flat map. v3 has no nested
- * columns at all.
+ * `buildColumnKeyMap` is the canonical v3 marker in this codebase — see
+ * `resolveEqlVersion` (`encryption/index.ts`) and `types.ts`, which document it
+ * as *the* signal. Only v3 tables define it.
  */
-export function isV3Table(table: AnyEncryptedTable): boolean {
-  return Object.values(table.columnBuilders).some(isV3Column)
-}
-
-function isV3Column(builder: unknown): boolean {
-  if (builder === null || typeof builder !== 'object') return false
-  if ('getQueryCapabilities' in builder) return true
-  // A v2 nested group: `{ ssn: encryptedField(...), address: { ... } }`.
-  return Object.values(builder as Record<string, unknown>).some(isV3Column)
+export function isV3Table(table: AnyEncryptedTable): table is AnyV3Table {
+  return (
+    'buildColumnKeyMap' in table &&
+    typeof table.buildColumnKeyMap === 'function'
+  )
 }
 
 export class EncryptedDynamoDBErrorImpl
@@ -138,23 +130,28 @@ export function throwPreservingCode(failure: {
   throw error
 }
 
+/**
+ * Clone caller input before it reaches the FFI, so encryption never mutates a
+ * caller's object.
+ *
+ * `structuredClone` rather than a hand-rolled `Object.entries` reduce: the
+ * reduce flattened every non-plain object to `{}`, which silently destroyed
+ * `Date` values — making the whole `types.Timestamp*` / `types.Date*` domain
+ * family unusable through this adapter — and blew the stack on a circular
+ * reference. `structuredClone` handles Date, Map, Set, TypedArray and cycles
+ * natively. Values it cannot structurally clone fall back to the original
+ * reference rather than throwing.
+ */
 export function deepClone<T>(obj: T): T {
   if (obj === null || typeof obj !== 'object') {
     return obj
   }
 
-  if (Array.isArray(obj)) {
-    return obj.map((item) => deepClone(item)) as unknown as T
+  try {
+    return structuredClone(obj)
+  } catch {
+    return obj
   }
-
-  return Object.entries(obj as Record<string, unknown>).reduce(
-    (acc, [key, value]) => ({
-      // biome-ignore lint/performance/noAccumulatingSpread: TODO later
-      ...acc,
-      [key]: deepClone(value),
-    }),
-    {} as T,
-  )
 }
 
 /**
@@ -168,6 +165,10 @@ export function deepClone<T>(obj: T): T {
  * keys, so state them structurally.
  */
 type StoredEqlPayload = {
+  /** Wire version. Present on every payload in both versions. */
+  v?: unknown
+  /** Identifier `{ t, c }`. Present on every payload in both versions. */
+  i?: unknown
   /** Absent on v3 scalars; `'ct'` on v2 scalars; `'sv'` on JSON in both. */
   k?: 'ct' | 'sv'
   /** Scalar ciphertext. */
@@ -176,6 +177,23 @@ type StoredEqlPayload = {
   hm?: unknown
   /** ste_vec entries for a JSON document. */
   sv?: unknown
+}
+
+/**
+ * Is this value an EQL payload, as opposed to a plaintext object that merely
+ * looks like one?
+ *
+ * `v` and `i` are the discriminators, deliberately: they are the same keys the
+ * FFI itself uses to decide whether a value is encrypted, and every payload in
+ * both wire versions carries both. Testing for a ciphertext alone is not
+ * enough — `c` is an ordinary attribute name (country, currency, count), and
+ * treating `{ c: 'AU', d: 1 }` as a payload silently rewrites it to
+ * `<attr>__source` and DISCARDS every sibling key.
+ */
+function isStoredEqlPayload(value: unknown): value is StoredEqlPayload {
+  if (value === null || typeof value !== 'object') return false
+  if (!('v' in value) || !('i' in value)) return false
+  return 'c' in value || 'sv' in value
 }
 
 export function toEncryptedDynamoItem(
@@ -191,14 +209,14 @@ export function toEncryptedDynamoItem(
       return { [attrName]: attrValue }
     }
 
-    // Handle encrypted payload
+    // Handle encrypted payload. Both arms require the value to actually BE a
+    // payload — a registered attribute name is not sufficient on its own, and
+    // for a nested value the name tells us nothing at all.
     if (
-      encryptedAttrs.includes(attrName) ||
-      (isNested &&
-        typeof attrValue === 'object' &&
-        'c' in (attrValue as object))
+      (encryptedAttrs.includes(attrName) || isNested) &&
+      isStoredEqlPayload(attrValue)
     ) {
-      const encryptPayload = attrValue as StoredEqlPayload
+      const encryptPayload = attrValue
 
       // A JSON document, in either wire version, keeps its `k: 'sv'` tag. Its
       // index terms live *inside* the `sv` entries, so the whole array is
@@ -260,6 +278,25 @@ export function toItemWithEqlPayloads(
   encryptionSchema: AnyEncryptedTable,
 ): Record<string, unknown> {
   const v = isV3Table(encryptionSchema) ? 3 : 2
+  // Hoisted: `build()` is not memoized, and this used to run once per attribute
+  // per nesting level per item.
+  const encryptConfig = encryptionSchema.build()
+  // `columnPaths` are the keys a model's fields are MATCHED on (JS property
+  // names); `toColumnName` maps a match to the name the FFI config is keyed by.
+  // For v3 those differ whenever a column is declared as
+  // `emailAddress: types.TextEq('email_address')` — matching on the config keys
+  // instead would miss the attribute entirely, drop its `__hmac`, and recurse
+  // into the payload. Reuses the core resolver rather than re-deriving it.
+  const { columnPaths, toColumnName } =
+    resolveEncryptColumnMap(encryptionSchema)
+
+  /** Resolve an attribute back to the column path it was written from. */
+  function matchColumn(leaf: string, prefix: string): string | undefined {
+    const dotted = prefix ? `${prefix}.${leaf}` : leaf
+    if (columnPaths.includes(dotted)) return dotted
+    if (columnPaths.includes(leaf)) return leaf
+    return undefined
+  }
 
   function processValue(
     attrName: string,
@@ -271,33 +308,31 @@ export function toItemWithEqlPayloads(
       return { [attrName]: attrValue }
     }
 
-    // Skip HMAC fields
+    // Drop the search term — but only when it belongs to a column we know
+    // about. An unrelated customer attribute that merely ends in `__hmac`
+    // (an app-level signature, say) must survive the read untouched.
     if (attrName.endsWith(searchTermAttrSuffix)) {
-      return {}
+      const term = attrName.slice(0, -searchTermAttrSuffix.length)
+      if (matchColumn(term, prefix)) return {}
+      return { [attrName]: attrValue }
     }
 
-    const encryptConfig = encryptionSchema.build()
-    const encryptedAttrs = Object.keys(encryptConfig.columns)
     const columnName = attrName.slice(0, -ciphertextAttrSuffix.length)
 
-    // A nested attribute's registered column name depends on the authoring
-    // convention: `encryptedField('example.protected')` (and v3's dotted
-    // property form) register the full dotted path, whereas
-    // `encryptedField('amount')` under a `details` group registers just the
-    // leaf. Prefer the dotted path when the schema knows it, else fall back to
-    // the leaf — so both conventions rebuild an identifier that matches how the
-    // column was declared, rather than always guessing the leaf.
-    const dottedPath = prefix ? `${prefix}.${columnName}` : columnName
-    const identifierColumn = encryptedAttrs.includes(dottedPath)
-      ? dottedPath
-      : columnName
+    // Resolve the attribute back to a declared column. `matchColumn` prefers
+    // the dotted path (`encryptedField('example.protected')`, and v3's dotted
+    // property form) and falls back to the bare leaf (`encryptedField('amount')`
+    // under a `details` group), so both authoring conventions resolve.
+    const matched = matchColumn(columnName, prefix)
 
-    // Handle encrypted payload
-    if (
-      attrName.endsWith(ciphertextAttrSuffix) &&
-      (encryptedAttrs.includes(identifierColumn) || isNested)
-    ) {
-      const i = { c: identifierColumn, t: encryptConfig.tableName }
+    // Handle encrypted payload. An unmatched attribute is NOT an envelope, even
+    // when nested — previously `|| isNested` made every nested `*__source` a
+    // decrypt target, so an unrelated customer attribute was handed to the FFI.
+    if (attrName.endsWith(ciphertextAttrSuffix) && matched) {
+      // Match on the property name, but identify by the DB column name — they
+      // differ whenever a v3 column is declared
+      // `emailAddress: types.TextEq('email_address')`.
+      const i = { c: toColumnName(matched), t: encryptConfig.tableName }
 
       // A JSON document is stored as its ste_vec array and must be rebuilt with
       // `k: 'sv'`. Look the config up by the resolved identifier so a nested
@@ -305,7 +340,7 @@ export function toItemWithEqlPayloads(
       // the leaf it would be missing, and would be rebuilt as a scalar.
       // A v3 column builds the same `{ cast_as, indexes }` shape as a v2 one,
       // so this detection needs no version branch.
-      const columnConfig = encryptConfig.columns[identifierColumn]
+      const columnConfig = encryptConfig.columns[toColumnName(matched)]
       if (columnConfig?.cast_as === 'json' && columnConfig.indexes.ste_vec) {
         return {
           [columnName]: {
