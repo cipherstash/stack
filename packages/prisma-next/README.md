@@ -12,7 +12,7 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 - 🔍 Searchable encryption — equality, free-text search, range, order, JSON path and containment
 - 🎯 Type-safe query operators — EQL v3 uses the EQL-derived `eql*` vocabulary (`eqlEq`, `eqlMatch`, `eqlGt`, `eqlAsc`, …); the legacy v2 surface keeps its `cipherstash*` names
 - ⚡ Bulk encrypt / bulk decrypt coalescing — one SDK round-trip per `(table, column)` group per query
-- 🧩 One-call setup via `cipherstashFromStack({ contractJson })` (v2: `cipherstashFromStackV2`) — no duplicate stack schema to maintain
+- 🧩 One-call setup via `cipherstashFromStack({ contractJson })` — no duplicate stack schema to maintain
 - 🛡️ Plaintext redaction on every implicit serialisation path (`toJSON`, `toString`, `util.inspect`, …)
 
 ## Installation
@@ -91,15 +91,14 @@ See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encr
 
 | Subpath          | Purpose                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `./v3`           | The complete EQL v3 surface: `cipherstashFromStack`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, envelopes, middleware, SDK adapter |
-| `./stack`        | One-call setup against `@cipherstash/stack` (EQL v2): `cipherstashFromStackV2`, `deriveStackSchemas`, `createCipherstashSdk` |
-| `./control`      | `SqlControlExtensionDescriptor` (contract space + pack meta + codec lifecycle hooks)                   |
-| `./runtime`      | Six envelope classes + `CipherstashSdk` + codec runtime + `decryptAll` + four free-standing helpers    |
-| `./middleware`   | `bulkEncryptMiddleware(sdk)`                                                                           |
+| `./v3`           | The complete EQL v3 surface: `cipherstashFromStack`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, envelopes, `bulkEncryptMiddlewareV3`, SDK adapter |
+| `./stack`        | One-call setup against `@cipherstash/stack`: `cipherstashFromStack`, `deriveStackSchemasV3`, `createCipherstashV3Sdk` |
+| `./control`      | `SqlControlExtensionDescriptor` (contract space + pack meta + v3 codec lifecycle hooks)                |
+| `./runtime`      | Envelope classes + `CipherstashSdk` + v3 codec runtime + `decryptAll` + `bulkEncryptMiddlewareV3`      |
 | `./pack`         | `cipherstashPackMeta` for TS contract authoring                                                        |
-| `./column-types` | Six TS factories: `encryptedString` / `encryptedDouble` / `encryptedBigInt` / `encryptedDate` / `encryptedBoolean` / `encryptedJson` |
+| `./column-types` | The v3 domain factories: `text` / `textSearch` / `integerOrd` / `bigIntOrd` / `date` / `boolean` / `json` / … |
 
-`./control`, `./runtime`, and `./middleware` are tree-shakable. `./stack` sits on top of `./runtime` + `./middleware` and additionally pulls in `@cipherstash/stack`; consumers who implement `CipherstashSdk` against a different KMS skip `./stack` and pay no `@cipherstash/stack` bundle cost.
+`./control` and `./runtime` are tree-shakable. `./stack` sits on top of `./runtime` and additionally pulls in `@cipherstash/stack`; consumers who implement `CipherstashSdk` against a different KMS skip `./stack` and pay no `@cipherstash/stack` bundle cost.
 
 ## Authentication
 

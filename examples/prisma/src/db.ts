@@ -9,10 +9,6 @@
  * returns ready-to-spread arrays for `extensions` and `middleware`.
  * Override `schemasV3` only if you have additional tables the contract
  * does not model.
- *
- * A v3 client is v3-only: a contract carrying v2 cipherstash codec ids
- * is rejected at setup (use `cipherstashFromStackV2` from
- * `@cipherstash/prisma-next/stack` for a v2 contract).
  */
 
 import 'dotenv/config'

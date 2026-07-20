@@ -11,10 +11,8 @@ encrypted columns directly in `schema.prisma`; Prisma Next's migration system
 installs the EQL bundle in the same sweep that creates your tables — there is no
 separate `stash eql install` step.
 
-> This is the **EQL v3** surface (the documented one). A legacy EQL v2 surface
-> exists for existing deployments (`cipherstashFromStackV2` from
-> `@cipherstash/prisma-next/stack`, `cipherstash*` operators); everything below
-> is v3. New projects use v3.
+> `@cipherstash/prisma-next` is **EQL v3 only** — there is no EQL v2 surface.
+> Everything below is v3.
 
 In EQL v3 every encrypted column is a **concrete Postgres domain**
 (`public.eql_v3_text_search`, `public.eql_v3_double_ord`, …) whose query
@@ -109,9 +107,7 @@ export const db = postgres<Contract>({
 the contract (one `public.eql_v3_*` domain per column), constructs the
 `@cipherstash/stack` `EncryptionV3` client from your `CS_*` env vars or local
 profile, builds the SDK adapter, and returns ready-to-spread `extensions` and
-`middleware`. A v3 client is v3-only — a contract carrying v2 codec ids is
-rejected at setup (use `cipherstashFromStackV2` from
-`@cipherstash/prisma-next/stack` for a v2 contract).
+`middleware`.
 
 ## Install the EQL bundle (part of your migration, not a separate step)
 
@@ -170,7 +166,7 @@ column type is `DoubleOrd`. Envelope ↔ column pairing: `EncryptedString`
 
 Operators live on the encrypted column inside `.where((u) => …)` and encrypt the
 search term for you — Prisma Next never sees plaintext in a query. EQL v3 uses the
-EQL-derived `eql*` vocabulary (the legacy v2 surface keeps `cipherstash*` names):
+EQL-derived `eql*` vocabulary:
 
 | Operator | Meaning | Requires |
 |---|---|---|
@@ -227,13 +223,13 @@ use `@cipherstash/stack/wasm-inline`.
 | `@cipherstash/prisma-next/v3` | The v3 surface: `cipherstashFromStack`, the SDK adapter, envelopes/middleware |
 | `@cipherstash/prisma-next/control` | The extension pack for `extensionPacks: [...]` |
 | `@cipherstash/prisma-next/runtime` | Envelope classes, `decryptAll`, `eql*` operators, `EncryptedString.from()`… |
-| `@cipherstash/prisma-next/stack` | Legacy EQL v2 one-call setup (`cipherstashFromStackV2`) |
+| `@cipherstash/prisma-next/stack` | One-call setup against `@cipherstash/stack`: `cipherstashFromStack` |
 
 ## Gotchas
 
 - **EQL installs via `prisma-next migration apply`, never `stash eql install`.**
 - **Column type (schema, domain-named) ≠ runtime envelope (value, primitive-named).**
   `DoubleOrd` column ↔ `EncryptedNumber.from(...)` value.
-- **A v3 client rejects a v2 contract** at `cipherstashFromStack`. Regenerate the
-  contract (`prisma-next contract emit`) after switching a column to a v3 type.
+- **Regenerate the contract** (`prisma-next contract emit`) after changing a
+  column's encrypted type, so `cipherstashFromStack` and the migrations agree.
 - **Never log or read `~/.cipherstash`** or `.env*` credential files (see `stash-cli`).
