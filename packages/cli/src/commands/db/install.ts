@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -8,7 +8,12 @@ import {
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
 import pg from 'pg'
-import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
+import { CliExit } from '@/cli/exit.js'
+import {
+  detectPackageManager,
+  runnerArgv,
+  runnerCommand,
+} from '@/commands/init/utils.js'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
 import { findConfigFile, loadStashConfig } from '@/config/index.js'
 import { isInteractive } from '@/config/tty.js'
@@ -36,6 +41,16 @@ import {
 
 const DEFAULT_MIGRATION_NAME = 'install-eql'
 const DEFAULT_DRIZZLE_OUT = 'drizzle'
+
+/**
+ * File-system-safe migration name: what drizzle-kit accepts, and shell-inert.
+ *
+ * Lives here rather than in `commands/eql/migration.ts` (the v3 generator) only
+ * because that module already imports from this one — keeping the constant on
+ * this side of the existing edge avoids an import cycle. Both generators share
+ * it; there must not be a second copy.
+ */
+export const SAFE_MIGRATION_NAME = /^[\w-]+$/
 
 export interface InstallOptions {
   force?: boolean
@@ -467,8 +482,12 @@ export function printNextSteps(): void {
  * Uses `drizzle-kit generate --custom` to scaffold an empty migration,
  * then loads the EQL install SQL (bundled by default, or from GitHub with
  * `--latest`) and writes it into the file.
+ *
+ * Exported for unit tests; not part of the CLI's public surface. Failures
+ * throw {@link CliExit} rather than calling `process.exit` so the telemetry
+ * `finally` in `main.ts` still runs (and the branches stay testable).
  */
-async function generateDrizzleMigration(
+export async function generateDrizzleMigration(
   s: ReturnType<typeof p.spinner>,
   options: {
     name?: string
@@ -480,8 +499,29 @@ async function generateDrizzleMigration(
   },
 ) {
   const migrationName = options.name ?? DEFAULT_MIGRATION_NAME
+  if (!SAFE_MIGRATION_NAME.test(migrationName)) {
+    p.log.error(messages.eql.migrationBadName)
+    p.outro('Migration aborted.')
+    throw new CliExit(1)
+  }
   const outDir = resolve(options.out ?? DEFAULT_DRIZZLE_OUT)
-  const drizzleCmd = `${runnerCommand(detectPackageManager(), '').trim()} drizzle-kit generate --custom --name=${migrationName}`
+
+  // Invoke via spawnSync with an argv array (no shell), so a `--name` carrying
+  // spaces or shell metacharacters is one inert token, never word-split or
+  // executed. `--out` is always passed so drizzle-kit WRITES where we then
+  // LOOK — otherwise a project whose drizzle.config.ts points elsewhere would
+  // have drizzle-kit write there while we search `drizzle/` and fail in step 2.
+  const pm = detectPackageManager()
+  const { command, prefixArgs } = runnerArgv(pm)
+  const drizzleArgs = [
+    ...prefixArgs,
+    'drizzle-kit',
+    'generate',
+    '--custom',
+    `--name=${migrationName}`,
+    `--out=${outDir}`,
+  ]
+  const drizzleCmd = `${runnerCommand(pm, '').trim()} ${drizzleArgs.slice(prefixArgs.length).join(' ')}`
 
   if (options.dryRun) {
     p.log.info('Dry run — no changes will be made.')
@@ -501,32 +541,23 @@ async function generateDrizzleMigration(
   // Step 1: Generate a custom Drizzle migration
   s.start('Generating custom Drizzle migration...')
 
-  try {
-    execSync(drizzleCmd, {
-      stdio: 'pipe',
-      encoding: 'utf-8',
-    })
-    s.stop('Custom Drizzle migration generated.')
-  } catch (error) {
+  const result = spawnSync(command, drizzleArgs, {
+    stdio: 'pipe',
+    encoding: 'utf-8',
+  })
+  if (result.status !== 0) {
     s.stop('Failed to generate migration.')
-    const stderr =
-      error !== null &&
-      typeof error === 'object' &&
-      'stderr' in error &&
-      typeof error.stderr === 'string'
-        ? error.stderr.trim()
-        : undefined
-    if (stderr) {
-      p.log.error(stderr)
-    } else {
-      p.log.error(
-        error instanceof Error ? error.message : 'Unknown error occurred.',
-      )
-    }
+    const stderr = result.stderr?.trim()
+    p.log.error(
+      stderr ||
+        result.error?.message ||
+        `drizzle-kit exited with status ${result.status ?? 'unknown'}.`,
+    )
     p.log.info('Make sure drizzle-kit is installed: npm install -D drizzle-kit')
     p.outro('Migration aborted.')
-    process.exit(1)
+    throw new CliExit(1)
   }
+  s.stop('Custom Drizzle migration generated.')
 
   // Step 2: Find the generated migration file
   s.start('Locating generated migration file...')
@@ -537,8 +568,11 @@ async function generateDrizzleMigration(
   } catch (error) {
     s.stop('Failed to locate migration file.')
     p.log.error(error instanceof Error ? error.message : String(error))
+    p.log.info(
+      'If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.',
+    )
     p.outro('Migration aborted.')
-    process.exit(1)
+    throw new CliExit(1)
   }
 
   // Step 3: Load the EQL SQL (bundled or from GitHub). Thread supabase /
@@ -560,7 +594,7 @@ async function generateDrizzleMigration(
       p.log.error(error instanceof Error ? error.message : String(error))
       cleanupMigrationFile(generatedMigrationPath)
       p.outro('Migration aborted.')
-      process.exit(1)
+      throw new CliExit(1)
     }
   } else {
     s.start('Loading bundled EQL install script...')
@@ -572,7 +606,7 @@ async function generateDrizzleMigration(
       p.log.error(error instanceof Error ? error.message : String(error))
       cleanupMigrationFile(generatedMigrationPath)
       p.outro('Migration aborted.')
-      process.exit(1)
+      throw new CliExit(1)
     }
   }
 
@@ -592,7 +626,7 @@ async function generateDrizzleMigration(
     p.log.error(error instanceof Error ? error.message : String(error))
     cleanupMigrationFile(generatedMigrationPath)
     p.outro('Migration aborted.')
-    process.exit(1)
+    throw new CliExit(1)
   }
 
   // Step 5: Sweep for sibling migrations that drizzle-kit may have emitted

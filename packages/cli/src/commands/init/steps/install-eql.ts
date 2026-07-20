@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { CliExit } from '../../../cli/exit.js'
 import { isInteractive } from '../../../config/tty.js'
 import { pinnedSpec } from '../../../runtime-versions.js'
 import { installCommand } from '../../db/install.js'
@@ -105,7 +106,12 @@ export const installEqlStep: InitStep = {
         // config scaffolded — this is NOT a one-shot `--database-url` run.
         scaffoldConfig: 'ensure',
       })
-    } catch {
+    } catch (error) {
+      // A cooperative exit is a hard stop the installer already reported on
+      // (it printed its own actionable error and outro). Re-throw so it
+      // unwinds to `run()` and exits, rather than being reframed below as a
+      // database-connection problem and letting init continue.
+      if (error instanceof CliExit) throw error
       // Don't echo the underlying error — Postgres client errors routinely
       // include the connection string (with credentials) in the message,
       // and `state.databaseUrl` flows into this code path.
