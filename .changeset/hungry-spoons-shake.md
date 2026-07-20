@@ -2,14 +2,23 @@
 'stash': patch
 ---
 
-Fix `stash impl` hanging on CI runners that set `CI=1` or `CI=TRUE`.
+Fix `stash impl` and `stash init` hanging on CI runners that allocate a TTY.
 
-`stash impl` decided whether to prompt with an inline `process.env.CI !== 'true'`
-check, which only recognised the exact lowercase spelling. On a CI runner that
-sets `CI=1` or `CI=TRUE` and allocates a TTY, the command believed it was
-interactive and blocked forever on the plan-summary confirmation or the
-agent-target picker — a silent hang with no error and no timeout.
+Three prompts decided whether to run interactively without going through the
+shared TTY helper, so on a CI runner with an allocated TTY they rendered a clack
+prompt and blocked forever on `/dev/tty` — a silent hang with no error and no
+timeout:
 
-The gate now uses the shared `isInteractive()` helper, the same one `stash plan`
-already used, which treats `1`/`true` in any case as CI. `stash impl` now takes
-the non-interactive path on those runners, matching `stash plan`.
+- `stash impl` gated on an inline `process.env.CI !== 'true'`, which only
+  recognised the exact lowercase spelling. Runners that set `CI=1` or `CI=TRUE`
+  blocked on the plan-summary confirmation or the agent-target picker.
+- `stash init`'s offer to chain into `stash plan`, and its Proxy-vs-SDK
+  question, gated on `process.stdout.isTTY` and did not consult `CI` at all —
+  so they hung on any CI runner with a TTY, whatever the spelling. Gating on
+  stdout was also the wrong stream: a redirected stdin still hangs a prompt.
+
+All three now use the shared `isInteractive()` helper (stdin is a TTY and `CI`
+is not set to `1`/`true` in any case), matching `stash plan`. Non-interactive
+runs take the path they always should have: `stash init` skips the chain offer
+and prints the `plan --target` hint, the Proxy-vs-SDK question defaults to
+SDK-only, and `stash impl` proceeds without prompting.

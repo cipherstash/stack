@@ -1,5 +1,5 @@
 import * as p from '@clack/prompts'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
 import type { InitState } from '../types.js'
@@ -172,5 +172,66 @@ describe('initCommand — honest summary', () => {
       expect.stringContaining('✓ Encryption client scaffolded'),
       'Setup complete',
     )
+  })
+})
+
+describe('initCommand — CI detection on the `stash plan` chain offer', () => {
+  // Regression: this gate was `process.stdout.isTTY`, which consulted CI not
+  // at all. A CI runner with an allocated TTY reached the confirm and blocked
+  // on /dev/tty forever — a hang, not an error. It also asked about the wrong
+  // stream: a redirected stdin still hangs the prompt. Now `isInteractive()`
+  // (stdin + isCiEnv, which accepts 1/true in any case).
+  const originalStdinIsTTY = process.stdin.isTTY
+  const originalStdoutIsTTY = process.stdout.isTTY
+
+  // Force BOTH streams. A CI runner that allocates a TTY has stdin *and*
+  // stdout as TTYs — that is the configuration this gate used to hang in, and
+  // setting stdin alone would let the old `process.stdout.isTTY` gate pass
+  // these tests for the wrong reason (vitest's own stdout is not a TTY).
+  beforeEach(() => {
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: true,
+      configurable: true,
+    })
+    Object.defineProperty(process.stdout, 'isTTY', {
+      value: true,
+      configurable: true,
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: originalStdinIsTTY,
+      configurable: true,
+    })
+    Object.defineProperty(process.stdout, 'isTTY', {
+      value: originalStdoutIsTTY,
+      configurable: true,
+    })
+    vi.unstubAllEnvs()
+  })
+
+  for (const ciValue of ['1', 'TRUE', 'true']) {
+    it(`skips the chain offer under CI=${ciValue} even with a TTY`, async () => {
+      vi.stubEnv('CI', ciValue)
+
+      await expect(initCommand({}, {})).resolves.toBeUndefined()
+
+      // Non-interactive must skip the offer, not fail: init still completes,
+      // and steers the user at `plan --target` instead of blocking.
+      expect(vi.mocked(p.confirm)).not.toHaveBeenCalled()
+      expect(vi.mocked(p.outro)).toHaveBeenCalledWith(
+        expect.stringContaining('--target'),
+      )
+    })
+  }
+
+  it('offers the chain when CI is unset and stdin is a TTY', async () => {
+    vi.stubEnv('CI', '')
+    vi.mocked(p.confirm).mockResolvedValueOnce(false)
+
+    await expect(initCommand({}, {})).resolves.toBeUndefined()
+
+    expect(vi.mocked(p.confirm)).toHaveBeenCalledTimes(1)
   })
 })
