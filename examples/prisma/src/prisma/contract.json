@@ -79,7 +79,7 @@
               "preferences": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/eql-v3/eql_v3_json@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_json_search@1",
                   "kind": "scalar",
                   "typeParams": {
                     "capabilities": {
@@ -196,8 +196,8 @@
                   "nullable": false
                 },
                 "preferences": {
-                  "codecId": "cipherstash/eql-v3/eql_v3_json@1",
-                  "nativeType": "public.eql_v3_json",
+                  "codecId": "cipherstash/eql-v3/eql_v3_json_search@1",
+                  "nativeType": "public.eql_v3_json_search",
                   "nullable": false,
                   "typeParams": {
                     "capabilities": {
@@ -1467,13 +1467,13 @@
             },
             {
               "descriptor": {
-                "codecId": "cipherstash/eql-v3/eql_v3_json@1",
+                "codecId": "cipherstash/eql-v3/eql_v3_json_search@1",
                 "isParameterized": true,
                 "meta": {
                   "db": {
                     "sql": {
                       "postgres": {
-                        "nativeType": "public.eql_v3_json"
+                        "nativeType": "public.eql_v3_json_search"
                       }
                     }
                   }
@@ -1485,7 +1485,7 @@
                   }
                 },
                 "targetTypes": [
-                  "public.eql_v3_json"
+                  "public.eql_v3_json_search"
                 ],
                 "traits": [
                   "cipherstash:searchable-json"
@@ -1816,9 +1816,9 @@
           },
           {
             "familyId": "sql",
-            "nativeType": "public.eql_v3_json",
+            "nativeType": "public.eql_v3_json_search",
             "targetId": "postgres",
-            "typeId": "cipherstash/eql-v3/eql_v3_json@1"
+            "typeId": "cipherstash/eql-v3/eql_v3_json_search@1"
           }
         ]
       },

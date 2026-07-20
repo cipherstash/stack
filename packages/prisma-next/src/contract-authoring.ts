@@ -77,6 +77,10 @@ function coreName(bareDomain: string): string {
     )
   }
   const core = bareDomain.slice(EQL_V3_DOMAIN_PREFIX.length)
+  // EQL names the searchable JSON storage domain `json_search`, while the
+  // public Stack/Prisma factory remains the capability-complete `Json` type.
+  // Preserve that stable authoring API across the SQL-domain rename.
+  if (core === 'json_search') return 'Json'
   const i = core.indexOf('_')
   const stem = i === -1 ? core : core.slice(0, i)
   const suffix = i === -1 ? '' : core.slice(i + 1)

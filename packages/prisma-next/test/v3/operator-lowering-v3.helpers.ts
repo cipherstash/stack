@@ -71,7 +71,7 @@ export const BIGINT_ORD_ORE_CODEC_ID =
   'cipherstash/eql-v3/eql_v3_bigint_ord_ore@1'
 export const DATE_ORD_CODEC_ID = 'cipherstash/eql-v3/eql_v3_date_ord@1'
 export const BOOLEAN_CODEC_ID = 'cipherstash/eql-v3/eql_v3_boolean@1'
-export const JSON_CODEC_ID = 'cipherstash/eql-v3/eql_v3_json@1'
+export const JSON_CODEC_ID = 'cipherstash/eql-v3/eql_v3_json_search@1'
 
 /**
  * Build a contract column entry for a v3 codec id, deriving `nativeType`

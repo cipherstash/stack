@@ -6,8 +6,8 @@
  *
  *     eql_v3.eq(<col>, $n::eql_v3.query_<domain>)      -- equality (eqlEq)
  *     eql_v3.gt(<col>, $n::eql_v3.query_<domain>)      -- comparison (eqlGt)
- *     eql_v3.contains(<col>, $n::eql_v3.query_<domain>) -- bloom free-text (eqlMatch)
- *     <col> OPERATOR(public.@>) $n::eql_v3.query_jsonb  -- JSON containment (eqlJsonContains)
+ *     eql_v3.matches(<col>, $n::eql_v3.query_<domain>) -- bloom free-text (eqlMatch)
+ *     <col> OPERATOR(public.@>) $n::eql_v3.query_json  -- JSON containment (eqlJsonContains)
  *     eql_v3.ord_term(<col>) / eql_v3.ord_term_ore(<col>) -- ordering (eqlAsc/eqlDesc)
  *
  * ## Operands are QUERY TERMS, not storage envelopes
@@ -73,7 +73,12 @@
  * shared trait constants.
  */
 
-import { matchNeedleError } from '@cipherstash/stack/adapter-kit'
+import {
+  jsonPathOf,
+  matchNeedleError,
+  parseSelectorSegments,
+  unsupportedLeafReason,
+} from '@cipherstash/stack/adapter-kit'
 import type { CodecTrait } from '@prisma-next/framework-components/codec'
 import type {
   SqlOperationDescriptor,
@@ -161,8 +166,8 @@ interface ColumnContext {
  * across the queryable column domains (`_eq`, `_ord`, `_ord_ore`,
  * `_match`, `_search`); the irregular cases are handled elsewhere:
  * storage-only domains have no query type (they are gated out before
- * a template is built) and `eql_v3_json` maps to the irregular
- * `eql_v3.query_jsonb`, cast explicitly on the JSON path.
+ * a template is built) and `eql_v3_json_search` maps to the irregular
+ * `eql_v3.query_json`, cast explicitly on the JSON path.
  */
 function queryCastForMeta(meta: V3DomainMeta): string | null {
   const prefix = 'eql_v3_'
@@ -558,7 +563,7 @@ function normalizeMatchNeedle(
 
 /**
  * Fuzzy free-text token match on a `text_search`/`text_match` column,
- * lowering to `eql_v3.contains` — NOT SQL pattern matching: matching is
+ * lowering to `eql_v3.matches` — NOT SQL pattern matching: matching is
  * case-insensitive, order- and multiplicity-insensitive, and one-sided
  * (may false-positive). The needle is normalised and guarded by
  * {@link normalizeMatchNeedle} before encryption.
@@ -588,7 +593,7 @@ function matchOperator(): SqlOperationDescriptor {
         lowering: {
           targetFamily: 'sql',
           strategy: 'function',
-          template: `eql_v3.contains({{self}}, {{arg0}}::${cast})`,
+          template: `eql_v3.matches({{self}}, {{arg0}}::${cast})`,
         },
       })
     },
@@ -596,20 +601,17 @@ function matchOperator(): SqlOperationDescriptor {
 }
 
 /**
- * Exact encrypted-JSONB containment on an `eql_v3_json` (`ste_vec`)
- * column: genuine jsonb `@>`, no false positives. `eql_v3_json` has no
- * `eql_v3.contains` overload — containment is the `@>` operator, whose
- * `(eql_v3_json, eql_v3.query_jsonb)` form takes a NARROWED query term
+ * Exact encrypted-JSONB containment on an `eql_v3_json_search` (`ste_vec`)
+ * column: genuine jsonb `@>`, no false positives. `eql_v3_json_search` has no
+ * `eql_v3.matches` overload — containment is the `@>` operator, whose
+ * `(eql_v3_json_search, eql_v3.query_json)` form takes a NARROWED query term
  * (searchableJson → no ciphertext) cast to the irregular
- * `eql_v3.query_jsonb`. The explicit `OPERATOR(public.@>)` spelling
- * plus the cast disambiguate among the four `eql_v3_json @> ?` RHS
+ * `eql_v3.query_json`. The explicit `OPERATOR(public.@>)` spelling
+ * plus the cast disambiguate among the four `eql_v3_json_search @> ?` RHS
  * overloads ("operator is not unique", 42725).
  *
- * This mirrors the drizzle reference's `contains` under the v3 `eql*`
- * naming vocabulary. Selector querying (comparing the value at a
- * JSONPath via `eql_v3.jsonb_path_query_first` — the drizzle
- * reference's `selectorOps`, #651) is tracked for prisma-next in #677;
- * a containedBy direction is exposed by neither adapter.
+ * This mirrors the Drizzle reference's `contains` under the v3 `eql*`
+ * vocabulary. A containedBy direction is exposed by neither adapter.
  */
 function jsonContainsOperator(): SqlOperationDescriptor {
   const method = 'eqlJsonContains'
@@ -651,7 +653,108 @@ function jsonContainsOperator(): SqlOperationDescriptor {
         lowering: {
           targetFamily: 'sql',
           strategy: 'function',
-          template: '{{self}} OPERATOR(public.@>) {{arg0}}::eql_v3.query_jsonb',
+          template: '{{self}} OPERATOR(public.@>) {{arg0}}::eql_v3.query_json',
+        },
+      })
+    },
+  }
+}
+
+type JsonSelectorOp = 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte'
+
+/**
+ * Compare a scalar value at a JSONPath in an encrypted JSON document.
+ *
+ * Equality is value-selector containment, which is exact and can use the
+ * document's functional GIN index. Ordering hashes the path separately and
+ * compares the extracted entry with a ciphertext-free string/number ordering
+ * term. The two query operands deliberately take different query routes.
+ */
+function jsonSelectorOperator(
+  method: string,
+  op: JsonSelectorOp,
+): SqlOperationDescriptor {
+  return {
+    self: {
+      traits: [
+        CIPHERSTASH_TRAIT_SEARCHABLE_JSON,
+      ] as unknown as readonly CodecTrait[],
+    },
+    impl: (
+      self: Expression<ScopeField>,
+      path: unknown,
+      value: unknown,
+    ): Expression<PgBoolReturn> => {
+      const ctx = resolveContext(self, method)
+      gate(ctx, JSON_GATE.capability, JSON_GATE.label, method)
+      if (typeof path !== 'string') {
+        throw operatorError(
+          ctx,
+          method,
+          `cipherstash ${method}: expected a JSONPath string, got ${path === null ? 'null' : typeof path}.`,
+        )
+      }
+
+      let canonicalPath: string
+      try {
+        canonicalPath = jsonPathOf(parseSelectorSegments(path))
+      } catch (error) {
+        throw operatorError(
+          ctx,
+          method,
+          `cipherstash ${method}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+
+      const ordering = op !== 'eq' && op !== 'neq'
+      const reason = unsupportedLeafReason(value, ordering)
+      if (reason !== null) {
+        throw operatorError(ctx, method, `cipherstash ${method}: ${reason}`)
+      }
+
+      if (!ordering) {
+        const needle = asQueryTermParam(
+          ctx,
+          { path: canonicalPath, value },
+          method,
+          'steVecValueSelector',
+        )
+        const contains =
+          '{{self}} OPERATOR(public.@>) {{arg0}}::eql_v3.query_json'
+        return buildOperation({
+          method,
+          args: [ctx.selfAst, needle],
+          returns: { codecId: PG_BOOL_CODEC_ID, nullable: false },
+          lowering: {
+            targetFamily: 'sql',
+            strategy: 'function',
+            template:
+              op === 'eq'
+                ? contains
+                : `({{self}} IS NULL OR NOT (${contains}))`,
+          },
+        })
+      }
+
+      const selector = asQueryTermParam(
+        ctx,
+        canonicalPath,
+        method,
+        'steVecSelector',
+      )
+      const term = asQueryTermParam(ctx, value, method, 'steVecTerm')
+      const queryCast =
+        typeof value === 'string'
+          ? 'eql_v3.query_text_ord'
+          : 'eql_v3.query_double_ord'
+      return buildOperation({
+        method,
+        args: [ctx.selfAst, selector, term],
+        returns: { codecId: PG_BOOL_CODEC_ID, nullable: false },
+        lowering: {
+          targetFamily: 'sql',
+          strategy: 'function',
+          template: `eql_v3.${op}(eql_v3.jsonb_path_query_first({{self}}, {{arg0}}::text), {{arg1}}::${queryCast})`,
         },
       })
     },
@@ -673,7 +776,7 @@ function jsonContainsOperator(): SqlOperationDescriptor {
  *     `eqlNotBetween` (`cipherstash:order-and-range`) →
  *     `eql_v3.gt`/`gte`/`lt`/`lte`, range as a self-parenthesised
  *     `(gte AND lte)` conjunction
- *   - `eqlMatch` (`cipherstash:free-text-search`) → `eql_v3.contains`
+ *   - `eqlMatch` (`cipherstash:free-text-search`) → `eql_v3.matches`
  *     — a bloom-filter TOKEN MATCH (order/multiplicity-insensitive,
  *     one-sided: may false-positive), NOT SQL pattern matching. Guarded
  *     up front: needles the column's match index cannot answer are
@@ -681,9 +784,13 @@ function jsonContainsOperator(): SqlOperationDescriptor {
  *     away or rejected (see {@link matchOperator}).
  *   - `eqlJsonContains` (`cipherstash:searchable-json`) →
  *     exact jsonb containment via `OPERATOR(public.@>)`.
+ *   - `eqlJsonPathEq/Neq/Gt/Gte/Lt/Lte`
+ *     (`cipherstash:searchable-json`) → exact value-selector containment for
+ *     equality, or selector extraction plus a ciphertext-free scalar query
+ *     term for ordering.
  *
  * Every operand renders as `$n::eql_v3.query_<domain>` (irregularly
- * `::eql_v3.query_jsonb` for JSON), matching the stack-drizzle v3
+ * `::eql_v3.query_json` for JSON), matching the stack-drizzle v3
  * dialect byte-for-byte.
  */
 export function cipherstashV3QueryOperations(): SqlOperationDescriptors {
@@ -764,13 +871,19 @@ export function cipherstashV3QueryOperations(): SqlOperationDescriptors {
         `NOT (eql_v3.gte({{self}}, {{arg0}}::${cast}) AND eql_v3.lte({{self}}, {{arg1}}::${cast}))`,
     ),
     eqlMatch: matchOperator(),
-    // NO negated match: `eql_v3.contains` is a bloom-filter test that
+    // NO negated match: `eql_v3.matches` is a bloom-filter test that
     // may FALSE-POSITIVE, so its negation FALSE-NEGATIVES — it would
     // silently drop rows that genuinely don't match. A trustworthy
     // negative free-text search needs a decrypt-and-post-filter path;
     // until one exists the operator must not be offered (PR #655
     // review; same removal as the Drizzle/Supabase v3 surfaces).
     eqlJsonContains: jsonContainsOperator(),
+    eqlJsonPathEq: jsonSelectorOperator('eqlJsonPathEq', 'eq'),
+    eqlJsonPathNeq: jsonSelectorOperator('eqlJsonPathNeq', 'neq'),
+    eqlJsonPathGt: jsonSelectorOperator('eqlJsonPathGt', 'gt'),
+    eqlJsonPathGte: jsonSelectorOperator('eqlJsonPathGte', 'gte'),
+    eqlJsonPathLt: jsonSelectorOperator('eqlJsonPathLt', 'lt'),
+    eqlJsonPathLte: jsonSelectorOperator('eqlJsonPathLte', 'lte'),
   }
 }
 

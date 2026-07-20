@@ -7,11 +7,9 @@ import type {
 import type { Encrypted, EncryptedQueryResult, KeysetIdentifier } from '@/types'
 
 /**
- * The shape `encryptQuery` / `encryptQueryBulk` can return: a full storage
- * payload (returned for v2 `ste_vec_term` containment queries), a query-only
- * payload with no ciphertext (scalar `unique`/`match`/`ore` lookups and
- * `ste_vec_selector` path queries), or — under `eqlVersion: 3` — the
- * `eql_v3.jsonb_query` containment needle.
+ * The shape `encryptQuery` / `encryptQueryBulk` can return: a legacy v2 query
+ * payload, or a v3 ciphertext-free scalar/SteVec query term (including the
+ * bare selector hash and `eql_v3.query_json` containment needle).
  *
  * TODO: duplicated in `@cipherstash/protect` — see
  * `packages/protect/src/helpers/index.ts`. Both copies should be removed once

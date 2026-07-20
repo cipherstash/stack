@@ -72,15 +72,15 @@ export const noClientError = () =>
  * `buildColumnKeyMap()` marker — v2 tables don't have one:
  *
  * - every schema is v3 → `3`;
- * - no schema is v3 → `undefined`, leaving the FFI's v2 default (and its
- *   byte-identical v2 output) untouched;
+ * - no schema is v3 → `undefined`, leaving scalar-only schemas on the FFI's v2
+ *   default;
  * - a mix of the two → throws: the v2 tables target `eql_v2_encrypted`
  *   columns and the v3 tables target `eql_v3` domains, so no single wire
  *   format serves both. Split them across two clients.
  *
- * An explicit `config.eqlVersion` bypasses detection (the wire format is
- * then unambiguous — e.g. writing v2-wire from a v3 schema set during a
- * migration), but a mixed schema set still throws.
+ * An explicit `config.eqlVersion` bypasses version detection (the wire format
+ * is then unambiguous — e.g. writing v2 wire from a v3 schema set during a
+ * migration), but mixed schemas and legacy v2 SteVec schemas still throw.
  *
  * @internal exported for unit-test coverage of the detection matrix.
  */
@@ -95,6 +95,23 @@ export function resolveEqlVersion(
   if (v3Count > 0 && v3Count < schemas.length) {
     throw new Error(
       '[encryption]: cannot mix EQL v2 and EQL v3 tables in one client — one client emits exactly one wire format. Create separate clients for the v2 and v3 schemas.',
+    )
+  }
+
+  // cipherstash-client 0.42 removed the EQL v2 SteVec selector envelope.
+  // protect-ffi 0.30 therefore cannot emit v2 searchable-JSON values at all;
+  // allowing this legacy schema through would either fail opaquely in the FFI
+  // or emit v3 data for an eql_v2 column. Fail at setup with a migration steer.
+  if (
+    v3Count === 0 &&
+    schemas.some((schema) =>
+      Object.values(schema.build().columns).some(
+        (column) => column.indexes?.ste_vec !== undefined,
+      ),
+    )
+  ) {
+    throw new Error(
+      '[encryption]: searchableJson() on the legacy EQL v2 schema is not supported by protect-ffi 0.30. Migrate the column to the EQL v3 types.Json() domain.',
     )
   }
 
@@ -309,7 +326,7 @@ export class EncryptionClient {
    * **JSONB columns (searchableJson):**
    * When `queryType` is omitted on a `searchableJson()` column, the query operation is inferred:
    * - String plaintext → `steVecSelector` (JSONPath queries like `'$.user.email'`)
-   * - Object/Array plaintext → `steVecTerm` (containment queries like `{ role: 'admin' }`)
+   * - Object/Array plaintext → default SteVec containment (for example `{ role: 'admin' }`)
    */
   encryptQuery(
     plaintext: Plaintext,

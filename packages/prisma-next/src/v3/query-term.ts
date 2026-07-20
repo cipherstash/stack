@@ -50,13 +50,19 @@ export class EncryptionOperatorError extends Error {
 
 /**
  * The query-term flavours a v3 operator can mint — the subset of the
- * stack's `QueryTypeName` union that maps 1:1 onto the four
- * capability families (`steVecSelector`/`steVecTerm` are subsumed by
- * `searchableJson`, which auto-infers).
+ * stack's `QueryTypeName` union used by the v3 operators. JSON selector
+ * predicates use the explicit SteVec flavours because path hashing,
+ * value-selector equality, and scalar ordering have distinct wire shapes.
  */
 export type V3QueryTermType = Extract<
   QueryTypeName,
-  'equality' | 'orderAndRange' | 'freeTextSearch' | 'searchableJson'
+  | 'equality'
+  | 'orderAndRange'
+  | 'freeTextSearch'
+  | 'searchableJson'
+  | 'steVecSelector'
+  | 'steVecValueSelector'
+  | 'steVecTerm'
 >
 
 /**

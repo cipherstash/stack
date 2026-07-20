@@ -12,7 +12,8 @@
  * `ops.json`. The committed op carries {@link RUNTIME_EQL_SQL_SENTINEL}, and
  * `src/exports/control.ts` swaps in `readInstallSql()` from the installed
  * `@cipherstash/eql` when it builds the descriptor (see {@link withRuntimeEqlSql}).
- * `@cipherstash/eql` is therefore a runtime dependency, pinned exact (`3.0.0`)
+ * `@cipherstash/eql` is therefore a runtime dependency, pinned to an exact
+ * version
  * to match the version `@cipherstash/stack` encodes its v3 domain TYPES against
  * — the two must move together, so this is a coordinated bump, not a float.
  *

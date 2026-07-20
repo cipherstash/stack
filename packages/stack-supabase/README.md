@@ -13,7 +13,13 @@ npm install @cipherstash/stack @cipherstash/stack-supabase @supabase/supabase-js
 
 `encryptedSupabaseV3` introspects the database at connect time (native
 `public.eql_v3_*` column domains) — no schema argument, `select('*')` support,
-`contains()` free-text search, and encrypted `order()` on OPE columns.
+equality/range filters, and encrypted `order()` on OPE columns.
+
+EQL 3.0.2 requires typed query-domain operands for encrypted free-text and JSON
+operators. PostgREST cannot express those casts, so v3 `matches()`, encrypted
+`contains()`, and `selectorEq()`/`selectorNe()` fail fast with this EQL release.
+Use the Drizzle or Prisma Next adapter, or a carefully scoped direct SQL/RPC
+path.
 
 ```ts
 import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'

@@ -76,9 +76,9 @@ describe('v3 catalog derivation', () => {
 
   it('exposes json as a first-class searchable-JSON domain (ste_vec index)', () => {
     const meta = V3_DOMAIN_META_BY_CODEC_ID.get(
-      'cipherstash/eql-v3/eql_v3_json@1',
+      'cipherstash/eql-v3/eql_v3_json_search@1',
     )
-    expect(meta?.nativeType).toBe('public.eql_v3_json')
+    expect(meta?.nativeType).toBe('public.eql_v3_json_search')
     expect(meta?.castAs).toBe('json')
     expect(meta?.capabilities).toEqual({
       equality: false,
@@ -88,7 +88,9 @@ describe('v3 catalog derivation', () => {
     })
     expect(Object.keys(meta?.indexes ?? {})).toEqual(['ste_vec'])
     expect(
-      EXPOSED_DOMAIN_ENTRIES.some(([, m]) => m.bareDomain === 'eql_v3_json'),
+      EXPOSED_DOMAIN_ENTRIES.some(
+        ([, m]) => m.bareDomain === 'eql_v3_json_search',
+      ),
     ).toBe(true)
   })
 

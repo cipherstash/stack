@@ -158,7 +158,7 @@ describe('WasmEncryptionClient.encryptQuery', () => {
       expect.anything(),
       expect.objectContaining({
         indexType: 'ste_vec',
-        queryOp: 'ste_vec_term',
+        queryOp: 'default',
       }),
     )
   })

@@ -20,7 +20,7 @@
  *   - accountId     eql_v3_bigint_ord  — eq + range + ORDER BY
  *   - birthday      eql_v3_date_ord    — eq + range + ORDER BY
  *   - emailVerified eql_v3_boolean     — STORAGE-ONLY (no operators)
- *   - preferences   eql_v3_json        — eqlJsonContains (@>)
+ *   - preferences   eql_v3_json_search        — eqlJsonContains (@>)
  *
  * Prerequisites:
  *
@@ -172,7 +172,7 @@ async function searchByEq(): Promise<void> {
 
 async function searchByMatchAndDecrypt(): Promise<void> {
   console.log('\n--- eqlMatch (text_search free-text tokens) ---')
-  // v3 free-text search is bloom-filter TOKEN matching (eql_v3.contains),
+  // v3 free-text search is bloom-filter TOKEN matching (eql_v3.matches),
   // not SQL ILIKE: the needle's tokens must appear in the ciphertext's
   // index. 'example.com' matches the three @example.com addresses.
   const rows = await db.orm.public.User.where((u) =>

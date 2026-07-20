@@ -10,8 +10,8 @@
  *     `{ castAs, capabilities }` typeParams block — no options, no
  *     `AuthoringArgRef` nodes.
  *   - `EncryptedString` (unqualified) does not exist — v3 text columns use
- *     the `Text*` family. `Json` (unqualified) is the v3 `eql_v3_json`
- *     domain.
+ *     the `Text*` family. `Json` (unqualified) is now the
+ *     v3 `eql_v3_json_search` domain.
  *
  * Full PSL→ColumnTypeDescriptor lowering is exercised in
  * `test/psl-interpretation*.test.ts`.
@@ -87,10 +87,10 @@ describe('cipherstash v3 authoring (concrete per-domain, static descriptors)', (
     expect(ns.BooleanEq).toBeUndefined()
   })
 
-  it('Json → public.eql_v3_json with searchableJson-only capabilities', () => {
+  it('Json → public.eql_v3_json_search with searchableJson-only capabilities', () => {
     expect(ns.Json?.output).toMatchObject({
-      codecId: 'cipherstash/eql-v3/eql_v3_json@1',
-      nativeType: 'public.eql_v3_json',
+      codecId: 'cipherstash/eql-v3/eql_v3_json_search@1',
+      nativeType: 'public.eql_v3_json_search',
       typeParams: {
         castAs: 'json',
         capabilities: {

@@ -3,8 +3,8 @@
  * operators. Seeds encrypted JSONB documents and queries them with
  * `ops.contains(col, subObject)` — EXACT containment (distinct from the fuzzy
  * `ops.matches` used for text search). On a `json` column it emits the `@>`
- * operator over the encrypted JSONB document (json has no `eql_v3.contains`
- * overload) with a `query_jsonb` needle from `encryptQuery` — asserting it
+ * operator over the encrypted JSONB document (json has no `eql_v3.matches`
+ * overload) with a `query_json` needle from `encryptQuery` — asserting it
  * returns exactly the rows whose document contains the sub-object (jsonb `@>`
  * semantics), and excludes the rest.
  */
@@ -70,7 +70,7 @@ beforeAll(async () => {
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,
-      doc public.eql_v3_json NOT NULL
+      doc public.eql_v3_json_search NOT NULL
     )
   `)
 

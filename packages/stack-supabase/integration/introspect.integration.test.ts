@@ -31,7 +31,7 @@ beforeAll(async () => {
   // This table exercises all three cases the introspector must tell apart:
   //   score → EQL domain (eql_v3_integer_ord_ope) the SDK has no factory for
   //           → "unmodelled", MUST be reported so the caller knows it can't query it
-  //   doc   → EQL domain (eql_v3_json) the SDK models via types.Json
+  //   doc   → EQL domain (eql_v3_json_search) the SDK models via types.Json
   //           → modelled, MUST be synthesized and NOT reported
   //   own   → a user's own plain jsonb domain with no EQL marker
   //           → plaintext passthrough, MUST never be reported
@@ -39,7 +39,7 @@ beforeAll(async () => {
     CREATE TABLE ${UNMODELLED} (
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       score public.eql_v3_integer_ord_ope NOT NULL,
-      doc public.eql_v3_json,
+      doc public.eql_v3_json_search,
       own public.${USER_DOMAIN}
     )
   `)
@@ -100,10 +100,10 @@ describe('eql_v3 supabase introspection', () => {
 
     // Sanity, keyed exactly as the registry keys and the introspection query do
     // (the full `eql_v3_*` domain name): `eql_v3_integer_ord_ope` has no types
-    // factory (unmodelled → reported), whereas `eql_v3_json` now HAS one
+    // factory (unmodelled → reported), whereas `eql_v3_json_search` now HAS one
     // (`types.Json` → modelled → NOT reported).
     expect(factoryForDomain('eql_v3_integer_ord_ope')).toBeUndefined()
-    expect(factoryForDomain('eql_v3_json')).toBeDefined()
+    expect(factoryForDomain('eql_v3_json_search')).toBeDefined()
 
     const offenders = unmodelled.get(UNMODELLED)
     expect(offenders).toBeDefined()

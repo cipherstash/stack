@@ -61,7 +61,7 @@ const EXPECTED_DOMAIN_KEYS = [
   'eql_v3_double_eq',
   'eql_v3_double_ord_ore',
   'eql_v3_double_ord',
-  'eql_v3_json',
+  'eql_v3_json_search',
 ] as const
 
 describe('DOMAIN_REGISTRY', () => {

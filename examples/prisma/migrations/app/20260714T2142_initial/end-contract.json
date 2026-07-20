@@ -79,7 +79,7 @@
               "preferences": {
                 "nullable": false,
                 "type": {
-                  "codecId": "cipherstash/eql-v3/eql_v3_json@1",
+                  "codecId": "cipherstash/eql-v3/eql_v3_json_search@1",
                   "kind": "scalar",
                   "typeParams": {
                     "capabilities": {
@@ -196,8 +196,8 @@
                   "nullable": false
                 },
                 "preferences": {
-                  "codecId": "cipherstash/eql-v3/eql_v3_json@1",
-                  "nativeType": "public.eql_v3_json",
+                  "codecId": "cipherstash/eql-v3/eql_v3_json_search@1",
+                  "nativeType": "public.eql_v3_json_search",
                   "nullable": false,
                   "typeParams": {
                     "capabilities": {

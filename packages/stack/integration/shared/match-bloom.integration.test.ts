@@ -6,7 +6,7 @@ import { encryptedTable, types } from '@/eql/v3'
  * The invariant `contains()` rests on, asserted directly on the wire rather than
  * inferred from a query result.
  *
- * `eql_v3.contains(a, b)` is `match_term(a) @> match_term(b)`: bloom-filter
+ * `eql_v3.matches(a, b)` is `match_term(a) @> match_term(b)`: bloom-filter
  * (`smallint[]`) containment. So a substring search can only work if
  *
  *     bloom(needle) ⊆ bloom(haystack)

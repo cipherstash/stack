@@ -89,6 +89,7 @@ describe('Type inference', () => {
     expectTypeOf<'orderAndRange'>().toMatchTypeOf<QueryTypeName>()
     expectTypeOf<'searchableJson'>().toMatchTypeOf<QueryTypeName>()
     expectTypeOf<'steVecSelector'>().toMatchTypeOf<QueryTypeName>()
+    expectTypeOf<'steVecValueSelector'>().toMatchTypeOf<QueryTypeName>()
     expectTypeOf<'steVecTerm'>().toMatchTypeOf<QueryTypeName>()
   })
 

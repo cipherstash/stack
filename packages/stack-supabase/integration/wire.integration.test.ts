@@ -329,84 +329,15 @@ describe('supabase v3 adapter over real PostgREST (wire + grants)', () => {
     expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
   })
 
-  // `cs` → `@>` on the encrypted domain. This is the load-bearing assertion of
-  // the whole suite: the bundle declares
-  //   CREATE OPERATOR @> (FUNCTION = eql_v3.contains, LEFTARG = public.eql_v3_text_search,
-  //                       RIGHTARG = jsonb)
-  // whose body is `match_term(a) @> match_term(b::public.eql_v3_text_search)` — a
-  // smallint[] containment of the two BLOOM FILTERS. It is NOT the built-in
-  // `jsonb @> jsonb`, which would compare whole envelopes and so could only ever
-  // match on an identical ciphertext.
-  //
-  // The four tests below discriminate: substrings that share no `c` with the
-  // stored row match, and a trigram present in no row does not. Only bloom
-  // containment explains both.
-  it('resolves matches() through cs containment for an exact value', async () => {
-    const { data, error } = await from()
-      .select('row_key')
-      .matches('email', 'ada@example.com')
-
-    expect(error).toBeNull()
-    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
-  })
-
-  // The needle blooms to its own trigrams — `exa,xam,amp,mpl,ple` — every one of
-  // which is a trigram of `ada@example.com`, so containment holds. This once
-  // asserted the opposite, on the strength of an `include_original` token that
-  // protect-ffi never emits; `bloomTokens` above no longer invents one.
-  it('matches a longer substring through bloom containment', async () => {
-    const { data, error } = await from()
-      .select('row_key')
-      .matches('email', 'example')
-
-    expect(error).toBeNull()
-    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
-  })
-
-  it('matches a substring exactly one trigram long', async () => {
-    const { data, error } = await from()
-      .select('row_key')
-      .matches('email', 'ada')
-
-    expect(error).toBeNull()
-    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
-  })
-
-  // The discriminator. Every assertion above is satisfied by a `contains` that
-  // matches EVERYTHING — an empty needle bloom, a broken `@>`, a fail-open. A
-  // trigram held by no stored row must come back empty. (`drizzle-v3`'s live
-  // suite pins the same guarantee against real ffi with `'qqqzzz'`.)
-  it('does not match a trigram absent from every stored value', async () => {
-    const { data, error } = await from()
-      .select('row_key')
-      .matches('email', 'zzz')
-
-    expect(error).toBeNull()
-    expect(data).toEqual([])
-  })
-
-  // `like`/`ilike` on an encrypted column are a compatibility shim: they delegate
-  // to `matches` (fuzzy bloom token search), NOT SQL `~~` (undefined on
-  // public.eql_v3_text_search — 42883). Surrounding `%` are stripped, so
-  // `like('email', '%ada%')` searches the term `ada` and returns the same row as
-  // `matches('email', 'ada')`.
-  it('delegates like() on an encrypted column to matches (fuzzy)', async () => {
-    const { data, error } = await from()
-      .select('row_key')
-      .like('email', '%ada%')
-
-    expect(error).toBeNull()
-    expect(data.map((r: { row_key: string }) => r.row_key)).toEqual(['ada'])
-  })
-
-  // A pattern fuzzy matching cannot approximate (internal `%` / any `_`) is
-  // refused client-side before the round-trip.
-  it('rejects an unapproximable like() pattern on an encrypted column', () => {
-    expect(() => from().select('row_key').like('email', 'a%b')).toThrow(
-      /cannot honor/,
+  // EQL 3.0.2 moved encrypted matching to `@@` with a typed query-domain RHS.
+  // PostgREST cannot express that cast, so the adapter must fail before it
+  // encrypts a storage envelope into the request URL.
+  it('fails encrypted free-text filters at the PostgREST boundary', () => {
+    expect(() => from().select('row_key').matches('email', 'ada')).toThrow(
+      /EQL 3\.0\.2\+.*query_\* cast.*PostgREST/s,
     )
-    expect(() => from().select('row_key').ilike('email', 'f_o')).toThrow(
-      /cannot honor/,
+    expect(() => from().select('row_key').like('email', '%ada%')).toThrow(
+      /EQL 3\.0\.2\+/,
     )
   })
 

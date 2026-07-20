@@ -675,7 +675,7 @@ export const V3_MATRIX = {
   // models, so `runFamilySuite` cannot exercise it. The row still pins the built
   // shape (`cast_as: 'json'` + the encrypted-JSONB index) and carries
   // representative document samples.
-  'public.eql_v3_json': {
+  'public.eql_v3_json_search': {
     builder: types.Json,
     ColumnClass: EncryptedJsonColumn,
     castAs: 'json',

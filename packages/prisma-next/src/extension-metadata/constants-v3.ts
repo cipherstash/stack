@@ -99,7 +99,7 @@ export const CIPHERSTASH_V3_CODEC_IDS = [
   'cipherstash/eql-v3/eql_v3_double_eq@1',
   'cipherstash/eql-v3/eql_v3_double_ord_ore@1',
   'cipherstash/eql-v3/eql_v3_double_ord@1',
-  'cipherstash/eql-v3/eql_v3_json@1',
+  'cipherstash/eql-v3/eql_v3_json_search@1',
 ] as const satisfies readonly CipherstashV3CodecId[]
 
 // Bidirectional drift guard — the direction `satisfies` cannot catch. If the

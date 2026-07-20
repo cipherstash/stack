@@ -1,7 +1,7 @@
 /**
  * v3 operator lowering — free-text search (`eqlMatch`).
  *
- * Canonical dialect: `eql_v3.contains(<col>, $n::eql_v3.query_<domain>)`.
+ * Canonical dialect: `eql_v3.matches(<col>, $n::eql_v3.query_<domain>)`.
  * The SQL function keeps its bundle name `contains`, but the semantics
  * are a bloom-filter TOKEN MATCH, not SQL LIKE/ILIKE and not
  * containment: the needle's downcased 3-gram set is tested as a subset
@@ -21,7 +21,7 @@
  *     with the shared `matchNeedleError` reason (adapter-kit — same
  *     guard as the Drizzle and Supabase v3 surfaces).
  *
- * There is NO negated match (`eql_v3.contains` may false-positive, so
+ * There is NO negated match (`eql_v3.matches` may false-positive, so
  * its negation would false-negative — silently dropping rows that
  * genuinely don't match; PR #655 review). The registry must not expose
  * one, pinned below.
@@ -59,10 +59,10 @@ function lowerMatch(needle: unknown) {
 }
 
 describe('cipherstash v3 operator lowering — eqlMatch', () => {
-  it('lowers to eql_v3.contains(col, $1::eql_v3.query_text_search)', () => {
+  it('lowers to eql_v3.matches(col, $1::eql_v3.query_text_search)', () => {
     const lowered = lowerMatch('alice')
     expect(lowered.sql).toMatchInlineSnapshot(
-      `"SELECT "user"."id" AS "id" FROM "user" WHERE eql_v3.contains("user"."email", $1::eql_v3.query_text_search)"`,
+      `"SELECT "user"."id" AS "id" FROM "user" WHERE eql_v3.matches("user"."email", $1::eql_v3.query_text_search)"`,
     )
   })
 
@@ -85,7 +85,7 @@ describe('cipherstash v3 operator lowering — eqlMatch needle guards', () => {
   it('strips leading/trailing % — the STRIPPED needle is what gets encrypted', () => {
     const lowered = lowerMatch('%alice%')
     expect(lowered.sql).toContain(
-      'eql_v3.contains("user"."email", $1::eql_v3.query_text_search)',
+      'eql_v3.matches("user"."email", $1::eql_v3.query_text_search)',
     )
     expect(lowered.params).toHaveLength(1)
     const envelope = literalParamValue(lowered.params[0])
@@ -154,7 +154,7 @@ describe('cipherstash v3 operator lowering — eqlMatch needle guards', () => {
 
 describe('cipherstash v3 registry — no negated match', () => {
   it('exposes neither eqlNotMatch nor the removed cipherstashNotIlike', () => {
-    // `eql_v3.contains` is one-sided (may false-positive), so a negated
+    // `eql_v3.matches` is one-sided (may false-positive), so a negated
     // form would FALSE-NEGATIVE — silently dropping rows that genuinely
     // don't match. Until a decrypt-and-post-filter path exists, the
     // registry must not offer one (PR #655 review; same removal as the

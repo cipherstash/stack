@@ -65,7 +65,7 @@ model User {
 | `BigIntOrd()` | `eql_v3_bigint_ord` | equality, range, ORDER BY |
 | `DateOrd()` | `eql_v3_date_ord` | equality, range, ORDER BY |
 | `Boolean()` | `eql_v3_boolean` | storage-only (no operators) |
-| `Json()` | `eql_v3_json` | containment (`@>`) |
+| `Json()` | `eql_v3_json_search` | containment + JSONPath equality/range |
 
 Choose the column type by the queries you need: a value you only store and
 decrypt (never search) can use a storage-only domain; a value you filter or sort
@@ -172,11 +172,13 @@ EQL-derived `eql*` vocabulary:
 |---|---|---|
 | `eqlEq(v)` / `eqlNeq(v)` | equality / inequality | any searchable domain |
 | `eqlIn(vs)` / `eqlNotIn(vs)` | membership | any searchable domain |
-| `eqlMatch(term)` | free-text token match (`eql_v3.contains`) | `TextSearch` |
+| `eqlMatch(term)` | free-text token match (`eql_v3.matches`) | `TextSearch` |
 | `eqlGt/eqlGte/eqlLt/eqlLte(v)` | range comparison | an `*Ord` domain |
 | `eqlBetween(lo,hi)` / `eqlNotBetween(lo,hi)` | range window | an `*Ord` domain |
 | `eqlAsc(col)` / `eqlDesc(col)` | ORDER BY (free functions, take the column) | an `*Ord` or `TextSearch` domain |
 | `eqlJsonContains(obj)` | encrypted JSON containment (`@>`) | `EncryptedJson` |
+| `eqlJsonPathEq/Neq(path,v)` | exact value equality/inequality at a JSONPath | `EncryptedJson` |
+| `eqlJsonPathGt/Gte/Lt/Lte(path,v)` | string/number ordering at a JSONPath | `EncryptedJson` |
 
 ```typescript
 // range
@@ -189,6 +191,10 @@ await db.orm.public.User.where((u) => u.birthday.eqlBetween(lo, hi)).all()
 await db.orm.public.User.where((u) => u.accountId.eqlIn([100_000_000_001n])).all()
 // encrypted JSON containment
 await db.orm.public.User.where((u) => u.preferences.eqlJsonContains({ theme: 'dark' })).all()
+// exact JSONPath equality (value-selector containment; GIN-indexable)
+await db.orm.public.User.where((u) => u.preferences.eqlJsonPathEq('$.theme', 'dark')).all()
+// JSONPath ordering (ciphertext-free selector + scalar term)
+await db.orm.public.User.where((u) => u.preferences.eqlJsonPathGte('$.score', 80)).all()
 // ordering
 import { eqlAsc } from '@cipherstash/prisma-next/runtime'
 await db.orm.public.User.orderBy((u) => eqlAsc(u.salary)).all()

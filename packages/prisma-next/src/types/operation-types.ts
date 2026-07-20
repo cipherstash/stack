@@ -167,7 +167,7 @@ export type QueryOperationTypes<CT extends CodecTypesBase> =
             high: unknown,
           ) => PgBoolReturn
         }
-        // Fuzzy free-text token match (`eql_v3.contains`) — NOT SQL
+        // Fuzzy free-text token match (`eql_v3.matches`) — NOT SQL
         // pattern matching; needles are guarded at lowering time
         // (wildcards, short needles). No negated form: the bloom test
         // may false-positive, so its negation would false-negative.
@@ -178,13 +178,61 @@ export type QueryOperationTypes<CT extends CodecTypesBase> =
             needle: unknown,
           ) => PgBoolReturn
         }
-        // v3-only: encrypted jsonb `@>` containment on `eql_v3_json`
+        // v3-only: encrypted jsonb `@>` containment on `eql_v3_json_search`
         // columns.
         readonly eqlJsonContains: {
           readonly self: { readonly traits: V3SearchableJsonMarker }
           readonly impl: (
             self: AnyExpressionLike,
             needle: unknown,
+          ) => PgBoolReturn
+        }
+        readonly eqlJsonPathEq: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            path: string,
+            value: string | number | boolean,
+          ) => PgBoolReturn
+        }
+        readonly eqlJsonPathNeq: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            path: string,
+            value: string | number | boolean,
+          ) => PgBoolReturn
+        }
+        readonly eqlJsonPathGt: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            path: string,
+            value: string | number,
+          ) => PgBoolReturn
+        }
+        readonly eqlJsonPathGte: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            path: string,
+            value: string | number,
+          ) => PgBoolReturn
+        }
+        readonly eqlJsonPathLt: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            path: string,
+            value: string | number,
+          ) => PgBoolReturn
+        }
+        readonly eqlJsonPathLte: {
+          readonly self: { readonly traits: V3SearchableJsonMarker }
+          readonly impl: (
+            self: AnyExpressionLike,
+            path: string,
+            value: string | number,
           ) => PgBoolReturn
         }
       }

@@ -31,7 +31,7 @@
  * term-only `eql_v3.query_<name>` operands via `encryptQuery`; the
  * full-envelope path stays because it is what the integrations send.)
  * Dispatch mirrors the priority `resolveIndexType` uses (match > unique > ore):
- *   - match   (text_match, text_search):    `eql_v3.contains(col, operand)`
+ *   - match   (text_match, text_search):    `eql_v3.matches(col, operand)`
  *   - eq      (any `unique` domain):        `eql_v3.eq(col, operand)`
  *   - ord     (any `ore` domain):           ORE range `eql_v3.gte(col,op) AND
  *     eql_v3.lte(col,op)`. Pure-ORE numeric/date `*_ord`/`*_ord_ore` domains
@@ -439,13 +439,13 @@ describe('v3 matrix live Postgres coverage (all covered domains)', () => {
 
   it.each(
     matchDomains,
-  )('%s: eql_v3.contains selects the row containing "ada"', async (eqlType, spec) => {
+  )('%s: eql_v3.matches selects the row containing "ada"', async (eqlType, spec) => {
     const col = slug(eqlType)
     const expectedId = String(spec.samples[0]).includes('ada') ? idA : idB
     const rows = await sql.unsafe<Row[]>(
       `SELECT id FROM ${TABLE_NAME}
          WHERE test_run_id = $1
-           AND eql_v3.contains("${col}", $2::jsonb)`,
+           AND eql_v3.matches("${col}", $2::jsonb)`,
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([expectedId])

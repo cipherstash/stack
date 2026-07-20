@@ -366,6 +366,36 @@ describe('property: operator-gating totality (every domain × every operator)', 
       capability: 'searchableJson',
       args: (v) => [v],
     },
+    {
+      method: 'eqlJsonPathEq',
+      capability: 'searchableJson',
+      args: () => ['$.value', 'needle'],
+    },
+    {
+      method: 'eqlJsonPathNeq',
+      capability: 'searchableJson',
+      args: () => ['$.value', 'needle'],
+    },
+    {
+      method: 'eqlJsonPathGt',
+      capability: 'searchableJson',
+      args: () => ['$.value', 42],
+    },
+    {
+      method: 'eqlJsonPathGte',
+      capability: 'searchableJson',
+      args: () => ['$.value', 42],
+    },
+    {
+      method: 'eqlJsonPathLt',
+      capability: 'searchableJson',
+      args: () => ['$.value', 42],
+    },
+    {
+      method: 'eqlJsonPathLte',
+      capability: 'searchableJson',
+      args: () => ['$.value', 42],
+    },
   ]
 
   it('each pair either lowers with the canonical query cast or throws EncryptionOperatorError, decided by the capability', () => {
@@ -389,9 +419,13 @@ describe('property: operator-gating totality (every domain × every operator)', 
         // internal-invariant throw in requireQueryCast must be dead code.
         const template = templateOf(call())
         const cast =
-          opCase.method === 'eqlJsonContains'
-            ? 'eql_v3.query_jsonb'
-            : expectedQueryCast(meta)
+          opCase.method === 'eqlJsonContains' ||
+          opCase.method === 'eqlJsonPathEq' ||
+          opCase.method === 'eqlJsonPathNeq'
+            ? 'eql_v3.query_json'
+            : opCase.method.startsWith('eqlJsonPath')
+              ? 'eql_v3.query_double_ord'
+              : expectedQueryCast(meta)
         expect(template, label).toContain(`::${cast}`)
       }
     }

@@ -64,11 +64,9 @@ export type Encrypted = CipherStashEncryptedPayload
 
 /** Structural type representing an encrypted query term (search needle)
  * returned by `encryptQuery` / `encryptQueryBulk` for scalar
- * (`unique` / `match` / `ore`) lookups and `ste_vec_selector` JSON path
- * queries, plus — under `eqlVersion: 3` — the `eql_v3.jsonb_query`
- * containment needle. Carries no ciphertext — matched against stored
- * values, never decrypted. v2 JSON containment queries (`ste_vec_term`)
- * return a storage-shaped {@link Encrypted} payload instead. */
+ * (`unique` / `match` / `ore`) lookups and SteVec JSON selector,
+ * value-selector, ordering, and `eql_v3.query_json` containment queries.
+ * Carries no ciphertext — matched against stored values, never decrypted. */
 export type EncryptedQuery =
   | CipherStashEncryptedQuery
   | CipherStashEncryptedV3Query
@@ -193,7 +191,7 @@ export type ClientConfig = {
    *
    * Under `3`, `encryptQuery` returns EQL v3 query operands (protect-ffi
    * 0.29+): term-only scalar operands for the `eql_v3.query_<name>` twins,
-   * the `eql_v3.query_jsonb` containment needle, and bare selector-hash
+   * the `eql_v3.query_json` containment needle, and bare selector-hash
    * strings for JSON path queries.
    */
   eqlVersion?: 2 | 3
@@ -318,10 +316,9 @@ export type SearchTerm = {
   returnType?: EncryptedReturnType
 }
 
-/** Encrypted search term result. `eql` return type yields either a storage
- * payload (`Encrypted`, for `ste_vec_term`) or a query-only term
- * (`EncryptedQuery`, for scalar lookups and `ste_vec_selector`); the
- * `composite-literal` return types yield a string. */
+/** Encrypted search term result. `eql` returns the query-only scalar or SteVec
+ * term; the `composite-literal` return types yield a string. The `Encrypted`
+ * arm remains for legacy v2 scalar query compatibility. */
 export type EncryptedSearchTerm = Encrypted | EncryptedQuery | string
 
 /** Result of encryptQuery (single or batch). `eql` return type yields either a
@@ -423,14 +420,16 @@ export type DecryptionResult<T> = DecryptionSuccess<T> | DecryptionError<T>
  * - `'freeTextSearch'`: Text search. [Match Queries](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption)
  * - `'orderAndRange'`: Comparison and range. [Range Queries](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption)
  * - `'steVecSelector'`: JSONPath selector (e.g. `'$.user.email'`)
- * - `'steVecTerm'`: Containment (e.g. `{ role: 'admin' }`)
- * - `'searchableJson'`: Auto-infers selector or term from plaintext type (recommended)
+ * - `'steVecValueSelector'`: Exact value at a JSONPath (`{ path, value }`)
+ * - `'steVecTerm'`: Ordering term for a scalar JSON value
+ * - `'searchableJson'`: Auto-infers selector or containment from plaintext type (recommended)
  */
 export type QueryTypeName =
   | 'orderAndRange'
   | 'freeTextSearch'
   | 'equality'
   | 'steVecSelector'
+  | 'steVecValueSelector'
   | 'steVecTerm'
   | 'searchableJson'
 
@@ -442,6 +441,7 @@ export const queryTypes = {
   freeTextSearch: 'freeTextSearch',
   equality: 'equality',
   steVecSelector: 'steVecSelector',
+  steVecValueSelector: 'steVecValueSelector',
   steVecTerm: 'steVecTerm',
   searchableJson: 'searchableJson',
 } as const satisfies Record<string, QueryTypeName>
@@ -454,6 +454,7 @@ export const queryTypeToFfi: Record<QueryTypeName, FfiIndexTypeName> = {
   freeTextSearch: 'match',
   equality: 'unique',
   steVecSelector: 'ste_vec',
+  steVecValueSelector: 'ste_vec',
   steVecTerm: 'ste_vec',
   searchableJson: 'ste_vec',
 }
@@ -461,6 +462,7 @@ export const queryTypeToFfi: Record<QueryTypeName, FfiIndexTypeName> = {
 /** @internal */
 export const queryTypeToQueryOp: Partial<Record<QueryTypeName, QueryOpName>> = {
   steVecSelector: 'ste_vec_selector',
+  steVecValueSelector: 'ste_vec_value_selector',
   steVecTerm: 'ste_vec_term',
 }
 

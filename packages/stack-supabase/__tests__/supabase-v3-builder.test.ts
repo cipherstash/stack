@@ -224,7 +224,7 @@ describe('encryptedSupabaseV3 wire encoding', () => {
     expect(filterCalls).toHaveLength(1)
     expect(filterCalls[0].args[0]).toBe('email')
     expect(filterCalls[0].args[1]).toBe('cs')
-    // Full storage envelope: eql_v3.contains coerces the operand to the storage
+    // Full storage envelope: eql_v3.matches coerces the operand to the storage
     // domain, whose CHECK requires `c`.
     expect(JSON.parse(filterCalls[0].args[2] as string).c).toBeDefined()
     // postgrest-js's native contains() would re-serialize the operand.

@@ -168,7 +168,7 @@ CREATE TABLE users (
   email public.eql_v3_text_search,
   age public.eql_v3_integer_ord,
   balance public.eql_v3_bigint,
-  metadata public.eql_v3_json
+  metadata public.eql_v3_json_search
 );
 ```
 
@@ -289,11 +289,20 @@ const rangeQuery = await client.encryptQuery(30, {
 
 > **Gotcha — `TextSearch` defaults to equality.** A `TextSearch` column carries all three indexes, and `encryptQuery` with **no explicit `queryType` builds an equality term, not a free-text match**. A substring like `"joh"` then matches nothing. Always pass `queryType: 'freeTextSearch'` for substring/token search.
 
-Free-text search is fuzzy bloom-filter token matching, surfaced as `matches` in the Drizzle and Supabase adapters — it is order- and multiplicity-insensitive and one-sided (a match may be a false positive, a non-match never is). It is not SQL `LIKE`; don't pass `%` wildcards.
+Free-text search is fuzzy bloom-filter token matching, surfaced as `matches` in
+the Drizzle adapter and `eqlMatch` in Prisma Next. It is order- and
+multiplicity-insensitive and one-sided (a match may be a false positive, a
+non-match never is). It is not SQL `LIKE`; don't pass `%` wildcards.
+
+> **Supabase + EQL 3.0.2:** encrypted free-text and JSON operators now require
+> typed `eql_v3.query_*` operands. PostgREST cannot express those casts, so
+> Supabase v3 fails fast for `matches()`, encrypted `contains()`, and
+> `selectorEq()`/`selectorNe()`. Use Drizzle, Prisma Next, or a carefully scoped
+> direct SQL/RPC path.
 
 ### Encrypted JSON
 
-A `types.Json` column encrypts a whole JSON document (an object, array, or null — not a top-level scalar) to a `public.eql_v3_json` value. Two query patterns are supported:
+A `types.Json` column encrypts a whole JSON document (an object, array, or null — not a top-level scalar) to a `public.eql_v3_json_search` value. Two query patterns are supported:
 
 **Exact containment** (jsonb `@>` semantics, no false positives). Pass a sub-object or sub-array needle; array containment is a subset test regardless of element position — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
 
@@ -309,14 +318,22 @@ const containsQuery = await client.encryptQuery(
 **JSONPath selectors** — equality and ordering at a path (`$.a`, `$.a.b` dot-notation object paths):
 
 - **Drizzle**: `ops.selector(events.metadata, "$.age")` returns comparison methods bound to the path — `eq`, `ne`, `gt`, `gte`, `lt`, `lte` (e.g. `await ops.selector(events.metadata, "$.age").gt(21)`). Its unique power over containment is *ordering* at a path; equality at a path is equivalently `contains(col, { age: 21 })`.
-- **Supabase**: `selectorEq(col, path, value)` and `selectorNe(col, path, value)`.
+- **Supabase**: unavailable through PostgREST on EQL 3.0.2 because it cannot
+  cast operands to `eql_v3.query_json`; the adapter fails fast.
+- **Prisma Next**: `eqlJsonPathEq/Neq/Gt/Gte/Lt/Lte(path, value)` on an encrypted JSON field.
 
 Two semantics to know:
 
 - **`ne` includes absent paths.** A "not equal at path" query also matches rows where the path does not exist at all.
-- **Array-leaf caveat:** a scalar needle does not match an array at the path. `selectorEq("payload", "$.roles", "admin")` does *not* match `{ roles: ["admin", "analyst"] }` — use containment for membership tests.
+- **Array-leaf caveat:** a scalar needle does not match an array at the path.
+  Use a full-array containment needle for membership tests.
 
 `types.Json` carries no equality or ordering on the document itself, so applying `eq` / `gt` / `asc` directly to a `Json` column throws.
+
+> **Upgrade note:** EQL 3.0.2 changes the searchable-JSON storage domain and
+> SteVec wire format. Existing encrypted JSON rows must be re-encrypted before
+> querying them with this version. Legacy EQL v2 `searchableJson()` columns are
+> no longer supported; migrate them to the EQL v3 `types.Json` domain.
 
 ### Batch Query Encryption
 
@@ -435,7 +452,12 @@ await es.from("users").select("id, email").eq("email", "a@b.com")
 await es.from("users").select("id, age").gte("age", 18).order("age")
 ```
 
-Encrypted free-text search is `matches()` (fuzzy bloom token search — `contains()` stays native, exact containment for plaintext columns), encrypted-JSON path queries are `selectorEq()` / `selectorNe()`, and `order()` works on OPE-backed ordering columns. Pass optional declared `schemas` for compile-time row types. See the `stash-supabase` skill or the [docs](https://cipherstash.com/docs) for the full guide.
+Equality/range filters and `order()` on OPE-backed ordering columns remain
+available. On EQL 3.0.2, PostgREST cannot express the typed query operands
+required by encrypted free-text and JSON operators, so those methods fail with
+an actionable error. Pass optional declared `schemas` for compile-time row
+types. See the `stash-supabase` skill or the [docs](https://cipherstash.com/docs)
+for the full guide.
 
 ## Authentication
 
@@ -745,13 +767,14 @@ depend on `@cipherstash/stack` (they are no longer subpaths of it):
 
 Before the concrete-domain types above, encrypted columns were declared with
 chainable capability builders and stored in a single `eql_v2_encrypted`
-composite column type. That surface remains fully supported for existing
-deployments, but new work should use EQL v3:
+composite column type. The scalar surface remains supported for existing
+deployments, but new work should use EQL v3. Legacy searchable JSON cannot be
+emitted by protect-ffi 0.30 and must migrate to v3 `types.Json`:
 
 - **Client and schema**: `Encryption` from `@cipherstash/stack` with
   `encryptedColumn("email").equality().freeTextSearch().orderAndRange()` and
-  `.searchableJson()` from `@cipherstash/stack/schema`. v2 and v3 tables cannot
-  be mixed in one client.
+  the builders from `@cipherstash/stack/schema`. v2 and v3 tables cannot be
+  mixed in one client.
 - **Query formatting**: v2 query terms can be rendered as strings with
   `returnType: 'composite-literal'` / `'escaped-composite-literal'` for
   string-based APIs.

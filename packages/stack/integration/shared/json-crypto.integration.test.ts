@@ -1,6 +1,6 @@
 /**
  * Live round-trip for the v3 `types.Json()` column — an encrypted JSONB document
- * (`public.eql_v3_json`). Proves the new json column model encrypts and decrypts
+ * (`public.eql_v3_json_search`). Proves the new json column model encrypts and decrypts
  * a real document through protect-ffi (no DB query here; containment is exercised
  * by the Drizzle json suite). The stored payload is protect-ffi's
  * `SteVecDocument`, carrying an `sv` array rather than a scalar `c` ciphertext.

@@ -54,7 +54,7 @@ type V3ColumnLike = {
     equality: boolean
     orderAndRange: boolean
     freeTextSearch: boolean
-    /** Optional: only `public.eql_v3_json` (`types.Json`) carries it. */
+    /** Optional: only `public.eql_v3_json_search` (`types.Json`) carries it. */
     searchableJson?: boolean
   }
   build(): ColumnSchema
@@ -149,8 +149,8 @@ function assertNoPropertyDbNameCollision(
  * - **Mutation encoding** — the raw encrypted payload object is sent (the
  *   `public.*` domains are `DOMAIN … AS jsonb`), not v2's `{ data: … }`
  *   composite wrap.
- * - **Query-term encoding** — every filter operand is the FULL storage
- *   envelope from `encrypt()`, serialized as jsonb text.
+ * - **Query-term encoding** — scalar equality/range filters use the FULL
+ *   storage envelope from `encrypt()`, serialized as jsonb text.
  *
  *   NOT because narrowed terms fail the domain CHECK: the bundle defines a
  *   `public.<domain>_query` companion for each storage domain, whose CHECK
@@ -161,16 +161,21 @@ function assertNoPropertyDbNameCollision(
  *   the bundle says so itself, see `cipherstash-encrypt-v3.sql`, the
  *   `_query_types.sql` note). The reachable overload is the `jsonb` one, whose
  *   body coerces its operand to the STORAGE domain, which does require `c`.
- *   (protect-ffi 0.29 can mint narrowed `eql_v3.query_<name>` operands via
+ *   (protect-ffi can mint narrowed `eql_v3.query_<name>` operands via
  *   `encryptQuery`, but with no way to cast a PostgREST filter value they
  *   stay unreachable from this adapter.)
  *
- *   The full envelope satisfies the storage-domain CHECK by construction, and
- *   the operators extract the term they need (`eq_term`/`ord_term`/
- *   `match_term`).
- * - **`matches`, not `like`/`ilike`/`contains`** — encrypted free-text search is
+ *   The full envelope satisfies scalar storage-domain CHECKs by construction,
+ *   and equality/range operators extract the term they need.
+ *
+ *   EQL 3.0.2 removed the storage/jsonb escape hatch for free-text and JSON
+ *   operators: those now require typed query-domain operands. The factory reads
+ *   the installed EQL version and this builder fails those operators before
+ *   encryption, so a decryptable storage envelope never enters a GET URL.
+ * - **Legacy `matches`, not `like`/`ilike`/`contains`** — on pre-3.0.2 EQL,
+ *   encrypted free-text search is
  *   FUZZY BLOOM TOKEN MATCHING, not containment: the bundle declares `@>` on each
- *   match domain (`CREATE OPERATOR @> … FUNCTION = eql_v3.contains`, the SQL
+ *   match domain (`CREATE OPERATOR @> … FUNCTION = eql_v3.matches`, the SQL
  *   function's name), whose body is `match_term(a) @> match_term(b)` — `smallint[]`
  *   containment of the two bloom filters. It is order- and multiplicity-
  *   insensitive and one-sided (a `true` may be a false positive). PostgREST
@@ -206,6 +211,8 @@ export class EncryptedQueryBuilderV3Impl<
   private columnSchemas: Record<string, ColumnSchema>
   /** Column builders keyed by BOTH property name and DB name. */
   private v3Columns: Record<string, V3ColumnLike>
+  /** EQL 3.0.2+ requires query-domain casts PostgREST cannot express. */
+  private queryDomainsRequired: boolean
 
   constructor(
     tableName: string,
@@ -213,6 +220,7 @@ export class EncryptedQueryBuilderV3Impl<
     encryptionClient: EncryptionClient,
     supabaseClient: SupabaseClientLike,
     allColumns: string[] | null = null,
+    queryDomainsRequired = false,
   ) {
     super(
       tableName,
@@ -226,6 +234,7 @@ export class EncryptedQueryBuilderV3Impl<
     )
 
     this.v3Table = table
+    this.queryDomainsRequired = queryDomainsRequired
     this.propToDb = table.buildColumnKeyMap()
     this.columnSchemas = table.build().columns
 
@@ -371,7 +380,7 @@ export class EncryptedQueryBuilderV3Impl<
 
   /**
    * Resolve a raw `.filter()` operator to the capability it exercises. Unlike
-   * v2, the v3 operand is always the full storage envelope, so `queryType`
+   * v2, a supported v3 operand is a full storage envelope, so `queryType`
    * never selects a narrowing — it only tells {@link encryptCollectedTerms}
    * which capability to demand of the column. Getting it wrong therefore
    * produces a wrong accept/reject, not a wrong ciphertext: the base class's
@@ -446,9 +455,9 @@ export class EncryptedQueryBuilderV3Impl<
 
   /**
    * Validate a term's query type against its column's declared capabilities.
-   * Pure validation: `encrypt`/`bulkEncrypt` never receive the query type — the
-   * v3 filter operand is a full storage envelope (see the class doc for why
-   * `encryptQuery` terms cannot be used).
+   * Pure validation: `encrypt`/`bulkEncrypt` never receive the query type. On
+   * EQL 3.0.2+, free-text/JSON terms are rejected before this storage-encryption
+   * path can place ciphertext in a GET URL.
    */
   private assertTermQueryable(term: ScalarQueryTerm): V3ColumnLike {
     const column = term.column as unknown as V3ColumnLike
@@ -668,6 +677,16 @@ export class EncryptedQueryBuilderV3Impl<
     return Boolean(builder?.getQueryCapabilities().searchableJson)
   }
 
+  private assertPostgrestCanQueryEncryptedOperator(
+    method: string,
+    column: string,
+  ): void {
+    if (!this.queryDomainsRequired) return
+    throw new Error(
+      `[supabase v3]: ${method}() on encrypted column "${column}" is unavailable with EQL 3.0.2+: the SQL operator requires an eql_v3.query_* cast that PostgREST cannot express. Use the Drizzle or Prisma Next adapter, or a scoped SQL/RPC function.`,
+    )
+  }
+
   /**
    * `contains` on the v3 surface is EXACT containment: native jsonb/array `@>`
    * on a plaintext column, ENCRYPTED ste_vec `@>` on a `types.Json` column (the
@@ -678,6 +697,7 @@ export class EncryptedQueryBuilderV3Impl<
    */
   override contains(column: string, value: unknown): this {
     if (this.isSearchableJsonColumn(column)) {
+      this.assertPostgrestCanQueryEncryptedOperator('contains', column)
       // Same validator the term resolver enforces — failing here just surfaces
       // the error at the call site instead of at execution.
       assertJsonContainmentOperand(column, value)
@@ -712,6 +732,7 @@ export class EncryptedQueryBuilderV3Impl<
         `[supabase v3]: matches() is encrypted free-text search and requires an encrypted column; "${column}" is not one. Use contains() for native containment.`,
       )
     }
+    this.assertPostgrestCanQueryEncryptedOperator('matches', column)
     return super.matches(column, value)
   }
 
@@ -810,6 +831,7 @@ export class EncryptedQueryBuilderV3Impl<
    * `ops.selector()` supports it today.
    */
   selectorEq(column: string, path: string, value: unknown): this {
+    this.assertPostgrestCanQueryEncryptedOperator('selectorEq', column)
     const needle = this.selectorNeedle('selectorEq', column, path, value)
     return super.contains(column, needle)
   }
@@ -825,6 +847,7 @@ export class EncryptedQueryBuilderV3Impl<
    * operand is encrypted through the normal or-condition term path.
    */
   selectorNe(column: string, path: string, value: unknown): this {
+    this.assertPostgrestCanQueryEncryptedOperator('selectorNe', column)
     const needle = this.selectorNeedle('selectorNe', column, path, value)
     return super.or([
       { column, op: 'is', value: null },
@@ -877,7 +900,7 @@ export class EncryptedQueryBuilderV3Impl<
   /**
    * Encrypted `matches` goes through the bloom-filter `@>`, which the bundle
    * declares on the domain as PostgREST's `cs`. The operand is the full storage
-   * envelope; `eql_v3.contains` (the SQL function) extracts the `bf` array from
+   * envelope; `eql_v3.matches` (the SQL function) extracts the `bf` array from
    * both sides.
    *
    * Emitted via `filter(col, 'cs', json)` rather than `q.contains(col, json)`:
@@ -892,6 +915,7 @@ export class EncryptedQueryBuilderV3Impl<
     wasEncrypted: boolean,
   ): SupabaseQueryBuilder {
     if (wasEncrypted) {
+      this.assertPostgrestCanQueryEncryptedOperator('filter', column)
       return q.filter(column, 'cs', value)
     }
     return super.applyContainsFilter(q, column, value, wasEncrypted)

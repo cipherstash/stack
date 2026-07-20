@@ -70,7 +70,7 @@ CREATE TABLE users (
   id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
   email public.eql_v3_text_search,   -- equality + order/range + free-text
   age public.eql_v3_integer_ord,     -- equality + order/range
-  profile public.eql_v3_json,        -- encrypted-JSONB queries
+  profile public.eql_v3_json_search,        -- encrypted-JSONB queries
   role VARCHAR(50)                   -- non-encrypted columns are normal types
 );
 ```
@@ -109,7 +109,7 @@ Capability suffixes at a glance (full catalog: `stash-encryption` skill, "Schema
 | `types.IntegerOrdOre`, ... | `eql_v3_integer_ord_ore`, ... | as `Ord`, with block-ORE ordering (superuser-only install — see Sorting) |
 | `types.TextMatch` | `eql_v3_text_match` | `matches` (fuzzy free-text) only |
 | `types.TextSearch` | `eql_v3_text_search` | equality + order/range + `matches` |
-| `types.Json` | `eql_v3_json` | `contains` + `selector` (encrypted JSONB) |
+| `types.Json` | `eql_v3_json_search` | `contains` + `selector` (encrypted JSONB) |
 
 Value families: `Integer`/`Smallint`/`Numeric`/`Real`/`Double` (`number`), `Bigint` (`bigint`), `Date`/`Timestamp` (`Date`), `Text` (`string`), `Boolean` (`boolean`, storage only), `Json` (a JSON document — object or array, not a top-level scalar).
 
@@ -258,7 +258,7 @@ const results = await db
 
 ### Encrypted-JSONB Containment (`contains`)
 
-`contains(col, subDoc)` on a `types.Json` column is **exact** encrypted containment (jsonb `@>` semantics, no false positives). The needle is a ciphertext-free `query_jsonb` term. Array containment is position-independent — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
+`contains(col, subDoc)` on a `types.Json` column is **exact** encrypted containment (jsonb `@>` semantics, no false positives). The needle is a ciphertext-free `query_json` term. Array containment is position-independent — `{ roles: ["admin"] }` matches any document whose `roles` array includes `"admin"`:
 
 ```typescript
 const results = await db
@@ -292,10 +292,10 @@ const results = await db
 Available methods: `.eq`, `.ne`, `.gt`, `.gte`, `.lt`, `.lte`. Rules:
 
 - **Paths are dot-notation object keys only** (`"$.a.b"`). Array-index and wildcard syntax (`$.items[0]`) is rejected.
-- **Leaves are scalars only**: `string`, `number`, `boolean`, `Date`, or `bigint`. An object or array leaf is rejected — use `contains` for sub-object matching. A `boolean` leaf is rejected under the ordering methods (booleans have no ordering).
+- **Leaves are JSON scalars only**: `string`, `number`, or `boolean`. An object or array leaf is rejected — use `contains` for sub-object matching. A `boolean` leaf is rejected under the ordering methods (booleans have no ordering). Serialize `Date`/`bigint` to the representation actually stored in the JSON document.
 - **A scalar needle does not match an array at the path.** `selector(col, "$.tags").eq("a")` will not match `{ tags: ["a"] }` — use `contains(col, { tags: ["a"] })` for that.
 - **Absent-path semantics:** `eq` and the ordering methods exclude rows whose document lacks the path; `ne` **includes** them ("not equal to X" covers "has no X").
-- **Interim ciphertext disclosure ([cipherstash/protectjs-ffi#137](https://github.com/cipherstash/protectjs-ffi/issues/137)):** the selector's right-hand value is currently a storage-encrypted needle, so its ciphertext appears in the WHERE clause (and therefore in Postgres logs that capture query text). The comparison itself only reads the needle's index terms. Once #137 lands, the needle becomes ciphertext-free like every other operand.
+- **No ciphertext in selector predicates.** Equality uses a value-selector containment needle (and can use the functional GIN index); ordering uses a selector hash plus a ciphertext-free scalar query term.
 
 ### Batched Conditions (and / or)
 

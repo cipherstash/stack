@@ -4,10 +4,10 @@
  * `@cipherstash/stack/adapter-kit`.
  *
  * Both adapters express "compare the value at `$.a.b`" over an encrypted
- * `eql_v3_json` column, and both need the same three pieces: parse + validate
- * the dot-notation path, reconstruct the `{ a: { b: value } }` needle document
- * whose ste_vec entry at the path carries the comparison terms, and reject
- * non-scalar leaves up front. Originally private to the Drizzle v3 operators
+ * `eql_v3_json_search` column, and both need consistent parsing and scalar-leaf
+ * validation. `reconstructSelectorDocument` remains available for adapters that
+ * must send a storage-shaped document through PostgREST. Originally private to
+ * the Drizzle v3 operators
  * (#651); moved here when the Supabase adapter grew the same querying (#650) so
  * the validation rules cannot drift between adapters.
  */
@@ -75,7 +75,7 @@ export function jsonPathOf(segments: string[]): string {
 
 /**
  * A selector compares a single scalar LEAF. Returns a reason string when `value`
- * is unsupported — a non-scalar (object/array → that's `contains`), or a boolean
+ * is unsupported — a non-JSON scalar (object/array/Date/bigint), or a boolean
  * under an ordering operator (no ordering term) — else `null`. Callers raise it
  * as their adapter's operator error with column context, so a bad value is an
  * actionable SDK error rather than a deferred, opaque DB failure.
@@ -90,13 +90,21 @@ export function unsupportedLeafReason(
     return 'a selector compares a non-null scalar leaf, but got null/undefined — SQL NULL never equals anything; use is(column, null) for null checks.'
   }
   const isScalar =
-    value instanceof Date ||
     typeof value === 'number' ||
-    typeof value === 'bigint' ||
     typeof value === 'string' ||
     typeof value === 'boolean'
   if (!isScalar) {
-    return `a selector compares a scalar leaf, but got ${Array.isArray(value) ? 'an array' : 'an object'} — use contains() for sub-object matching.`
+    const got = Array.isArray(value)
+      ? 'an array'
+      : value instanceof Date
+        ? 'a Date — pass date.toISOString() (or its stored JSON representation)'
+        : typeof value === 'bigint'
+          ? 'bigint — pass its stored string/number representation'
+          : 'an object'
+    return `a selector compares a JSON scalar leaf, but got ${got} — use contains() for sub-object matching.`
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    return `a selector compares a JSON number, but got ${String(value)} — JSON supports only finite numbers.`
   }
   if (ordering && typeof value === 'boolean') {
     return 'a boolean leaf has no ordering — use eq/ne (or contains()).'

@@ -99,7 +99,7 @@ describe('v3 operator capability gating', () => {
     ).toThrow(/JSON containment/)
   })
 
-  it('eql_v3_json is searchableJson-only — rejects eqlEq', () => {
+  it('eql_v3_json_search is searchableJson-only — rejects eqlEq', () => {
     expect(() =>
       callOperator(
         getOperator('eqlEq'),

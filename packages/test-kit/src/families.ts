@@ -47,7 +47,7 @@ const FAMILY_PREFIXES: Readonly<Record<FamilyName, readonly string[]>> = {
   timestamp: ['timestamp'],
   text: ['text'],
   boolean: ['boolean'],
-  // `json` is here only for coverage accounting — its one domain (`eql_v3_json`)
+  // `json` is here only for coverage accounting — its one domain (`eql_v3_json_search`)
   // is marked `deferred`, meaning "not run by the scalar op-matrix", because JSON
   // is queried by containment (`@>`), not the eq/ord/match ops the oracle models.
   // It is NOT unimplemented: dedicated live suites (`json-crypto`, `json-contains`)

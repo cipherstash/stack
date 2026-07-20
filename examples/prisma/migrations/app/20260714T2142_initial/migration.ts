@@ -65,10 +65,10 @@ export default class M extends Migration {
             notNull: true,
             codecRef: { codecId: 'pg/text@1' },
           }),
-          col('preferences', 'eql_v3_json', {
+          col('preferences', 'eql_v3_json_search', {
             notNull: true,
             codecRef: {
-              codecId: 'cipherstash/eql-v3/eql_v3_json@1',
+              codecId: 'cipherstash/eql-v3/eql_v3_json_search@1',
               typeParams: {
                 capabilities: { searchableJson: true },
                 castAs: 'json',

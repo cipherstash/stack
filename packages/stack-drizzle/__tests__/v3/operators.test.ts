@@ -105,7 +105,7 @@ const orderDomains = matrixEntries.filter(
 const matchDomains = matrixEntries.filter(([, spec]) => spec.indexes.match)
 // Domains with NO scalar query index (unique/ore/ope/match), so `eq`/`ne`/
 // ordering all throw. This is the truly storage-only scalar domains PLUS
-// `eql_v3_json` — json is a QUERYABLE domain (containment), it just answers no
+// `eql_v3_json_search` — json is a QUERYABLE domain (containment), it just answers no
 // scalar op, so it lands here for the eq/order rejection checks.
 const nonScalarQueryDomains = matrixEntries.filter(
   ([, spec]) =>
@@ -358,12 +358,12 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
 describe('createEncryptionOperatorsV3 - free-text match', () => {
   it.each(
     matchDomains,
-  )('%s matches emits latest eql_v3.contains with a query-term operand', async (eqlType, spec) => {
+  )('%s matches emits latest eql_v3.matches with a query-term operand', async (eqlType, spec) => {
     const { ops, encryptQuery, render } = setup()
     const q = render(await ops.matches(matrixColumn(eqlType), needleFor(spec)))
 
     expect(q.sql).toContain(
-      `eql_v3.contains("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
+      `eql_v3.matches("matrix_users"."${slug(eqlType)}", $1::${qcast(eqlType)})`,
     )
     expect(q.params).toEqual([TERM_JSON])
     expect(encryptQuery.mock.calls[0]?.[1]?.column.getName()).toBe(
@@ -392,7 +392,7 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
     const { ops, render } = setup()
     const q = render(await ops.matches(users.email, 'ada'))
     expect(q.sql).toContain(
-      'eql_v3.contains("users"."email", $1::eql_v3.query_text_search)',
+      'eql_v3.matches("users"."email", $1::eql_v3.query_text_search)',
     )
   })
 
@@ -401,7 +401,7 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
     const q = render(ops.not(await ops.matches(users.email, 'example.com')))
     expect(q.sql).toMatch(/^not /i)
     expect(q.sql).toContain(
-      'eql_v3.contains("users"."email", $1::eql_v3.query_text_search)',
+      'eql_v3.matches("users"."email", $1::eql_v3.query_text_search)',
     )
   })
 
@@ -414,21 +414,21 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
 })
 
 describe('createEncryptionOperatorsV3 - JSON containment', () => {
-  const JSON_TYPE = 'public.eql_v3_json'
+  const JSON_TYPE = 'public.eql_v3_json_search'
 
-  // json has no `eql_v3.contains` overload: containment is the `@>` operator,
-  // and the needle is a narrowed `query_jsonb` term from `encryptQuery` (no
-  // ciphertext), cast to `eql_v3.query_jsonb`.
-  it('contains emits the @> operator with a query_jsonb needle', async () => {
+  // json has no `eql_v3.matches` overload: containment is the `@>` operator,
+  // and the needle is a narrowed `query_json` term from `encryptQuery` (no
+  // ciphertext), cast to `eql_v3.query_json`.
+  it('contains emits the @> operator with a query_json needle', async () => {
     const { ops, encryptQuery, render } = setup()
     const q = render(
       await ops.contains(matrixColumn(JSON_TYPE), { roles: ['eng'] }),
     )
 
     expect(q.sql.toLowerCase()).toContain(
-      `"matrix_users"."${slug(JSON_TYPE)}" operator(public.@>) $1::eql_v3.query_jsonb`,
+      `"matrix_users"."${slug(JSON_TYPE)}" operator(public.@>) $1::eql_v3.query_json`,
     )
-    expect(q.sql).not.toContain('eql_v3.contains')
+    expect(q.sql).not.toContain('eql_v3.matches')
     // The needle is the encryptQuery result, not a full storage envelope.
     expect(q.params).toEqual([TERM_JSON])
     expect(encryptQuery).toHaveBeenCalledTimes(1)
@@ -473,6 +473,75 @@ describe('createEncryptionOperatorsV3 - JSON containment', () => {
       /matches every row/,
     )
     expect(encryptQuery).not.toHaveBeenCalled()
+  })
+})
+
+describe('createEncryptionOperatorsV3 - JSON selectors', () => {
+  const JSON_TYPE = 'public.eql_v3_json_search'
+  const column = matrixColumn(JSON_TYPE)
+  const VALUE_SELECTOR = { sv: [{ s: 'value-selector' }] }
+  const ORDER_TERM = { v: 3, i: {}, op: 'ordered-value' }
+
+  it('uses value-selector containment for equality and inequality', async () => {
+    const { ops, encryptQuery, render } = setup((value) =>
+      typeof value === 'object' ? VALUE_SELECTOR : TERM,
+    )
+
+    const eq = render(await ops.selector(column, '$.profile.age').eq(42))
+    const ne = render(await ops.selector(column, '$.profile.age').ne(42))
+
+    expect(eq.sql.toLowerCase()).toContain(
+      `"matrix_users"."${slug(JSON_TYPE)}" operator(public.@>) $1::eql_v3.query_json`,
+    )
+    expect(ne.sql).toContain('NOT')
+    expect(ne.sql).toContain('IS NULL')
+    expect(eq.params).toEqual([JSON.stringify(VALUE_SELECTOR)])
+    expect(encryptQuery.mock.calls[0]?.[0]).toEqual({
+      path: '$.profile.age',
+      value: 42,
+    })
+    expect(encryptQuery.mock.calls[0]?.[1]).toMatchObject({
+      queryType: 'steVecValueSelector',
+    })
+  })
+
+  it('orders the extracted entry against a ciphertext-free scalar term', async () => {
+    const { ops, encryptQuery, render } = setup((value) =>
+      typeof value === 'string' && value.startsWith('$.')
+        ? 'selector-hash'
+        : ORDER_TERM,
+    )
+
+    const q = render(await ops.selector(column, 'profile.age').gt(42))
+
+    expect(q.sql).toContain(
+      'eql_v3.gt(eql_v3.jsonb_path_query_first("matrix_users"."eql_v3_json_search", $1::text), $2::eql_v3.query_double_ord)',
+    )
+    expect(q.params).toEqual(['selector-hash', JSON.stringify(ORDER_TERM)])
+    expect(encryptQuery.mock.calls.map((call) => call[1]?.queryType)).toEqual([
+      'steVecSelector',
+      'steVecTerm',
+    ])
+  })
+
+  it('uses the text query domain and rejects non-JSON scalar leaves', async () => {
+    const { ops, render } = setup((value) =>
+      typeof value === 'string' && value.startsWith('$.')
+        ? 'selector-hash'
+        : ORDER_TERM,
+    )
+    const q = render(await ops.selector(column, '$.profile.name').lte('zoe'))
+    expect(q.sql).toContain('::eql_v3.query_text_ord')
+
+    await expect(
+      ops.selector(column, '$.profile').eq(new Date()),
+    ).rejects.toThrow(/pass date\.toISOString/)
+    await expect(ops.selector(column, '$.profile').gt(true)).rejects.toThrow(
+      /boolean leaf has no ordering/,
+    )
+    await expect(
+      ops.selector(column, '$.profile').eq(Number.NaN),
+    ).rejects.toThrow(/JSON supports only finite numbers/)
   })
 })
 

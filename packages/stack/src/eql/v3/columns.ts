@@ -12,7 +12,7 @@ import { defaultMatchOpts } from '@/schema/match-defaults'
  * - `freeTextSearch`: tokenised substring match (EQL `bf`).
  * - `searchableJson`: encrypted-JSONB containment / selector lookups (EQL
  *   `ste_vec`). Optional and mutually exclusive with the scalar flags — a
- *   `public.eql_v3_json` document is queried by structure, not by scalar term.
+ *   `public.eql_v3_json_search` document is queried by structure, not by scalar term.
  */
 export type QueryCapabilities = Readonly<{
   equality: boolean
@@ -390,7 +390,7 @@ function indexesForCapabilities(
     // With positional terms emitted (v2 `searchableJson`'s `'all'`), the needle
     // for `x`-at-index-0 would miss a document holding `x` at index 1.
     //
-    // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json` orders the
+    // `mode: 'compat'` is REQUIRED for eql-3.0.0: `public.eql_v3_json_search` orders the
     // document's entries by the CLLW-OPE `op` term, so the index must emit `op`
     // (compat) terms. `'standard'` emits v2's CLLW-ORE `oc` terms, which the v3
     // domain rejects at encrypt time.
@@ -631,7 +631,7 @@ export class EncryptedDoubleOrdColumn extends EncryptedV3Column<
 
 // json
 const JSON_DOMAIN = {
-  eqlType: 'public.eql_v3_json',
+  eqlType: 'public.eql_v3_json_search',
   castAs: 'json',
   capabilities: {
     equality: false,
@@ -642,7 +642,7 @@ const JSON_DOMAIN = {
 } as const
 
 /**
- * Builder for a `public.eql_v3_json` column — an encrypted JSONB document
+ * Builder for a `public.eql_v3_json_search` column — an encrypted JSONB document
  * (a {@link JsonDocument}: object, array, or null). It round-trips through
  * `encrypt`/`decrypt`, and containment queries use the encrypted-JSONB index
  * emitted by `build()`. (The stored payload is protect-ffi's `SteVecDocument`,
@@ -727,7 +727,7 @@ export type JsonValue =
   | { [key: string]: JsonValue }
 
 /**
- * The plaintext a `public.eql_v3_json` column encrypts and reconstructs: a JSON
+ * The plaintext a `public.eql_v3_json_search` column encrypts and reconstructs: a JSON
  * DOCUMENT — an object, an array, or `null`. NOT a bare top-level scalar:
  * protect-ffi's `json` cast rejects a top-level string/number/boolean
  * ("Cannot convert … to Json"), because a scalar belongs in a scalar domain

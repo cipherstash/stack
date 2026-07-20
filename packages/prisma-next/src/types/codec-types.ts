@@ -299,7 +299,7 @@ export type CodecTypes = {
   // alias is kept in scope (via the import above) so the codec entry
   // still flags JSON as an envelope-bearing codec at the type-import
   // layer.
-  readonly 'cipherstash/eql-v3/eql_v3_json@1': {
+  readonly 'cipherstash/eql-v3/eql_v3_json_search@1': {
     readonly input: unknown
     readonly output: EncryptedJson
     readonly traits: V3TraitsJson

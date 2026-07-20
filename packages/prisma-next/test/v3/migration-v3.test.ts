@@ -72,7 +72,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(JSON.stringify(v3Ops).length).toBeLessThan(5_000)
     // @cipherstash/eql is pinned exact (matching @cipherstash/stack, which
     // encodes the v3 domain types against this same release).
-    expect(releaseManifest.eqlVersion).toBe('3.0.0')
+    expect(releaseManifest.eqlVersion).toBe('3.0.2')
   })
 
   it('injects readInstallSql() from @cipherstash/eql into the descriptor at build time', () => {

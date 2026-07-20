@@ -43,6 +43,8 @@ export interface UnmodelledColumn {
 export interface IntrospectionData {
   tables: IntrospectionResult
   unmodelled: Map<string, UnmodelledColumn[]>
+  /** Installed EQL version from the `eql_v3` schema comment, when available. */
+  eqlVersion?: string | null
 }
 
 /** Raw row of {@link UNMODELLED_COLUMNS_QUERY}. */
@@ -139,6 +141,28 @@ const UNMODELLED_COLUMNS_QUERY = `
   ORDER BY c.table_name, c.ordinal_position
 `
 
+const EQL_VERSION_QUERY = `
+  SELECT obj_description(to_regnamespace('eql_v3'), 'pg_namespace') AS version
+`
+
+interface EqlVersionRow {
+  version: string | null
+}
+
+/** EQL 3.0.2+ requires typed query-domain operands for match/JSON operators. */
+export function eqlRequiresQueryDomains(version: string | null | undefined) {
+  const match = version?.match(/^(\d+)\.(\d+)\.(\d+)/)
+  // Unknown/missing version metadata must fail closed: assuming the legacy
+  // storage-envelope route could put decryptable ciphertext in a GET URL.
+  if (!match) return true
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  const patch = Number(match[3])
+  return (
+    major > 3 || (major === 3 && (minor > 0 || (minor === 0 && patch >= 2)))
+  )
+}
+
 /** `pg` ships its API on the CJS default export, not the module namespace. */
 type PgDefaultExport = typeof import('pg')['default']
 
@@ -195,15 +219,17 @@ export async function introspect(
   })
   await client.connect()
   try {
-    const [columns, unmodelled] = await Promise.all([
+    const [columns, unmodelled, eqlVersion] = await Promise.all([
       client.query<IntrospectionRow>(COLUMNS_QUERY),
       client.query<UnmodelledRow>(UNMODELLED_COLUMNS_QUERY, [
         Object.keys(DOMAIN_REGISTRY),
       ]),
+      client.query<EqlVersionRow>(EQL_VERSION_QUERY),
     ])
     return {
       tables: groupIntrospectionRows(columns.rows),
       unmodelled: groupUnmodelledRows(unmodelled.rows),
+      eqlVersion: eqlVersion.rows[0]?.version ?? null,
     }
   } finally {
     // `end()` runs only after a successful connect; swallow its own failure so it

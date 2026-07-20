@@ -1,6 +1,24 @@
 import fc from 'fast-check'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { groupIntrospectionRows, loadPg } from '../src/introspect'
+import {
+  eqlRequiresQueryDomains,
+  groupIntrospectionRows,
+  loadPg,
+} from '../src/introspect'
+
+describe('eqlRequiresQueryDomains', () => {
+  it.each([
+    [null, true],
+    ['unknown', true],
+    ['3.0.0', false],
+    ['3.0.1', false],
+    ['3.0.2', true],
+    ['3.1.0', true],
+    ['4.0.0', true],
+  ] as const)('classifies %s', (version, expected) => {
+    expect(eqlRequiresQueryDomains(version)).toBe(expected)
+  })
+})
 
 describe('groupIntrospectionRows', () => {
   it('groups rows by table, preserving row order as column order', () => {
@@ -79,7 +97,7 @@ describe('groupIntrospectionRows', () => {
 describe('introspect happy path', () => {
   afterEach(() => vi.resetModules())
 
-  it('issues both queries, builds the domains, and closes the connection', async () => {
+  it('issues all queries, builds the domains, and closes the connection', async () => {
     const end = vi.fn(() => Promise.resolve())
     const queries: Array<{ sql: string; params?: unknown[] }> = []
 
@@ -92,6 +110,9 @@ describe('introspect happy path', () => {
         query(sql: string, params?: unknown[]) {
           queries.push({ sql, params })
           // The unmodelled query is the parameterised one.
+          if (sql.includes('to_regnamespace')) {
+            return Promise.resolve({ rows: [{ version: '3.0.2' }] })
+          }
           return Promise.resolve({
             rows: params
               ? [
@@ -116,9 +137,9 @@ describe('introspect happy path', () => {
     })
 
     const { introspect } = await import('../src/introspect')
-    const { tables, unmodelled } = await introspect('postgres://ok')
+    const { tables, unmodelled, eqlVersion } = await introspect('postgres://ok')
 
-    expect(queries).toHaveLength(2)
+    expect(queries).toHaveLength(3)
     // The registry IS the query parameter — it must be pushed into Postgres,
     // not re-derived client-side.
     const parameterised = queries.find((q) => q.params)!
@@ -136,6 +157,7 @@ describe('introspect happy path', () => {
     expect(unmodelled.get('users')).toEqual([
       { columnName: 'legacy', domainName: 'unsupported_domain' },
     ])
+    expect(eqlVersion).toBe('3.0.2')
     // A leaked connection is invisible to every other assertion here.
     expect(end).toHaveBeenCalledTimes(1)
 

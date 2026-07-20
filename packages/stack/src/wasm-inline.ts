@@ -46,7 +46,7 @@
  * })
  * // e.g. postgres-js:
  * //   sql`SELECT * FROM users
- * //       WHERE eql_v3.contains(email, ${term}::jsonb::eql_v3.query_text_search)`
+ * //       WHERE eql_v3.matches(email, ${term}::jsonb::eql_v3.query_text_search)`
  * ```
  *
  * For per-user, identity-bound encryption on the edge, build an
@@ -375,7 +375,7 @@ export class WasmEncryptionClient {
    * Interpolate it as a parameter and cast to the column's
    * `eql_v3.query_<domain>` type to reach the indexed operators — the domain
    * suffix mirrors the storage domain (`eql_v3_text_eq` →
-   * `eql_v3.query_text_eq`; irregular: `eql_v3_json` → `eql_v3.query_jsonb`).
+   * `eql_v3.query_text_eq`; irregular: `eql_v3_json_search` → `eql_v3.query_json`).
    *
    * @example Equality (unique index)
    * ```ts
@@ -393,7 +393,7 @@ export class WasmEncryptionClient {
    *   table: users, column: users.bio, queryType: "freeTextSearch",
    * })
    * sql`SELECT * FROM users
-   *     WHERE eql_v3.contains(bio, ${term}::jsonb::eql_v3.query_text_search)`
+   *     WHERE eql_v3.matches(bio, ${term}::jsonb::eql_v3.query_text_search)`
    * ```
    *
    * @example Range / ORDER BY (ORE index)
@@ -412,7 +412,7 @@ export class WasmEncryptionClient {
    *   table: users, column: users.prefs, queryType: "searchableJson",
    * })
    * sql`SELECT * FROM users
-   *     WHERE prefs @> ${contains}::jsonb::eql_v3.query_jsonb`
+   *     WHERE prefs @> ${contains}::jsonb::eql_v3.query_json`
    *
    * // String value → JSONPath selector. NOTE: v3 has no encrypted-selector
    * // envelope — this returns the BARE selector-hash string, bound as the

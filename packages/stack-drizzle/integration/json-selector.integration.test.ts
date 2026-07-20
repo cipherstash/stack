@@ -2,13 +2,9 @@
  * Live JSONPath selector-with-constraint for the v3 `types.Json()` column (#623).
  * Distinct from containment (`ops.contains`, `@>`): this extracts the encrypted
  * leaf entry at a JSONPath and compares it, so it can express ORDERING at a path
- * (`col->'$.age' > 25`) that containment cannot. Emits
- * `eql_v3.<op>(eql_v3.jsonb_path_query_first(col, '<sel>'), eql_v3.jsonb_path_query_first('<needle>'::eql_v3_json, '<sel>'))`.
- *
- * INTERIM (cipherstash/protectjs-ffi#137): the RHS needle is a STORAGE encryption
- * of `{path: value}` — its ste_vec entry carries `c` + `op`/`hm`, which the
- * comparison extracts. Once protect-ffi can mint a ciphertext-free ordering query
- * needle for a ste_vec column, the RHS drops the ciphertext.
+ * (`col->'$.age' > 25`) that containment cannot. Equality uses exact
+ * value-selector containment; ordering compares the extracted entry with a
+ * ciphertext-free scalar query term.
  */
 
 import type { JsonDocument } from '@cipherstash/stack/eql/v3'
@@ -74,7 +70,7 @@ beforeAll(async () => {
       id INTEGER PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
       row_key TEXT NOT NULL,
       test_run_id TEXT NOT NULL,
-      doc public.eql_v3_json NOT NULL
+      doc public.eql_v3_json_search NOT NULL
     )
   `)
 

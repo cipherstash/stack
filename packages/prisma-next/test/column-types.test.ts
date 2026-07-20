@@ -51,10 +51,10 @@ describe('v3 TS factories', () => {
     })
   })
 
-  it('json() emits public.eql_v3_json with searchableJson-only capabilities', () => {
+  it('json() emits public.eql_v3_json_search with searchableJson-only capabilities', () => {
     expect(columnTypes.json()).toEqual({
-      codecId: 'cipherstash/eql-v3/eql_v3_json@1',
-      nativeType: 'public.eql_v3_json',
+      codecId: 'cipherstash/eql-v3/eql_v3_json_search@1',
+      nativeType: 'public.eql_v3_json_search',
       typeParams: {
         castAs: 'json',
         capabilities: {

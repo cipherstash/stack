@@ -11,7 +11,7 @@
  *   - `eqlAsc` / `eqlDesc` order alphabetically
  *     via the encrypted order term.
  *   - `eqlMatch` — bloom-filter TOKEN containment
- *     (`eql_v3.contains`), not SQL ILIKE — coexists with the
+ *     (`eql_v3.matches`), not SQL ILIKE — coexists with the
  *     order-and-range operators on the same column.
  */
 

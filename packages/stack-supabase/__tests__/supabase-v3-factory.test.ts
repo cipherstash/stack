@@ -36,6 +36,7 @@ function introspectionOf(data: Partial<IntrospectionData>): IntrospectionData {
   return {
     tables: data.tables ?? [],
     unmodelled: data.unmodelled ?? new Map(),
+    eqlVersion: data.eqlVersion ?? null,
   }
 }
 
@@ -151,6 +152,22 @@ describe('encryptedSupabaseV3 factory', () => {
       databaseUrl: 'postgres://x',
     })
     expect(supabase.from('users')).toBeInstanceOf(EncryptedQueryBuilderV3Impl)
+  })
+
+  it('threads the EQL 3.0.2 query-domain limitation into builders', async () => {
+    introspectMock.mockResolvedValueOnce(
+      introspectionOf({
+        ...usersIntrospection,
+        eqlVersion: '3.0.2',
+      }),
+    )
+    const supabase = await encryptedSupabaseV3(fakeClient, {
+      databaseUrl: 'postgres://x',
+    })
+
+    expect(() => supabase.from('users').matches('email', 'alice')).toThrow(
+      /EQL 3\.0\.2\+/,
+    )
   })
 
   it('throws when a schemas record key ≠ its table name', async () => {

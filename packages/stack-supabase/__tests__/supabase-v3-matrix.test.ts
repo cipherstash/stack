@@ -118,7 +118,7 @@ describe('supabase v3 wire encoding, every domain', () => {
     expect(equalityDomains).toHaveLength(28)
     expect(orderDomains).toHaveLength(19)
     expect(matchDomains).toHaveLength(2)
-    // +1: `eql_v3_json` carries only an `ste_vec` index, so from this scalar
+    // +1: `eql_v3_json_search` carries only an `ste_vec` index, so from this scalar
     // tiering it reads as storage-only — the Supabase adapter has no JSON
     // containment path (PostgREST can't cast/call), so it rejects scalar ops.
     expect(storageOnlyDomains).toHaveLength(11)

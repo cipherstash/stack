@@ -11,7 +11,7 @@ A single `User` model with one column per plaintext family, exercised end-to-end
 | `accountId`     | `cipherstash.BigIntOrd()`  | `public.eql_v3_bigint_ord`  | equality + order/range (true `bigint`) |
 | `birthday`      | `cipherstash.DateOrd()`    | `public.eql_v3_date_ord`    | equality + order/range                 |
 | `emailVerified` | `cipherstash.Boolean()`    | `public.eql_v3_boolean`     | storage-only (no operators)            |
-| `preferences`   | `cipherstash.Json()`       | `public.eql_v3_json`        | `eqlJsonContains` (`@>`)               |
+| `preferences`   | `cipherstash.Json()`       | `public.eql_v3_json_search`        | `eqlJsonContains` (`@>`)               |
 
 📖 See the [Prisma Next encryption docs](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the full operator reference, security model, and known limitations.
 
@@ -102,7 +102,7 @@ Found 2 user(s) with a dark-theme preference.
 
 Two v3 behaviours worth noticing in that output:
 
-- **`eqlMatch` is fuzzy bloom-filter token matching** (`eql_v3.contains`), not SQL `ILIKE` — the needle's tokens must appear in the ciphertext's index. Plain literal terms like `example.com` are the idiomatic needle: leading/trailing `%` are stripped for compatibility, while an interior `%` or any `_` throws (the tokenizer would treat them as ordinary characters), as do needles shorter than the match tokenizer length.
+- **`eqlMatch` is fuzzy bloom-filter token matching** (`eql_v3.matches`), not SQL `ILIKE` — the needle's tokens must appear in the ciphertext's index. Plain literal terms like `example.com` are the idiomatic needle: leading/trailing `%` are stripped for compatibility, while an interior `%` or any `_` throws (the tokenizer would treat them as ordinary characters), as do needles shorter than the match tokenizer length.
 - **`eql_v3_boolean` is storage-only.** It round-trips `true`/`false` losslessly but surfaces no search operators — calling one throws `EncryptionOperatorError`. Filter on a searchable column and decrypt the boolean from the result set.
 
 ## References

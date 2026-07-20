@@ -58,7 +58,7 @@ import {
 } from './operator-lowering-v3.helpers'
 
 const V3_TEXT_SEARCH = 'cipherstash/eql-v3/eql_v3_text_search@1'
-const V3_JSON = 'cipherstash/eql-v3/eql_v3_json@1'
+const V3_JSON = 'cipherstash/eql-v3/eql_v3_json_search@1'
 
 it('test fixture codec ids are members of the pinned v3 set', () => {
   expect(isCipherstashV3CodecId(V3_TEXT_SEARCH)).toBe(true)

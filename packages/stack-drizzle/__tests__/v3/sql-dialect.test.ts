@@ -50,7 +50,7 @@ describe('v3Dialect', () => {
 
   it('contains via two-arg function', () => {
     expect(render(v3Dialect.contains(col, enc))).toBe(
-      'eql_v3.contains("users"."x", $1)',
+      'eql_v3.matches("users"."x", $1)',
     )
   })
 

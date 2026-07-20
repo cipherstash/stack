@@ -91,10 +91,11 @@ describe('createV3CodecDescriptors — descriptor metadata', () => {
     ])
   })
 
-  it('eql_v3_json declares only the searchable-json trait', () => {
+  it('eql_v3_json_search declares only the searchable-json trait', () => {
     const ds = createV3CodecDescriptors(emptySdk())
     expect(
-      ds.find((d) => d.codecId === 'cipherstash/eql-v3/eql_v3_json@1')?.traits,
+      ds.find((d) => d.codecId === 'cipherstash/eql-v3/eql_v3_json_search@1')
+        ?.traits,
     ).toEqual(['cipherstash:searchable-json'])
   })
 
@@ -120,7 +121,9 @@ describe('createV3CodecDescriptors — descriptor metadata', () => {
     expect(render('cipherstash/eql-v3/eql_v3_boolean@1')).toBe(
       'EncryptedBoolean',
     )
-    expect(render('cipherstash/eql-v3/eql_v3_json@1')).toBe('EncryptedJson')
+    expect(render('cipherstash/eql-v3/eql_v3_json_search@1')).toBe(
+      'EncryptedJson',
+    )
   })
 })
 
@@ -257,7 +260,7 @@ describe('CipherstashV3CellCodec — decode', () => {
     expect(bigintDecoded).toBeInstanceOf(EncryptedBigInt)
     const jsonDecoded = await codecFor(
       ds,
-      'cipherstash/eql-v3/eql_v3_json@1',
+      'cipherstash/eql-v3/eql_v3_json_search@1',
     ).decode('{"c":"x"}', routedCtx('t', 'c'))
     expect(jsonDecoded).toBeInstanceOf(EncryptedJson)
   })

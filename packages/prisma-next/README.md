@@ -85,7 +85,7 @@ await decryptAll(rows)
 console.log(await rows[0]?.email.decrypt())
 ```
 
-See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the complete encrypted column reference, all 17 query operators, the override surface, security model, and known limitations.
+See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the complete encrypted column reference, all 23 query operators (including encrypted JSONPath comparisons), the override surface, security model, and known limitations.
 
 ## Subpath exports
 

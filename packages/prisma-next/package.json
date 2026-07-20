@@ -77,7 +77,7 @@
 		"clean": "rm -rf dist coverage .tmp-output"
 	},
 	"dependencies": {
-		"@cipherstash/eql": "3.0.0",
+		"@cipherstash/eql": "3.0.2",
 		"@cipherstash/stack": "workspace:*",
 		"@prisma-next/contract": "0.14.0",
 		"@prisma-next/family-sql": "0.14.0",
