@@ -419,6 +419,19 @@ describe('error handling', () => {
     expect(result.failure?.details).toEqual({ context: 'bulkDecryptModels' })
   })
 
+  it('fails the whole batch when one item is undecryptable (all-or-nothing)', async () => {
+    const result = await dynamo.bulkDecryptModels(
+      // One malformed item alongside a well-formed plaintext-only one.
+      [{ email__source: 'not-a-ciphertext' }, { pk: 'ok' }],
+      users,
+    )
+
+    // The batch is all-or-nothing: a single bad item fails the whole call, and
+    // no partial data is returned.
+    expect(result.failure).toBeDefined()
+    expect((result as { data?: unknown }).data).toBeUndefined()
+  })
+
   it('routes failures to the configured errorHandler', async () => {
     const seen: { code: string; message: string }[] = []
     const instrumented = encryptedDynamoDB({

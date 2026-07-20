@@ -104,6 +104,16 @@ export async function resolveDecryptResult<T>(
     audit?: (data: { metadata?: Record<string, unknown> }) => unknown
   }
 
+  if (typeof chainable?.audit !== 'function' && auditData.metadata) {
+    // The typed EncryptionV3 client returns a plain promise with no decrypt
+    // audit surface, so the metadata has nowhere to go. Make the drop
+    // observable rather than silent — use the nominal client for audited
+    // decrypts.
+    logger.debug(
+      'DynamoDB: decrypt audit metadata ignored — the typed client has no decrypt audit surface; use Encryption({ config: { eqlVersion: 3 } }) for audited decrypts.',
+    )
+  }
+
   const resolved =
     typeof chainable?.audit === 'function'
       ? await chainable.audit(auditData)
@@ -273,28 +283,63 @@ export function toEncryptedDynamoItem(
   )
 }
 
+/**
+ * The row-invariant table facts the read path needs. `build()` and
+ * `resolveEncryptColumnMap` are not memoized, so a bulk decrypt of N items must
+ * build this ONCE and reuse it — see `buildReadContext`. `columnPaths` are the
+ * keys a model's fields are MATCHED on (JS property names); `toColumnName` maps
+ * a match to the name the FFI config is keyed by. For v3 those differ whenever
+ * a column is declared `emailAddress: types.TextEq('email_address')`.
+ */
+export type ReadContext = {
+  isV3: boolean
+  v: 2 | 3
+  encryptConfig: {
+    tableName: string
+    columns: Record<
+      string,
+      { cast_as?: string; indexes: Record<string, unknown> }
+    >
+  }
+  columnPaths: string[]
+  toColumnName: (path: string) => string
+}
+
+/** Resolve the row-invariant read context for a table, once. */
+export function buildReadContext(schema: AnyEncryptedTable): ReadContext {
+  const isV3 = isV3Table(schema)
+  const { columnPaths, toColumnName } = resolveEncryptColumnMap(schema)
+  return {
+    isV3,
+    v: isV3 ? 3 : 2,
+    encryptConfig: schema.build(),
+    columnPaths,
+    toColumnName,
+  }
+}
+
 export function toItemWithEqlPayloads(
   decrypted: Record<string, EncryptedValue | unknown>,
   encryptionSchema: AnyEncryptedTable,
+  // Resolved once here for the single-item path; passed in by the bulk path so
+  // it is not rebuilt per item.
+  context: ReadContext = buildReadContext(encryptionSchema),
 ): Record<string, unknown> {
-  const v = isV3Table(encryptionSchema) ? 3 : 2
-  // Hoisted: `build()` is not memoized, and this used to run once per attribute
-  // per nesting level per item.
-  const encryptConfig = encryptionSchema.build()
-  // `columnPaths` are the keys a model's fields are MATCHED on (JS property
-  // names); `toColumnName` maps a match to the name the FFI config is keyed by.
-  // For v3 those differ whenever a column is declared as
-  // `emailAddress: types.TextEq('email_address')` — matching on the config keys
-  // instead would miss the attribute entirely, drop its `__hmac`, and recurse
-  // into the payload. Reuses the core resolver rather than re-deriving it.
-  const { columnPaths, toColumnName } =
-    resolveEncryptColumnMap(encryptionSchema)
+  const { isV3, v, encryptConfig, columnPaths, toColumnName } = context
 
   /** Resolve an attribute back to the column path it was written from. */
   function matchColumn(leaf: string, prefix: string): string | undefined {
     const dotted = prefix ? `${prefix}.${leaf}` : leaf
     if (columnPaths.includes(dotted)) return dotted
-    if (columnPaths.includes(leaf)) return leaf
+
+    // Bare-leaf fallback, v2-only. A v2 `encryptedField('amount')` inside a
+    // group registers the bare leaf `amount`, so a nested `amount__source` has
+    // to match it by leaf. v3 always registers the full dotted path
+    // (`'profile.ssn': types.TextEq('profile.ssn')`), so it never needs this —
+    // and must NOT use it: a nested `note__source` would otherwise match a
+    // same-named TOP-LEVEL `note` column and rewrite a plaintext sibling as an
+    // envelope. Scope the fallback to nested v2 attributes only.
+    if (!isV3 && prefix && columnPaths.includes(leaf)) return leaf
     return undefined
   }
 

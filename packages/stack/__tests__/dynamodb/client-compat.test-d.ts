@@ -155,9 +155,35 @@ describe('the v3 overload types the DynamoDB storage split', () => {
     expectTypeOf(result.data).not.toHaveProperty('meta__hmac')
   })
 
+  it('applies the same storage split to the bulk return type', async () => {
+    const result = await dynamo.bulkEncryptModels(
+      [{ pk: 'a', email: 'a@b.com', age: 3 }],
+      usersV3,
+    )
+    if (result.failure) return
+
+    expectTypeOf(result.data[0].email__source).toEqualTypeOf<string>()
+    expectTypeOf(result.data[0].email__hmac).toEqualTypeOf<string | undefined>()
+    expectTypeOf(result.data[0].age__source).toEqualTypeOf<string>()
+    expectTypeOf(result.data[0]).not.toHaveProperty('email')
+  })
+
+  it('folds bulk stored attributes back to plaintext on decrypt', async () => {
+    const result = await dynamo.bulkDecryptModels(
+      [{ pk: 'a', email__source: 'ct', email__hmac: 'hm' }],
+      usersV3,
+    )
+    if (result.failure) return
+
+    expectTypeOf(result.data[0].email).toEqualTypeOf<string>()
+    expectTypeOf(result.data[0]).not.toHaveProperty('email__source')
+  })
+
   it('rejects a field whose type does not match its column domain', () => {
     // @ts-expect-error - `email` is a text domain, not a number
     dynamo.encryptModel({ pk: 'a', email: 42 }, usersV3)
+    // @ts-expect-error - `age` is an integer domain, not a string
+    dynamo.encryptModel({ pk: 'a', age: 'not-a-number' }, usersV3)
   })
 
   it('folds the stored attributes back to plaintext on decrypt', async () => {

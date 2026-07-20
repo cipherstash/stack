@@ -229,6 +229,47 @@ describe('regressions found in review', () => {
     expect(toItemWithEqlPayloads(item, users)).toEqual(item)
   })
 
+  it('does not rebuild a nested <leaf>__source whose leaf collides with a top-level column', () => {
+    // `note` is a TOP-LEVEL column; there is no `profile.note`. A v3 table
+    // registers full dotted paths, so a nested `note__source` must NOT match
+    // the top-level `note` by bare leaf — doing so rewrote a plaintext sibling
+    // as an envelope and handed it to the FFI as a decrypt target.
+    const t = encryptedTable('t', {
+      email: types.TextEq('email'),
+      note: types.Text('note'),
+    })
+    const item = { profile: { note__source: 'plaintext, not a ciphertext' } }
+
+    expect(toItemWithEqlPayloads(item, t)).toEqual(item)
+  })
+
+  it('still rebuilds a v3 column declared with a dotted path', () => {
+    const t = encryptedTable('t', {
+      'profile.ssn': types.TextEq('profile.ssn'),
+    })
+
+    expect(
+      toItemWithEqlPayloads({ profile: { ssn__source: 'CT' } }, t),
+    ).toEqual({
+      profile: { ssn: { i: { c: 'profile.ssn', t: 't' }, v: 3, c: 'CT' } },
+    })
+  })
+
+  it('round-trips a three-level dotted path', () => {
+    const t = encryptedTable('t', { 'a.b.c': types.TextEq('a.b.c') })
+    const stored = toEncryptedDynamoItem(
+      {
+        a: { b: { c: { v: 3, i: { t: 't', c: 'a.b.c' }, c: 'CT', hm: 'H' } } },
+      },
+      Object.keys(t.buildColumnKeyMap()),
+    )
+
+    expect(stored).toEqual({ a: { b: { c__source: 'CT', c__hmac: 'H' } } })
+    expect(toItemWithEqlPayloads(stored, t)).toEqual({
+      a: { b: { c: { i: { c: 'a.b.c', t: 't' }, v: 3, c: 'CT' } } },
+    })
+  })
+
   it('identifies a column by its DB name when it differs from the property', () => {
     // `emailAddress: types.TextEq('email_address')` — matching must happen on
     // the property name, identification on the DB name.

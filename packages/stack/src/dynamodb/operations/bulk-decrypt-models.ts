@@ -2,6 +2,7 @@ import { type Result, withResult } from '@byteslice/result'
 import type { Decrypted, EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
 import {
+  buildReadContext,
   handleError,
   resolveDecryptResult,
   throwPreservingCode,
@@ -43,8 +44,11 @@ export class BulkDecryptModelsOperation<
     logger.debug(`DynamoDB: bulk decrypting ${this.items.length} models.`)
     return await withResult(
       async () => {
+        // Resolve the table's read context once, not once per item — `build()`
+        // and the column map are row-invariant.
+        const readContext = buildReadContext(this.table)
         const itemsWithEqlPayloads = this.items.map((item) =>
-          toItemWithEqlPayloads(item, this.table),
+          toItemWithEqlPayloads(item, this.table, readContext),
         )
 
         const client = this.encryptionClient as CallableEncryptionClient
