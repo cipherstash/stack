@@ -55,7 +55,28 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 
 There is no data migration between them: DynamoDB has no EQL extension to install and no schema to alter. But the two write **different wire formats**, so a table populated under v2 cannot be read back with a v3 schema, or vice versa. Pick one per table and stay on it.
 
-If you need nested object encryption, you must use EQL v2 — v3 has no `encryptedField` equivalent.
+**Nested objects work differently in each version, and this is the main reason to stay on v2.**
+
+EQL v2's `encryptedField` encrypts *selected leaves in place*. The item keeps its shape and unlisted siblings stay plaintext:
+
+```jsonc
+// schema: profile: { ssn: encryptedField("profile.ssn") }
+{ "profile": { "ssn__source": "<ciphertext>", "city": "Sydney" } }
+```
+
+EQL v3 has no `encryptedField` — a nested group is a compile error, since a v3 column map holds only `types.*` domains. Its equivalent is `types.Json`, which encrypts the **whole subtree as a single value**:
+
+```jsonc
+// schema: profile: types.Json("profile")
+{ "profile__source": [ /* ste_vec entries */ ] }
+```
+
+Choose accordingly:
+
+| You want | Use |
+|---|---|
+| The whole object encrypted as one value | `types.Json` (v3) |
+| Some leaves encrypted, siblings plaintext, structure preserved | `encryptedField` (v2 only) |
 
 ## Rolling Encryption Out to Production
 
