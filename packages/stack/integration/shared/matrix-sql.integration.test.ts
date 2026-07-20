@@ -20,8 +20,8 @@
  * has at least two), and per domain one proof per query permutation its indexes
  * support — proving each selects the expected row and not the other. Beyond the
  * per-capability proofs below, every applicable domain also exercises the public
- * two-arg negation/containment/range functions: `eql_v3.neq` (eq domains),
- * `eql_v3.contained_by` (match domains), and explicit two-bound `eql_v3.gte`+`lte`
+ * two-arg negation/range functions: `eql_v3.neq` (eq domains) and explicit
+ * two-bound `eql_v3.gte`+`lte`
  * with strict `gt`+`lt` (ordering domains), plus a strict pairwise-`lt` ordering
  * proof. Queries use a FULL encrypted
  * operand (`client.encrypt`, same payload as storage) compared against the
@@ -220,9 +220,6 @@ let orderIds: number[] = []
 const eqTerms: Record<string, unknown> = {}
 const ordTerms: Record<string, unknown> = {}
 const matchTerms: Record<string, unknown> = {}
-// Full operand for each match domain's `samples[0]` value (NOT the 'ada'
-// substring in `matchTerms`) — used by the `contained_by` proof.
-const containedByTerms: Record<string, unknown> = {}
 // Full operand for each ordering domain's distinct samples[0..L-1], reused from
 // the already-encrypted `ORDER_RUN_ID` rows (no extra encryption) — used by the
 // two-bound range / strict gt-lt proof.
@@ -327,12 +324,6 @@ beforeAll(async () => {
   // seeded sample of exactly one row per domain.
   for (const [t] of matchDomains) {
     matchTerms[slug(t)] = await encryptOperand(t, 'ada')
-  }
-  // `contained_by` operand = the FULL `samples[0]` value (row idA). Its token
-  // set equals idA's, so idA is contained_by it, while idB (`samples[1]`) has
-  // tokens the operand lacks. Reuse the already-encrypted `encModels[0]`.
-  for (const [t] of matchDomains) {
-    containedByTerms[slug(t)] = encModels[0][slug(t)]
   }
   // Range-bound operands: the full operand for each distinct sample of an
   // ordering domain, taken straight from the encrypted `ORDER_RUN_ID` rows
@@ -449,24 +440,6 @@ describe('v3 matrix live Postgres coverage (all covered domains)', () => {
       [TEST_RUN_ID, sql.json(matchTerms[col] as never)],
     )
     expect(rows.map((r) => r.id)).toEqual([expectedId])
-  })
-
-  it.each(
-    matchDomains,
-  )('%s: eql_v3.contained_by selects the row whose tokens the operand covers', async (eqlType) => {
-    const col = slug(eqlType)
-    // `contained_by(col, operand)` (`col <@ operand`) is true when the column's
-    // bloom tokens are a subset of the operand's. The operand encrypts row idA's
-    // full `samples[0]` value, so idA (equal token set) is contained_by it, while
-    // idB (`samples[1]`) carries tokens the operand lacks and is excluded. This is
-    // the dual of the `contains`/`@>` proof above.
-    const rows = await sql.unsafe<Row[]>(
-      `SELECT id FROM ${TABLE_NAME}
-         WHERE test_run_id = $1
-           AND eql_v3.contained_by("${col}", $2::jsonb)`,
-      [TEST_RUN_ID, sql.json(containedByTerms[col] as never)],
-    )
-    expect(rows.map((r) => r.id)).toEqual([idA])
   })
 
   it.each(

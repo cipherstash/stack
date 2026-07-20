@@ -21,7 +21,7 @@ The harness's Vitest global setup (`global-setup.ts`):
 
 1. Verifies the container is up (`pg_isready`) — you own the container lifecycle.
 2. Sets `DATABASE_URL` to the harness's local Postgres URL.
-3. Runs `prisma-next migrate` against the example app (installs the cipherstash EQL v2 + v3 bundle baselines + the `users` table typed against `public.eql_v3_*` domains; v3 needs no per-column search configs).
+3. Runs `prisma-next migrate` against the example app (installs the CipherStash EQL v2/v3 baselines, applies versioned EQL upgrades, and creates the `users` table typed against `public.eql_v3_*` domains; v3 needs no per-column search configs).
 4. Requires CipherStash credentials: either `CS_*` variables in `.env` or a local profile from `stash auth login` (device-code flow).
 
 `vitest.config.ts` wires the global setup, scopes the run to `*.e2e.test.ts`, and pins `pool: 'threads'` + `maxWorkers: 1` + `isolate: false` + `fileParallelism: false` so every test file shares one Postgres connection and one CipherStash SDK encryption client (and the SDK isn't asked to run encrypts across files concurrently). Each test file truncates `users` in its `beforeAll` for clean-slate isolation.

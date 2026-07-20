@@ -1,6 +1,7 @@
 {
   "hash": "sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e",
   "invariants": [
-    "cipherstash:install-eql-v3-bundle-v1"
+    "cipherstash:install-eql-v3-bundle-v1",
+    "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1"
   ]
 }

@@ -95,6 +95,8 @@ const ALLOWED_SHARED_CHUNK_MARKER_SETS: ReadonlyArray<readonly string[]> = [
   [
     'CIPHERSTASH_SPACE_ID',
     'CIPHERSTASH_V3_CODEC_IDS',
+    'CIPHERSTASH_V3_BASELINE_MIGRATION_NAME',
+    'CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME',
     'v3TraitsForCapabilities',
   ],
   // v3 catalog chunk (per-domain metadata + name/trait mappers)

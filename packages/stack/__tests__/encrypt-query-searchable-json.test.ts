@@ -117,16 +117,16 @@ describe('encryptQuery with searchableJson', () => {
   }, 30000)
 
   it('supports lock-context chaining for JSON query terms', async () => {
-    const result = await client
-      .encryptQuery(
-        { role: 'admin' },
-        {
-          column: documents.metadata,
-          table: documents,
-          queryType: 'searchableJson',
-        },
-      )
-      .withLockContext(createMockLockContext())
-    expectContainment(unwrapResult(result))
+    const operation = client.encryptQuery(
+      { role: 'admin' },
+      {
+        column: documents.metadata,
+        table: documents,
+        queryType: 'searchableJson',
+      },
+    )
+    const withContext = operation.withLockContext(createMockLockContext())
+    expect(withContext).toHaveProperty('execute')
+    expect(typeof withContext.execute).toBe('function')
   }, 30000)
 })

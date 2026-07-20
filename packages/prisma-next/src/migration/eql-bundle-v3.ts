@@ -8,8 +8,8 @@
  *
  * ## Runtime-sourced, NOT baked
  *
- * The v3 baseline migration does **not** embed the ~1.7 MB install SQL in its
- * `ops.json`. The committed op carries {@link RUNTIME_EQL_SQL_SENTINEL}, and
+ * The v3 migrations do **not** embed the ~1.7 MB install SQL in their
+ * `ops.json`. Each committed op carries {@link RUNTIME_EQL_SQL_SENTINEL}, and
  * `src/exports/control.ts` swaps in `readInstallSql()` from the installed
  * `@cipherstash/eql` when it builds the descriptor (see {@link withRuntimeEqlSql}).
  * `@cipherstash/eql` is therefore a runtime dependency, pinned to an exact
@@ -21,15 +21,15 @@
  * re-emitting the 1.7 MB `ops.json` (which coupled every EQL bump to a manual
  * re-emit loop) — it is a one-line version bump plus a rebuild.
  *
- * Why this is sound: the v3 baseline is an INVARIANT-ONLY self-edge
+ * Why this is sound: the v3 bundle migrations are INVARIANT-ONLY self-edges
  * (`from === to`; the bundle declares no contract-space storage — unlike the v2
  * bundle's `eql_v2_configuration`). The install SQL therefore never contributes
  * to the contract-space hash, and `contractSpaceFromJson` passes the ops through
  * with no integrity check on their contents (`verifyMigrationHash` runs only on
  * the disk read path for the user's own repo, never on the in-memory extension
  * descriptor). Swapping the SQL at descriptor-construction time is invisible to
- * the planner, which routes purely on the `cipherstash:install-eql-v3-bundle-v1`
- * invariant.
+ * the planner. A versioned upgrade invariant ensures databases that have
+ * already recorded the original baseline still traverse a new EQL release.
  */
 import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
 import type {
@@ -44,7 +44,7 @@ import type { MigrationMetadata } from '@prisma-next/migration-tools/metadata'
 export { readInstallSql, releaseManifest }
 
 /**
- * Placeholder the committed v3 baseline op carries in `execute[].sql` in place
+ * Placeholder each committed v3 bundle op carries in `execute[].sql` in place
  * of the baked install SQL. {@link withRuntimeEqlSql} swaps it for the real
  * bundle at descriptor-build time; if it ever reached a database directly it is
  * an inert SQL comment. It is ALSO the join key the injector matches on — the
@@ -104,7 +104,7 @@ function isMigrationOperationClass(
  * non-lossy. Called by the descriptor in `control.ts` so the applied SQL always
  * matches the resolved `@cipherstash/eql` version, not a baked snapshot.
  *
- * Throws if NO placeholder is present: the committed v3 baseline op MUST carry
+ * Throws if NO placeholder is present: every committed v3 bundle op MUST carry
  * the sentinel, so a missing match means the emit source and this injector have
  * diverged (e.g. real SQL was baked back in, or the sentinel string changed) —
  * fail loudly at descriptor build rather than silently apply the inert comment
@@ -116,7 +116,7 @@ export function withRuntimeEqlSql<T extends OpLike>(ops: readonly T[]): T[] {
   )
   if (!hasPlaceholder) {
     throw new Error(
-      'withRuntimeEqlSql: no op carried RUNTIME_EQL_SQL_SENTINEL — the v3 baseline ops.json must carry the placeholder for runtime EQL-SQL injection. The emit source and this injector have diverged.',
+      'withRuntimeEqlSql: no op carried RUNTIME_EQL_SQL_SENTINEL — the v3 bundle ops.json must carry the placeholder for runtime EQL-SQL injection. The emit source and this injector have diverged.',
     )
   }
   const sql = readV3InstallSql()

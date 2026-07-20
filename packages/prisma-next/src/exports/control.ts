@@ -39,9 +39,18 @@ import v3BaselineMetadata from '../../migrations/20260601T0100_install_eql_v3_bu
 import v3BaselineOps from '../../migrations/20260601T0100_install_eql_v3_bundle/ops.json' with {
   type: 'json',
 }
+import v3Upgrade302Metadata from '../../migrations/20260720T0000_upgrade_eql_v3_3_0_2/migration.json' with {
+  type: 'json',
+}
+import v3Upgrade302Ops from '../../migrations/20260720T0000_upgrade_eql_v3_3_0_2/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import contractJson from '../contract.json' with { type: 'json' }
-import { CIPHERSTASH_V3_BASELINE_MIGRATION_NAME } from '../extension-metadata/constants-v3'
+import {
+  CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+} from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
 import { cipherstashV3CodecControlHooks } from '../migration/cipherstash-codec-v3'
 import { withRuntimeEqlSqlPackage } from '../migration/eql-bundle-v3'
@@ -50,12 +59,16 @@ const v3BaselineRuntimePackage = withRuntimeEqlSqlPackage(
   v3BaselineMetadata,
   v3BaselineOps,
 )
+const v3Upgrade302RuntimePackage = withRuntimeEqlSqlPackage(
+  v3Upgrade302Metadata,
+  v3Upgrade302Ops,
+)
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
   migrations: [
-    // The v3 bundle baseline is the SOLE migration — the package is EQL
-    // v3 only. It is an invariant-only genesis edge (`from: null` → the
+    // The v3 bundle baseline is the genesis migration — the package is EQL
+    // v3 only. It is an invariant-only edge (`from: null` → the
     // empty-storage hash; the bundle creates `public.eql_v3_*` domains +
     // `eql_v3.*` functions but no contract-space storage). The v3 codec
     // ids ARE registered in `controlPlaneHooks` below, but with the
@@ -72,6 +85,13 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
       // helper also recomputes the content-addressed migration hash from the
       // injected ops so the descriptor can be materialised and verified.
       ops: v3BaselineRuntimePackage.ops,
+    },
+    // A distinct invariant is required for upgrades: databases that already
+    // recorded the baseline marker must still install the pinned 3.0.2 SQL.
+    {
+      dirName: CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
+      metadata: v3Upgrade302RuntimePackage.metadata,
+      ops: v3Upgrade302RuntimePackage.ops,
     },
   ],
   headRef,

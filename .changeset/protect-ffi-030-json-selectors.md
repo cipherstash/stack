@@ -8,6 +8,10 @@
 
 Upgrade Stack to `@cipherstash/protect-ffi` 0.30 and EQL 3.0.2.
 
+Prisma Next includes a versioned EQL 3.0.2 upgrade migration, so databases
+that have already recorded the original EQL v3 baseline still install the new
+domains and functions.
+
 Encrypted JSON now uses the `public.eql_v3_json_search` storage domain and
 `eql_v3.query_json` query domain. Drizzle selector equality uses exact,
 GIN-indexable value-selector containment, while selector ordering uses a

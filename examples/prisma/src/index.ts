@@ -27,7 +27,7 @@
  *   1. A Postgres database with the EQL v3 bundle installed. The
  *      extension contributes its own contract space at
  *      `migrations/cipherstash/` which installs the EQL bundles
- *      (v2 + v3 baselines) alongside the application schema —
+ *      (v2/v3 baselines plus versioned EQL upgrades) alongside the application schema —
  *      `pnpm migration:apply` runs it for you.
  *   2. A CipherStash workspace + ZeroKMS credentials. Run
  *      `stash auth login` once, or populate `CS_WORKSPACE_CRN`,

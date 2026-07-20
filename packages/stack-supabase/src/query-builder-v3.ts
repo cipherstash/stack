@@ -476,15 +476,6 @@ export class EncryptedQueryBuilderV3Impl<
       capabilities.searchableJson
     ) {
       queryType = 'searchableJson'
-      // THE single enforced operand boundary for encrypted-JSON containment.
-      // Terms reach this resolver from every spelling — contains(), raw
-      // .filter(col,'cs',…), not(col,'contains'|'matches',…), and .or()
-      // string/structured conditions — and only contains() has a method-level
-      // guard. Without this check a raw string (e.g. a free-text term ported
-      // from a text column, or an .or() condition value, which is always a
-      // string) would be storage-encrypted as a JSON SCALAR and silently match
-      // nothing; pre-#650 every such spelling failed loudly on capability.
-      assertJsonContainmentOperand(column.getName(), term.value)
     }
 
     if (
@@ -502,6 +493,27 @@ export class EncryptedQueryBuilderV3Impl<
       throw new Error(
         `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ${queryType} queries — declare the column with a domain that carries that capability`,
       )
+    }
+
+    if (queryType === 'freeTextSearch' || queryType === 'searchableJson') {
+      // This is the common boundary for every spelling that collects an
+      // encrypted match/containment term: matches(), contains(), not(), raw
+      // filter(), and both forms of or(). Method-level checks provide earlier
+      // errors for the direct helpers, but cannot cover the inherited raw
+      // filter paths on their own.
+      this.assertPostgrestCanQueryEncryptedOperator('filter', column.getName())
+    }
+
+    if (queryType === 'searchableJson') {
+      // THE single enforced operand boundary for encrypted-JSON containment.
+      // Terms reach this resolver from every spelling — contains(), raw
+      // .filter(col,'cs',…), not(col,'contains'|'matches',…), and .or()
+      // string/structured conditions — and only contains() has a method-level
+      // guard. Without this check a raw string (e.g. a free-text term ported
+      // from a text column, or an .or() condition value, which is always a
+      // string) would be storage-encrypted as a JSON SCALAR and silently match
+      // nothing; pre-#650 every such spelling failed loudly on capability.
+      assertJsonContainmentOperand(column.getName(), term.value)
     }
 
     // Free-text (bloom) needle floor. A needle shorter than the tokenizer's
