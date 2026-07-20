@@ -51,34 +51,47 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 | Import | `@cipherstash/stack/v3` | `@cipherstash/stack` + `@cipherstash/stack/schema` |
 | Schema | `encryptedTable` + `types.*` | `encryptedTable` + `encryptedColumn` |
 | Client | `EncryptionV3({ schemas })` | `Encryption({ schemas })` |
-| Nested fields | **Not yet** (deferred) | `encryptedField` |
+| Nested fields | Flat dotted path (`"profile.ssn"`) | Nested group + `encryptedField` |
 
 There is no data migration between them: DynamoDB has no EQL extension to install and no schema to alter. But the two write **different wire formats**, so a table populated under v2 cannot be read back with a v3 schema, or vice versa. Pick one per table and stay on it.
 
-**Nested objects work differently in each version, and this is the main reason to stay on v2.**
+**Nested attributes work in both versions**, with different authoring syntax.
 
-EQL v2's `encryptedField` encrypts *selected leaves in place*. The item keeps its shape and unlisted siblings stay plaintext:
+DynamoDB items are natively nested, so this matters here more than on Postgres. Both versions encrypt *selected leaves in place*: the item keeps its shape and unlisted siblings stay plaintext.
 
-```jsonc
-// schema: profile: { ssn: encryptedField("profile.ssn") }
-{ "profile": { "ssn__source": "<ciphertext>", "city": "Sydney" } }
+EQL v2 uses a nested group with `encryptedField`:
+
+```typescript
+const users = encryptedTable("users", {
+  profile: { ssn: encryptedField("profile.ssn") },
+})
 ```
 
-EQL v3 has no `encryptedField` authoring form — a nested group is a compile error, since a v3 column map holds only `types.*` domains.
+EQL v3 has no nested-group syntax — a nested object in a v3 column map is a compile error. Declare the column **flat, with a dotted path** instead:
 
-The nearest v3 equivalent is `types.Json`, which encrypts the **whole subtree as a single value**:
-
-```jsonc
-// schema: profile: types.Json("profile")
-{ "profile__source": [ /* ste_vec entries */ ] }
+```typescript
+const users = encryptedTable("users", {
+  "profile.ssn": types.TextEq("profile.ssn"),
+  "profile.note": types.Text("profile.note"),
+})
 ```
 
-Choose accordingly:
+Both produce the same DynamoDB item, and the v3 form keeps equality queryability on the nested attribute:
 
-| You want | Use |
-|---|---|
-| The whole object encrypted as one value | `types.Json` (v3) |
-| Some leaves encrypted, siblings plaintext, structure preserved | `encryptedField` (v2 only) |
+```jsonc
+{ "pk": "u#1",
+  "profile": {
+    "ssn__source": "<ciphertext>",
+    "ssn__hmac": "<hmac>",        // key-condition on profile.ssn__hmac
+    "note__source": "<ciphertext>",
+    "city": "Sydney"              // not in schema, stays plaintext
+  } }
+```
+
+> The dotted string is the *property key* as well as the column name — the model
+> is matched by dotted path, so `{ profile: { ssn } }` resolves correctly.
+
+To encrypt a whole subtree as one value instead of per-leaf, use `types.Json`, which stores it as a single ste_vec attribute (`profile__source`).
 
 ## Rolling Encryption Out to Production
 

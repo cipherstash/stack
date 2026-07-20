@@ -265,6 +265,7 @@ export function toItemWithEqlPayloads(
     attrName: string,
     attrValue: unknown,
     isNested: boolean,
+    prefix = '',
   ): Record<string, unknown> {
     if (attrValue === null || attrValue === undefined) {
       return { [attrName]: attrValue }
@@ -279,22 +280,33 @@ export function toItemWithEqlPayloads(
     const encryptedAttrs = Object.keys(encryptConfig.columns)
     const columnName = attrName.slice(0, -ciphertextAttrSuffix.length)
 
+    // A nested attribute's registered column name depends on the authoring
+    // convention: `encryptedField('example.protected')` (and v3's dotted
+    // property form) register the full dotted path, whereas
+    // `encryptedField('amount')` under a `details` group registers just the
+    // leaf. Prefer the dotted path when the schema knows it, else fall back to
+    // the leaf — so both conventions rebuild an identifier that matches how the
+    // column was declared, rather than always guessing the leaf.
+    const dottedPath = prefix ? `${prefix}.${columnName}` : columnName
+    const identifierColumn = encryptedAttrs.includes(dottedPath)
+      ? dottedPath
+      : columnName
+
     // Handle encrypted payload
     if (
       attrName.endsWith(ciphertextAttrSuffix) &&
-      (encryptedAttrs.includes(columnName) || isNested)
+      (encryptedAttrs.includes(identifierColumn) || isNested)
     ) {
-      const i = { c: columnName, t: encryptConfig.tableName }
+      const i = { c: identifierColumn, t: encryptConfig.tableName }
 
-      // Nested values are not searchable, so we can just return the standard EQL payload.
-      // Worth noting, that encryptConfig.columns[columnName] will be undefined if isNested is true.
+      // A JSON document is stored as its ste_vec array and must be rebuilt with
+      // `k: 'sv'`. Look the config up by the resolved identifier so a nested
+      // JSON column (registered under a dotted path) is detected too — keyed on
+      // the leaf it would be missing, and would be rebuilt as a scalar.
       // A v3 column builds the same `{ cast_as, indexes }` shape as a v2 one,
       // so this detection needs no version branch.
-      if (
-        !isNested &&
-        encryptConfig.columns[columnName].cast_as === 'json' &&
-        encryptConfig.columns[columnName].indexes.ste_vec
-      ) {
+      const columnConfig = encryptConfig.columns[identifierColumn]
+      if (columnConfig?.cast_as === 'json' && columnConfig.indexes.ste_vec) {
         return {
           [columnName]: {
             i,
@@ -320,13 +332,19 @@ export function toItemWithEqlPayloads(
       }
     }
 
-    // Handle nested objects recursively
+    // Handle nested objects recursively, carrying the path so a nested column
+    // can be matched against its registered dotted name.
     if (typeof attrValue === 'object' && !Array.isArray(attrValue)) {
       const nestedResult = Object.entries(
         attrValue as Record<string, unknown>,
       ).reduce(
         (acc, [key, val]) => {
-          const processed = processValue(key, val, true)
+          const processed = processValue(
+            key,
+            val,
+            true,
+            prefix ? `${prefix}.${attrName}` : attrName,
+          )
           return Object.assign({}, acc, processed)
         },
         {} as Record<string, unknown>,

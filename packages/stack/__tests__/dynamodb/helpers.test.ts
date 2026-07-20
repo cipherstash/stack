@@ -195,7 +195,7 @@ describe('toItemWithEqlPayloads (read path)', () => {
     })
   })
 
-  it('rebuilds nested payloads, identifying them by the leaf attribute name', () => {
+  it('rebuilds nested payloads, identifying them by their registered dotted name', () => {
     const result = toItemWithEqlPayloads(
       { example: { protected__source: 'nested-ct', notProtected: 'plain' } },
       users,
@@ -204,14 +204,35 @@ describe('toItemWithEqlPayloads (read path)', () => {
     expect(result).toEqual({
       example: {
         protected: {
-          // NOTE: the identifier uses the leaf name, not the dotted schema key
-          // (`example.protected`) the column is registered under.
-          i: { c: 'protected', t: 'users' },
+          // The column is registered as `example.protected`, so that is what
+          // the rebuilt identifier carries. This originally emitted the bare
+          // leaf (`protected`), which only worked because the FFI treats `i` as
+          // a detection key and never validates it against the ciphertext.
+          i: { c: 'example.protected', t: 'users' },
           v: 2,
           k: 'ct',
           c: 'nested-ct',
         },
         notProtected: 'plain',
+      },
+    })
+  })
+
+  it('falls back to the leaf name when only the leaf is registered', () => {
+    // `encryptedField('amount')` under a `details` group — the convention the
+    // schema docs show — registers `amount`, not `details.amount`.
+    const orders = encryptedTable('orders', {
+      details: { amount: encryptedField('amount') },
+    })
+
+    const result = toItemWithEqlPayloads(
+      { details: { amount__source: 'ct' } },
+      orders,
+    )
+
+    expect(result).toEqual({
+      details: {
+        amount: { i: { c: 'amount', t: 'orders' }, v: 2, k: 'ct', c: 'ct' },
       },
     })
   })

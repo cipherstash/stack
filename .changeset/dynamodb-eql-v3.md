@@ -28,9 +28,11 @@ Notes on capability:
   that mint an `hm` term — the `*Eq` family, plus `TextOrd`/`TextOrdOre`/
   `TextSearch`. Ordering and bloom-filter terms have no DynamoDB query surface
   and are not stored, so those columns remain decryptable but not queryable.
-- EQL v3 has no `encryptedField` authoring form, so per-leaf nested object
-  encryption currently requires an EQL v2 table. v3 can encrypt a whole
-  subtree with `types.Json`.
+- Nested attributes are supported in v3. There is no nested-group authoring
+  form (that is a compile error), so declare the column flat with a dotted
+  path — `{ 'profile.ssn': types.TextEq('profile.ssn') }`. The model is
+  matched by dotted path, so `{ profile: { ssn } }` resolves, and the nested
+  attribute keeps its `__hmac` for key conditions.
 - Audit metadata on `decryptModel` / `bulkDecryptModels` requires the nominal
   client; the `EncryptionV3` client has no audit surface on decrypt.
 

@@ -17,6 +17,7 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { encryptedDynamoDB } from '@/dynamodb'
+import { toItemWithEqlPayloads } from '@/dynamodb/helpers'
 import type { EncryptedDynamoDBInstance } from '@/dynamodb/types'
 import type { EncryptionClient } from '@/encryption'
 import { EncryptionV3 } from '@/encryption/v3'
@@ -234,6 +235,132 @@ describe('bulk operations with a v3 table', () => {
     const decrypted = await nominalDynamo.bulkDecryptModels<User>(
       encrypted.data,
       users,
+    )
+    if (decrypted.failure) throw new Error(decrypted.failure.message)
+
+    expect(decrypted.data).toEqual(items)
+  })
+})
+
+describe('nested attributes with a v3 table', () => {
+  // EQL v3 has no nested-object *authoring* form — a nested group is a compile
+  // error. But a dotted column path is a supported column name, and the model
+  // walk in `encryption/helpers/model-helpers.ts` is shared with v2 and matches
+  // on dotted paths. So nested DynamoDB attributes work in v3 today, declared
+  // flat. This matters for DynamoDB specifically, where items are natively
+  // nested documents.
+  const nested = encryptedTable('users_v3_nested', {
+    'profile.ssn': types.TextEq('profile.ssn'),
+    'profile.note': types.Text('profile.note'),
+  })
+
+  type NestedUser = {
+    pk: string
+    profile?: { ssn?: string; note?: string; city?: string }
+  }
+
+  let nestedDynamo: EncryptedDynamoDBInstance
+  let nestedClient: EncryptionClient
+
+  beforeAll(async () => {
+    nestedClient = await Encryption({
+      schemas: [nested] as never,
+      config: { eqlVersion: 3 },
+    })
+    nestedDynamo = encryptedDynamoDB({ encryptionClient: nestedClient })
+  })
+
+  it('splits nested attributes in place, leaving plaintext siblings alone', async () => {
+    const result = await nestedDynamo.encryptModel<NestedUser>(
+      {
+        pk: 'u#1',
+        profile: { ssn: '123-45-6789', note: 'hi', city: 'Sydney' },
+      },
+      nested,
+    )
+
+    if (result.failure) throw new Error(result.failure.message)
+
+    const profile = result.data.profile as Record<string, unknown>
+    expect(Object.keys(profile).sort()).toEqual([
+      'city',
+      'note__source',
+      'ssn__hmac',
+      'ssn__source',
+    ])
+    expect(profile.city).toBe('Sydney')
+  })
+
+  it('round-trips a nested item exactly', async () => {
+    const original: NestedUser = {
+      pk: 'u#2',
+      profile: { ssn: '123-45-6789', note: 'hi', city: 'Sydney' },
+    }
+
+    const encrypted = await nestedDynamo.encryptModel<NestedUser>(
+      original,
+      nested,
+    )
+    if (encrypted.failure) throw new Error(encrypted.failure.message)
+
+    const decrypted = await nestedDynamo.decryptModel<NestedUser>(
+      encrypted.data,
+      nested,
+    )
+    if (decrypted.failure) throw new Error(decrypted.failure.message)
+
+    expect(decrypted.data).toEqual(original)
+  })
+
+  it('rebuilds the nested identifier from its registered dotted name', async () => {
+    const encrypted = await nestedDynamo.encryptModel<NestedUser>(
+      { pk: 'u#3', profile: { ssn: '123-45-6789' } },
+      nested,
+    )
+    if (encrypted.failure) throw new Error(encrypted.failure.message)
+
+    const rebuilt = toItemWithEqlPayloads(encrypted.data, nested)
+    const payload = (rebuilt.profile as Record<string, { i: { c: string } }>)
+      .ssn
+
+    expect(payload.i.c).toBe('profile.ssn')
+  })
+
+  it('makes a nested equality attribute queryable by __hmac', async () => {
+    const ssn = '999-88-7777'
+
+    const stored = await nestedDynamo.encryptModel<NestedUser>(
+      { pk: 'u#4', profile: { ssn } },
+      nested,
+    )
+    if (stored.failure) throw new Error(stored.failure.message)
+
+    const term = await nestedClient.encryptQuery(ssn, {
+      table: nested as never,
+      column: nested['profile.ssn'] as never,
+    })
+    if (term.failure) throw new Error(term.failure.message)
+
+    const profile = stored.data.profile as Record<string, unknown>
+    // A key condition on `profile.ssn__hmac` matches what was written.
+    expect((term.data as { hm: string }).hm).toBe(profile.ssn__hmac)
+  })
+
+  it('bulk round-trips nested items', async () => {
+    const items: NestedUser[] = [
+      { pk: 'u#5', profile: { ssn: 'a', city: 'Sydney' } },
+      { pk: 'u#6', profile: { note: 'b' } },
+    ]
+
+    const encrypted = await nestedDynamo.bulkEncryptModels<NestedUser>(
+      items,
+      nested,
+    )
+    if (encrypted.failure) throw new Error(encrypted.failure.message)
+
+    const decrypted = await nestedDynamo.bulkDecryptModels<NestedUser>(
+      encrypted.data,
+      nested,
     )
     if (decrypted.failure) throw new Error(decrypted.failure.message)
 
