@@ -333,7 +333,10 @@ Two semantics to know:
 > **Upgrade note:** EQL 3.0.2 changes the searchable-JSON storage domain and
 > SteVec wire format. Existing encrypted JSON rows must be re-encrypted before
 > querying them with this version. Legacy EQL v2 `searchableJson()` columns are
-> no longer supported; migrate them to the EQL v3 `types.Json` domain.
+> no longer supported; migrate them to the EQL v3 `types.Json` domain. For raw
+> `encryptQuery` callers, explicit `queryType: 'steVecTerm'` now means a scalar
+> JSON ordering term, not containment. Prefer `searchableJson` for containment,
+> or `steVecValueSelector` for exact equality at a path.
 
 ### Batch Query Encryption
 

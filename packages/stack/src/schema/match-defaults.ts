@@ -120,10 +120,10 @@ export function matchNeedleMinLength(opts: MatchIndexOpts): number | undefined {
  * in the other direction — NFD `'éé'` is 4 codepoints but 2 grapheme clusters,
  * and does yield trigrams.
  *
- * Currently wired ONLY into the v3 Drizzle adapter (`eql/v3/drizzle/operators`).
+ * Wired into the v3 adapter surfaces and the core v3 `encryptQuery` preflight.
  * It lives here, beside the shared match defaults, because v2 builds the same
  * bloom filters and needs the same floor — but v2's `like`/`ilike` path remains
- * unguarded and still fails open. Do not reuse this for v2 without first
+ * separate. Do not reuse this for v2 without first
  * measuring what its tokenizer actually receives: v2 needles carry SQL wildcards
  * (`'%ada%'`), so the floor may have to apply to the unwrapped term rather than
  * to the string the caller passed.

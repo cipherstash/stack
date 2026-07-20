@@ -16,6 +16,7 @@ import type {
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
+  assertMatchNeedleQueryable,
   assertValueIndexCompatibility,
   validateNumericValue,
 } from '../helpers/validation'
@@ -86,6 +87,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
           indexType,
           this.opts.column.getName(),
         )
+        assertMatchNeedleQueryable(plaintext, indexType, this.opts.column)
 
         const encrypted = await ffiEncryptQuery(this.client, {
           // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
@@ -176,6 +178,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
           indexType,
           this.opts.column.getName(),
         )
+        assertMatchNeedleQueryable(plaintext, indexType, this.opts.column)
 
         const encrypted = await ffiEncryptQuery(this.client, {
           // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via

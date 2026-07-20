@@ -19,6 +19,12 @@ ciphertext-free path selector plus string/number query term. Prisma Next gains
 the equivalent `eqlJsonPathEq`, `eqlJsonPathNeq`, `eqlJsonPathGt`,
 `eqlJsonPathGte`, `eqlJsonPathLt`, and `eqlJsonPathLte` operators.
 
+If you call `encryptQuery` with an explicit `queryType`, note that
+`steVecTerm` now produces a scalar JSON ordering term. It no longer means
+structural containment; use the recommended `searchableJson` query type with
+an object or array for containment, or `steVecValueSelector` with
+`{ path, value }` for exact equality at a path.
+
 The FFI now rejects free-text needles shorter than the configured n-gram size
 at the core query-encryption boundary, including callers that bypass adapter
 guards.

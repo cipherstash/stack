@@ -1,6 +1,7 @@
 import type { Result } from '@byteslice/result'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
-import type { FfiIndexTypeName } from '@/types'
+import { matchNeedleError } from '@/schema/match-defaults'
+import type { BuildableQueryColumn, FfiIndexTypeName } from '@/types'
 
 /**
  * Inclusive bounds of a signed 64-bit integer (`int8`) — the range every
@@ -128,6 +129,33 @@ export function assertValueIndexCompatibility(
   ) {
     throw new Error(
       `[encryption]: Cannot use 'match' index with numeric value on column "${columnName}". The 'freeTextSearch' index only supports string values. Configure the column with 'orderAndRange()' or 'equality()' for numeric queries.`,
+    )
+  }
+}
+
+/**
+ * Fail closed when a v3 match needle would tokenize to nothing.
+ *
+ * protect-ffi enforces the same invariant at its query-encryption boundary;
+ * this credential-free preflight keeps the Stack core path deterministic and
+ * ensures the FFI is never called with a match-all empty bloom. The v3 marker
+ * deliberately excludes legacy v2 LIKE/ILIKE values, which may still carry SQL
+ * wildcard syntax at this layer.
+ *
+ * @internal
+ */
+export function assertMatchNeedleQueryable(
+  value: unknown,
+  indexType: FfiIndexTypeName,
+  column: BuildableQueryColumn,
+): void {
+  if (indexType !== 'match' || !('getQueryCapabilities' in column)) return
+
+  const match = column.build().indexes?.match
+  const reason = match ? matchNeedleError(value, match) : undefined
+  if (reason) {
+    throw new Error(
+      `[encryption]: Cannot search column "${column.getName()}": ${reason}`,
     )
   }
 }

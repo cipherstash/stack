@@ -558,7 +558,10 @@ Semantics to know:
 > SteVec wire format are not compatible with earlier encrypted JSON rows.
 > Re-encrypt those rows during the upgrade. Legacy EQL v2
 > `searchableJson()` columns are no longer supported by protect-ffi 0.30;
-> migrate them to v3 `types.Json`.
+> migrate them to v3 `types.Json`. If you use raw `encryptQuery` query types,
+> explicit `steVecTerm` now produces a scalar JSON ordering term rather than a
+> containment needle. Prefer `searchableJson` for containment, or
+> `steVecValueSelector` for exact equality at a path.
 
 See the `stash-drizzle` and `stash-supabase` skills for the full integration guides.
 

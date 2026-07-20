@@ -16,6 +16,7 @@ import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
+  assertMatchNeedleQueryable,
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '../helpers/validation'
@@ -56,6 +57,7 @@ function buildQueryPayload(
 
   // Validate value/index compatibility
   assertValueIndexCompatibility(term.value, indexType, term.column.getName())
+  assertMatchNeedleQueryable(term.value, indexType, term.column)
 
   const payload: QueryPayload = {
     plaintext: term.value as JsPlaintext,
