@@ -239,15 +239,33 @@ describe('eqlMigrationCommand — Drizzle', () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
     const generated = join(out, '0000_install-eql.sql')
+    // A sibling carrying the SAME statement — the differential that proves the
+    // sweep ran at all, rather than no-opping over the whole directory.
+    const sibling = join(out, '0001_encrypt-email.sql')
+    const unsafeAlter =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n'
+    writeFileSync(sibling, unsafeAlter)
     spawnMock.mockImplementation(() => {
-      writeFileSync(generated, '')
+      fsWrite.real(generated, '')
       return { status: 0, stdout: '', stderr: '' }
     })
+    // The install bundle contains no ALTER COLUMN of its own, so the skip would
+    // have nothing to skip and this test would pass with `skip` removed. Append
+    // one to whatever the command writes, so the skip is load-bearing.
+    fsWrite.spy.mockImplementation(((path: string, data: unknown, ...rest) => {
+      const content =
+        typeof data === 'string' && data.includes('EQL v3 schema creation')
+          ? `${data}\n${unsafeAlter}`
+          : data
+      return fsWrite.real(path, content as string, ...(rest as []))
+    }) as typeof import('node:fs').writeFileSync)
 
     await eqlMigrationCommand({ drizzle: true, out })
 
-    // Untouched by the sweep: still the EQL v3 install bundle, verbatim.
-    expect(readFileSync(generated, 'utf-8')).toContain('EQL v3 schema creation')
+    // Skipped: the statement survives verbatim in the generated migration...
+    expect(readFileSync(generated, 'utf-8')).toContain(unsafeAlter)
+    // ...while the identical statement in the sibling was rewritten.
+    expect(readFileSync(sibling, 'utf-8')).not.toContain('SET DATA TYPE')
   })
 
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {
