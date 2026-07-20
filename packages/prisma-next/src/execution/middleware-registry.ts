@@ -1,6 +1,6 @@
 /**
  * Per-process registry of `CipherstashSdk` instances that have been
- * wired up via `bulkEncryptMiddleware(sdk)`. The codec's `encode`
+ * wired up via `bulkEncryptMiddlewareV3(sdk)`. The codec's `encode`
  * consults this registry to fire a misconfig diagnostic when an
  * SDK-bound codec sees a pre-encrypt envelope without a corresponding
  * middleware registration — the failure mode is otherwise an opaque

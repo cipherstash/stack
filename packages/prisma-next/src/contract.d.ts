@@ -30,7 +30,7 @@ import type {
 } from '@prisma-next/contract/types';
 
 export type StorageHash =
-  StorageHashBase<'sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7'>;
+  StorageHashBase<'sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e'>;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash =
   ProfileHashBase<'sha256:9c8aa3114e84ed3b7ea2bd57526d9c2e1bf7c5292be694e9d3801f566fda7ccb'>;
@@ -42,24 +42,8 @@ type DefaultLiteralValue<CodecId extends string, _Encoded> = CodecId extends key
   ? CodecTypes[CodecId]['output']
   : _Encoded;
 
-export type FieldOutputTypes = {
-  readonly public: {
-    readonly EqlV2Configuration: {
-      readonly id: CodecTypes['pg/text@1']['output'];
-      readonly state: CodecTypes['pg/text@1']['output'];
-      readonly data: CodecTypes['pg/jsonb@1']['output'];
-    };
-  };
-};
-export type FieldInputTypes = {
-  readonly public: {
-    readonly EqlV2Configuration: {
-      readonly id: CodecTypes['pg/text@1']['input'];
-      readonly state: CodecTypes['pg/text@1']['input'];
-      readonly data: CodecTypes['pg/jsonb@1']['input'];
-    };
-  };
-};
+export type FieldOutputTypes = { readonly public: Record<string, never> };
+export type FieldInputTypes = { readonly public: Record<string, never> };
 export type TypeMaps = TypeMapsType<
   CodecTypes,
   QueryOperationTypes,
@@ -73,33 +57,7 @@ type ContractBase = Omit<
       readonly public: {
         readonly id: 'public';
         readonly kind: 'sql-namespace';
-        readonly entries: {
-          readonly table: {
-            readonly eql_v2_configuration: {
-              columns: {
-                readonly id: {
-                  readonly nativeType: 'text';
-                  readonly codecId: 'pg/text@1';
-                  readonly nullable: false;
-                };
-                readonly state: {
-                  readonly nativeType: 'text';
-                  readonly codecId: 'pg/text@1';
-                  readonly nullable: false;
-                };
-                readonly data: {
-                  readonly nativeType: 'jsonb';
-                  readonly codecId: 'pg/jsonb@1';
-                  readonly nullable: false;
-                };
-              };
-              primaryKey: { readonly columns: readonly ['id'] };
-              uniques: readonly [];
-              indexes: readonly [];
-              foreignKeys: readonly [];
-            };
-          };
-        };
+        readonly entries: { readonly table: {} };
       };
     };
     readonly storageHash: StorageHash;
@@ -108,43 +66,11 @@ type ContractBase = Omit<
 > & {
   readonly target: 'postgres';
   readonly targetFamily: 'sql';
-  readonly roots: {
-    readonly eql_v2_configuration: {
-      readonly namespace: 'public' & NamespaceId;
-      readonly model: 'EqlV2Configuration';
-    };
-  };
+  readonly roots: Record<string, never>;
   readonly domain: {
     readonly namespaces: {
       readonly public: {
-        readonly models: {
-          readonly EqlV2Configuration: {
-            readonly fields: {
-              readonly id: {
-                readonly nullable: false;
-                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
-              };
-              readonly state: {
-                readonly nullable: false;
-                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/text@1' };
-              };
-              readonly data: {
-                readonly nullable: false;
-                readonly type: { readonly kind: 'scalar'; readonly codecId: 'pg/jsonb@1' };
-              };
-            };
-            readonly relations: Record<string, never>;
-            readonly storage: {
-              readonly table: 'eql_v2_configuration';
-              readonly namespaceId: 'public';
-              readonly fields: {
-                readonly id: { readonly column: 'id' };
-                readonly state: { readonly column: 'state' };
-                readonly data: { readonly column: 'data' };
-              };
-            };
-          };
-        };
+        readonly models: Record<string, never>;
       };
     };
   };

@@ -25,7 +25,6 @@ import { decryptAll } from '../src/execution/decrypt-all'
 import { EncryptedBigInt } from '../src/execution/envelope-bigint'
 import { EncryptedBoolean } from '../src/execution/envelope-boolean'
 import { EncryptedDate } from '../src/execution/envelope-date'
-import { EncryptedDouble } from '../src/execution/envelope-double'
 import { EncryptedJson } from '../src/execution/envelope-json'
 import {
   EncryptedString,
@@ -38,6 +37,7 @@ import type {
   CipherstashSdk,
   CipherstashSingleDecryptArgs,
 } from '../src/execution/sdk'
+import { EncryptedNumber } from '../src/v3/envelope-number'
 
 interface CounterSdk extends CipherstashSdk {
   readonly bulkDecryptCalls: CipherstashBulkDecryptArgs[]
@@ -495,7 +495,7 @@ describe('decryptAll — heterogeneous envelope subclasses', () => {
       column: 'email',
       sdk,
     })
-    const doubleEnv = EncryptedDouble.fromInternal({
+    const doubleEnv = EncryptedNumber.fromInternal({
       ciphertext: { v: 3.14 },
       table: 'User',
       column: 'score',
@@ -567,7 +567,7 @@ describe('decryptAll — heterogeneous envelope subclasses', () => {
     // contract with two envelopes of the same type at the same
     // routing key + a third envelope at a sibling column to confirm
     // the per-(table,column) split is preserved.
-    const { EncryptedDouble } = await import('../src/execution/envelope-double')
+    const { EncryptedNumber } = await import('../src/v3/envelope-number')
     const sdk = makeMultiSdk()
     const a = EncryptedString.fromInternal({
       ciphertext: { v: 'alice' },
@@ -581,7 +581,7 @@ describe('decryptAll — heterogeneous envelope subclasses', () => {
       column: 'email',
       sdk,
     })
-    const score = EncryptedDouble.fromInternal({
+    const score = EncryptedNumber.fromInternal({
       ciphertext: { v: 9.5 },
       table: 'User',
       column: 'score',

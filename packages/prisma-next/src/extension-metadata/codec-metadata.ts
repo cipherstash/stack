@@ -5,13 +5,13 @@
  * emit time — they never call `encode`/`decode`.
  *
  * The SDK-bound runtime codec for actual `encode`/`decode` lives in
- * `../execution/codec-runtime`; it is resolved through
- * `RuntimeParameterizedCodecDescriptor.factory` at runtime instead of
- * through pack-meta's `codecInstances`.
+ * `../v3/codec-runtime-v3`; it is resolved through the runtime
+ * descriptor's `codecDescriptors` at runtime instead of through
+ * pack-meta's `codecInstances`.
  *
  * Keeping the SDK-free metadata in its own module — and *not* importing
- * the runtime `CipherstashStringCodec` class — preserves the control
- * vs runtime split. Control-plane consumers (`exports/control.ts`,
+ * the runtime envelope classes — preserves the control vs runtime
+ * split. Control-plane consumers (`exports/control.ts`,
  * `exports/pack.ts`) pull this file but never touch the envelope, the
  * SDK interface, or the bulk-encrypt middleware. The bundling-isolation
  * test pins this property by snapshotting that the control entry's
@@ -33,43 +33,7 @@ import {
   V3_DOMAIN_META_BY_CODEC_ID,
   type V3DomainMeta,
 } from '../v3/catalog'
-import {
-  CIPHERSTASH_BIGINT_CODEC_ID,
-  CIPHERSTASH_BOOLEAN_CODEC_ID,
-  CIPHERSTASH_CODEC_TRAITS,
-  CIPHERSTASH_DATE_CODEC_ID,
-  CIPHERSTASH_DOUBLE_CODEC_ID,
-  CIPHERSTASH_JSON_CODEC_ID,
-  CIPHERSTASH_STRING_CODEC_ID,
-  EQL_V2_ENCRYPTED_TYPE,
-} from './constants'
 import { v3TraitsForCapabilities } from './constants-v3'
-
-function makeMetadataDescriptor(
-  codecId: string,
-  typeName: string,
-): AnyCodecDescriptor {
-  return {
-    codecId,
-    traits: CIPHERSTASH_CODEC_TRAITS[codecId] ?? [],
-    targetTypes: [EQL_V2_ENCRYPTED_TYPE],
-    meta: { db: { sql: { postgres: { nativeType: EQL_V2_ENCRYPTED_TYPE } } } },
-    paramsSchema: {
-      '~standard': {
-        version: 1,
-        vendor: 'cipherstash',
-        validate: (value: unknown) => ({ value }),
-      },
-    },
-    isParameterized: false,
-    renderOutputType: () => typeName,
-    factory: () => () => {
-      throw new Error(
-        'cipherstash codec: metadata descriptor factory is not callable',
-      )
-    },
-  }
-}
 
 class CipherstashCodecMetadata extends CodecImpl<
   string,
@@ -87,14 +51,14 @@ class CipherstashCodecMetadata extends CodecImpl<
   async encode(): Promise<unknown> {
     throw new Error(
       'cipherstash codec: encode called on the pack-meta metadata codec. ' +
-        'Construct a runtime descriptor via `createCipherstashRuntimeDescriptor({ sdk })` and use that instead.',
+        'Construct a runtime descriptor via `createCipherstashV3RuntimeDescriptor({ sdk })` and use that instead.',
     )
   }
 
   async decode(): Promise<unknown> {
     throw new Error(
       'cipherstash codec: decode called on the pack-meta metadata codec. ' +
-        'Construct a runtime descriptor via `createCipherstashRuntimeDescriptor({ sdk })` and use that instead.',
+        'Construct a runtime descriptor via `createCipherstashV3RuntimeDescriptor({ sdk })` and use that instead.',
     )
   }
 
@@ -109,36 +73,6 @@ class CipherstashCodecMetadata extends CodecImpl<
     )
   }
 }
-
-export const cipherstashStringCodecMetadata = new CipherstashCodecMetadata(
-  makeMetadataDescriptor(CIPHERSTASH_STRING_CODEC_ID, 'EncryptedString'),
-  'EncryptedString',
-)
-
-export const cipherstashDoubleCodecMetadata = new CipherstashCodecMetadata(
-  makeMetadataDescriptor(CIPHERSTASH_DOUBLE_CODEC_ID, 'EncryptedDouble'),
-  'EncryptedDouble',
-)
-
-export const cipherstashBigIntCodecMetadata = new CipherstashCodecMetadata(
-  makeMetadataDescriptor(CIPHERSTASH_BIGINT_CODEC_ID, 'EncryptedBigInt'),
-  'EncryptedBigInt',
-)
-
-export const cipherstashDateCodecMetadata = new CipherstashCodecMetadata(
-  makeMetadataDescriptor(CIPHERSTASH_DATE_CODEC_ID, 'EncryptedDate'),
-  'EncryptedDate',
-)
-
-export const cipherstashBooleanCodecMetadata = new CipherstashCodecMetadata(
-  makeMetadataDescriptor(CIPHERSTASH_BOOLEAN_CODEC_ID, 'EncryptedBoolean'),
-  'EncryptedBoolean',
-)
-
-export const cipherstashJsonCodecMetadata = new CipherstashCodecMetadata(
-  makeMetadataDescriptor(CIPHERSTASH_JSON_CODEC_ID, 'EncryptedJson'),
-  'EncryptedJson',
-)
 
 // ---------------------------------------------------------------------------
 // EQL v3 — one metadata codec per catalog domain (all 40), DERIVED from the

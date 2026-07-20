@@ -28,14 +28,6 @@
  * the static `{ castAs, capabilities }` block below lowers to itself — no
  * `{ kind: 'literal' }` wrapper exists or is needed.
  *
- * ## v2: legacy `*V2` aliases
- *
- * The six pre-existing v2 constructors survive verbatim under `*V2` names
- * (`EncryptedStringV2`, …): same optional-object argument (all search-mode
- * flags default to `true` — searchable encryption is the legitimate default;
- * users opt out explicitly), same `cipherstash/*@1` codec ids, same
- * `eql_v2_encrypted` native type.
- *
  * The same descriptors lower a PSL field-type expression and the matching TS
  * factory (see `./exports/column-types`) to an identical
  * `ColumnTypeDescriptor`, so PSL- and TS-authored contracts emit
@@ -47,15 +39,6 @@ import type {
   AuthoringTypeConstructorDescriptor,
   AuthoringTypeNamespace,
 } from '@prisma-next/framework-components/authoring'
-import {
-  CIPHERSTASH_BIGINT_CODEC_ID,
-  CIPHERSTASH_BOOLEAN_CODEC_ID,
-  CIPHERSTASH_DATE_CODEC_ID,
-  CIPHERSTASH_DOUBLE_CODEC_ID,
-  CIPHERSTASH_JSON_CODEC_ID,
-  CIPHERSTASH_STRING_CODEC_ID,
-  EQL_V2_ENCRYPTED_TYPE,
-} from './extension-metadata/constants'
 import { EXPOSED_DOMAIN_ENTRIES, type V3DomainMeta } from './v3/catalog'
 
 // The stem of a bare domain maps to a JS-friendly display label; the suffix
@@ -112,10 +95,9 @@ function coreName(bareDomain: string): string {
  *
  * The `cipherstash.` PSL namespace already disambiguates, so the constructor
  * names drop the `Encrypted` prefix to line up with the stack / Drizzle
- * `types.*` catalog (`types.TextSearch`, `types.BigintOrd`, …). The v2
- * constructors keep their `*V2` names; the runtime envelope classes
- * (`EncryptedString`, `EncryptedBoolean`, …) are a separate surface and are
- * unchanged.
+ * `types.*` catalog (`types.TextSearch`, `types.BigintOrd`, …). The runtime
+ * envelope classes (`EncryptedString`, `EncryptedBoolean`, …) are a separate
+ * surface and keep their names.
  */
 export function v3PascalName(bareDomain: string): string {
   return coreName(bareDomain)
@@ -172,199 +154,6 @@ function v3Constructor(
   }
 }
 
-// --- v2 legacy aliases (verbatim pre-rename v2 outputs, now keyed *V2) ---
-
-const encryptedStringV2 = {
-  kind: 'typeConstructor',
-  args: [
-    {
-      kind: 'object',
-      name: 'options',
-      optional: true,
-      properties: {
-        equality: { kind: 'boolean', optional: true },
-        freeTextSearch: { kind: 'boolean', optional: true },
-        orderAndRange: { kind: 'boolean', optional: true },
-      },
-    },
-  ],
-  output: {
-    codecId: CIPHERSTASH_STRING_CODEC_ID,
-    nativeType: EQL_V2_ENCRYPTED_TYPE,
-    typeParams: {
-      equality: {
-        kind: 'arg',
-        index: 0,
-        path: ['equality'],
-        default: true,
-      },
-      freeTextSearch: {
-        kind: 'arg',
-        index: 0,
-        path: ['freeTextSearch'],
-        default: true,
-      },
-      orderAndRange: {
-        kind: 'arg',
-        index: 0,
-        path: ['orderAndRange'],
-        default: true,
-      },
-    },
-  },
-} as const satisfies AuthoringTypeConstructorDescriptor
-
-const encryptedDoubleV2 = {
-  kind: 'typeConstructor',
-  args: [
-    {
-      kind: 'object',
-      name: 'options',
-      optional: true,
-      properties: {
-        equality: { kind: 'boolean', optional: true },
-        orderAndRange: { kind: 'boolean', optional: true },
-      },
-    },
-  ],
-  output: {
-    codecId: CIPHERSTASH_DOUBLE_CODEC_ID,
-    nativeType: EQL_V2_ENCRYPTED_TYPE,
-    typeParams: {
-      equality: {
-        kind: 'arg',
-        index: 0,
-        path: ['equality'],
-        default: true,
-      },
-      orderAndRange: {
-        kind: 'arg',
-        index: 0,
-        path: ['orderAndRange'],
-        default: true,
-      },
-    },
-  },
-} as const satisfies AuthoringTypeConstructorDescriptor
-
-const encryptedBigIntV2 = {
-  kind: 'typeConstructor',
-  args: [
-    {
-      kind: 'object',
-      name: 'options',
-      optional: true,
-      properties: {
-        equality: { kind: 'boolean', optional: true },
-        orderAndRange: { kind: 'boolean', optional: true },
-      },
-    },
-  ],
-  output: {
-    codecId: CIPHERSTASH_BIGINT_CODEC_ID,
-    nativeType: EQL_V2_ENCRYPTED_TYPE,
-    typeParams: {
-      equality: {
-        kind: 'arg',
-        index: 0,
-        path: ['equality'],
-        default: true,
-      },
-      orderAndRange: {
-        kind: 'arg',
-        index: 0,
-        path: ['orderAndRange'],
-        default: true,
-      },
-    },
-  },
-} as const satisfies AuthoringTypeConstructorDescriptor
-
-const encryptedDateV2 = {
-  kind: 'typeConstructor',
-  args: [
-    {
-      kind: 'object',
-      name: 'options',
-      optional: true,
-      properties: {
-        equality: { kind: 'boolean', optional: true },
-        orderAndRange: { kind: 'boolean', optional: true },
-      },
-    },
-  ],
-  output: {
-    codecId: CIPHERSTASH_DATE_CODEC_ID,
-    nativeType: EQL_V2_ENCRYPTED_TYPE,
-    typeParams: {
-      equality: {
-        kind: 'arg',
-        index: 0,
-        path: ['equality'],
-        default: true,
-      },
-      orderAndRange: {
-        kind: 'arg',
-        index: 0,
-        path: ['orderAndRange'],
-        default: true,
-      },
-    },
-  },
-} as const satisfies AuthoringTypeConstructorDescriptor
-
-const encryptedBooleanV2 = {
-  kind: 'typeConstructor',
-  args: [
-    {
-      kind: 'object',
-      name: 'options',
-      optional: true,
-      properties: {
-        equality: { kind: 'boolean', optional: true },
-      },
-    },
-  ],
-  output: {
-    codecId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-    nativeType: EQL_V2_ENCRYPTED_TYPE,
-    typeParams: {
-      equality: {
-        kind: 'arg',
-        index: 0,
-        path: ['equality'],
-        default: true,
-      },
-    },
-  },
-} as const satisfies AuthoringTypeConstructorDescriptor
-
-const encryptedJsonV2 = {
-  kind: 'typeConstructor',
-  args: [
-    {
-      kind: 'object',
-      name: 'options',
-      optional: true,
-      properties: {
-        searchableJson: { kind: 'boolean', optional: true },
-      },
-    },
-  ],
-  output: {
-    codecId: CIPHERSTASH_JSON_CODEC_ID,
-    nativeType: EQL_V2_ENCRYPTED_TYPE,
-    typeParams: {
-      searchableJson: {
-        kind: 'arg',
-        index: 0,
-        path: ['searchableJson'],
-        default: true,
-      },
-    },
-  },
-} as const satisfies AuthoringTypeConstructorDescriptor
-
 const v3Constructors: Record<string, AuthoringTypeConstructorDescriptor> =
   Object.fromEntries(
     EXPOSED_DOMAIN_ENTRIES.map(
@@ -380,12 +169,5 @@ const v3Constructors: Record<string, AuthoringTypeConstructorDescriptor> =
 export const cipherstashAuthoringTypes: AuthoringTypeNamespace = {
   cipherstash: {
     ...v3Constructors,
-    // v2 legacy aliases
-    EncryptedStringV2: encryptedStringV2,
-    EncryptedDoubleV2: encryptedDoubleV2,
-    EncryptedBigIntV2: encryptedBigIntV2,
-    EncryptedDateV2: encryptedDateV2,
-    EncryptedBooleanV2: encryptedBooleanV2,
-    EncryptedJsonV2: encryptedJsonV2,
   },
 }

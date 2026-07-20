@@ -3,7 +3,7 @@
 	"version": "1.0.0-rc.3",
 	"license": "MIT",
 	"author": "CipherStash <support@cipherstash.com>",
-	"description": "CipherStash extension for Prisma Next: searchable application-layer field-level encryption for Postgres, with six encrypted column types, 17 query operators, bulk encrypt/decrypt middleware, and a baseline migration that installs the vendored EQL bundle SQL byte-for-byte.",
+	"description": "CipherStash extension for Prisma Next: searchable application-layer field-level encryption for Postgres (EQL v3), with domain-typed encrypted columns, the eql* query operators, bulk encrypt/decrypt middleware, and a baseline migration that installs the EQL v3 bundle.",
 	"keywords": [
 		"encrypted",
 		"prisma-next",
@@ -35,14 +35,6 @@
 		"./control": {
 			"types": "./dist/control.d.ts",
 			"import": "./dist/control.js"
-		},
-		"./middleware": {
-			"types": "./dist/middleware.d.ts",
-			"import": "./dist/middleware.js"
-		},
-		"./migration": {
-			"types": "./dist/migration.d.ts",
-			"import": "./dist/migration.js"
 		},
 		"./operation-types": {
 			"types": "./dist/operation-types.d.ts",

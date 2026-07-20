@@ -7,12 +7,11 @@
  *
  * SDK-free: the runtime descriptor layers SDK-bound codec instances on
  * top at execution time. The `codecInstances` slot here uses the
- * metadata-only
- * codec from `./codec-metadata` because pack-meta consumers only read
- * codec metadata (typeId, targetTypes, traits, renderOutputType);
- * runtime encode/decode always go through the SDK-bound codec produced
- * by `RuntimeParameterizedCodecDescriptor.factory` (see
- * `./parameterized`).
+ * metadata-only codec from `./codec-metadata` because pack-meta
+ * consumers only read codec metadata (typeId, targetTypes, traits,
+ * renderOutputType); runtime encode/decode always go through the
+ * SDK-bound v3 codecs produced by `createV3CodecDescriptors` (see
+ * `../v3/codec-runtime-v3`).
  *
  * The control descriptor in `../exports/control.ts` spreads this pack
  * meta so the framework's contract emitter sees `authoring`,
@@ -23,25 +22,12 @@
 
 import { cipherstashAuthoringTypes } from '../contract-authoring'
 import {
-  cipherstashBigIntCodecMetadata,
-  cipherstashBooleanCodecMetadata,
-  cipherstashDateCodecMetadata,
-  cipherstashDoubleCodecMetadata,
-  cipherstashJsonCodecMetadata,
-  cipherstashStringCodecMetadata,
   cipherstashV3CodecMetadataInstances,
   cipherstashV3StorageRows,
 } from './codec-metadata'
 import {
-  CIPHERSTASH_BIGINT_CODEC_ID,
-  CIPHERSTASH_BOOLEAN_CODEC_ID,
-  CIPHERSTASH_DATE_CODEC_ID,
-  CIPHERSTASH_DOUBLE_CODEC_ID,
   CIPHERSTASH_EXTENSION_VERSION,
-  CIPHERSTASH_JSON_CODEC_ID,
   CIPHERSTASH_SPACE_ID,
-  CIPHERSTASH_STRING_CODEC_ID,
-  EQL_V2_ENCRYPTED_TYPE,
 } from './constants'
 
 export { CIPHERSTASH_EXTENSION_VERSION }
@@ -58,12 +44,6 @@ export const cipherstashPackMeta = {
   types: {
     codecTypes: {
       codecInstances: [
-        cipherstashStringCodecMetadata,
-        cipherstashDoubleCodecMetadata,
-        cipherstashBigIntCodecMetadata,
-        cipherstashDateCodecMetadata,
-        cipherstashBooleanCodecMetadata,
-        cipherstashJsonCodecMetadata,
         // EQL v3 — all 40 catalog domains, derived (see codec-metadata.ts).
         ...cipherstashV3CodecMetadataInstances,
       ],
@@ -71,17 +51,17 @@ export const cipherstashPackMeta = {
       //   `import type { CodecTypes as CipherstashTypes } from '@prisma-next/extension-cipherstash/codec-types'`
       // and to intersect `CipherstashTypes` into the generated
       // `CodecTypes` type alias. Without this slot the codec-id-keyed
-      // type lookups (`CodecTypes['cipherstash/string@1']['traits']`)
+      // type lookups (`CodecTypes['cipherstash/eql-v3/eql_v3_text@1']`)
       // collapse to `unknown` on the consumer side, and the
-      // trait-dispatched operators (`cipherstashGt`, …) never surface
-      // on real model accessors. Mirrors pgvector's `import:` slot.
+      // trait-dispatched operators (`eqlGt`, …) never surface on real
+      // model accessors. Mirrors pgvector's `import:` slot.
       import: {
         package: '@prisma-next/extension-cipherstash/codec-types',
         named: 'CodecTypes',
         alias: 'CipherstashTypes',
       },
       // `renderOutputType` returns the bare envelope type name (e.g.
-      // `EncryptedString`, `EncryptedDouble`) for parameterized
+      // `EncryptedString`, `EncryptedNumber`) for parameterized
       // cipherstash columns; the contract emitter needs to import each
       // type alongside its occurrence so the generated `.d.ts`
       // typechecks cleanly. Mirrors pgvector's `Vector` typeImports
@@ -91,11 +71,6 @@ export const cipherstashPackMeta = {
           package: '@prisma-next/extension-cipherstash/runtime',
           named: 'EncryptedString',
           alias: 'EncryptedString',
-        },
-        {
-          package: '@prisma-next/extension-cipherstash/runtime',
-          named: 'EncryptedDouble',
-          alias: 'EncryptedDouble',
         },
         {
           package: '@prisma-next/extension-cipherstash/runtime',
@@ -135,42 +110,6 @@ export const cipherstashPackMeta = {
       },
     },
     storage: [
-      {
-        typeId: CIPHERSTASH_STRING_CODEC_ID,
-        familyId: 'sql',
-        targetId: 'postgres',
-        nativeType: EQL_V2_ENCRYPTED_TYPE,
-      },
-      {
-        typeId: CIPHERSTASH_DOUBLE_CODEC_ID,
-        familyId: 'sql',
-        targetId: 'postgres',
-        nativeType: EQL_V2_ENCRYPTED_TYPE,
-      },
-      {
-        typeId: CIPHERSTASH_BIGINT_CODEC_ID,
-        familyId: 'sql',
-        targetId: 'postgres',
-        nativeType: EQL_V2_ENCRYPTED_TYPE,
-      },
-      {
-        typeId: CIPHERSTASH_DATE_CODEC_ID,
-        familyId: 'sql',
-        targetId: 'postgres',
-        nativeType: EQL_V2_ENCRYPTED_TYPE,
-      },
-      {
-        typeId: CIPHERSTASH_BOOLEAN_CODEC_ID,
-        familyId: 'sql',
-        targetId: 'postgres',
-        nativeType: EQL_V2_ENCRYPTED_TYPE,
-      },
-      {
-        typeId: CIPHERSTASH_JSON_CODEC_ID,
-        familyId: 'sql',
-        targetId: 'postgres',
-        nativeType: EQL_V2_ENCRYPTED_TYPE,
-      },
       // EQL v3 — one row per catalog domain, each targeting its own
       // concrete `public.eql_v3_*` native type (see codec-metadata.ts).
       ...cipherstashV3StorageRows,

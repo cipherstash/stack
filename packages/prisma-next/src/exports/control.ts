@@ -17,12 +17,13 @@
  *
  *   - `contractSpace.{contractJson,migrations,headRef}` — sourced from
  *     the on-disk artefacts emitted by `build:contract-space`.
- *   - `types.codecTypes.controlPlaneHooks[CIPHERSTASH_STRING_CODEC_ID]`
- *     — the lifecycle hook the SQL planner extracts via
- *     `extractCodecControlHooks` and inlines into the application's
- *     migration via `planFieldEventOperations`. Implements
- *     `add_search_config` / `remove_search_config` / rotate behaviour
- *     for `searchable: true` `Encrypted<string>` columns.
+ *   - `types.codecTypes.controlPlaneHooks` — the v3 codec-control hooks
+ *     (`cipherstashV3CodecControlHooks`) the SQL planner extracts via
+ *     `extractCodecControlHooks`. v3 registers the identity
+ *     `expandNativeType` ONLY (the planner requires a hook to exist for
+ *     `typeParams`-carrying columns) and NO `onFieldEvent`, so v3
+ *     columns emit no `add_search_config` / `remove_search_config` ops —
+ *     the v3 domains carry their own index metadata.
  *
  * @see docs/architecture docs/adrs/ADR 212 - Contract spaces.md
  *   (contract-space package layout convention).
@@ -32,12 +33,6 @@ import type { Contract } from '@prisma-next/contract/types'
 import type { SqlControlExtensionDescriptor } from '@prisma-next/family-sql/control'
 import { contractSpaceFromJson } from '@prisma-next/migration-tools/spaces'
 import type { SqlStorage } from '@prisma-next/sql-contract/types'
-import baselineMetadata from '../../migrations/20260601T0000_install_eql_bundle/migration.json' with {
-  type: 'json',
-}
-import baselineOps from '../../migrations/20260601T0000_install_eql_bundle/ops.json' with {
-  type: 'json',
-}
 import v3BaselineMetadata from '../../migrations/20260601T0100_install_eql_v3_bundle/migration.json' with {
   type: 'json',
 }
@@ -46,25 +41,8 @@ import v3BaselineOps from '../../migrations/20260601T0100_install_eql_v3_bundle/
 }
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import contractJson from '../contract.json' with { type: 'json' }
-import {
-  CIPHERSTASH_BASELINE_MIGRATION_NAME,
-  CIPHERSTASH_BIGINT_CODEC_ID,
-  CIPHERSTASH_BOOLEAN_CODEC_ID,
-  CIPHERSTASH_DATE_CODEC_ID,
-  CIPHERSTASH_DOUBLE_CODEC_ID,
-  CIPHERSTASH_JSON_CODEC_ID,
-  CIPHERSTASH_STRING_CODEC_ID,
-} from '../extension-metadata/constants'
 import { CIPHERSTASH_V3_BASELINE_MIGRATION_NAME } from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
-import {
-  cipherstashBigIntCodecHooks,
-  cipherstashBooleanCodecHooks,
-  cipherstashDateCodecHooks,
-  cipherstashDoubleCodecHooks,
-  cipherstashJsonCodecHooks,
-  cipherstashStringCodecHooks,
-} from '../migration/cipherstash-codec'
 import { cipherstashV3CodecControlHooks } from '../migration/cipherstash-codec-v3'
 import { withRuntimeEqlSqlPackage } from '../migration/eql-bundle-v3'
 
@@ -76,18 +54,14 @@ const v3BaselineRuntimePackage = withRuntimeEqlSqlPackage(
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
   migrations: [
-    {
-      dirName: CIPHERSTASH_BASELINE_MIGRATION_NAME,
-      metadata: baselineMetadata,
-      ops: baselineOps,
-    },
-    // The v3 bundle baseline — an invariant-only edge (`from === to`;
-    // the bundle creates `public.eql_v3_*` domains + `eql_v3.*`
-    // functions but no contract-space storage). The v3 codec ids ARE
-    // registered in `controlPlaneHooks` below, but with the identity
-    // `expandNativeType` ONLY (the planner requires the hook to exist
-    // for `typeParams`-carrying columns) — no `onFieldEvent`, which is
-    // what guarantees v3 columns emit no `add_search_config` /
+    // The v3 bundle baseline is the SOLE migration — the package is EQL
+    // v3 only. It is an invariant-only genesis edge (`from: null` → the
+    // empty-storage hash; the bundle creates `public.eql_v3_*` domains +
+    // `eql_v3.*` functions but no contract-space storage). The v3 codec
+    // ids ARE registered in `controlPlaneHooks` below, but with the
+    // identity `expandNativeType` ONLY (the planner requires the hook to
+    // exist for `typeParams`-carrying columns) — no `onFieldEvent`,
+    // which is what guarantees v3 columns emit no `add_search_config` /
     // `remove_search_config` ops.
     {
       dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
@@ -126,14 +100,9 @@ const cipherstashExtensionDescriptor: SqlControlExtensionDescriptor<'postgres'> 
         ...cipherstashPackMeta.types.codecTypes,
         controlPlaneHooks: {
           // v3: identity expandNativeType only, no onFieldEvent — see
-          // `../migration/cipherstash-codec-v3.ts`.
+          // `../migration/cipherstash-codec-v3.ts`. This is the whole
+          // control-plane hook set: the package is EQL v3 only.
           ...cipherstashV3CodecControlHooks,
-          [CIPHERSTASH_STRING_CODEC_ID]: cipherstashStringCodecHooks,
-          [CIPHERSTASH_DOUBLE_CODEC_ID]: cipherstashDoubleCodecHooks,
-          [CIPHERSTASH_BIGINT_CODEC_ID]: cipherstashBigIntCodecHooks,
-          [CIPHERSTASH_DATE_CODEC_ID]: cipherstashDateCodecHooks,
-          [CIPHERSTASH_BOOLEAN_CODEC_ID]: cipherstashBooleanCodecHooks,
-          [CIPHERSTASH_JSON_CODEC_ID]: cipherstashJsonCodecHooks,
         },
       },
     },

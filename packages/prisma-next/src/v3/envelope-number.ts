@@ -4,12 +4,12 @@
  * `..._smallint*`, `..._numeric*`, `..._real*`, `..._double*`). Concrete
  * subclass of {@link EncryptedEnvelopeBase} parameterised on `number`.
  *
- * A SIBLING of the v2 `EncryptedDouble` — NOT a subclass or alias. Its
- * distinct `typeName` drives the `$encryptedNumber` placeholder marker;
- * keeping the class separate prevents `value instanceof EncryptedNumber`
- * from matching a v2 `EncryptedDouble` (a cross-version leak). Every v3
- * number-castAs domain (integer / smallint / numeric / real / double)
- * renders as `EncryptedNumber`.
+ * A distinct SIBLING of the other envelope classes — NOT a subclass or
+ * alias. Its distinct `typeName` drives the `$encryptedNumber`
+ * placeholder marker; keeping the class separate prevents `value
+ * instanceof EncryptedNumber` from matching a different envelope class.
+ * Every v3 number-castAs domain (integer / smallint / numeric / real /
+ * double) renders as `EncryptedNumber`.
  *
  * No `parseDecryptedValue` override is needed: the SDK's polymorphic
  * `bulkDecrypt` / single-cell `decrypt` already returns numeric

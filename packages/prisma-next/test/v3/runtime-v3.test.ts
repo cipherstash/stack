@@ -12,10 +12,12 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { CipherstashSdk } from '../../src/execution/sdk'
-import {
-  CIPHERSTASH_SPACE_ID,
-  CIPHERSTASH_STRING_CODEC_ID,
-} from '../../src/extension-metadata/constants'
+import { CIPHERSTASH_SPACE_ID } from '../../src/extension-metadata/constants'
+
+// A legacy (non-v3) codec id — the v3 runtime descriptor must never emit one.
+// (The EQL v2 codec ids were removed; this literal stands in for "a v2 id".)
+const LEGACY_CODEC_ID = 'cipherstash/string@1'
+
 import {
   CIPHERSTASH_V3_CODEC_IDS,
   CIPHERSTASH_V3_EXTENSION_VERSION,
@@ -59,10 +61,8 @@ describe('createCipherstashV3RuntimeDescriptor — descriptor shape', () => {
     expect(viaCodecs.map((c) => c.codecId).sort()).toEqual(
       [...CIPHERSTASH_V3_CODEC_IDS].sort(),
     )
-    // Never a v2 codec id.
-    expect(viaCodecs.map((c) => c.codecId)).not.toContain(
-      CIPHERSTASH_STRING_CODEC_ID,
-    )
+    // Never a legacy (v2) codec id.
+    expect(viaCodecs.map((c) => c.codecId)).not.toContain(LEGACY_CODEC_ID)
   })
 
   it('every queryable codec carries only cipherstash:* namespaced traits', () => {

@@ -52,11 +52,14 @@ import {
   setHandleCiphertext,
 } from '../execution/envelope-base'
 import { markBulkEncryptMiddlewareRegistered } from '../execution/middleware-registry'
-import { type BulkEncryptTarget, groupByRoutingKey } from '../execution/routing'
+// Version-neutral AST routing-key stamping — reused, not the v2 encode path.
+import {
+  type BulkEncryptTarget,
+  groupByRoutingKey,
+  stampRoutingKeysFromAst,
+} from '../execution/routing'
 import type { CipherstashSdk } from '../execution/sdk'
 import { CIPHERSTASH_V3_CODEC_ID_SET } from '../extension-metadata/constants-v3'
-// Version-neutral AST routing-key stamping — reused, not the v2 encode path.
-import { stampRoutingKeysFromAst } from '../middleware/bulk-encrypt'
 import { v3QueryTermTypeOf } from './query-term'
 import { v3ToDriver } from './wire-v3'
 

@@ -5,9 +5,11 @@
  * envelope wrapping at every async observation point the extension
  * exposes:
  *
- *   - `bulk-encrypt`  — bulk-encrypt middleware`s `sdk.bulkEncrypt` call.
  *   - `decrypt`       — single-cell `EncryptedString#decrypt()` SDK call.
  *   - `decrypt-all`   — `decryptAll` walker`s `sdk.bulkDecrypt` calls.
+ *
+ * (The bulk-encrypt phase — the v3 middleware`s `sdk.bulkEncrypt` call —
+ * is covered by `test/v3/bulk-encrypt-v3.test.ts`.)
  *
  * The codec`s `encode` / `decode` paths are deliberately NOT wrapped
  * here; both are synchronous (encode reads `handle.ciphertext`; decode
@@ -16,8 +18,8 @@
  * framework`s `encodeParams` / `decodeRow` paths — already throws
  * `RUNTIME.ABORTED` with `phase: 'encode'` / `phase: 'decode'` per
  * ADR 207. The cipherstash phases below cover the async work the
- * framework cannot see (bulk SDK calls in `beforeExecute` middleware
- * and post-stream caller-driven `decrypt()` / `decryptAll()` sites).
+ * framework cannot see (post-stream caller-driven `decrypt()` /
+ * `decryptAll()` sites).
  *
  * Envelope shape contract: every cipherstash phase wrapping reuses
  * the framework`s `RUNTIME.ABORTED` envelope (`code === 'RUNTIME.ABORTED'`,
@@ -27,30 +29,17 @@
  * behind it) come from the framework. See ADR 207 / 027.
  */
 
-import type { Contract } from '@prisma-next/contract/types'
 import {
   isRuntimeError,
   RUNTIME_ABORTED,
 } from '@prisma-next/framework-components/runtime'
-import type { SqlStorage } from '@prisma-next/sql-contract/types'
-import {
-  InsertAst,
-  ParamRef,
-  TableSource,
-} from '@prisma-next/sql-relational-core/ast'
-import { createSqlParamRefMutator } from '@prisma-next/sql-relational-core/middleware'
-import type { SqlExecutionPlan } from '@prisma-next/sql-relational-core/plan'
-import type { SqlMiddlewareContext } from '@prisma-next/sql-runtime'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { decryptAll } from '../src/execution/decrypt-all'
 import {
   EncryptedString,
   type EncryptedStringFromInternalArgs,
-  setHandleRoutingKey,
 } from '../src/execution/envelope-string'
 import type { CipherstashSdk } from '../src/execution/sdk'
-import { CIPHERSTASH_STRING_CODEC_ID } from '../src/extension-metadata/constants'
-import { bulkEncryptMiddleware } from '../src/middleware/bulk-encrypt'
 
 interface CounterSdk extends CipherstashSdk {
   readonly bulkEncryptCalls: number
@@ -117,41 +106,6 @@ function expectAbortedEnvelope(error: unknown, phase: string): void {
   expect(error.details).toEqual({ phase })
 }
 
-function makeMiddlewareCtx(
-  signal: AbortSignal | undefined,
-): SqlMiddlewareContext {
-  return {
-    contract: {} as Contract<SqlStorage>,
-    mode: 'strict',
-    scope: 'runtime',
-    now: () => Date.now(),
-    log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-    contentHash: async () => 'mock-hash',
-    planExecutionId: 'test-plan-execution',
-    ...(signal === undefined ? {} : { signal }),
-  }
-}
-
-function buildInsertPlan(
-  envelopes: ReadonlyArray<EncryptedString>,
-): SqlExecutionPlan {
-  const params: unknown[] = []
-  const astRows = envelopes.map((envelope) => {
-    const ref = ParamRef.of(envelope, {
-      codec: { codecId: CIPHERSTASH_STRING_CODEC_ID },
-    })
-    params.push(envelope)
-    return { email: ref }
-  })
-  const ast = new InsertAst(TableSource.named('user'), astRows)
-  return {
-    sql: `INSERT INTO "user" (email) VALUES ...`,
-    params,
-    meta: { target: 'postgres', storageHash: 'sha256:test', lane: 'dsl' },
-    ast,
-  } as SqlExecutionPlan
-}
-
 interface MakeReadEnvelopeArgs {
   readonly plaintext: string
   readonly table: string
@@ -168,67 +122,6 @@ function makeReadEnvelope(args: MakeReadEnvelopeArgs): EncryptedString {
   }
   return EncryptedString.fromInternal(fromInternalArgs)
 }
-
-describe('bulk-encrypt middleware — RUNTIME.ABORTED { phase: "bulk-encrypt" }', () => {
-  it('pre-aborted ctx.signal short-circuits before sdk.bulkEncrypt is called', async () => {
-    const sdk = makeStuckSdk('stuck')
-    const middleware = bulkEncryptMiddleware(sdk)
-    const envelope = EncryptedString.from('alice@example.com')
-    setHandleRoutingKey(envelope, 'user', 'email')
-    const plan = buildInsertPlan([envelope])
-    const params = createSqlParamRefMutator(plan)
-    const controller = new AbortController()
-    controller.abort(new Error('client gone'))
-
-    const pending = middleware.beforeExecute?.(
-      plan,
-      makeMiddlewareCtx(controller.signal),
-      params,
-    )
-    if (!pending) throw new Error('beforeExecute is required for this test')
-    const error = await pending.then(
-      () => {
-        throw new Error('expected RUNTIME.ABORTED rejection')
-      },
-      (err: unknown) => err,
-    )
-
-    expectAbortedEnvelope(error, 'bulk-encrypt')
-    // The SDK must not have been entered; the pre-check fires before
-    // the bulk-encrypt round-trip is scheduled.
-    expect(sdk.bulkEncryptCalls).toBe(0)
-  })
-
-  it('mid-flight abort surfaces RUNTIME.ABORTED { phase: "bulk-encrypt" } via the race', async () => {
-    const sdk = makeStuckSdk('stuck')
-    const middleware = bulkEncryptMiddleware(sdk)
-    const envelope = EncryptedString.from('alice@example.com')
-    setHandleRoutingKey(envelope, 'user', 'email')
-    const plan = buildInsertPlan([envelope])
-    const params = createSqlParamRefMutator(plan)
-    const controller = new AbortController()
-
-    const pending = middleware.beforeExecute?.(
-      plan,
-      makeMiddlewareCtx(controller.signal),
-      params,
-    )
-    queueMicrotask(() => controller.abort(new Error('client gone')))
-
-    const error = await pending?.then(
-      () => {
-        throw new Error('expected RUNTIME.ABORTED rejection')
-      },
-      (err: unknown) => err,
-    )
-
-    expectAbortedEnvelope(error, 'bulk-encrypt')
-    // The SDK call was scheduled (counter increments before the
-    // underlying promise settles) but never resolved; the wrapping
-    // observed the abort and rejected the awaiter.
-    expect(sdk.bulkEncryptCalls).toBe(1)
-  })
-})
 
 describe('EncryptedString.decrypt — RUNTIME.ABORTED { phase: "decrypt" }', () => {
   it('pre-aborted signal short-circuits before sdk.decrypt is called', async () => {
@@ -362,28 +255,6 @@ describe('cipherstash phase wrappings preserve cause and reuse the framework env
     const reason = new Error('explicit-controller-reason')
     const controller = new AbortController()
     controller.abort(reason)
-
-    // bulk-encrypt
-    {
-      const sdk = makeStuckSdk('stuck')
-      const envelope = EncryptedString.from('alice@example.com')
-      setHandleRoutingKey(envelope, 'user', 'email')
-      const plan = buildInsertPlan([envelope])
-      const params = createSqlParamRefMutator(plan)
-      const pending = bulkEncryptMiddleware(sdk).beforeExecute?.(
-        plan,
-        makeMiddlewareCtx(controller.signal),
-        params,
-      )
-      if (!pending) throw new Error('beforeExecute is required for this test')
-      const error = await pending.then(
-        () => {
-          throw new Error('expected RUNTIME.ABORTED rejection')
-        },
-        (err: unknown) => err,
-      )
-      expect((error as { cause?: unknown }).cause).toBe(reason)
-    }
 
     // decrypt
     {
