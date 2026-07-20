@@ -5,6 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { implCommand } from '../index.js'
 import { howToProceedStep } from '../steps/how-to-proceed.js'
 
+// `implCommand` reaches the plan-summary checkpoint via `p.confirm`, which
+// reads /dev/tty. Stub just that export (the rest of @clack/prompts stays
+// real) so the CI-detection cases can assert whether the prompt was reached.
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@clack/prompts', async () => {
+  const actual =
+    await vi.importActual<typeof import('@clack/prompts')>('@clack/prompts')
+  return { ...actual, confirm: confirmMock }
+})
+
 let originalIsTTY: boolean | undefined
 let originalCwd: string
 let tmpDir: string
@@ -97,5 +107,51 @@ describe('implCommand — TTY handling', () => {
     )
     expect(exitSpy).toHaveBeenCalledWith(1)
     expect(runSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('implCommand — CI detection with a TTY attached', () => {
+  // Regression: the gate used to be an inline `process.env.CI !== 'true'`,
+  // which only recognised the exact lowercase spelling. A CI runner that sets
+  // CI=1 or CI=TRUE *and* allocates a TTY made `stash impl` believe it was
+  // interactive, so it blocked on the plan-summary confirm (or the
+  // agent-target picker) forever — a hang, not an error. The gate now goes
+  // through `isInteractive()` in config/tty.ts, whose `isCiEnv()` accepts
+  // 1/true in any case.
+  beforeEach(() => {
+    setIsTTY(true)
+    confirmMock.mockReset()
+    confirmMock.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  for (const ciValue of ['1', 'TRUE', 'true']) {
+    it(`treats CI=${ciValue} as non-interactive even with a TTY`, async () => {
+      vi.stubEnv('CI', ciValue)
+      const runSpy = vi
+        .spyOn(howToProceedStep, 'run')
+        .mockResolvedValue({} as never)
+
+      await expect(implCommand({}, {})).resolves.toBeUndefined()
+
+      // Neither blocking prompt may be reached.
+      expect(confirmMock).not.toHaveBeenCalled()
+      expect(runSpy).not.toHaveBeenCalled()
+    })
+  }
+
+  it('is interactive when CI is unset and stdin is a TTY', async () => {
+    vi.stubEnv('CI', '')
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await implCommand({}, {})
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(runSpy).toHaveBeenCalledTimes(1)
   })
 })
