@@ -234,7 +234,7 @@
         "kind": "postgres-schema"
       }
     },
-    "storageHash": "sha256:deb36a1ab7e51717f5ca822a32ff09a18cf3a0aaf1189262852c8953adba1720"
+    "storageHash": "sha256:32984f82d1b089087df107ff4b86310b8640e04f67eb7f6ebf5601694338b8f2"
   },
   "capabilities": {
     "postgres": {
@@ -421,6 +421,1076 @@
                   "cipherstash:searchable-json"
                 ]
               }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_integer@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_integer"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_integer"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_integer_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_integer_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_integer_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_integer_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_integer_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_integer_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_integer_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_integer_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_integer_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_smallint@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_smallint"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_smallint"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_smallint_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_smallint_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_smallint_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_smallint_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_smallint_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_smallint_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_smallint_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_smallint_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_smallint_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_bigint@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_bigint"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_bigint"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_bigint_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_bigint_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_bigint_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_bigint_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_bigint_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_bigint_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_bigint_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_bigint_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_bigint_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_date@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_date"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_date"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_date_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_date_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_date_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_date_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_date_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_date_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_date_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_date_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_date_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_timestamp@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_timestamp"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_timestamp"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_timestamp_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_timestamp_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_timestamp_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_timestamp_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_timestamp_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_timestamp_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_timestamp_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_timestamp_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_timestamp_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_numeric@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_numeric"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_numeric"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_numeric_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_numeric_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_numeric_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_numeric_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_numeric_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_numeric_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_numeric_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_numeric_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_numeric_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_text@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_text"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_text"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_text_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_text_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_text_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_text_match@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_text_match"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_text_match"
+                ],
+                "traits": [
+                  "cipherstash:free-text-search"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_text_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_text_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_text_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_text_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_text_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_text_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_text_search@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_text_search"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_text_search"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range",
+                  "cipherstash:free-text-search"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_boolean@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_boolean"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_boolean"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_real@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_real"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_real"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_real_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_real_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_real_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_real_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_real_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_real_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_real_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_real_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_real_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_double@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_double"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_double"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_double_eq@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_double_eq"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_double_eq"
+                ],
+                "traits": [
+                  "cipherstash:equality"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_double_ord_ore@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_double_ord_ore"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_double_ord_ore"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_double_ord@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_double_ord"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_double_ord"
+                ],
+                "traits": [
+                  "cipherstash:equality",
+                  "cipherstash:order-and-range"
+                ]
+              }
+            },
+            {
+              "descriptor": {
+                "codecId": "cipherstash/eql-v3/eql_v3_json_search@1",
+                "isParameterized": true,
+                "meta": {
+                  "db": {
+                    "sql": {
+                      "postgres": {
+                        "nativeType": "public.eql_v3_json_search"
+                      }
+                    }
+                  }
+                },
+                "paramsSchema": {
+                  "~standard": {
+                    "vendor": "cipherstash",
+                    "version": 1
+                  }
+                },
+                "targetTypes": [
+                  "public.eql_v3_json_search"
+                ],
+                "traits": [
+                  "cipherstash:searchable-json"
+                ]
+              }
             }
           ],
           "import": {
@@ -457,6 +1527,11 @@
             {
               "alias": "EncryptedJson",
               "named": "EncryptedJson",
+              "package": "@prisma-next/extension-cipherstash/runtime"
+            },
+            {
+              "alias": "EncryptedNumber",
+              "named": "EncryptedNumber",
               "package": "@prisma-next/extension-cipherstash/runtime"
             }
           ]
@@ -504,6 +1579,246 @@
             "nativeType": "eql_v2_encrypted",
             "targetId": "postgres",
             "typeId": "cipherstash/json@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_integer",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_integer@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_integer_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_integer_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_integer_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_integer_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_integer_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_integer_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_smallint",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_smallint@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_smallint_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_smallint_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_smallint_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_smallint_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_smallint_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_smallint_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_bigint",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_bigint@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_bigint_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_bigint_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_bigint_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_bigint_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_bigint_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_bigint_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_date",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_date@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_date_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_date_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_date_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_date_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_date_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_date_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_timestamp",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_timestamp@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_timestamp_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_timestamp_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_timestamp_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_timestamp_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_timestamp_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_timestamp_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_numeric",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_numeric@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_numeric_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_numeric_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_numeric_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_numeric_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_numeric_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_numeric_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_text",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_text@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_text_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_text_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_text_match",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_text_match@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_text_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_text_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_text_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_text_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_text_search",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_text_search@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_boolean",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_boolean@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_real",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_real@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_real_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_real_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_real_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_real_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_real_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_real_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_double",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_double@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_double_eq",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_double_eq@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_double_ord_ore",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_double_ord_ore@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_double_ord",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_double_ord@1"
+          },
+          {
+            "familyId": "sql",
+            "nativeType": "public.eql_v3_json_search",
+            "targetId": "postgres",
+            "typeId": "cipherstash/eql-v3/eql_v3_json_search@1"
           }
         ]
       },
