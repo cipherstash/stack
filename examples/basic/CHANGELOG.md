@@ -1,5 +1,15 @@
 # @cipherstash/basic-example
 
+## 1.2.14-rc.4
+
+### Patch Changes
+
+- Updated dependencies [cf2c57c]
+- Updated dependencies [508f1d5]
+  - @cipherstash/stack@1.0.0-rc.4
+  - @cipherstash/stack-drizzle@1.0.0-rc.4
+  - @cipherstash/stack-supabase@1.0.0-rc.4
+
 ## 1.2.14-rc.3
 
 ### Patch Changes

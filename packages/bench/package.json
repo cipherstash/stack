@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/bench",
-  "version": "0.0.5-rc.3",
+  "version": "0.0.5-rc.4",
   "private": true,
   "description": "Performance / index-engagement benchmarks for stack integrations (Drizzle, encryptedSupabase, Prisma).",
   "type": "module",

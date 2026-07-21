@@ -1,5 +1,212 @@
 # @cipherstash/cli
 
+## 1.0.0-rc.4
+
+### Patch Changes
+
+- 98156ac: Fix the Codex handoff installing zero skills — and losing `AGENTS.md` and `.cipherstash/` with them — when `.codex/` is not writable.
+
+  Codex sandboxes deny writes under `.codex/`. `installSkills` created its destination with an unguarded `mkdirSync`, sitting directly above a per-skill copy loop that _was_ guarded — so the failure threw past that fallback and past the caller, aborting the whole handoff step. Because the skills install runs first, nothing after it ran either: no `AGENTS.md`, no `.cipherstash/context.json`, no `.cipherstash/setup-prompt.md`. All five Codex runs of the rc.3 skilltester matrix landed here, and it was identified in that report as the primary driver of the Claude→Codex quality gap.
+
+  The fix, hardened by a follow-up review of the first cut:
+
+  - **`installSkills` never throws, and reports what happened.** It returns `{ copied, failed }` instead of a flat list, so callers can tell "unwritable destination" from "stripped build" from "partial copy" without re-deriving it — every filesystem failure degrades to a warning plus a `failed` entry.
+  - **The Codex handoff inlines exactly the skills that failed.** Whatever could not be copied into `.codex/skills/` — all of them under a sandbox, or a subset after a partial failure — has its body inlined into `AGENTS.md` via the same `doctrine-plus-skills` path the editor-agent handoff uses. The launch prompt points at wherever each skill actually ended up, including both locations after a partial copy. A stripped build that ships no skills stays `doctrine-only` and says nothing.
+  - **The doctrine now ships where the published CLI can find it.** The bundled AGENTS.md doctrine was copied to `dist/commands/init/doctrine`, but the compiled resolver probes ancestor directories of the chunk in `dist/bin/` — so every published build silently wrote the minimal `AGENTS.md` stub instead of the doctrine (and the inline fallback would have inlined nothing). It now lands at `dist/doctrine`, like the skills bundle. `buildAgentsMdBody` also honours `doctrine-plus-skills` even when the doctrine fragment is missing, so inlined skills are never dropped with it.
+  - **The generated artifacts describe the fallback honestly.** `context.json` gains an `inlinedSkills` field, and `setup-prompt.md` distinguishes installed / inlined / failed skills instead of mislabelling an unwritable destination as a "stripped build". The Claude handoff now warns when skills exist but could not be installed, and the AGENTS.md handoff records what it inlined.
+  - **The rest of the handoff is guarded too.** The `AGENTS.md` upsert (which refuses malformed sentinel pairs) and the bundled-file reads degrade to warnings instead of aborting the step before `.cipherstash/` is written.
+
+  `@cipherstash/wizard` carries its own copy of `installSkills` with the same unguarded `mkdirSync` above the same guarded copy loop. It targets `.claude/skills` rather than `.codex/skills`, so the Codex sandbox case does not apply, but an unwritable destination crashed it identically — now guarded the same way, with a confirmed-then-failed install recorded in the wizard changelog instead of vanishing with the terminal output.
+
+- 0e2ce93: Fix `stash impl` and `stash init` hanging on CI runners that allocate a TTY.
+
+  Four prompts decided whether to run interactively without going through the
+  shared TTY helper, so on a CI runner with an allocated TTY they rendered a clack
+  prompt and blocked forever on `/dev/tty` — a silent hang with no error and no
+  timeout:
+
+  - `stash impl` gated on an inline `process.env.CI !== 'true'`, which only
+    recognised the exact lowercase spelling. Runners that set `CI=1` or `CI=TRUE`
+    blocked on the plan-summary confirmation or the agent-target picker.
+  - `stash init`'s offer to chain into `stash plan`, and its Proxy-vs-SDK
+    question, gated on `process.stdout.isTTY` and did not consult `CI` at all —
+    so they hung on any CI runner with a TTY, whatever the spelling. Gating on
+    stdout was also the wrong stream: a redirected stdin still hangs a prompt.
+  - `stash impl --continue-without-plan` confirmed the flag with a second prompt
+    that was not gated at all, so a CI run with no plan on disk blocked there even
+    though the flag had already granted consent. The flag is now taken as consent
+    in non-interactive runs and only re-confirmed interactively.
+
+  All four now use the shared `isInteractive()` helper (stdin is a TTY and `CI`
+  is not set to `1`/`true` in any case), matching `stash plan`. Non-interactive
+  runs take the path they always should have: `stash init` skips the chain offer
+  and prints the `plan --target` hint, the Proxy-vs-SDK question defaults to
+  SDK-only, and `stash impl` proceeds without prompting.
+
+- c8726cd: `stash init --drizzle` now installs EQL v3 instead of v2.
+
+  The Drizzle init flow pinned `--eql-version 2`, because `stash eql install
+--drizzle` (the only migration-generating install path at the time) was
+  v2-only. That made `stash init --drizzle` the single flow that provisioned a v2
+  database — a bare `stash eql install`, and init for every other integration,
+  already defaulted to v3. It also contradicted the `stash-drizzle` skill init
+  copies into the same project, which documents the v3 `@cipherstash/stack-drizzle/v3`
+  surface (`types.*` domains, `EncryptionV3`) and would have the user's agent
+  author v3 code against a v2 database.
+
+  Init's Drizzle flow now routes through `stash eql migration --drizzle`, so it
+  stays migration-first (the install lands in your Drizzle migration history and
+  ships to every environment via `drizzle-kit migrate`) while emitting v3 SQL.
+  The generated migration also carries the `cs_migrations` tracking schema, so one
+  `drizzle-kit migrate` covers everything `stash encrypt …` needs. If `drizzle-kit`
+  isn't installed or configured, init now reports EQL as not installed and points
+  at `stash eql migration --drizzle` rather than aborting the run.
+
+  The v2 Drizzle path remains available for existing deployments via an explicit
+  `stash eql install --drizzle --eql-version 2`; that command's error message now
+  points at the v3 alternative instead of only suggesting `--eql-version 2`.
+
+- 04f5a13: `stash init` now scaffolds an EQL **v3** encryption client, matching the EQL v3
+  database it installs.
+
+  The placeholder client (`DRIZZLE_PLACEHOLDER` / `GENERIC_PLACEHOLDER`) and the
+  introspection-driven client generator previously emitted EQL v2 authoring
+  patterns — `Encryption({ schemas })`, `encryptedColumn(...).equality().freeTextSearch()`,
+  and `encryptedType<T>('x', { equality: true })`. Since init installs a v3
+  database, this handed the customer's coding agent v2 guidance against a v3
+  schema (follow-up to #732 / #705).
+
+  Scaffolds now teach the v3 surface: `EncryptionV3` from `@cipherstash/stack/v3`,
+  the concrete-domain `types.*` factories (`types.TextSearch`, `types.IntegerOrd`,
+  `types.Text`, `types.Json`, …), and the `@cipherstash/stack-drizzle/v3` entry
+  (`extractEncryptionSchemaV3`) for Drizzle. The `encryptionClient` export shape
+  and the empty-schema "no schemas yet" error path are unchanged.
+
+- 46dde37: Fix two defects in the Drizzle migration generator used by `stash eql install --drizzle` (EQL v2):
+
+  - **`--name` is now validated and no longer reaches a shell.** The migration name was interpolated into a shell command string, so a name containing shell metacharacters (e.g. `--name 'x; rm -rf ~'`) was executed. `--name` is now restricted to letters, numbers, dashes, and underscores, and drizzle-kit is invoked with an argv array instead of a shell string.
+  - **`--out` is now actually passed to drizzle-kit.** The flag was used to search for the generated migration but never handed to `drizzle-kit generate`, so any project whose `drizzle.config.ts` writes migrations outside `drizzle/` had the file written in one place and searched for in another, failing with "migration file not found".
+  - **drizzle-kit now runs project-locally.** The generator invoked drizzle-kit through the download-and-run form (`pnpm dlx` / `npx <pkg>` / `bunx`), which could fetch a different drizzle-kit major into a temp store and resolve a different `drizzle.config.ts`/schema than the project's. It now uses the project-local form (`pnpm exec` / `npx --no-install`), so it resolves the project's own drizzle-kit and config and fails loudly if drizzle-kit isn't installed rather than surprise-downloading it. The "run your migrations" hint matches. This aligns v2 with the v3 generator's behaviour.
+
+  `stash eql migration --drizzle` (EQL v3) already had all three fixes and is unchanged.
+
+- cf2c57c: Upgrade Stack to `@cipherstash/protect-ffi` 0.30 and EQL 3.0.2.
+
+  Prisma Next includes a versioned EQL 3.0.2 upgrade migration, so databases
+  that have already recorded the original EQL v3 baseline still install the new
+  domains and functions.
+
+  Encrypted JSON now uses the `public.eql_v3_json_search` storage domain and
+  `eql_v3.query_json` query domain. Drizzle selector equality uses exact,
+  GIN-indexable value-selector containment, while selector range comparisons use
+  a ciphertext-free path selector plus string/number query term. Prisma Next gains
+  the equivalent `eqlJsonPathEq`, `eqlJsonPathNeq`, `eqlJsonPathGt`,
+  `eqlJsonPathGte`, `eqlJsonPathLt`, and `eqlJsonPathLte` operators. Selector
+  Selector-based `ORDER BY` is available as
+  `ops.selector(column, path).asc()/desc()` in Drizzle
+  and `eqlJsonPathAsc(column, path)` / `eqlJsonPathDesc(column, path)` in Prisma
+  Next; both lower to `ORDER BY eql_v3.ord_term` over the selected entry.
+
+  If you call `encryptQuery` with an explicit `queryType`, note that
+  `steVecTerm` now produces a scalar JSON ordering term. It no longer means
+  structural containment; use the recommended `searchableJson` query type with
+  an object or array for containment, or `steVecValueSelector` with
+  `{ path, value }` for exact equality at a path.
+
+  The FFI now rejects free-text needles shorter than the configured n-gram size
+  at the core query-encryption boundary, including callers that bypass adapter
+  guards.
+
+  This EQL release changes the SteVec storage format. Existing EQL v3 encrypted
+  JSON rows must be re-encrypted before they can be queried with the new domain.
+  Legacy EQL v2 `searchableJson()` schemas are rejected during client setup
+  because the old selector envelope can no longer be emitted; migrate them to the
+  v3 `types.Json` domain.
+
+  EQL 3.0.2 requires typed query-domain operands for encrypted free-text and JSON
+  operators. PostgREST cannot express those casts, so Supabase v3 fails fast for
+  `matches()`, encrypted `contains()`, and `selectorEq()`/`selectorNe()` instead
+  of placing a decryptable storage envelope in a GET query string that the new
+  SQL surface will reject. Use the Drizzle or Prisma Next adapter, or a carefully
+  scoped direct SQL/RPC path.
+
+- 524903c: Correct stale EQL v3 guidance in the bundled agent skills.
+
+  `@cipherstash/migrate` and the `stash encrypt *` commands gained EQL v3 support
+  (cipherstash/stack#648, now closed), but the shipped skills still told readers the
+  rollout tooling was v2-only. Since these skills are copied into customer repos, the
+  stale text steered users away from v3 and toward workarounds they no longer need.
+
+  - **`stash-drizzle`, `stash-supabase`** — replaced the "v3 not supported end-to-end"
+    callouts with an accurate EQL version note: the tooling auto-detects a column's
+    generation from its Postgres domain type, and the two lifecycles differ at the end.
+    v3 is `backfill → switch the app to the encrypted column by name → drop` with no
+    cut-over rename; v2 keeps the `stash encrypt cutover` rename plus config promotion.
+  - **`stash-supabase`** — removed the "Interim path until #648: the v2 encrypted twin"
+    section; a v2 twin is no longer needed to get CLI-managed backfill.
+  - **`stash-drizzle`, `stash-supabase`** — the drop step now documents that
+    `stash encrypt drop` targets the _original_ column under v3 (there is no
+    `<col>_plaintext`, since nothing was renamed) and `<col>_plaintext` under v2.
+  - **`stash-cli`** — corrected the documented `EQLInstaller` default: `eqlVersion`
+    defaults to `3`, not `2`, matching the `--eql-version` CLI default. Also reworded
+    the v2 cut-over known-gap note, which cited cipherstash/stack#585 as open tracking
+    when it was resolved by making v3 the default.
+
+- 2e6f032: Update the bundled `stash-prisma-next` skill for the EQL v3-only
+  `@cipherstash/prisma-next`: drop the stale references to the removed EQL v2
+  surface (`cipherstashFromStackV2`, the `cipherstash*` operators, the "legacy v2"
+  subpath note) so the guidance copied into customer repos matches the package.
+- 508f1d5: **Breaking (`@cipherstash/stack/wasm-inline`):** every fallible method now returns a `Result` — `{ data } | { failure }` — instead of throwing. And `bulkEncrypt` / `bulkDecrypt` are added, so a list of encrypted rows costs **one** ZeroKMS round trip instead of one per row.
+
+  ### Result alignment
+
+  `encrypt`, `decrypt`, `encryptQuery` and `encryptQueryBulk` previously threw on failure, and returned bare values on success. They now return `{ data } | { failure }`, with `failure.type` drawn from `EncryptionErrorTypes` (`EncryptionError` for encrypt-side operations, `DecryptionError` for decrypt-side) and `failure.code` carrying the FFI error code where there is one.
+
+  ```typescript
+  // before
+  const encrypted = await client.encrypt(plaintext, {
+    table: users,
+    column: users.email,
+  });
+
+  // after
+  const result = await client.encrypt(plaintext, {
+    table: users,
+    column: users.email,
+  });
+  if (result.failure) throw new Error(result.failure.message);
+  const encrypted = result.data;
+  ```
+
+  This is the contract the native entry has always honoured, and the one `AGENTS.md` states outright: _"Operations return `{ data }` or `{ failure }`. Preserve this shape and error `type` values in `EncryptionErrorTypes`."_ The WASM entry never followed it. That was drift rather than a design decision — nothing about WASM prevents it (`@byteslice/result` is already bundled into `dist/wasm-inline.js`), and it meant edge code had to be written in a different shape from every other surface, with failures that were easy to miss.
+
+  Fixed now because it is a breaking change and 1.0.0 has not shipped: `@cipherstash/stack@latest` is still `0.19.0`, so this surface has only ever been published under the `rc` tag. After GA it would have had to wait for a major.
+
+  `isEncrypted` is unchanged — a pure predicate with nothing to fail at, exactly as on the native entry.
+
+  ### Bulk operations
+
+  ```typescript
+  // Write: several columns across many rows, one round trip
+  const encrypted = await client.bulkEncrypt([
+    { plaintext: "alice@example.com", table: users, column: users.email },
+    { plaintext: "hello", table: users, column: users.bio },
+  ]);
+
+  // Read: a whole page in one call
+  const emails = await client.bulkDecrypt(rows.map((r) => r.email));
+  ```
+
+  The WASM entry previously exposed no bulk operations at all, so rendering an N-row list on Deno, Cloudflare Workers, or Supabase Edge Functions meant N sequential ZeroKMS calls. Combined with the WASM cold start, that made list endpoints impractical on the edge.
+
+  Both are index-aligned with their input, and `null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS (an all-null batch makes no call at all). Because each entry names its own table and column, a single `bulkEncrypt` can cover several columns across many rows — which is what makes the saving real, since a single-column batch would still cost one round trip per column.
+
+  `bulkDecrypt` builds on the fallible FFI primitive, so when items fail the `failure.message` names **every** failing index with its reason, rather than surfacing the first and discarding the rest.
+
+  The model helpers (`encryptModel` / `decryptModel` and their bulk forms) remain Node-only: the WASM entry has no single-model operation to build them on, so those need their own port.
+
+  - @cipherstash/migrate@1.0.0-rc.1
+
 ## 1.0.0-rc.3
 
 ### Minor Changes
