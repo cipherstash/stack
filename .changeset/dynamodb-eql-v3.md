@@ -36,8 +36,8 @@ Notes on capability:
 - Audit metadata on `decryptModel` / `bulkDecryptModels` requires the nominal
   client; the `EncryptionV3` client has no audit surface on decrypt.
 
-The DynamoDB adapter also gains its first test coverage — 74 tests across the
-v2 and v3 paths, where it previously had none.
+The DynamoDB adapter also gains its first test coverage — across the v2 and v3
+paths, where it previously had none.
 
 The v3 overloads are strongly typed. `encryptModel` / `bulkEncryptModels` check
 the input model against the table's column domains, and return the DynamoDB

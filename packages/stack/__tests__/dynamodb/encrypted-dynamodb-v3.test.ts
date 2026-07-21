@@ -197,7 +197,7 @@ describe('round trips with a v3 table', () => {
    * The one LIVE property. Its pure siblings (`properties.test.ts`) cover the
    * attribute mapping in both directions with a fake ciphertext; this closes the
    * loop over the real thing — every run is a ZeroKMS encrypt + decrypt, so it
-   * is capped hard at 15 runs. It is the only check that the split/rebuild
+   * is capped hard at 5 runs. It is the only check that the split/rebuild
    * survives contact with actual ciphertext across all five domains at once.
    */
   it('property: round-trips arbitrary multi-domain items through ZeroKMS', async () => {
