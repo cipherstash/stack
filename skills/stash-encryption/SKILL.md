@@ -189,6 +189,7 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/types` | All TypeScript types |
 | `@cipherstash/stack-drizzle/v3` | Drizzle ORM integration for EQL v3 schemas (see the `stash-drizzle` skill) |
 | `@cipherstash/stack-supabase` | `encryptedSupabaseV3` wrapper for Supabase (see the `stash-supabase` skill) |
+| `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` — **still requires the legacy v2 schema surface**; see "Legacy: EQL v2" below |
 | `@cipherstash/stack/schema`, `@cipherstash/stack/client`, `@cipherstash/stack/encryption` | Legacy v2 schema builders and client surface — see "Legacy: EQL v2" below |
 
@@ -424,8 +425,27 @@ for (const item of decrypted.data) {
 
 **On the WASM entry (`@cipherstash/stack/wasm-inline`), the batch shape differs** — do not copy the shape above onto the edge. The `{ data } | { failure }` Result is the same, but there are no `{ id, plaintext }` envelopes: each entry carries its own table and column, and the payload is a plain index-aligned array.
 
+> [!IMPORTANT]
+> The `client` below is a **different client** from the one used everywhere else in this skill. The edge entry has its own `Encryption` factory — the native `EncryptionV3` client's `bulkEncrypt` takes `(plaintexts, { table, column })` and will fail at runtime if given the per-item shape below. Construct the WASM client explicitly:
+
 ```typescript
-// Deno / Workers / Supabase Edge Functions
+// Deno / Workers / Supabase Edge Functions — note the import path
+import { Encryption, encryptedTable, types } from "@cipherstash/stack/wasm-inline"
+
+const users = encryptedTable("users", { email: types.TextEq("email") })
+
+const client = await Encryption({
+  schemas: [users],
+  config: {
+    workspaceCrn: Deno.env.get("CS_WORKSPACE_CRN")!,
+    accessKey: Deno.env.get("CS_CLIENT_ACCESS_KEY")!,
+    clientId: Deno.env.get("CS_CLIENT_ID")!,
+    clientKey: Deno.env.get("CS_CLIENT_KEY")!,
+  },
+})
+```
+
+```typescript
 const encrypted = await client.bulkEncrypt([
   { plaintext: "alice@example.com", table: users, column: users.email },
   { plaintext: "hello", table: users, column: users.bio },

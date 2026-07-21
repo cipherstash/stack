@@ -15,13 +15,17 @@
 
 import {
   Encryption,
-  encryptedColumn,
   encryptedTable,
   isEncrypted,
-} from 'npm:@cipherstash/stack@^0.18.0/wasm-inline'
+  types,
+} from 'npm:@cipherstash/stack@^1.0.0-rc.3/wasm-inline'
 
+// EQL v3: the WASM entry exports the v3 authoring surface only (`types.*`),
+// not the v2 chainable builders — `encryptedColumn('email').equality()` is
+// rejected by the factory outright. `TextEq` is the v3 equality-capable text
+// domain, i.e. the direct replacement.
 const users = encryptedTable('users', {
-  email: encryptedColumn('email').equality(),
+  email: types.TextEq('email'),
 })
 
 Deno.serve(async (_req: Request) => {

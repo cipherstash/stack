@@ -244,21 +244,36 @@ export function makeWasmAdapter(): IntegrationAdapter {
 
   async function encryptRow(row: PlainRow): Promise<Record<string, unknown>> {
     const assignments: Record<string, unknown> = { row_key: row.rowKey }
-    // Field encrypts are independent ZeroKMS round-trips — run them
-    // concurrently rather than paying fields × RTT per row.
-    await Promise.all(
-      Object.entries(row.values).map(async ([slug, value]) => {
-        const encrypted = unwrap(
-          await client.encrypt(toWasmPlaintext(value), {
-            table: tableSchema,
-            column: col(slug).column,
-          }),
-          'encrypt',
-        )
-        assertWireEnvelope(slug, encrypted)
-        assignments[slug] = encrypted
-      }),
+
+    // ONE ZeroKMS round trip for the whole row, not one per field. This was
+    // `Promise.all` over per-field `client.encrypt` — concurrency hides
+    // latency but not request count, so a 100-row × 5-field family was 500
+    // requests. `bulkEncrypt`'s per-item `{ plaintext, table, column }`
+    // routing exists precisely for this shape (#737).
+    //
+    // It also makes this harness the live coverage for the bulk path: the
+    // unit tests mock the FFI, so without this nothing in the repo exercises
+    // `bulkEncrypt` against real ZeroKMS.
+    const entries = Object.entries(row.values)
+    const encrypted = unwrap(
+      await client.bulkEncrypt(
+        entries.map(([slug, value]) => ({
+          plaintext: toWasmPlaintext(value),
+          table: tableSchema,
+          column: col(slug).column,
+        })),
+      ),
+      'bulkEncrypt',
     )
+
+    entries.forEach(([slug], i) => {
+      const payload = encrypted[i]
+      // A null here means the fixture value was null/undefined — the column
+      // is genuinely absent, not an encryption failure.
+      if (payload === null || payload === undefined) return
+      assertWireEnvelope(slug, payload)
+      assignments[slug] = payload
+    })
     return assignments
   }
 
