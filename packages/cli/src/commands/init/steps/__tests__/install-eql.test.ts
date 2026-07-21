@@ -160,6 +160,36 @@ describe('installEqlStep', () => {
       )
     })
 
+    it('passes supabase: undefined for a plain (non-Supabase) Drizzle project', async () => {
+      // Symmetric negative to the --supabase forward: a plain Drizzle project
+      // must NOT leak supabase: true, or the migration would append role grants
+      // no one asked for. `toMatchObject` above ignores the key, so it can't
+      // catch a leak — this asserts it explicitly.
+      await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(
+        vi.mocked(eqlMigrationCommand).mock.calls[0][0].supabase,
+      ).toBeUndefined()
+    })
+
+    it('still generates the migration when stash.config.ts already exists', async () => {
+      // offerStashConfig returns null when the config is already on disk — the
+      // re-run case (config-scaffold.ts: `if (existsSync(configPath)) return
+      // null`), i.e. every re-run of `stash init` on a Drizzle project. Nothing
+      // to scaffold, but the migration must still be written and the state must
+      // still say "pending". If the `if (clientPath)` guard were dropped,
+      // ensureEncryptionClient(null, …) would throw outside the try/catch and
+      // abort init after the user has already authenticated.
+      vi.mocked(offerStashConfig).mockResolvedValueOnce(null)
+
+      const result = await installEqlStep.run(drizzleState, drizzleProvider)
+
+      expect(ensureEncryptionClient).not.toHaveBeenCalled()
+      expect(eqlMigrationCommand).toHaveBeenCalledTimes(1)
+      expect(result.eqlMigrationPending).toBe(true)
+      expect(result.eqlInstalled).toBe(false)
+    })
+
     it('degrades to "not installed" (never crashes init) when drizzle-kit is missing', async () => {
       // eqlMigrationCommand throws CliExit when drizzle-kit isn't installed or
       // configured. init must absorb that and report honestly — a thrown
