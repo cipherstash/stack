@@ -77,7 +77,9 @@ import {
 } from '@cipherstash/auth/wasm-inline'
 import {
   decrypt as wasmDecrypt,
+  decryptBulkFallible as wasmDecryptBulkFallible,
   encrypt as wasmEncrypt,
+  encryptBulk as wasmEncryptBulk,
   encryptQuery as wasmEncryptQuery,
   encryptQueryBulk as wasmEncryptQueryBulk,
   isEncrypted as wasmIsEncrypted,
@@ -299,6 +301,58 @@ export type WasmQueryTerm = WasmEncryptQueryOptions & {
 }
 
 /**
+ * One storage value in a {@link WasmEncryptionClient.bulkEncrypt} batch.
+ *
+ * Each entry carries its OWN table and column, rather than the batch taking a
+ * single `EncryptOptions` the way {@link WasmEncryptionClient.encrypt} does.
+ * That mirrors {@link WasmQueryTerm} — and it is what makes the round-trip
+ * saving worth having: rendering a page of rows means encrypting several
+ * columns across many rows, and a single-column batch would still cost one
+ * ZeroKMS call per column. The FFI's `EncryptPayload` is per-item
+ * (`{ plaintext, table, column }`), so mixing is free at the boundary.
+ *
+ * (The native entry's `bulkEncrypt` takes one column for the whole batch and
+ * wraps values in `{ id, plaintext }` envelopes. This surface does neither —
+ * see {@link WasmEncryptionClient.bulkEncrypt} for why.)
+ */
+export type WasmBulkPlaintext = {
+  /**
+   * The value to encrypt. `null`/`undefined` yields `null` at this index
+   * without reaching ZeroKMS.
+   *
+   * `undefined` is admitted explicitly — unlike {@link WasmQueryTerm.value},
+   * which is `WasmPlaintext` alone. Both are guarded identically at runtime,
+   * but the shapes fed to them differ: a query needle is written by hand,
+   * whereas a bulk batch is mapped straight off database rows, where an
+   * absent column is `undefined`. Typing it out would force `?? null` at
+   * every call site to satisfy a check the runtime does anyway.
+   */
+  plaintext: WasmPlaintext | undefined
+  table: EncryptOptions['table']
+  column: EncryptOptions['column']
+}
+
+/**
+ * Guard the positional contract the bulk methods rely on.
+ *
+ * Both `bulkEncrypt` and `bulkDecrypt` match FFI results to inputs by INDEX —
+ * the payloads carry no correlation id (protect-ffi's `EncryptPayload` /
+ * `BulkDecryptPayload` have no `id` field). If the FFI ever returned a
+ * different count, the surplus input slots would keep their initial `null`,
+ * which a caller cannot distinguish from "this row genuinely had no value".
+ * That is a silent-wrong-data failure, so it throws instead.
+ */
+function assertBatchLength(op: string, received: number, sent: number): void {
+  if (received !== sent) {
+    throw new Error(
+      `[encryption]: ${op} sent ${sent} payload(s) to ZeroKMS but received ${received} back. ` +
+        'Results are matched to inputs by position, so a count mismatch would silently return null ' +
+        'for the unmatched entries — refusing rather than returning data that looks complete.',
+    )
+  }
+}
+
+/**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
  * forge one even if they recreate `WasmEncryptionClient` via type
@@ -310,10 +364,17 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  * WASM encryption client. Returned by {@link Encryption}.
  *
  * Wraps an opaque `wasmNewClient` handle and exposes `encrypt`, `decrypt`,
- * `isEncrypted`, and — since #662 made searchable encryption reachable on
- * the edge — `encryptQuery` / `encryptQueryBulk` for minting v3 query
- * terms. Remaining surface (bulk encrypt/decrypt, model helpers) lives on
- * the Node entry — port lazily as Deno / edge consumers demand it.
+ * `isEncrypted`, `encryptQuery` / `encryptQueryBulk` for minting v3 query
+ * terms (#662, which made searchable encryption reachable on the edge), and
+ * `bulkEncrypt` / `bulkDecrypt` for single-round-trip list reads and writes
+ * (#737).
+ *
+ * Still Node-only: the MODEL helpers (`encryptModel` / `decryptModel` and
+ * their bulk forms). Those are a separate port — this entry has no
+ * single-model operation to build a bulk one on top of, so adding
+ * `bulkEncryptModels` alone would be incoherent. Port lazily as Deno / edge
+ * consumers demand it; the value-level bulk primitives above are what the
+ * round-trip cost actually hangs on.
  *
  * Construct via {@link Encryption} — the constructor is private to
  * prevent callers from wrapping arbitrary objects in this type.
@@ -500,6 +561,164 @@ export class WasmEncryptionClient {
       const slot = live[i]
       if (slot) out[slot.at] = value
     })
+    return out
+  }
+
+  /**
+   * Encrypt many storage values in ONE ZeroKMS round trip.
+   *
+   * Without this, an edge function writing N rows pays N round trips — the
+   * property `AGENTS.md` calls out ("prefer bulk operations to exercise
+   * ZeroKMS bulk speed") was unreachable from the WASM entry entirely (#737).
+   *
+   * Position-stable: the result is index-aligned with `items`, and a
+   * `null`/`undefined` plaintext yields `null` at the same index without
+   * being sent to ZeroKMS (an all-null batch short-circuits entirely).
+   * Entries may mix tables and columns freely — see {@link WasmBulkPlaintext}.
+   *
+   * ## Why this differs from the native `bulkEncrypt`
+   *
+   * The Node entry takes one column for the whole batch and wraps values in
+   * `{ id, plaintext }` envelopes, returning `{ id, data }` inside a
+   * `{ data } | { failure }` Result. This surface keeps neither convention,
+   * deliberately: it follows {@link encryptQueryBulk}, the bulk primitive
+   * already on this client — a plain index-aligned array that THROWS, with
+   * per-item routing. Matching the local surface matters more here than
+   * matching a different entry point, and the `id` bookkeeping buys nothing
+   * when positions are already stable (the FFI's `EncryptPayload` has no
+   * `id` field — the native one is dropped at the boundary).
+   *
+   * @example Encrypting a page of rows in one call
+   * ```ts
+   * const rows = [{ email: "a@b.com", bio: "hi" }, { email: "c@d.com", bio: "yo" }]
+   * const encrypted = await client.bulkEncrypt(
+   *   rows.flatMap((r) => [
+   *     { plaintext: r.email, table: users, column: users.email },
+   *     { plaintext: r.bio,   table: users, column: users.bio },
+   *   ]),
+   * )
+   * // encrypted[0] = email of row 0, encrypted[1] = bio of row 0, …
+   * ```
+   *
+   * @param items - Values to encrypt, each with its own table and column.
+   * @returns Index-aligned array of storage payloads (`null` per null input).
+   * @throws When encryption fails. The batch is all-or-nothing: ZeroKMS
+   *   rejects the call as a whole, so there is no per-item error to report
+   *   (unlike {@link bulkDecrypt}, whose FFI primitive IS fallible).
+   */
+  async bulkEncrypt(
+    items: readonly WasmBulkPlaintext[],
+  ): Promise<Array<Encrypted | null>> {
+    const live: Array<{ item: WasmBulkPlaintext; at: number }> = []
+    items.forEach((item, at) => {
+      if (item.plaintext !== null && item.plaintext !== undefined)
+        live.push({ item, at })
+    })
+    const out: Array<Encrypted | null> = items.map(() => null)
+    if (live.length === 0) return out
+
+    const encrypted = (await wasmEncryptBulk(
+      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+      this.client as never,
+      // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+      {
+        plaintexts: live.map(({ item }) => ({
+          plaintext: item.plaintext,
+          table: item.table.tableName,
+          column: getColumnName(item.column),
+        })),
+      } as never,
+    )) as Encrypted[]
+
+    // Results are matched to inputs BY POSITION (the FFI payload carries no
+    // correlation id). A length mismatch would silently leave trailing slots
+    // null — indistinguishable from "this row had no value" — so treat it as
+    // the contract violation it is rather than returning plausible-looking
+    // data.
+    assertBatchLength('bulkEncrypt', encrypted.length, live.length)
+
+    encrypted.forEach((value, i) => {
+      const slot = live[i]
+      if (slot) out[slot.at] = value
+    })
+    return out
+  }
+
+  /**
+   * Decrypt many stored payloads in ONE ZeroKMS round trip.
+   *
+   * This is the half that matters most on the edge: rendering a list of N
+   * encrypted rows cost N round trips before this existed, which is what made
+   * list endpoints impractical on Deno / Workers (#737).
+   *
+   * Position-stable, same contract as {@link bulkEncrypt}: index-aligned with
+   * `ciphertexts`, `null`/`undefined` passes through as `null` without
+   * reaching ZeroKMS, and an all-null batch short-circuits.
+   *
+   * ## Partial failure
+   *
+   * The underlying primitive is `decryptBulkFallible`, which reports success
+   * or failure PER ITEM — one undecryptable row does not fail the call at the
+   * FFI level. This surface still throws (its whole convention is to throw,
+   * unlike the native entry's Result envelope), but the thrown error names
+   * every failed index and its reason rather than surfacing the first one and
+   * discarding the rest. So a caller debugging one bad row in a page of 50
+   * learns which row, and that the other 49 were fine.
+   *
+   * @example
+   * ```ts
+   * const rows = await sql`SELECT email FROM users LIMIT 50`
+   * const emails = await client.bulkDecrypt(rows.map((r) => r.email))
+   * // one ZeroKMS call, not 50
+   * ```
+   *
+   * @param ciphertexts - Stored payloads; `null`/`undefined` entries allowed.
+   * @returns Index-aligned array of plaintexts (`null` per null input).
+   * @throws When any item fails to decrypt — the message lists each failing
+   *   index with its reason.
+   */
+  async bulkDecrypt(
+    ciphertexts: readonly (Encrypted | null | undefined)[],
+  ): Promise<Array<WasmPlaintext | null>> {
+    const live: Array<{ ciphertext: Encrypted; at: number }> = []
+    ciphertexts.forEach((ciphertext, at) => {
+      if (ciphertext !== null && ciphertext !== undefined)
+        live.push({ ciphertext, at })
+    })
+    const out: Array<WasmPlaintext | null> = ciphertexts.map(() => null)
+    if (live.length === 0) return out
+
+    const results = (await wasmDecryptBulkFallible(
+      // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+      this.client as never,
+      // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+      {
+        ciphertexts: live.map(({ ciphertext }) => ({ ciphertext })),
+      } as never,
+    )) as Array<{ data: WasmPlaintext } | { error: string; code?: string }>
+
+    // Positional matching, same contract as `bulkEncrypt` — see there.
+    assertBatchLength('bulkDecrypt', results.length, live.length)
+
+    // Collect every failure before throwing: the FFI already did the work for
+    // the rows that succeeded, so reporting only the first would discard
+    // information the caller paid for.
+    const failures: string[] = []
+    results.forEach((result, i) => {
+      const slot = live[i]
+      if (!slot) return
+      if ('error' in result) {
+        failures.push(`  [${slot.at}]: ${result.error}`)
+        return
+      }
+      out[slot.at] = result.data
+    })
+
+    if (failures.length > 0) {
+      throw new Error(
+        `[encryption]: bulkDecrypt failed for ${failures.length} of ${live.length} payload(s) (indices are into the input array):\n${failures.join('\n')}`,
+      )
+    }
     return out
   }
 }

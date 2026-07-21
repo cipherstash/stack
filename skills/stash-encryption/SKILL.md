@@ -422,6 +422,22 @@ for (const item of decrypted.data) {
 }
 ```
 
+**On the WASM entry (`@cipherstash/stack/wasm-inline`), the signature differs** — do not copy the shape above onto the edge. There are no `{ id, plaintext }` envelopes and no `Result`; each entry carries its own table and column, the result is a plain index-aligned array, and errors throw:
+
+```typescript
+// Deno / Workers / Supabase Edge Functions
+const encrypted = await client.bulkEncrypt([
+  { plaintext: "alice@example.com", table: users, column: users.email },
+  { plaintext: "hello", table: users, column: users.bio },
+])
+// encrypted = [EncryptedPayload, EncryptedPayload] — same order as the input
+
+const decrypted = await client.bulkDecrypt(rows.map((r) => r.email))
+// one ZeroKMS round trip for the whole list, not one per row
+```
+
+`null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS. Because each entry names its own column, one call can cover several columns across many rows. `bulkDecrypt` throws if any item fails, naming every failing index. The model helpers (`encryptModel` / `bulkEncryptModels` / …) are **not** available on the WASM entry.
+
 ## Searchable Encryption
 
 Encrypt query terms with `encryptQuery` so you can search encrypted data in PostgreSQL. On the typed client, `encryptQuery` only accepts queryable columns (storage-only columns are rejected at compile time) and constrains `queryType` to the column's capabilities.
