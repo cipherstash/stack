@@ -89,10 +89,15 @@ export default defineConfig([
         cpSync('../../skills', 'dist/skills', { recursive: true })
       }
       // The AGENTS.md doctrine fragment is read at handoff time and
-      // wrapped in a sentinel block. The runtime resolver in
-      // src/commands/init/lib/build-agents-md.ts walks up looking for a
-      // sibling `doctrine/` dir, so mirror the source layout under dist.
-      cpSync('src/commands/init/doctrine', 'dist/commands/init/doctrine', {
+      // wrapped in a sentinel block. The runtime resolver
+      // (findBundledDir in src/commands/init/lib/bundled-paths.ts) probes
+      // ANCESTOR directories of the compiled chunk — which lives in
+      // dist/bin/, not in a mirror of the source layout — so the doctrine
+      // must land at dist/doctrine, exactly like dist/skills above.
+      // Mirroring the source path (dist/commands/init/doctrine) is never
+      // probed and left every published build writing the minimal
+      // AGENTS.md stub instead of the doctrine.
+      cpSync('src/commands/init/doctrine', 'dist/doctrine', {
         recursive: true,
       })
     },

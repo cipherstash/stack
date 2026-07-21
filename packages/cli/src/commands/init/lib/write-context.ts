@@ -19,6 +19,26 @@ import { renderSetupPrompt, type SetupPromptContext } from './setup-prompt.js'
 export const CONTEXT_REL_PATH = '.cipherstash/context.json'
 export const SETUP_PROMPT_REL_PATH = '.cipherstash/setup-prompt.md'
 
+/**
+ * How the per-integration skills reached (or failed to reach) the project.
+ * Threaded into `context.json` and the setup prompt so both describe what
+ * actually happened, not what the handoff hoped for:
+ *
+ *   installed — copied into a skills directory (`.claude/skills`,
+ *               `.codex/skills`)
+ *   inlined   — bodies written into AGENTS.md under "## Skill references"
+ *               (the editor-agent handoff, and the Codex fallback for an
+ *               unwritable `.codex/` — #736)
+ *   failed    — bundled skills that ended up nowhere (destination
+ *               unwritable with no inline fallback, or AGENTS.md itself
+ *               unwritable)
+ */
+export interface SkillsDelivery {
+  installed: string[]
+  inlined: string[]
+  failed: string[]
+}
+
 export interface ContextFile {
   cliVersion: string
   integration: Integration
@@ -32,9 +52,14 @@ export interface ContextFile {
   schemas: SchemaDef[]
   /** Names of skills `stash init` copied into the project (e.g.
    *  `stash-encryption`, `stash-drizzle`, `stash-cli`). Empty for the
-   *  AGENTS.md handoff (skill content is inlined into AGENTS.md instead)
-   *  and for wizard (the wizard installs its own). */
+   *  AGENTS.md handoff (see `inlinedSkills`) and for wizard (the wizard
+   *  installs its own). */
   installedSkills: string[]
+  /** Names of skills whose SKILL.md bodies were inlined into AGENTS.md
+   *  under "## Skill references" instead of being copied as directories —
+   *  the AGENTS.md handoff always, the Codex handoff when `.codex/skills`
+   *  could not be written (#736). */
+  inlinedSkills: string[]
   /** Plan-step the CLI resolved at handoff time. Written by `stash plan`
    *  so the wizard handoff (and any other reader of this file) can pick
    *  up the same rollout/cutover/complete dispatch the prompt-driven
@@ -107,6 +132,7 @@ export function buildContextFile(state: InitState): ContextFile {
     envKeys: [],
     schemas: state.schemas ?? [],
     installedSkills: [],
+    inlinedSkills: [],
     planStep: state.planStep,
     usesProxy: state.usesProxy,
     generatedAt: new Date().toISOString(),
@@ -151,7 +177,7 @@ export function writeBaselineContextFile(
 export function buildSetupPromptContext(
   state: InitState,
   handoff: HandoffChoice,
-  installedSkills: string[],
+  skills: SkillsDelivery,
 ): SetupPromptContext | undefined {
   if (handoff === 'wizard') return undefined
   const integration = state.integration ?? 'postgresql'
@@ -167,7 +193,7 @@ export function buildSetupPromptContext(
     cliInstalled: state.cliInstalled ?? false,
     handoff,
     mode: state.mode ?? 'implement',
-    installedSkills,
+    skills,
     planStep: state.planStep,
   }
 }

@@ -60,4 +60,15 @@ describe('buildAgentsMdBody', () => {
     expect(out).toContain('# Skill: stash-encryption')
     expect(out).not.toContain('# Skill: stash-drizzle')
   })
+
+  it('inlines only the requested subset when a skill list is passed', () => {
+    // The Codex fallback passes just the skills that failed to copy, so a
+    // partial install inlines exactly the missing ones (#736 follow-up).
+    const out = buildAgentsMdBody('drizzle', 'doctrine-plus-skills', [
+      'stash-cli',
+    ])
+    expect(out).toContain('# Skill: stash-cli')
+    expect(out).not.toContain('# Skill: stash-encryption')
+    expect(out).not.toContain('# Skill: stash-drizzle')
+  })
 })

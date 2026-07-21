@@ -104,8 +104,10 @@ sentence in one of them the way you'd treat a wrong line of code:
 - `installSkills()` (`packages/cli/src/commands/init/lib/install-skills.ts`) copies the
   per-integration set into the user's `.claude/skills/` or `.codex/skills/` at handoff time.
 - `readBundledSkill()` inlines a skill's body into the user's `AGENTS.md` for editor
-  agents (Cursor / Windsurf / Cline). Only `SKILL.md` is inlined — content split into
-  sibling files is silently dropped on that path, so keep each `SKILL.md` self-sufficient.
+  agents (Cursor / Windsurf / Cline), and as the Codex fallback for skills that could
+  not be copied into `.codex/skills/` (#736). Only `SKILL.md` is inlined — content split
+  into sibling files is silently dropped on that path, so keep each `SKILL.md`
+  self-sufficient.
 
 **Every change to a package's public API, the CLI command surface, or a user-facing
 workflow must check the affected skills in the same PR.** These skills drift silently:
