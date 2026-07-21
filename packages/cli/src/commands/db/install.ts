@@ -511,6 +511,16 @@ export async function generateDrizzleMigration(
   // executed. `--out` is always passed so drizzle-kit WRITES where we then
   // LOOK — otherwise a project whose drizzle.config.ts points elsewhere would
   // have drizzle-kit write there while we search `drizzle/` and fail in step 2.
+  //
+  // Runner: `runnerArgv` is the download-and-run form (`pnpm dlx` / `npx` /
+  // `bunx`) this v2 path has always used. The v3 generator
+  // (`commands/eql/migration.ts`) deliberately uses `execArgv` instead
+  // (`pnpm exec` / `npx --no-install`) so it resolves THIS project's local
+  // drizzle-kit and drizzle.config.ts. v2 keeps `dlx` to preserve established
+  // behaviour for existing users; aligning it with v3's project-local form is
+  // a deliberate, separate change, not made here. The exact argv (including
+  // `dlx`) is pinned in the tests so this divergence stays a conscious
+  // contract rather than drifting silently.
   const pm = detectPackageManager()
   const { command, prefixArgs } = runnerArgv(pm)
   const drizzleArgs = [

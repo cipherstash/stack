@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -6,7 +7,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
@@ -33,6 +34,32 @@ vi.mock('@clack/prompts', () => ({
 const spawnMock = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ spawnSync: spawnMock }))
 
+// node:fs stays REAL by default — the generator's own writes, the bundled-SQL
+// reads, and cleanup all need it. We only need a seam on `writeFileSync` to
+// simulate the SQL-bundle write failing, so route it through a spy that
+// delegates to the real implementation (reset in beforeEach) and is overridden
+// only in the write-failure test.
+const fsWrite = vi.hoisted(() => ({
+  real: (() => {
+    throw new Error('fsWrite.real not initialised')
+  }) as typeof import('node:fs').writeFileSync,
+  spy: vi.fn(),
+}))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  fsWrite.real = actual.writeFileSync
+  return { ...actual, default: actual, writeFileSync: fsWrite.spy }
+})
+
+// The `--latest` path calls `downloadEqlSql`; stub just that export so we can
+// make the network fetch reject. Everything else in the installer module
+// (including the real `loadBundledEqlSql` the other tests rely on) stays real.
+const downloadMock = vi.hoisted(() => vi.fn())
+vi.mock('@/installer/index.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/installer/index.js')>()),
+  downloadEqlSql: downloadMock,
+}))
+
 // Pin the package manager so the argv assertion below is exact. Detection reads
 // the lockfile in cwd and npm_config_user_agent, both of which vary by how the
 // suite was launched. The runner MAPPING stays real — `pnpm` + `['dlx', …]` is
@@ -45,6 +72,12 @@ vi.mock('@/commands/init/utils.js', async (importOriginal) => ({
 const { generateDrizzleMigration } = await import('../install.js')
 
 const spinner = p.spinner()
+
+beforeEach(() => {
+  // Default: `writeFileSync` behaves exactly like the real thing. Tests that
+  // need it to fail override the implementation for their own scope.
+  fsWrite.spy.mockImplementation(fsWrite.real)
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -80,6 +113,10 @@ describe('generateDrizzleMigration', () => {
     ['backticks', 'a`id`'],
     ['a space', 'add eql'],
     ['a path separator', '../escape'],
+    // `''` is not nullish, so it slips past `options.name ?? DEFAULT` and hits
+    // the regex, where `+` rejects it — `--name ''` aborts, it does NOT fall
+    // back to `install-eql`. The one input where "empty" and "absent" diverge.
+    ['an empty string', ''],
   ])('rejects %s in --name', async (_label, name) => {
     await expect(
       generateDrizzleMigration(spinner, { name, out: join(tmp, 'drizzle') }),
@@ -142,5 +179,117 @@ describe('generateDrizzleMigration', () => {
       generateDrizzleMigration(spinner, { out: join(tmp, 'drizzle') }),
     ).rejects.toBeInstanceOf(CliExit)
     expect(clack.log.error).toHaveBeenCalledWith('boom')
+  })
+
+  it('reports the spawn error when drizzle-kit cannot be launched', async () => {
+    // spawnSync's ENOENT shape: null status, no captured stderr, `error` set.
+    // `result.stderr?.trim()` is undefined, so the message falls through to the
+    // second arm (`result.error?.message`) — the realistic "drizzle-kit isn't
+    // installed" case. If the `?.` on stderr were dropped this shape would
+    // throw a TypeError instead of reporting.
+    spawnMock.mockReturnValue({
+      status: null,
+      stdout: null,
+      stderr: null,
+      error: Object.assign(new Error('spawnSync pnpm ENOENT'), {
+        code: 'ENOENT',
+      }),
+    })
+
+    await expect(
+      generateDrizzleMigration(spinner, { out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.error).toHaveBeenCalledWith('spawnSync pnpm ENOENT')
+    expect(clack.log.info).toHaveBeenCalledWith(
+      'Make sure drizzle-kit is installed: npm install -D drizzle-kit',
+    )
+  })
+
+  it('falls back to the exit status when there is no stderr or spawn error', async () => {
+    // Third arm of the fallback chain: non-zero status, empty stderr, no
+    // `error`. The user still gets a message instead of a blank error line.
+    spawnMock.mockReturnValue({ status: 2, stdout: '', stderr: '' })
+
+    await expect(
+      generateDrizzleMigration(spinner, { out: join(tmp, 'drizzle') }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.error).toHaveBeenCalledWith(
+      'drizzle-kit exited with status 2.',
+    )
+  })
+
+  it('defaults --out to an absolute drizzle/ when the flag is omitted', async () => {
+    // Widest blast radius in the diff: because `--out` is always appended, a
+    // flag-less invocation has its drizzle.config.ts `out` overridden by
+    // `<cwd>/drizzle`. The dry-run preview reaches that arm without touching
+    // the filesystem or spawning.
+    await generateDrizzleMigration(spinner, { dryRun: true })
+    expect(clack.note).toHaveBeenCalledWith(
+      expect.stringContaining(`--out=${resolve('drizzle')}`),
+      'Dry Run',
+    )
+  })
+
+  it('points at --out when the generated migration is not where we looked', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    // drizzle-kit "succeeds" but wrote to its drizzle.config.ts `out`, not ours,
+    // so step 2 finds nothing and aborts with the remediation hint (defect 2).
+    spawnMock.mockReturnValue({ status: 0, stdout: '', stderr: '' })
+
+    await expect(
+      generateDrizzleMigration(spinner, { out }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(clack.log.info).toHaveBeenCalledWith(
+      'If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.',
+    )
+  })
+
+  it('removes the scaffolded migration when writing the SQL fails', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    const scaffolded = join(out, '0000_install-eql.sql')
+    // drizzle-kit scaffolds an empty custom migration where we look.
+    spawnMock.mockImplementation(() => {
+      fsWrite.real(scaffolded, '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    // Throw only on the big bundle write, letting the empty scaffold through.
+    fsWrite.spy.mockImplementation(((path, data, ...rest) => {
+      if (typeof data === 'string' && data.includes('cs_migrations')) {
+        throw new Error('EACCES: permission denied')
+      }
+      return fsWrite.real(
+        path as string,
+        data as string,
+        ...(rest as unknown[]),
+      )
+    }) as typeof import('node:fs').writeFileSync)
+
+    await expect(
+      generateDrizzleMigration(spinner, { out }),
+    ).rejects.toBeInstanceOf(CliExit)
+    // Without cleanup, an empty scaffolded migration survives and
+    // `drizzle-kit migrate` applies and records it — a silent no-op migration.
+    expect(existsSync(scaffolded)).toBe(false)
+    expect(clack.log.error).toHaveBeenCalledWith('EACCES: permission denied')
+  })
+
+  it('cleans up the scaffold when --latest cannot fetch the SQL', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    const scaffolded = join(out, '0000_install-eql.sql')
+    spawnMock.mockImplementation(() => {
+      fsWrite.real(scaffolded, '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+    // A network failure (rate limit / offline) is the likeliest real trip here.
+    downloadMock.mockRejectedValueOnce(new Error('403 rate limited'))
+
+    await expect(
+      generateDrizzleMigration(spinner, { out, latest: true }),
+    ).rejects.toBeInstanceOf(CliExit)
+    expect(existsSync(scaffolded)).toBe(false)
+    expect(clack.log.error).toHaveBeenCalledWith('403 rate limited')
   })
 })
