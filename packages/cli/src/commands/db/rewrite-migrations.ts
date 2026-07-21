@@ -62,7 +62,12 @@ const MANGLED_TYPE_FORMS = [
  * - $3: the mangled type blob — feed it to {@link DOMAIN_RE} for the bare name
  */
 const ALTER_COLUMN_TO_ENCRYPTED_RE = new RegExp(
-  String.raw`ALTER TABLE "([^"]+)"\s+ALTER COLUMN "([^"]+)"\s+SET DATA TYPE (${MANGLED_TYPE_FORMS})[^;]*;`,
+  // `\s*;` — not `[^;]*;` — so the type blob must run straight into the
+  // statement terminator. drizzle-kit emits exactly that (no trailing clause),
+  // and the tighter tail means a HAND-AUTHORED `SET DATA TYPE … USING <expr>;`
+  // is left untouched instead of being silently rewritten (and its USING
+  // discarded).
+  String.raw`ALTER TABLE "([^"]+)"\s+ALTER COLUMN "([^"]+)"\s+SET DATA TYPE (${MANGLED_TYPE_FORMS})\s*;`,
   'gi',
 )
 
@@ -123,20 +128,22 @@ export async function rewriteEncryptedAlterColumns(
 }
 
 /**
- * The rewrite is identical for v2 and v3, and so is the backfill guidance.
+ * The rewrite is identical for v2 and v3, and the ADD+DROP+RENAME sequence is
+ * equivalent to DROP+ADD: it makes the column type valid but does NOT preserve
+ * the column's data. It is therefore safe only on an EMPTY table. On a populated
+ * table the new column starts NULL and the old one is dropped in the same
+ * migration, so the plaintext is destroyed.
  *
- * v3 stores the encrypted EQL jsonb envelope rather than v2's composite, which
- * might suggest the UPDATE could become real SQL — it cannot. The envelope is
- * produced by ZeroKMS via the client (`encryptModel` / `bulkEncryptModels`), so
- * there is no expression Postgres can evaluate to fill it, exactly as for v2.
- * The UPDATE therefore stays a guidance comment on both surfaces.
+ * The commented UPDATE is only a placeholder — it can never become real SQL. The
+ * encrypted value is the EQL envelope produced by ZeroKMS via the client
+ * (`encryptModel` / `bulkEncryptModels`); there is no expression Postgres can
+ * evaluate to fill it. (v3 stores that envelope as jsonb rather than v2's
+ * composite, but this is equally true on both surfaces.)
  *
- * What the v3 rollout path does change is the warning worth giving. This
- * sequence DROPS the plaintext column in the same migration; the staged
- * `stash encrypt` lifecycle (add → backfill → cutover → drop) deliberately
- * keeps both columns alive across deploys. On a populated production table that
- * staged path is the right one, so say so instead of implying this migration
- * implements it.
+ * So the guidance does NOT tell the user to backfill and run this migration —
+ * that would still lose data on cutover. It points a populated table at the
+ * staged `stash encrypt` lifecycle (add → backfill → cutover → drop), which
+ * keeps both columns alive across deploys.
  */
 function renderSafeAlter(
   table: string,
@@ -146,11 +153,11 @@ function renderSafeAlter(
   const tmp = `${column}__cipherstash_tmp`
   return [
     '-- Rewritten by stash: in-place ALTER COLUMN cannot cast to',
-    `-- ${domain}. If "${table}" already has rows, backfill the new`,
-    "-- column via @cipherstash/stack's encryptModel in application code BEFORE",
-    '-- running this migration in production. Empty tables are safe as-is.',
-    `-- This migration DROPS "${column}" — on a populated production table prefer`,
-    '-- the staged `stash encrypt` path (add -> backfill -> cutover -> drop).',
+    `-- ${domain}. This ADD+DROP+RENAME equals DROP+ADD and is safe ONLY if`,
+    `-- "${table}" is empty. On a populated table it DESTROYS existing "${column}"`,
+    '-- data (the new column starts NULL) — do NOT run it there. Use the staged',
+    "-- `stash encrypt` path instead: add -> backfill via @cipherstash/stack's",
+    '-- encryptModel in application code -> cutover -> drop.',
     `ALTER TABLE "${table}" ADD COLUMN "${tmp}" "public"."${domain}";`,
     `-- UPDATE "${table}" SET "${tmp}" = /* encrypted value for ${column} */ NULL;`,
     `ALTER TABLE "${table}" DROP COLUMN "${column}";`,

@@ -388,7 +388,7 @@ stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authentic
 
 Pass exactly one of `--drizzle` / `--prisma`. The generated migration also installs the `cs_migrations` tracking schema, so one `drizzle-kit migrate` covers everything `stash encrypt …` needs.
 
-After writing the migration, `--drizzle` sweeps the output directory for sibling migrations containing an in-place `ALTER COLUMN … SET DATA TYPE <eql_v2_encrypted | eql_v3_*>` — drizzle-kit emits these when you change a plaintext column to an encrypted one, and Postgres rejects them (there is no cast from `text`/`numeric` to an EQL type). Each is rewritten into an `ADD COLUMN` + backfill-comment + `DROP` + `RENAME` sequence and the rewritten files are listed. The rewrite **drops the plaintext column**, so it is safe on an empty table; on a populated production table use the staged `stash encrypt` path (add → backfill → cutover → drop) instead.
+After writing the migration, `--drizzle` sweeps the output directory for sibling migrations containing an in-place `ALTER COLUMN … SET DATA TYPE <eql_v2_encrypted | eql_v3_*>` — drizzle-kit emits these when you change a plaintext column to an encrypted one, and Postgres rejects them (there is no cast from `text`/`numeric` to an EQL type). Each is rewritten into an `ADD COLUMN` + `DROP` + `RENAME` sequence and the rewritten files are listed. This is equivalent to DROP+ADD — it fixes the type but does **not** preserve data — so it is safe **only on an empty table**. On a populated table the new column starts NULL and the old one is dropped in the same migration, destroying the plaintext; do not run it there. Use the staged `stash encrypt` path (add → backfill → cutover → drop) instead.
 
 #### `eql upgrade`
 

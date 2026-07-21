@@ -285,6 +285,21 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
   })
 
+  it('leaves a hand-authored SET DATA TYPE ... USING conversion untouched', async () => {
+    // A user who writes their own cast expression has a runnable statement we
+    // must not clobber — the tail is `\s*;`, not `[^;]*;`, precisely so the
+    // USING clause keeps this out of the match.
+    const original =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING encrypt(email);\n'
+    const filePath = path.join(tmpDir, '0013_using.sql')
+    fs.writeFileSync(filePath, original)
+
+    const rewritten = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([])
+    expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
+  })
+
   it('handles multiple ALTER statements in one file', async () => {
     const original = [
       'ALTER TABLE "a" ALTER COLUMN "x" SET DATA TYPE eql_v2_encrypted;',
