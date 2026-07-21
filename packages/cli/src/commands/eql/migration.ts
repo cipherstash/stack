@@ -221,8 +221,12 @@ async function generateDrizzleEqlMigration(
   // staged `stash encrypt` path. `eql install --drizzle` has always done this
   // for v2; without it the v3 migration-first path leaves the user with broken
   // SQL and no repair (#693).
+  // Whether the sweep failed outright or left near-misses it couldn't rewrite.
+  // Either way the user must review sibling migrations before running migrate,
+  // so surface it again at the closing note (below) — not just inline here.
+  let sweepIncomplete = false
   try {
-    const rewritten = await rewriteEncryptedAlterColumns(outDir, {
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
       skip: migrationPath,
     })
     if (rewritten.length > 0) {
@@ -231,8 +235,18 @@ async function generateDrizzleEqlMigration(
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }
+    if (skipped.length > 0) {
+      sweepIncomplete = true
+      p.log.warn(
+        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
+      )
+      for (const { file, statement } of skipped) {
+        p.log.step(`  - ${file}: ${statement}`)
+      }
+    }
   } catch (error) {
     // Advisory: the install migration itself is already written and valid.
+    sweepIncomplete = true
     p.log.warn(
       `Could not sweep ${outDir} for unsafe ALTER COLUMN statements: ${
         error instanceof Error ? error.message : String(error)
@@ -241,6 +255,11 @@ async function generateDrizzleEqlMigration(
   }
 
   p.log.success(`Migration created: ${migrationPath}`)
+  if (sweepIncomplete) {
+    p.log.warn(
+      `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${outDir} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+    )
+  }
   p.note(
     `Run your Drizzle migrations to install EQL v3:\n\n  ${execCommand(pm)} drizzle-kit migrate`,
     'Next Steps',

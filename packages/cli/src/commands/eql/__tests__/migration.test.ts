@@ -268,6 +268,35 @@ describe('eqlMigrationCommand — Drizzle', () => {
     expect(readFileSync(sibling, 'utf-8')).not.toContain('SET DATA TYPE')
   })
 
+  // When the sweep leaves near-misses it couldn't rewrite, the closing note
+  // must warn the user the sweep didn't fully complete — otherwise they run
+  // drizzle-kit migrate against un-swept, broken sibling SQL.
+  it('warns at the closing note when the sweep leaves skipped statements', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    // A hand-authored SET DATA TYPE ... USING the strict matcher won't rewrite,
+    // but the broad scan flags as a near-miss.
+    const sibling = join(out, '0001_nearmiss.sql')
+    writeFileSync(
+      sibling,
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;\n',
+    )
+    spawnMock.mockImplementation(() => {
+      writeFileSync(join(out, '0002_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    // The near-miss statement is left untouched...
+    expect(readFileSync(sibling, 'utf-8')).toContain('SET DATA TYPE')
+    // ...and the closing note warns the sweep did not fully complete.
+    const warned = clack.log.warn.mock.calls.map((c) => String(c[0]))
+    expect(warned.some((msg) => msg.includes('did not fully complete'))).toBe(
+      true,
+    )
+  })
+
   it('aborts (exit 1) when drizzle-kit exits non-zero', async () => {
     spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
     await expect(

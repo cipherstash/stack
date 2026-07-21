@@ -11,9 +11,11 @@ import { join } from 'node:path'
 const ENCRYPTED_DOMAIN = String.raw`eql_v2_encrypted|eql_v3_[a-z0-9_]+`
 
 /**
- * Extracts the bare domain name out of whichever mangled form matched.
+ * Extracts the bare domain name out of whichever mangled form matched. Derived
+ * from {@link ENCRYPTED_DOMAIN} so the two can never drift out of sync — a new
+ * domain added to the alternation is extracted here for free.
  */
-const DOMAIN_RE = /eql_v2_encrypted|eql_v3_[a-z0-9_]+/i
+const DOMAIN_RE = new RegExp(ENCRYPTED_DOMAIN, 'i')
 
 /**
  * The mangled forms drizzle-kit emits for a customType in an ALTER COLUMN.
@@ -57,9 +59,15 @@ const MANGLED_TYPE_FORMS = [
  * type, in any of the forms above.
  *
  * Captures:
- * - $1: table name (without quotes)
- * - $2: column name (without quotes)
- * - $3: the mangled type blob — feed it to {@link DOMAIN_RE} for the bare name
+ * - $1: table name, OR the schema when a qualifier follows (both without quotes)
+ * - $2: table name when schema-qualified (`"app"."users"`), else undefined
+ * - $3: column name (without quotes)
+ * - $4: the mangled type blob — feed it to {@link DOMAIN_RE} for the bare name
+ *
+ * The optional `(?:\."([^"]+)")?` after the first quoted name matches the
+ * schema qualifier drizzle-kit emits for a `pgSchema()` table (`"app"."users"`).
+ * A plain `\s+` between the two names could never cross the `.`, so those tables
+ * were silently passed over.
  */
 const ALTER_COLUMN_TO_ENCRYPTED_RE = new RegExp(
   // `\s*;` — not `[^;]*;` — so the type blob must run straight into the
@@ -67,34 +75,78 @@ const ALTER_COLUMN_TO_ENCRYPTED_RE = new RegExp(
   // and the tighter tail means a HAND-AUTHORED `SET DATA TYPE … USING <expr>;`
   // is left untouched instead of being silently rewritten (and its USING
   // discarded).
-  String.raw`ALTER TABLE "([^"]+)"\s+ALTER COLUMN "([^"]+)"\s+SET DATA TYPE (${MANGLED_TYPE_FORMS})\s*;`,
+  String.raw`ALTER TABLE "([^"]+)"(?:\."([^"]+)")?\s+ALTER COLUMN "([^"]+)"\s+SET DATA TYPE (${MANGLED_TYPE_FORMS})\s*;`,
   'gi',
 )
 
 /**
- * Replace in-place `ALTER COLUMN ... SET DATA TYPE eql_v2_encrypted` statements
- * with an ADD + DROP + RENAME sequence.
+ * A deliberately BROAD scan for statements that look like an in-place change to
+ * an encrypted column but that the strict {@link ALTER_COLUMN_TO_ENCRYPTED_RE}
+ * did not rewrite — a hand-authored `SET DATA TYPE … USING …;`, or some future
+ * drizzle-kit form the strict matcher doesn't yet cover.
  *
- * **Why this exists (CIP-2991, CIP-2994):** Postgres has no implicit cast from
- * `text`/`numeric` to `eql_v2_encrypted`, so `ALTER COLUMN ... SET DATA TYPE
- * eql_v2_encrypted` fails with `cannot cast type ... to eql_v2_encrypted`.
- * The fix that works on both empty and non-empty tables is to add a new
- * encrypted column, backfill it, drop the original, and rename the new
- * column into place. For empty tables the UPDATE is a no-op and the
- * sequence is effectively equivalent to DROP+ADD.
+ * It matches any single (`;`-terminated) statement that contains both
+ * `SET DATA TYPE` and an `eql_v2`/`eql_v3` domain token at a word boundary (so
+ * lookalikes like `eql_v4_…` or `not_eql_v3_…` don't trip it). Run AFTER the
+ * strict rewrite so genuinely-rewritten statements — which no longer contain
+ * `SET DATA TYPE` — are already gone; whatever this still finds is a near-miss
+ * we flag for human review rather than silently ship as broken SQL.
+ */
+const NEAR_MISS_RE =
+  /[^;]*?\bSET\s+DATA\s+TYPE\b[^;]*?\beql_v[23][a-z0-9_]*[^;]*?;/gi
+
+/** A statement the sweep recognised as ALTER-to-encrypted but did NOT rewrite. */
+export interface SkippedAlter {
+  /** Absolute path of the migration file the statement lives in. */
+  file: string
+  /** The offending statement, verbatim (trimmed), for the user to review. */
+  statement: string
+}
+
+/** Outcome of a sweep: the files rewritten, and near-misses left for review. */
+export interface RewriteResult {
+  /** Absolute paths of files whose unsafe ALTER COLUMN(s) were rewritten. */
+  rewritten: string[]
+  /** Near-miss statements the strict matcher passed over — flag, don't guess. */
+  skipped: SkippedAlter[]
+}
+
+/**
+ * Replace in-place `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`
+ * statements with an ADD + DROP + RENAME sequence.
  *
- * We only rewrite the statement — the actual encryption of existing rows has
- * to happen in application code (via `encryptModel` from
- * `@cipherstash/stack`), which is why the UPDATE is emitted as a guidance
- * comment rather than real SQL. Running this migration against a populated
- * table leaves the new column NULL until the app backfills it.
+ * **Why this exists (CIP-2991, CIP-2994, #693):** Postgres has no implicit cast
+ * from `text`/`numeric` to an encrypted domain, so `ALTER COLUMN ... SET DATA
+ * TYPE eql_v2_encrypted` (or any `eql_v3_*` domain) fails at migrate time with
+ * `cannot cast type ... to <domain>`. This applies equally to the single EQL v2
+ * type and the whole EQL v3 concrete-domain family.
+ *
+ * The rewrite is an ADD+DROP+RENAME, which is **equivalent to DROP+ADD**: it
+ * makes the column type valid but does NOT preserve the column's data. It is
+ * therefore safe ONLY on an EMPTY table. On a populated table the new column
+ * starts NULL and the original is dropped in the same migration, so the
+ * plaintext is destroyed. The commented UPDATE is a placeholder that can never
+ * become real SQL (the encrypted value is the EQL envelope produced by ZeroKMS
+ * via the client — there is no expression Postgres can evaluate to fill it), so
+ * a populated table must instead use the staged `stash encrypt` lifecycle
+ * (add → backfill via `@cipherstash/stack`'s `encryptModel` → cutover → drop),
+ * which keeps both columns alive across deploys. Each rewritten file carries a
+ * header comment saying exactly this.
+ *
+ * Returns {@link RewriteResult}: the files rewritten, plus `skipped` near-misses
+ * — statements that look like an ALTER-to-encrypted but fall outside the strict
+ * matcher (a hand-authored `SET DATA TYPE … USING …;`, or a future drizzle-kit
+ * form). Near-misses are left untouched on disk and surfaced non-fatally so the
+ * caller can tell the user to review them, rather than silently shipping broken
+ * SQL.
  */
 export async function rewriteEncryptedAlterColumns(
   outDir: string,
   options: { skip?: string } = {},
-): Promise<string[]> {
+): Promise<RewriteResult> {
   const entries = await readdir(outDir).catch(() => [])
   const rewritten: string[] = []
+  const skipped: SkippedAlter[] = []
 
   for (const entry of entries) {
     if (!entry.endsWith('.sql')) continue
@@ -102,19 +154,28 @@ export async function rewriteEncryptedAlterColumns(
     if (options.skip && filePath === options.skip) continue
 
     const original = await readFile(filePath, 'utf-8')
-    if (!ALTER_COLUMN_TO_ENCRYPTED_RE.test(original)) continue
 
     // Reset the regex's lastIndex — it's stateful on /g
     ALTER_COLUMN_TO_ENCRYPTED_RE.lastIndex = 0
 
     const updated = original.replace(
       ALTER_COLUMN_TO_ENCRYPTED_RE,
-      (match: string, table: string, column: string, mangledType: string) => {
+      (
+        match: string,
+        first: string,
+        second: string | undefined,
+        column: string,
+        mangledType: string,
+      ) => {
+        // When schema-qualified (`"app"."users"`) the first capture is the
+        // schema and the second is the table; otherwise the first is the table.
+        const schema = second === undefined ? undefined : first
+        const table = second === undefined ? first : second
         const domain = DOMAIN_RE.exec(mangledType)?.[0]?.toLowerCase()
         // Unreachable — the outer regex only matches when a domain is present —
         // but leave the statement alone rather than emit a broken rewrite.
         if (!domain) return match
-        return renderSafeAlter(table, column, domain)
+        return renderSafeAlter(table, column, domain, schema)
       },
     )
 
@@ -122,9 +183,17 @@ export async function rewriteEncryptedAlterColumns(
       await writeFile(filePath, updated, 'utf-8')
       rewritten.push(filePath)
     }
+
+    // Broad secondary scan on the POST-rewrite content: anything still carrying
+    // `SET DATA TYPE` near an eql_v2/eql_v3 token slipped past the strict
+    // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
+    // that fails at migrate time.
+    for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
+      skipped.push({ file: filePath, statement: nearMiss[0].trim() })
+    }
   }
 
-  return rewritten
+  return { rewritten, skipped }
 }
 
 /**
@@ -149,18 +218,27 @@ function renderSafeAlter(
   table: string,
   column: string,
   domain: string,
+  schema?: string,
 ): string {
   const tmp = `${column}__cipherstash_tmp`
+  // Preserve the schema qualifier drizzle-kit emitted for pgSchema() tables so
+  // the rewritten statements target the same object.
+  const qualifiedTable = schema ? `"${schema}"."${table}"` : `"${table}"`
   return [
     '-- Rewritten by stash: in-place ALTER COLUMN cannot cast to',
     `-- ${domain}. This ADD+DROP+RENAME equals DROP+ADD and is safe ONLY if`,
-    `-- "${table}" is empty. On a populated table it DESTROYS existing "${column}"`,
+    `-- ${qualifiedTable} is empty. On a populated table it DESTROYS existing "${column}"`,
     '-- data (the new column starts NULL) — do NOT run it there. Use the staged',
     "-- `stash encrypt` path instead: add -> backfill via @cipherstash/stack's",
     '-- encryptModel in application code -> cutover -> drop.',
-    `ALTER TABLE "${table}" ADD COLUMN "${tmp}" "public"."${domain}";`,
-    `-- UPDATE "${table}" SET "${tmp}" = /* encrypted value for ${column} */ NULL;`,
-    `ALTER TABLE "${table}" DROP COLUMN "${column}";`,
-    `ALTER TABLE "${table}" RENAME COLUMN "${tmp}" TO "${column}";`,
+    '-- NOTE: constraints, defaults, and indexes on the original column are NOT',
+    '-- carried over by this ADD/DROP/RENAME — re-add any NOT NULL, DEFAULT,',
+    '-- UNIQUE, or index definitions manually.',
+    `ALTER TABLE ${qualifiedTable} ADD COLUMN "${tmp}" "public"."${domain}";`,
+    `-- UPDATE ${qualifiedTable} SET "${tmp}" = /* encrypted value for ${column} */ NULL`,
+    '--> statement-breakpoint',
+    `ALTER TABLE ${qualifiedTable} DROP COLUMN "${column}";`,
+    '--> statement-breakpoint',
+    `ALTER TABLE ${qualifiedTable} RENAME COLUMN "${tmp}" TO "${column}";`,
   ].join('\n')
 }

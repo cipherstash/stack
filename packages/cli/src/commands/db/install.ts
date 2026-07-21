@@ -604,7 +604,7 @@ async function generateDrizzleMigration(
   // comment steering populated tables to the staged `stash encrypt` path.
   // CIP-2991 + CIP-2994.
   try {
-    const rewritten = await rewriteEncryptedAlterColumns(outDir, {
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
       skip: generatedMigrationPath,
     })
     if (rewritten.length > 0) {
@@ -612,6 +612,14 @@ async function generateDrizzleMigration(
         `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
+    }
+    if (skipped.length > 0) {
+      p.log.warn(
+        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
+      )
+      for (const { file, statement } of skipped) {
+        p.log.step(`  - ${file}: ${statement}`)
+      }
     }
   } catch (error) {
     p.log.warn(
