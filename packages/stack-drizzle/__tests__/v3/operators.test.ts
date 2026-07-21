@@ -515,12 +515,32 @@ describe('createEncryptionOperatorsV3 - JSON selectors', () => {
     const q = render(await ops.selector(column, 'profile.age').gt(42))
 
     expect(q.sql).toContain(
-      'eql_v3.gt(eql_v3.jsonb_path_query_first("matrix_users"."eql_v3_json_search", $1::text), $2::eql_v3.query_double_ord)',
+      'eql_v3.gt("matrix_users"."eql_v3_json_search" -> $1::text, $2::eql_v3.query_double_ord)',
     )
     expect(q.params).toEqual(['selector-hash', JSON.stringify(ORDER_TERM)])
     expect(encryptQuery.mock.calls.map((call) => call[1]?.queryType)).toEqual([
       'steVecSelector',
       'steVecTerm',
+    ])
+  })
+
+  it('orders rows by the OPE term of an extracted selector entry', async () => {
+    const { ops, encryptQuery, render } = setup(() => 'selector-hash')
+
+    const asc = render(await ops.selector(column, 'profile.age').asc())
+    const desc = render(await ops.selector(column, '$.profile.age').desc())
+
+    expect(asc.sql).toContain(
+      'eql_v3.ord_term("matrix_users"."eql_v3_json_search" -> $1::text) asc',
+    )
+    expect(desc.sql).toContain(
+      'eql_v3.ord_term("matrix_users"."eql_v3_json_search" -> $1::text) desc',
+    )
+    expect(asc.params).toEqual(['selector-hash'])
+    expect(desc.params).toEqual(['selector-hash'])
+    expect(encryptQuery.mock.calls.map((call) => call[1]?.queryType)).toEqual([
+      'steVecSelector',
+      'steVecSelector',
     ])
   })
 

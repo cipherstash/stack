@@ -281,7 +281,7 @@ describeLivePg('v3 operators against live Postgres', () => {
         3,
       ),
     )
-    expect(level.sql).toContain('eql_v3.jsonb_path_query_first')
+    expect(level.sql).toContain('"payload" -> $1::text')
     expect(level.sql).toContain('::eql_v3.query_double_ord')
     expect(level.ids).toEqual(['zora'])
   }, 60_000)

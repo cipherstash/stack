@@ -670,7 +670,7 @@ export const V3_MATRIX = {
 
   // Encrypted JSONB document. Excluded from the SCALAR family driver (that is
   // what `deferred` marks here) — NOT unimplemented: JSON is fully covered by
-  // its own live suites (`json-crypto`, `json-contains`). It is queried by
+  // its own live suites (`json-crypto` and the shared adapter JSON suite). It is queried by
   // containment (the `@>` operator), not the eq/ord/match ops the scalar oracle
   // models, so `runFamilySuite` cannot exercise it. The row still pins the built
   // shape (`cast_as: 'json'` + the encrypted-JSONB index) and carries
@@ -697,7 +697,7 @@ export const V3_MATRIX = {
       { user: 'grace@example.com', roles: ['eng'] },
     ],
     deferred:
-      'json is covered by dedicated live suites (json-crypto, json-contains), ' +
+      'json is covered by dedicated live suites (json-crypto and the shared adapter JSON suite), ' +
       'not the scalar op-matrix: it is queried by containment, not eq/ord/match',
   },
 } as const satisfies Record<EqlV3TypeName, DomainSpec>

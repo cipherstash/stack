@@ -91,7 +91,7 @@ See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encr
 
 | Subpath          | Purpose                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `./v3`           | The complete EQL v3 surface: `cipherstashFromStack`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, envelopes, `bulkEncryptMiddlewareV3`, SDK adapter |
+| `./v3`           | The complete EQL v3 surface: `cipherstashFromStack`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, `eqlJsonPathAsc`/`eqlJsonPathDesc`, envelopes, `bulkEncryptMiddlewareV3`, SDK adapter |
 | `./stack`        | One-call setup against `@cipherstash/stack`: `cipherstashFromStack`, `deriveStackSchemasV3`, `createCipherstashV3Sdk` |
 | `./control`      | `SqlControlExtensionDescriptor` (contract space + pack meta + v3 codec lifecycle hooks)                |
 | `./runtime`      | Envelope classes + `CipherstashSdk` + v3 codec runtime + `decryptAll` + `bulkEncryptMiddlewareV3`      |

@@ -66,7 +66,10 @@ export const v3Dialect = {
 
   /** Extract the encrypted JSON leaf entry addressed by a selector hash. */
   selectorEntry(source: SQL, selector: SQL): SQL {
-    return sql`${fn('jsonb_path_query_first')}(${source}, ${selector})`
+    // Keep the canonical operator shape: functional indexes are defined over
+    // `eql_v3.ord_term(col -> selector)`. The RHS is explicitly `text` upstream
+    // so PostgreSQL selects EQL's encrypted-JSON accessor, not native jsonb `->`.
+    return sql`${source} -> ${selector}`
   },
 
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {

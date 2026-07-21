@@ -81,6 +81,8 @@ export {
   cipherstashV3QueryOperations,
   eqlAsc,
   eqlDesc,
+  eqlJsonPathAsc,
+  eqlJsonPathDesc,
 } from '../v3/operators-v3'
 export {
   EncryptionOperatorError,

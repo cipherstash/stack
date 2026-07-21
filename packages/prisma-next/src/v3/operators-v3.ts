@@ -754,7 +754,7 @@ function jsonSelectorOperator(
         lowering: {
           targetFamily: 'sql',
           strategy: 'function',
-          template: `eql_v3.${op}(eql_v3.jsonb_path_query_first({{self}}, {{arg0}}::text), {{arg1}}::${queryCast})`,
+          template: `eql_v3.${op}({{self}} -> {{arg0}}::text, {{arg1}}::${queryCast})`,
         },
       })
     },
@@ -944,4 +944,68 @@ export function eqlAsc(col: Expression<ScopeField>): OrderByItem {
  */
 export function eqlDesc(col: Expression<ScopeField>): OrderByItem {
   return OrderByItem.desc(ordTermExpression(col, 'eqlDesc').buildAst())
+}
+
+/** Build the OPE order term for a scalar JSON leaf addressed by `path`. */
+function jsonPathOrdTermExpression(
+  col: Expression<ScopeField>,
+  path: string,
+  method: string,
+): Expression<ScopeField> {
+  const ctx = resolveContext(col, method)
+  gate(ctx, JSON_GATE.capability, JSON_GATE.label, method)
+
+  let canonicalPath: string
+  try {
+    canonicalPath = jsonPathOf(parseSelectorSegments(path))
+  } catch (error) {
+    throw operatorError(
+      ctx,
+      method,
+      `cipherstash ${method}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  const selector = asQueryTermParam(
+    ctx,
+    canonicalPath,
+    method,
+    'steVecSelector',
+  )
+  return buildOperation({
+    method,
+    args: [ctx.selfAst, selector],
+    returns: { codecId: ctx.selfCodec.codecId, nullable: true },
+    lowering: {
+      targetFamily: 'sql',
+      strategy: 'function',
+      // The operator form is canonical and structurally matches functional
+      // indexes on `eql_v3.ord_term(col -> selector)`. The explicit text cast
+      // prevents PostgreSQL from resolving the native jsonb accessor instead.
+      template: 'eql_v3.ord_term({{self}} -> {{arg0}}::text)',
+    },
+  })
+}
+
+/**
+ * ASC sort over a scalar leaf in an encrypted JSON document. Missing paths
+ * produce SQL NULL and follow PostgreSQL's normal NULL ordering.
+ */
+export function eqlJsonPathAsc(
+  col: Expression<ScopeField>,
+  path: string,
+): OrderByItem {
+  return OrderByItem.asc(
+    jsonPathOrdTermExpression(col, path, 'eqlJsonPathAsc').buildAst(),
+  )
+}
+
+/** DESC counterpart to {@link eqlJsonPathAsc}. */
+export function eqlJsonPathDesc(
+  col: Expression<ScopeField>,
+  path: string,
+): OrderByItem {
+  return OrderByItem.desc(
+    jsonPathOrdTermExpression(col, path, 'eqlJsonPathDesc').buildAst(),
+  )
 }

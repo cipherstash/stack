@@ -14,10 +14,14 @@ domains and functions.
 
 Encrypted JSON now uses the `public.eql_v3_json_search` storage domain and
 `eql_v3.query_json` query domain. Drizzle selector equality uses exact,
-GIN-indexable value-selector containment, while selector ordering uses a
-ciphertext-free path selector plus string/number query term. Prisma Next gains
+GIN-indexable value-selector containment, while selector range comparisons use
+a ciphertext-free path selector plus string/number query term. Prisma Next gains
 the equivalent `eqlJsonPathEq`, `eqlJsonPathNeq`, `eqlJsonPathGt`,
-`eqlJsonPathGte`, `eqlJsonPathLt`, and `eqlJsonPathLte` operators.
+`eqlJsonPathGte`, `eqlJsonPathLt`, and `eqlJsonPathLte` operators. Selector
+Selector-based `ORDER BY` is available as
+`ops.selector(column, path).asc()/desc()` in Drizzle
+and `eqlJsonPathAsc(column, path)` / `eqlJsonPathDesc(column, path)` in Prisma
+Next; both lower to `ORDER BY eql_v3.ord_term` over the selected entry.
 
 If you call `encryptQuery` with an explicit `queryType`, note that
 `steVecTerm` now produces a scalar JSON ordering term. It no longer means

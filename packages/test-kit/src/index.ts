@@ -42,6 +42,13 @@ export {
   type FamilyName,
 } from './families.ts'
 export { type DbVariant, dbVariant, installEqlV3 } from './install.ts'
+export type {
+  JsonIntegrationAdapter,
+  JsonQueryOp,
+  JsonScalar,
+  JsonSeedRow,
+  JsonTableSpec,
+} from './json-adapter.ts'
 export { needleFor } from './needle-for.ts'
 export {
   negativeOps,

@@ -1,6 +1,6 @@
 ---
 name: stash-prisma-next
-description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (TextSearch, DoubleOrd, BigIntOrd, DateOrd, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc), EQL bundle installation via prisma-next migration apply, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
+description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (TextSearch, DoubleOrd, BigIntOrd, DateOrd, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migration apply, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
 ---
 
 # CipherStash Stack — Prisma Next Integration
@@ -179,6 +179,7 @@ EQL-derived `eql*` vocabulary:
 | `eqlJsonContains(obj)` | encrypted JSON containment (`@>`) | `EncryptedJson` |
 | `eqlJsonPathEq/Neq(path,v)` | exact value equality/inequality at a JSONPath | `EncryptedJson` |
 | `eqlJsonPathGt/Gte/Lt/Lte(path,v)` | string/number ordering at a JSONPath | `EncryptedJson` |
+| `eqlJsonPathAsc(col,path)` / `eqlJsonPathDesc(col,path)` | ORDER BY a scalar JSONPath leaf (free functions) | `EncryptedJson` |
 
 ```typescript
 // range
@@ -198,6 +199,10 @@ await db.orm.public.User.where((u) => u.preferences.eqlJsonPathGte('$.score', 80
 // ordering
 import { eqlAsc } from '@cipherstash/prisma-next/runtime'
 await db.orm.public.User.orderBy((u) => eqlAsc(u.salary)).all()
+
+// ordering by a JSONPath leaf; missing paths follow PostgreSQL NULL ordering
+import { eqlJsonPathAsc } from '@cipherstash/prisma-next/runtime'
+await db.orm.public.User.orderBy((u) => eqlJsonPathAsc(u.preferences, '$.score')).all()
 ```
 
 Applying an operator its domain doesn't support (e.g. `eqlGt` on a

@@ -24,6 +24,8 @@ import { describe, expect, it } from 'vitest'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import {
   EncryptionOperatorError,
+  eqlJsonPathAsc,
+  eqlJsonPathDesc,
   v3QueryTermTypeOf,
 } from '../../src/v3/operators-v3'
 import {
@@ -34,6 +36,7 @@ import {
   JSON_CODEC_ID,
   literalParamValue,
   makeV3Adapter,
+  selectWithOrderBy,
   selectWithWhere,
   TABLE,
 } from './operator-lowering-v3.helpers'
@@ -154,7 +157,7 @@ describe('cipherstash v3 operator lowering — JSONPath selectors', () => {
     })
 
     expect(lowered.sql).toContain(
-      'eql_v3.gt(eql_v3.jsonb_path_query_first("user"."payload", $1::text), $2::eql_v3.query_double_ord)',
+      'eql_v3.gt("user"."payload" -> $1::text, $2::eql_v3.query_double_ord)',
     )
     const selector = literalParamValue(lowered.params[0]) as EncryptedJson
     const term = literalParamValue(lowered.params[1]) as EncryptedJson
@@ -177,6 +180,31 @@ describe('cipherstash v3 operator lowering — JSONPath selectors', () => {
     expect(lowered.sql).toContain('$2::eql_v3.query_text_ord')
   })
 
+  it('orders by the OPE term of an extracted selector entry', () => {
+    const col = columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID)
+    const asc = eqlJsonPathAsc(col, 'profile.age')
+    const desc = eqlJsonPathDesc(col, '$.profile.age')
+
+    const ascLowered = makeV3Adapter().lower(selectWithOrderBy([asc]), {
+      contract: contractV3,
+    })
+    const descLowered = makeV3Adapter().lower(selectWithOrderBy([desc]), {
+      contract: contractV3,
+    })
+
+    expect(ascLowered.sql).toContain(
+      'ORDER BY eql_v3.ord_term("user"."payload" -> $1::text) ASC',
+    )
+    expect(descLowered.sql).toContain(
+      'ORDER BY eql_v3.ord_term("user"."payload" -> $1::text) DESC',
+    )
+    for (const lowered of [ascLowered, descLowered]) {
+      const selector = literalParamValue(lowered.params[0]) as EncryptedJson
+      expect(selector.expose().plaintext).toBe('$.profile.age')
+      expect(v3QueryTermTypeOf(selector)).toBe('steVecSelector')
+    }
+  })
+
   it('rejects malformed paths and non-orderable leaves before encryption', () => {
     const col = columnAccessorV3(TABLE, 'payload', JSON_CODEC_ID)
     expect(() =>
@@ -196,5 +224,8 @@ describe('cipherstash v3 operator lowering — JSONPath selectors', () => {
         Number.POSITIVE_INFINITY,
       ),
     ).toThrow(/JSON supports only finite numbers/)
+    expect(() => eqlJsonPathAsc(col, '$.a[0]')).toThrow(
+      /array\/wildcard syntax/,
+    )
   })
 })

@@ -728,7 +728,73 @@ export function createEncryptionOperatorsV3(
       lt: at('lt'),
       /** `col->'path' <= value`. */
       lte: at('lte'),
+      /** Order rows ascending by the encrypted scalar at `path`. Missing paths
+       * produce SQL NULL and follow PostgreSQL's normal NULL ordering. */
+      asc: (opts?: EncryptionOperatorCallOpts) =>
+        selectorOrder(col, path, 'asc', opts),
+      /** Order rows descending by the encrypted scalar at `path`. Missing paths
+       * produce SQL NULL and follow PostgreSQL's normal NULL ordering. */
+      desc: (opts?: EncryptionOperatorCallOpts) =>
+        selectorOrder(col, path, 'desc', opts),
     }
+  }
+
+  /** Build `ORDER BY eql_v3.ord_term(col -> selector::text)`.
+   * The selector is encrypted, but the extracted SteVec entry already carries
+   * its OPE ordering term, so no plaintext comparison operand is needed. */
+  async function selectorOrder(
+    col: SQLWrapper,
+    path: string,
+    direction: 'asc' | 'desc',
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const operator = `selector(${path}).${direction}`
+    const ctx = resolveContext(col, operator)
+    requireIndex(
+      ctx,
+      JSON_CONTAINMENT_INDEXES,
+      operator,
+      'JSON selector (searchableJson)',
+    )
+
+    let canonicalPath: string
+    try {
+      canonicalPath = jsonPathOf(parseSelectorSegments(path))
+    } catch (err) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" on column "${ctx.columnName}": ${err instanceof Error ? err.message : String(err)}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+
+    const result = await applyOperationOptions(
+      client.encryptQuery(
+        canonicalPath as never,
+        {
+          table: ctx.table,
+          column: ctx.builder,
+          queryType: 'steVecSelector',
+        } as never,
+      ),
+      opts,
+    )
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+    if (typeof result.data !== 'string') {
+      throw operandFailure(
+        ctx,
+        operator,
+        `expected a bare selector hash, got ${typeof result.data}.`,
+      )
+    }
+
+    const entry = v3Dialect.selectorEntry(
+      colSql(col),
+      sql`${result.data}::text`,
+    )
+    const term = v3Dialect.orderBy(entry, 'ope')
+    return direction === 'asc' ? asc(term) : desc(term)
   }
 
   async function inArrayOp(
@@ -835,11 +901,12 @@ export function createEncryptionOperatorsV3(
     contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
       containsJsonOp(l, r, 'contains', opts),
     /** JSONPath selector-with-constraint on a `types.Json` (`ste_vec`) column.
-     * Returns comparison methods bound to `col->'path'` — e.g.
+     * Returns comparison and ordering methods bound to `col->'path'` — e.g.
      * `await ops.selector(users.doc, '$.age').gt(21)` emits
-     * `col->'<sel>' > <entry>`. Its unique power over `contains` is ORDERING at
-     * a path (`gt`/`gte`/`lt`/`lte`); `eq`/`ne` are also provided. Dot-notation
-     * object paths only in v1. */
+     * `col->'<sel>' > <entry>`, while `.asc()` emits
+     * `ORDER BY eql_v3.ord_term(col->'<sel>')`. Its unique power over `contains`
+     * is ordering at a path (`gt`/`gte`/`lt`/`lte` and `asc`/`desc`); `eq`/`ne`
+     * are also provided. Dot-notation object paths only in v1. */
     selector: (l: SQLWrapper, path: string) => selectorOps(l, path),
     /** Membership: ORs one encrypted `eq` term per value. The whole list is
      * encrypted in one `encryptQuery` batch crossing. Rejects an empty list;

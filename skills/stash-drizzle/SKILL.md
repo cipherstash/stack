@@ -143,7 +143,7 @@ const encryptionClient = await EncryptionV3({
 const ops = createEncryptionOperatorsV3(encryptionClient)
 ```
 
-`createEncryptionOperatorsV3(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; the async encrypting operators (`eq`, `ne`, `inArray`, `notInArray`, `gt`/`gte`/`lt`/`lte`, `between`/`notBetween`, `matches`, `contains`, and the comparison methods returned by `selector(...)`) also take an optional trailing `{ lockContext, audit }` argument per call. `asc`/`desc` and the passthrough operators (`isNull`, `isNotNull`, `not`, `and`, `or`, `exists`, `notExists`) encrypt nothing and take no such argument.
+`createEncryptionOperatorsV3(client, { lockContext, audit })` optionally sets defaults applied to every operand encryption; the async encrypting operators (`eq`, `ne`, `inArray`, `notInArray`, `gt`/`gte`/`lt`/`lte`, `between`/`notBetween`, `matches`, `contains`, and all methods returned by `selector(...)`) also take an optional trailing `{ lockContext, audit }` argument per call. Top-level `asc`/`desc` and the passthrough operators (`isNull`, `isNotNull`, `not`, `and`, `or`, `exists`, `notExists`) encrypt nothing and take no such argument.
 
 ### 4. Create Drizzle Instance
 
@@ -287,14 +287,21 @@ const results = await db
   .select()
   .from(usersTable)
   .where(await ops.selector(usersTable.profile, "$.user").eq("zoe@example.com"))
+
+// ORDER BY eql_v3.ord_term of the encrypted leaf at $.age
+const ordered = await db
+  .select()
+  .from(usersTable)
+  .orderBy(await ops.selector(usersTable.profile, "$.age").asc())
 ```
 
-Available methods: `.eq`, `.ne`, `.gt`, `.gte`, `.lt`, `.lte`. Rules:
+Available methods: `.eq`, `.ne`, `.gt`, `.gte`, `.lt`, `.lte`, `.asc`, `.desc`. Rules:
 
 - **Paths are dot-notation object keys only** (`"$.a.b"`). Array-index and wildcard syntax (`$.items[0]`) is rejected.
 - **Leaves are JSON scalars only**: `string`, `number`, or `boolean`. An object or array leaf is rejected — use `contains` for sub-object matching. A `boolean` leaf is rejected under the ordering methods (booleans have no ordering). Serialize `Date`/`bigint` to the representation actually stored in the JSON document.
 - **A scalar needle does not match an array at the path.** `selector(col, "$.tags").eq("a")` will not match `{ tags: ["a"] }` — use `contains(col, { tags: ["a"] })` for that.
 - **Absent-path semantics:** `eq` and the ordering methods exclude rows whose document lacks the path; `ne` **includes** them ("not equal to X" covers "has no X").
+- **ORDER BY absent paths are SQL NULL.** PostgreSQL's normal NULL placement applies (`ASC` puts them last; `DESC` puts them first unless the query overrides NULL placement).
 - **No ciphertext in selector predicates.** Equality uses a value-selector containment needle (and can use the functional GIN index); ordering uses a selector hash plus a ciphertext-free scalar query term.
 
 ### Batched Conditions (and / or)
@@ -598,6 +605,7 @@ All comparison/containment operators auto-encrypt their operands and are async; 
 | `matches(col, needle)` | Fuzzy free-text token match (short needles rejected) | free-text (`TextMatch`, `TextSearch`) |
 | `contains(col, subDoc)` | Exact encrypted-JSONB containment (`{}` rejected) | `Json` |
 | `selector(col, path).eq/ne/gt/gte/lt/lte(value)` | JSONPath selector-with-constraint (dot-notation paths, scalar leaves) | `Json` |
+| `selector(col, path).asc()/desc()` | ORDER BY a scalar JSONPath leaf (missing paths are SQL NULL) | `Json` |
 
 ### Sort Operators (sync)
 
