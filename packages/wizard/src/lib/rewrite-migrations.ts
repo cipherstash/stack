@@ -22,6 +22,11 @@ import { join } from 'node:path'
  * because cli's `eql install --drizzle` uses the same fix. Both copies are
  * tightly coupled to drizzle-kit's output format — if drizzle-kit changes,
  * both need to be updated together.
+ *
+ * The copies have DIVERGED as of #693: the `stash` one also matches the EQL v3
+ * domain family (`eql_v3_*`) and two further mangled forms, and documents which
+ * drizzle-kit versions emit which. This copy stays v2-only because the wizard
+ * only ever scaffolds v2 columns. Port the v3 handling here if that changes.
  */
 const ALTER_COLUMN_TO_ENCRYPTED_RE =
   /ALTER TABLE "([^"]+)"\s+ALTER COLUMN "([^"]+)"\s+SET DATA TYPE (?:"undefined"\.""public"\."eql_v2_encrypted""|"undefined"\."eql_v2_encrypted"|"public"\."eql_v2_encrypted"|eql_v2_encrypted)[^;]*;/gi

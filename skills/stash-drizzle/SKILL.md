@@ -61,6 +61,8 @@ stash eql migration --drizzle --supabase   # also grants eql_v3 to anon/authenti
 
 The generated migration also installs the `cs_migrations` tracking schema, so a single `drizzle-kit migrate` covers everything `stash encrypt …` needs — no out-of-band `stash eql install`. EQL v3 ships one SQL bundle for every target including Supabase; `--supabase` only adds the PostgREST/RLS role grants (harmless when you connect directly as `postgres`). Requires `drizzle-kit` installed and configured.
 
+**Changing an existing plaintext column to an encrypted one.** `drizzle-kit generate` emits an in-place `ALTER TABLE … ALTER COLUMN … SET DATA TYPE eql_v3_<name>`, which Postgres rejects — there is no cast from `text`/`numeric` to an EQL domain. (On drizzle-kit 0.31.0 and later the emitted type is also mangled to `"undefined"."eql_v3_<name>"`, since a `customType` has no `typeSchema`.) The `stash eql migration --drizzle` sweep repairs the invalid statement — the `stash-cli` skill covers what it rewrites and the rule that matters: the repair is data-destroying, so it is safe **only on an empty table**. For a table with live data, do **not** apply the swept migration; follow the staged flow in **Migrating an Existing Column to Encrypted** below instead.
+
 ### Column Storage
 
 Each encrypted column is a concrete Postgres domain named `public.eql_v3_<name>`:

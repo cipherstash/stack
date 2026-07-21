@@ -638,25 +638,44 @@ export async function generateDrizzleMigration(
   // Step 5: Sweep for sibling migrations that drizzle-kit may have emitted
   // with `ALTER COLUMN ... SET DATA TYPE eql_v2_encrypted`. These fail in
   // Postgres because there's no implicit cast from text/numeric to the
-  // encrypted type. Rewrite them into the ADD/UPDATE/DROP/RENAME sequence
-  // that works on both empty and populated tables. CIP-2991 + CIP-2994.
+  // encrypted type. Rewrite them into a runnable ADD+DROP+RENAME sequence.
+  // That sequence is equivalent to DROP+ADD — safe on an EMPTY table, but
+  // data-destroying on a populated one — so the rewritten file carries a
+  // comment steering populated tables to the staged `stash encrypt` path.
+  // CIP-2991 + CIP-2994.
+  let sweepIncomplete = false
   try {
-    const rewritten = await rewriteEncryptedAlterColumns(outDir, {
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
       skip: generatedMigrationPath,
     })
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) to use safe ADD+migrate+DROP for encrypted columns:`,
+        `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }
+    if (skipped.length > 0) {
+      sweepIncomplete = true
+      p.log.warn(
+        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
+      )
+      for (const { file, statement } of skipped) {
+        p.log.step(`  - ${file}: ${statement}`)
+      }
+    }
   } catch (error) {
+    sweepIncomplete = true
     p.log.warn(
       `Could not rewrite ALTER COLUMN migrations: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
 
   p.log.success(`Migration created: ${generatedMigrationPath}`)
+  if (sweepIncomplete) {
+    p.log.warn(
+      `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${outDir} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+    )
+  }
   p.note(
     `Run your Drizzle migrations to install EQL:\n\n  ${execCommand(detectPackageManager())} drizzle-kit migrate`,
     'Next Steps',
