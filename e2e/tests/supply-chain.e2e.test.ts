@@ -360,6 +360,10 @@ describe('supply chain — governance (CODEOWNERS)', () => {
       'dependabot.yml',
       '.npmrc',
       '.github/workflows/',
+      // Composite actions run arbitrary steps inside the same job, with the
+      // same secrets, as the workflow that calls them — same blast radius,
+      // same review gate.
+      '.github/actions/',
       '.github/CODEOWNERS',
       'skills/stash-supply-chain-security/',
     ]) {

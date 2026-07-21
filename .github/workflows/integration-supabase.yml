@@ -27,6 +27,7 @@ on:
       - 'local/supabase-init.sql'
       - '.github/workflows/integration-supabase.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/integration-db/**'
   pull_request:
     branches: ['**']
     paths:
@@ -45,23 +46,18 @@ on:
       - 'local/supabase-init.sql'
       - '.github/workflows/integration-supabase.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/integration-db/**'
 
 jobs:
   integration:
     name: Supabase v3 integration (db=${{ matrix.db }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Serialize every job that brings up the SAME docker-compose stack, so no two
-    # bind the same fixed host ports (55430 / 55433) on a shared runner at once —
-    # the "address already in use" flake. The group is keyed by the compose
-    # variant, NOT the ref: two different PRs contend for the same host port just
-    # as much as two pushes to one PR, so it must serialize across refs. It is the
-    # SAME key the Drizzle workflow's matching leg uses (`integration-live-db-<db>`),
-    # so those two workflows also queue against each other rather than colliding.
-    # `cancel-in-progress: false` queues (a live-DB job that shares one ZeroKMS
-    # workspace should finish, not be interrupted mid-run).
-    concurrency:
-      group: integration-live-db-${{ matrix.db }}
-      cancel-in-progress: false
+    # No concurrency group: `integration-db` gives each job its own compose
+    # project and ephemeral host ports, so live-DB jobs no longer contend and do
+    # not need serialising. See that action for why the old
+    # `integration-live-db-<db>` group had to go (it cancelled a third
+    # contender rather than queueing it).
+    #
     # Fork PRs have no secrets. Skip cleanly rather than fail loudly on something
     # the contributor cannot fix — `tests.yml` still gives them a green signal.
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -78,14 +74,13 @@ jobs:
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
-      # Job-level env, not a `.env` file: `dotenv/config` does not override an
-      # already-set `process.env`, so these win and no secret is written to disk.
+      # `DATABASE_URL` / `PGRST_URL` are set per step from the `integration-db`
+      # outputs — the host ports are assigned by Docker at start-up, so they
+      # cannot be written down here. The role that URL connects as (`postgres`)
+      # is deliberately NOT a superuser on this image, which is what makes the
+      # EQL install, the grants, and the ORE opclass skip behave as they do on a
+      # real Supabase project.
       #
-      # `postgres` here is deliberately NOT a superuser on this image — that is
-      # what makes the EQL install, the grants, and the ORE opclass skip behave
-      # as they do on a real Supabase project.
-      DATABASE_URL: postgres://postgres:password@localhost:55433/postgres
-      PGRST_URL: http://localhost:55430
       # EXPLICIT, never inferred from `PGRST_URL` — see `dbVariant()`.
       CS_IT_DB_VARIANT: ${{ matrix.db }}
       # Scoped by directory, never by named file, so a renamed suite cannot
@@ -118,22 +113,28 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # Belt-and-braces for the concurrency guard: a run that was hard-killed
-      # (runner crash / forced cancel) can skip its `down` and leak a container
-      # holding the host port onto a REUSED runner. Tear any prior stack down
-      # before starting a fresh one. `|| true` so a clean runner (nothing to
-      # remove) is not an error.
-      - name: Clear any leaked containers from a prior run
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v --remove-orphans || true
-
+      # No pre-`up` cleanup step any more: the project name is unique per job, so
+      # a container leaked by a hard-killed prior run cannot hold this job's
+      # name or its (ephemeral) port. Blanket-pruning would now be actively
+      # unsafe — without the concurrency group, another job's stack may be live
+      # on this runner.
       - name: Start ${{ matrix.db }}
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml up -d --wait
+        id: db
+        uses: ./.github/actions/integration-db
+        with:
+          db: ${{ matrix.db }}
 
       # `globalSetup` installs EQL v3 by shelling out to the real
       # `stash eql install --eql-version 3 --supabase --direct`, so an installer
       # regression fails here rather than hiding behind a test-only SQL apply.
+      #
+      # Step env, not a `.env` file: `dotenv/config` does not override an
+      # already-set `process.env`, so these win and no secret is written to disk.
       - name: Supabase v3 integration suites
         run: pnpm --filter @cipherstash/stack-supabase run test:integration
+        env:
+          DATABASE_URL: ${{ steps.db.outputs.database-url }}
+          PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
 
       # A second vitest invocation (stack's shared/ suites live in a different
       # package now). Its globalSetup calls the same EQL v3 install, but
@@ -141,7 +142,13 @@ jobs:
       # provisioned — so this is a fast no-op check, not a second schema apply.
       - name: Shared core integration suites (against Supabase Postgres)
         run: pnpm --filter @cipherstash/stack run test:integration
+        env:
+          DATABASE_URL: ${{ steps.db.outputs.database-url }}
+          PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
 
+      # Guarded on the project being set: if the stack never came up, there is
+      # nothing to tear down and an unguarded `-p ""` would fail the job with a
+      # confusing error that masks the real one.
       - name: Stop ${{ matrix.db }}
-        if: always()
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v
+        if: always() && env.CS_COMPOSE_PROJECT != ''
+        run: docker compose -p "$CS_COMPOSE_PROJECT" -f "$CS_COMPOSE_FILE" down -v

@@ -1,0 +1,113 @@
+name: Integration database
+description: >-
+  Bring up an integration docker-compose stack that is ISOLATED from every other
+  job on the runner, and hand back the URLs to reach it.
+
+  Isolation is the point. These stacks used to bind fixed host ports
+  (55430 / 55432 / 55433) under a fixed compose project name, so two jobs
+  running the same variant on one runner collided with "address already in
+  use". The guard was a cross-workflow job-level concurrency group
+  (`integration-live-db-<db>`), but GitHub Actions allows only ONE in-progress
+  plus ONE pending run per group — a third contender is CANCELLED outright,
+  not queued. With three integration workflows sharing each key, that fired
+  regularly and silently dropped the signal for whichever variant lost (a
+  cancelled job never runs, so its check is absent rather than red).
+
+  This action removes the contention instead of serialising it: a unique
+  compose project name per job, and EPHEMERAL host ports assigned by Docker
+  (`CS_PG_PORTS` / `CS_PGRST_PORTS` carry a bare container port, so the compose
+  files publish with no fixed host side) read back via `docker compose port`.
+  Nothing is shared between jobs, so nothing needs to queue.
+
+inputs:
+  db:
+    description: Compose variant to bring up — `postgres` or `supabase`.
+    required: true
+
+outputs:
+  database-url:
+    description: Direct Postgres URL for the stack this job just started.
+    value: ${{ steps.up.outputs.database-url }}
+  pgrest-url:
+    description: PostgREST base URL. Empty for the `postgres` variant, which runs none.
+    value: ${{ steps.up.outputs.pgrest-url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Start ${{ inputs.db }}
+      id: up
+      shell: bash
+      env:
+        # A bare container port publishes to an ephemeral host port. The compose
+        # files fall back to their fixed local-dev mappings when these are unset.
+        CS_PG_PORTS: '5432'
+        CS_PGRST_PORTS: '3000'
+        # Passed through the environment rather than templated into the script
+        # body: `${{ }}` is textual substitution, so interpolating a value
+        # straight into shell is a script-injection seam. These are static today,
+        # but the safe shape costs nothing.
+        DB_VARIANT: ${{ inputs.db }}
+        JOB_ID: ${{ github.job }}
+      run: |
+        set -euo pipefail
+
+        # Unique per job AND per attempt: a re-run must not adopt the previous
+        # attempt's containers. `github.job` alone is not enough — matrix legs of
+        # one job share it — so the variant goes in too.
+        project="cs-it-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${JOB_ID}-${DB_VARIANT}"
+        # Compose project names must be [a-z0-9][a-z0-9_-]*.
+        project="$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')"
+        file="local/docker-compose.${DB_VARIANT}.yml"
+
+        # Exported for the teardown step, which must target THIS job's stack.
+        echo "CS_COMPOSE_PROJECT=$project" >> "$GITHUB_ENV"
+        echo "CS_COMPOSE_FILE=$file" >> "$GITHUB_ENV"
+
+        docker compose -p "$project" -f "$file" up -d --wait
+
+        # `docker compose port` prints `0.0.0.0:49153`, and may print one line
+        # per address family — take the first, then the port after the last
+        # colon (IPv6 forms contain several).
+        #
+        # The emptiness check lives HERE, not at the call sites: `docker compose
+        # port` exits 0 with empty stdout when a port is not bound, so "" is the
+        # failure signal and every caller needs the same guard. Checking once, by
+        # construction, is what stops the asymmetry this function had in review —
+        # Postgres was validated and PostgREST was not, so an unbound PostgREST
+        # would have silently produced `http://localhost:` and handed every
+        # consumer a malformed URL instead of an immediate, clear error.
+        port_of() {
+          local svc="$1" cport="$2" hport
+          hport="$(docker compose -p "$project" -f "$file" port "$svc" "$cport" \
+            | head -n 1 | sed 's/.*://' | tr -d '[:space:]')"
+          if [ -z "$hport" ]; then
+            echo "::error::could not read the published host port for service '$svc' (container port $cport) in the '$DB_VARIANT' stack" >&2
+            docker compose -p "$project" -f "$file" ps >&2
+            return 1
+          fi
+          printf '%s' "$hport"
+        }
+
+        # Each port is captured in its own bare assignment so `set -e` fails the
+        # step on a non-zero `port_of` unambiguously.
+        case "$DB_VARIANT" in
+          postgres)
+            pg_port="$(port_of postgres 5432)"
+            database_url="postgres://cipherstash:password@localhost:${pg_port}/cipherstash"
+            pgrest_url=''
+            ;;
+          supabase)
+            pg_port="$(port_of db 5432)"
+            pgrest_port="$(port_of postgrest 3000)"
+            database_url="postgres://postgres:password@localhost:${pg_port}/postgres"
+            pgrest_url="http://localhost:${pgrest_port}"
+            ;;
+          *)
+            echo "::error::unknown db variant '$DB_VARIANT'" && exit 1
+            ;;
+        esac
+
+        echo "database-url=$database_url" >> "$GITHUB_OUTPUT"
+        echo "pgrest-url=$pgrest_url" >> "$GITHUB_OUTPUT"
+        echo "Started '$project' — postgres on :$pg_port${pgrest_url:+, postgrest on ${pgrest_url##*:}}"
