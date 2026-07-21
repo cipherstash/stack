@@ -36,6 +36,14 @@ export interface EqlMigrationOptions {
   out?: string
   /** Describe what would happen without writing anything. */
   dryRun?: boolean
+  /**
+   * Run as a step inside a larger flow (`stash init`) rather than as a
+   * standalone command. Suppresses the intro/outro banners and the trailing
+   * `printNextSteps()` note — init renders its own summary and agent handoff,
+   * so emitting ours as well would give the user two competing "what next"
+   * blocks. Purely presentational: the migration written is identical.
+   */
+  embedded?: boolean
 }
 
 /**
@@ -146,14 +154,15 @@ async function generateDrizzleEqlMigration(
     throw new CliExit(1)
   }
 
-  p.intro('CipherStash EQL migration')
+  const embedded = options.embedded ?? false
+  if (!embedded) p.intro('CipherStash EQL migration')
 
   if (options.dryRun) {
     p.note(
       `Would run: ${displayCmd}\nWould write the EQL v3 install SQL${options.supabase ? ' (with Supabase grants)' : ''} into the generated migration in ${outDir}`,
       'Dry Run',
     )
-    p.outro('Dry run complete.')
+    if (!embedded) p.outro('Dry run complete.')
     return
   }
 
@@ -177,7 +186,7 @@ async function generateDrizzleEqlMigration(
     p.log.info(
       `Make sure drizzle-kit is installed and configured: ${execCommand(pm)} drizzle-kit --version`,
     )
-    p.outro('Migration aborted.')
+    if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)
   }
   s.stop('Custom Drizzle migration generated.')
@@ -194,7 +203,7 @@ async function generateDrizzleEqlMigration(
     p.log.info(
       `If your drizzle.config.ts writes elsewhere, pass --out <dir> so it matches.`,
     )
-    p.outro('Migration aborted.')
+    if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)
   }
 
@@ -207,7 +216,7 @@ async function generateDrizzleEqlMigration(
     s.stop('Failed to write migration file.')
     p.log.error(error instanceof Error ? error.message : String(error))
     cleanupMigrationFile(migrationPath)
-    p.outro('Migration aborted.')
+    if (!embedded) p.outro('Migration aborted.')
     throw new CliExit(1)
   }
 
@@ -216,6 +225,8 @@ async function generateDrizzleEqlMigration(
     `Run your Drizzle migrations to install EQL v3:\n\n  ${execCommand(pm)} drizzle-kit migrate`,
     'Next Steps',
   )
-  printNextSteps()
-  p.outro('Done!')
+  if (!embedded) {
+    printNextSteps()
+    p.outro('Done!')
+  }
 }

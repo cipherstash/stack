@@ -741,9 +741,16 @@ export function validateInstallFlags(options: InstallOptions): string | null {
             ? '--migrations-dir'
             : null
     if (v2OnlyFlag) {
+      // `--drizzle` has a v3 answer now (`stash eql migration --drizzle`, #691),
+      // so point there rather than at `--eql-version 2` — steering users to v2
+      // is how new projects ended up on the legacy generation.
+      const v3Alternative =
+        v2OnlyFlag === '--drizzle'
+          ? ' For a v3 install as a Drizzle migration, use `stash eql migration --drizzle`.'
+          : ''
       return options.eqlVersion === '3'
-        ? `\`--eql-version 3\` does not support \`${v2OnlyFlag}\` yet — v3 currently installs via the direct path only.`
-        : `\`${v2OnlyFlag}\` requires EQL v2. Re-run with \`--eql-version 2 ${v2OnlyFlag}\` (v3 is the default and installs via the direct path only).`
+        ? `\`--eql-version 3\` does not support \`${v2OnlyFlag}\` yet — v3 currently installs via the direct path only.${v3Alternative}`
+        : `\`${v2OnlyFlag}\` requires EQL v2. Re-run with \`--eql-version 2 ${v2OnlyFlag}\` (v3 is the default and installs via the direct path only).${v3Alternative}`
     }
   }
 

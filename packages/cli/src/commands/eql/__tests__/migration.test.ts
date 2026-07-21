@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CliExit } from '../../../cli/exit.js'
 import { messages } from '../../../messages.js'
+import { printNextSteps } from '../../db/install.js'
 import { buildEqlV3MigrationSql, eqlMigrationCommand } from '../migration.js'
 
 // clack is chrome — silence it and spy on the error/note channels the command
@@ -241,5 +242,64 @@ describe('eqlMigrationCommand — Drizzle', () => {
     // The empty scaffold must not survive — drizzle-kit would happily run it.
     expect(existsSync(scaffolded)).toBe(false)
     expect(clack.log.error).toHaveBeenCalledWith('EACCES: permission denied')
+  })
+
+  // The `embedded` flag is asserted at the caller (install-eql.test.ts) as
+  // *passed*; these pin what it *does* at the callee. All six suppression sites
+  // hang off `options.embedded ?? false`, and none were exercised — flipping the
+  // default or dropping an `if (!embedded)` guard would pass CI silently.
+  it('emits the standalone banners by default (embedded unset)', async () => {
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    spawnMock.mockImplementation(() => {
+      fsWrite.real(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out })
+
+    expect(clack.intro).toHaveBeenCalled()
+    expect(clack.outro).toHaveBeenCalledWith('Done!')
+    expect(printNextSteps).toHaveBeenCalled()
+  })
+
+  it('suppresses intro/outro/next-steps when embedded, but still writes the SQL', async () => {
+    // `stash init` renders its own summary + agent handoff; a second "what next"
+    // block from here would compete with it. The migration itself is unchanged.
+    const out = join(tmp, 'drizzle')
+    mkdirSync(out, { recursive: true })
+    spawnMock.mockImplementation(() => {
+      fsWrite.real(join(out, '0000_install-eql.sql'), '')
+      return { status: 0, stdout: '', stderr: '' }
+    })
+
+    await eqlMigrationCommand({ drizzle: true, out, embedded: true })
+
+    expect(clack.intro).not.toHaveBeenCalled()
+    expect(clack.outro).not.toHaveBeenCalled()
+    expect(printNextSteps).not.toHaveBeenCalled()
+    // Presentational suppression only — the migration note itself still renders,
+    // and the SQL is written to the located file.
+    expect(clack.note).toHaveBeenCalledWith(expect.any(String), 'Next Steps')
+    expect(readFileSync(join(out, '0000_install-eql.sql'), 'utf-8')).toContain(
+      'EQL v3 schema creation',
+    )
+  })
+
+  it('suppresses the abort outro when embedded but still exits 1', async () => {
+    // `install-eql`'s catch depends on the CliExit propagating; embedded must
+    // silence the outro banner without swallowing the failure.
+    spawnMock.mockReturnValue({ status: 1, stdout: '', stderr: 'boom' })
+
+    await expect(
+      eqlMigrationCommand({
+        drizzle: true,
+        out: join(tmp, 'drizzle'),
+        embedded: true,
+      }),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    expect(clack.outro).not.toHaveBeenCalled()
+    expect(clack.log.error).toHaveBeenCalledWith('boom')
   })
 })

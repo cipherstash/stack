@@ -1,13 +1,20 @@
 import * as p from '@clack/prompts'
 import { isInteractive } from '../../../config/tty.js'
 import { pinnedSpec } from '../../../runtime-versions.js'
+import { ensureEncryptionClient } from '../../db/client-scaffold.js'
+import { offerStashConfig } from '../../db/config-scaffold.js'
 import { installCommand } from '../../db/install.js'
+import { eqlMigrationCommand } from '../../eql/migration.js'
 import type { InitProvider, InitState, InitStep } from '../types.js'
 import { CancelledError } from '../types.js'
 import { isPackageInstalled } from '../utils.js'
 
 /**
- * Run `stash eql install` programmatically after a y/N confirm.
+ * Install EQL programmatically after a y/N confirm.
+ *
+ * Two routes, both EQL v3: Drizzle projects generate a v3 install migration
+ * (`stash eql migration --drizzle`) so the install lands in the project's
+ * migration history; everything else runs `stash eql install` directly.
  *
  * EQL is the Postgres extension every CipherStash query relies on. Without
  * it, the encryption client can't read or write to encrypted columns.
@@ -90,17 +97,61 @@ export const installEqlStep: InitStep = {
       return { ...state, eqlInstalled: false }
     }
 
+    // Drizzle: generate an EQL **v3** migration (`stash eql migration
+    // --drizzle`) rather than routing through `eql install`.
+    //
+    // `eql install --drizzle` is v2-only — under the v3 default it rejects the
+    // flag outright, so init used to pin `eqlVersion: '2'` to get a migration
+    // at all. That pin made `stash init --drizzle` the one flow that provisions
+    // a v2 database while every other integration (and a bare `stash eql
+    // install`) gets v3, and it contradicted the stash-drizzle skill we install
+    // into the very same project — that skill documents the `/v3` surface
+    // (`types.*` domains, `EncryptionV3`) and would have the user's agent
+    // author v3 code against a v2 database.
+    //
+    // `stash eql migration --drizzle` (added in #691) closes that gap: v3 SQL,
+    // still migration-first, and it bundles the `cs_migrations` tracking schema
+    // so one `drizzle-kit migrate` covers everything `stash encrypt` needs.
+    // `eql install`'s config/client scaffolding isn't part of that command, so
+    // we do it here to keep the rest of the init contract identical.
+    if (drizzle) {
+      const clientPath = await offerStashConfig({ ensure: true })
+      if (clientPath) {
+        ensureEncryptionClient(clientPath, process.cwd(), state.databaseUrl)
+      }
+
+      try {
+        await eqlMigrationCommand({
+          drizzle: true,
+          supabase: supabase || undefined,
+          embedded: true,
+        })
+      } catch {
+        // Most likely drizzle-kit missing or misconfigured. Don't echo the
+        // error (same reasoning as below re: connection strings) — the command
+        // has already logged its own actionable diagnostics.
+        p.log.error(
+          'Could not generate the EQL migration — check that drizzle-kit is installed and configured.',
+        )
+        p.note(
+          'Re-run with: stash eql migration --drizzle',
+          'You can retry manually',
+        )
+        return { ...state, eqlInstalled: false }
+      }
+
+      // A migration file was WRITTEN, not applied — EQL lands in the database
+      // when the user runs `drizzle-kit migrate`.
+      return { ...state, eqlInstalled: false, eqlMigrationPending: true }
+    }
+
     let outcome: Awaited<ReturnType<typeof installCommand>>
     try {
       outcome = await installCommand({
         supabase: supabase || undefined,
-        drizzle: drizzle || undefined,
         databaseUrl: state.databaseUrl,
-        // EQL v3 is the default, but the Drizzle migration path is v2-only, so
-        // pin v2 when we're driving the Drizzle flow — otherwise the install
-        // would reject `--drizzle` under the v3 default. Supabase and plain
-        // Postgres projects take the v3 default (direct install).
-        eqlVersion: drizzle ? '2' : undefined,
+        // No `eqlVersion` — take the v3 default. (The Drizzle branch above
+        // returns before this point.)
         // init passes a resolved URL to avoid re-prompting, but still wants a
         // config scaffolded — this is NOT a one-shot `--database-url` run.
         scaffoldConfig: 'ensure',
@@ -116,8 +167,8 @@ export const installEqlStep: InitStep = {
       return { ...state, eqlInstalled: false }
     }
 
-    // The Drizzle path (and Supabase `--migration` mode) only WRITES a
-    // migration file — EQL isn't in the database until the user applies it.
+    // Supabase `--migration` mode only WRITES a migration file — EQL isn't in
+    // the database until the user applies it. (Drizzle is handled above.)
     // Report that honestly rather than claiming the extension is installed;
     // the init summary turns this into "migration generated, apply it".
     if (outcome === 'migration-generated') {

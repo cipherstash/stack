@@ -49,7 +49,7 @@ export interface InitState {
    *  i.e. the extension is actually present in the target database. */
   eqlInstalled?: boolean
   /** True when install-eql GENERATED a migration file but did not apply it
-   *  (the Drizzle v2 path, or Supabase `--migration` mode). EQL is not in the
+   *  (the Drizzle v3 path, or Supabase `--migration` mode). EQL is not in the
    *  database yet — the user applies it with `drizzle-kit migrate` (or their
    *  Supabase migration workflow). Distinct from `eqlInstalled` so the init
    *  summary reports "migration generated, apply it" instead of a false

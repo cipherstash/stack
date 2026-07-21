@@ -338,6 +338,36 @@ describe('validateInstallFlags', () => {
       }),
     ).toBeNull()
   })
+
+  it('points --drizzle at the v3 migration command instead of only at --eql-version 2', () => {
+    // Steering users to `--eql-version 2` is how new projects ended up on the
+    // legacy generation (#691). Both the default-branch wording and the explicit
+    // `--eql-version 3` wording must carry the pointer. Assert the distinctive
+    // substring, not a bare `/--drizzle/` — that already appears in the base
+    // message body and would pass even if the pointer were dropped.
+    expect(validateInstallFlags({ drizzle: true })).toMatch(
+      /stash eql migration --drizzle/,
+    )
+    expect(validateInstallFlags({ eqlVersion: '3', drizzle: true })).toMatch(
+      /stash eql migration --drizzle/,
+    )
+  })
+
+  it('does NOT offer the Drizzle alternative for the other v2-only flags', () => {
+    // There is no `stash eql migration` route for these — suggesting one would
+    // send the user to a command that cannot help them. Guards the pointer being
+    // gated on `v2OnlyFlag === '--drizzle'`.
+    for (const opts of [
+      { latest: true },
+      { supabase: true, migration: true },
+      { supabase: true, migrationsDir: 'db/migrations' },
+    ]) {
+      expect(validateInstallFlags(opts)).not.toMatch(/stash eql migration/)
+      expect(validateInstallFlags({ ...opts, eqlVersion: '3' })).not.toMatch(
+        /stash eql migration/,
+      )
+    }
+  })
 })
 
 describe('routeInstallPathForEqlVersion', () => {

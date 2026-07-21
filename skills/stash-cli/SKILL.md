@@ -223,7 +223,7 @@ Seven mechanical steps, no agent handoff. It prompts only when it can't pick a s
 3. **Resolve proxy choice** — CipherStash Proxy or direct SDK access (the default). Stored as `usesProxy` in `context.json`; this is what decides whether `db push` is part of your flow at all. Set by `--proxy` / `--no-proxy`; non-TTY without a flag defaults to SDK.
 4. **Build schema** — auto-detects Drizzle (`drizzle.config.*`, `drizzle-orm`/`drizzle-kit`), Supabase (from the `DATABASE_URL` host), and Prisma Next. Writes a placeholder encryption client; prompts only if a file already exists there.
 5. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`. Skipped when both are present.
-6. **Install EQL** — runs `eql install` against the resolved database. Skipped when EQL is already installed.
+6. **Install EQL** — always EQL v3. **Drizzle** projects generate a v3 install migration (the same output as `eql migration --drizzle`, including the `cs_migrations` tracking schema) so the install lands in your migration history — apply it with `drizzle-kit migrate`; requires `drizzle-kit` to be installed and configured. **Prisma Next** is skipped (it installs EQL via `prisma-next migration apply`). Everything else runs `eql install` directly against the resolved database, and is skipped when EQL is already installed.
 7. **Gather context** — detects available coding agents and writes `.cipherstash/context.json`.
 
 Flags: `--supabase`, `--drizzle`, `--prisma-next`, `--proxy` / `--no-proxy`, `--region <slug>`.
