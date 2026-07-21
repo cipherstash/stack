@@ -1,4 +1,5 @@
 import * as p from '@clack/prompts'
+import { CliExit } from '../../../cli/exit.js'
 import { isInteractive } from '../../../config/tty.js'
 import { pinnedSpec } from '../../../runtime-versions.js'
 import { ensureEncryptionClient } from '../../db/client-scaffold.js'
@@ -26,10 +27,12 @@ import { isPackageInstalled } from '../utils.js'
  * picks the Supabase migration / direct mode itself based on `--supabase` and
  * project layout — we don't pre-decide it here.
  *
- * `installCommand` may `process.exit(1)` on a hard failure (mutually-exclusive
- * flag clash, scaffold cancellation). That's fine — by that point the user
- * has already authenticated and written the encryption client, and a clean
- * exit is preferable to a half-installed setup.
+ * `installCommand` ends init on a hard failure (mutually-exclusive flag clash,
+ * scaffold cancellation, an unsafe `--name`) — either by calling
+ * `process.exit(1)` directly or by throwing `CliExit`, which the catch below
+ * re-throws. That's fine — by that point the user has already authenticated
+ * and written the encryption client, and a clean exit is preferable to a
+ * half-installed setup.
  */
 export const installEqlStep: InitStep = {
   id: 'install-eql',
@@ -156,7 +159,12 @@ export const installEqlStep: InitStep = {
         // config scaffolded — this is NOT a one-shot `--database-url` run.
         scaffoldConfig: 'ensure',
       })
-    } catch {
+    } catch (error) {
+      // A cooperative exit is a hard stop the installer already reported on
+      // (it printed its own actionable error and outro). Re-throw so it
+      // unwinds to `run()` and exits, rather than being reframed below as a
+      // database-connection problem and letting init continue.
+      if (error instanceof CliExit) throw error
       // Don't echo the underlying error — Postgres client errors routinely
       // include the connection string (with credentials) in the message,
       // and `state.databaseUrl` flows into this code path.

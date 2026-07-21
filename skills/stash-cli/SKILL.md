@@ -350,7 +350,7 @@ Gets a project from zero to installed EQL. It loads an existing `stash.config.ts
 | `--force` | Reinstall even if EQL is present |
 | `--dry-run` | Show what would happen |
 | `--supabase` | Supabase-compatible install (no operator families; grants `anon`, `authenticated`, `service_role`) |
-| `--drizzle` | Generate a Drizzle migration (`--name`, `--out` tune it) |
+| `--drizzle` | Generate a Drizzle migration (`--name`, `--out` tune it — `--name` accepts letters, numbers, `-`, `_` only; `--out` is passed to `drizzle-kit --out`, so set it to match your `drizzle.config.ts`) |
 | `--migration` / `--direct` | Supabase: write a migration file, or run SQL directly |
 | `--migrations-dir <path>` | Supabase migrations directory (default `supabase/migrations`) |
 | `--exclude-operator-family` | Skip operator families (non-superuser roles) |
@@ -382,8 +382,8 @@ stash eql migration --drizzle --supabase   # also grant eql_v3 to anon/authentic
 | `--drizzle` | Emit a Drizzle custom migration (via `drizzle-kit generate --custom`, then inject the SQL). Requires `drizzle-kit`. |
 | `--prisma` | Emit a Prisma Next migration. **Not available yet** — the emitter is a follow-up (tracked in GitHub issue #690); fails with a pointer for now. Use `--drizzle` today. |
 | `--supabase` | Append the Supabase role grants (`eql_v3` + `eql_v3_internal` → `anon`, `authenticated`, `service_role`). Harmless when you connect directly as `postgres`; needed when the same tables are reached via PostgREST/RLS. |
-| `--name <name>` | Migration name (Drizzle). Default `install-eql`. |
-| `--out <path>` | Output directory (Drizzle). Default `drizzle`. |
+| `--name <name>` | Migration name (Drizzle). Default `install-eql`. Letters, numbers, `-`, and `_` only — anything else is rejected. |
+| `--out <path>` | Output directory (Drizzle). Default `drizzle`. Passed straight to `drizzle-kit --out`, so set it to match your `drizzle.config.ts` if that writes elsewhere. |
 | `--dry-run` | Show what would happen without writing anything. |
 
 Pass exactly one of `--drizzle` / `--prisma`. The generated migration also installs the `cs_migrations` tracking schema, so one `drizzle-kit migrate` covers everything `stash encrypt …` needs.

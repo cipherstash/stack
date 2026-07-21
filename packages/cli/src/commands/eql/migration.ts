@@ -8,6 +8,7 @@ import {
   cleanupMigrationFile,
   findGeneratedMigration,
   printNextSteps,
+  SAFE_MIGRATION_NAME,
 } from '@/commands/db/install.js'
 import {
   detectPackageManager,
@@ -19,9 +20,6 @@ import { messages } from '@/messages.js'
 
 const DEFAULT_MIGRATION_NAME = 'install-eql'
 const DEFAULT_DRIZZLE_OUT = 'drizzle'
-
-/** File-system-safe migration name: what drizzle-kit accepts, and shell-inert. */
-const SAFE_MIGRATION_NAME = /^[\w-]+$/
 
 export interface EqlMigrationOptions {
   /** Emit a Drizzle custom migration. */
