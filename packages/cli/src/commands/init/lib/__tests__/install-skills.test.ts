@@ -155,7 +155,11 @@ describe('installSkills', () => {
   // writable SKILL.md in place — this test's first version failed CI there).
   it('reports a partial copy as copied plus failed', () => {
     mkdirSync(join(tmp, '.codex/skills'), { recursive: true })
-    writeFileSync(join(tmp, '.codex/skills/stash-drizzle'), 'not a dir', 'utf-8')
+    writeFileSync(
+      join(tmp, '.codex/skills/stash-drizzle'),
+      'not a dir',
+      'utf-8',
+    )
 
     const { copied, failed } = installSkills(tmp, '.codex/skills', 'drizzle')
     expect(copied).toEqual(['stash-encryption', 'stash-cli'])
