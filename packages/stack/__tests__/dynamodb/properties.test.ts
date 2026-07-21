@@ -139,6 +139,9 @@ const roundTripCase = fc
       ),
       cts: fc.tuple(...names.map(() => ciphertext)),
       svs: fc.tuple(...names.map(() => steVecEntries)),
+      // The per-document SteVec KeyHeader (`h`). Opaque to the mapping, but
+      // protect-ffi 0.30 decrypt requires it, so it must survive the round trip.
+      hs: fc.tuple(...names.map(() => fc.string({ minLength: 1 }))),
       hms: fc.tuple(
         ...names.map(() =>
           fc.option(fc.string({ minLength: 1 }), { nil: undefined }),
@@ -151,62 +154,71 @@ const roundTripCase = fc
 describe('property: write → read round trip', () => {
   it('preserves every ciphertext and rebuilds the envelope, for any column set', () => {
     fc.assert(
-      fc.property(roundTripCase, ({ names, kinds, cts, svs, hms, plain }) => {
-        const table = encryptedTable(
-          'users',
-          Object.fromEntries(
-            names.map((n, idx) => [
-              n,
-              kinds[idx] === 'json' ? types.Json(n) : types.TextEq(n),
-            ]),
-          ),
-        )
-        const encryptedAttrs = Object.keys(table.buildColumnKeyMap())
+      fc.property(
+        roundTripCase,
+        ({ names, kinds, cts, svs, hs, hms, plain }) => {
+          const table = encryptedTable(
+            'users',
+            Object.fromEntries(
+              names.map((n, idx) => [
+                n,
+                kinds[idx] === 'json' ? types.Json(n) : types.TextEq(n),
+              ]),
+            ),
+          )
+          const encryptedAttrs = Object.keys(table.buildColumnKeyMap())
 
-        const item: Record<string, unknown> = { [PLAINTEXT_KEY]: plain }
-        const expectedStored: Record<string, unknown> = {
-          [PLAINTEXT_KEY]: plain,
-        }
-        const expectedRebuilt: Record<string, unknown> = {
-          [PLAINTEXT_KEY]: plain,
-        }
+          const item: Record<string, unknown> = { [PLAINTEXT_KEY]: plain }
+          const expectedStored: Record<string, unknown> = {
+            [PLAINTEXT_KEY]: plain,
+          }
+          const expectedRebuilt: Record<string, unknown> = {
+            [PLAINTEXT_KEY]: plain,
+          }
 
-        names.forEach((name, idx) => {
-          const i = { t: 'users', c: name }
-          if (kinds[idx] === 'json') {
-            item[name] = { v: 3, k: 'sv', i, sv: svs[idx] }
-            expectedStored[`${name}${ciphertextAttrSuffix}`] = svs[idx]
+          names.forEach((name, idx) => {
+            const i = { t: 'users', c: name }
+            if (kinds[idx] === 'json') {
+              // A SteVec document stores its `sv` entries plus the KeyHeader `h`
+              // (0.30 decrypt requires `h`); `v`/`i`/`k` are rebuilt on read.
+              item[name] = { v: 3, k: 'sv', i, h: hs[idx], sv: svs[idx] }
+              expectedStored[`${name}${ciphertextAttrSuffix}`] = {
+                h: hs[idx],
+                sv: svs[idx],
+              }
+              expectedRebuilt[name] = {
+                i: { c: name, t: 'users' },
+                v: 3,
+                k: 'sv',
+                h: hs[idx],
+                sv: svs[idx],
+              }
+              return
+            }
+            item[name] = {
+              v: 3,
+              i,
+              c: cts[idx],
+              ...(hms[idx] === undefined ? {} : { hm: hms[idx] }),
+            }
+            expectedStored[`${name}${ciphertextAttrSuffix}`] = cts[idx]
+            if (hms[idx] !== undefined) {
+              expectedStored[`${name}${searchTermAttrSuffix}`] = hms[idx]
+            }
+            // The search term is a write-side index, not part of the envelope:
+            // the read path drops it rather than round-tripping it.
             expectedRebuilt[name] = {
               i: { c: name, t: 'users' },
               v: 3,
-              k: 'sv',
-              sv: svs[idx],
+              c: cts[idx],
             }
-            return
-          }
-          item[name] = {
-            v: 3,
-            i,
-            c: cts[idx],
-            ...(hms[idx] === undefined ? {} : { hm: hms[idx] }),
-          }
-          expectedStored[`${name}${ciphertextAttrSuffix}`] = cts[idx]
-          if (hms[idx] !== undefined) {
-            expectedStored[`${name}${searchTermAttrSuffix}`] = hms[idx]
-          }
-          // The search term is a write-side index, not part of the envelope:
-          // the read path drops it rather than round-tripping it.
-          expectedRebuilt[name] = {
-            i: { c: name, t: 'users' },
-            v: 3,
-            c: cts[idx],
-          }
-        })
+          })
 
-        const stored = toEncryptedDynamoItem(item, encryptedAttrs)
-        expect(stored).toEqual(expectedStored)
-        expect(toItemWithEqlPayloads(stored, table)).toEqual(expectedRebuilt)
-      }),
+          const stored = toEncryptedDynamoItem(item, encryptedAttrs)
+          expect(stored).toEqual(expectedStored)
+          expect(toItemWithEqlPayloads(stored, table)).toEqual(expectedRebuilt)
+        },
+      ),
     )
   })
 })
@@ -348,20 +360,27 @@ describe('property: the rebuilt wire version follows the table', () => {
     )
   })
 
-  it('a v3 JSON column keeps v: 3 with the mandatory k: "sv"', () => {
+  it('a v3 JSON column keeps v: 3, the mandatory k: "sv", and the KeyHeader', () => {
     fc.assert(
-      fc.property(safeName, steVecEntries, (name, entries) => {
-        const table = encryptedTable('t', { [name]: types.Json(name) })
+      fc.property(
+        safeName,
+        steVecEntries,
+        fc.string({ minLength: 1 }),
+        (name, entries, h) => {
+          const table = encryptedTable('t', { [name]: types.Json(name) })
 
-        const rebuilt = toItemWithEqlPayloads(
-          { [`${name}${ciphertextAttrSuffix}`]: entries },
-          table,
-        )[name] as Record<string, unknown>
+          const rebuilt = toItemWithEqlPayloads(
+            { [`${name}${ciphertextAttrSuffix}`]: { h, sv: entries } },
+            table,
+          )[name] as Record<string, unknown>
 
-        expect(rebuilt.v).toBe(3)
-        expect(rebuilt.k).toBe('sv')
-        expect(rebuilt.sv).toEqual(entries)
-      }),
+          expect(rebuilt.v).toBe(3)
+          expect(rebuilt.k).toBe('sv')
+          // The per-document KeyHeader survives — 0.30 decrypt requires it.
+          expect(rebuilt.h).toBe(h)
+          expect(rebuilt.sv).toEqual(entries)
+        },
+      ),
     )
   })
 
@@ -459,21 +478,32 @@ describe('property: no envelope metadata reaches storage', () => {
     )
   })
 
-  it('a ste_vec document is stored as its bare sv array', () => {
+  it('a ste_vec document is stored as its entries plus KeyHeader, no envelope metadata', () => {
     fc.assert(
-      fc.property(safeName, steVecEntries, (name, entries) => {
-        const table = encryptedTable('t', { [name]: types.Json(name) })
-        const stored = toEncryptedDynamoItem(
-          {
-            [name]: { v: 3, k: 'sv', i: { t: 't', c: name }, sv: entries },
-          },
-          Object.keys(table.buildColumnKeyMap()),
-        )
+      fc.property(
+        safeName,
+        steVecEntries,
+        fc.string({ minLength: 1 }),
+        (name, entries, h) => {
+          const table = encryptedTable('t', { [name]: types.Json(name) })
+          const stored = toEncryptedDynamoItem(
+            {
+              [name]: { v: 3, k: 'sv', i: { t: 't', c: name }, h, sv: entries },
+            },
+            Object.keys(table.buildColumnKeyMap()),
+          )
 
-        expect(Object.keys(stored)).toEqual([`${name}${ciphertextAttrSuffix}`])
-        expect(stored[`${name}${ciphertextAttrSuffix}`]).toEqual(entries)
-        expect(hasEnvelopeMetadata(stored)).toBe(false)
-      }),
+          expect(Object.keys(stored)).toEqual([
+            `${name}${ciphertextAttrSuffix}`,
+          ])
+          expect(stored[`${name}${ciphertextAttrSuffix}`]).toEqual({
+            h,
+            sv: entries,
+          })
+          // `v`/`i`/`k` are reconstructed on read, never stored.
+          expect(hasEnvelopeMetadata(stored)).toBe(false)
+        },
+      ),
     )
   })
 })

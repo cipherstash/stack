@@ -212,6 +212,11 @@ type StoredEqlPayload = {
   hm?: unknown
   /** ste_vec entries for a JSON document. */
   sv?: unknown
+  /**
+   * Per-document SteVec KeyHeader. Present on a v3 JSON (`k: 'sv'`) document;
+   * protect-ffi 0.30 decrypt requires it, so it is stored alongside `sv`.
+   */
+  h?: unknown
 }
 
 /**
@@ -253,12 +258,18 @@ export function toEncryptedDynamoItem(
     ) {
       const encryptPayload = attrValue
 
-      // A JSON document, in either wire version, keeps its `k: 'sv'` tag. Its
-      // index terms live *inside* the `sv` entries, so the whole array is
-      // stored and there is no separate search-term attribute to split out.
+      // A JSON document keeps its `k: 'sv'` tag. Its index terms live *inside*
+      // the `sv` entries, so there is no separate search-term attribute to split
+      // out. Store the `sv` entries together with the per-document KeyHeader
+      // `h`: protect-ffi 0.30's SteVec decrypt requires `h` (there is no root
+      // `c` to reconstruct from) and it is not derivable, whereas `v`/`i`/`k`
+      // ARE reconstructed on read and so are kept out of the stored attribute.
       if (encryptPayload?.k === 'sv' && encryptPayload.sv) {
         const result: Record<string, unknown> = {}
-        result[`${attrName}${ciphertextAttrSuffix}`] = encryptPayload.sv
+        result[`${attrName}${ciphertextAttrSuffix}`] = {
+          h: encryptPayload.h,
+          sv: encryptPayload.sv,
+        }
         return result
       }
 
@@ -416,22 +427,24 @@ export function toItemWithEqlPayloads(
       // `emailAddress: types.TextEq('email_address')`.
       const i = { c: toColumnName(matched), t: encryptConfig.tableName }
 
-      // A JSON document is stored as its ste_vec array and must be rebuilt with
-      // `k: 'sv'`. Look the config up by the resolved identifier so a nested
-      // JSON column (registered under a dotted path) is detected too — keyed on
-      // the leaf it would be missing, and would be rebuilt as a scalar.
-      // A v3 column builds the same `{ cast_as, indexes }` shape as a v2 one,
-      // so this detection needs no version branch.
+      // A JSON document is stored as `{ h, sv }` (see the write path); rebuild
+      // the full SteVec envelope around it. protect-ffi 0.30 deserialization is
+      // strict — it requires `k` ("missing field `k`") and the per-document
+      // KeyHeader `h` ("missing field `h`"), and there is no root `c`. `i`/`v`/`k`
+      // are reconstructed; `h`/`sv` come from storage. Look the config up by the
+      // resolved identifier so a nested JSON column (registered under a dotted
+      // path) is detected too. A v3 column builds the same `{ cast_as, indexes }`
+      // shape as a v2 one, so this detection needs no version branch.
       const columnConfig = encryptConfig.columns[toColumnName(matched)]
       if (columnConfig?.cast_as === 'json' && columnConfig.indexes.ste_vec) {
+        const stored = attrValue as { h?: unknown; sv?: unknown }
         return {
           [columnName]: {
             i,
             v,
-            // Mandatory in both versions — a v3 ste_vec document without it
-            // fails deserialization with "missing field `k`".
             k: 'sv',
-            sv: attrValue,
+            h: stored.h,
+            sv: stored.sv,
           },
         }
       }

@@ -127,11 +127,15 @@ type V3Columns<Table extends AnyV3Table> =
   Table extends EncryptedV3Table<infer C> ? C : never
 
 /**
- * What `toEncryptedDynamoItem` writes into `<attr>__source` for a column: the
- * `sv` array for a JSON document, the base64 ciphertext `c` for every scalar.
+ * What `toEncryptedDynamoItem` writes into `<attr>__source` for a column: for a
+ * JSON document, the SteVec entries plus the per-document KeyHeader `h`
+ * (`{ h, sv }`) — protect-ffi 0.30 decrypt requires `h`; for every scalar, the
+ * base64 ciphertext `c`.
  */
 type SourceAttribute<C> =
-  'searchableJson' extends QueryTypesForColumn<C> ? unknown[] : string
+  'searchableJson' extends QueryTypesForColumn<C>
+    ? { h: unknown; sv: unknown[] }
+    : string
 
 /**
  * Does this column mint the `hm` term that becomes `<attr>__hmac`?

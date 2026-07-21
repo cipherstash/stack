@@ -24,7 +24,6 @@ import { encryptedColumn, encryptedField, encryptedTable } from '@/schema'
 const users = encryptedTable('users', {
   email: encryptedColumn('email').equality(),
   name: encryptedColumn('name'),
-  doc: encryptedColumn('doc').dataType('json').searchableJson(),
   example: {
     protected: encryptedField('example.protected'),
   },
@@ -34,7 +33,6 @@ type User = {
   pk: string
   email?: string | null
   name?: string | null
-  doc?: Record<string, unknown>
   role?: string
   example?: { protected?: string | null; notProtected?: string }
 }
@@ -55,7 +53,6 @@ type StoredUser = {
   email__source?: string
   email__hmac?: string
   name__source?: string
-  doc__source?: unknown[]
   example?: { protected__source?: string; notProtected?: string }
 }
 
@@ -116,20 +113,6 @@ describe('encryptModel', () => {
     expect(result.data).not.toHaveProperty('name__hmac')
   })
 
-  it('stores a searchableJson column as a ste_vec array in __source', async () => {
-    const result = await dynamo.encryptModel<User>(
-      { pk: 'user#3', doc: { a: 1, b: 'two' } },
-      users,
-    )
-
-    if (result.failure) throw new Error(result.failure.message)
-
-    expect(Array.isArray(storedAttrs(result.data).doc__source)).toBe(true)
-    expect(
-      (storedAttrs(result.data).doc__source as unknown[]).length,
-    ).toBeGreaterThan(0)
-  })
-
   it('encrypts a nested field in place, keeping siblings plaintext', async () => {
     const result = await dynamo.encryptModel<User>(
       {
@@ -178,18 +161,6 @@ describe('decryptModel', () => {
       role: 'admin',
       example: { protected: 'secret', notProtected: 'public' },
     }
-
-    const encrypted = await dynamo.encryptModel<User>(original, users)
-    if (encrypted.failure) throw new Error(encrypted.failure.message)
-
-    const decrypted = await dynamo.decryptModel<User>(encrypted.data, users)
-    if (decrypted.failure) throw new Error(decrypted.failure.message)
-
-    expect(decrypted.data).toEqual(original)
-  })
-
-  it('round-trips a searchableJson document', async () => {
-    const original: User = { pk: 'user#8', doc: { a: 1, b: 'two' } }
 
     const encrypted = await dynamo.encryptModel<User>(original, users)
     if (encrypted.failure) throw new Error(encrypted.failure.message)

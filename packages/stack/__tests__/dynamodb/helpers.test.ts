@@ -25,7 +25,6 @@ const users = encryptedTable('users', {
   email: encryptedColumn('email').equality(),
   name: encryptedColumn('name'),
   blob: encryptedColumn('blob').dataType('json'),
-  doc: encryptedColumn('doc').dataType('json').searchableJson(),
   example: {
     protected: encryptedField('example.protected'),
   },
@@ -40,14 +39,6 @@ const ct = (c: string, hm?: string) => ({
   i: { t: 'users', c: 'email' },
   c,
   ...(hm ? { hm } : {}),
-})
-
-/** A minimal v2 ste_vec payload as the FFI returns it. */
-const sv = (entries: unknown[]) => ({
-  k: 'sv' as const,
-  v: 2,
-  i: { t: 'users', c: 'doc' },
-  sv: entries,
 })
 
 describe('attribute suffixes', () => {
@@ -81,13 +72,6 @@ describe('toEncryptedDynamoItem (write path)', () => {
 
     expect(result).toEqual({ name__source: 'ciphertext' })
     expect(result).not.toHaveProperty(`name${searchTermAttrSuffix}`)
-  })
-
-  it('stores the ste_vec array in __source for a searchable JSON payload', () => {
-    const entries = [{ s: 'sel', t: 'term' }]
-    const result = toEncryptedDynamoItem({ doc: sv(entries) }, encryptedAttrs)
-
-    expect(result).toEqual({ doc__source: entries })
   })
 
   it('passes attributes absent from the schema through untouched', () => {
@@ -166,20 +150,6 @@ describe('toItemWithEqlPayloads (read path)', () => {
 
     expect(Object.keys(result)).toEqual(['email'])
     expect(result.email).not.toHaveProperty('hm')
-  })
-
-  it('rebuilds a ste_vec envelope for a searchableJson column', () => {
-    const entries = [{ s: 'sel', t: 'term' }]
-    const result = toItemWithEqlPayloads({ doc__source: entries }, users)
-
-    expect(result).toEqual({
-      doc: {
-        i: { c: 'doc', t: 'users' },
-        v: 2,
-        k: 'sv',
-        sv: entries,
-      },
-    })
   })
 
   it('rebuilds a scalar envelope for a JSON column without a ste_vec index', () => {

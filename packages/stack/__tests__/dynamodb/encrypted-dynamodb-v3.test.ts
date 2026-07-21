@@ -147,7 +147,7 @@ describe.skipIf(!hasCipherStashCreds)('encryptModel with a v3 table', () => {
     ])
   })
 
-  it('stores a Json domain as a ste_vec array', async () => {
+  it('stores a Json domain as its sv entries plus the KeyHeader', async () => {
     const result = await typedDynamo.encryptModel(
       { pk: 'user#5', meta: { a: 1, b: { c: 'deep' } } },
       users,
@@ -155,8 +155,13 @@ describe.skipIf(!hasCipherStashCreds)('encryptModel with a v3 table', () => {
 
     if (result.failure) throw new Error(result.failure.message)
 
-    expect(Array.isArray(result.data.meta__source)).toBe(true)
-    expect(result.data.meta__source.length).toBeGreaterThan(0)
+    // A SteVec document is stored as `{ h, sv }` under __source: the `sv`
+    // entries plus the per-document KeyHeader `h` that protect-ffi 0.30 decrypt
+    // requires. `v`/`i`/`k` are reconstructed on read, so they are not stored.
+    const stored = result.data.meta__source as { h: unknown; sv: unknown[] }
+    expect(stored.h).toBeDefined()
+    expect(Array.isArray(stored.sv)).toBe(true)
+    expect(stored.sv.length).toBeGreaterThan(0)
   })
 
   it('passes a null column value through without splitting it', async () => {

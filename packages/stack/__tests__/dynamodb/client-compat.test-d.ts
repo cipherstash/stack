@@ -154,14 +154,19 @@ describe('the v3 overload types the DynamoDB storage split', () => {
     expectTypeOf(result.data.role).toEqualTypeOf<string>()
   })
 
-  it('types a JSON document as its stored ste_vec array', async () => {
+  it('types a JSON document as its stored ste_vec entries plus KeyHeader', async () => {
     const result = await dynamo.encryptModel(
       { pk: 'a', meta: { a: 1 } },
       usersV3,
     )
     if (result.failure) return
 
-    expectTypeOf(result.data.meta__source).toEqualTypeOf<unknown[]>()
+    // A SteVec document is stored as `{ h, sv }` — the entries plus the
+    // per-document KeyHeader `h` that protect-ffi 0.30 decrypt requires.
+    expectTypeOf(result.data.meta__source).toEqualTypeOf<{
+      h: unknown
+      sv: unknown[]
+    }>()
     expectTypeOf(result.data).not.toHaveProperty('meta__hmac')
   })
 

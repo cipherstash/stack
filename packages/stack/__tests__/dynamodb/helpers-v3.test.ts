@@ -127,14 +127,25 @@ describe('toEncryptedDynamoItem with v3 payloads', () => {
     })
   })
 
-  it('stores a v3 ste_vec document as its sv array', () => {
+  it('stores a v3 ste_vec document as its entries plus the KeyHeader', () => {
     const entries = [{ s: 'sel', c: 'ct', a: false, hm: 'h' }]
+    // Only the non-reconstructable parts are stored: the `sv` entries and the
+    // per-document KeyHeader `h` (protect-ffi 0.30 decrypt requires `h`). The
+    // `v`/`i`/`k` envelope fields are rebuilt on read, so they are not stored.
     const result = toEncryptedDynamoItem(
-      { meta: { v: 3, k: 'sv', i: { t: 'users', c: 'meta' }, sv: entries } },
+      {
+        meta: {
+          v: 3,
+          k: 'sv',
+          i: { t: 'users', c: 'meta' },
+          h: 'key-header',
+          sv: entries,
+        },
+      },
       encryptedAttrs,
     )
 
-    expect(result).toEqual({ meta__source: entries })
+    expect(result).toEqual({ meta__source: { h: 'key-header', sv: entries } })
   })
 })
 
@@ -148,12 +159,24 @@ describe('toItemWithEqlPayloads for a v3 table', () => {
     expect(result.email).not.toHaveProperty('k')
   })
 
-  it('rebuilds a v3 ste_vec envelope, keeping the mandatory k tag', () => {
+  it('rebuilds a v3 ste_vec envelope, restoring k and the KeyHeader', () => {
+    // The stored __source is `{ h, sv }`; the read path rebuilds the full
+    // envelope, restoring the `k` tag and the `h` KeyHeader that 0.30 decrypt
+    // requires, with `i`/`v` reconstructed from the schema.
     const entries = [{ s: 'sel', c: 'ct' }]
-    const result = toItemWithEqlPayloads({ meta__source: entries }, users)
+    const result = toItemWithEqlPayloads(
+      { meta__source: { h: 'key-header', sv: entries } },
+      users,
+    )
 
     expect(result).toEqual({
-      meta: { i: { c: 'meta', t: 'users' }, v: 3, k: 'sv', sv: entries },
+      meta: {
+        i: { c: 'meta', t: 'users' },
+        v: 3,
+        k: 'sv',
+        h: 'key-header',
+        sv: entries,
+      },
     })
   })
 
