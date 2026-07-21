@@ -36,23 +36,23 @@ export function inferIndexType(column: BuildableQueryColumn): FfiIndexTypeName {
 /**
  * Infer the FFI query operation from plaintext type for STE Vec queries.
  * - String → ste_vec_selector (JSONPath queries like '$.user.email')
- * - Object/Array/Number/Boolean → ste_vec_term (containment queries)
+ * - Object/Array/Number/Boolean → default (containment queries)
  */
 export function inferQueryOpFromPlaintext(plaintext: Plaintext): QueryOpName {
   if (typeof plaintext === 'string') {
     return 'ste_vec_selector'
   }
-  // Objects (incl. Date), arrays, numbers, booleans are all valid JSONB
-  // containment values
+  // Objects, arrays, numbers, and booleans use SteVec's default structural
+  // containment query. `ste_vec_term` is reserved for selector ordering.
   if (
     typeof plaintext === 'object' ||
     typeof plaintext === 'number' ||
     typeof plaintext === 'boolean'
   ) {
-    return 'ste_vec_term'
+    return 'default'
   }
   // This should never happen with valid JsPlaintext, but keep for safety
-  return 'ste_vec_term'
+  return 'default'
 }
 
 /**

@@ -48,36 +48,28 @@ export const v3Dialect = {
   },
 
   contains(left: SQL, enc: SQL): SQL {
-    return sql`${fn('contains')}(${left}, ${enc})`
+    return sql`${fn('matches')}(${left}, ${enc})`
   },
 
   /**
-   * Encrypted-JSONB containment (`eql_v3_json @> sub-document`). Unlike text,
-   * json has NO `eql_v3.contains` overload — containment is the `@>` operator,
-   * whose `(eql_v3_json, eql_v3.query_jsonb)` form takes the `query_jsonb` needle
-   * the operator layer produced. The four `eql_v3_json @> ?` RHS overloads mean a
+   * Encrypted-JSONB containment (`eql_v3_json_search @> sub-document`). Unlike text,
+   * json has NO `eql_v3.matches` overload — containment is the `@>` operator,
+   * whose `(eql_v3_json_search, eql_v3.query_json)` form takes the `query_json` needle
+   * the operator layer produced. The four `eql_v3_json_search @> ?` RHS overloads mean a
    * bare operand would be ambiguous ("operator is not unique", 42725), so the
-   * needle is pre-cast to `eql_v3.query_jsonb` upstream (see
+   * needle is pre-cast to `eql_v3.query_json` upstream (see
    * `encryptJsonContainmentTerm`).
    */
   containsJson(left: SQL, enc: SQL): SQL {
     return sql`${left} OPERATOR(public.@>) ${enc}`
   },
 
-  /**
-   * Extract the encrypted JSONB leaf entry at a selector:
-   * `eql_v3.jsonb_path_query_first(src, sel)` → `eql_v3_jsonb_entry`. `src` is
-   * either an `eql_v3_json` column or a storage-needle document already cast to
-   * `eql_v3_json`; `sel` is the selector hash bound as `text`. The returned entry
-   * feeds `eql_v3.{eq,neq,lt,lte,gt,gte}(jsonb_entry, jsonb_entry)`, so a selector
-   * comparison is `equality`/`comparison` applied to two extractions (column side
-   * and needle side) rather than column vs operand.
-   *
-   * The root `eql_v3_json` domain has no comparison operators (they're blocked in
-   * the bundle), which is why the selector must be extracted before comparing.
-   */
+  /** Extract the encrypted JSON leaf entry addressed by a selector hash. */
   selectorEntry(source: SQL, selector: SQL): SQL {
-    return sql`${fn('jsonb_path_query_first')}(${source}, ${selector})`
+    // Keep the canonical operator shape: functional indexes are defined over
+    // `eql_v3.ord_term(col -> selector)`. The RHS is explicitly `text` upstream
+    // so PostgreSQL selects EQL's encrypted-JSON accessor, not native jsonb `->`.
+    return sql`${source} -> ${selector}`
   },
 
   orderBy(left: SQL, flavour: 'ope' | 'ore'): SQL {

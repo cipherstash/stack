@@ -206,6 +206,16 @@ describe('Encryption config.eqlVersion', () => {
     expect(lastNewClientOpts().eqlVersion).toBeUndefined()
   })
 
+  it('rejects legacy v2 searchableJson before constructing an incompatible FFI client', async () => {
+    const legacyJson = encryptedTable('documents', {
+      metadata: encryptedColumn('metadata').searchableJson(),
+    })
+    await expect(Encryption({ schemas: [legacyJson] })).rejects.toThrow(
+      /legacy EQL v2 schema is not supported.*types\.Json\(\)/,
+    )
+    expect(ffi.newClient).not.toHaveBeenCalled()
+  })
+
   it('auto-detects eqlVersion 3 when every schema is a v3 table', async () => {
     await Encryption({ schemas: [v3Table()] })
 

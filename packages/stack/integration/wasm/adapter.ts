@@ -95,7 +95,7 @@ function toWasmPlaintext(value: Plain): WasmPlaintext {
 /** `public.eql_v3_text_eq` → `eql_v3.query_text_eq`; irregular: json → jsonb. */
 function queryDomain(eqlType: string): string {
   const suffix = eqlType.replace(/^public\.eql_v3_/, '')
-  return suffix === 'json' ? 'eql_v3.query_jsonb' : `eql_v3.query_${suffix}`
+  return suffix === 'json' ? 'eql_v3.query_json' : `eql_v3.query_${suffix}`
 }
 
 const QUERY_TYPE_BY_KIND = {
@@ -299,7 +299,7 @@ export function makeWasmAdapter(): IntegrationAdapter {
       case 'matches': {
         const t = await term(op.column, op.needle, 'matches')
         return selectKeys(
-          `eql_v3.contains("${op.column}", $1::jsonb::${t.cast})`,
+          `eql_v3.matches("${op.column}", $1::jsonb::${t.cast})`,
           [t.param],
         )
       }

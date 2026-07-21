@@ -34,6 +34,7 @@ import { describe, expect, it } from 'vitest'
 import cipherstashExtensionDescriptor from '../src/exports/control'
 import { CIPHERSTASH_SPACE_ID } from '../src/extension-metadata/constants'
 import {
+  CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../src/extension-metadata/constants-v3'
@@ -65,9 +66,9 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     expect(tables).toEqual([])
   })
 
-  it('publishes the v3 baseline migration as the sole invariant-only genesis edge', () => {
+  it('publishes the v3 baseline and versioned EQL upgrade edges', () => {
     const space = cipherstashExtensionDescriptor.contractSpace!
-    expect(space.migrations).toHaveLength(1)
+    expect(space.migrations).toHaveLength(2)
     const v3Baseline = space.migrations[0]!
     expect(v3Baseline.dirName).toBe(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME)
     // Genesis edge (`from: null`): the bundle declares no contract-space
@@ -75,6 +76,10 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     // which is exactly `contractJson.storage.storageHash` / the head ref.
     expect(v3Baseline.metadata.from).toBeNull()
     expect(v3Baseline.metadata.to).toBe(space.contractJson.storage.storageHash)
+    const v3Upgrade = space.migrations[1]!
+    expect(v3Upgrade.dirName).toBe(CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME)
+    expect(v3Upgrade.metadata.from).toBe(v3Baseline.metadata.to)
+    expect(v3Upgrade.metadata.to).toBe(v3Baseline.metadata.to)
   })
 
   it('v3 baseline ops carry the installEqlV3Bundle op only', () => {
@@ -82,6 +87,12 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     const v3Baseline = space.migrations[0]!
     const opIds = v3Baseline.ops.map((op) => op.invariantId).filter(Boolean)
     expect(opIds).toEqual([CIPHERSTASH_V3_INVARIANTS.installBundle])
+  })
+
+  it('v3 3.0.2 upgrade ops carry a distinct versioned invariant', () => {
+    const upgrade = cipherstashExtensionDescriptor.contractSpace!.migrations[1]!
+    const opIds = upgrade.ops.map((op) => op.invariantId).filter(Boolean)
+    expect(opIds).toEqual([CIPHERSTASH_V3_INVARIANTS.upgradeBundle302])
   })
 
   it('namespaces every op invariantId in every migration under cipherstash:*', () => {

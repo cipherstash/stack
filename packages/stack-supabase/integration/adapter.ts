@@ -40,18 +40,17 @@ const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
   'lte',
   'between',
   'notBetween',
-  'matches',
   'isNull',
   'isNotNull',
   'order',
 ])
 
 /**
- * Nothing is refused adapter-wide. ORE-backed columns cannot be ordered through
- * PostgREST, but they are `deferred` in the catalog — they cannot hold data on
- * managed Postgres at all — so no test reaches them here.
+ * EQL 3.0.2 requires a typed query-domain operand for encrypted free-text
+ * matching. PostgREST cannot express that cast, so matching is rejected on
+ * every encrypted column even when its domain carries the capability.
  */
-const ALWAYS_REJECTED: ReadonlySet<QueryOpKind> = new Set()
+const ALWAYS_REJECTED: ReadonlySet<QueryOpKind> = new Set(['matches'])
 
 type Instance = Awaited<ReturnType<typeof encryptedSupabaseV3>>
 

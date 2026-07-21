@@ -62,11 +62,11 @@ describe('protect-ffi match bloom', () => {
     return (payload as { bf?: number[] }).bf ?? []
   }
 
-  // The bloom of a QUERY term, produced the way a `contains` query actually
+  // The bloom of a QUERY term, produced the way a `matches` query actually
   // produces its needle — `encryptQuery` with the `match` index type, not
-  // `encrypt`. This is the operand `eql_v3.contains` binds on the right of `@>`,
-  // so a subset test against a stored `bloomOf` value is the real query path,
-  // not a same-function artefact comparing `encrypt` to itself.
+  // `encrypt`. This is the operand `eql_v3.matches` receives, so a subset test
+  // against a stored `bloomOf` value is the real query path, not a same-function
+  // artefact comparing `encrypt` to itself.
   const queryBloomOf = async (client: Client, plaintext: string) => {
     const term = await encryptQuery(client, {
       plaintext,
@@ -116,8 +116,20 @@ describe('protect-ffi match bloom', () => {
     expect(bloom).toEqual([])
   })
 
+  // protect-ffi 0.30 closes the core fail-open path: query encryption itself
+  // rejects empty-token needles, so callers that bypass every ORM guard still
+  // cannot produce the match-all bloom operand reported in #697.
+  it.each([
+    [1, 'a'],
+    [2, 'ad'],
+  ] as const)('rejects the %i-character query needle in the core FFI', async (_length, needle) => {
+    await expect(queryBloomOf(withOriginal, needle)).rejects.toThrow(
+      /short|token|3|ngram/i,
+    )
+  })
+
   // The query needle's bloom is a subset of the STORED value's bloom — which is
-  // exactly what `eql_v3.contains` (`match_term(stored) @> query_term(needle)`)
+  // exactly what `eql_v3.matches` (`match_term(stored) @> query_term(needle)`)
   // tests. The haystack is a stored `encrypt` value; each needle is an
   // `encryptQuery` `match` term, the real operand the containment query binds —
   // so this exercises the query path, not `encrypt` compared to itself. This is

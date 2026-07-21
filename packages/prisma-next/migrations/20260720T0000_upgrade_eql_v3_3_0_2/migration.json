@@ -1,0 +1,9 @@
+{
+  "from": "sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e",
+  "to": "sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e",
+  "providedInvariants": [
+    "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1"
+  ],
+  "createdAt": "2026-07-20T11:40:17.876Z",
+  "migrationHash": "sha256:aacf44ab97bead9257d1a5eeb2e854a142a6dd312a0f0475b87df110c87155e0"
+}

@@ -50,12 +50,18 @@ describe('v3Dialect', () => {
 
   it('contains via two-arg function', () => {
     expect(render(v3Dialect.contains(col, enc))).toBe(
-      'eql_v3.contains("users"."x", $1)',
+      'eql_v3.matches("users"."x", $1)',
     )
   })
 
   it('orderBy extracts the ord term', () => {
     expect(render(v3Dialect.orderBy(col))).toBe('eql_v3.ord_term("users"."x")')
+  })
+
+  it('selectorEntry uses the typed -> form required by functional indexes', () => {
+    expect(render(v3Dialect.selectorEntry(col, sql`${'selector'}::text`))).toBe(
+      '"users"."x" -> $1::text',
+    )
   })
 
   // `render` above discards `.params`, so nothing here proved a value was BOUND
@@ -69,6 +75,10 @@ describe('v3Dialect', () => {
       ['equality', () => v3Dialect.equality('eq', col, sql`${hostile}`)],
       ['comparison', () => v3Dialect.comparison('gte', col, sql`${hostile}`)],
       ['contains', () => v3Dialect.contains(col, sql`${hostile}`)],
+      [
+        'selectorEntry',
+        () => v3Dialect.selectorEntry(col, sql`${hostile}::text`),
+      ],
       // `$1` in a title is consumed by vitest as an index into the case tuple,
       // so it cannot be used to name the SQL placeholder here.
     ])('%s binds a hostile operand as a positional parameter', (_name, build) => {

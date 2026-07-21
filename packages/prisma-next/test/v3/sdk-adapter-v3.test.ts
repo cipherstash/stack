@@ -207,6 +207,40 @@ describe('createCipherstashV3Sdk — query-term routing (Task 6 seam)', () => {
     expect(out).toEqual([{ qt: 'json-term', value: { role: 'admin' } }])
   })
 
+  it('routes selector, value-selector, and ordering terms through their explicit SteVec flavours', async () => {
+    const users = makeUsersTable()
+    const { client, calls } = makeFakeClient()
+    const sdk = createCipherstashV3Sdk(client, [users])
+
+    const selector = EncryptedJson.from('$.profile.age')
+    const valueSelector = EncryptedJson.from({
+      path: '$.profile.age',
+      value: 42,
+    })
+    const orderTerm = EncryptedJson.from(42)
+    markV3QueryTerm(selector, 'steVecSelector')
+    markV3QueryTerm(valueSelector, 'steVecValueSelector')
+    markV3QueryTerm(orderTerm, 'steVecTerm')
+
+    const out = await sdk.bulkEncrypt({
+      routingKey: { table: 'users', column: 'payload' },
+      values: [selector, valueSelector, orderTerm],
+    })
+
+    expect(calls.encryptQuerySingle).toHaveLength(0)
+    expect(calls.encryptQueryBatch).toHaveLength(3)
+    expect(
+      calls.encryptQueryBatch
+        .flat()
+        .map((term) => (term as { queryType: string }).queryType),
+    ).toEqual(['steVecSelector', 'steVecValueSelector', 'steVecTerm'])
+    expect(out).toEqual([
+      { qt: 'term-0', value: '$.profile.age' },
+      { qt: 'term-0', value: { path: '$.profile.age', value: 42 } },
+      { qt: 'term-0', value: 42 },
+    ])
+  })
+
   it('keeps mixed storage values and query terms position-stable', async () => {
     const users = makeUsersTable()
     const { client, calls } = makeFakeClient()

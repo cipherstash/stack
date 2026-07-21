@@ -23,6 +23,7 @@ import {
 } from '@prisma-next/sql-relational-core/ast'
 import type { SqlExecutionPlan } from '@prisma-next/sql-relational-core/plan'
 import { describe, expect, it } from 'vitest'
+import type { EncryptedEnvelopeBase } from '../../src/execution/envelope-base'
 import { setHandleRoutingKey } from '../../src/execution/envelope-base'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
@@ -58,7 +59,7 @@ import {
 } from './operator-lowering-v3.helpers'
 
 const V3_TEXT_SEARCH = 'cipherstash/eql-v3/eql_v3_text_search@1'
-const V3_JSON = 'cipherstash/eql-v3/eql_v3_json@1'
+const V3_JSON = 'cipherstash/eql-v3/eql_v3_json_search@1'
 
 it('test fixture codec ids are members of the pinned v3 set', () => {
   expect(isCipherstashV3CodecId(V3_TEXT_SEARCH)).toBe(true)
@@ -370,11 +371,14 @@ describe('bulkEncryptMiddlewareV3', () => {
      * routing pre-stamped, bound under the bare-rendering `pg/text@1`
      * codec (never a v3 codec id).
      */
-    function queryTermPlan(envelope: EncryptedString): SqlExecutionPlan {
+    function queryTermPlan(
+      envelope: EncryptedEnvelopeBase<unknown>,
+      column = 'email',
+    ): SqlExecutionPlan {
       const ref = ParamRef.of(envelope, { codec: { codecId: 'pg/text@1' } })
       // A WHERE-operand param lives outside insert/update rows; the AST
       // shape here only needs to expose the ParamRef to the mutator.
-      const ast = new InsertAst(TableSource.named('user'), [{ email: ref }])
+      const ast = new InsertAst(TableSource.named('user'), [{ [column]: ref }])
       return {
         sql: 'SELECT ... WHERE eql_v3.eq("user"."email", $1::eql_v3.query_text_search)',
         params: [envelope],
@@ -419,6 +423,36 @@ describe('bulkEncryptMiddlewareV3', () => {
 
       expect(envelope.expose().ciphertext).toBeUndefined()
       expect(envelope.expose().plaintext).toBe('alice@example.com')
+    })
+
+    it('writes steVecSelector as bare SQL text, not a quoted JSON string', async () => {
+      const selectorHash = 'selector-hash'
+      const sdk = makeCounterSdk({ encryptImpl: () => [selectorHash] })
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const envelope = EncryptedJson.from('$.profile.age')
+      setHandleRoutingKey(envelope, 'user', 'payload')
+      markV3QueryTerm(envelope, 'steVecSelector')
+      const plan = queryTermPlan(envelope, 'payload')
+      const params = createSqlParamRefMutator(plan)
+
+      await middleware.beforeExecute?.(plan, createCtx(), params)
+
+      expect(params.currentParams()[0]).toBe(selectorHash)
+      expect(params.currentParams()[0]).not.toBe(v3ToDriver(selectorHash))
+    })
+
+    it('rejects a non-string steVecSelector result', async () => {
+      const sdk = makeCounterSdk({ encryptImpl: () => [{ bad: 'selector' }] })
+      const middleware = bulkEncryptMiddlewareV3(sdk)
+      const envelope = EncryptedJson.from('$.profile.age')
+      setHandleRoutingKey(envelope, 'user', 'payload')
+      markV3QueryTerm(envelope, 'steVecSelector')
+      const plan = queryTermPlan(envelope, 'payload')
+      const params = createSqlParamRefMutator(plan)
+
+      await expect(
+        middleware.beforeExecute?.(plan, createCtx(), params),
+      ).rejects.toThrow(/steVecSelector must resolve to a bare string hash/)
     })
 
     it('groups a storage value and a query term on the same column into one SDK call, position-stable', async () => {

@@ -1,0 +1,32 @@
+[
+  {
+    "id": "cipherstash.upgrade-eql-v3-bundle-3.0.2",
+    "label": "Upgrade EQL v3 bundle to eql-3.0.2",
+    "operationClass": "data",
+    "invariantId": "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1",
+    "target": {
+      "id": "postgres"
+    },
+    "precheck": [],
+    "execute": [
+      {
+        "description": "Upgrade EQL v3 bundle to eql-3.0.2",
+        "sql": "-- EQL v3 install SQL is injected at runtime from @cipherstash/eql — see packages/prisma-next/src/migration/eql-bundle-v3.ts"
+      }
+    ],
+    "postcheck": [
+      {
+        "description": "verify eql_v3.version() reports 3.0.2",
+        "sql": "SELECT eql_v3.version() = '3.0.2'"
+      },
+      {
+        "description": "verify the typed JSON query domain exists",
+        "sql": "SELECT to_regtype('eql_v3.query_json') IS NOT NULL"
+      },
+      {
+        "description": "verify the typed text-match query domain exists",
+        "sql": "SELECT to_regtype('eql_v3.query_text_match') IS NOT NULL"
+      }
+    ]
+  }
+]

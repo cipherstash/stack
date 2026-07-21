@@ -4,6 +4,7 @@ import {
   CIPHERSTASH_SPACE_ID,
 } from '../../src/extension-metadata/constants'
 import {
+  CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_CODEC_ID_SET,
   CIPHERSTASH_V3_CODEC_IDS,
@@ -76,6 +77,12 @@ describe('constants-v3', () => {
     )
     expect(CIPHERSTASH_V3_INVARIANTS.installBundle).toBe(
       'cipherstash:install-eql-v3-bundle-v1',
+    )
+    expect(CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME).toBe(
+      '20260720T0000_upgrade_eql_v3_3_0_2',
+    )
+    expect(CIPHERSTASH_V3_INVARIANTS.upgradeBundle302).toBe(
+      'cipherstash:upgrade-eql-v3-bundle-3.0.2-v1',
     )
   })
 

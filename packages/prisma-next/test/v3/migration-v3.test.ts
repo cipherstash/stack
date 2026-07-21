@@ -5,9 +5,8 @@
  * The install SQL is NOT baked into `ops.json`: the committed op carries a
  * placeholder, and the descriptor (`control.ts`) injects `readInstallSql()`
  * from the installed `@cipherstash/eql` at build time. The package installs EQL
- * v3 only, so this is the sole migration: an invariant-only genesis edge
- * (`from: null`) — the v3 bundle creates `public.eql_v3_*` domains + `eql_v3.*`
- * functions but no contract-space storage, so `to` is the empty-storage hash.
+ * v3 only: the baseline is an invariant-only genesis edge (`from: null`), and
+ * a second invariant-only edge upgrades already-baselined databases to 3.0.2.
  */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -24,9 +23,16 @@ import v3Metadata from '../../migrations/20260601T0100_install_eql_v3_bundle/mig
 import v3Ops from '../../migrations/20260601T0100_install_eql_v3_bundle/ops.json' with {
   type: 'json',
 }
+import v3UpgradeMetadata from '../../migrations/20260720T0000_upgrade_eql_v3_3_0_2/migration.json' with {
+  type: 'json',
+}
+import v3UpgradeOps from '../../migrations/20260720T0000_upgrade_eql_v3_3_0_2/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import cipherstashDescriptor from '../../src/exports/control'
 import {
+  CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
@@ -72,7 +78,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(JSON.stringify(v3Ops).length).toBeLessThan(5_000)
     // @cipherstash/eql is pinned exact (matching @cipherstash/stack, which
     // encodes the v3 domain types against this same release).
-    expect(releaseManifest.eqlVersion).toBe('3.0.0')
+    expect(releaseManifest.eqlVersion).toBe('3.0.2')
   })
 
   it('injects readInstallSql() from @cipherstash/eql into the descriptor at build time', () => {
@@ -152,10 +158,36 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     ])
   })
 
-  it('pins the head ref at the genesis hash with the v3 invariant only', () => {
+  it('adds a distinct 3.0.2 upgrade edge for already-baselined databases', () => {
+    expect(CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME).toBe(
+      '20260720T0000_upgrade_eql_v3_3_0_2',
+    )
+    expect(v3UpgradeMetadata.from).toBe(v3Metadata.to)
+    expect(v3UpgradeMetadata.to).toBe(v3Metadata.to)
+    expect(v3UpgradeMetadata.providedInvariants).toEqual([
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
+    ])
+    expect(v3UpgradeOps).toHaveLength(1)
+    expect(v3UpgradeOps[0]?.execute[0]?.sql).toBe(RUNTIME_EQL_SQL_SENTINEL)
+
+    const runtimeUpgrade = cipherstashDescriptor.contractSpace?.migrations.find(
+      ({ dirName }) => dirName === CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
+    )
+    expect(runtimeUpgrade).toBeDefined()
+    expect(runtimeUpgrade?.metadata.migrationHash).not.toBe(
+      v3UpgradeMetadata.migrationHash,
+    )
+    const runtimeOp = runtimeUpgrade?.ops[0] as
+      | { readonly execute?: ReadonlyArray<{ readonly sql: string }> }
+      | undefined
+    expect(runtimeOp?.execute?.[0]?.sql).toBe(readInstallSql())
+  })
+
+  it('pins the head ref at the unchanged hash with all invariants', () => {
     expect(headRef.hash).toBe(v3Metadata.to)
     expect(headRef.invariants).toEqual([
       CIPHERSTASH_V3_INVARIANTS.installBundle,
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
     ])
   })
 })

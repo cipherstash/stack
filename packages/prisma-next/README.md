@@ -85,13 +85,13 @@ await decryptAll(rows)
 console.log(await rows[0]?.email.decrypt())
 ```
 
-See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the complete encrypted column reference, all 17 query operators, the override surface, security model, and known limitations.
+See the [full documentation](https://cipherstash.com/docs/stack/cipherstash/encryption/prisma-next) for the complete encrypted column reference, all 23 query operators (including encrypted JSONPath comparisons), the override surface, security model, and known limitations.
 
 ## Subpath exports
 
 | Subpath          | Purpose                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------ |
-| `./v3`           | The complete EQL v3 surface: `cipherstashFromStack`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, envelopes, `bulkEncryptMiddlewareV3`, SDK adapter |
+| `./v3`           | The complete EQL v3 surface: `cipherstashFromStack`, the `eql*` query operations, `eqlAsc`/`eqlDesc`, `eqlJsonPathAsc`/`eqlJsonPathDesc`, envelopes, `bulkEncryptMiddlewareV3`, SDK adapter |
 | `./stack`        | One-call setup against `@cipherstash/stack`: `cipherstashFromStack`, `deriveStackSchemasV3`, `createCipherstashV3Sdk` |
 | `./control`      | `SqlControlExtensionDescriptor` (contract space + pack meta + v3 codec lifecycle hooks)                |
 | `./runtime`      | Envelope classes + `CipherstashSdk` + v3 codec runtime + `decryptAll` + `bulkEncryptMiddlewareV3`      |

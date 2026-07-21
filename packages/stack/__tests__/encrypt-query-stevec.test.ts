@@ -1,332 +1,139 @@
 import 'dotenv/config'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
+import { expectFailure, unwrapResult } from './fixtures'
 
 type EncryptionClient = Awaited<ReturnType<typeof Encryption>>
 
-import { expectFailure, jsonbSchema, metadata, unwrapResult } from './fixtures'
-
-describe('encryptQuery with steVecSelector', () => {
-  let protectClient: EncryptionClient
-
-  beforeAll(async () => {
-    protectClient = await Encryption({ schemas: [jsonbSchema, metadata] })
-  })
-
-  it('encrypts a JSONPath selector', async () => {
-    const result = await protectClient.encryptQuery('$.user.email', {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      queryType: 'steVecSelector',
-    })
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
-  }, 30000)
-
-  it('encrypts nested path selector', async () => {
-    const result = await protectClient.encryptQuery('$.user.profile.settings', {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      queryType: 'steVecSelector',
-    })
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
-  }, 30000)
-
-  it('fails for non-string plaintext with steVecSelector (object)', async () => {
-    const result = await protectClient.encryptQuery(
-      { role: 'admin' },
-      {
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'steVecSelector',
-      },
-    )
-
-    expectFailure(result)
-  }, 30000)
+const documents = encryptedTable('documents', {
+  metadata: types.Json('metadata'),
 })
+const plain = encryptedTable('plain', { raw: types.Text('raw') })
 
-describe('encryptQuery with steVecTerm', () => {
-  let protectClient: EncryptionClient
+function expectSelector(value: unknown): asserts value is string {
+  expect(typeof value).toBe('string')
+  expect((value as string).length).toBeGreaterThan(0)
+}
+
+function expectQueryJson(value: unknown): void {
+  expect(value).toMatchObject({ sv: expect.any(Array) })
+  expect(JSON.stringify(value)).not.toContain('"c"')
+}
+
+function expectOrderingTerm(value: unknown): void {
+  expect(value).toMatchObject({ v: 3, op: expect.any(String) })
+  expect(value).not.toHaveProperty('c')
+}
+
+describe('encryptQuery with protect-ffi 0.30 SteVec operations', () => {
+  let client: EncryptionClient
 
   beforeAll(async () => {
-    protectClient = await Encryption({ schemas: [jsonbSchema, metadata] })
+    client = await Encryption({ schemas: [documents, plain] })
   })
 
-  it('encrypts an object for containment query', async () => {
-    const result = await protectClient.encryptQuery(
-      { role: 'admin' },
-      {
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'steVecTerm',
-      },
-    )
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
+  it('returns a bare selector hash for a JSONPath', async () => {
+    const result = await client.encryptQuery('$.user.email', {
+      column: documents.metadata,
+      table: documents,
+      queryType: 'steVecSelector',
     })
+    expectSelector(unwrapResult(result))
   }, 30000)
 
-  it('encrypts nested object for containment', async () => {
-    const result = await protectClient.encryptQuery(
-      { user: { profile: { role: 'admin' } } },
+  it('returns an exact value-selector containment needle', async () => {
+    const result = await client.encryptQuery(
+      { path: '$.user.age', value: 42 },
       {
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'steVecTerm',
+        column: documents.metadata,
+        table: documents,
+        queryType: 'steVecValueSelector',
       },
     )
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
+    expectQueryJson(unwrapResult(result))
   }, 30000)
 
-  it('encrypts array for containment query', async () => {
-    const result = await protectClient.encryptQuery([1, 2, 3], {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
+  it.each([
+    'zoe',
+    42,
+  ])('returns a ciphertext-free selector ordering term for %j', async (value) => {
+    const result = await client.encryptQuery(value, {
+      column: documents.metadata,
+      table: documents,
       queryType: 'steVecTerm',
     })
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
+    expectOrderingTerm(unwrapResult(result))
   }, 30000)
 
-  it('rejects string plaintext with steVecTerm', async () => {
-    // steVecTerm requires object or array, not string
-    // For path queries like '$.field', use steVecSelector instead
-    const result = await protectClient.encryptQuery('search text', {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      queryType: 'steVecTerm',
+  it.each([
+    { role: 'admin' },
+    ['admin', 'user'],
+  ])('uses default structural containment for %j', async (value) => {
+    const result = await client.encryptQuery(value, {
+      column: documents.metadata,
+      table: documents,
+      queryType: 'searchableJson',
     })
-
-    expectFailure(result, /expected JSON object or array/)
-  }, 30000)
-})
-
-describe('encryptQuery STE Vec validation', () => {
-  let protectClient: EncryptionClient
-
-  beforeAll(async () => {
-    protectClient = await Encryption({ schemas: [jsonbSchema, metadata] })
-  })
-
-  it('throws when steVecSelector used on non-ste_vec column', async () => {
-    const result = await protectClient.encryptQuery('$.user.email', {
-      column: metadata.raw, // raw column has no ste_vec index
-      table: metadata,
-      queryType: 'steVecSelector',
-    })
-
-    expectFailure(result)
+    expectQueryJson(unwrapResult(result))
   }, 30000)
 
-  it('throws when steVecTerm used on non-ste_vec column', async () => {
-    const result = await protectClient.encryptQuery(
-      { field: 'value' },
+  it('infers selector versus containment when queryType is omitted', async () => {
+    const selector = await client.encryptQuery('$.user.email', {
+      column: documents.metadata,
+      table: documents,
+    })
+    const containment = await client.encryptQuery(
+      { role: 'admin' },
       {
-        column: metadata.raw, // raw column has no ste_vec index
-        table: metadata,
-        queryType: 'steVecTerm',
+        column: documents.metadata,
+        table: documents,
       },
     )
-
-    expectFailure(result)
+    expectSelector(unwrapResult(selector))
+    expectQueryJson(unwrapResult(containment))
   }, 30000)
-})
 
-describe('encryptQuery batch with STE Vec', () => {
-  let protectClient: EncryptionClient
-
-  beforeAll(async () => {
-    protectClient = await Encryption({ schemas: [jsonbSchema, metadata] })
-  })
-
-  it('handles mixed query types in batch (steVecSelector + steVecTerm)', async () => {
-    const result = await protectClient.encryptQuery([
+  it('supports every SteVec query shape in one batch', async () => {
+    const result = await client.encryptQuery([
       {
         value: '$.user.email',
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
+        column: documents.metadata,
+        table: documents,
         queryType: 'steVecSelector',
+      },
+      {
+        value: { path: '$.user.age', value: 42 },
+        column: documents.metadata,
+        table: documents,
+        queryType: 'steVecValueSelector',
+      },
+      {
+        value: 42,
+        column: documents.metadata,
+        table: documents,
+        queryType: 'steVecTerm',
       },
       {
         value: { role: 'admin' },
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'steVecTerm',
+        column: documents.metadata,
+        table: documents,
+        queryType: 'searchableJson',
       },
     ])
-
     const data = unwrapResult(result)
-
-    expect(data).toHaveLength(2)
-    expect(data[0]).toMatchObject({ i: { t: 'documents', c: 'metadata' } })
-    expect(data[1]).toMatchObject({ i: { t: 'documents', c: 'metadata' } })
+    expectSelector(data[0])
+    expectQueryJson(data[1])
+    expectOrderingTerm(data[2])
+    expectQueryJson(data[3])
   }, 30000)
 
-  it('handles multiple steVecSelector queries in batch', async () => {
-    const result = await protectClient.encryptQuery([
-      {
-        value: '$.user.email',
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'steVecSelector',
-      },
-      {
-        value: '$.settings.theme',
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        queryType: 'steVecSelector',
-      },
-    ])
-
-    const data = unwrapResult(result)
-
-    expect(data).toHaveLength(2)
-    expect(data[0]).toMatchObject({ i: { t: 'documents', c: 'metadata' } })
-    expect(data[1]).toMatchObject({ i: { t: 'documents', c: 'metadata' } })
-  }, 30000)
-})
-
-describe('encryptQuery with queryType inference', () => {
-  let protectClient: EncryptionClient
-
-  beforeAll(async () => {
-    protectClient = await Encryption({ schemas: [jsonbSchema] })
-  })
-
-  it('infers steVecSelector for string plaintext without queryType', async () => {
-    const result = await protectClient.encryptQuery('$.user.email', {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      // No queryType - should infer steVecSelector from string
+  it('rejects SteVec query operations on a non-SteVec column', async () => {
+    const result = await client.encryptQuery('$.user.email', {
+      column: plain.raw,
+      table: plain,
+      queryType: 'steVecSelector',
     })
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
-  }, 30000)
-
-  it('infers steVecTerm for object plaintext without queryType', async () => {
-    const result = await protectClient.encryptQuery(
-      { role: 'admin' },
-      {
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        // No queryType - should infer steVecTerm from object
-      },
-    )
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
-  }, 30000)
-
-  it('infers steVecTerm for array plaintext without queryType', async () => {
-    const result = await protectClient.encryptQuery(['admin', 'user'], {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      // No queryType - should infer steVecTerm from array
-    })
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
-  }, 30000)
-
-  it('infers steVecTerm for number plaintext but FFI requires wrapping', async () => {
-    // Numbers infer steVecTerm but FFI requires wrapping in object/array
-    const result = await protectClient.encryptQuery(42, {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      // No queryType - infers steVecTerm, FFI rejects with helpful message
-    })
-
-    expectFailure(result, /Wrap the number in a JSON object/)
-  }, 30000)
-
-  it('infers steVecTerm for boolean plaintext but FFI requires wrapping', async () => {
-    // Booleans infer steVecTerm but FFI requires wrapping in object/array
-    const result = await protectClient.encryptQuery(true, {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      // No queryType - infers steVecTerm, FFI rejects with helpful message
-    })
-
-    expectFailure(result, /Wrap the boolean in a JSON object/)
-  }, 30000)
-
-  it('uses explicit queryType over plaintext inference', async () => {
-    // String plaintext would normally infer steVecSelector, but explicit steVecTerm should be used
-    // Note: steVecTerm with string fails FFI validation, so we test the opposite direction
-    // Using a number (which would infer steVecTerm) with explicit steVecSelector would also fail
-    // So we verify with array + steVecTerm (already tested) and trust unit test coverage for precedence
-    const result = await protectClient.encryptQuery([42], {
-      column: jsonbSchema.metadata,
-      table: jsonbSchema,
-      queryType: 'steVecTerm', // Explicit - matches inference but proves explicit path works
-    })
-
-    const data = unwrapResult(result)
-    expect(data).toBeDefined()
-    expect(data).toMatchObject({
-      i: { t: 'documents', c: 'metadata' },
-    })
-  }, 30000)
-})
-
-describe('encryptQuery batch with queryType inference', () => {
-  let protectClient: EncryptionClient
-
-  beforeAll(async () => {
-    protectClient = await Encryption({ schemas: [jsonbSchema] })
-  })
-
-  it('infers queryOp for each term independently in batch', async () => {
-    const results = await protectClient.encryptQuery([
-      {
-        value: '$.user.email', // string → steVecSelector
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        // No queryType
-      },
-      {
-        value: { role: 'admin' }, // object → steVecTerm
-        column: jsonbSchema.metadata,
-        table: jsonbSchema,
-        // No queryType
-      },
-    ])
-
-    const data = unwrapResult(results)
-    expect(data).toHaveLength(2)
-    expect(data[0]).toBeDefined()
-    expect(data[1]).toBeDefined()
+    expectFailure(result, /not configured/)
   }, 30000)
 })

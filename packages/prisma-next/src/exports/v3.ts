@@ -60,6 +60,8 @@ export {
   cipherstashV3QueryOperations,
   eqlAsc,
   eqlDesc,
+  eqlJsonPathAsc,
+  eqlJsonPathDesc,
 } from '../v3/operators-v3'
 // The query-term seam (consumed by custom CipherstashSdk implementations).
 export {

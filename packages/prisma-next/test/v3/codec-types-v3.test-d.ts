@@ -110,10 +110,10 @@ describe('v3 CodecTypes entries', () => {
 
   it('json carries ONLY the v3-searchable-json marker (v2 jsonb-path methods must not surface)', () => {
     expectTypeOf<
-      CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['traits']
+      CodecTypes['cipherstash/eql-v3/eql_v3_json_search@1']['traits']
     >().toEqualTypeOf<'cipherstash:v3-searchable-json'>()
     expectTypeOf<
-      CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['output']
+      CodecTypes['cipherstash/eql-v3/eql_v3_json_search@1']['output']
     >().toEqualTypeOf<EncryptedJson>()
   })
 

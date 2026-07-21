@@ -1,9 +1,4 @@
 import { type Result, withResult } from '@byteslice/result'
-import type {
-  Encrypted as CipherStashEncrypted,
-  EncryptedQuery as CipherStashEncryptedQuery,
-  EncryptedV3Query as CipherStashEncryptedV3Query,
-} from '@cipherstash/protect-ffi'
 import {
   encryptQueryBulk as ffiEncryptQueryBulk,
   type JsPlaintext,
@@ -21,6 +16,7 @@ import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
+  assertMatchNeedleQueryable,
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '../helpers/validation'
@@ -61,6 +57,7 @@ function buildQueryPayload(
 
   // Validate value/index compatibility
   assertValueIndexCompatibility(term.value, indexType, term.column.getName())
+  assertMatchNeedleQueryable(term.value, indexType, term.column)
 
   const payload: QueryPayload = {
     plaintext: term.value as JsPlaintext,
@@ -83,17 +80,15 @@ function buildQueryPayload(
  */
 function assembleResults(
   totalLength: number,
-  // Typed as the FFI bulk-query return so it tracks the upstream union. As of
-  // protect-ffi 0.27 that union also includes `SteVecQuery`, but scalar query
-  // terms (all this operation builds) never produce a ste_vec result, so each
-  // element is narrowed back to the scalar shape `formatEncryptedResult` takes.
+  // Typed as the FFI bulk-query return so it tracks scalar, SteVec containment,
+  // selector-hash, value-selector, and selector-ordering query shapes.
   encryptedValues: Awaited<ReturnType<typeof ffiEncryptQueryBulk>>,
   nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[],
 ): EncryptedQueryResult[] {
   const results: EncryptedQueryResult[] = new Array(totalLength).fill(null)
   nonNullTerms.forEach(({ term, originalIndex }, i) => {
     results[originalIndex] = formatEncryptedResult(
-      encryptedValues[i] as CipherStashEncrypted | CipherStashEncryptedQuery,
+      encryptedValues[i],
       term.returnType,
     )
   })

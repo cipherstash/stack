@@ -25,7 +25,7 @@ const events = encryptedTable('events', {
 
 const EVENTS_ALL_COLUMNS = ['id', 'payload', 'name', 'note']
 
-function makeBuilder(resultData: unknown = []) {
+function makeBuilder(resultData: unknown = [], queryDomainsRequired = false) {
   const supabase = createMockSupabase(resultData)
   const encryptionClient = createMockEncryptionClient()
   const builder = new EncryptedQueryBuilderV3Impl(
@@ -34,9 +34,53 @@ function makeBuilder(resultData: unknown = []) {
     encryptionClient as never,
     supabase.client as never,
     EVENTS_ALL_COLUMNS,
+    queryDomainsRequired,
   )
   return { supabase, builder }
 }
+
+describe('EQL 3.0.2 PostgREST boundary', () => {
+  it('rejects encrypted operators whose typed query-domain cast is unreachable', () => {
+    const { builder } = makeBuilder([], true)
+
+    expect(() => builder.matches('name', 'alice')).toThrow(
+      /EQL 3\.0\.2\+.*query_\* cast.*PostgREST/s,
+    )
+    expect(() => builder.contains('payload', { role: 'admin' })).toThrow(
+      /EQL 3\.0\.2\+/,
+    )
+    expect(() => builder.selectorEq('payload', '$.role', 'admin')).toThrow(
+      /EQL 3\.0\.2\+/,
+    )
+    expect(() => builder.selectorNe('payload', '$.role', 'admin')).toThrow(
+      /EQL 3\.0\.2\+/,
+    )
+  })
+
+  it('rejects every inherited raw filter path before encryption', async () => {
+    const cases = [
+      makeBuilder([], true)
+        .builder.select('id')
+        .filter('payload', 'cs', { role: 'admin' }),
+      makeBuilder([], true)
+        .builder.select('id')
+        .not('payload', 'contains', { role: 'admin' }),
+      makeBuilder([], true)
+        .builder.select('id')
+        .not('name', 'matches', 'alice'),
+      makeBuilder([], true)
+        .builder.select('id')
+        .or([{ column: 'payload', op: 'contains', value: { role: 'admin' } }]),
+      makeBuilder([], true).builder.select('id').or('name.cs.alice'),
+    ]
+
+    for (const query of cases) {
+      const { error, status } = await query
+      expect(status).toBe(500)
+      expect(error?.message).toMatch(/EQL 3\.0\.2\+.*PostgREST/s)
+    }
+  })
+})
 
 /** The recorded wire call for a column's containment filter, parsed. */
 function containsCall(

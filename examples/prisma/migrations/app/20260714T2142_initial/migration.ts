@@ -10,7 +10,7 @@ export default class M extends Migration {
   override describe() {
     return {
       from: null,
-      to: 'sha256:deb36a1ab7e51717f5ca822a32ff09a18cf3a0aaf1189262852c8953adba1720',
+      to: 'sha256:32984f82d1b089087df107ff4b86310b8640e04f67eb7f6ebf5601694338b8f2',
     }
   }
 
@@ -65,10 +65,10 @@ export default class M extends Migration {
             notNull: true,
             codecRef: { codecId: 'pg/text@1' },
           }),
-          col('preferences', 'eql_v3_json', {
+          col('preferences', 'eql_v3_json_search', {
             notNull: true,
             codecRef: {
-              codecId: 'cipherstash/eql-v3/eql_v3_json@1',
+              codecId: 'cipherstash/eql-v3/eql_v3_json_search@1',
               typeParams: {
                 capabilities: { searchableJson: true },
                 castAs: 'json',

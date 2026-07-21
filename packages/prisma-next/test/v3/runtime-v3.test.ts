@@ -84,6 +84,8 @@ describe('createCipherstashV3RuntimeDescriptor — descriptor shape', () => {
     )
     expect(methods).toContain('eqlEq')
     expect(methods).toContain('eqlJsonContains')
+    expect(methods).toContain('eqlJsonPathEq')
+    expect(methods).toContain('eqlJsonPathGt')
   })
 
   it('create() returns a target-bound SQL/Postgres instance', () => {

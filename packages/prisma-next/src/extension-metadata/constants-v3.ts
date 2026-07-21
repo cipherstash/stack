@@ -99,7 +99,7 @@ export const CIPHERSTASH_V3_CODEC_IDS = [
   'cipherstash/eql-v3/eql_v3_double_eq@1',
   'cipherstash/eql-v3/eql_v3_double_ord_ore@1',
   'cipherstash/eql-v3/eql_v3_double_ord@1',
-  'cipherstash/eql-v3/eql_v3_json@1',
+  'cipherstash/eql-v3/eql_v3_json_search@1',
 ] as const satisfies readonly CipherstashV3CodecId[]
 
 // Bidirectional drift guard — the direction `satisfies` cannot catch. If the
@@ -139,8 +139,12 @@ export function v3TraitsForCapabilities(
 export const CIPHERSTASH_V3_BASELINE_MIGRATION_NAME =
   '20260601T0100_install_eql_v3_bundle'
 
+export const CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME =
+  '20260720T0000_upgrade_eql_v3_3_0_2'
+
 export const CIPHERSTASH_V3_INVARIANTS = {
   installBundle: 'cipherstash:install-eql-v3-bundle-v1',
+  upgradeBundle302: 'cipherstash:upgrade-eql-v3-bundle-3.0.2-v1',
 } as const
 
 // v3's OWN extension identity (decision 1b) — DISTINCT from the v2

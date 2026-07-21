@@ -1,10 +1,10 @@
 /**
- * End-to-end round-trip for the `eql_v3_json` domain against live
+ * End-to-end round-trip for the `eql_v3_json_search` domain against live
  * Postgres + EQL v3 + ZeroKMS.
  *
  * v3 searchable JSON is containment-only: the ste_vec index answers
  * encrypted jsonb `@>` via `eqlJsonContains`, with the operand
- * minted as a ciphertext-free `eql_v3.query_jsonb` term. The v2
+ * minted as a ciphertext-free `eql_v3.query_json` term. The v2
  * `cipherstashJsonbPathQueryFirst` / `cipherstashJsonbGet` /
  * `cipherstashJsonbPathExists` helpers do not exist in v3 (and with
  * them goes the v2 suite's "selector hashing" known-limitation skip —
@@ -74,7 +74,7 @@ function seedRow(s: (typeof SEED)[number]) {
   }
 }
 
-describe('EncryptedJson (eql_v3_json) e2e (live PG + EQL v3 + ZeroKMS)', () => {
+describe('EncryptedJson (eql_v3_json_search) e2e (live PG + EQL v3 + ZeroKMS)', () => {
   beforeAll(async () => {
     await ensureConnected()
     await truncateUsers()

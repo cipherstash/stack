@@ -152,8 +152,8 @@ describe('PSL interpretation: v3 argument-less constructors (static typeParams)'
       asStorage(result.value.storage).tables['user']?.columns['payload'],
     ).toEqual(
       expect.objectContaining({
-        codecId: 'cipherstash/eql-v3/eql_v3_json@1',
-        nativeType: 'public.eql_v3_json',
+        codecId: 'cipherstash/eql-v3/eql_v3_json_search@1',
+        nativeType: 'public.eql_v3_json_search',
         typeParams: {
           castAs: 'json',
           capabilities: {

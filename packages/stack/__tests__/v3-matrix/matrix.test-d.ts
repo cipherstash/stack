@@ -32,7 +32,7 @@ const records = encryptedTable('records', {
   active: V3_MATRIX['public.eql_v3_boolean'].builder('active'), // boolean, storage-only
   // Pinned so core's OWN suite guards the `searchableJson` arm rather than
   // leaving it to a downstream adapter's typecheck (#650).
-  payload: V3_MATRIX['public.eql_v3_json'].builder('payload'), // JsonDocument, containment/selector only
+  payload: V3_MATRIX['public.eql_v3_json_search'].builder('payload'), // JsonDocument, containment/selector only
 })
 
 describe('eql_v3 type-driven matrix (types)', () => {

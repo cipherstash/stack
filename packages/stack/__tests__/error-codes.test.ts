@@ -23,7 +23,6 @@ describe('FFI Error Code Preservation', () => {
     email: encryptedColumn('email').equality(),
     bio: encryptedColumn('bio').freeTextSearch(),
     age: encryptedColumn('age').dataType('number').orderAndRange(),
-    metadata: encryptedColumn('metadata').searchableJson(),
   })
 
   // Schema without indexes for testing non-FFI validation

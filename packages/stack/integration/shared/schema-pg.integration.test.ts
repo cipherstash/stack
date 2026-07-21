@@ -180,7 +180,7 @@ describe('eql_v3 text_search postgres integration', () => {
     await expect(decryptRow(rows[0])).resolves.toBe('grace@example.com')
   }, 30000)
 
-  it('queries free-text with eql_v3.contains and a full operand', async () => {
+  it('queries free-text with eql_v3.matches and a full operand', async () => {
     await seedRows()
     const operand = await encryptOperand('example.com', {
       table,
@@ -191,7 +191,7 @@ describe('eql_v3 text_search postgres integration', () => {
       SELECT id, email::jsonb AS email, label
       FROM protect_ci_v3_text_search
       WHERE test_run_id = ${TEST_RUN_ID}
-        AND eql_v3.contains(email, ${sql.json(operand)}::jsonb)
+        AND eql_v3.matches(email, ${sql.json(operand)}::jsonb)
       ORDER BY label
     `
 

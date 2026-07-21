@@ -176,7 +176,7 @@ export type V3EncryptedFreeTextKeys<
 
 /**
  * JS property names of a v3 table's columns that carry NO `searchableJson`
- * capability — i.e. every domain but `public.eql_v3_json`. Mirror of
+ * capability — i.e. every domain but `public.eql_v3_json_search`. Mirror of
  * {@link NonFreeTextSearchV3Keys} for the encrypted-JSON capability.
  */
 type NonSearchableJsonV3Keys<Table extends AnyV3Table> = {
@@ -191,7 +191,7 @@ type NonSearchableJsonV3Keys<Table extends AnyV3Table> = {
 /**
  * Row keys the encrypted-JSON query methods accept (`contains()` on an
  * encrypted column, `selectorEq()`, `selectorNe()`): ONLY the table's ENCRYPTED
- * columns whose domain is `public.eql_v3_json` (`types.Json`). Plaintext
+ * columns whose domain is `public.eql_v3_json_search` (`types.Json`). Plaintext
  * columns are excluded — on those, `contains()` is PostgREST-native containment
  * and the selector methods do not apply. Mirror of
  * {@link V3EncryptedFreeTextKeys} for the `searchableJson` capability.
@@ -336,9 +336,8 @@ export interface EncryptedQueryBuilderV3<
     // still admits none.
     V3PlaintextKeys<Table, Row> & StringKeyOf<Row>
   > {
-  /** Encrypted free-text token match. Encrypted match/search columns only —
-   * plaintext columns are a compile error (use {@link contains}). The operand is
-   * the string to tokenize into a bloom-filter query term. */
+  /** Encrypted free-text token match on legacy EQL versions. EQL 3.0.2+
+   * requires a query-domain cast PostgREST cannot express, so this fails fast. */
   matches<K extends V3EncryptedFreeTextKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     value: string,
@@ -350,47 +349,28 @@ export interface EncryptedQueryBuilderV3<
     column: K,
     value: PlaintextContainsValue<Row[K]>,
   ): EncryptedQueryBuilderV3<Table, Row>
-  /** ENCRYPTED (exact) JSON containment on a `types.Json` column: the
-   * sub-document operand is storage-encrypted against the column and compared
-   * via the encrypted ste_vec `@>`. Every leaf of the operand must match at its
-   * path. Note the operand's ciphertext appears in the request's filter string
-   * (the same tradeoff as every v3 filter operand — see the class doc). */
+  /** Encrypted JSON containment on legacy EQL versions. EQL 3.0.2+ requires an
+   * `eql_v3.query_json` cast PostgREST cannot express, so this fails fast before
+   * encrypting an operand into the request URL. */
   contains<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     value: EncryptedJsonContainsValue,
   ): EncryptedQueryBuilderV3<Table, Row>
-  /** Encrypted JSONPath-selector equality on a `types.Json` column:
-   * `selectorEq('doc', '$.user.role', 'admin')` matches rows whose document
-   * carries that value at that path, compiled to encrypted containment of the
-   * reconstructed `{user: {role: 'admin'}}` needle. ARRAY-LEAF CAVEAT (pinned
-   * by the live integration suite): an ARRAY at the path does NOT match a
-   * scalar needle — ste_vec encodes array elements under their own selectors —
-   * so `{a:[40,30]}` is NOT matched by `selectorEq('$.a', 30)`; to match an
-   * array-valued path, pass the full array through `contains()`. Paths are
-   * dot-notation object keys (`'$.a.b'`); array/wildcard steps are
-   * rejected. */
+  /** Encrypted JSONPath equality on legacy EQL versions. EQL 3.0.2+ fails fast
+   * because PostgREST cannot express the required query-domain cast. */
   selectorEq<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
   ): EncryptedQueryBuilderV3<Table, Row>
-  /** Encrypted JSONPath-selector inequality. Matches rows whose document does
-   * NOT carry `value` at `path` — INCLUDING rows where the path is absent and
-   * rows whose document column is SQL NULL (compiled to
-   * `payload IS NULL OR NOT contains`, matching the Drizzle selector's `ne`
-   * semantics for both absence cases). The array-leaf caveat on
-   * {@link selectorEq} carries over: an ARRAY at `path` is never equal to a
-   * scalar needle, so such rows are INCLUDED here. Selector ordering
-   * (`gt`/`lt`/…) is not yet expressible over PostgREST — see
-   * cipherstash/encrypt-query-language#407. */
+  /** Encrypted JSONPath inequality on legacy EQL versions. EQL 3.0.2+ fails
+   * fast because PostgREST cannot express the required query-domain cast. */
   selectorNe<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
   ): EncryptedQueryBuilderV3<Table, Row>
-  /** Raw containment spelling on an encrypted `types.Json` column — the ONLY
-   * `filter()` form a JSON column supports (scalar operators have no terms to
-   * compare; they are compile-excluded via {@link V3FilterableKeys}). */
+  /** Raw legacy containment spelling. EQL 3.0.2+ rejects this before sending. */
   filter<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     operator: 'cs',
@@ -401,9 +381,8 @@ export interface EncryptedQueryBuilderV3<
     operator: string,
     value: Row[K],
   ): EncryptedQueryBuilderV3<Table, Row>
-  /** Negated exact containment on an encrypted `types.Json` column (PostgREST
-   * `not.cs`). Note the bare form EXCLUDES rows whose document column is SQL
-   * NULL (three-valued logic) — {@link selectorNe} adds the IS NULL arm. */
+  /** Negated legacy containment spelling. EQL 3.0.2+ rejects this before
+   * sending. */
   not<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     operator: 'contains',
@@ -442,21 +421,19 @@ export interface EncryptedQueryBuilderV3Untyped<
     column: K,
     value: string,
   ): EncryptedQueryBuilderV3Untyped<Row>
-  /** Native jsonb/array containment on a plaintext column (PostgREST `cs`),
-   * or ENCRYPTED ste_vec containment on an encrypted `types.Json` column — the
-   * runtime resolves the column kind and picks the encoding. */
+  /** Native jsonb/array containment on plaintext columns. Encrypted JSON
+   * containment fails fast on EQL 3.0.2+. */
   contains<K extends StringKeyOf<Row>>(
     column: K,
     value: NativeContainsValue,
   ): EncryptedQueryBuilderV3Untyped<Row>
-  /** Encrypted JSONPath-selector equality on an encrypted `types.Json` column
-   * (runtime-guarded on the untyped surface). */
+  /** Legacy encrypted JSONPath equality; fails fast on EQL 3.0.2+. */
   selectorEq<K extends StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
   ): EncryptedQueryBuilderV3Untyped<Row>
-  /** Encrypted JSONPath-selector inequality (includes absent-path rows). */
+  /** Legacy encrypted JSONPath inequality; fails fast on EQL 3.0.2+. */
   selectorNe<K extends StringKeyOf<Row>>(
     column: K,
     path: string,

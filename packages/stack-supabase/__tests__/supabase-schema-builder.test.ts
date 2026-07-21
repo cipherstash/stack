@@ -213,7 +213,7 @@ describe('groupUnmodelledRows', () => {
         {
           table_name: 'audit',
           column_name: 'payload',
-          domain_name: 'eql_v3_json',
+          domain_name: 'eql_v3_json_search',
         },
         {
           table_name: 'metrics',
@@ -230,7 +230,10 @@ describe('groupUnmodelledRows', () => {
             { columnName: 'bucket', domainName: 'eql_v3_text_ord_ope' },
           ],
         ],
-        ['audit', [{ columnName: 'payload', domainName: 'eql_v3_json' }]],
+        [
+          'audit',
+          [{ columnName: 'payload', domainName: 'eql_v3_json_search' }],
+        ],
       ]),
     )
   })

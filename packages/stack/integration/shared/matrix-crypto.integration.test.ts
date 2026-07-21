@@ -89,7 +89,7 @@ describe('v3 matrix live round-trip (all domains × samples)', () => {
   )('%s round-trips through the model path', (_label, col, sample, i) => {
     // Guard against a false pass: the field must be a real ciphertext, not a
     // plaintext value that slipped through un-encrypted. Scalar domains carry it
-    // at a top-level `c`; a JSON (`eql_v3_json`) document is an ste_vec payload
+    // at a top-level `c`; a JSON (`eql_v3_json_search`) document is an ste_vec payload
     // (`{ k: 'sv', sv: [...] }`) with NO top-level `c`, so it is guarded by the
     // presence of its `sv` array instead.
     const payload = encrypted[i][col] as { k?: unknown; sv?: unknown }

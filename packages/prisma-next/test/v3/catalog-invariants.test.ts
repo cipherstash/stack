@@ -13,17 +13,19 @@ describe('FFI catalog invariants (non-structural — pinned)', () => {
 
   it('exposes json as a first-class searchable-JSON domain (ste_vec, no scalar caps)', () => {
     expect(bareDomains.filter((d) => d.includes('json'))).toEqual([
-      'eql_v3_json',
+      'eql_v3_json_search',
     ])
     const json = V3_DOMAIN_META_BY_CODEC_ID.get(
-      'cipherstash/eql-v3/eql_v3_json@1',
+      'cipherstash/eql-v3/eql_v3_json_search@1',
     )
-    expect(json?.nativeType).toBe('public.eql_v3_json')
+    expect(json?.nativeType).toBe('public.eql_v3_json_search')
     expect(json?.capabilities.searchableJson).toBe(true)
     expect(json?.capabilities.equality).toBe(false)
     expect(Object.keys(json?.indexes ?? {})).toEqual(['ste_vec'])
     expect(
-      EXPOSED_DOMAIN_ENTRIES.some(([, m]) => m.bareDomain === 'eql_v3_json'),
+      EXPOSED_DOMAIN_ENTRIES.some(
+        ([, m]) => m.bareDomain === 'eql_v3_json_search',
+      ),
     ).toBe(true)
   })
 

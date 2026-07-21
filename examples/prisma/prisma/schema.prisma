@@ -23,7 +23,7 @@
 //                     STORAGE-ONLY: no search operators at all — every
 //                     eql* predicate throws
 //                     EncryptionOperatorError on this column.
-//   - preferences   (EncryptedJson → eql_v3_json)
+//   - preferences   (EncryptedJson → eql_v3_json_search)
 //                     searchable JSON: eqlJsonContains
 //                     (encrypted jsonb `@>` containment).
 //

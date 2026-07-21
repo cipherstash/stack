@@ -72,7 +72,7 @@ export const BOOLEAN = toV3CodecId('eql_v3_boolean')
 export const BIGINT_STORAGE = toV3CodecId('eql_v3_bigint')
 export const BIGINT_EQ = toV3CodecId('eql_v3_bigint_eq')
 export const BIGINT_ORD = toV3CodecId('eql_v3_bigint_ord')
-export const JSON_CODEC = toV3CodecId('eql_v3_json')
+export const JSON_CODEC = toV3CodecId('eql_v3_json_search')
 
 const PG_TEXT = 'pg/text@1'
 

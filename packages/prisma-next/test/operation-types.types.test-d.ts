@@ -97,7 +97,10 @@ type _v3_gt_ord_pos = Expect<
   M3<'eqlGt', 'cipherstash/eql-v3/eql_v3_double_ord@1'>
 >
 type _v3_jsoncontains_json_pos = Expect<
-  M3<'eqlJsonContains', 'cipherstash/eql-v3/eql_v3_json@1'>
+  M3<'eqlJsonContains', 'cipherstash/eql-v3/eql_v3_json_search@1'>
+>
+type _v3_jsonpath_json_pos = Expect<
+  M3<'eqlJsonPathGt', 'cipherstash/eql-v3/eql_v3_json_search@1'>
 >
 
 // v3 negatives: capability tiers gate visibility.
@@ -132,6 +135,7 @@ export type _Anchors = [
   _v3_match_textmatch_pos,
   _v3_gt_ord_pos,
   _v3_jsoncontains_json_pos,
+  _v3_jsonpath_json_pos,
   _v3_eq_boolean_neg,
   _v3_eq_text_storage_neg,
   _v3_match_texteq_neg,

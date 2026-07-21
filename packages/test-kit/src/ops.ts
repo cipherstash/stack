@@ -58,8 +58,8 @@ const OPS_BY_CAPABILITY = {
   orderAndRange: ['gt', 'gte', 'lt', 'lte', 'between', 'notBetween', 'order'],
   freeTextSearch: ['matches'],
   // json domains are `deferred` from this driver (ste_vec doesn't fit the scalar
-  // oracle) and covered by a dedicated suite (`json-contains`, which calls the
-  // adapter's exact `contains()` directly), so this entry only satisfies the
+  // oracle) and covered by the shared adapter JSON suite, which calls each
+  // adapter's exact containment and selector surfaces, so this entry only satisfies the
   // capability-keyed type — it gates no matrix run. `matches` is a placeholder.
   searchableJson: ['matches'],
 } as const satisfies Record<keyof QueryCapabilities, readonly QueryOpKind[]>

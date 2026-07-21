@@ -41,7 +41,7 @@ import type {
 } from '@prisma-next/contract/types';
 
 export type StorageHash =
-  StorageHashBase<'sha256:deb36a1ab7e51717f5ca822a32ff09a18cf3a0aaf1189262852c8953adba1720'>;
+  StorageHashBase<'sha256:32984f82d1b089087df107ff4b86310b8640e04f67eb7f6ebf5601694338b8f2'>;
 export type ExecutionHash = ExecutionHashBase<string>;
 export type ProfileHash =
   ProfileHashBase<'sha256:9c8aa3114e84ed3b7ea2bd57526d9c2e1bf7c5292be694e9d3801f566fda7ccb'>;
@@ -63,7 +63,7 @@ export type FieldOutputTypes = {
       readonly accountId: CodecTypes['cipherstash/eql-v3/eql_v3_bigint_ord@1']['output'];
       readonly birthday: CodecTypes['cipherstash/eql-v3/eql_v3_date_ord@1']['output'];
       readonly emailVerified: CodecTypes['cipherstash/eql-v3/eql_v3_boolean@1']['output'];
-      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['output'];
+      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json_search@1']['output'];
     };
   };
 };
@@ -76,7 +76,7 @@ export type FieldInputTypes = {
       readonly accountId: CodecTypes['cipherstash/eql-v3/eql_v3_bigint_ord@1']['input'];
       readonly birthday: CodecTypes['cipherstash/eql-v3/eql_v3_date_ord@1']['input'];
       readonly emailVerified: CodecTypes['cipherstash/eql-v3/eql_v3_boolean@1']['input'];
-      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json@1']['input'];
+      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json_search@1']['input'];
     };
   };
 };
@@ -168,8 +168,8 @@ type ContractBase = Omit<
                   };
                 };
                 readonly preferences: {
-                  readonly nativeType: 'public.eql_v3_json';
-                  readonly codecId: 'cipherstash/eql-v3/eql_v3_json@1';
+                  readonly nativeType: 'public.eql_v3_json_search';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_json_search@1';
                   readonly nullable: false;
                   readonly typeParams: {
                     readonly castAs: 'json';
@@ -289,7 +289,7 @@ type ContractBase = Omit<
                 readonly nullable: false;
                 readonly type: {
                   readonly kind: 'scalar';
-                  readonly codecId: 'cipherstash/eql-v3/eql_v3_json@1';
+                  readonly codecId: 'cipherstash/eql-v3/eql_v3_json_search@1';
                   readonly typeParams: {
                     readonly castAs: 'json';
                     readonly capabilities: {
@@ -1436,13 +1436,13 @@ type ContractBase = Omit<
             },
             {
               readonly descriptor: {
-                readonly codecId: 'cipherstash/eql-v3/eql_v3_json@1';
+                readonly codecId: 'cipherstash/eql-v3/eql_v3_json_search@1';
                 readonly factory: unknown;
                 readonly isParameterized: true;
                 readonly meta: {
                   readonly db: {
                     readonly sql: {
-                      readonly postgres: { readonly nativeType: 'public.eql_v3_json' };
+                      readonly postgres: { readonly nativeType: 'public.eql_v3_json_search' };
                     };
                   };
                 };
@@ -1454,7 +1454,7 @@ type ContractBase = Omit<
                   };
                 };
                 readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['public.eql_v3_json'];
+                readonly targetTypes: readonly ['public.eql_v3_json_search'];
                 readonly traits: readonly ['cipherstash:searchable-json'];
               };
             },
@@ -1782,9 +1782,9 @@ type ContractBase = Omit<
           },
           {
             readonly familyId: 'sql';
-            readonly nativeType: 'public.eql_v3_json';
+            readonly nativeType: 'public.eql_v3_json_search';
             readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/eql-v3/eql_v3_json@1';
+            readonly typeId: 'cipherstash/eql-v3/eql_v3_json_search@1';
           },
         ];
       };

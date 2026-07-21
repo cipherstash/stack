@@ -64,12 +64,12 @@ describe('deriveStackSchemasV3', () => {
     expect(built?.columns.balance?.cast_as).toBe('bigint')
   })
 
-  it('derives a types.Json-backed column for public.eql_v3_json (ste_vec)', () => {
+  it('derives a types.Json-backed column for public.eql_v3_json_search (ste_vec)', () => {
     const [table] = deriveStackSchemasV3(
       contract({
         payload: {
-          codecId: 'cipherstash/eql-v3/eql_v3_json@1',
-          nativeType: 'public.eql_v3_json',
+          codecId: 'cipherstash/eql-v3/eql_v3_json_search@1',
+          nativeType: 'public.eql_v3_json_search',
         },
       }),
     )

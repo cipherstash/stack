@@ -84,20 +84,20 @@ describe('infer-index-type helpers', () => {
       expect(inferQueryOpFromPlaintext('$.user.email')).toBe('ste_vec_selector')
     })
 
-    it('returns ste_vec_term for object plaintext', () => {
-      expect(inferQueryOpFromPlaintext({ role: 'admin' })).toBe('ste_vec_term')
+    it('returns default for object plaintext containment', () => {
+      expect(inferQueryOpFromPlaintext({ role: 'admin' })).toBe('default')
     })
 
-    it('returns ste_vec_term for array plaintext', () => {
-      expect(inferQueryOpFromPlaintext(['admin', 'user'])).toBe('ste_vec_term')
+    it('returns default for array plaintext containment', () => {
+      expect(inferQueryOpFromPlaintext(['admin', 'user'])).toBe('default')
     })
 
-    it('returns ste_vec_term for number plaintext', () => {
-      expect(inferQueryOpFromPlaintext(42)).toBe('ste_vec_term')
+    it('returns default for number plaintext', () => {
+      expect(inferQueryOpFromPlaintext(42)).toBe('default')
     })
 
-    it('returns ste_vec_term for boolean plaintext', () => {
-      expect(inferQueryOpFromPlaintext(true)).toBe('ste_vec_term')
+    it('returns default for boolean plaintext', () => {
+      expect(inferQueryOpFromPlaintext(true)).toBe('default')
     })
   })
 })

@@ -1,6 +1,6 @@
 ---
 name: stash-supabase
-description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabaseV3 wrapper over native EQL v3 column domains, transparent encryption/decryption on insert/update/select, encrypted query filters (eq, matches, gt/gte/lt/lte, in, or, match), encrypted JSON querying (contains, selectorEq/selectorNe), ordering on encrypted columns, identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
+description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabaseV3 wrapper over native EQL v3 column domains, transparent encryption/decryption on insert/update/select, encrypted scalar filters (eq, gt/gte/lt/lte, in, or), ordering on encrypted columns, EQL 3.0.2 PostgREST query-domain limitations, identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
 ---
 
 # CipherStash Stack - Supabase Integration
@@ -8,9 +8,7 @@ description: Integrate CipherStash encryption with Supabase using @cipherstash/s
 Guide for integrating CipherStash field-level encryption with Supabase using
 the `encryptedSupabaseV3` wrapper over native EQL v3 column domains. The
 wrapper provides transparent encryption on mutations and decryption on
-selects, with full support for querying encrypted columns — equality, range,
-fuzzy free-text search, encrypted JSON containment and selectors, and
-ordering.
+selects, with support for equality, range, and ordering.
 
 A legacy EQL v2 wrapper (`encryptedSupabase`) still ships for existing
 deployments — see "Legacy: EQL v2" at the end. New projects should use
@@ -19,8 +17,8 @@ deployments — see "Legacy: EQL v2" at the end. New projects should use
 ## When to Use This Skill
 
 - Adding field-level encryption to a Supabase project
-- Querying encrypted data with Supabase's query builder (eq, matches, gt, in, or, etc.)
-- Querying encrypted JSON documents (containment, path selectors)
+- Querying encrypted data with Supabase's query builder (eq, gt, in, or, etc.)
+- Understanding encrypted JSON query limitations in PostgREST
 - Inserting, updating, or upserting encrypted data
 - Using identity-aware encryption (lock contexts) with Supabase
 - Building applications where sensitive columns need encryption at rest and in transit
@@ -88,7 +86,7 @@ CREATE TABLE users (
   email public.eql_v3_text_search,        -- eq + range + free-text search
   amount public.eql_v3_integer_ord,       -- eq + range
   joined_at public.eql_v3_timestamp_ord,  -- eq + range, decrypts to Date
-  payload public.eql_v3_json,             -- encrypted JSON document
+  payload public.eql_v3_json_search,             -- encrypted JSON document
   role VARCHAR(50),                       -- regular plaintext column
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -152,8 +150,8 @@ const { data } = await es.from("users").select("id, email, joined").eq("email", 
 
 A declared table gets a typed builder: rows infer each column's plaintext
 type (`types.IntegerOrd` → `number`, `types.TimestampOrd` → `Date`),
-storage-only columns are excluded from every filter method, `matches()` is
-narrowed to match-indexed columns, and `order()` to orderable columns.
+storage-only columns are excluded from every filter method, and `order()` is
+narrowed to orderable columns.
 Undeclared tables behave exactly as with no `schemas` at all. Every v3 column
 is fully described by its `types.*` factory — there are no capability or
 tuning chains on v3 columns.
@@ -265,18 +263,11 @@ encrypted columns makes N ZeroKMS calls, run in parallel.
 
 ### Free-Text Search (`matches`)
 
-```typescript
-// Fuzzy bloom token search (requires a match-indexed domain,
-// e.g. text_search / text_match). Matches substrings of >= 3 characters.
-.matches("email", "alice")
-```
-
-`like`/`ilike` on an encrypted column are a **deprecated approximate shim**
-that delegates to `matches()` — see "Query behaviour on encrypted columns"
-below. On plaintext columns they stay real SQL LIKE. The shim is
-**runtime-only**: neither the typed nor the untyped v3 builder interface
-declares `like`/`ilike`, so in TypeScript the call is a compile error (use
-`matches()`) — the shim is reachable only from plain JavaScript or via a cast.
+EQL 3.0.2 requires a typed `eql_v3.query_*` right operand for encrypted
+free-text matching. PostgREST cannot express that cast, so Supabase v3
+`matches()` fails fast with this EQL release. Use the Drizzle or Prisma Next
+adapter, or expose a carefully scoped SQL/RPC path. Plaintext `like`/`ilike`
+queries remain native PostgREST operations.
 
 ### Range/Comparison Filters
 
@@ -354,30 +345,12 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
 
 - **`select('*')` (and bare `select()`) works** — it expands to the
   introspected column list.
-- **Encrypted free-text search is `matches()`, not `contains()`/`like`/`ilike`.**
-  The v3 domains define no LIKE operator — encrypted free-text search is fuzzy
-  bloom-filter token matching (PostgREST `cs` / SQL `@>`): one-sided (a match
-  may be a false positive, a non-match never is) and order-/multiplicity-
-  insensitive, where `%` is tokenized like any other character. `matches(col,
-  needle)` is the operator; `contains()` on an encrypted TEXT column throws an
-  error pointing at `matches()`. `contains()` is native (exact) jsonb/array
-  containment on plaintext columns — and ENCRYPTED (exact) containment on a
-  `types.Json` column (see "Encrypted JSON querying" below).
-- **`like`/`ilike` on an encrypted column are an approximate compatibility
-  shim** delegating to `matches()`: leading/trailing `%` are stripped and the
-  residual term is fuzzy-matched (same `cs` wire, plus a one-time warning).
-  Results are APPROXIMATE — case-insensitive, one-sided, and anchoring is not
-  honored. A pattern with an internal `%` or any `_` cannot be approximated and
-  throws; call `matches()` directly to make the fuzzy intent explicit. On
-  plaintext columns `like`/`ilike` stay real SQL LIKE. Note the shim is
-  reachable only at runtime: `like`/`ilike` are absent from the v3 builder
-  interfaces (typed and untyped alike), so on the TypeScript surface the call
-  is a compile error — only untyped JavaScript or a cast reaches the shim.
-- **`matches()` matches substrings.** The search term blooms to its own
-  trigrams, and a row matches when the stored value's bloom contains all of
-  them — so any substring of at least 3 characters (the tokenizer's
-  `token_length`) matches. Shorter terms bloom to nothing and would match every
-  row, so they are rejected with an error rather than answered.
+- **Encrypted free-text search is unavailable through PostgREST on EQL 3.0.2.**
+  The SQL surface uses `@@` with an `eql_v3.query_*` right operand. PostgREST's
+  filter grammar cannot express that cast; its `cs` operator is SQL `@>`, which
+  EQL deliberately rejects for text-search domains. Do not use `matches()`,
+  encrypted `like`/`ilike`, or raw `cs` as substitutes. `contains()` remains
+  native exact jsonb/array containment on plaintext columns.
 - **INTERIM — filter operands are full storage envelopes.** EQL ships
   term-only query domains (`eql_v3.query_<name>`, which accept envelopes with
   no ciphertext) and the encryption client can mint those narrowed terms, but
@@ -416,57 +389,16 @@ All envelopes (stored payloads and filter operands) are versioned `v: 3`.
 
 ## Encrypted JSON querying (`types.Json`)
 
-A `types.Json("payload")` column (`public.eql_v3_json`) stores an encrypted
-JSONB document and supports two query forms:
+A `types.Json("payload")` column (`public.eql_v3_json_search`) can be stored and
+decrypted through Supabase, but EQL 3.0.2 requires an explicit
+`eql_v3.query_json` cast for containment and value-selector equality.
+PostgREST cannot express that cast. The wrapper therefore fails fast for
+encrypted `contains()`, `selectorEq()`, and `selectorNe()` before encrypting a
+query operand; it never places a decryptable JSON storage envelope in the GET
+query string. Use Drizzle or Prisma Next for containment and selector equality
+or ordering, or expose a carefully scoped SQL/RPC function.
 
-```typescript
-// Exact encrypted containment: every leaf of the sub-document must match at
-// its path (ste_vec `@>` — PostgREST `cs`).
-es.from("events").select("id").contains("payload", { user: { role: "admin" } })
-
-// JSONPath selector equality / inequality at a dot-notation path:
-es.from("events").select("id").selectorEq("payload", "$.user.role", "admin")
-es.from("events").select("id").selectorNe("payload", "$.user.role", "admin")
-```
-
-- `selectorEq(col, path, value)` matches rows carrying exactly `value` at
-  `path` — it compiles to containment of the path-shaped needle
-  (`{user: {role: "admin"}}`), which is the same operation. Paths are
-  dot-notation object keys (`"$.a.b"` or `"a.b"`); array/wildcard steps are
-  rejected, and values must be JSON scalars — string, number, or boolean (an
-  object operand belongs to `contains()`). On Supabase a `Date` or `bigint`
-  leaf is rejected with a serialization steer: pass a Date as
-  `date.toISOString()` and a bigint as its string/number form. (The Drizzle
-  selector accepts Date/bigint directly.)
-- `selectorNe` matches rows that do NOT carry the value — **including rows
-  where the path is absent entirely, and rows whose document column is SQL
-  NULL** (it compiles to `payload.is.null OR payload.not.cs.<needle>`, matching
-  the Drizzle selector's `ne` semantics for both absence cases).
-- **Array-valued paths:** a scalar needle does NOT match an array at the path —
-  ste_vec encodes array elements under their own selectors — so
-  `selectorEq("payload", "$.roles", "admin")` does not match
-  `{roles: ["admin", "analyst"]}` (and `selectorNe` includes that row). To
-  match an array-valued path, pass the full array through `contains()`.
-- **Selector ordering (`gt`/`gte`/`lt`/`lte`) is not available on Supabase.**
-  PostgREST cannot reach the entry-comparison operators (it wraps JSON arrow
-  paths in `to_jsonb`, and bare-column comparison is blocked by design); it
-  needs an EQL-bundle overload, tracked in
-  cipherstash/encrypt-query-language#407. The Drizzle integration's
-  `ops.selector()` supports ordering today — use it where ordering at a path
-  is required.
-- `matches()` does not apply to JSON columns (it is text free-text search) and
-  throws with a steer; scalar filters (`eq`, `gt`, `in`, …) on the column are
-  rejected by capability.
-- The containment/selector operand is a **full storage envelope** of the
-  needle document. The GET-query-string security caveat above applies with an
-  important difference in degree: a JSON needle carries the root decryptable
-  ciphertext PLUS one ciphertext-bearing entry **per node of the sub-document**
-  — the exposure scales with needle size (the equivalent Drizzle containment
-  ships no ciphertext at all). Keep needles minimal; removing the ciphertext on
-  this surface is tracked in cipherstash/stack#654.
-- Empty needles (`{}` / `[]`) are rejected — jsonb containment holds for every
-  document, so an accidentally-empty filter would silently return the whole
-  table (the Drizzle adapter rejects the same needle).
+Plaintext jsonb/array `contains()` remains a native PostgREST operation.
 
 ## Authentication
 
@@ -565,7 +497,7 @@ const { data } = await es
   .select("id, email, amount")
   .gte("amount", 18)
   .lte("amount", 35)
-  .matches("email", "alice")
+  .eq("email", "alice@example.com")
 
 // data is fully decrypted:
 // [{ id: 1, email: "alice@example.com", amount: 30 }]
@@ -604,9 +536,9 @@ The column's `public.eql_v3_*` domain determines which filters it accepts:
 | Filter Method | Works On |
 |---|---|
 | `eq`, `neq`, `in`, `match()` | Equality-capable domains (`*_eq`, `*_ord`, `text_search`) |
-| `matches()` (and the runtime-only `like`/`ilike` shim — absent from the TS interfaces) | Match-indexed domains (`text_match`, `text_search`) |
+| `matches()` / encrypted `contains()` / `selectorEq()` / `selectorNe()` | Unavailable through PostgREST on EQL 3.0.2; use Drizzle, Prisma Next, or scoped SQL/RPC |
 | `gt`, `gte`, `lt`, `lte` | Range-capable domains (`*_ord`, `text_search`) |
-| `contains()`, `selectorEq()`, `selectorNe()` | `eql_v3_json` (encrypted); `contains()` is also native containment on plaintext jsonb/array columns |
+| `contains()` | Plaintext jsonb/array columns (native containment) |
 | `order()` | OPE-backed ordering domains (plain `*_ord`, `text_ord`, `text_search`) — never `*_ord_ore` |
 | `is` | Any column (no encryption; NULL check) |
 
@@ -800,7 +732,10 @@ const { data } = await supabase.from('users').select('email').eq('id', id).singl
 const { data } = await es.from('users').select('email').eq('id', id).single()
 ```
 
-For queries that filter on `email`, the wrapper handles the encrypted operators internally — the call site is the same shape as before (`.eq()`, `.matches()`, `.gte()`, etc.), but the values are encrypted before reaching the database. See `## Query Filters` above.
+For supported scalar queries that filter on `email`, the wrapper handles the
+encrypted operators internally — calls such as `.eq()` and `.gte()` keep the
+same shape, but values are encrypted before reaching the database. See
+`## Query Filters` above for the EQL 3.0.2 PostgREST limitations.
 
 #### Drop: remove the plaintext column
 

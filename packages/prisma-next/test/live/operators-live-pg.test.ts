@@ -4,7 +4,7 @@
  * `eql_v3.*` SQL, real `encryptQuery` terms) → assert the EXPECTED ROWS
  * are selected → decrypt the stored cells back to the original
  * plaintext. Includes the ruled-decision-2 JSON containment case
- * (`@>` with `eql_v3.query_jsonb`).
+ * (`@>` with `eql_v3.query_json`).
  */
 
 import 'dotenv/config'
@@ -172,7 +172,7 @@ describeLivePg('v3 operators against live Postgres', () => {
     expect(inArray.ids.sort()).toEqual(['ada', 'zora'])
   }, 60_000)
 
-  it('eqlMatch lowers to eql_v3.contains and finds the token match', async () => {
+  it('eqlMatch lowers to eql_v3.matches and finds the token match', async () => {
     const result = await where(
       callOperator(
         getOperator('eqlMatch'),
@@ -180,7 +180,7 @@ describeLivePg('v3 operators against live Postgres', () => {
         'grace',
       ),
     )
-    expect(result.sql).toContain('eql_v3.contains')
+    expect(result.sql).toContain('eql_v3.matches')
     expect(result.ids).toEqual(['grace'])
   }, 60_000)
 
@@ -239,7 +239,7 @@ describeLivePg('v3 operators against live Postgres', () => {
     expect(desc.ids).toEqual(['zora', 'grace', 'ada'])
   }, 60_000)
 
-  it('eqlJsonContains (@> with eql_v3.query_jsonb) selects by encrypted containment', async () => {
+  it('eqlJsonContains (@> with eql_v3.query_json) selects by encrypted containment', async () => {
     const result = await where(
       callOperator(
         getOperator('eqlJsonContains'),
@@ -248,7 +248,7 @@ describeLivePg('v3 operators against live Postgres', () => {
       ),
     )
     expect(result.sql).toContain('OPERATOR(public.@>)')
-    expect(result.sql).toContain('::eql_v3.query_jsonb')
+    expect(result.sql).toContain('::eql_v3.query_json')
     expect(result.ids.sort()).toEqual(['ada', 'zora'])
 
     const nested = await where(
@@ -259,6 +259,31 @@ describeLivePg('v3 operators against live Postgres', () => {
       ),
     )
     expect(nested.ids).toEqual(['grace'])
+  }, 60_000)
+
+  it('eqlJsonPath operators select exact values and ordered path entries', async () => {
+    const role = await where(
+      callOperator(
+        getOperator('eqlJsonPathEq'),
+        columnAccessorV3(TABLE, 'payload', JSON_CODEC),
+        '$.role',
+        'admin',
+      ),
+    )
+    expect(role.sql).toContain('OPERATOR(public.@>)')
+    expect(role.ids.sort()).toEqual(['ada', 'zora'])
+
+    const level = await where(
+      callOperator(
+        getOperator('eqlJsonPathGte'),
+        columnAccessorV3(TABLE, 'payload', JSON_CODEC),
+        '$.level',
+        3,
+      ),
+    )
+    expect(level.sql).toContain('"payload" -> $1::text')
+    expect(level.sql).toContain('::eql_v3.query_double_ord')
+    expect(level.ids).toEqual(['zora'])
   }, 60_000)
 
   it('every domain family decrypts back to the original plaintext', async () => {

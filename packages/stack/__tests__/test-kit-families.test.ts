@@ -63,7 +63,7 @@ describe('test-kit families partition the v3 catalog', () => {
       'date_ord_ore',
       'double_ord_ore',
       'integer_ord_ore',
-      'json',
+      'json_search',
       'numeric_ord_ore',
       'real_ord_ore',
       'smallint_ord_ore',
@@ -74,7 +74,9 @@ describe('test-kit families partition the v3 catalog', () => {
     // is queried by containment, not the scalar op-matrix (covered by dedicated
     // suites — see catalog reason).
     for (const { bare, reason } of deferred) {
-      expect(reason).toMatch(bare === 'json' ? /containment/ : /superuser-only/)
+      expect(reason).toMatch(
+        bare === 'json_search' ? /containment/ : /superuser-only/,
+      )
     }
   })
 

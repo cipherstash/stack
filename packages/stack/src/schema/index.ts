@@ -399,6 +399,10 @@ export class EncryptedColumn {
    * the plaintext type: strings become selector queries, objects/arrays become
    * containment queries.
    *
+   * @deprecated Legacy EQL v2 searchable JSON cannot be emitted by
+   * protect-ffi 0.30. Migrate the column to the EQL v3 `types.Json()` domain;
+   * client initialization rejects schemas that still use this method.
+   *
    * @returns This `EncryptedColumn` instance for method chaining.
    *
    * @example

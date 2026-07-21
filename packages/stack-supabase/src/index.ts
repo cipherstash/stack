@@ -4,7 +4,7 @@ import type {
   EncryptedTableColumn,
 } from '@cipherstash/stack/schema'
 import type { UnmodelledColumn } from './introspect'
-import { introspect } from './introspect'
+import { eqlRequiresQueryDomains, introspect } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
 import { EncryptedQueryBuilderV3Impl } from './query-builder-v3'
 import { mergeDeclaredTables, synthesizeTables } from './schema-builder'
@@ -83,7 +83,7 @@ export function encryptedSupabase(
  *
  * Keyed by table, not applied to the whole schema, because the hazard exists
  * only for a table the caller actually queries. An `audit_log.payload
- * public.eql_v3_json` column on a table you never name cannot leak, and must not stop
+ * public.eql_v3_json_search` column on a table you never name cannot leak, and must not stop
  * you constructing a client for `users`.
  */
 function assertTableIsModelled(
@@ -204,7 +204,8 @@ export async function encryptedSupabaseV3(
 
   // 3. Introspect. Unmodelled EQL columns are NOT a construction-time veto —
   //    they are checked per table, at the point the caller names one.
-  const { tables, unmodelled } = await introspect(databaseUrl)
+  const { tables, unmodelled, eqlVersion } = await introspect(databaseUrl)
+  const queryDomainsRequired = eqlRequiresQueryDomains(eqlVersion)
 
   // 4. Synthesize; if declared, guard record keys, verify, then merge.
   //    A DECLARED table is one the caller named, so it is validated eagerly,
@@ -278,6 +279,7 @@ export async function encryptedSupabaseV3(
         encryptionClient,
         supabaseClient,
         allColumns,
+        queryDomainsRequired,
       ) as unknown as EncryptedQueryBuilder<Record<string, unknown>>
     },
   }

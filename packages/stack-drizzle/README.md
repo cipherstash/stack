@@ -55,6 +55,11 @@ const rows = await db
 const dec = await client.bulkDecryptModels(rows, schema)
 ```
 
+For a `types.Json` column, `ops.selector(column, path)` supports encrypted
+comparisons and ordering at a scalar JSONPath leaf. For example,
+`.orderBy(await ops.selector(users.profile, '$.age').asc())` lowers to
+`ORDER BY eql_v3.ord_term(...)` over the selected encrypted entry.
+
 ## EQL v2 (package root) — legacy
 
 The v2 integration predates the typed v3 domains and is kept for existing

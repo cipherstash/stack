@@ -518,7 +518,7 @@ Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`,
 
 ## Encrypted JSON (`types.Json`)
 
-A `types.Json("metadata")` column encrypts a whole JSON document to a `public.eql_v3_json` value. The plaintext is a **`JsonDocument`: an object, an array, or `null` — NOT a bare top-level scalar** (protect-ffi rejects a top-level string/number/boolean; a scalar belongs in a scalar domain like `types.TextEq` or `types.IntegerEq`). Nested scalars are fully supported.
+A `types.Json("metadata")` column encrypts a whole JSON document to a `public.eql_v3_json_search` value. The plaintext is a **`JsonDocument`: an object, an array, or `null` — NOT a bare top-level scalar** (protect-ffi rejects a top-level string/number/boolean; a scalar belongs in a scalar domain like `types.TextEq` or `types.IntegerEq`). Nested scalars are fully supported.
 
 `types.Json` carries no equality or ordering capability — `eq` / `gt` / `asc` on it throw. It supports two query patterns: containment and JSONPath selectors.
 
@@ -537,22 +537,31 @@ The Drizzle and Supabase adapters reject an empty-object needle (jsonb `{} ⊆ a
 
 ### JSONPath Selectors (value-at-a-path)
 
-Selector queries constrain the value **at a path** inside the document — `metadata->'$.user.role' = 'admin'`. Their unique power over containment is **ordering at a path** (`gt`/`gte`/`lt`/`lte`), available through the Drizzle v3 integration. Paths are dot-notation object paths (`'$.a.b'`); array/wildcard steps are rejected.
+Selector queries constrain the value **at a path** inside the document — `metadata->'$.user.role' = 'admin'`. Their unique power over containment is **ordering at a path** (`gt`/`gte`/`lt`/`lte`), available through the Drizzle and Prisma Next integrations. Paths are dot-notation object paths (`'$.a.b'`); array/wildcard steps are rejected.
 
 Semantics to know:
 
 - **`eq`** at a path excludes rows whose document lacks the path (absent is not equal).
 - **`ne`** at a path **includes** rows whose document lacks the path, and — in both adapters — rows whose column is SQL NULL ("not equal to value" covers "has no value"; Drizzle adds `OR <col> IS NULL`, Supabase an `is.null` branch).
 - **Array-leaf caveat:** a scalar needle does not match an array at the path — ste_vec encodes array elements under their own selectors, so `{a: [40, 30]}` is NOT matched by a selector-eq of `30` at `$.a`. To match an array-valued path, pass the full array through containment.
-- **Ciphertext in the WHERE clause (interim):** pending a ciphertext-free ordering needle from protect-ffi ([cipherstash/protectjs-ffi#137](https://github.com/cipherstash/protectjs-ffi/issues/137)), the selector's right-hand operand is a storage encryption of `{path: value}` whose ciphertext appears in the emitted SQL statement — it can surface in SQL logs and statement views. On Supabase, the selector/containment needle additionally ships as a full storage envelope because of a PostgREST operand-casting gap ([cipherstash/stack#654](https://github.com/cipherstash/stack/issues/654)) — #137 landing does not remove that exposure.
+- **Query operands are ciphertext-free in Drizzle and Prisma Next.** Equality uses a value-selector containment needle; ordering uses a selector hash plus a scalar query term. Supabase still sends a full storage envelope because PostgREST cannot cast a filter operand to `eql_v3.query_json` ([cipherstash/stack#654](https://github.com/cipherstash/stack/issues/654)).
 
 ### Adapter Matrix
 
-| Capability | Drizzle v3 (`ops` from `@cipherstash/stack-drizzle/v3`) | Supabase v3 (`encryptedSupabaseV3`) |
-|---|---|---|
-| Containment (`@>`) | `ops.contains(col, subdoc)` | `contains(col, subdoc)` / `filter(col, 'cs', ...)` |
-| Selector equality | `ops.selector(col, '$.path').eq(value)` / `.ne(value)` | `selectorEq(col, '$.path', value)` / `selectorNe(...)` |
-| Selector ordering | `ops.selector(col, '$.path').gt/gte/lt/lte(value)` | Not available — needs [cipherstash/encrypt-query-language#407](https://github.com/cipherstash/encrypt-query-language/issues/407) |
+| Capability | Drizzle v3 | Prisma Next | Supabase v3 |
+|---|---|---|---|
+| Containment (`@>`) | `ops.contains(col, subdoc)` | `eqlJsonContains(subdoc)` | `contains(col, subdoc)` |
+| Selector equality | `ops.selector(col, path).eq/ne(value)` | `eqlJsonPathEq/Neq(path, value)` | `selectorEq/selectorNe(col, path, value)` |
+| Selector ordering | `ops.selector(col, path).gt/gte/lt/lte(value)` | `eqlJsonPathGt/Gte/Lt/Lte(path, value)` | Not available — needs [cipherstash/encrypt-query-language#407](https://github.com/cipherstash/encrypt-query-language/issues/407) |
+
+> **EQL 3.0.2 upgrade:** the `public.eql_v3_json_search` storage domain and
+> SteVec wire format are not compatible with earlier encrypted JSON rows.
+> Re-encrypt those rows during the upgrade. Legacy EQL v2
+> `searchableJson()` columns are no longer supported by protect-ffi 0.30;
+> migrate them to v3 `types.Json`. If you use raw `encryptQuery` query types,
+> explicit `steVecTerm` now produces a scalar JSON ordering term rather than a
+> containment needle. Prefer `searchableJson` for containment, or
+> `steVecValueSelector` for exact equality at a path.
 
 See the `stash-drizzle` and `stash-supabase` skills for the full integration guides.
 
@@ -986,12 +995,11 @@ import { encryptedTable, encryptedColumn } from "@cipherstash/stack/schema"
 
 const users = encryptedTable("users", {
   email: encryptedColumn("email").equality().freeTextSearch().orderAndRange(),
-  metadata: encryptedColumn("metadata").searchableJson(),
 })
 
 const client = await Encryption({ schemas: [users] })
 ```
 
-The v2 API — `Encryption` plus the `@cipherstash/stack/schema` builders, the v2 Drizzle/Supabase integrations (`@cipherstash/stack-drizzle`, `encryptedSupabase`), and `stash eql install --eql-version 2` — **still exists and is supported for existing deployments**. Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/docs). Remember: v2 and v3 tables cannot be mixed in one client. (If you are migrating code from the old `@cipherstash/protect` package, its `protect`/`csTable`/`csColumn` names map onto this v2 surface.)
+The scalar v2 API — `Encryption` plus the `@cipherstash/stack/schema` builders, the v2 Drizzle/Supabase integrations (`@cipherstash/stack-drizzle`, `encryptedSupabase`), and `stash eql install --eql-version 2` — still exists for existing deployments. Legacy v2 `searchableJson()` is the exception: protect-ffi 0.30 cannot emit the removed selector envelope, so migrate those columns to v3 `types.Json`. Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/docs). Remember: v2 and v3 tables cannot be mixed in one client. (If you are migrating code from the old `@cipherstash/protect` package, its `protect`/`csTable`/`csColumn` names map onto this v2 surface.)
 
 > **Exception — DynamoDB.** The DynamoDB integration (`encryptedDynamoDB` from `@cipherstash/stack/dynamodb`) **still requires the v2 schema surface** — `encryptedTable`/`encryptedColumn`/`encryptedField` from `@cipherstash/stack/schema`. Do not use v3 `types.*` schemas with it. See the `stash-dynamodb` skill; v3 support is tracked in [cipherstash/stack#657](https://github.com/cipherstash/stack/issues/657).

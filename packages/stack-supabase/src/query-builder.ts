@@ -1338,7 +1338,7 @@ export class EncryptedQueryBuilderImpl<
    * Apply a `contains` filter. On a plaintext column this is PostgREST's native
    * jsonb/array containment. The v3 dialect overrides it for encrypted columns,
    * where `cs` resolves to the `@>` operator the EQL bundle declares on the
-   * domain, backed by `eql_v3.contains` (bloom-filter containment).
+   * domain, backed by `eql_v3.matches` (bloom-filter containment).
    *
    * A structured operand is serialized here rather than by postgrest-js, which
    * joins array elements on `,` without quoting them — so `['with,comma']` would
