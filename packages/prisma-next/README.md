@@ -10,7 +10,7 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 
 - 🔒 Six encrypted column types — `string`, `double`, `bigint`, `date`, `boolean`, `json`
 - 🔍 Searchable encryption — equality, free-text search, range, order, JSON path and containment
-- 🎯 Type-safe query operators — EQL v3 uses the EQL-derived `eql*` vocabulary (`eqlEq`, `eqlMatch`, `eqlGt`, `eqlAsc`, …); the legacy v2 surface keeps its `cipherstash*` names
+- 🎯 Type-safe query operators — the EQL-derived `eql*` vocabulary (`eqlEq`, `eqlMatch`, `eqlGt`, `eqlAsc`, …)
 - ⚡ Bulk encrypt / bulk decrypt coalescing — one SDK round-trip per `(table, column)` group per query
 - 🧩 One-call setup via `cipherstashFromStack({ contractJson })` — no duplicate stack schema to maintain
 - 🛡️ Plaintext redaction on every implicit serialisation path (`toJSON`, `toString`, `util.inspect`, …)
@@ -78,7 +78,7 @@ await db.orm.public.User.create({
 })
 
 const rows = await db.orm.public.User
-  .where((u) => u.email.cipherstashIlike("%@example.com"))
+  .where((u) => u.email.eqlMatch("example.com"))
   .all()
 
 await decryptAll(rows)

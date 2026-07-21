@@ -40,6 +40,7 @@ import { EncryptedBoolean } from '../execution/envelope-boolean'
 import { EncryptedDate } from '../execution/envelope-date'
 import { EncryptedJson } from '../execution/envelope-json'
 import { EncryptedString } from '../execution/envelope-string'
+import { isBulkEncryptMiddlewareRegistered } from '../execution/middleware-registry'
 import type { CipherstashSdk } from '../execution/sdk'
 import {
   isCipherstashV3CodecId,
@@ -121,6 +122,10 @@ export class CipherstashV3CellCodec<
   readonly #sdk: CipherstashSdk
   readonly #fromInternal: FromInternal
   readonly #typeName: string
+  // Memo: once this SDK is known-registered it can never become
+  // unregistered (the registry is add-only), so the WeakSet lookup is
+  // paid once per codec rather than once per encoded cell.
+  #middlewareCheckPassed = false
 
   constructor(
     descriptor: AnyCodecDescriptor,
@@ -148,6 +153,36 @@ export class CipherstashV3CellCodec<
     }
     const handle = value.expose()
     if (handle.ciphertext === undefined) {
+      // Misconfig diagnostic (ported from the v2 codec's
+      // `../execution/cell-codec-factory.ts`, deleted with the rest of
+      // v2): an SDK-bound codec seeing a pre-encrypt envelope means no
+      // `bulkEncryptMiddlewareV3(sdk)` was constructed against this same
+      // SDK, so the two-pass write can never complete. Throw at the
+      // codec boundary with a copy-pasteable wiring snippet rather than
+      // letting the envelope reach the pg driver, where it surfaces as
+      // an opaque serialise error.
+      if (!this.#middlewareCheckPassed) {
+        if (!isBulkEncryptMiddlewareRegistered(this.#sdk)) {
+          throw runtimeError(
+            'RUNTIME.ENCODE_FAILED',
+            `cipherstash ${this.descriptor.codecId}: encrypted column value has not been encrypted, ` +
+              'and no `bulkEncryptMiddlewareV3(sdk)` has been registered with this SDK. ' +
+              'Wire it up alongside the extension descriptor:\n\n' +
+              '  postgres<Contract>({\n' +
+              '    contractJson,\n' +
+              '    extensions: [createCipherstashV3RuntimeDescriptor({ sdk })],\n' +
+              '    middleware:  [bulkEncryptMiddlewareV3(sdk)],\n' +
+              '  });\n\n' +
+              'Both must close over the SAME `sdk` reference. See the @cipherstash/prisma-next README for the full wiring example.',
+            {
+              codecId: this.descriptor.codecId,
+              reason: 'cipherstash-bulk-encrypt-middleware-not-registered',
+              envelopeRouting: { table: handle.table, column: handle.column },
+            },
+          )
+        }
+        this.#middlewareCheckPassed = true
+      }
       return value
     }
     return v3ToDriver(handle.ciphertext)

@@ -10,12 +10,10 @@
  * cannot answer the operator.
  *
  * Also pins decision 1b's registration posture: the v3 descriptor
- * stands alone (a v3-only adapter builds cleanly), and the v2
- * `cipherstash*` and v3 `eql*` method-name sets are DISJOINT — the two
- * surfaces share no registry key, so a client is v2 or v3 purely by
- * which descriptor it was constructed with, never by registry
- * collision. v2 and v3 remain separate entry points, never composed
- * into one client.
+ * stands alone (a v3-only adapter builds cleanly) and registers its
+ * full method set without collision, every method wearing the `eql*`
+ * prefix. A contract carrying a v2 cipherstash codec id is rejected
+ * outright — v2 is no longer a surface this package serves.
  */
 
 import { describe, expect, it } from 'vitest'

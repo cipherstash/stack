@@ -23,6 +23,7 @@ import { EncryptedBigInt } from '../../src/execution/envelope-bigint'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
 import type { CipherstashSdk } from '../../src/execution/sdk'
+import { bulkEncryptMiddlewareV3 } from '../../src/v3/bulk-encrypt-v3'
 import { V3_CODEC_IDS } from '../../src/v3/catalog'
 import { createV3CodecDescriptors } from '../../src/v3/codec-runtime-v3'
 import { EncryptedNumber } from '../../src/v3/envelope-number'
@@ -168,12 +169,48 @@ describe('CipherstashV3CellCodec — encode (plain JSONB)', () => {
   })
 
   it('returns the envelope unchanged when it has no ciphertext yet (pre-encrypt sentinel)', async () => {
+    const sdk = emptySdk()
+    // The sentinel path is only legitimate once the middleware is wired
+    // against this SAME sdk — that is what promises a second pass will
+    // fill in the ciphertext. Register it the way production does.
+    bulkEncryptMiddlewareV3(sdk)
     const codec = codecFor(
-      createV3CodecDescriptors(emptySdk()),
+      createV3CodecDescriptors(sdk),
       'cipherstash/eql-v3/eql_v3_text_eq@1',
     )
     const preEncrypt = EncryptedString.from('plaintext')
     expect(await codec.encode(preEncrypt, callCtx)).toBe(preEncrypt)
+  })
+
+  it('throws a wiring diagnostic when the sdk has no bulk-encrypt middleware registered', async () => {
+    // No `bulkEncryptMiddlewareV3(sdk)` for this sdk: the two-pass write
+    // can never complete, so fail at the codec boundary rather than
+    // letting the envelope reach the driver as an opaque serialise error.
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    await expect(
+      codec.encode(EncryptedString.from('plaintext'), callCtx),
+    ).rejects.toThrow(/bulkEncryptMiddlewareV3\(sdk\)/)
+  })
+
+  it('does not fire the wiring diagnostic for an already-encrypted envelope', async () => {
+    // An envelope carrying ciphertext needs no second pass, so an
+    // unregistered sdk is not a misconfig on this path.
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    const encrypted = EncryptedString.fromInternal({
+      ciphertext: { c: 'abc' },
+      table: 'users',
+      column: 'email',
+      sdk: emptySdk(),
+    })
+    expect(await codec.encode(encrypted, callCtx)).toBe(
+      JSON.stringify({ c: 'abc' }),
+    )
   })
 })
 

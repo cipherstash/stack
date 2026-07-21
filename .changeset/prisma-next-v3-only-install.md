@@ -41,3 +41,10 @@ installs EQL v3 exclusively and works on Supabase as a non-superuser.
 Apps still on the v2 surface must move to the v3 constructors and regenerate
 their contract (`prisma-next contract emit`); there is no supported EQL v2 path
 in this package anymore.
+
+**Also:** the "bulk-encrypt middleware not wired" diagnostic is now raised on the
+v3 write path. Encoding an unencrypted value with an SDK that has no
+`bulkEncryptMiddlewareV3(sdk)` registered against it fails fast with
+`RUNTIME.ENCODE_FAILED` and a copy-pasteable wiring snippet, instead of surfacing
+as an opaque pg-level serialise error. (The guard existed on the v2 codec; the v3
+codec had never wired it up.)

@@ -247,10 +247,15 @@ two-pass design:
    `handle.ciphertext === undefined` the codec returns the envelope
    itself as the pre-encrypt sentinel (a bare string or `null`/`undefined`
    passes straight through); the second-pass middleware fills in the
-   ciphertext. `bulkEncryptMiddlewareV3(sdk)` marks its SDK in the
-   per-SDK `middleware-registry` WeakSet — the seam a future encode-time
-   "is the middleware wired?" diagnostic would consult (the v3 codec does
-   not raise one today).
+   ciphertext. That sentinel is only legitimate if a second pass is
+   actually coming, so `encode` first consults the per-SDK
+   `middleware-registry` WeakSet that `bulkEncryptMiddlewareV3(sdk)`
+   marks its SDK in. An unregistered SDK means the two-pass flow can
+   never complete, so the codec raises `RUNTIME.ENCODE_FAILED` with a
+   copy-pasteable wiring snippet rather than letting the envelope reach
+   the pg driver as an opaque serialise error. The check is memoised per
+   codec (the registry is add-only), so it costs one WeakSet lookup, not
+   one per cell.
 2. **Second pass — `bulkEncryptMiddlewareV3#beforeExecute`.** Walks the
    lowered AST to stamp `(table, column)` routing keys
    (`stampRoutingKeysFromAst`, version-neutral, shared from

@@ -72,7 +72,8 @@ export default class M extends Migration {
         // `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so the
         // ~1.7 MB bundle is NOT baked into `ops.json` and bumping the pinned
         // `@cipherstash/eql` needs no re-emit. Safe because this is an
-        // invariant-only self-edge: the SQL never moves the contract hash.
+        // invariant-only genesis edge: the SQL never moves the contract
+        // hash (`from: null` → the empty-storage hash, as above).
         execute: [
           { description: INSTALL_LABEL, sql: RUNTIME_EQL_SQL_SENTINEL },
         ],

@@ -6,8 +6,8 @@
  *
  * Decision 1b pins: a v3 client is v3-only — a contract carrying a v2
  * cipherstash codec id is a hard error, never a silently-ignored
- * column; and the v2 `cipherstashFromStackV2` is a separate, untouched
- * entry point.
+ * column. (The v2 entry point has since been removed outright; these
+ * cases now guard against a stale v2 contract reaching a v3 client.)
  */
 
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
