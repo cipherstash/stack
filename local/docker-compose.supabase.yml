@@ -17,6 +17,12 @@
 # Postgres bound to 5432/3000. Binding those here would either fail to start or,
 # worse, silently shadow the database they think they are talking to.
 #
+# `CS_PG_PORTS` / `CS_PGRST_PORTS` override the mappings so CI can publish to
+# EPHEMERAL host ports (container port only, e.g. `CS_PG_PORTS=5432`) and read the
+# assigned ports back with `docker compose port`. That is what lets concurrent
+# integration jobs share a runner without contending for fixed ports. Unset — the
+# local default — keeps the stable `55433`/`55430` a developer can point at.
+#
 # Connect DIRECT to the database, never through a pooler: `SET ROLE` and session
 # advisory locks (both used by the EQL installer) are unstable over PgBouncer in
 # transaction mode.
@@ -28,7 +34,7 @@ services:
     environment:
       POSTGRES_PASSWORD: password
     ports:
-      - "55433:5432"
+      - "${CS_PG_PORTS:-55433:5432}"
     volumes:
       # Supplies the one thing the image omits: a password for `authenticator`.
       #
@@ -74,7 +80,7 @@ services:
       # after boot becomes visible without a restart.
       PGRST_DB_CHANNEL_ENABLED: "true"
     ports:
-      - "55430:3000"
+      - "${CS_PGRST_PORTS:-55430:3000}"
     # No healthcheck: the postgrest image is distroless — it has no shell, no
     # wget, no curl, so every in-container probe fails with "executable file not
     # found" and `docker compose up --wait` reports the service unhealthy while

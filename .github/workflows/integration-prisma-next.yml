@@ -33,6 +33,7 @@ on:
       - 'local/supabase-init.sql'
       - '.github/workflows/integration-prisma-next.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/integration-db/**'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -52,17 +53,18 @@ on:
       - 'local/supabase-init.sql'
       - '.github/workflows/integration-prisma-next.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/integration-db/**'
 
 jobs:
   integration:
     name: prisma-next v3 integration (db=${{ matrix.db }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Serialize every job that brings up the SAME docker-compose stack — same
-    # rationale and keys as the Drizzle/Supabase workflows, so the jobs queue
-    # on a shared runner rather than collide on the fixed host ports.
-    concurrency:
-      group: integration-live-db-${{ matrix.db }}
-      cancel-in-progress: false
+    # No concurrency group: `integration-db` gives each job its own compose
+    # project and ephemeral host ports, so live-DB jobs no longer contend and do
+    # not need serialising. See that action for why the old
+    # `integration-live-db-<db>` group had to go (it cancelled a third
+    # contender rather than queueing it).
+    #
     # Fork PRs have no secrets. Skip cleanly rather than fail on something the
     # contributor cannot fix — `tests.yml` still gives them a green signal.
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -74,23 +76,13 @@ jobs:
       # is not a superuser, so the EQL install takes its self-skipping path. A
       # suite that passes on a superuser database can still fail there.
       matrix:
-        include:
-          - db: postgres
-            database-url: postgres://cipherstash:password@localhost:55432/cipherstash
-            pgrest-url: ''
-          - db: supabase
-            database-url: postgres://postgres:password@localhost:55433/postgres
-            pgrest-url: http://localhost:55430
+        db: [postgres, supabase]
 
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
-      # Job-level env, not a `.env` file: `dotenv/config` does not override an
-      # already-set `process.env`, so these win and no secret is written to disk.
-      DATABASE_URL: ${{ matrix.database-url }}
-      PGRST_URL: ${{ matrix.pgrest-url }}
       # EXPLICIT, never inferred — same rationale as the Drizzle workflow.
       CS_IT_DB_VARIANT: ${{ matrix.db }}
 
@@ -109,21 +101,31 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # Belt-and-braces for the concurrency guard: a run that was hard-killed
-      # can skip its `down` and leak a container holding the host port onto a
-      # REUSED runner. `|| true` so a clean runner is not an error.
-      - name: Clear any leaked containers from a prior run
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v --remove-orphans || true
-
+      # No pre-`up` cleanup step any more: the project name is unique per job, so
+      # a container leaked by a hard-killed prior run cannot hold this job's
+      # name or its (ephemeral) port. Blanket-pruning would now be actively
+      # unsafe — without the concurrency group, another job's stack may be live
+      # on this runner.
       - name: Start ${{ matrix.db }}
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml up -d --wait
+        id: db
+        uses: ./.github/actions/integration-db
+        with:
+          db: ${{ matrix.db }}
 
       # `globalSetup` installs EQL v3 by shelling out to the real
       # `stash eql install --eql-version 3`, so an installer regression fails
       # here rather than hiding behind a test-only SQL apply.
       - name: prisma-next v3 family suites
         run: pnpm --filter @cipherstash/prisma-next run test:integration
+        env:
+          # Step env, not a `.env` file: `dotenv/config` does not override an
+          # already-set `process.env`, so these win and no secret hits disk.
+          DATABASE_URL: ${{ steps.db.outputs.database-url }}
+          PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
 
+      # Guarded on the project being set: if the stack never came up, there is
+      # nothing to tear down and an unguarded `-p ""` would fail the job with a
+      # confusing error that masks the real one.
       - name: Stop ${{ matrix.db }}
-        if: always()
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v
+        if: always() && env.CS_COMPOSE_PROJECT != ''
+        run: docker compose -p "$CS_COMPOSE_PROJECT" -f "$CS_COMPOSE_FILE" down -v

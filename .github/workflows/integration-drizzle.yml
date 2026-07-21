@@ -6,8 +6,7 @@ name: Integration — Drizzle (EQL v3)
 # PostgREST — but it does need to work on managed Postgres, where the `postgres`
 # role is not a superuser, the EQL install takes its self-skipping path, and the
 # ORE domains cannot hold data. The Supabase compose file brings up PostgREST
-# too; this job simply ignores it, and leaves `PGRST_URL` unset so a Supabase
-# suite scoped here would throw rather than silently skip.
+# too; the Drizzle suites simply ignore it.
 #
 # Separate from `tests.yml` on purpose: these suites need CipherStash credentials
 # and a database, and they THROW rather than skip when unconfigured. Keeping them
@@ -35,6 +34,7 @@ on:
       - 'local/supabase-init.sql'
       - '.github/workflows/integration-drizzle.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/integration-db/**'
   pull_request:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
@@ -57,23 +57,18 @@ on:
       - 'local/supabase-init.sql'
       - '.github/workflows/integration-drizzle.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/integration-db/**'
 
 jobs:
   integration:
     name: Drizzle v3 integration (db=${{ matrix.db }})
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    # Serialize every job that brings up the SAME docker-compose stack, so no two
-    # bind the same fixed host ports on a shared runner at once (the "address
-    # already in use" flake). Keyed by the compose variant, NOT the ref (two PRs
-    # contend for a host port just as much as two pushes to one PR), so it
-    # serializes across refs. The `supabase` leg uses the SAME supabase compose
-    # (55430 / 55433) as the Supabase workflow and shares its key
-    # (`integration-live-db-supabase`), so the two workflows queue rather than
-    # collide; the `postgres` leg (55432) has its own key and still runs in
-    # parallel with them.
-    concurrency:
-      group: integration-live-db-${{ matrix.db }}
-      cancel-in-progress: false
+    # No concurrency group: `integration-db` gives each job its own compose
+    # project and ephemeral host ports, so live-DB jobs no longer contend and do
+    # not need serialising. See that action for why the old
+    # `integration-live-db-<db>` group had to go (it cancelled a third
+    # contender rather than queueing it).
+    #
     # Fork PRs have no secrets. Skip cleanly rather than fail on something the
     # contributor cannot fix — `tests.yml` still gives them a green signal.
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -85,17 +80,12 @@ jobs:
       # superuser, so the EQL install takes its self-skipping path and the ORE
       # domains become unusable. A suite that passes on a superuser database can
       # still fail there.
+      # (The supabase compose file starts PostgREST anyway. Drizzle does not use
+      # it, but `integration-db` supplies the URL regardless, which lets the
+      # harness assert the `anon` path on the database it is actually running
+      # against.)
       matrix:
-        include:
-          - db: postgres
-            database-url: postgres://cipherstash:password@localhost:55432/cipherstash
-            pgrest-url: ''
-          - db: supabase
-            database-url: postgres://postgres:password@localhost:55433/postgres
-            # The supabase compose file starts PostgREST anyway. Drizzle does not
-            # use it, but supplying the URL lets the harness assert the `anon`
-            # path on the database it is actually running against.
-            pgrest-url: http://localhost:55430
+        db: [postgres, supabase]
 
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
@@ -110,10 +100,6 @@ jobs:
       # instance, used only by the cross-identity test.
       CLERK_MACHINE_TOKEN: ${{ secrets.CLERK_MACHINE_TOKEN }}
       CLERK_MACHINE_TOKEN_B: ${{ secrets.CLERK_MACHINE_TOKEN_B }}
-      # Job-level env, not a `.env` file: `dotenv/config` does not override an
-      # already-set `process.env`, so these win and no secret is written to disk.
-      DATABASE_URL: ${{ matrix.database-url }}
-      PGRST_URL: ${{ matrix.pgrest-url }}
       # EXPLICIT, never inferred. The variant decides whether EQL is installed
       # with `--supabase` (and therefore whether the role grants are applied).
       # Inferring it from `PGRST_URL` reported `postgres` for this job's Supabase
@@ -152,22 +138,28 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # Belt-and-braces for the concurrency guard: a run that was hard-killed
-      # (runner crash / forced cancel) can skip its `down` and leak a container
-      # holding the host port onto a REUSED runner. Tear any prior stack down
-      # before starting a fresh one. `|| true` so a clean runner (nothing to
-      # remove) is not an error.
-      - name: Clear any leaked containers from a prior run
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v --remove-orphans || true
-
+      # No pre-`up` cleanup step any more: the project name is unique per job, so
+      # a container leaked by a hard-killed prior run cannot hold this job's
+      # name or its (ephemeral) port. Blanket-pruning would now be actively
+      # unsafe — without the concurrency group, another job's stack may be live
+      # on this runner.
       - name: Start ${{ matrix.db }}
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml up -d --wait
+        id: db
+        uses: ./.github/actions/integration-db
+        with:
+          db: ${{ matrix.db }}
 
       # `globalSetup` installs EQL v3 by shelling out to the real
       # `stash eql install --eql-version 3`, so an installer regression fails
       # here rather than hiding behind a test-only SQL apply.
+      #
+      # Step env, not a `.env` file: `dotenv/config` does not override an
+      # already-set `process.env`, so these win and no secret is written to disk.
       - name: Drizzle v3 integration suites
         run: pnpm --filter @cipherstash/stack-drizzle run test:integration
+        env:
+          DATABASE_URL: ${{ steps.db.outputs.database-url }}
+          PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
 
       # A second vitest invocation (stack's shared/ + identity suites live in a
       # different package now). Its globalSetup calls the same EQL v3 install, but
@@ -175,7 +167,13 @@ jobs:
       # provisioned — a fast no-op check, not a second schema apply.
       - name: Shared core + identity + wasm integration suites
         run: pnpm --filter @cipherstash/stack run test:integration
+        env:
+          DATABASE_URL: ${{ steps.db.outputs.database-url }}
+          PGRST_URL: ${{ steps.db.outputs.pgrest-url }}
 
+      # Guarded on the project being set: if the stack never came up, there is
+      # nothing to tear down and an unguarded `-p ""` would fail the job with a
+      # confusing error that masks the real one.
       - name: Stop ${{ matrix.db }}
-        if: always()
-        run: docker compose -f local/docker-compose.${{ matrix.db }}.yml down -v
+        if: always() && env.CS_COMPOSE_PROJECT != ''
+        run: docker compose -p "$CS_COMPOSE_PROJECT" -f "$CS_COMPOSE_FILE" down -v

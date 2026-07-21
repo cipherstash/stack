@@ -8,6 +8,12 @@
 # their own Postgres on 5432. Binding 5432 here would either fail to start or,
 # worse, shadow the database they think they are talking to.
 #
+# `CS_PG_PORTS` overrides the mapping so CI can publish to an EPHEMERAL host
+# port (`CS_PG_PORTS=5432`, container port only) and read the assigned port back
+# with `docker compose port`. That is what lets concurrent integration jobs share
+# a runner without contending for a fixed port. Unset — the local default — keeps
+# the stable `55432` a developer can put in a connection string.
+#
 # Connect DIRECT to the database, never through a pooler: `SET ROLE` and session
 # advisory locks (both used by the EQL installer) are unstable over PgBouncer in
 # transaction mode.
@@ -26,7 +32,7 @@ services:
       PGUSER: cipherstash
       POSTGRES_PASSWORD: password
     ports:
-      - "55432:5432"
+      - "${CS_PG_PORTS:-55432:5432}"
     # No volume: every run starts from a clean database, so a stale EQL
     # generation can never make a suite pass for the wrong reason.
     #

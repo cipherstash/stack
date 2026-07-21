@@ -4,6 +4,9 @@
 # Supply-chain critical paths — changes here require explicit review
 # (lirantal/npm-security-best-practices; see skills/stash-supply-chain-security/).
 /.github/workflows/                     @cipherstash/developers
+# Composite actions are workflow code by another name: they run arbitrary steps
+# in the same job, with the same secrets, so they need the same review gate.
+/.github/actions/                       @cipherstash/developers
 /.github/dependabot.yml                 @cipherstash/developers
 /.github/CODEOWNERS                     @cipherstash/developers
 /pnpm-workspace.yaml                    @cipherstash/developers
