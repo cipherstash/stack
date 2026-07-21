@@ -72,6 +72,26 @@ const catalog = encryptedTable('wasm_query_matrix', {
 })
 
 /** A v3 SCALAR query term: versioned envelope (`v: 3`), NO ciphertext. */
+/**
+ * Unwrap a `{ data } | { failure }` Result (#741 — every fallible method on
+ * this entry returns one). Asserting on the envelope instead of its payload
+ * silently passes: `term.v` is `undefined` on a Result, so a shape check reads
+ * as "not v3" rather than "you forgot to unwrap".
+ */
+function unwrap<T>(
+  result:
+    | { data: T; failure?: never }
+    | { data?: never; failure: { message: string } },
+  label: string,
+): T {
+  assertEquals(
+    result.failure,
+    undefined,
+    `${label}: ${result.failure?.message}`,
+  )
+  return result.data as T
+}
+
 function assertV3Term(term: unknown, label: string) {
   assertExists(term, `${label}: encryptQuery returned null`)
   const obj = term as Record<string, unknown>
@@ -119,42 +139,54 @@ Deno.test({
 
     // equality → unique index
     assertV3Term(
-      await client.encryptQuery('alice@example.com', {
-        table: catalog,
-        column: catalog.email,
-        queryType: 'equality',
-      }),
+      unwrap(
+        await client.encryptQuery('alice@example.com', {
+          table: catalog,
+          column: catalog.email,
+          queryType: 'equality',
+        }),
+        'equality',
+      ),
       'equality',
     )
 
     // freeTextSearch → match index
     assertV3Term(
-      await client.encryptQuery('needle phrase', {
-        table: catalog,
-        column: catalog.bio,
-        queryType: 'freeTextSearch',
-      }),
+      unwrap(
+        await client.encryptQuery('needle phrase', {
+          table: catalog,
+          column: catalog.bio,
+          queryType: 'freeTextSearch',
+        }),
+        'freeTextSearch',
+      ),
       'freeTextSearch',
     )
 
     // orderAndRange → ore index (numeric)
     assertV3Term(
-      await client.encryptQuery(42, {
-        table: catalog,
-        column: catalog.age,
-        queryType: 'orderAndRange',
-      }),
+      unwrap(
+        await client.encryptQuery(42, {
+          table: catalog,
+          column: catalog.age,
+          queryType: 'orderAndRange',
+        }),
+        'orderAndRange',
+      ),
       'orderAndRange',
     )
 
     // searchableJson, string value → ste_vec_selector (JSONPath). By
     // contract the selector "term" is a BARE selector-hash string — no
     // envelope — bound as the text argument of `->` / `->>`.
-    const selector = await client.encryptQuery('$.theme', {
-      table: catalog,
-      column: catalog.prefs,
-      queryType: 'searchableJson',
-    })
+    const selector = unwrap(
+      await client.encryptQuery('$.theme', {
+        table: catalog,
+        column: catalog.prefs,
+        queryType: 'searchableJson',
+      }),
+      'selector',
+    )
     assertExists(selector, 'selector: encryptQuery returned null')
     assertEquals(
       typeof selector,
@@ -171,13 +203,16 @@ Deno.test({
     // strict {sv: [...]}, no version envelope — per the eql_v3.query_jsonb
     // wire contract)
     assertContainmentNeedle(
-      await client.encryptQuery(
-        { theme: 'dark' },
-        {
-          table: catalog,
-          column: catalog.prefs,
-          queryType: 'searchableJson',
-        },
+      unwrap(
+        await client.encryptQuery(
+          { theme: 'dark' },
+          {
+            table: catalog,
+            column: catalog.prefs,
+            queryType: 'searchableJson',
+          },
+        ),
+        'searchableJson/containment',
       ),
       'searchableJson/containment',
     )
@@ -185,16 +220,19 @@ Deno.test({
     // Omitted queryType → inference from the column's indexes (TextEq has
     // exactly one: unique), mirroring the native client.
     assertV3Term(
-      await client.encryptQuery('bob@example.com', {
-        table: catalog,
-        column: catalog.email,
-      }),
+      unwrap(
+        await client.encryptQuery('bob@example.com', {
+          table: catalog,
+          column: catalog.email,
+        }),
+        'inference',
+      ),
       'inference',
     )
 
     // Bulk: one round trip across mixed query types, position-stable with
     // nulls passing through.
-    const bulk = await client.encryptQueryBulk([
+    const bulkResult = await client.encryptQueryBulk([
       {
         value: 'alice@example.com',
         table: catalog,
@@ -225,6 +263,7 @@ Deno.test({
         queryType: 'searchableJson',
       },
     ])
+    const bulk = unwrap(bulkResult, 'bulk')
     assertEquals(bulk.length, 5)
     assertV3Term(bulk[0], 'bulk/equality')
     assertEquals(bulk[1], null, 'bulk: null value must yield null')

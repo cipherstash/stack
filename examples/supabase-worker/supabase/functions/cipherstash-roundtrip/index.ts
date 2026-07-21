@@ -15,13 +15,17 @@
 
 import {
   Encryption,
-  encryptedColumn,
   encryptedTable,
   isEncrypted,
-} from 'npm:@cipherstash/stack@^0.18.0/wasm-inline'
+  types,
+} from 'npm:@cipherstash/stack@^1.0.0-rc.3/wasm-inline'
 
+// EQL v3: the WASM entry exports the v3 authoring surface only (`types.*`),
+// not the v2 chainable builders — `encryptedColumn('email').equality()` is
+// rejected by the factory outright. `TextEq` is the v3 equality-capable text
+// domain, i.e. the direct replacement.
 const users = encryptedTable('users', {
-  email: encryptedColumn('email').equality(),
+  email: types.TextEq('email'),
 })
 
 Deno.serve(async (_req: Request) => {
@@ -61,11 +65,28 @@ Deno.serve(async (_req: Request) => {
     })
 
     const plaintext = 'alice@example.com'
-    const encrypted = await client.encrypt(plaintext, {
+    // Every fallible method returns `{ data } | { failure }` — the same
+    // contract as the native entry (see AGENTS.md).
+    const encryptResult = await client.encrypt(plaintext, {
       column: users.email,
       table: users,
     })
-    const decrypted = await client.decrypt(encrypted)
+    if (encryptResult.failure) {
+      return Response.json(
+        { ok: false, error: encryptResult.failure.message },
+        { status: 500 },
+      )
+    }
+    const encrypted = encryptResult.data
+
+    const decryptResult = await client.decrypt(encrypted)
+    if (decryptResult.failure) {
+      return Response.json(
+        { ok: false, error: decryptResult.failure.message },
+        { status: 500 },
+      )
+    }
+    const decrypted = decryptResult.data
 
     return Response.json(
       {

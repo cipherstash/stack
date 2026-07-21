@@ -14,9 +14,21 @@ export const decrypt = (): never => {
   )
 }
 
+export const decryptBulkFallible = (): never => {
+  throw new Error(
+    '[test stub]: protect-ffi/wasm-inline decryptBulkFallible not implemented',
+  )
+}
+
 export const encrypt = (): never => {
   throw new Error(
     '[test stub]: protect-ffi/wasm-inline encrypt not implemented',
+  )
+}
+
+export const encryptBulk = (): never => {
+  throw new Error(
+    '[test stub]: protect-ffi/wasm-inline encryptBulk not implemented',
   )
 }
 

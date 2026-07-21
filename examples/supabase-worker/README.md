@@ -59,7 +59,7 @@ There are none. The `@cipherstash/stack/wasm-inline` subpath embeds the protect-
 ## What this verifies
 
 - Protect's WASM build works inside Supabase Edge Functions.
-- The full `@cipherstash/stack/wasm-inline` developer surface (`Encryption`, `encryptedTable`, `encryptedColumn`, …) is usable from an Edge Function with no native dependencies.
+- The full `@cipherstash/stack/wasm-inline` developer surface (`Encryption`, `encryptedTable`, the `types.*` EQL v3 domains, …) is usable from an Edge Function with no native dependencies.
 - A CipherStash service-to-service `AccessKeyStrategy` is the right credential shape for serverless / edge environments.
 
 Automated coverage of the same code path lives at `e2e/wasm/roundtrip.test.ts` and runs in CI on every PR — this example is the runnable runbook version.

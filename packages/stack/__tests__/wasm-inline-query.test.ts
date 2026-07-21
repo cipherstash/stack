@@ -30,6 +30,7 @@ vi.mock('@cipherstash/auth/wasm-inline', () => ({
 
 import { encryptedTable, types } from '../src/eql/v3'
 import { Encryption } from '../src/wasm-inline'
+import { expectData } from './helpers/expect-result'
 
 const users = encryptedTable('users', {
   // TextEq → unique index only
@@ -131,7 +132,12 @@ describe('WasmEncryptionClient.encryptQuery', () => {
         column: users.email,
         queryType: 'freeTextSearch',
       }),
-    ).rejects.toThrow(/not configured on column "email"/)
+    ).resolves.toMatchObject({
+      failure: {
+        type: 'EncryptionError',
+        message: expect.stringMatching(/not configured on column "email"/),
+      },
+    })
     expect(ffi.encryptQuery).not.toHaveBeenCalled()
   })
 
@@ -167,7 +173,7 @@ describe('WasmEncryptionClient.encryptQuery', () => {
     const c = await client()
     expect(
       await c.encryptQuery(null, { table: users, column: users.email }),
-    ).toBeNull()
+    ).toEqual({ data: null })
     expect(ffi.encryptQuery).not.toHaveBeenCalled()
   })
 
@@ -182,7 +188,9 @@ describe('WasmEncryptionClient.encryptQuery', () => {
         column: users.age,
         queryType: 'orderAndRange',
       }),
-    ).rejects.toThrow('[encryption]: Cannot encrypt NaN value')
+    ).resolves.toMatchObject({
+      failure: { message: '[encryption]: Cannot encrypt NaN value' },
+    })
     expect(ffi.encryptQuery).not.toHaveBeenCalled()
   })
 
@@ -194,7 +202,13 @@ describe('WasmEncryptionClient.encryptQuery', () => {
         column: users.bio,
         queryType: 'freeTextSearch',
       }),
-    ).rejects.toThrow(/Cannot use 'match' index with numeric value/)
+    ).resolves.toMatchObject({
+      failure: {
+        message: expect.stringMatching(
+          /Cannot use 'match' index with numeric value/,
+        ),
+      },
+    })
     expect(ffi.encryptQuery).not.toHaveBeenCalled()
   })
 
@@ -209,7 +223,9 @@ describe('WasmEncryptionClient.encryptQuery', () => {
           queryType: 'orderAndRange',
         },
       ]),
-    ).rejects.toThrow('[encryption]: Cannot encrypt Infinity value')
+    ).resolves.toMatchObject({
+      failure: { message: '[encryption]: Cannot encrypt Infinity value' },
+    })
     expect(ffi.encryptQueryBulk).not.toHaveBeenCalled()
   })
 })
@@ -235,10 +251,11 @@ describe('WasmEncryptionClient.encryptQueryBulk', () => {
       },
     ])
 
-    expect(out).toHaveLength(3)
-    expect(out[0]).toEqual({ v: 3, n: 0 })
-    expect(out[1]).toBeNull()
-    expect(out[2]).toEqual({ v: 3, n: 1 })
+    const terms = expectData(out)
+    expect(terms).toHaveLength(3)
+    expect(terms[0]).toEqual({ v: 3, n: 0 })
+    expect(terms[1]).toBeNull()
+    expect(terms[2]).toEqual({ v: 3, n: 1 })
     // Only the two live terms reached the FFI, with per-term resolution.
     const { queries } = ffi.encryptQueryBulk.mock.calls[0][1] as {
       queries: Array<{ indexType: string }>
@@ -251,7 +268,7 @@ describe('WasmEncryptionClient.encryptQueryBulk', () => {
     const out = await c.encryptQueryBulk([
       { value: null, table: users, column: users.email },
     ])
-    expect(out).toEqual([null])
+    expect(out).toEqual({ data: [null] })
     expect(ffi.encryptQueryBulk).not.toHaveBeenCalled()
   })
 })

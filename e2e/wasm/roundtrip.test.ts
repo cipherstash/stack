@@ -102,10 +102,19 @@ Deno.test({
 
     const plaintext = `wasm-v3-smoke-${crypto.randomUUID()}@example.com`
 
-    const encrypted = await client.encrypt(plaintext, {
+    // Every fallible method returns `{ data } | { failure }` (#741). Unwrap
+    // at each boundary — passing an envelope on would fail in ways that look
+    // like an encryption bug rather than a plumbing one.
+    const encryptResult = await client.encrypt(plaintext, {
       column: users.email,
       table: users,
     })
+    assertEquals(
+      encryptResult.failure,
+      undefined,
+      `encrypt() failed: ${encryptResult.failure?.message}`,
+    )
+    const encrypted = encryptResult.data
 
     assertEquals(
       isEncrypted(encrypted),
@@ -138,17 +147,28 @@ Deno.test({
     }
     assertEquals(String(wire.v), '3', 'wire envelope is not v3')
 
-    const decrypted = await client.decrypt(encrypted)
-    assertEquals(decrypted, plaintext, 'round-trip plaintext mismatch')
+    const decryptResult = await client.decrypt(encrypted)
+    assertEquals(
+      decryptResult.failure,
+      undefined,
+      `decrypt() failed: ${decryptResult.failure?.message}`,
+    )
+    assertEquals(decryptResult.data, plaintext, 'round-trip plaintext mismatch')
 
     // 5. (#662) Searchable encryption is reachable on the edge: mint a v3
     //    QUERY TERM for the column's free-text index. Terms are
     //    ciphertext-free needles — assert the wire shape, not decryption.
-    const term = (await client.encryptQuery(plaintext, {
+    const termResult = await client.encryptQuery(plaintext, {
       column: users.email,
       table: users,
       queryType: 'freeTextSearch',
-    })) as Record<string, unknown> | null
+    })
+    assertEquals(
+      termResult.failure,
+      undefined,
+      `encryptQuery() failed: ${termResult.failure?.message}`,
+    )
+    const term = termResult.data as Record<string, unknown> | null
     assertExists(term, 'encryptQuery() returned null for live plaintext')
     assertEquals(term.v, 3, 'query term is not EQL v3')
     assertEquals(
@@ -158,12 +178,48 @@ Deno.test({
     )
 
     // Bulk form is position-stable, nulls pass through.
-    const bulk = await client.encryptQueryBulk([
+    const bulkResult = await client.encryptQueryBulk([
       { value: plaintext, column: users.email, table: users },
       { value: null, column: users.email, table: users },
     ])
+    assertEquals(
+      bulkResult.failure,
+      undefined,
+      `encryptQueryBulk() failed: ${bulkResult.failure?.message}`,
+    )
+    const bulk = bulkResult.data
     assertEquals(bulk.length, 2)
     assertExists(bulk[0])
     assertEquals(bulk[1], null)
+
+    // 6. (#741) The value-level bulk ops — the whole reason a list read on the
+    //    edge is one ZeroKMS round trip instead of N. Nothing else in the repo
+    //    exercises these against real ZeroKMS.
+    const second = `wasm-v3-bulk-${crypto.randomUUID()}@example.com`
+    const bulkEncrypted = await client.bulkEncrypt([
+      { plaintext, column: users.email, table: users },
+      { plaintext: null, column: users.email, table: users },
+      { plaintext: second, column: users.email, table: users },
+    ])
+    assertEquals(
+      bulkEncrypted.failure,
+      undefined,
+      `bulkEncrypt() failed: ${bulkEncrypted.failure?.message}`,
+    )
+    const payloads = bulkEncrypted.data
+    assertEquals(payloads.length, 3, 'bulkEncrypt is not index-aligned')
+    assertEquals(payloads[1], null, 'null plaintext did not yield null')
+    assertExists(payloads[0])
+    assertExists(payloads[2])
+    assertEquals(isEncrypted(payloads[0]), true, 'bulkEncrypt[0] not a payload')
+
+    const bulkDecrypted = await client.bulkDecrypt(payloads)
+    assertEquals(
+      bulkDecrypted.failure,
+      undefined,
+      `bulkDecrypt() failed: ${bulkDecrypted.failure?.message}`,
+    )
+    // Round-trips at the ORIGINAL indices, with the null hole preserved.
+    assertEquals(bulkDecrypted.data, [plaintext, null, second])
   },
 })
