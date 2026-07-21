@@ -627,57 +627,13 @@ The hard case: a Supabase table that already exists with live data in a plaintex
 
 CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
 
-> **Known gap (EQL v3 backfill).** The `stash encrypt backfill` / `stash encrypt cutover` tooling currently targets EQL v2 (`eql_v2_encrypted`) columns — EQL v3 domain columns are not yet supported end-to-end. Tracked in [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648). The lifecycle below (rollout → deploy gate → cutover) is the correct shape either way; until #648 lands, run the CLI backfill/cutover commands against a v2 encrypted twin (see "Interim path until #648" just below), or backfill v3 columns with your own script.
+> **EQL version note.** The `stash encrypt *` tooling works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what this section's schema uses) is `rollout → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
 
 > **Using CipherStash Proxy?** If you query encrypted data through [CipherStash Proxy](https://github.com/cipherstash/proxy) instead of the SDK, also run `stash db push` after schema-add and again before cutover to register the encrypted column shape with EQL.
 
 > **Runner note.** `stash init` adds `stash` to the project as a dev dependency, so `stash <command>` runs through whichever package manager the project uses (Bun, pnpm, Yarn, or npm) — examples below show this bare form. Before init has run, prefix with your package manager's one-shot runner: `bunx`, `pnpm dlx`, `yarn dlx`, or `npx`. The CLI's behaviour is identical across all of them.
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
-
-### Interim path until #648: the v2 encrypted twin
-
-**This is the interim EQL v2 path, distinct from the v3 surface the rest of
-this skill documents.** `stash encrypt backfill` / `stash encrypt cutover`
-only operate on `eql_v2_encrypted` columns today, so to get the CLI-managed
-backfill/cutover, make the twin a **v2** column and dual-write it through the
-legacy `encryptedSupabase` (v2) wrapper. The lifecycle below (rollout → deploy
-gate → cutover) is unchanged — only the twin's column type and the dual-write
-client differ:
-
-```sql
--- schema-add: v2 twin instead of the v3 domain (still nullable)
-ALTER TABLE users
-  ADD COLUMN email_encrypted eql_v2_encrypted;
-```
-
-```typescript
-// Dual-write through the legacy v2 wrapper: hand-written client-side schema,
-// two-argument from(table, schema).
-import { Encryption } from '@cipherstash/stack'
-import { encryptedColumn, encryptedTable } from '@cipherstash/stack/schema'
-import { encryptedSupabase } from '@cipherstash/stack-supabase'
-
-const users = encryptedTable('users', {
-  email_encrypted: encryptedColumn('email_encrypted').equality().freeTextSearch(),
-})
-
-const encryptionClient = await Encryption({ schemas: [users] })
-const esV2 = encryptedSupabase({ supabaseClient, encryptionClient })
-
-// Dual-write: BOTH the plaintext column and the encrypted twin.
-export async function insertUser(email: string) {
-  return esV2.from('users', users).insert({
-    email,                   // plaintext — keep writing until drop
-    email_encrypted: email,  // v2 twin — encrypted automatically
-  })
-}
-```
-
-With the v2 twin in place, the backfill and cutover commands in Step 2 work
-as written. Alternatively, keep the twin v3 (as shown in the steps below) and
-backfill it with your own script — once #648 lands, the v3 twin becomes the
-CLI-supported path end to end.
 
 ### Starting state
 
@@ -786,11 +742,22 @@ stash encrypt backfill --table users --column email
 # (CI: pass --confirm-dual-writes-deployed instead.)
 ```
 
-Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination order, encrypts each chunk via the encryption client, and writes the ciphertext into `email_encrypted` inside transactions that also checkpoint to `cs_migrations`. SIGINT-safe. (Remember the known-gap callout above: today this command targets EQL v2 columns — see #648.)
+Resumable, idempotent, chunked. The CLI walks the table in keyset-pagination order, encrypts each chunk via the encryption client, and writes the ciphertext into `email_encrypted` inside transactions that also checkpoint to `cs_migrations`. SIGINT-safe. It auto-detects whether the column is EQL v2 or v3 and records that in `cs_migrations`.
 
 If something goes wrong (e.g. you discover the dual-write code wasn't actually live when backfill ran), re-run with `--force` to re-encrypt every row regardless of current state.
 
-#### Cutover: rename swap and activate
+#### Switch reads to the encrypted column
+
+**EQL v3 (the schema above): there is no cut-over.** The encrypted column keeps
+its own name — point your application at `email_encrypted` through the
+`encryptedSupabaseV3` wrapper, deploy, verify reads decrypt correctly, then skip
+ahead to the drop step. Running `stash encrypt cutover` on a **backfilled** v3
+column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't
+finished).
+
+The rest of this subsection is the **EQL v2** path (an `eql_v2_encrypted` twin
+queried through the legacy `encryptedSupabase` wrapper), kept for existing v2
+deployments.
 
 First, if you use declared `schemas`, update them to the post-cutover shape — the encrypted column will live under the original column name:
 
@@ -803,7 +770,7 @@ export const users = encryptedTable('users', {
 
 (Without declared schemas, introspection picks up the renamed column at the next client startup.)
 
-> **Known gap (SDK-only users):** `stash encrypt cutover` currently requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. This will be decoupled in a future release (tracked separately).
+> **Known gap (EQL v2, SDK-only users):** `stash encrypt cutover` requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. EQL v3 columns never hit this — cut-over doesn't apply to them.
 >
 > **Using CipherStash Proxy?** Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
 >
@@ -843,7 +810,12 @@ Once read paths are routing through the wrapper and you're confident reads are d
 stash encrypt drop --table users --column email
 ```
 
-The CLI emits a Supabase migration file with `ALTER TABLE users DROP COLUMN email_plaintext;`. Review and apply with `supabase migration up` (or `supabase db reset` locally). Then remove the dual-write code from app paths — `email_plaintext` is gone; only `email` (encrypted) is written now, through the wrapper.
+The CLI emits a Supabase migration file with the drop. **Which column it drops depends on the EQL version**, which the CLI auto-detects:
+
+- **v3** — drops the original plaintext column, `ALTER TABLE users DROP COLUMN email;`. There was no rename, so no `email_plaintext` exists. Requires the `backfilled` phase plus a live coverage check.
+- **v2** — drops the post-rename leftover, `ALTER TABLE users DROP COLUMN email_plaintext;`. Requires the `cut-over` phase.
+
+Review and apply with `supabase migration up` (or `supabase db reset` locally). Then remove the dual-write code from app paths — the plaintext column is gone; only the encrypted column is written now, through the wrapper.
 
 ### Inspecting progress at any time
 
@@ -864,9 +836,8 @@ supabaseClient, encryptionClient })` factory, which takes a hand-written
 client-side schema and a two-argument `from(tableName, schema)`. That surface
 still ships in `@cipherstash/stack-supabase` and is unchanged — keep using it
 for existing v2 deployments — but it is not the recommended path for new
-projects: use `encryptedSupabaseV3`. One current exception: the v2 wrapper is
-also the interim dual-write path for CLI-managed `stash encrypt backfill` /
-`stash encrypt cutover` until [cipherstash/stack#648](https://github.com/cipherstash/stack/issues/648)
-lands — see "Interim path until #648: the v2 encrypted twin" in the migration
-section above for a minimal recipe. For the v2 wrapper's full API and
-semantics, see the docs at https://cipherstash.com/docs.
+projects: use `encryptedSupabaseV3`. The CLI rollout tooling (`stash encrypt
+backfill` / `cutover` / `drop`) supports both generations and auto-detects which
+one a column uses, so a v2 twin is no longer needed to get CLI-managed
+backfill — see the EQL version note in the migration section above. For the v2
+wrapper's full API and semantics, see the docs at https://cipherstash.com/docs.
