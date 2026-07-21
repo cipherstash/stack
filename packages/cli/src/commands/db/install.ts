@@ -603,6 +603,7 @@ async function generateDrizzleMigration(
   // data-destroying on a populated one — so the rewritten file carries a
   // comment steering populated tables to the staged `stash encrypt` path.
   // CIP-2991 + CIP-2994.
+  let sweepIncomplete = false
   try {
     const { rewritten, skipped } = await rewriteEncryptedAlterColumns(outDir, {
       skip: generatedMigrationPath,
@@ -614,6 +615,7 @@ async function generateDrizzleMigration(
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }
     if (skipped.length > 0) {
+      sweepIncomplete = true
       p.log.warn(
         `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
       )
@@ -622,12 +624,18 @@ async function generateDrizzleMigration(
       }
     }
   } catch (error) {
+    sweepIncomplete = true
     p.log.warn(
       `Could not rewrite ALTER COLUMN migrations: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
 
   p.log.success(`Migration created: ${generatedMigrationPath}`)
+  if (sweepIncomplete) {
+    p.log.warn(
+      `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${outDir} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+    )
+  }
   p.note(
     `Run your Drizzle migrations to install EQL:\n\n  ${runnerCommand(detectPackageManager(), '').trim()} drizzle-kit migrate`,
     'Next Steps',
