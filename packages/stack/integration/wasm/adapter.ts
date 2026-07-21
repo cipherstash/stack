@@ -34,6 +34,7 @@ import {
   Encryption as WasmEncryption,
   type WasmEncryptionClient,
   type WasmPlaintext,
+  type WasmResult,
 } from '@/wasm-inline'
 
 const SUPPORTED_OPS: ReadonlySet<QueryOpKind> = new Set([
@@ -100,12 +101,7 @@ function toWasmPlaintext(value: Plain): WasmPlaintext {
  * the run loudly with the SDK's own message, so it unwraps at the call site
  * rather than threading Results through the query builders.
  */
-function unwrap<T>(
-  result:
-    | { data: T; failure?: never }
-    | { data?: never; failure: { message: string } },
-  op: string,
-): T {
+function unwrap<T>(result: WasmResult<T>, op: string): T {
   if (result.failure) {
     throw new Error(`[wasm adapter]: ${op} failed — ${result.failure.message}`)
   }

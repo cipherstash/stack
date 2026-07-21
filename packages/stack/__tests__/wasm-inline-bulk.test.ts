@@ -15,7 +15,10 @@ const ffi = vi.hoisted(() => ({
   decrypt: vi.fn(async () => 'plain'),
   isEncrypted: vi.fn(() => true),
   encryptQuery: vi.fn(async () => ({ v: 3, i: {} })),
-  encryptQueryBulk: vi.fn(async () => []),
+  encryptQueryBulk: vi.fn(
+    async (_client: unknown, { queries }: { queries: unknown[] }) =>
+      queries.map((_, n) => ({ v: 3, n })),
+  ),
   encryptBulk: vi.fn(
     async (_client: unknown, { plaintexts }: { plaintexts: unknown[] }) =>
       plaintexts.map((_, n) => ({ v: 3, i: {}, c: `ct-${n}` })),
@@ -241,12 +244,90 @@ describe('WasmEncryptionClient.bulkDecrypt', () => {
 // Results are matched to inputs BY POSITION — the FFI payloads carry no
 // correlation id. A short response would otherwise leave trailing slots null,
 // which a caller cannot tell apart from "this row had no value".
+// The live-filters test `!== null && !== undefined` deliberately, NOT
+// truthiness. If any regressed to a truthy check, `0` / `''` / `false` would
+// be treated as absent: real values silently persisted as NULL, with the whole
+// suite still green. This is the highest-consequence regression the batch code
+// can have, so it is pinned per method.
+describe('falsy-but-live values still reach ZeroKMS', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('bulkEncrypt sends 0, empty string and false', async () => {
+    const c = await client()
+    const out = await c.bulkEncrypt([
+      { plaintext: 0, table: users, column: users.email },
+      { plaintext: '', table: users, column: users.email },
+      { plaintext: false, table: users, column: users.email },
+    ])
+
+    const [, opts] = ffi.encryptBulk.mock.calls[0]
+    const sent = opts.plaintexts as Array<{ plaintext: unknown }>
+    expect(sent.map((p) => p.plaintext)).toEqual([0, '', false])
+    // …and each comes back at its own index, not as a null hole.
+    expect(expectData(out)).toEqual([
+      { v: 3, i: {}, c: 'ct-0' },
+      { v: 3, i: {}, c: 'ct-1' },
+      { v: 3, i: {}, c: 'ct-2' },
+    ])
+  })
+
+  it('encryptQueryBulk sends 0, empty string and false', async () => {
+    const c = await client()
+    await c.encryptQueryBulk([
+      { value: 0, table: users, column: users.email },
+      { value: '', table: users, column: users.email },
+      { value: false, table: users, column: users.email },
+    ])
+    expect(ffi.encryptQueryBulk).toHaveBeenCalledTimes(1)
+    const [, opts] = ffi.encryptQueryBulk.mock.calls[0]
+    expect(opts.queries).toHaveLength(3)
+  })
+})
+
+// A sparse input (e.g. a partially-filled `new Array(n)`) must still yield a
+// dense, index-aligned result. `Array.prototype.map` SKIPS holes, so building
+// the output with `map` left `undefined` holes rather than the documented
+// `null` — while lengths still matched, so the batch-length guard could not
+// see it.
+it('bulkDecrypt returns null (not a hole) for a sparse input slot', async () => {
+  const c = await client()
+  const sparse: Array<ReturnType<typeof ct> | undefined> = new Array(3)
+  sparse[0] = ct('a')
+  sparse[2] = ct('b')
+
+  const out = expectData(await c.bulkDecrypt(sparse))
+  expect(out).toHaveLength(3)
+  expect(out[1]).toBeNull()
+  expect(1 in out, 'index 1 must be a real null, not a hole').toBe(true)
+})
+
+// `encryptQueryBulk` gained the same length guard as the other two, but the
+// mismatch describe below only covered bulkEncrypt/bulkDecrypt — dropping the
+// guard here would have passed the whole suite.
+it('encryptQueryBulk fails on a short FFI response', async () => {
+  ffi.encryptQueryBulk.mockResolvedValueOnce([{ v: 3, n: 0 }])
+
+  const c = await client()
+  await expect(
+    c.encryptQueryBulk([
+      { value: 'a', table: users, column: users.email },
+      { value: 'b', table: users, column: users.email },
+    ]),
+  ).resolves.toMatchObject({
+    failure: {
+      message: expect.stringMatching(/sent 2 payload\(s\).*received 1 back/s),
+    },
+  })
+})
+
 describe('bulk result/input length mismatch', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('bulkEncrypt throws rather than returning a partially-null batch', async () => {
+  it('bulkEncrypt fails rather than returning a partially-null batch', async () => {
     ffi.encryptBulk.mockResolvedValueOnce([{ v: 3, i: {}, c: 'only-one' }])
 
     const c = await client()
@@ -262,7 +343,7 @@ describe('bulk result/input length mismatch', () => {
     })
   })
 
-  it('bulkDecrypt throws rather than returning a partially-null batch', async () => {
+  it('bulkDecrypt fails rather than returning a partially-null batch', async () => {
     ffi.decryptBulkFallible.mockResolvedValueOnce([
       { data: 'only-one' },
     ] as never)

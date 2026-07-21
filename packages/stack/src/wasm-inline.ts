@@ -31,11 +31,16 @@
  *   },
  * })
  *
+ * // Every fallible method returns `{ data } | { failure }` — the same
+ * // contract as the native entry. Unwrap before use.
  * const enc = await client.encrypt("alice@example.com", {
  *   column: users.email,
  *   table: users,
  * })
- * const dec = await client.decrypt(enc)
+ * if (enc.failure) throw new Error(enc.failure.message)
+ *
+ * const dec = await client.decrypt(enc.data)
+ * if (dec.failure) throw new Error(dec.failure.message)
  *
  * // Searchable encryption: mint a ciphertext-free QUERY TERM and cast it
  * // to the column's `eql_v3.query_<domain>` type in SQL to hit the index.
@@ -44,9 +49,10 @@
  *   table: users,
  *   queryType: "freeTextSearch",
  * })
- * // e.g. postgres-js:
+ * if (term.failure) throw new Error(term.failure.message)
+ * // e.g. postgres-js — bind `term.data`, NOT the envelope:
  * //   sql`SELECT * FROM users
- * //       WHERE eql_v3.matches(email, ${term}::jsonb::eql_v3.query_text_search)`
+ * //       WHERE eql_v3.matches(email, ${term.data}::jsonb::eql_v3.query_text_search)`
  * ```
  *
  * For per-user, identity-bound encryption on the edge, build an
@@ -71,7 +77,7 @@
  * re-exported from this entry.
  */
 
-import { type Result, withResult } from '@byteslice/result'
+import { withResult } from '@byteslice/result'
 import {
   AccessKeyStrategy,
   type OidcFederationStrategy,
@@ -86,7 +92,6 @@ import {
   isEncrypted as wasmIsEncrypted,
   newClient as wasmNewClient,
 } from '@cipherstash/protect-ffi/wasm-inline'
-import { getErrorCode } from '@/encryption/helpers/error-code'
 import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
 import {
   assertValidNumericValue,
@@ -129,6 +134,13 @@ export {
 // path was never announced or documented for v2, and the edge targets v3. EQL v2
 // remains fully available on the native `@cipherstash/stack` entry.
 export * from '@/eql/v3'
+// The failure vocabulary every method on this entry now returns. Exported here
+// so an edge consumer can discriminate `result.failure.type` from the SAME
+// single import they got the client from — without reaching for the
+// Node-oriented `@cipherstash/stack/errors` subpath (undocumented on edge) or
+// depending on `@byteslice/result` — which is bundled INTO this file, so it is
+// not a package an edge consumer can import at all.
+export { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 export type { Encrypted } from '@/types'
 
 /** Re-exported convenience predicate — same as the raw protect-ffi one. */
@@ -345,13 +357,54 @@ export type WasmBulkPlaintext = {
  * `EncryptionErrorTypes`."* This entry did not follow it until #741 — see
  * {@link WasmEncryptionClient} for why that mattered and what changed.
  */
+/**
+ * The `{ data } | { failure }` envelope every fallible method here returns.
+ *
+ * Structurally identical to `@byteslice/result`'s `Result<T, EncryptionError>`
+ * — which is what `withResult` actually produces — but declared LOCALLY on
+ * purpose, for the same reason {@link WasmPlaintext} re-declares protect-ffi's
+ * `JsPlaintext`: `@byteslice/result` is bundled into `dist/wasm-inline.js`
+ * (tsup `noExternal`), so it is not a package an edge consumer can resolve.
+ * Re-exporting its type put `import { Result } from '@byteslice/result'` at the
+ * top of the emitted `.d.ts`, which a Deno consumer cannot resolve at all — the
+ * e2e import map maps only the three `/wasm-inline` subpaths.
+ *
+ * Declaring it here keeps the published types self-contained.
+ */
+export type WasmResult<T> =
+  | { data: T; failure?: never }
+  | { data?: never; failure: EncryptionError }
+
+/**
+ * Read an FFI error code STRUCTURALLY.
+ *
+ * Deliberately not `@/encryption/helpers/error-code`: that narrows with
+ * `instanceof` against the native `ProtectError`, which is a runtime VALUE
+ * import of `@cipherstash/protect-ffi`. protect-ffi is not in tsup's
+ * `noExternal`, so importing it here put a bare `@cipherstash/protect-ffi`
+ * specifier into `dist/wasm-inline.js` — the native NAPI entry, in the one
+ * bundle that exists to avoid it. On Workers / Edge the non-`node` condition
+ * resolves that specifier to a module exporting no `ProtectError` at all.
+ *
+ * A structural read is also the only thing that could ever work here: the WASM
+ * build ships no error class, so `instanceof` never matches on this path
+ * regardless. A `code` string is all there is to find.
+ */
+function readErrorCode(error: unknown): EncryptionError['code'] {
+  if (typeof error !== 'object' || error === null) return undefined
+  const { code } = error as { code?: unknown }
+  return typeof code === 'string'
+    ? (code as EncryptionError['code'])
+    : undefined
+}
+
 function toFailure(
   type: EncryptionError['type'],
 ): (error: unknown) => EncryptionError {
   return (error: unknown) => ({
     type,
     message: error instanceof Error ? error.message : String(error),
-    code: getErrorCode(error),
+    code: readErrorCode(error),
   })
 }
 
@@ -378,13 +431,42 @@ function toFailure(
 function toError(ex: unknown): Error {
   if (ex instanceof Error) return ex
   if (typeof ex === 'string') return new Error(ex)
+
+  // Objects are the other shape wasm-bindgen hands back, so serialize rather
+  // than settle for "[object Object]". `JSON.stringify` returns undefined for
+  // a symbol/function and throws on a cycle.
+  let message: string
   try {
-    // Objects are the other shape wasm-bindgen hands back, so serialize rather
-    // than settle for "[object Object]". `JSON.stringify` returns undefined for
-    // a symbol/function and throws on a cycle — `String` covers both.
-    return new Error(JSON.stringify(ex) ?? String(ex))
+    message = JSON.stringify(ex) ?? safeString(ex)
   } catch {
-    return new Error(String(ex))
+    message = safeString(ex)
+  }
+
+  // Carry a structural `code` onto the synthesized Error so `toFailure` can
+  // still surface it. Without this the conversion loses it: `withResult` runs
+  // `onException` FIRST, so the mapper only ever sees this fresh Error, and
+  // `failure.code` could never be populated on this entry at all.
+  const error = new Error(message) as Error & { code?: string }
+  const code = readErrorCode(ex)
+  if (code) error.code = code
+  return error
+}
+
+/**
+ * `String(value)` that cannot itself throw.
+ *
+ * A null-prototype object (`Object.create(null)`) has no `toString`, so
+ * `String(ex)` raises `TypeError: Cannot convert object to primitive value`.
+ * That matters here because `withResult` invokes `onException` bare inside its
+ * catch — a throw from this function escapes the Result contract entirely and
+ * REJECTS the call, so edge code written as `if (result.failure)` would crash
+ * on an unhandled rejection. `Object.prototype.toString` works on anything.
+ */
+function safeString(value: unknown): string {
+  try {
+    return String(value)
+  } catch {
+    return Object.prototype.toString.call(value)
   }
 }
 
@@ -399,7 +481,7 @@ function toError(ex: unknown): Error {
 function wasmResult<T>(
   operation: () => Promise<T>,
   type: EncryptionError['type'],
-): Promise<Result<T, EncryptionError>> {
+): Promise<WasmResult<T>> {
   return withResult(operation, toFailure(type), { onException: toError })
 }
 
@@ -413,6 +495,54 @@ function wasmResult<T>(
  * which a caller cannot distinguish from "this row genuinely had no value".
  * That is a silent-wrong-data failure, so it throws instead.
  */
+/**
+ * The positional-batch bookkeeping every bulk method here shares: compact the
+ * live entries, remember where each came from, short-circuit an all-dead
+ * batch, send one FFI call, assert the response length, and hand back each
+ * result paired with the INPUT index it belongs to.
+ *
+ * Hand-rolled in three places before — the very code the length guard exists
+ * because it is easy to get subtly wrong. A fourth batch method (the model
+ * helpers, when they land) could have omitted {@link assertBatchLength}
+ * without failing a build; routing through here makes that impossible.
+ *
+ * `out` is built with `Array.from`, NOT `items.map(() => null)`: `map` SKIPS
+ * holes in a sparse input, so `bulkDecrypt([a, , b])` would leave index 1 an
+ * `undefined` hole rather than the documented `null`, while lengths still
+ * matched. (`forEach` skipping holes is correct and wanted — a hole is a dead
+ * slot.)
+ */
+async function runBatch<In, Res, Out = Res>(
+  op: string,
+  items: readonly In[],
+  isLive: (item: In) => boolean,
+  send: (live: In[]) => Promise<Res[]>,
+): Promise<{
+  out: Array<Out | null>
+  placed: Array<{ result: Res; at: number }>
+}> {
+  const live: Array<{ item: In; at: number }> = []
+  items.forEach((item, at) => {
+    if (isLive(item)) live.push({ item, at })
+  })
+
+  const out: Array<Out | null> = Array.from(
+    { length: items.length },
+    () => null,
+  )
+  if (live.length === 0) return { out, placed: [] }
+
+  const results = await send(live.map(({ item }) => item))
+  assertBatchLength(op, results.length, live.length)
+
+  // Lengths are equal past the assert, so every index pairs.
+  const placed = results.map((result, i) => ({
+    result,
+    at: (live[i] as { at: number }).at,
+  }))
+  return { out, placed }
+}
+
 function assertBatchLength(op: string, received: number, sent: number): void {
   if (received !== sent) {
     throw new Error(
@@ -490,7 +620,7 @@ export class WasmEncryptionClient {
   async encrypt(
     plaintext: WasmPlaintext,
     opts: EncryptOptions,
-  ): Promise<Result<Encrypted, EncryptionError>> {
+  ): Promise<WasmResult<Encrypted>> {
     return wasmResult(async () => {
       const ffiOpts = {
         plaintext,
@@ -506,9 +636,7 @@ export class WasmEncryptionClient {
     }, EncryptionErrorTypes.EncryptionError)
   }
 
-  async decrypt(
-    encrypted: Encrypted,
-  ): Promise<Result<WasmPlaintext, EncryptionError>> {
+  async decrypt(encrypted: Encrypted): Promise<WasmResult<WasmPlaintext>> {
     return wasmResult(
       async () =>
         (await wasmDecrypt(
@@ -542,9 +670,10 @@ export class WasmEncryptionClient {
    * const term = await client.encryptQuery("alice@example.com", {
    *   table: users, column: users.email, queryType: "equality",
    * })
-   * // postgres-js:
+   * if (term.failure) throw new Error(term.failure.message)
+   * // postgres-js — bind the unwrapped term, not the Result:
    * sql`SELECT * FROM users
-   *     WHERE email = ${term}::jsonb::eql_v3.query_text_eq`
+   *     WHERE email = ${term.data}::jsonb::eql_v3.query_text_eq`
    * ```
    *
    * @example Free-text match (bloom index — one-sided, fuzzy)
@@ -552,8 +681,9 @@ export class WasmEncryptionClient {
    * const term = await client.encryptQuery("needle", {
    *   table: users, column: users.bio, queryType: "freeTextSearch",
    * })
+   * if (term.failure) throw new Error(term.failure.message)
    * sql`SELECT * FROM users
-   *     WHERE eql_v3.matches(bio, ${term}::jsonb::eql_v3.query_text_search)`
+   *     WHERE eql_v3.matches(bio, ${term.data}::jsonb::eql_v3.query_text_search)`
    * ```
    *
    * @example Range / ORDER BY (ORE index)
@@ -561,8 +691,9 @@ export class WasmEncryptionClient {
    * const term = await client.encryptQuery(42, {
    *   table: users, column: users.age, queryType: "orderAndRange",
    * })
+   * if (term.failure) throw new Error(term.failure.message)
    * sql`SELECT * FROM users
-   *     WHERE eql_v3.gte(age, ${term}::jsonb::eql_v3.query_integer_ord)`
+   *     WHERE eql_v3.gte(age, ${term.data}::jsonb::eql_v3.query_integer_ord)`
    * ```
    *
    * @example Encrypted JSON — containment and JSONPath selector
@@ -571,8 +702,9 @@ export class WasmEncryptionClient {
    * const contains = await client.encryptQuery({ role: "admin" }, {
    *   table: users, column: users.prefs, queryType: "searchableJson",
    * })
+   * if (contains.failure) throw new Error(contains.failure.message)
    * sql`SELECT * FROM users
-   *     WHERE prefs @> ${contains}::jsonb::eql_v3.query_json`
+   *     WHERE prefs @> ${contains.data}::jsonb::eql_v3.query_json`
    *
    * // String value → JSONPath selector. NOTE: v3 has no encrypted-selector
    * // envelope — this returns the BARE selector-hash string, bound as the
@@ -580,7 +712,8 @@ export class WasmEncryptionClient {
    * const selector = await client.encryptQuery("$.role", {
    *   table: users, column: users.prefs, queryType: "searchableJson",
    * })
-   * sql`SELECT prefs -> ${selector} FROM users`
+   * if (selector.failure) throw new Error(selector.failure.message)
+   * sql`SELECT prefs -> ${selector.data} FROM users`
    * ```
    *
    * @param plaintext - The search needle. `null`/`undefined` returns `null`
@@ -588,7 +721,6 @@ export class WasmEncryptionClient {
    *   native client.
    * @param opts - Table, column, and (optionally) which index to target —
    *   see {@link WasmEncryptQueryOptions.queryType} for the inference rules.
-   * @returns The v3 query term, or `null` for null plaintext.
    * @returns `{ data }` with the v3 query term (or `null` for null
    *   plaintext), or `{ failure }` when the requested `queryType` isn't
    *   configured on the column, the column has no indexes at all, the value
@@ -599,7 +731,7 @@ export class WasmEncryptionClient {
   async encryptQuery(
     plaintext: WasmPlaintext,
     opts: WasmEncryptQueryOptions,
-  ): Promise<Result<EncryptedQuery | null, EncryptionError>> {
+  ): Promise<WasmResult<EncryptedQuery | null>> {
     return wasmResult(async () => {
       if (plaintext === null || plaintext === undefined) return null
       return (await wasmEncryptQuery(
@@ -640,34 +772,25 @@ export class WasmEncryptionClient {
    */
   async encryptQueryBulk(
     terms: readonly WasmQueryTerm[],
-  ): Promise<Result<Array<EncryptedQuery | null>, EncryptionError>> {
+  ): Promise<WasmResult<Array<EncryptedQuery | null>>> {
     return wasmResult(async () => {
-      const live: Array<{ term: WasmQueryTerm; at: number }> = []
-      terms.forEach((term, at) => {
-        if (term.value !== null && term.value !== undefined)
-          live.push({ term, at })
-      })
-      const out: Array<EncryptedQuery | null> = terms.map(() => null)
-      if (live.length === 0) return out
-
-      const ffiTerms = live.map(({ term }) => toFfiQueryTerm(term.value, term))
-      // The FFI's batch field is `queries` (matching the native
-      // ffiEncryptQueryBulk call in packages/protect).
-      const encrypted = (await wasmEncryptQueryBulk(
-        // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
-        this.client as never,
-        // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
-        {
-          queries: ffiTerms,
-        } as never,
-      )) as EncryptedQuery[]
-
-      assertBatchLength('encryptQueryBulk', encrypted.length, live.length)
-
-      encrypted.forEach((value, i) => {
-        const slot = live[i]
-        if (slot) out[slot.at] = value
-      })
+      const { out, placed } = await runBatch<WasmQueryTerm, EncryptedQuery>(
+        'encryptQueryBulk',
+        terms,
+        (term) => term.value !== null && term.value !== undefined,
+        async (live) =>
+          // The FFI's batch field is `queries` (matching the native
+          // ffiEncryptQueryBulk call in packages/protect).
+          (await wasmEncryptQueryBulk(
+            // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+            this.client as never,
+            // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+            {
+              queries: live.map((term) => toFfiQueryTerm(term.value, term)),
+            } as never,
+          )) as EncryptedQuery[],
+      )
+      for (const { result, at } of placed) out[at] = result
       return out
     }, EncryptionErrorTypes.EncryptionError)
   }
@@ -718,40 +841,27 @@ export class WasmEncryptionClient {
    */
   async bulkEncrypt(
     items: readonly WasmBulkPlaintext[],
-  ): Promise<Result<Array<Encrypted | null>, EncryptionError>> {
+  ): Promise<WasmResult<Array<Encrypted | null>>> {
     return wasmResult(async () => {
-      const live: Array<{ item: WasmBulkPlaintext; at: number }> = []
-      items.forEach((item, at) => {
-        if (item.plaintext !== null && item.plaintext !== undefined)
-          live.push({ item, at })
-      })
-      const out: Array<Encrypted | null> = items.map(() => null)
-      if (live.length === 0) return out
-
-      const encrypted = (await wasmEncryptBulk(
-        // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
-        this.client as never,
-        // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
-        {
-          plaintexts: live.map(({ item }) => ({
-            plaintext: item.plaintext,
-            table: item.table.tableName,
-            column: getColumnName(item.column),
-          })),
-        } as never,
-      )) as Encrypted[]
-
-      // Results are matched to inputs BY POSITION (the FFI payload carries no
-      // correlation id). A length mismatch would silently leave trailing slots
-      // null — indistinguishable from "this row had no value" — so treat it as
-      // the contract violation it is rather than returning plausible-looking
-      // data.
-      assertBatchLength('bulkEncrypt', encrypted.length, live.length)
-
-      encrypted.forEach((value, i) => {
-        const slot = live[i]
-        if (slot) out[slot.at] = value
-      })
+      const { out, placed } = await runBatch<WasmBulkPlaintext, Encrypted>(
+        'bulkEncrypt',
+        items,
+        (item) => item.plaintext !== null && item.plaintext !== undefined,
+        async (live) =>
+          (await wasmEncryptBulk(
+            // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+            this.client as never,
+            // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+            {
+              plaintexts: live.map((item) => ({
+                plaintext: item.plaintext,
+                table: item.table.tableName,
+                column: getColumnName(item.column),
+              })),
+            } as never,
+          )) as Encrypted[],
+      )
+      for (const { result, at } of placed) out[at] = result
       return out
     }, EncryptionErrorTypes.EncryptionError)
   }
@@ -795,46 +905,53 @@ export class WasmEncryptionClient {
    */
   async bulkDecrypt(
     ciphertexts: readonly (Encrypted | null | undefined)[],
-  ): Promise<Result<Array<WasmPlaintext | null>, EncryptionError>> {
+  ): Promise<WasmResult<Array<WasmPlaintext | null>>> {
     return wasmResult(async () => {
-      const live: Array<{ ciphertext: Encrypted; at: number }> = []
-      ciphertexts.forEach((ciphertext, at) => {
-        if (ciphertext !== null && ciphertext !== undefined)
-          live.push({ ciphertext, at })
-      })
-      const out: Array<WasmPlaintext | null> = ciphertexts.map(() => null)
-      if (live.length === 0) return out
+      type FallibleItem =
+        | { data: WasmPlaintext }
+        | { error: string; code?: string }
 
-      const results = (await wasmDecryptBulkFallible(
-        // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
-        this.client as never,
-        // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
-        {
-          ciphertexts: live.map(({ ciphertext }) => ({ ciphertext })),
-        } as never,
-      )) as Array<{ data: WasmPlaintext } | { error: string; code?: string }>
-
-      // Positional matching, same contract as `bulkEncrypt` — see there.
-      assertBatchLength('bulkDecrypt', results.length, live.length)
+      const { out, placed } = await runBatch<
+        Encrypted,
+        FallibleItem,
+        WasmPlaintext
+      >(
+        'bulkDecrypt',
+        ciphertexts as readonly Encrypted[],
+        (ciphertext) => ciphertext !== null && ciphertext !== undefined,
+        async (live) =>
+          (await wasmDecryptBulkFallible(
+            // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+            this.client as never,
+            // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+            {
+              ciphertexts: live.map((ciphertext) => ({ ciphertext })),
+            } as never,
+          )) as FallibleItem[],
+      )
 
       // Collect every failure before raising: the FFI already did the work for
       // the rows that succeeded, so reporting only the first would discard
       // information the caller paid for. The throw is caught by `withResult`
       // and surfaces as a single `{ failure }` naming every bad index.
+      //
+      // Each line carries the per-item `code` the FFI supplies. It cannot go
+      // on `failure.code` — a batch has no single code, and inventing one from
+      // the first failure would be wrong — but dropping it entirely would lose
+      // the only machine-meaningful part of a row's error.
       const failures: string[] = []
-      results.forEach((result, i) => {
-        const slot = live[i]
-        if (!slot) return
+      for (const { result, at } of placed) {
         if ('error' in result) {
-          failures.push(`  [${slot.at}]: ${result.error}`)
-          return
+          const code = result.code ? ` (${result.code})` : ''
+          failures.push(`  [${at}]${code}: ${result.error}`)
+          continue
         }
-        out[slot.at] = result.data
-      })
+        out[at] = result.data
+      }
 
       if (failures.length > 0) {
         throw new Error(
-          `bulkDecrypt failed for ${failures.length} of ${live.length} payload(s) (indices are into the input array):\n${failures.join('\n')}`,
+          `bulkDecrypt failed for ${failures.length} of ${placed.length} payload(s) (indices are into the input array):\n${failures.join('\n')}`,
         )
       }
       return out
