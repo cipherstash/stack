@@ -21,6 +21,10 @@ const repoRoot = __dirname
 
 export const sharedAlias: Record<string, string> = {
   // Longest specifiers first: Vite alias keys are prefix-matched in order.
+  '@cipherstash/test-kit/json-suite': resolve(
+    repoRoot,
+    'packages/test-kit/src/run-json-suite.ts',
+  ),
   '@cipherstash/test-kit/suite': resolve(
     repoRoot,
     'packages/test-kit/src/run-family-suite.ts',

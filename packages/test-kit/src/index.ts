@@ -13,8 +13,9 @@
  * This barrel MUST NOT import `vitest`, directly or transitively. Vitest's
  * `globalSetup` runs in a different context from the test workers, and a
  * `vitest` import reached from there fails with "Vitest failed to access its
- * internal state". `global-setup.ts` imports this barrel, so the test driver
- * lives behind its own subpath: `@cipherstash/test-kit/suite`.
+ * internal state". `global-setup.ts` imports this barrel, so the test drivers
+ * live behind `@cipherstash/test-kit/suite` and
+ * `@cipherstash/test-kit/json-suite`.
  */
 
 export type { IntegrationAdapter } from './adapter.ts'

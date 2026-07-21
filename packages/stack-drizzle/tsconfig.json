@@ -27,6 +27,9 @@
       "@cipherstash/stack/eql/v3": ["../stack/src/eql/v3/index.ts"],
       "@cipherstash/stack/v3": ["../stack/src/encryption/v3.ts"],
       "@cipherstash/test-kit": ["../test-kit/src/index.ts"],
+      "@cipherstash/test-kit/json-suite": [
+        "../test-kit/src/run-json-suite.ts"
+      ],
       "@cipherstash/test-kit/suite": ["../test-kit/src/run-family-suite.ts"],
       "@cipherstash/test-kit/integration-clerk": [
         "../test-kit/src/integration/clerk.ts"
