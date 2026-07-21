@@ -1,5 +1,4 @@
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -147,33 +146,22 @@ describe('installSkills', () => {
     expect(warnings()).toContain('Could not create .codex/skills/')
   })
 
-  // A pre-existing read-only skill directory (e.g. left by an earlier run
-  // under a restrictive sandbox) fails only that skill's copy — the result
-  // must report the split so the Codex fallback can inline exactly the
-  // missing ones instead of declaring success. chmod is advisory for root
-  // and on Windows, so skip there.
-  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-    'reports a partial copy as copied plus failed',
-    () => {
-      const blocked = join(tmp, '.codex/skills/stash-drizzle')
-      mkdirSync(blocked, { recursive: true })
-      writeFileSync(join(blocked, 'SKILL.md'), 'stale', 'utf-8')
-      chmodSync(blocked, 0o555)
+  // One skill's copy failing must fail only that skill — the result reports
+  // the split so the Codex fallback can inline exactly the missing ones
+  // instead of declaring success. A FILE where the skill's directory must go
+  // makes cpSync throw ERR_FS_CP_DIR_TO_NON_DIR — a type-mismatch error, so
+  // it triggers on every platform and as root, unlike permission tricks
+  // (a 0o555 directory blocks nothing on Linux, where cpSync overwrites the
+  // writable SKILL.md in place — this test's first version failed CI there).
+  it('reports a partial copy as copied plus failed', () => {
+    mkdirSync(join(tmp, '.codex/skills'), { recursive: true })
+    writeFileSync(join(tmp, '.codex/skills/stash-drizzle'), 'not a dir', 'utf-8')
 
-      try {
-        const { copied, failed } = installSkills(
-          tmp,
-          '.codex/skills',
-          'drizzle',
-        )
-        expect(copied).toEqual(['stash-encryption', 'stash-cli'])
-        expect(failed).toEqual(['stash-drizzle'])
-        expect(warnings()).toContain('Failed to install skill stash-drizzle')
-      } finally {
-        chmodSync(blocked, 0o755)
-      }
-    },
-  )
+    const { copied, failed } = installSkills(tmp, '.codex/skills', 'drizzle')
+    expect(copied).toEqual(['stash-encryption', 'stash-cli'])
+    expect(failed).toEqual(['stash-drizzle'])
+    expect(warnings()).toContain('Failed to install skill stash-drizzle')
+  })
 
   it('leaves the caller able to distinguish "unwritable" from "nothing to install"', () => {
     // An unwritable destination reports the bundled skills as `failed`;
