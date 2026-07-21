@@ -1,5 +1,102 @@
 # @cipherstash/prisma-next
 
+## 1.0.0-rc.4
+
+### Minor Changes
+
+- 2e6f032: Make `@cipherstash/prisma-next` **EQL v3 only**. The EQL v2 surface is removed
+  entirely — install path, authoring constructors, runtime codecs, and the v2
+  subpath exports.
+
+  **Why:** the v2 and v3 baselines were chained — the v3 migration edge started
+  from the v2 baseline's `to` state and the head ref required both invariants — so
+  the only path to head ran the v2 install first. The v2 bundle's install fails on
+  managed Postgres (e.g. Supabase) where the connecting role is **not a
+  superuser**, which made the adapter unusable there even for v3-only apps.
+  Installing only EQL v3 (which applies fine as a non-superuser) fixes this.
+
+  **Breaking — install path:** the EQL v2 baseline migration
+  (`20260601T0000_install_eql_bundle`) is removed, and the contract now models no
+  storage (the retired `eql_v2_configuration` table is gone). The v3 baseline
+  (`20260601T0100_install_eql_v3_bundle`) is re-rooted as the sole invariant-only
+  **genesis** edge (`from: null`); the head ref requires only
+  `cipherstash:install-eql-v3-bundle-v1`. `prisma-next migration apply` now
+  installs EQL v3 exclusively and works on Supabase as a non-superuser.
+
+  **Breaking — API:** the EQL v2 authoring/runtime surface is removed:
+
+  - `cipherstashFromStackV2`, `deriveStackSchemas`, and `createCipherstashSdk`
+    (from `./stack`) — use `cipherstashFromStack` (v3).
+  - The `encrypted*V2` TS column factories and the `cipherstash.Encrypted*V2` PSL
+    constructors (from `./column-types`) — use the v3 domain factories/constructors
+    (`text`/`textSearch`/`bigIntOrd`/… and `cipherstash.TextSearch()` etc.).
+  - The v2 runtime codecs, `createCipherstashRuntimeDescriptor`, the `cipherstash*`
+    query operators/helpers, and the `EncryptedDouble` envelope (from `./runtime`)
+    — use the v3 runtime (`createCipherstashV3RuntimeDescriptor`,
+    `bulkEncryptMiddlewareV3`, the `eql*` operators, `EncryptedNumber`). The
+    version-neutral envelopes (`EncryptedString`/`BigInt`/`Boolean`/`Date`/`Json`)
+    and `decryptAll` are unchanged.
+  - The `./middleware` and `./migration` subpath exports are removed (the v2
+    bulk-encrypt middleware and call-classes). Use `bulkEncryptMiddlewareV3` from
+    `./runtime` / `./v3`.
+
+  Apps still on the v2 surface must move to the v3 constructors and regenerate
+  their contract (`prisma-next contract emit`); there is no supported EQL v2 path
+  in this package anymore.
+
+  **Also:** the "bulk-encrypt middleware not wired" diagnostic is now raised on the
+  v3 write path. Encoding an unencrypted value with an SDK that has no
+  `bulkEncryptMiddlewareV3(sdk)` registered against it fails fast with
+  `RUNTIME.ENCODE_FAILED` and a copy-pasteable wiring snippet, instead of surfacing
+  as an opaque pg-level serialise error. (The guard existed on the v2 codec; the v3
+  codec had never wired it up.)
+
+- cf2c57c: Upgrade Stack to `@cipherstash/protect-ffi` 0.30 and EQL 3.0.2.
+
+  Prisma Next includes a versioned EQL 3.0.2 upgrade migration, so databases
+  that have already recorded the original EQL v3 baseline still install the new
+  domains and functions.
+
+  Encrypted JSON now uses the `public.eql_v3_json_search` storage domain and
+  `eql_v3.query_json` query domain. Drizzle selector equality uses exact,
+  GIN-indexable value-selector containment, while selector range comparisons use
+  a ciphertext-free path selector plus string/number query term. Prisma Next gains
+  the equivalent `eqlJsonPathEq`, `eqlJsonPathNeq`, `eqlJsonPathGt`,
+  `eqlJsonPathGte`, `eqlJsonPathLt`, and `eqlJsonPathLte` operators. Selector
+  Selector-based `ORDER BY` is available as
+  `ops.selector(column, path).asc()/desc()` in Drizzle
+  and `eqlJsonPathAsc(column, path)` / `eqlJsonPathDesc(column, path)` in Prisma
+  Next; both lower to `ORDER BY eql_v3.ord_term` over the selected entry.
+
+  If you call `encryptQuery` with an explicit `queryType`, note that
+  `steVecTerm` now produces a scalar JSON ordering term. It no longer means
+  structural containment; use the recommended `searchableJson` query type with
+  an object or array for containment, or `steVecValueSelector` with
+  `{ path, value }` for exact equality at a path.
+
+  The FFI now rejects free-text needles shorter than the configured n-gram size
+  at the core query-encryption boundary, including callers that bypass adapter
+  guards.
+
+  This EQL release changes the SteVec storage format. Existing EQL v3 encrypted
+  JSON rows must be re-encrypted before they can be queried with the new domain.
+  Legacy EQL v2 `searchableJson()` schemas are rejected during client setup
+  because the old selector envelope can no longer be emitted; migrate them to the
+  v3 `types.Json` domain.
+
+  EQL 3.0.2 requires typed query-domain operands for encrypted free-text and JSON
+  operators. PostgREST cannot express those casts, so Supabase v3 fails fast for
+  `matches()`, encrypted `contains()`, and `selectorEq()`/`selectorNe()` instead
+  of placing a decryptable storage envelope in a GET query string that the new
+  SQL surface will reject. Use the Drizzle or Prisma Next adapter, or a carefully
+  scoped direct SQL/RPC path.
+
+### Patch Changes
+
+- Updated dependencies [cf2c57c]
+- Updated dependencies [508f1d5]
+  - @cipherstash/stack@1.0.0-rc.4
+
 ## 1.0.0-rc.3
 
 ### Minor Changes
