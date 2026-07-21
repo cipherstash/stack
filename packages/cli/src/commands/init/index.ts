@@ -1,5 +1,6 @@
 import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
+import { isInteractive } from '../../config/tty.js'
 import { messages } from '../../messages.js'
 import { HANDOFF_CHOICES } from '../impl/steps/how-to-proceed.js'
 import { planCommand } from '../plan/index.js'
@@ -165,7 +166,13 @@ export async function initCommand(
     // multi-command flow. Drafting a plan is fast (~1–3 min of agent
     // thinking) and produces a reviewable artifact — `stash impl` is the
     // separate, slower verb that actually mutates code.
-    if (process.stdout.isTTY) {
+    //
+    // Gated on the shared `isInteractive()` (config/tty.ts), the same helper
+    // every other prompt uses. `process.stdout.isTTY` was wrong on both
+    // counts: it ignored CI entirely (a runner with an allocated TTY blocked
+    // here forever, since clack `confirm` reads /dev/tty), and it asked about
+    // the wrong stream — a redirected stdin still hangs the prompt.
+    if (isInteractive()) {
       const proceed = await p.confirm({
         message: `Continue to \`${cli} plan\` now to draft your encryption plan?`,
         initialValue: true,

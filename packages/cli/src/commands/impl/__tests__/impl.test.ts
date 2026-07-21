@@ -2,8 +2,19 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CliExit } from '../../../cli/exit.js'
 import { implCommand } from '../index.js'
 import { howToProceedStep } from '../steps/how-to-proceed.js'
+
+// `implCommand` reaches the plan-summary checkpoint via `p.confirm`, which
+// reads /dev/tty. Stub just that export (the rest of @clack/prompts stays
+// real) so the CI-detection cases can assert whether the prompt was reached.
+const confirmMock = vi.hoisted(() => vi.fn())
+vi.mock('@clack/prompts', async () => {
+  const actual =
+    await vi.importActual<typeof import('@clack/prompts')>('@clack/prompts')
+  return { ...actual, confirm: confirmMock }
+})
 
 let originalIsTTY: boolean | undefined
 let originalCwd: string
@@ -96,6 +107,141 @@ describe('implCommand — TTY handling', () => {
       'process.exit',
     )
     expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(runSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('implCommand — CI detection with a TTY attached', () => {
+  // Regression: the gate used to be an inline `process.env.CI !== 'true'`,
+  // which only recognised the exact lowercase spelling. A CI runner that sets
+  // CI=1 or CI=TRUE *and* allocates a TTY made `stash impl` believe it was
+  // interactive, so it blocked on the plan-summary confirm (or the
+  // agent-target picker) forever — a hang, not an error. The gate now goes
+  // through `isInteractive()` in config/tty.ts, whose `isCiEnv()` accepts
+  // 1/true in any case.
+  beforeEach(() => {
+    setIsTTY(true)
+    confirmMock.mockReset()
+    confirmMock.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  for (const ciValue of ['1', 'TRUE', 'true']) {
+    it(`treats CI=${ciValue} as non-interactive even with a TTY`, async () => {
+      vi.stubEnv('CI', ciValue)
+      const runSpy = vi
+        .spyOn(howToProceedStep, 'run')
+        .mockResolvedValue({} as never)
+
+      await expect(implCommand({}, {})).resolves.toBeUndefined()
+
+      // Neither blocking prompt may be reached.
+      expect(confirmMock).not.toHaveBeenCalled()
+      expect(runSpy).not.toHaveBeenCalled()
+    })
+  }
+
+  it('does not re-confirm --continue-without-plan under CI when no plan exists', async () => {
+    // The flag is the consent. Prompting again under CI blocks on /dev/tty,
+    // and the confirm is default-no, so a resolved prompt would cancel a run
+    // the user explicitly asked for.
+    vi.stubEnv('CI', '1')
+    fs.rmSync(path.join(tmpDir, '.cipherstash', 'plan.md'))
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await expect(
+      implCommand({ 'continue-without-plan': true }, {}),
+    ).resolves.toBeUndefined()
+
+    expect(confirmMock).not.toHaveBeenCalled()
+    expect(runSpy).not.toHaveBeenCalled()
+  })
+
+  it('is interactive when CI is unset and stdin is a TTY', async () => {
+    vi.stubEnv('CI', '')
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await implCommand({}, {})
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(runSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('performs the handoff under CI=1 when --target is given', async () => {
+    // Non-interactive means "don't prompt", not "don't run". A regression
+    // that made the command bail early under CI would keep the not-called
+    // cases above green — this locks the automation happy path.
+    vi.stubEnv('CI', '1')
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await implCommand({}, { target: 'agents-md' })
+
+    expect(confirmMock).not.toHaveBeenCalled()
+    expect(runSpy).toHaveBeenCalledTimes(1)
+    expect(runSpy.mock.calls[0][0].handoff).toBe('agents-md')
+  })
+
+  it('runs the selected handoff under CI with --continue-without-plan and no plan', async () => {
+    // The specific path the `if (isTTY)` gate at index.ts opened up: flag +
+    // target, no plan on disk — it must run the handoff without re-confirming.
+    vi.stubEnv('CI', '1')
+    fs.rmSync(path.join(tmpDir, '.cipherstash', 'plan.md'))
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await implCommand(
+      { 'continue-without-plan': true },
+      { target: 'agents-md' },
+    )
+
+    expect(confirmMock).not.toHaveBeenCalled()
+    expect(runSpy).toHaveBeenCalledTimes(1)
+    expect(runSpy.mock.calls[0][0].handoff).toBe('agents-md')
+  })
+
+  it('exits 1 with the plan hint under CI=1 when no plan and no --continue-without-plan', async () => {
+    // CI=1 flips isTTY to false, rerouting a no-plan / no-flag run out of the
+    // interactive `select` and into the `else if (!isTTY)` error + exit(1). It
+    // must fail loudly, not render the "No plan found" select and block.
+    vi.stubEnv('CI', '1')
+    fs.rmSync(path.join(tmpDir, '.cipherstash', 'plan.md'))
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit')
+    }) as never)
+
+    await expect(implCommand({}, {})).rejects.toThrow('process.exit')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(confirmMock).not.toHaveBeenCalled()
+  })
+
+  it('still confirms --continue-without-plan interactively, and declining aborts', async () => {
+    // The honour-the-prompt half of the `if (isTTY)` gate: with a TTY and CI
+    // unset the default-no confirm must still fire, and declining it must abort
+    // (CancelledError → CliExit) rather than fall through to the handoff.
+    vi.stubEnv('CI', '')
+    fs.rmSync(path.join(tmpDir, '.cipherstash', 'plan.md'))
+    confirmMock.mockReset()
+    confirmMock.mockResolvedValue(false)
+    const runSpy = vi
+      .spyOn(howToProceedStep, 'run')
+      .mockResolvedValue({} as never)
+
+    await expect(
+      implCommand({ 'continue-without-plan': true }, {}),
+    ).rejects.toBeInstanceOf(CliExit)
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
     expect(runSpy).not.toHaveBeenCalled()
   })
 })

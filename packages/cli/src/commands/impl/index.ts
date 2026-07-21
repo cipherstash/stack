@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { CliExit } from '../../cli/exit.js'
+import { isInteractive as isInteractiveTty } from '../../config/tty.js'
 import { type AgentEnvironment, detectAgents } from '../init/detect-agents.js'
 import {
   effectiveStep,
@@ -166,11 +167,13 @@ export async function implCommand(
   const planPath = resolve(cwd, PLAN_REL_PATH)
   const planExists = existsSync(planPath)
   const continueWithoutPlan = flags['continue-without-plan'] === true
-  // Interactive only when stdin is a real TTY and we're not in CI — the
-  // same gate the encrypt commands use. `process.stdout.isTTY` alone is
-  // wrong: a redirected stdin still hangs the agent-target picker (clack
-  // `select` reads from /dev/tty).
-  const isTTY = Boolean(process.stdin.isTTY) && process.env.CI !== 'true'
+  // Interactive only when stdin is a real TTY and we're not in CI — via the
+  // shared `isInteractive()` (config/tty.ts) so this gate stays identical to
+  // every other prompt gate (its `isCiEnv()` treats `CI=1`/`CI=TRUE` as CI too,
+  // which a bare `CI !== 'true'` inline would miss). `process.stdout.isTTY`
+  // alone is wrong: a redirected stdin still hangs the agent-target picker
+  // (clack `select` reads from /dev/tty).
+  const isTTY = isInteractiveTty()
 
   let planStep: PlanStep | undefined
 
@@ -227,7 +230,13 @@ export async function implCommand(
     } else {
       // No plan on disk. Branch on flag / TTY / interactive.
       if (continueWithoutPlan) {
-        await confirmContinueWithoutPlan()
+        // The flag *is* the consent. Re-prompting for it non-interactively
+        // is the same hang this gate exists to close (clack `confirm` reads
+        // /dev/tty), and `confirmContinueWithoutPlan` is default-no, so a
+        // prompt that did resolve would cancel a run the user asked for.
+        if (isTTY) {
+          await confirmContinueWithoutPlan()
+        }
       } else if (!isTTY) {
         p.log.error(
           `No plan at \`${PLAN_REL_PATH}\`. Run \`${cli} plan\` first, or pass --continue-without-plan to skip planning.`,
