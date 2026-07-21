@@ -57,6 +57,23 @@ describe('resolveProxyChoiceStep — flag short-circuit', () => {
     )
     expect(vi.mocked(p.select)).not.toHaveBeenCalled()
   })
+
+  it('returns state untouched when --no-proxy set usesProxy to false', async () => {
+    // The guard is `state.usesProxy !== undefined`; `false` is the value that
+    // distinguishes it from a truthiness check. Rewriting it as
+    // `if (state.usesProxy)` would silently re-prompt for --no-proxy (and log
+    // the misleading "No --proxy flag set" notice non-interactively).
+    setTty(true)
+    vi.stubEnv('CI', '')
+
+    const state = { ...baseState, usesProxy: false }
+    await expect(resolveProxyChoiceStep.run(state, provider)).resolves.toEqual(
+      state,
+    )
+    expect(vi.mocked(p.select)).not.toHaveBeenCalled()
+    // An explicit --no-proxy is not "no flag set" — don't log the default notice.
+    expect(vi.mocked(p.log.info)).not.toHaveBeenCalled()
+  })
 })
 
 describe('resolveProxyChoiceStep — CI detection with a TTY attached', () => {
@@ -108,6 +125,28 @@ describe('resolveProxyChoiceStep — CI detection with a TTY attached', () => {
 describe('resolveProxyChoiceStep — no TTY', () => {
   it('defaults to SDK-only when stdin is not a TTY, CI unset', async () => {
     setTty(false)
+    vi.stubEnv('CI', '')
+
+    const result = await resolveProxyChoiceStep.run(baseState, provider)
+
+    expect(vi.mocked(p.select)).not.toHaveBeenCalled()
+    expect(result.usesProxy).toBe(false)
+  })
+
+  it('does not prompt when stdin is piped even though stdout is a TTY', async () => {
+    // setTty() can't express this — it moves both streams together. The fix
+    // gates on stdin, so a redirected stdin (`stash init < /dev/null` from a
+    // terminal) must not reach the prompt even while stdout is still a TTY.
+    // This is the case that verifies the changeset's "wrong stream" claim;
+    // only the CI axis distinguishes old from new anywhere else.
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: false,
+      configurable: true,
+    })
+    Object.defineProperty(process.stdout, 'isTTY', {
+      value: true,
+      configurable: true,
+    })
     vi.stubEnv('CI', '')
 
     const result = await resolveProxyChoiceStep.run(baseState, provider)

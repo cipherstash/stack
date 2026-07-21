@@ -234,4 +234,46 @@ describe('initCommand — CI detection on the `stash plan` chain offer', () => {
 
     expect(vi.mocked(p.confirm)).toHaveBeenCalledTimes(1)
   })
+
+  it('skips the chain offer when stdin is redirected even if stdout is a TTY', async () => {
+    // The gate keys off stdin, not stdout: `stash init < /dev/null` from a
+    // terminal (stdin piped, stdout still a TTY) must not reach the confirm.
+    // Reinstating `process.stdout.isTTY` would keep the CI loop above green,
+    // so only this stdin/stdout split pins the correct stream.
+    vi.stubEnv('CI', '')
+    Object.defineProperty(process.stdin, 'isTTY', {
+      value: false,
+      configurable: true,
+    })
+    Object.defineProperty(process.stdout, 'isTTY', {
+      value: true,
+      configurable: true,
+    })
+
+    await expect(initCommand({}, {})).resolves.toBeUndefined()
+
+    expect(vi.mocked(p.confirm)).not.toHaveBeenCalled()
+    expect(vi.mocked(p.outro)).toHaveBeenCalledWith(
+      expect.stringContaining('--target'),
+    )
+  })
+
+  it('chains into `stash plan` when the offer is accepted', async () => {
+    // The accept arm (outro + planCommand() + early return) is what the gate
+    // change made reachable; the only other confirm test resolves `false`.
+    vi.stubEnv('CI', '')
+    vi.mocked(p.confirm).mockResolvedValueOnce(true)
+    const { planCommand } = await import('../../plan/index.js')
+
+    await expect(initCommand({}, {})).resolves.toBeUndefined()
+
+    expect(vi.mocked(planCommand)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(p.outro)).toHaveBeenCalledWith(
+      expect.stringContaining('handing off to `stash plan`'),
+    )
+    // The accept path returns early — it must not also print the --target hint.
+    expect(vi.mocked(p.outro)).not.toHaveBeenCalledWith(
+      expect.stringContaining('--target'),
+    )
+  })
 })
