@@ -1,10 +1,10 @@
 /**
- * Shared harness for the bulk-encrypt middleware suites (v2
- * `bulk-encrypt-middleware.test.ts` and v3 `v3/bulk-encrypt-v3.test.ts`).
- * Version-neutral by construction: plan builders take the codec id to
- * stamp on each `ParamRef` (defaulting to the v2 string codec id so
- * existing v2 call sites read unchanged), and the mock SDK echoes
- * whatever ciphertext shape the caller's `encryptImpl` produces.
+ * Shared harness for the bulk-encrypt middleware suite
+ * (`v3/bulk-encrypt-v3.test.ts`) and the live-PG harness. Plan builders
+ * take the codec id to stamp on each `ParamRef` (defaulting to a
+ * searchable v3 text domain; callers that need a specific domain pass
+ * their own), and the mock SDK echoes whatever ciphertext shape the
+ * caller's `encryptImpl` produces.
  */
 
 import type { Contract, PlanMeta } from '@prisma-next/contract/types'
@@ -25,7 +25,10 @@ import type {
   CipherstashSdk,
   CipherstashSingleDecryptArgs,
 } from '../src/execution/sdk'
-import { CIPHERSTASH_STRING_CODEC_ID } from '../src/extension-metadata/constants'
+
+// Default codec id for the plan-builder helpers below (callers that need a
+// specific domain pass their own). A searchable v3 text domain.
+const DEFAULT_CODEC_ID = 'cipherstash/eql-v3/eql_v3_text_search@1'
 
 export { createSqlParamRefMutator } from '@prisma-next/sql-relational-core/middleware'
 
@@ -97,7 +100,7 @@ export function makeCounterSdk(options?: {
 export function buildInsertPlan(
   table: string,
   rows: ReadonlyArray<Record<string, unknown>>,
-  codecId: string = CIPHERSTASH_STRING_CODEC_ID,
+  codecId: string = DEFAULT_CODEC_ID,
 ): SqlExecutionPlan {
   const params: unknown[] = []
   const astRows = rows.map((row) => {
@@ -123,7 +126,7 @@ export function buildInsertPlan(
 export function buildUpdatePlan(
   table: string,
   set: Record<string, unknown>,
-  codecId: string = CIPHERSTASH_STRING_CODEC_ID,
+  codecId: string = DEFAULT_CODEC_ID,
 ): SqlExecutionPlan {
   const params: unknown[] = []
   const astSet: Record<string, ParamRef | ColumnRef> = {}

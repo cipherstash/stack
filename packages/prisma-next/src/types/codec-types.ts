@@ -4,9 +4,9 @@
  * Type-only definitions for codec input/output/traits — consumed by
  * the contract emitter when generating an application's
  * `contract.d.ts`. Importing this subpath registers every cipherstash
- * codec id with its `cipherstash:*` traits, so trait-dispatched
- * operators (`cipherstashGt`, `cipherstashBetween`,
- * `cipherstashInArray`, …) surface on real model accessors.
+ * v3 codec id with its `cipherstash:v3-*` markers, so trait-dispatched
+ * operators (`eqlGt`, `eqlBetween`, `eqlIn`, …) surface on real model
+ * accessors.
  *
  * # Why this is hand-written, not derived via `ExtractCodecTypes`
  *
@@ -39,8 +39,7 @@
  * (and the ORM read path returns an envelope the user calls
  * `.decrypt()` on); `input` is the union of the envelope class and
  * the bare plaintext, mirroring the polymorphic argument shapes the
- * predicate operators accept (`coerceToEnvelope` in
- * `src/execution/operators.ts`).
+ * `eql*` predicate operators accept (see `src/v3/operators-v3.ts`).
  */
 
 // Type-only imports — the codec-types subpath compiles to an empty
@@ -50,7 +49,6 @@
 import type { EncryptedBigInt } from '../execution/envelope-bigint'
 import type { EncryptedBoolean } from '../execution/envelope-boolean'
 import type { EncryptedDate } from '../execution/envelope-date'
-import type { EncryptedDouble } from '../execution/envelope-double'
 import type { EncryptedJson } from '../execution/envelope-json'
 import type { EncryptedString } from '../execution/envelope-string'
 import type { EncryptedNumber } from '../v3/envelope-number'
@@ -94,43 +92,6 @@ interface V3Codec<Plain, Envelope, Traits> {
 }
 
 export type CodecTypes = {
-  readonly 'cipherstash/string@1': {
-    readonly input: string | EncryptedString
-    readonly output: EncryptedString
-    readonly traits:
-      | 'cipherstash:equality'
-      | 'cipherstash:free-text-search'
-      | 'cipherstash:order-and-range'
-  }
-  readonly 'cipherstash/double@1': {
-    readonly input: number | EncryptedDouble
-    readonly output: EncryptedDouble
-    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range'
-  }
-  readonly 'cipherstash/bigint@1': {
-    readonly input: bigint | EncryptedBigInt
-    readonly output: EncryptedBigInt
-    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range'
-  }
-  readonly 'cipherstash/date@1': {
-    readonly input: Date | EncryptedDate
-    readonly output: EncryptedDate
-    readonly traits: 'cipherstash:equality' | 'cipherstash:order-and-range'
-  }
-  readonly 'cipherstash/boolean@1': {
-    readonly input: boolean | EncryptedBoolean
-    readonly output: EncryptedBoolean
-    readonly traits: 'cipherstash:equality'
-  }
-  readonly 'cipherstash/json@1': {
-    // `unknown` already subsumes `EncryptedJson`, but the alias is kept in
-    // scope (via the import above) so the codec entry still flags JSON as
-    // an envelope-bearing codec at the type-import layer.
-    readonly input: unknown
-    readonly output: EncryptedJson
-    readonly traits: 'cipherstash:searchable-json'
-  }
-
   // -------------------------------------------------------------------------
   // EQL v3 — one entry per catalog domain (all 40, including the
   // authoring-unexposed `*_ord_ore` variants the codec layer still
@@ -334,8 +295,10 @@ export type CodecTypes = {
     EncryptedNumber,
     V3TraitsOrd
   >
-  // `unknown` subsumes `EncryptedJson` on the input side — same note
-  // as the v2 JSON entry above.
+  // `unknown` subsumes `EncryptedJson` on the input side, but the
+  // alias is kept in scope (via the import above) so the codec entry
+  // still flags JSON as an envelope-bearing codec at the type-import
+  // layer.
   readonly 'cipherstash/eql-v3/eql_v3_json@1': {
     readonly input: unknown
     readonly output: EncryptedJson

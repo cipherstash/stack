@@ -5,8 +5,6 @@ export default defineConfig({
     'src/exports/codec-types.ts',
     'src/exports/column-types.ts',
     'src/exports/control.ts',
-    'src/exports/middleware.ts',
-    'src/exports/migration.ts',
     'src/exports/operation-types.ts',
     'src/exports/pack.ts',
     'src/exports/runtime.ts',

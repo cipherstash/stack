@@ -10,16 +10,13 @@
  * cannot answer the operator.
  *
  * Also pins decision 1b's registration posture: the v3 descriptor
- * stands alone (a v3-only adapter builds cleanly), and the v2
- * `cipherstash*` and v3 `eql*` method-name sets are DISJOINT — the two
- * surfaces share no registry key, so a client is v2 or v3 purely by
- * which descriptor it was constructed with, never by registry
- * collision. v2 and v3 remain separate entry points, never composed
- * into one client.
+ * stands alone (a v3-only adapter builds cleanly) and registers its
+ * full method set without collision, every method wearing the `eql*`
+ * prefix. A contract carrying a v2 cipherstash codec id is rejected
+ * outright — v2 is no longer a surface this package serves.
  */
 
 import { describe, expect, it } from 'vitest'
-import { cipherstashQueryOperations } from '../../src/execution/operators'
 import {
   cipherstashV3QueryOperations,
   EncryptionOperatorError,
@@ -175,25 +172,14 @@ describe('v3 descriptor registration (decision 1b)', () => {
     )
   })
 
-  it('the v2 and v3 operator method-name sets are disjoint', () => {
-    // The v3 registry speaks the EQL-derived `eql*` vocabulary, v2
-    // keeps its historical `cipherstash*` names (PR #655 review). No
-    // shared key means the flat, method-keyed OperationRegistry can
-    // never confuse the two surfaces — generation identity is fixed at
-    // client construction (decision 1b), not resolved per method name.
-    const v2Methods = Object.keys(cipherstashQueryOperations())
+  it('every v3 operator method wears the `eql` prefix', () => {
+    // The v3 registry speaks the EQL-derived `eql*` vocabulary
+    // (PR #655 review): a fixed, self-consistent naming surface on the
+    // flat method-keyed OperationRegistry. Generation identity is fixed
+    // at client construction (decision 1b), not resolved per method
+    // name.
     const v3Methods = Object.keys(cipherstashV3QueryOperations())
-    expect(v2Methods.length).toBeGreaterThan(0)
     expect(v3Methods.length).toBeGreaterThan(0)
-    const v2Set = new Set(v2Methods)
-    expect(v3Methods.filter((method) => v2Set.has(method))).toEqual([])
-    const v3Set = new Set(v3Methods)
-    expect(v2Methods.filter((method) => v3Set.has(method))).toEqual([])
-    // The naming split is total, not incidental: every v3 method wears
-    // the `eql` prefix, no v2 method does.
     expect(v3Methods.every((method) => method.startsWith('eql'))).toBe(true)
-    expect(v2Methods.every((method) => method.startsWith('cipherstash'))).toBe(
-      true,
-    )
   })
 })

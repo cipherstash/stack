@@ -9,38 +9,21 @@
 // The descriptor at `src/exports/control.ts` then wires the emitted JSON
 // artefacts via JSON-import declarations.
 //
-// ## IR coverage and explicit deferral
+// ## v3-only: this contract models no storage
 //
-// CipherStash should declare four kinds of typed objects in its
-// contract IR: tables, enums, composite types, and domains. Of these,
-// today's `SqlStorage` IR (`@prisma-next/sql-contract/types`) only
-// models tables and parameterised type instances (a fit for things
-// like pgvector's `vector(N)`, but not yet codec-less composite types,
-// standalone enums, or domains).
+// This package installs EQL **v3** only. The v3 bundle creates the
+// `public.eql_v3_*` storage domains, the `eql_v3.*` operator functions, and the
+// `eql_v3_internal` helper schema — but **no contract-space storage** (no config
+// table; unlike the retired EQL v2 bundle's `eql_v2_configuration`). The
+// `SqlStorage` IR (`@prisma-next/sql-contract/types`) models tables and
+// parameterised type instances, and v3 declares neither at the contract level:
+// the v3 domains carry their own index metadata, so there is no
+// `add_search_config` bookkeeping table to model.
 //
-// The contract therefore declares the only IR-representable object
-// today (the `eql_v2_configuration` table) using portable scalar
-// types (`String` / `Json`). The actual database state — the `eql_v2`
-// schema, the typed `eql_v2_configuration_state` enum, the
-// `eql_v2_encrypted` composite, the `eql_v2.bloom_filter` /
-// `hmac_256` / `blake3` domains, and the various `ore_*` composites —
-// is created by the `installEqlBundle` migration op (which carries
-// the vendored bundle SQL byte-for-byte; see
-// `./src/migration/eql-bundle.ts`). The structural
-// `cipherstash:create-*-v1` no-op ops register the invariantIds the
-// verifier needs so its `applied_invariants` gate passes.
-//
-// Once the IR vocabulary expands to first-class composite types,
-// standalone enums, and domains, those typed objects shift up into
-// `storage.types` and the structural ops gain real verification work
-// (precheck SQL probing `pg_type` / `information_schema`).
+// The contract therefore declares **no models**. The database state is created
+// entirely by the `installEqlV3Bundle` migration op (the EQL v3 install SQL,
+// injected at descriptor-build time from `@cipherstash/eql`; see
+// `./src/migration/eql-bundle-v3.ts`). That op is an invariant-only genesis edge
+// carrying `cipherstash:install-eql-v3-bundle-v1`.
 //
 // @see docs/architecture docs/adrs/ADR 211 - Contract spaces.md
-
-model EqlV2Configuration {
-  id    String @id
-  state String
-  data  Json
-
-  @@map("eql_v2_configuration")
-}

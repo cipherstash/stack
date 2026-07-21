@@ -1,7 +1,7 @@
 /**
  * The v3 runtime extension descriptor —
- * `createCipherstashV3RuntimeDescriptor({ sdk })`, the v3 twin of
- * `../exports/runtime.ts`'s `createCipherstashRuntimeDescriptor`.
+ * `createCipherstashV3RuntimeDescriptor({ sdk })`, exported from
+ * `../exports/runtime.ts` as the package's only runtime descriptor.
  *
  * Composes the SDK-bound v3 codec descriptors (Task 4, one per catalog
  * domain) and the v3 query operations (Task 6) into a single
@@ -12,22 +12,18 @@
  * The runtime asserts every extension pack the contract declares has a
  * runtime descriptor with a MATCHING ID
  * (`assertExecutionStackContractRequirements` in sql-runtime's
- * `sql-context.ts`). Both v2 and v3 contracts are emitted by the ONE
- * cipherstash control descriptor, whose pack id is
- * `CIPHERSTASH_SPACE_ID` (`'cipherstash'`) — so the v3 runtime
- * descriptor must present that id too, or `postgres<Contract>({...})`
- * rejects a v3 contract at startup with
- * `RUNTIME.MISSING_EXTENSION_PACK`. The descriptor's VERSION carries
- * v3's own identity (`CIPHERSTASH_V3_EXTENSION_VERSION`), and decision
- * 1b's separation holds regardless: the v3 method names (`eqlEq`, …)
- * are disjoint from the v2 set, but the v2 and v3 descriptors must
- * still NEVER be co-registered in one client — a client is v2 or v3,
- * never both (pinned in `test/v3/operator-gating-v3.test.ts`).
+ * `sql-context.ts`). The contract is emitted by the cipherstash control
+ * descriptor, whose pack id is `CIPHERSTASH_SPACE_ID`
+ * (`'cipherstash'`) — so the v3 runtime descriptor must present that id
+ * too, or `postgres<Contract>({...})` rejects the contract at startup
+ * with `RUNTIME.MISSING_EXTENSION_PACK`. The descriptor's VERSION
+ * carries v3's own identity (`CIPHERSTASH_V3_EXTENSION_VERSION`), and
+ * every registered method wears the `eql*` prefix (pinned in
+ * `test/v3/operator-gating-v3.test.ts`).
  *
  * The v3 bulk-encrypt middleware ships separately
  * (`bulkEncryptMiddlewareV3(sdk)`) because
- * `SqlRuntimeExtensionDescriptor` does not own a middleware slot —
- * same split as v2.
+ * `SqlRuntimeExtensionDescriptor` does not own a middleware slot.
  */
 
 import type { SqlRuntimeExtensionDescriptor } from '@prisma-next/sql-runtime'

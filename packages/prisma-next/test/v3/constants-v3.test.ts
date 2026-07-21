@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  CIPHERSTASH_CODEC_IDS,
   CIPHERSTASH_EXTENSION_VERSION,
   CIPHERSTASH_SPACE_ID,
 } from '../../src/extension-metadata/constants'
@@ -26,11 +25,6 @@ describe('constants-v3', () => {
     expect(new Set(CIPHERSTASH_V3_CODEC_IDS).size).toBe(
       CIPHERSTASH_V3_CODEC_IDS.length,
     )
-  })
-
-  it('v3 and v2 codec-id sets are disjoint', () => {
-    const v2 = new Set<string>(CIPHERSTASH_CODEC_IDS)
-    for (const id of CIPHERSTASH_V3_CODEC_IDS) expect(v2.has(id)).toBe(false)
   })
 
   it('guard narrows only v3 ids', () => {

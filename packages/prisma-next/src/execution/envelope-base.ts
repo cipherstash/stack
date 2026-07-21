@@ -2,7 +2,7 @@
  * Shared abstract base for every cipherstash envelope class.
  *
  * Each concrete encrypted-column type (`EncryptedString`,
- * `EncryptedDouble`, `EncryptedBigInt`, `EncryptedDate`,
+ * `EncryptedNumber`, `EncryptedBigInt`, `EncryptedDate`,
  * `EncryptedBoolean`, `EncryptedJson`) wraps a handle of the same shape
  * — only the plaintext slot's `T` differs — and shares verbatim:
  *
@@ -70,7 +70,7 @@ const REDACTED = '[REDACTED]'
  * Placeholder shape returned by `JSON.stringify(envelope)` for every
  * concrete envelope. The marker key is derived from the subclass's
  * `typeName` (e.g. `EncryptedString` → `$encryptedString`,
- * `EncryptedDouble` → `$encryptedDouble`) so each codec carries a
+ * `EncryptedNumber` → `$encryptedNumber`) so each codec carries a
  * distinct, machine-recognisable signature in serialised payloads.
  *
  * The four other coercion paths (`toString` / `valueOf` /

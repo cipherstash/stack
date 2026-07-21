@@ -1,17 +1,16 @@
 /**
  * Behavioural tests for the v3 `EncryptedNumber` envelope.
  *
- * Mirrors `test/envelope-double.test.ts` (subclass surface, decrypt
- * round-trip, the four non-`toJSON` redaction overrides, the
- * `JSON.stringify` placeholder shape) and additionally pins the
- * sibling relationship with the v2 `EncryptedDouble`: the two classes
- * must not satisfy each other's `instanceof` (a cross-version leak).
+ * Covers the subclass surface, decrypt round-trip, the four
+ * non-`toJSON` redaction overrides, and the `JSON.stringify`
+ * placeholder shape, and pins that it does not satisfy a sibling
+ * envelope's `instanceof` (no cross-class leak).
  */
 
 import { inspect } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 import { EncryptedEnvelopeBase } from '../../src/execution/envelope-base'
-import { EncryptedDouble } from '../../src/execution/envelope-double'
+import { EncryptedString } from '../../src/execution/envelope-string'
 import type { CipherstashSdk } from '../../src/execution/sdk'
 import { EncryptedNumber } from '../../src/v3/envelope-number'
 
@@ -23,12 +22,12 @@ function emptySdk(): CipherstashSdk {
   }
 }
 
-describe('EncryptedNumber — sibling of EncryptedDouble', () => {
-  it('is a distinct sibling of EncryptedDouble (no cross-instanceof leak)', () => {
+describe('EncryptedNumber — distinct envelope subclass', () => {
+  it('is a distinct sibling of the other envelopes (no cross-instanceof leak)', () => {
     const n = EncryptedNumber.from(42)
     expect(n).toBeInstanceOf(EncryptedNumber)
-    expect(n instanceof EncryptedDouble).toBe(false)
-    expect(EncryptedDouble.from(42) instanceof EncryptedNumber).toBe(false)
+    expect(n instanceof EncryptedString).toBe(false)
+    expect(EncryptedString.from('42') instanceof EncryptedNumber).toBe(false)
   })
 
   it('renders the $encryptedNumber placeholder marker (distinct typeName)', () => {

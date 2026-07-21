@@ -12,12 +12,11 @@
  * operator-function schema (`eql_v3.eq`, `eql_v3.ord_term`, …), the
  * `eql_v3.query_*` operand domains, and the `eql_v3_internal` helper schema.
  *
- * This is the SECOND migration in the cipherstash contract space, and
- * it is an **invariant-only edge**: the v3 bundle declares no
- * contract-space storage (no config table — unlike the v2 bundle's
- * `eql_v2_configuration`), so the storage hash does not move and
- * `describe()` returns `from === to === <the v2 baseline's to>`. The
- * edge exists to carry the `cipherstash:install-eql-v3-bundle-v1`
+ * This is the SOLE migration in the cipherstash contract space (the
+ * package is EQL v3 only), and it is an **invariant-only genesis edge**:
+ * the v3 bundle declares no contract-space storage (no config table),
+ * so `describe()` returns `from: null → to: <the empty-storage hash>`.
+ * The edge exists to carry the `cipherstash:install-eql-v3-bundle-v1`
  * invariant: the apply-path planner (`findPathWithInvariants`) walks it
  * when the head ref requires that invariant.
  *
@@ -43,8 +42,8 @@ const INSTALL_LABEL = `Install EQL v3 bundle (eql-${releaseManifest.eqlVersion}:
 export default class M extends Migration {
   override describe() {
     return {
-      from: 'sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7',
-      to: 'sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7',
+      from: null,
+      to: 'sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e',
     }
   }
 
@@ -53,18 +52,17 @@ export default class M extends Migration {
       rawSql({
         id: 'cipherstash.install-eql-v3-bundle',
         label: INSTALL_LABEL,
-        // `data`, not `additive`: this edge is a SELF-EDGE (`from ===
-        // to` — the bundle declares no contract-space storage), and the
-        // aggregate integrity checker (`migration-tools`
-        // `check-integrity.ts`) rejects a self-edge unless it carries a
-        // `data`-class op. Along the axis the checker classifies —
-        // does the op move the modeled contract shape? — `data` is the
+        // `data`, not `additive`: this genesis edge moves NO contract
+        // storage (`from: null` → the empty-storage hash — the bundle
+        // declares no contract-space storage), and the aggregate
+        // integrity checker (`migration-tools` `check-integrity.ts`)
+        // rejects a no-storage-movement edge unless it carries a
+        // `data`-class op. Along the axis the checker classifies — does
+        // the op move the modeled contract shape? — `data` is the
         // truthful answer: the bundle creates `public.eql_v3_*` domains
         // and `eql_v3.*` functions the space contract deliberately does
-        // not model. (Contrast the v2 bundle op: `additive`, because
-        // its edge really moves the hash by adding the
-        // `eql_v2_configuration` table.) The `migrate` policy allows
-        // all four classes, so apply behaviour is unchanged.
+        // not model. The `migrate` policy allows all four classes, so
+        // apply behaviour is unchanged.
         operationClass: 'data',
         invariantId: CIPHERSTASH_V3_INVARIANTS.installBundle,
         target: { id: 'postgres' },
@@ -74,7 +72,8 @@ export default class M extends Migration {
         // `../../src/migration/eql-bundle-v3.ts` `withRuntimeEqlSql`), so the
         // ~1.7 MB bundle is NOT baked into `ops.json` and bumping the pinned
         // `@cipherstash/eql` needs no re-emit. Safe because this is an
-        // invariant-only self-edge: the SQL never moves the contract hash.
+        // invariant-only genesis edge: the SQL never moves the contract
+        // hash (`from: null` → the empty-storage hash, as above).
         execute: [
           { description: INSTALL_LABEL, sql: RUNTIME_EQL_SQL_SENTINEL },
         ],

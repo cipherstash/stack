@@ -207,15 +207,6 @@ describe('property: constructor ↔ domain totality (authoring namespace)', () =
       }
     }
   >
-  const V2_ALIASES = [
-    'EncryptedStringV2',
-    'EncryptedDoubleV2',
-    'EncryptedBigIntV2',
-    'EncryptedDateV2',
-    'EncryptedBooleanV2',
-    'EncryptedJsonV2',
-  ]
-
   it('every exposed domain has exactly one constructor whose descriptor equals the catalog values', () => {
     fc.assert(
       fc.property(
@@ -237,24 +228,16 @@ describe('property: constructor ↔ domain totality (authoring namespace)', () =
     )
   })
 
-  it('no constructor maps off-catalog (v2 aliases excepted) and the counts agree', () => {
+  it('no constructor maps off-catalog and the counts agree', () => {
     const validNames = new Set(
       EXPOSED_DOMAIN_ENTRIES.map(([, m]) => v3PascalName(m.bareDomain)),
     )
     for (const name of Object.keys(ns)) {
-      if (name.endsWith('V2')) continue
       expect(validNames.has(name), `constructor ${name} is off-catalog`).toBe(
         true,
       )
     }
-    expect(
-      Object.keys(ns)
-        .filter((n) => n.endsWith('V2'))
-        .sort(),
-    ).toEqual([...V2_ALIASES].sort())
-    expect(Object.keys(ns)).toHaveLength(
-      EXPOSED_DOMAIN_ENTRIES.length + V2_ALIASES.length,
-    )
+    expect(Object.keys(ns)).toHaveLength(EXPOSED_DOMAIN_ENTRIES.length)
   })
 
   it('name transforms are injective and pascal/camel agree modulo first-letter case', () => {

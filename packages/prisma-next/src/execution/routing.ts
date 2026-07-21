@@ -3,9 +3,10 @@
  *
  * The routing key is derived from the envelope handle's
  * `(table, column)` — there is no per-column override surface. Every
- * cipherstash envelope passing through `bulkEncryptMiddleware` (and
- * `decryptAll`) carries `(table, column)` on its handle, populated by
- * the middleware's AST walk before the bulk-encrypt phase begins.
+ * cipherstash envelope passing through the v3 bulk-encrypt middleware
+ * (and `decryptAll`) carries `(table, column)` on its handle, populated
+ * by the routing-key AST walk ({@link stampRoutingKeysFromAst}) before
+ * the bulk-encrypt phase begins.
  *
  * `groupByRoutingKey` produces one homogeneous group per
  * `(table, column)` pair so each `bulkEncrypt` call serves a single
@@ -14,7 +15,14 @@
  * batching is a future optimization.
  */
 
-import type { EncryptedEnvelopeBase } from './envelope-base'
+import type {
+  AnyExpression,
+  AnyQueryAst,
+  InsertAst,
+  InsertValue,
+  UpdateAst,
+} from '@prisma-next/sql-relational-core/ast'
+import { EncryptedEnvelopeBase, setHandleRoutingKey } from './envelope-base'
 import type { CipherstashRoutingKey } from './sdk'
 
 /**
@@ -100,4 +108,60 @@ export function groupByRoutingKey<TRef>(
     group.push(target)
   }
   return groups
+}
+
+/**
+ * Walk a lowered `InsertAst` / `UpdateAst` and stamp `(table, column)`
+ * routing context onto every cipherstash envelope embedded in a
+ * `ParamRef`. Version-neutral: it touches only the shared envelope base
+ * and the AST — no wire/codec knowledge — so the v3 bulk-encrypt
+ * middleware (`../v3/bulk-encrypt-v3.ts`) reuses it rather than forking
+ * the walk. This is the single place the AST's structural column
+ * metadata gets attached to the envelopes the SDK will see.
+ */
+export function stampRoutingKeysFromAst(ast: AnyQueryAst | undefined): void {
+  if (!ast) return
+  switch (ast.kind) {
+    case 'insert':
+      stampInsert(ast)
+      return
+    case 'update':
+      stampUpdate(ast)
+      return
+    default:
+      return
+  }
+}
+
+function stampInsert(ast: InsertAst): void {
+  const tableName = ast.table.name
+  for (const row of ast.rows) {
+    for (const [column, value] of Object.entries(row)) {
+      stampParamRefIfEnvelope(value, tableName, column)
+    }
+  }
+  if (ast.onConflict?.action.kind === 'do-update-set') {
+    for (const [column, value] of Object.entries(ast.onConflict.action.set)) {
+      stampParamRefIfEnvelope(value, tableName, column)
+    }
+  }
+}
+
+function stampUpdate(ast: UpdateAst): void {
+  const tableName = ast.table.name
+  for (const [column, value] of Object.entries(ast.set)) {
+    stampParamRefIfEnvelope(value, tableName, column)
+  }
+}
+
+function stampParamRefIfEnvelope(
+  value: AnyExpression | InsertValue,
+  table: string,
+  column: string,
+): void {
+  if (value.kind !== 'param-ref') return
+  const inner = value.value
+  if (inner instanceof EncryptedEnvelopeBase) {
+    setHandleRoutingKey(inner, table, column)
+  }
 }

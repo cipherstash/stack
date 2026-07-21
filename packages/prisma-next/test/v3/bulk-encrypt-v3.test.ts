@@ -26,7 +26,12 @@ import { describe, expect, it } from 'vitest'
 import { setHandleRoutingKey } from '../../src/execution/envelope-base'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
-import { CIPHERSTASH_STRING_CODEC_ID } from '../../src/extension-metadata/constants'
+
+// A non-v3 codec id — used to prove the guard and the v3 middleware reject
+// anything outside the pinned v3 set. (The legacy EQL v2 codec ids were
+// removed; this literal stands in for "not a v3 codec id".)
+const NON_V3_CODEC_ID = 'cipherstash/string@1'
+
 import { isCipherstashV3CodecId } from '../../src/extension-metadata/constants-v3'
 import { bulkEncryptMiddlewareV3 } from '../../src/v3/bulk-encrypt-v3'
 import { EncryptedNumber } from '../../src/v3/envelope-number'
@@ -58,7 +63,7 @@ const V3_JSON = 'cipherstash/eql-v3/eql_v3_json@1'
 it('test fixture codec ids are members of the pinned v3 set', () => {
   expect(isCipherstashV3CodecId(V3_TEXT_SEARCH)).toBe(true)
   expect(isCipherstashV3CodecId(V3_JSON)).toBe(true)
-  expect(isCipherstashV3CodecId(CIPHERSTASH_STRING_CODEC_ID)).toBe(false)
+  expect(isCipherstashV3CodecId(NON_V3_CODEC_ID)).toBe(false)
 })
 
 /** SDK whose ciphertexts are object EQL payloads, the v3 SDK shape. */
@@ -231,13 +236,13 @@ describe('bulkEncryptMiddlewareV3', () => {
   })
 
   describe('jurisdiction is the v3 codec-id set only', () => {
-    it('ignores v2-codec params', async () => {
+    it('ignores non-v3-codec params', async () => {
       const sdk = makeV3Sdk()
       const middleware = bulkEncryptMiddlewareV3(sdk)
       const plan = buildInsertPlan(
         'user',
         [{ email: EncryptedString.from('x') }],
-        CIPHERSTASH_STRING_CODEC_ID,
+        NON_V3_CODEC_ID,
       )
       const params = createSqlParamRefMutator(plan)
 

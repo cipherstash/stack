@@ -1,9 +1,7 @@
 /**
  * One-call setup for `@cipherstash/prisma-next` against the
- * `@cipherstash/stack` EQL v3 client — the v3-only sibling of
- * `./from-stack.ts` (decision 1b: v2 and v3 are SEPARATE entry points
- * that are never co-registered in one client; the v2
- * `cipherstashFromStackV2` is untouched by this module).
+ * `@cipherstash/stack` EQL v3 client. `@cipherstash/prisma-next` is EQL
+ * v3 only; this is the sole `cipherstashFromStack` entry point.
  *
  *   const cipherstash = await cipherstashFromStack({ contractJson })
  *
@@ -80,8 +78,8 @@ export async function cipherstashFromStack(
   if (foreignIds.length > 0) {
     throw new Error(
       `cipherstashFromStack: contract.json contains non-v3 cipherstash codec ids [${foreignIds.join(', ')}]. ` +
-        'A v3 client is v3-only; use cipherstashFromStackV2 for a v2 contract. ' +
-        'Mixed v2+v3 cipherstash columns in one client are unsupported.',
+        '`@cipherstash/prisma-next` is EQL v3 only — author columns with the v3 ' +
+        '`cipherstash.*()` constructors and re-emit the contract (`prisma-next contract emit`).',
     )
   }
 
@@ -90,7 +88,7 @@ export async function cipherstashFromStack(
     throw new Error(
       'cipherstashFromStack: no v3 cipherstash columns found in contract.json. ' +
         'Declare at least one v3 `cipherstash.*()` column (e.g. `cipherstash.TextSearch()`) in prisma/schema.prisma ' +
-        'and re-emit the contract (or use cipherstashFromStackV2 if this is a v2 contract).',
+        'and re-emit the contract (`prisma-next contract emit`).',
     )
   }
 
