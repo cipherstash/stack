@@ -92,6 +92,26 @@ function toWasmPlaintext(value: Plain): WasmPlaintext {
   return value instanceof Date ? value.toISOString() : value
 }
 
+/**
+ * Unwrap a `Result` from the WASM client, throwing on failure.
+ *
+ * The client returns `{ data } | { failure }` on every fallible method (the
+ * repo-wide contract — see `AGENTS.md`). This harness wants a failure to abort
+ * the run loudly with the SDK's own message, so it unwraps at the call site
+ * rather than threading Results through the query builders.
+ */
+function unwrap<T>(
+  result:
+    | { data: T; failure?: never }
+    | { data?: never; failure: { message: string } },
+  op: string,
+): T {
+  if (result.failure) {
+    throw new Error(`[wasm adapter]: ${op} failed — ${result.failure.message}`)
+  }
+  return result.data as T
+}
+
 /** `public.eql_v3_text_eq` → `eql_v3.query_text_eq`; irregular: json → jsonb. */
 function queryDomain(eqlType: string): string {
   const suffix = eqlType.replace(/^public\.eql_v3_/, '')
@@ -139,11 +159,14 @@ export function makeWasmAdapter(): IntegrationAdapter {
     kind: keyof typeof QUERY_TYPE_BY_KIND,
   ): Promise<{ param: unknown; cast: string }> {
     const { column, eqlType } = col(slug)
-    const encrypted = await client.encryptQuery(toWasmPlaintext(value), {
-      table: tableSchema,
-      column,
-      queryType: QUERY_TYPE_BY_KIND[kind],
-    })
+    const encrypted = unwrap(
+      await client.encryptQuery(toWasmPlaintext(value), {
+        table: tableSchema,
+        column,
+        queryType: QUERY_TYPE_BY_KIND[kind],
+      }),
+      'encryptQuery',
+    )
     return { param: encrypted, cast: queryDomain(eqlType) }
   }
 
@@ -229,10 +252,13 @@ export function makeWasmAdapter(): IntegrationAdapter {
     // concurrently rather than paying fields × RTT per row.
     await Promise.all(
       Object.entries(row.values).map(async ([slug, value]) => {
-        const encrypted = await client.encrypt(toWasmPlaintext(value), {
-          table: tableSchema,
-          column: col(slug).column,
-        })
+        const encrypted = unwrap(
+          await client.encrypt(toWasmPlaintext(value), {
+            table: tableSchema,
+            column: col(slug).column,
+          }),
+          'encrypt',
+        )
         assertWireEnvelope(slug, encrypted)
         assignments[slug] = encrypted
       }),
@@ -266,13 +292,16 @@ export function makeWasmAdapter(): IntegrationAdapter {
         // One encryptQueryBulk crossing for the whole list — the bulk path
         // gets exercised on every family this way.
         const { column, eqlType } = col(op.column)
-        const encrypted = await client.encryptQueryBulk(
-          op.values.map((value) => ({
-            value: toWasmPlaintext(value),
-            table: tableSchema,
-            column,
-            queryType: 'equality' as const,
-          })),
+        const encrypted = unwrap(
+          await client.encryptQueryBulk(
+            op.values.map((value) => ({
+              value: toWasmPlaintext(value),
+              table: tableSchema,
+              column,
+              queryType: 'equality' as const,
+            })),
+          ),
+          'encryptQueryBulk',
         )
         const cast = queryDomain(eqlType)
         const fn = op.kind === 'in' ? 'eq' : 'neq'

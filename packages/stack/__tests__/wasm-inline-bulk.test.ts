@@ -37,6 +37,7 @@ vi.mock('@cipherstash/auth/wasm-inline', () => ({
 
 import { encryptedTable, types } from '../src/eql/v3'
 import { Encryption } from '../src/wasm-inline'
+import { expectData } from './helpers/expect-result'
 
 const users = encryptedTable('users', {
   email: types.TextEq('email'),
@@ -128,12 +129,13 @@ describe('WasmEncryptionClient.bulkEncrypt', () => {
       { plaintext: 'c@d.com', table: users, column: users.email },
     ])
 
-    expect(out).toHaveLength(4)
-    expect(out[0]).toBeNull()
-    expect(out[2]).toBeNull()
+    const values = expectData(out)
+    expect(values).toHaveLength(4)
+    expect(values[0]).toBeNull()
+    expect(values[2]).toBeNull()
     // Live values keep their ORIGINAL indices, not their compacted ones.
-    expect(out[1]).toEqual({ v: 3, i: {}, c: 'ct-0' })
-    expect(out[3]).toEqual({ v: 3, i: {}, c: 'ct-1' })
+    expect(values[1]).toEqual({ v: 3, i: {}, c: 'ct-0' })
+    expect(values[3]).toEqual({ v: 3, i: {}, c: 'ct-1' })
 
     // Nulls never reach ZeroKMS.
     const [, opts] = ffi.encryptBulk.mock.calls[0]
@@ -147,13 +149,13 @@ describe('WasmEncryptionClient.bulkEncrypt', () => {
       { plaintext: undefined, table: users, column: users.email },
     ])
 
-    expect(out).toEqual([null, null])
+    expect(out).toEqual({ data: [null, null] })
     expect(ffi.encryptBulk).not.toHaveBeenCalled()
   })
 
   it('returns an empty array for an empty batch, with no FFI call', async () => {
     const c = await client()
-    expect(await c.bulkEncrypt([])).toEqual([])
+    expect(await c.bulkEncrypt([])).toEqual({ data: [] })
     expect(ffi.encryptBulk).not.toHaveBeenCalled()
   })
 })
@@ -185,14 +187,16 @@ describe('WasmEncryptionClient.bulkDecrypt', () => {
     const c = await client()
     const out = await c.bulkDecrypt([null, ct('a'), undefined, ct('b')])
 
-    expect(out).toEqual([null, 'plain-0', null, 'plain-1'])
+    expect(out).toEqual({ data: [null, 'plain-0', null, 'plain-1'] })
     const [, opts] = ffi.decryptBulkFallible.mock.calls[0]
     expect(opts.ciphertexts).toHaveLength(2)
   })
 
   it('short-circuits an all-null batch without calling the FFI', async () => {
     const c = await client()
-    expect(await c.bulkDecrypt([null, undefined])).toEqual([null, null])
+    expect(await c.bulkDecrypt([null, undefined])).toEqual({
+      data: [null, null],
+    })
     expect(ffi.decryptBulkFallible).not.toHaveBeenCalled()
   })
 
@@ -208,27 +212,29 @@ describe('WasmEncryptionClient.bulkDecrypt', () => {
     // input 1/2/3 map to live 0/1/2, and the two failures are inputs 2 and 3.
     await expect(
       c.bulkDecrypt([null, ct('a'), ct('b'), ct('c')]),
-    ).rejects.toThrow(/failed for 2 of 3 payload\(s\)/)
+    ).resolves.toMatchObject({
+      failure: {
+        type: 'DecryptionError',
+        message: expect.stringMatching(/failed for 2 of 3 payload\(s\)/),
+      },
+    })
 
     ffi.decryptBulkFallible.mockResolvedValueOnce([
       { data: 'ok' },
       { error: 'boom-one' },
       { error: 'boom-two' },
     ] as never)
-    const err = await c
-      .bulkDecrypt([null, ct('a'), ct('b'), ct('c')])
-      .catch((e: Error) => e)
+    const res = await c.bulkDecrypt([null, ct('a'), ct('b'), ct('c')])
 
-    expect((err as Error).message).toContain('[2]: boom-one')
-    expect((err as Error).message).toContain('[3]: boom-two')
+    expect(res.failure?.message).toContain('[2]: boom-one')
+    expect(res.failure?.message).toContain('[3]: boom-two')
   })
 
   it('succeeds when every item decrypts', async () => {
     const c = await client()
-    await expect(c.bulkDecrypt([ct('a'), ct('b')])).resolves.toEqual([
-      'plain-0',
-      'plain-1',
-    ])
+    await expect(c.bulkDecrypt([ct('a'), ct('b')])).resolves.toEqual({
+      data: ['plain-0', 'plain-1'],
+    })
   })
 })
 
@@ -249,7 +255,11 @@ describe('bulk result/input length mismatch', () => {
         { plaintext: 'a', table: users, column: users.email },
         { plaintext: 'b', table: users, column: users.email },
       ]),
-    ).rejects.toThrow(/sent 2 payload\(s\).*received 1 back/s)
+    ).resolves.toMatchObject({
+      failure: {
+        message: expect.stringMatching(/sent 2 payload\(s\).*received 1 back/s),
+      },
+    })
   })
 
   it('bulkDecrypt throws rather than returning a partially-null batch', async () => {
@@ -258,8 +268,10 @@ describe('bulk result/input length mismatch', () => {
     ] as never)
 
     const c = await client()
-    await expect(c.bulkDecrypt([ct('a'), ct('b')])).rejects.toThrow(
-      /sent 2 payload\(s\).*received 1 back/s,
-    )
+    await expect(c.bulkDecrypt([ct('a'), ct('b')])).resolves.toMatchObject({
+      failure: {
+        message: expect.stringMatching(/sent 2 payload\(s\).*received 1 back/s),
+      },
+    })
   })
 })

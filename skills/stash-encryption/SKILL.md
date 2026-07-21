@@ -422,7 +422,7 @@ for (const item of decrypted.data) {
 }
 ```
 
-**On the WASM entry (`@cipherstash/stack/wasm-inline`), the signature differs** — do not copy the shape above onto the edge. There are no `{ id, plaintext }` envelopes and no `Result`; each entry carries its own table and column, the result is a plain index-aligned array, and errors throw:
+**On the WASM entry (`@cipherstash/stack/wasm-inline`), the batch shape differs** — do not copy the shape above onto the edge. The `{ data } | { failure }` Result is the same, but there are no `{ id, plaintext }` envelopes: each entry carries its own table and column, and the payload is a plain index-aligned array.
 
 ```typescript
 // Deno / Workers / Supabase Edge Functions
@@ -430,13 +430,15 @@ const encrypted = await client.bulkEncrypt([
   { plaintext: "alice@example.com", table: users, column: users.email },
   { plaintext: "hello", table: users, column: users.bio },
 ])
-// encrypted = [EncryptedPayload, EncryptedPayload] — same order as the input
+if (encrypted.failure) throw new Error(encrypted.failure.message)
+// encrypted.data = [EncryptedPayload, EncryptedPayload] — same order as the input
 
 const decrypted = await client.bulkDecrypt(rows.map((r) => r.email))
+if (decrypted.failure) throw new Error(decrypted.failure.message)
 // one ZeroKMS round trip for the whole list, not one per row
 ```
 
-`null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS. Because each entry names its own column, one call can cover several columns across many rows. `bulkDecrypt` throws if any item fails, naming every failing index. The model helpers (`encryptModel` / `bulkEncryptModels` / …) are **not** available on the WASM entry.
+`null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS. Because each entry names its own column, one call can cover several columns across many rows. When items fail to decrypt, `failure.message` names every failing index. The model helpers (`encryptModel` / `bulkEncryptModels` / …) are **not** available on the WASM entry.
 
 ## Searchable Encryption
 
