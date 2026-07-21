@@ -36,7 +36,7 @@ CipherStash encrypts each attribute into two DynamoDB attributes:
 | Original Attribute | Stored As | Purpose |
 |---|---|---|
 | `email` | `email__source` | Encrypted ciphertext |
-| `email` | `email__hmac` | HMAC for equality lookups (only for equality-capable columns) |
+| `email` | `email__hmac` | HMAC — written whenever the domain produces an equality term, usable only for equality lookups (see the domain table below) |
 
 Non-encrypted attributes pass through unchanged. On decryption, the `__source` and `__hmac` attributes are recombined back into the original attribute name with the plaintext value.
 
@@ -53,7 +53,7 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 | Client | `EncryptionV3({ schemas })` | `Encryption({ schemas })` |
 | Nested fields | Flat dotted path (`"profile.ssn"`) | Nested group + `encryptedField` |
 
-There is no data migration between them: DynamoDB has no EQL extension to install and no schema to alter. But the two write **different wire formats**, so a table populated under v2 cannot be read back with a v3 schema, or vice versa. Pick one per table and stay on it.
+There is no infrastructure migration between them — DynamoDB has no EQL extension to install and no schema to alter — but there is no automatic *data* migration path either. The two write **different wire formats**, so items written under one version cannot be decrypted by the other. Pick one per table and stay on it; to switch an existing table you must re-encrypt every item.
 
 **Nested attributes work in both versions**, with different authoring syntax.
 
@@ -489,14 +489,19 @@ const result = await encryptionClient.encryptQuery(
   "search-value",
   { table: users, column: users.email }
 )
-const hmac = result.data?.hm  // Use this in DynamoDB key conditions
+// encryptQuery returns a Result; check the failure branch before reading `data`.
+// `data?.hm` would mask a failure (and a null-plaintext result) as `undefined`,
+// producing a malformed key condition rather than a clear error.
+if (result.failure) throw new Error(result.failure.message)
+const hmac = result.data.hm  // Use this in DynamoDB key conditions
 
 // EQL v2 — pass queryType explicitly:
 const v2Result = await encryptionClient.encryptQuery(
   "search-value",
   { table: users, column: users.email, queryType: "equality" }
 )
-const v2Hmac = v2Result.data?.hm
+if (v2Result.failure) throw new Error(v2Result.failure.message)
+const v2Hmac = v2Result.data.hm
 ```
 
 > On a `types.TextSearch` column `encryptQuery` returns `hm` alongside ordering
@@ -545,7 +550,8 @@ const queryEnc = await encryptionClient.encryptQuery("alice@example.com", {
   table: users,
   column: users.email,
 })
-const hmac = queryEnc.data?.hm
+if (queryEnc.failure) throw new Error(queryEnc.failure.message)
+const hmac = queryEnc.data.hm
 
 const queryResult = await docClient.send(new QueryCommand({
   TableName: "Users",
