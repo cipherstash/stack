@@ -91,9 +91,14 @@ const RUNTIME_FORBIDDEN = [
 const SHARED_CHUNK_PATTERN = /^chunk-[A-Za-z0-9_-]+\.js$/
 
 const ALLOWED_SHARED_CHUNK_MARKER_SETS: ReadonlyArray<readonly string[]> = [
-  // constants chunk (constants.ts + constants-v3.ts — pure literals)
+  // legacy constants chunk (constants.ts — pure literals)
   [
     'CIPHERSTASH_SPACE_ID',
+    'CIPHERSTASH_CODEC_IDS',
+    'CIPHERSTASH_TRAIT_SEARCHABLE_JSON',
+  ],
+  // v3 constants chunk (constants-v3.ts — pure literals and trait mapper)
+  [
     'CIPHERSTASH_V3_CODEC_IDS',
     'CIPHERSTASH_V3_BASELINE_MIGRATION_NAME',
     'CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME',
