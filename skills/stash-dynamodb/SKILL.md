@@ -76,7 +76,7 @@ const users = encryptedTable("users", {
 })
 ```
 
-Both produce the same DynamoDB item, and the v3 form keeps equality queryability on the nested attribute:
+Both produce the same DynamoDB attribute *layout* — and the v3 form keeps equality queryability on the nested attribute — but the encrypted contents are version-specific: an item written under one version cannot be decrypted under the other (see the compatibility note above).
 
 ```jsonc
 { "pk": "u#1",
