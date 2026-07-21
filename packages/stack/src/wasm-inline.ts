@@ -350,14 +350,57 @@ function toFailure(
 ): (error: unknown) => EncryptionError {
   return (error: unknown) => ({
     type,
-    // In practice always an `Error`: `withResult`'s `ensureError` replaces any
-    // non-Error throw with `new Error('Something went wrong')` before this
-    // runs, discarding the original value (@byteslice/result@0.2.0). The
-    // narrowing is kept anyway — it is correct on its own terms, and the #532
-    // bump to 0.5.0 may start passing the raw value through.
     message: error instanceof Error ? error.message : String(error),
     code: getErrorCode(error),
   })
+}
+
+/**
+ * Coerce a rejection into an `Error` WITHOUT losing what it said.
+ *
+ * `withResult`'s built-in `ensureError` replaces any non-`Error` throw with
+ * `new Error('Something went wrong')`, discarding the original value entirely
+ * (@byteslice/result@0.2.0, `dist/result.js:27`). It is only the fallback,
+ * though — `withResult` prefers the `onException` hook:
+ *
+ * ```js
+ * const error = hooks?.onException?.(ex) ?? ensureError(ex)
+ * ```
+ *
+ * Supplying it matters more here than on the native entry. wasm-bindgen
+ * rejects with the raw `JsValue` the Rust side produced (`throw
+ * takeFromExternrefTable0(...)` in the generated glue), and the WASM build
+ * exports no `ProtectError` class, so a genuine FFI failure can arrive as a
+ * plain string or object rather than an `Error`. Without this hook its message
+ * would be replaced by boilerplate — strictly worse than the throwing
+ * behaviour this entry had before, which at least propagated the raw value.
+ */
+function toError(ex: unknown): Error {
+  if (ex instanceof Error) return ex
+  if (typeof ex === 'string') return new Error(ex)
+  try {
+    // Objects are the other shape wasm-bindgen hands back, so serialize rather
+    // than settle for "[object Object]". `JSON.stringify` returns undefined for
+    // a symbol/function and throws on a cycle — `String` covers both.
+    return new Error(JSON.stringify(ex) ?? String(ex))
+  } catch {
+    return new Error(String(ex))
+  }
+}
+
+/**
+ * `withResult` bound to this entry's conventions: the repo-wide failure shape
+ * ({@link toFailure}) plus the {@link toError} hook.
+ *
+ * One seam, so a method added later cannot silently omit either. Omitting them
+ * would not fail a build — it would quietly degrade failure messages, which is
+ * precisely the bug this helper exists to prevent.
+ */
+function wasmResult<T>(
+  operation: () => Promise<T>,
+  type: EncryptionError['type'],
+): Promise<Result<T, EncryptionError>> {
+  return withResult(operation, toFailure(type), { onException: toError })
 }
 
 /**
@@ -448,7 +491,7 @@ export class WasmEncryptionClient {
     plaintext: WasmPlaintext,
     opts: EncryptOptions,
   ): Promise<Result<Encrypted, EncryptionError>> {
-    return withResult(async () => {
+    return wasmResult(async () => {
       const ffiOpts = {
         plaintext,
         table: opts.table.tableName,
@@ -460,13 +503,13 @@ export class WasmEncryptionClient {
         // biome-ignore lint/plugin: the opts cross the serde boundary, whose shape protect-ffi types as `any`
         ffiOpts as never,
       )) as Encrypted
-    }, toFailure(EncryptionErrorTypes.EncryptionError))
+    }, EncryptionErrorTypes.EncryptionError)
   }
 
   async decrypt(
     encrypted: Encrypted,
   ): Promise<Result<WasmPlaintext, EncryptionError>> {
-    return withResult(
+    return wasmResult(
       async () =>
         (await wasmDecrypt(
           // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
@@ -474,7 +517,7 @@ export class WasmEncryptionClient {
           // biome-ignore lint/plugin: the opts cross the serde boundary, whose shape protect-ffi types as `any`
           { ciphertext: encrypted } as never,
         )) as WasmPlaintext,
-      toFailure(EncryptionErrorTypes.DecryptionError),
+      EncryptionErrorTypes.DecryptionError,
     )
   }
 
@@ -557,7 +600,7 @@ export class WasmEncryptionClient {
     plaintext: WasmPlaintext,
     opts: WasmEncryptQueryOptions,
   ): Promise<Result<EncryptedQuery | null, EncryptionError>> {
-    return withResult(async () => {
+    return wasmResult(async () => {
       if (plaintext === null || plaintext === undefined) return null
       return (await wasmEncryptQuery(
         // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
@@ -565,7 +608,7 @@ export class WasmEncryptionClient {
         // biome-ignore lint/plugin: the term crosses the serde boundary, whose shape protect-ffi types as `any`
         toFfiQueryTerm(plaintext, opts) as never,
       )) as EncryptedQuery
-    }, toFailure(EncryptionErrorTypes.EncryptionError))
+    }, EncryptionErrorTypes.EncryptionError)
   }
 
   /**
@@ -598,7 +641,7 @@ export class WasmEncryptionClient {
   async encryptQueryBulk(
     terms: readonly WasmQueryTerm[],
   ): Promise<Result<Array<EncryptedQuery | null>, EncryptionError>> {
-    return withResult(async () => {
+    return wasmResult(async () => {
       const live: Array<{ term: WasmQueryTerm; at: number }> = []
       terms.forEach((term, at) => {
         if (term.value !== null && term.value !== undefined)
@@ -626,7 +669,7 @@ export class WasmEncryptionClient {
         if (slot) out[slot.at] = value
       })
       return out
-    }, toFailure(EncryptionErrorTypes.EncryptionError))
+    }, EncryptionErrorTypes.EncryptionError)
   }
 
   /**
@@ -676,7 +719,7 @@ export class WasmEncryptionClient {
   async bulkEncrypt(
     items: readonly WasmBulkPlaintext[],
   ): Promise<Result<Array<Encrypted | null>, EncryptionError>> {
-    return withResult(async () => {
+    return wasmResult(async () => {
       const live: Array<{ item: WasmBulkPlaintext; at: number }> = []
       items.forEach((item, at) => {
         if (item.plaintext !== null && item.plaintext !== undefined)
@@ -710,7 +753,7 @@ export class WasmEncryptionClient {
         if (slot) out[slot.at] = value
       })
       return out
-    }, toFailure(EncryptionErrorTypes.EncryptionError))
+    }, EncryptionErrorTypes.EncryptionError)
   }
 
   /**
@@ -753,7 +796,7 @@ export class WasmEncryptionClient {
   async bulkDecrypt(
     ciphertexts: readonly (Encrypted | null | undefined)[],
   ): Promise<Result<Array<WasmPlaintext | null>, EncryptionError>> {
-    return withResult(async () => {
+    return wasmResult(async () => {
       const live: Array<{ ciphertext: Encrypted; at: number }> = []
       ciphertexts.forEach((ciphertext, at) => {
         if (ciphertext !== null && ciphertext !== undefined)
@@ -795,7 +838,7 @@ export class WasmEncryptionClient {
         )
       }
       return out
-    }, toFailure(EncryptionErrorTypes.DecryptionError))
+    }, EncryptionErrorTypes.DecryptionError)
   }
 }
 

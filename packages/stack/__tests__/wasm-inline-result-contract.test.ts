@@ -120,16 +120,25 @@ describe('wasm-inline Result contract — failure path', () => {
     })
   })
 
-  // A non-Error throw still produces a well-formed `{ failure }`, but its
-  // message is LOST: `withResult`'s `ensureError` replaces any non-Error with
-  // `new Error('Something went wrong')` before `onError` ever sees it
-  // (@byteslice/result@0.2.0, `dist/result.js:27`). That is a library-wide
-  // characteristic — the native entry's `(error as Error).message` has it too
-  // — not something this entry can fix locally. Pinned so the behaviour is
-  // documented rather than surprising, and so the #532 bump to 0.5.0 shows up
-  // here as a failing test if the library starts passing the value through.
-  it('still returns a well-formed failure for a non-Error throw', async () => {
-    ffi.encrypt.mockRejectedValueOnce('just a string')
+  // Non-Error rejections must keep their detail. `withResult`'s default
+  // `ensureError` would replace them with `new Error('Something went wrong')`,
+  // discarding the value (@byteslice/result@0.2.0, `dist/result.js:27`) — so
+  // this entry passes the `onException` hook, which takes precedence.
+  //
+  // This is not hypothetical on WASM: wasm-bindgen rejects with the raw
+  // `JsValue` from Rust (`throw takeFromExternrefTable0(...)`), and the WASM
+  // build exports no `ProtectError` class, so a real FFI failure can arrive as
+  // a bare string or object. Losing it would be worse than the throwing
+  // behaviour this entry had before, which propagated the raw value.
+  it.each([
+    ['a string', 'boom from rust', 'boom from rust'],
+    [
+      'an object',
+      { code: 'EQL_X', detail: 'bad domain' },
+      '{"code":"EQL_X","detail":"bad domain"}',
+    ],
+  ])('preserves the detail of %s rejection', async (_label, thrown, expected) => {
+    ffi.encrypt.mockRejectedValueOnce(thrown)
 
     const c = await client()
     const result = await c.encrypt('a@b.com', {
@@ -138,6 +147,24 @@ describe('wasm-inline Result contract — failure path', () => {
     })
 
     expect(result.failure?.type).toBe('EncryptionError')
-    expect(result.failure?.message).toBe('Something went wrong')
+    expect(result.failure?.message).toBe(expected)
+    expect(result.failure?.message).not.toBe('Something went wrong')
+  })
+
+  it('falls back to String() for a value JSON cannot serialize', async () => {
+    // A cycle makes JSON.stringify throw; the catch must still yield a
+    // well-formed failure rather than propagating a second error.
+    const cyclic: Record<string, unknown> = { a: 1 }
+    cyclic.self = cyclic
+    ffi.encrypt.mockRejectedValueOnce(cyclic)
+
+    const c = await client()
+    const result = await c.encrypt('a@b.com', {
+      table: users,
+      column: users.email,
+    })
+
+    expect(result.failure?.type).toBe('EncryptionError')
+    expect(result.failure?.message).toBe('[object Object]')
   })
 })
