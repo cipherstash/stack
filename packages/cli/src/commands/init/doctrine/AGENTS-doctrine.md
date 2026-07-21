@@ -2,7 +2,7 @@
 
 This project uses [CipherStash](https://cipherstash.com) for searchable, field-level encryption. Plaintext values are encrypted client-side via `@cipherstash/stack` before they leave the application; ciphertext is stored as `jsonb` in Postgres (or as encrypted attributes in DynamoDB) and decrypted on read.
 
-This document is the **durable rule book** for any agent working on this codebase. Read it before touching encryption-related code. Repeatable workflows (setup, schema design, migrations) live in skills installed alongside this file — see "Where to read more" at the bottom.
+This document is the **durable rule book** for any agent working on this codebase. Read it before touching encryption-related code. Repeatable workflows (setup, schema design, migrations) live in skills — installed as directories alongside this file, or inlined at the bottom of this file — see "Where to read more" at the bottom.
 
 ## What you are working with
 
@@ -41,9 +41,10 @@ Encryption migrations affect production data. Treat every change as **plan → i
 
 ## Where to read more
 
-The CipherStash setup skills are installed alongside this file. Use them when you need API details — don't re-invent. Likely paths:
+The CipherStash setup skills carry the API details. Use them when you need specifics — don't re-invent. Depending on how setup ran, they are installed as directories or inlined into this file:
 
 - `.claude/skills/<skill>/SKILL.md` (Claude Code)
 - `.codex/skills/<skill>/SKILL.md` (Codex)
+- Under `## Skill references` at the bottom of this file (editor agents, or when a skills directory could not be written — if the section exists, it is the current copy)
 
 Skills relevant to this project depend on the integration. Common ones: `stash-encryption` (encryption API), `stash-cli` (`stash` commands), and one of `stash-drizzle` / `stash-supabase` / `stash-dynamodb` for the chosen ORM.

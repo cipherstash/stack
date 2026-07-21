@@ -304,14 +304,22 @@ async function finalize(opts: {
   startTime: number
   outro: string
 }): Promise<void> {
-  const installedSkills = await maybeInstallSkills(
+  const { copied, failed } = await maybeInstallSkills(
     opts.cwd,
     opts.selectedIntegration,
   )
-  if (installedSkills.length > 0) {
+  if (copied.length > 0) {
     opts.changelog.action(
-      `Installed ${installedSkills.length} Claude skill(s).`,
-      installedSkills.map((name) => `.claude/skills/${name}`),
+      `Installed ${copied.length} Claude skill(s).`,
+      copied.map((name) => `.claude/skills/${name}`),
+    )
+  }
+  if (failed.length > 0) {
+    // The user confirmed the install and the filesystem refused — without
+    // this note the flushed log is indistinguishable from declining, and
+    // "why does Claude have no skills" has no artifact trail.
+    opts.changelog.note(
+      `Skills install failed (destination not writable?): ${failed.join(', ')}.`,
     )
   }
 

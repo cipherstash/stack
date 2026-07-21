@@ -15,33 +15,48 @@ export type AgentsMdMode = 'doctrine-only' | 'doctrine-plus-skills'
  * file on the second init run.
  *
  *   doctrine-only         — the durable AGENTS.md doctrine file. Used by
- *                           the Codex handoff, where workflows live in
- *                           `.codex/skills/` and AGENTS.md is reserved for
- *                           durable rules per OpenAI's Codex guidance.
+ *                           the Codex handoff when the skills landed in
+ *                           `.codex/skills/`, where AGENTS.md is reserved
+ *                           for durable rules per OpenAI's Codex guidance.
  *
- *   doctrine-plus-skills  — doctrine + the relevant skill SKILL.md bodies
- *                           inlined under "## Skill references". Used by
- *                           the AGENTS.md handoff for editor agents
- *                           (Cursor / Windsurf / Cline) that don't auto-
- *                           load skill directories.
+ *   doctrine-plus-skills  — doctrine + skill SKILL.md bodies inlined under
+ *                           "## Skill references". Used by the AGENTS.md
+ *                           handoff for editor agents (Cursor / Windsurf /
+ *                           Cline) that don't auto-load skill directories,
+ *                           and by the Codex handoff as the fallback for
+ *                           skills that could not be written to
+ *                           `.codex/skills/` (#736).
+ *
+ * `skills` names which skills to inline in `doctrine-plus-skills` mode —
+ * the Codex fallback passes only the skills that failed to copy, so a
+ * partial install inlines exactly the missing ones. Defaults to the full
+ * per-integration set. Ignored in `doctrine-only` mode.
+ *
+ * A build with no doctrine fragment still honours the mode: the skills are
+ * inlined under a minimal header rather than silently dropped, so the
+ * fallback never claims content that isn't there.
  */
 export function buildAgentsMdBody(
   integration: Integration,
   mode: AgentsMdMode,
+  skills: readonly string[] = skillsFor(integration),
 ): string {
   const doctrine = readDoctrine()
-  if (!doctrine) {
+  const parts: string[] = []
+  if (doctrine) {
+    parts.push(doctrine.trim())
+  } else {
     p.log.warn(
       'AGENTS.md doctrine fragment not found in this CLI build — writing a minimal AGENTS.md.',
     )
-    return '# CipherStash\n\nSee `.cipherstash/setup-prompt.md` for the action plan and the installed skills for the rules.'
+    parts.push(
+      '# CipherStash\n\nSee `.cipherstash/setup-prompt.md` for the action plan and where the setup rules live.',
+    )
   }
-
-  const parts: string[] = [doctrine.trim()]
 
   if (mode === 'doctrine-plus-skills') {
     const skillBodies: string[] = []
-    for (const name of skillsFor(integration)) {
+    for (const name of skills) {
       const body = readBundledSkill(name)
       if (body) {
         skillBodies.push(`---\n\n# Skill: ${name}\n\n${stripFrontmatter(body)}`)
@@ -79,5 +94,15 @@ function readDoctrine(): string | undefined {
   const dir = findBundledDir('doctrine')
   if (!dir) return undefined
   const file = join(dir, 'AGENTS-doctrine.md')
-  return existsSync(file) ? readFileSync(file, 'utf-8') : undefined
+  if (!existsSync(file)) return undefined
+  try {
+    return readFileSync(file, 'utf-8')
+  } catch (err) {
+    // An existing-but-unreadable file must degrade like a missing one —
+    // this runs before any handoff artifact is written, so a throw here
+    // recreates the #736 total loss.
+    const message = err instanceof Error ? err.message : String(err)
+    p.log.warn(`Could not read the AGENTS.md doctrine fragment: ${message}`)
+    return undefined
+  }
 }

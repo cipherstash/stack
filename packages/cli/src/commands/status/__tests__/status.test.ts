@@ -53,6 +53,7 @@ const sampleContext = {
     { tableName: 'orders', columns: [] },
   ],
   installedSkills: [],
+  inlinedSkills: [],
   generatedAt: '2026-01-01T00:00:00.000Z',
 }
 

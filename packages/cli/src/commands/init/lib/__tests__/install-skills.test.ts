@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -8,8 +9,15 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Integration } from '../../types.js'
+
+// The module's documented contract is "every filesystem step degrades to a
+// warning" — spy on the warn channel so a refactor to a silent
+// `catch { return ... }` fails here instead of shipping.
+vi.mock('@clack/prompts', () => ({ log: { warn: vi.fn() } }))
+
+import * as p from '@clack/prompts'
 import {
   availableSkills,
   installSkills,
@@ -17,6 +25,8 @@ import {
   SKILL_MAP,
   skillsFor,
 } from '../install-skills.js'
+
+const warnings = () => vi.mocked(p.log.warn).mock.calls.map(String).join('\n')
 
 // Every integration the init flow can resolve to. Kept in lockstep with the
 // `Integration` union and the init provider registry — a new integration added
@@ -85,6 +95,7 @@ describe('installSkills', () => {
   let tmp: string
 
   beforeEach(() => {
+    vi.clearAllMocks()
     tmp = mkdtempSync(join(tmpdir(), 'install-skills-test-'))
   })
 
@@ -93,8 +104,9 @@ describe('installSkills', () => {
   })
 
   it('copies the per-integration skills into destDir', () => {
-    const copied = installSkills(tmp, '.claude/skills', 'drizzle')
+    const { copied, failed } = installSkills(tmp, '.claude/skills', 'drizzle')
     expect(copied).toEqual(['stash-encryption', 'stash-drizzle', 'stash-cli'])
+    expect(failed).toEqual([])
     for (const name of copied) {
       expect(
         existsSync(join(tmp, '.claude/skills', name, 'SKILL.md')),
@@ -104,7 +116,7 @@ describe('installSkills', () => {
   })
 
   it('honours the destDir parameter (codex)', () => {
-    const copied = installSkills(tmp, '.codex/skills', 'supabase')
+    const { copied } = installSkills(tmp, '.codex/skills', 'supabase')
     expect(copied).toContain('stash-supabase')
     expect(existsSync(join(tmp, '.codex/skills/stash-supabase/SKILL.md'))).toBe(
       true,
@@ -116,33 +128,64 @@ describe('installSkills', () => {
   // #736: a Codex sandbox denies writes under `.codex/`, and the unguarded
   // `mkdirSync` threw PAST the per-skill fallback and past the caller — so the
   // whole handoff step died and AGENTS.md / .cipherstash were never written.
-  // Degrading to `[]` is what lets the caller fall back to inlining.
-  it('returns [] instead of throwing when destDir cannot be created', () => {
+  // Degrading to `failed` (with a warning — the documented contract) is what
+  // lets the caller fall back to inlining exactly those skills.
+  it('degrades to failed-with-a-warning when destDir cannot be created', () => {
     // A FILE where the skills directory needs to be: mkdirSync recursive
     // fails with ENOTDIR/EEXIST rather than succeeding.
     mkdirSync(join(tmp, '.codex'), { recursive: true })
     writeFileSync(join(tmp, '.codex/skills'), 'not a directory', 'utf-8')
 
-    let copied: string[] | undefined
+    let result: ReturnType<typeof installSkills> | undefined
     expect(() => {
-      copied = installSkills(tmp, '.codex/skills', 'drizzle')
+      result = installSkills(tmp, '.codex/skills', 'drizzle')
     }).not.toThrow()
-    expect(copied).toEqual([])
+    expect(result).toEqual({
+      copied: [],
+      failed: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+    })
+    expect(warnings()).toContain('Could not create .codex/skills/')
   })
 
+  // A pre-existing read-only skill directory (e.g. left by an earlier run
+  // under a restrictive sandbox) fails only that skill's copy — the result
+  // must report the split so the Codex fallback can inline exactly the
+  // missing ones instead of declaring success. chmod is advisory for root
+  // and on Windows, so skip there.
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'reports a partial copy as copied plus failed',
+    () => {
+      const blocked = join(tmp, '.codex/skills/stash-drizzle')
+      mkdirSync(blocked, { recursive: true })
+      writeFileSync(join(blocked, 'SKILL.md'), 'stale', 'utf-8')
+      chmodSync(blocked, 0o555)
+
+      try {
+        const { copied, failed } = installSkills(
+          tmp,
+          '.codex/skills',
+          'drizzle',
+        )
+        expect(copied).toEqual(['stash-encryption', 'stash-cli'])
+        expect(failed).toEqual(['stash-drizzle'])
+        expect(warnings()).toContain('Failed to install skill stash-drizzle')
+      } finally {
+        chmodSync(blocked, 0o755)
+      }
+    },
+  )
+
   it('leaves the caller able to distinguish "unwritable" from "nothing to install"', () => {
-    // `availableSkills` reports what the BUNDLE has, independent of whether
-    // the destination could be written — the signal the Codex handoff uses to
-    // decide whether an inline fallback is honest.
+    // An unwritable destination reports the bundled skills as `failed`;
+    // a stripped build reports both lists empty. The two no longer look
+    // identical, so the Codex handoff's inline fallback stays honest.
     mkdirSync(join(tmp, '.codex'), { recursive: true })
     writeFileSync(join(tmp, '.codex/skills'), 'not a directory', 'utf-8')
 
-    expect(installSkills(tmp, '.codex/skills', 'drizzle')).toEqual([])
-    expect(availableSkills('drizzle')).toEqual([
-      'stash-encryption',
-      'stash-drizzle',
-      'stash-cli',
-    ])
+    const { copied, failed } = installSkills(tmp, '.codex/skills', 'drizzle')
+    expect(copied).toEqual([])
+    expect(failed).toEqual(availableSkills('drizzle'))
+    expect(failed).toEqual(['stash-encryption', 'stash-drizzle', 'stash-cli'])
   })
 
   it('is idempotent — re-running does not throw and yields the same result', () => {

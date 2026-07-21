@@ -2,32 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InitState } from '../../../init/types.js'
 
 // Same seam as the handoff-claude test: the launch prompt's skills clause is
-// the unit under test. Mock the skill installer to control whether skills were
-// "copied". The Codex handoff also writes AGENTS.md to disk before printing
-// the prompt, so stub `node:fs` and the AGENTS.md builders to keep the test
-// hermetic (no file lands in the repo) — the assertions are on the
-// launch-prompt text and the AGENTS.md mode chosen.
+// the unit under test. Mock the skill installer to control the copied/failed
+// split, and the shared AGENTS.md writer to control whether the inline
+// fallback landed. The assertions are on the launch-prompt text, the
+// AGENTS.md mode chosen, and the delivery recorded into the artifacts.
 const installSkills = vi.hoisted(() => vi.fn())
-const availableSkills = vi.hoisted(() => vi.fn())
-vi.mock('../../../init/lib/install-skills.js', () => ({
-  installSkills,
-  availableSkills,
-}))
+vi.mock('../../../init/lib/install-skills.js', () => ({ installSkills }))
+const writeAgentsMd = vi.hoisted(() => vi.fn())
 vi.mock('../../../init/lib/handoff-helpers.js', () => ({
+  AGENTS_MD_REL_PATH: 'AGENTS.md',
+  writeAgentsMd,
   writeArtifacts: vi.fn(),
   spawnAgent: vi.fn(async () => 0),
 }))
-// Typed with both parameters so `mock.calls[0][1]` (the AGENTS.md mode, which
-// is what the fallback actually switches) type-checks.
-const buildAgentsMdBody = vi.hoisted(() =>
-  vi.fn((_integration: string, _mode: string) => '# managed doctrine'),
-)
+const buildAgentsMdBody = vi.hoisted(() => vi.fn())
 vi.mock('../../../init/lib/build-agents-md.js', () => ({ buildAgentsMdBody }))
-vi.mock('../../../init/lib/sentinel-upsert.js', () => ({
-  upsertManagedBlock: vi.fn(() => '# AGENTS.md'),
-}))
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(() => false),
+  mkdirSync: vi.fn(),
   readFileSync: vi.fn(() => ''),
   writeFileSync: vi.fn(),
 }))
@@ -37,6 +29,7 @@ vi.mock('@clack/prompts', () => ({
 }))
 
 import * as p from '@clack/prompts'
+import { writeArtifacts } from '../../../init/lib/handoff-helpers.js'
 import { handoffCodexStep } from '../handoff-codex.js'
 
 // `agents` undefined → Codex "not installed" path, which routes the launch
@@ -45,32 +38,44 @@ const state = { integration: 'postgresql' } as unknown as InitState
 
 const promptBody = () => vi.mocked(p.note).mock.calls[0][0]
 const agentsMdMode = () => vi.mocked(buildAgentsMdBody).mock.calls[0][1]
+const inlinedList = () => vi.mocked(buildAgentsMdBody).mock.calls[0][2]
+const delivery = () => vi.mocked(writeArtifacts).mock.calls[0][3]
 const warnings = () => vi.mocked(p.log.warn).mock.calls.map(String).join('\n')
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  writeAgentsMd.mockReturnValue(true)
+})
 
-it('launch prompt names .codex/skills/ when skills were copied', async () => {
-  installSkills.mockReturnValue(['stash-encryption'])
-  availableSkills.mockReturnValue(['stash-encryption'])
+it('launch prompt names .codex/skills/ when all skills were copied', async () => {
+  installSkills.mockReturnValue({ copied: ['stash-encryption'], failed: [] })
   await handoffCodexStep.run(state)
 
   expect(promptBody()).toContain('.codex/skills/')
   // Skills are on disk, so AGENTS.md stays doctrine-only per Codex guidance.
   expect(agentsMdMode()).toBe('doctrine-only')
+  expect(delivery()).toEqual({
+    installed: ['stash-encryption'],
+    inlined: [],
+    failed: [],
+  })
 })
 
 // #736: Codex sandboxes deny writes under `.codex/`. The skills cannot land,
 // but AGENTS.md (project root) can — so the guidance is inlined there rather
 // than lost, and Codex is pointed at it.
-describe('when .codex/skills could not be written', () => {
+describe('when .codex/skills could not be written at all', () => {
   beforeEach(() => {
-    installSkills.mockReturnValue([])
-    availableSkills.mockReturnValue(['stash-encryption', 'stash-cli'])
+    installSkills.mockReturnValue({
+      copied: [],
+      failed: ['stash-encryption', 'stash-cli'],
+    })
   })
 
-  it('inlines the skills into AGENTS.md instead of shipping nothing', async () => {
+  it('inlines the failed skills into AGENTS.md instead of shipping nothing', async () => {
     await handoffCodexStep.run(state)
     expect(agentsMdMode()).toBe('doctrine-plus-skills')
+    expect(inlinedList()).toEqual(['stash-encryption', 'stash-cli'])
   })
 
   it('points the launch prompt at AGENTS.md, not the directory that failed', async () => {
@@ -85,6 +90,61 @@ describe('when .codex/skills could not be written', () => {
     expect(warnings()).toContain('.codex/skills/')
     expect(warnings()).toContain('AGENTS.md')
   })
+
+  it('records the skills as inlined, not installed, in the artifacts', async () => {
+    await handoffCodexStep.run(state)
+    expect(delivery()).toEqual({
+      installed: [],
+      inlined: ['stash-encryption', 'stash-cli'],
+      failed: [],
+    })
+  })
+
+  it('records the skills as failed when AGENTS.md could not be written either', async () => {
+    writeAgentsMd.mockReturnValue(false)
+    await handoffCodexStep.run(state)
+    expect(delivery()).toEqual({
+      installed: [],
+      inlined: [],
+      failed: ['stash-encryption', 'stash-cli'],
+    })
+    // Nothing was inlined, so the prompt must not claim otherwise.
+    expect(promptBody()).not.toContain('inlined in AGENTS.md')
+  })
+})
+
+// A partial copy — mkdir succeeded, one skill's cpSync failed — must inline
+// exactly the missing skill, not declare success and drop it (#736 follow-up
+// review: the fallback used to be all-or-nothing on installed.length === 0).
+describe('when only some skills could be written', () => {
+  beforeEach(() => {
+    installSkills.mockReturnValue({
+      copied: ['stash-encryption'],
+      failed: ['stash-cli'],
+    })
+  })
+
+  it('inlines only the failed skill', async () => {
+    await handoffCodexStep.run(state)
+    expect(agentsMdMode()).toBe('doctrine-plus-skills')
+    expect(inlinedList()).toEqual(['stash-cli'])
+  })
+
+  it('points the launch prompt at both locations', async () => {
+    await handoffCodexStep.run(state)
+    const body = promptBody()
+    expect(body).toContain('.codex/skills/')
+    expect(body).toContain('inlined in AGENTS.md')
+  })
+
+  it('records the split delivery in the artifacts', async () => {
+    await handoffCodexStep.run(state)
+    expect(delivery()).toEqual({
+      installed: ['stash-encryption'],
+      inlined: ['stash-cli'],
+      failed: [],
+    })
+  })
 })
 
 // A stripped CLI build ships no skills at all. Nothing to copy AND nothing to
@@ -92,8 +152,7 @@ describe('when .codex/skills could not be written', () => {
 // and #687 removed elsewhere in init.
 describe('when this build ships no skills at all', () => {
   beforeEach(() => {
-    installSkills.mockReturnValue([])
-    availableSkills.mockReturnValue([])
+    installSkills.mockReturnValue({ copied: [], failed: [] })
   })
 
   it('stays doctrine-only — there is nothing to inline', async () => {
@@ -109,8 +168,8 @@ describe('when this build ships no skills at all', () => {
     expect(body).toContain('AGENTS.md')
   })
 
-  it('does not claim an inline fallback happened', async () => {
+  it('does not warn at all — there is no fallback to announce', async () => {
     await handoffCodexStep.run(state)
-    expect(warnings()).not.toContain('inlining')
+    expect(p.log.warn).not.toHaveBeenCalled()
   })
 })

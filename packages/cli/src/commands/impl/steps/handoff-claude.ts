@@ -25,21 +25,37 @@ export const handoffClaudeStep: HandoffStep = {
     const cwd = process.cwd()
     const integration = state.integration ?? 'postgresql'
 
-    const installed = installSkills(cwd, CLAUDE_SKILLS_DIR, integration)
-    if (installed.length > 0) {
+    const { copied, failed } = installSkills(
+      cwd,
+      CLAUDE_SKILLS_DIR,
+      integration,
+    )
+    if (copied.length > 0) {
       p.log.success(
-        `Installed ${installed.length} skill${installed.length !== 1 ? 's' : ''} into ${CLAUDE_SKILLS_DIR}/: ${installed.join(', ')}`,
+        `Installed ${copied.length} skill${copied.length !== 1 ? 's' : ''} into ${CLAUDE_SKILLS_DIR}/: ${copied.join(', ')}`,
+      )
+    }
+    if (failed.length > 0) {
+      // Unlike the Codex handoff there is no AGENTS.md on this path to
+      // inline into, so the guidance is genuinely absent — say so rather
+      // than letting the run look complete (#736 follow-up review).
+      p.log.warn(
+        `${failed.length} skill${failed.length !== 1 ? 's' : ''} could not be installed to ${CLAUDE_SKILLS_DIR}/: ${failed.join(', ')}. The agent will run without them — https://cipherstash.com/docs covers the same ground.`,
       )
     }
 
-    writeArtifacts(cwd, state, 'claude-code', installed)
+    writeArtifacts(cwd, state, 'claude-code', {
+      installed: copied,
+      inlined: [],
+      failed,
+    })
 
     const mode = state.mode ?? 'implement'
     // Only point the agent at the skills dir when skills were actually copied.
-    // A stripped CLI build (no bundled skills) returns [] — claiming they're
-    // there would send the agent to read files that don't exist.
+    // A stripped CLI build (no bundled skills) copies nothing — claiming
+    // they're there would send the agent to read files that don't exist.
     const skillsClause =
-      installed.length > 0
+      copied.length > 0
         ? `The installed skills under ${CLAUDE_SKILLS_DIR}/ have the rules; `
         : ''
     const launchPrompt =

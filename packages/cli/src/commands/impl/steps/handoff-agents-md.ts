@@ -1,16 +1,16 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import { buildAgentsMdBody } from '../../init/lib/build-agents-md.js'
-import { writeArtifacts } from '../../init/lib/handoff-helpers.js'
-import { upsertManagedBlock } from '../../init/lib/sentinel-upsert.js'
+import {
+  AGENTS_MD_REL_PATH,
+  writeAgentsMd,
+  writeArtifacts,
+} from '../../init/lib/handoff-helpers.js'
+import { availableSkills } from '../../init/lib/install-skills.js'
 import {
   CONTEXT_REL_PATH,
   SETUP_PROMPT_REL_PATH,
 } from '../../init/lib/write-context.js'
 import type { HandoffStep, InitState } from '../../init/types.js'
-
-const AGENTS_MD_REL_PATH = 'AGENTS.md'
 
 /**
  * Write `AGENTS.md`, `.cipherstash/context.json`, and
@@ -32,19 +32,19 @@ export const handoffAgentsMdStep: HandoffStep = {
     const cwd = process.cwd()
     const integration = state.integration ?? 'postgresql'
 
-    const agentsMdAbs = resolve(cwd, AGENTS_MD_REL_PATH)
-    const managed = buildAgentsMdBody(integration, 'doctrine-plus-skills')
-    const existing = existsSync(agentsMdAbs)
-      ? readFileSync(agentsMdAbs, 'utf-8')
-      : undefined
-    writeFileSync(
-      agentsMdAbs,
-      upsertManagedBlock({ existing, managed }),
-      'utf-8',
+    const inlinable = availableSkills(integration)
+    const managed = buildAgentsMdBody(
+      integration,
+      'doctrine-plus-skills',
+      inlinable,
     )
-    p.log.success(`Wrote ${AGENTS_MD_REL_PATH}`)
+    const written = writeAgentsMd(cwd, managed)
 
-    writeArtifacts(cwd, state, 'agents-md', [])
+    writeArtifacts(cwd, state, 'agents-md', {
+      installed: [],
+      inlined: written ? inlinable : [],
+      failed: written ? [] : inlinable,
+    })
 
     p.note(
       [

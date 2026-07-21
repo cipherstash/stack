@@ -1,6 +1,7 @@
 import type { HandoffChoice, InitMode, Integration } from '../types.js'
 import { execCommand, type PackageManager, runnerCommand } from '../utils.js'
 import type { PlanStep } from './parse-plan.js'
+import type { SkillsDelivery } from './write-context.js'
 
 export const PLAN_REL_PATH = '.cipherstash/plan.md'
 
@@ -20,12 +21,12 @@ export interface SetupPromptContext {
    *  to produce `.cipherstash/plan.md`; implement-mode is the orient-and-
    *  route action prompt. */
   mode: InitMode
-  /** Names of skills `stash init` copied into the project (e.g.
-   *  `stash-encryption`, `stash-drizzle`, `stash-cli`). The action prompt
-   *  names them so the agent knows which references to consult. Empty for
-   *  the `agents-md` handoff (no skills directory installed) and for
-   *  `wizard` (the wizard installs its own). */
-  installedSkills: string[]
+  /** Where the per-integration skills actually ended up — installed as
+   *  directories, inlined into AGENTS.md, or failed. The action prompt
+   *  names the delivered skills so the agent knows which references to
+   *  consult, and describes failures honestly instead of mislabelling an
+   *  unwritable destination as a stripped build. */
+  skills: SkillsDelivery
   /** In plan mode, which scope of plan to produce. The `stash plan` command
    *  picks this by reading `cs_migrations` (`rollupPlanStep`); the user
    *  override is `--complete-rollout`. Ignored in implement mode. Defaults
@@ -76,19 +77,21 @@ function checked(line: string): string {
 }
 
 /**
- * Phrase the "where the rules live" pointer for each handoff target.
- *
- *   claude-code → skills loaded into `.claude/skills/`
- *   codex       → AGENTS.md (durable doctrine) + skills in `.codex/skills/`
- *   agents-md   → AGENTS.md only (Cursor / Windsurf / Cline don't load
- *                 skill directories, so the rules are inlined there)
- *   wizard      → handled separately; this prompt isn't written for wizard
+ * Phrase the "where the rules live" pointer from where the skills actually
+ * ended up, not from the handoff choice alone — the Codex fallback (#736)
+ * can inline some or all of them into AGENTS.md instead of `.codex/skills/`.
  */
-function rulesLocation(handoff: HandoffChoice): string {
-  if (handoff === 'claude-code') return '`.claude/skills/`'
+function rulesLocation(handoff: HandoffChoice, skills: SkillsDelivery): string {
+  if (handoff === 'agents-md') return '`AGENTS.md` (Cursor / Windsurf / Cline)'
+  const dir =
+    handoff === 'claude-code' ? '`.claude/skills/`' : '`.codex/skills/`'
+  const inlined = 'inlined in `AGENTS.md` under "## Skill references"'
+  if (skills.installed.length > 0 && skills.inlined.length > 0)
+    return `${dir} and ${inlined}`
+  if (skills.inlined.length > 0) return inlined
   if (handoff === 'codex')
     return '`.codex/skills/` plus durable rules in `AGENTS.md`'
-  return '`AGENTS.md` (Cursor / Windsurf / Cline)'
+  return dir
 }
 
 /**
@@ -124,22 +127,36 @@ function renderSkillIndex(installedSkills: string[]): string {
 }
 
 /**
- * The "## Skills loaded" section, honouring what the handoff actually wrote —
- * so the prompt never points the agent at files that don't exist:
+ * The "## Skills loaded" section, honouring what the handoff actually
+ * delivered — so the prompt never points the agent at files that don't
+ * exist, and never mislabels a failed install as a stripped build:
  *
- *   - No skills installed (a stripped CLI build): don't reference any skill
- *     directory; point only at whatever durable rules the handoff wrote
- *     (`AGENTS.md` for codex / agents-md; nothing for claude-code, so send the
- *     agent to the docs).
- *   - claude-code: the doctrine lives in the installed skills, not `AGENTS.md`
- *     (this handoff never writes one) — so don't name `AGENTS.md`.
+ *   - Skills delivered (installed, inlined, or both): name them and where
+ *     they actually are.
+ *   - Skills exist but none were delivered: say the install failed and
+ *     point at the docs — the bundle was fine, the destination wasn't.
+ *   - Nothing bundled (a stripped CLI build): point only at whatever
+ *     durable rules the handoff wrote (`AGENTS.md` for codex / agents-md;
+ *     nothing for claude-code, so send the agent to the docs).
+ *   - claude-code: the doctrine lives in the installed skills, not
+ *     `AGENTS.md` (this handoff never writes one) — so don't name it.
  */
 function skillsLoadedLines(
   handoff: HandoffChoice,
-  installedSkills: string[],
+  skills: SkillsDelivery,
 ): string[] {
   const wroteAgentsMd = handoff === 'codex' || handoff === 'agents-md'
-  if (installedSkills.length === 0) {
+  const delivered = [...skills.installed, ...skills.inlined]
+  if (delivered.length === 0) {
+    if (skills.failed.length > 0) {
+      return [
+        '## Rules',
+        '',
+        wroteAgentsMd
+          ? 'The skills could not be installed (the destination was not writable) — the durable rules are in `AGENTS.md`; read it, and consult https://cipherstash.com/docs for the API details the skills would have carried.'
+          : 'The skills could not be installed (the destination was not writable) — consult https://cipherstash.com/docs for the encryption API, schema rules, and the rollout/cutover lifecycle.',
+      ]
+    }
     return [
       '## Rules',
       '',
@@ -154,9 +171,9 @@ function skillsLoadedLines(
   return [
     '## Skills loaded',
     '',
-    `Reusable rules and worked examples live in ${rulesLocation(handoff)}:`,
+    `Reusable rules and worked examples live in ${rulesLocation(handoff, skills)}:`,
     '',
-    renderSkillIndex(installedSkills),
+    renderSkillIndex(delivered),
     '',
     doctrine,
   ]
@@ -245,7 +262,7 @@ export function renderImplementPrompt(ctx: SetupPromptContext): string {
     '',
     ...setupChecklist(ctx),
     '',
-    ...skillsLoadedLines(ctx.handoff, ctx.installedSkills),
+    ...skillsLoadedLines(ctx.handoff, ctx.skills),
     '',
     '## The two options',
     '',
@@ -371,7 +388,7 @@ function planSharedSetupBlock(ctx: SetupPromptContext): string[] {
     '',
     ...setupChecklist(ctx),
     '',
-    ...skillsLoadedLines(ctx.handoff, ctx.installedSkills),
+    ...skillsLoadedLines(ctx.handoff, ctx.skills),
     '',
   ]
 }

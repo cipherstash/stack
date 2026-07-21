@@ -9,7 +9,7 @@ import type { Integration } from './types.js'
  * alongside the CLI (see `tsup.config.ts` — `skills/` is copied into
  * `dist/skills/` at build time). The wizard offers to copy the matching
  * skills into the user's project so Claude Code picks them up during
- * follow-up work (CIP-2992).
+ * follow-up work.
  */
 const SKILL_MAP: Record<Integration, readonly string[]> = {
   drizzle: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
@@ -19,31 +19,42 @@ const SKILL_MAP: Record<Integration, readonly string[]> = {
 }
 
 /**
+ * Outcome of {@link maybeInstallSkills}. `copied` and `failed` partition the
+ * skills the user confirmed: both empty means declined, nothing bundled, or
+ * nothing to copy; `failed` non-empty means the user said yes but the
+ * filesystem said no — the caller should record that, since the transient
+ * terminal warning is the only other evidence.
+ */
+export interface SkillsInstallResult {
+  copied: string[]
+  failed: string[]
+}
+
+/**
  * Prompt the user, and if they say yes, copy the selected skills into
- * `<cwd>/.claude/skills/<skill-name>/`. Returns the list of skill names
- * actually copied (empty if declined or nothing to copy).
+ * `<cwd>/.claude/skills/<skill-name>/`.
  */
 export async function maybeInstallSkills(
   cwd: string,
   integration: Integration,
-): Promise<string[]> {
+): Promise<SkillsInstallResult> {
   const skills = SKILL_MAP[integration] ?? SKILL_MAP.generic
   const bundledRoot = resolveBundledSkillsRoot()
   if (!bundledRoot) {
     p.log.warn(
       'Skills bundle not found in this CLI build — skipping skills install.',
     )
-    return []
+    return { copied: [], failed: [] }
   }
 
   const available = skills.filter((name) => existsSync(join(bundledRoot, name)))
-  if (available.length === 0) return []
+  if (available.length === 0) return { copied: [], failed: [] }
 
   const confirmed = await p.confirm({
     message: `Install ${available.length} Claude skill(s) into ./.claude/skills/ (${available.join(', ')})?`,
     initialValue: true,
   })
-  if (p.isCancel(confirmed) || !confirmed) return []
+  if (p.isCancel(confirmed) || !confirmed) return { copied: [], failed: [] }
 
   const destRoot = resolve(cwd, '.claude', 'skills')
   try {
@@ -57,10 +68,11 @@ export async function maybeInstallSkills(
     // instead; the wizard's remaining output is still useful.
     const message = err instanceof Error ? err.message : String(err)
     p.log.warn(`Could not create ./.claude/skills/: ${message}`)
-    return []
+    return { copied: [], failed: available }
   }
 
   const copied: string[] = []
+  const failed: string[] = []
   for (const name of available) {
     const src = join(bundledRoot, name)
     const dest = join(destRoot, name)
@@ -70,6 +82,7 @@ export async function maybeInstallSkills(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       p.log.warn(`Failed to install skill ${name}: ${message}`)
+      failed.push(name)
     }
   }
 
@@ -79,7 +92,7 @@ export async function maybeInstallSkills(
     )
   }
 
-  return copied
+  return { copied, failed }
 }
 
 /**

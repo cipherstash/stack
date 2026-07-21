@@ -37,19 +37,40 @@ export function skillsFor(integration: Integration): readonly string[] {
 /**
  * Which of an integration's skills actually exist in THIS build's bundle.
  *
- * Separate from {@link installSkills} because callers need to tell "there were
- * no skills to install" apart from "there were skills but they could not be
- * written" — the two look identical in an empty return, and only the second
- * has a fallback worth mentioning to the user. Claiming a fallback happened
- * when the bundle was empty would be exactly the kind of false success #714
- * and #687 removed elsewhere in init.
+ * A skill counts only when its `SKILL.md` exists — that is the file every
+ * consumer needs (the skill registries read it, and `readBundledSkill`
+ * inlines it), so a bundle directory without one must not be promised
+ * anywhere. Keeping this predicate identical to {@link readBundledSkill}'s
+ * is what keeps "inlining N skills" claims honest (#714 / #687 removed
+ * exactly this kind of false success elsewhere in init).
  */
 export function availableSkills(integration: Integration): string[] {
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) return []
   return skillsFor(integration).filter((name) =>
-    existsSync(join(bundledRoot, name)),
+    existsSync(join(bundledRoot, name, 'SKILL.md')),
   )
+}
+
+/**
+ * Outcome of {@link installSkills}. `copied` and `failed` partition the
+ * bundled skill set for the integration:
+ *
+ *   - both empty            → this build ships no skills (nothing to do,
+ *                             nothing to fall back to)
+ *   - `failed` non-empty    → skills exist but could not all be written
+ *                             (unwritable destination, per-skill copy
+ *                             failure) — fallback candidates
+ *
+ * Callers used to infer these states from a flat `string[]` plus a second
+ * `availableSkills()` probe, which made "unwritable" indistinguishable from
+ * "stripped build" for anyone who forgot the probe (#736 follow-up review).
+ */
+export interface SkillsInstallResult {
+  /** Skills copied into `<cwd>/<destDir>/<skill>/`. */
+  copied: string[]
+  /** Bundled skills that could not be copied. */
+  failed: string[]
 }
 
 /**
@@ -65,27 +86,27 @@ export function availableSkills(integration: Integration): string[] {
  * Idempotent: re-runs overwrite the skill folders so the user always gets
  * the latest content shipped with this CLI.
  *
- * **Never throws.** Every filesystem step degrades to a warning and a shorter
- * return, because the destination is not always writable: Codex sandboxes deny
+ * **Never throws.** Every filesystem step degrades to a warning and a `failed`
+ * entry, because the destination is not always writable: Codex sandboxes deny
  * writes under `.codex/`, which took out all five Codex runs of the rc.3
- * skilltester matrix (#736). The caller decides what to do with an empty
- * result — the Codex handoff inlines the skills into AGENTS.md instead.
+ * skilltester matrix (#736). The caller decides what to do with the failures —
+ * the Codex handoff inlines them into AGENTS.md instead.
  */
 export function installSkills(
   cwd: string,
   destDir: string,
   integration: Integration,
-): string[] {
+): SkillsInstallResult {
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) {
     p.log.warn(
       'Skills bundle not found in this CLI build — skipping skills install.',
     )
-    return []
+    return { copied: [], failed: [] }
   }
 
   const available = availableSkills(integration)
-  if (available.length === 0) return []
+  if (available.length === 0) return { copied: [], failed: [] }
 
   const destRoot = resolve(cwd, destDir)
   try {
@@ -96,10 +117,11 @@ export function installSkills(
     // whole handoff step — no skills, no AGENTS.md, no context.json.
     const message = err instanceof Error ? err.message : String(err)
     p.log.warn(`Could not create ${destDir}/: ${message}`)
-    return []
+    return { copied: [], failed: available }
   }
 
   const copied: string[] = []
+  const failed: string[] = []
   for (const name of available) {
     const src = join(bundledRoot, name)
     const dest = join(destRoot, name)
@@ -109,10 +131,11 @@ export function installSkills(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       p.log.warn(`Failed to install skill ${name}: ${message}`)
+      failed.push(name)
     }
   }
 
-  return copied
+  return { copied, failed }
 }
 
 /**
@@ -120,14 +143,23 @@ export function installSkills(
  * builder when the handoff target is an editor agent (Cursor / Windsurf /
  * Cline) that doesn't auto-load skill directories — we inline the content.
  *
- * Returns undefined if the bundle isn't found or the named skill isn't part
- * of the bundle. Callers should treat that as "skip this skill" rather than
- * a fatal error so a stripped CLI build still produces a usable AGENTS.md.
+ * Returns undefined if the bundle isn't found, the named skill isn't part
+ * of the bundle, or the file cannot be read (an existing-but-unreadable
+ * file would otherwise throw through the Codex inline fallback and abort
+ * the whole handoff — the #736 blast radius this module exists to prevent).
+ * Callers should treat undefined as "skip this skill" rather than a fatal
+ * error so a stripped CLI build still produces a usable AGENTS.md.
  */
 export function readBundledSkill(name: string): string | undefined {
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) return undefined
   const skillFile = join(bundledRoot, name, 'SKILL.md')
   if (!existsSync(skillFile)) return undefined
-  return readFileSync(skillFile, 'utf-8')
+  try {
+    return readFileSync(skillFile, 'utf-8')
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    p.log.warn(`Could not read bundled skill ${name}: ${message}`)
+    return undefined
+  }
 }

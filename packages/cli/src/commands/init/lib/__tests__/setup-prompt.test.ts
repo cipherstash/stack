@@ -11,7 +11,11 @@ const baseCtx: SetupPromptContext = {
   cliInstalled: true,
   handoff: 'claude-code',
   mode: 'implement',
-  installedSkills: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+  skills: {
+    installed: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+    inlined: [],
+    failed: [],
+  },
 }
 
 describe('renderSetupPrompt — orient + route (implement mode)', () => {
@@ -99,7 +103,11 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     const out = renderSetupPrompt({
       ...baseCtx,
       integration: 'supabase',
-      installedSkills: ['stash-encryption', 'stash-supabase', 'stash-cli'],
+      skills: {
+        installed: ['stash-encryption', 'stash-supabase', 'stash-cli'],
+        inlined: [],
+        failed: [],
+      },
     })
     expect(out).toContain('supabase migration new')
   })
@@ -136,7 +144,16 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
   it('points each handoff at the right rule location', () => {
     const claude = renderSetupPrompt({ ...baseCtx, handoff: 'claude-code' })
     const codex = renderSetupPrompt({ ...baseCtx, handoff: 'codex' })
-    const agents = renderSetupPrompt({ ...baseCtx, handoff: 'agents-md' })
+    // The agents-md handoff never installs a skills directory — it inlines.
+    const agents = renderSetupPrompt({
+      ...baseCtx,
+      handoff: 'agents-md',
+      skills: {
+        installed: [],
+        inlined: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+        failed: [],
+      },
+    })
 
     expect(claude).toContain('.claude/skills/')
     expect(codex).toContain('.codex/skills/')
@@ -153,7 +170,7 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     const out = renderSetupPrompt({
       ...baseCtx,
       handoff: 'claude-code',
-      installedSkills: [],
+      skills: { installed: [], inlined: [], failed: [] },
     })
     expect(out).not.toMatch(/the {2,}skill/)
     // Still describes both flows so the agent can route.
@@ -417,7 +434,7 @@ describe('renderSetupPrompt — honours what the handoff actually wrote', () => 
         ...baseCtx,
         mode,
         handoff: 'claude-code',
-        installedSkills: [],
+        skills: { installed: [], inlined: [], failed: [] },
       })
       // Nothing was written, so don't send the agent to files that don't exist.
       expect(out).not.toContain('.claude/skills/')
@@ -436,7 +453,7 @@ describe('renderSetupPrompt — honours what the handoff actually wrote', () => 
         ...baseCtx,
         mode,
         handoff: 'codex',
-        installedSkills: [],
+        skills: { installed: [], inlined: [], failed: [] },
       })
       expect(out).not.toContain('.codex/skills/')
       expect(out).toContain('AGENTS.md')
@@ -449,10 +466,64 @@ describe('renderSetupPrompt — honours what the handoff actually wrote', () => 
         ...baseCtx,
         mode,
         handoff: 'claude-code',
-        installedSkills: ['stash-encryption'],
+        skills: { installed: ['stash-encryption'], inlined: [], failed: [] },
       })
       expect(out).toContain('.claude/skills/')
       expect(out).not.toContain('AGENTS.md')
+    })
+
+    // #736: the Codex fallback inlines skills into AGENTS.md when
+    // `.codex/skills` cannot be written. The prompt must describe that —
+    // previously it rendered the stripped-build text, contradicting the
+    // launch prompt.
+    it(`codex with inlined skills points at AGENTS.md's skill references, not a stripped build (${mode})`, () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'codex',
+        skills: {
+          installed: [],
+          inlined: ['stash-encryption', 'stash-cli'],
+          failed: [],
+        },
+      })
+      expect(out).toContain('inlined in `AGENTS.md`')
+      expect(out).not.toContain('.codex/skills/')
+      expect(out).not.toContain('stripped build')
+      // The per-skill purpose index survives the fallback.
+      expect(out).toContain('`stash-encryption`')
+    })
+
+    it(`codex with a partial copy points at both locations (${mode})`, () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'codex',
+        skills: {
+          installed: ['stash-encryption'],
+          inlined: ['stash-cli'],
+          failed: [],
+        },
+      })
+      expect(out).toContain('.codex/skills/')
+      expect(out).toContain('inlined in `AGENTS.md`')
+    })
+
+    it(`a failed install is not mislabelled as a stripped build (${mode})`, () => {
+      const out = renderSetupPrompt({
+        ...baseCtx,
+        mode,
+        handoff: 'claude-code',
+        skills: {
+          installed: [],
+          inlined: [],
+          failed: ['stash-encryption', 'stash-cli'],
+        },
+      })
+      expect(out).toContain('could not be installed')
+      expect(out).not.toContain('stripped build')
+      expect(out).toContain('cipherstash.com/docs')
+      expect(out).not.toContain('.claude/skills/')
     })
   }
 })
