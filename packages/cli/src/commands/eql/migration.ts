@@ -215,17 +215,19 @@ async function generateDrizzleEqlMigration(
   // Step 4 — sweep for sibling migrations drizzle-kit emitted with an in-place
   // `ALTER COLUMN ... SET DATA TYPE <encrypted domain>`. Those fail in Postgres
   // (no implicit cast from text/numeric to an EQL domain), so rewrite them into
-  // the ADD/backfill/DROP/RENAME sequence that works on empty and populated
-  // tables alike. `eql install --drizzle` has always done this for v2; without
-  // it here the v3 migration-first path leaves the user with broken SQL and no
-  // repair (#693).
+  // an ADD+DROP+RENAME sequence that is runnable. That sequence is equivalent to
+  // DROP+ADD — safe on an EMPTY table but data-destroying on a populated one —
+  // so the rewritten file carries a comment steering populated tables to the
+  // staged `stash encrypt` path. `eql install --drizzle` has always done this
+  // for v2; without it the v3 migration-first path leaves the user with broken
+  // SQL and no repair (#693).
   try {
     const rewritten = await rewriteEncryptedAlterColumns(outDir, {
       skip: migrationPath,
     })
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) to use safe ADD+migrate+DROP for encrypted columns:`,
+        `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }

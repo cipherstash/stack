@@ -598,15 +598,18 @@ async function generateDrizzleMigration(
   // Step 5: Sweep for sibling migrations that drizzle-kit may have emitted
   // with `ALTER COLUMN ... SET DATA TYPE eql_v2_encrypted`. These fail in
   // Postgres because there's no implicit cast from text/numeric to the
-  // encrypted type. Rewrite them into the ADD/UPDATE/DROP/RENAME sequence
-  // that works on both empty and populated tables. CIP-2991 + CIP-2994.
+  // encrypted type. Rewrite them into a runnable ADD+DROP+RENAME sequence.
+  // That sequence is equivalent to DROP+ADD — safe on an EMPTY table, but
+  // data-destroying on a populated one — so the rewritten file carries a
+  // comment steering populated tables to the staged `stash encrypt` path.
+  // CIP-2991 + CIP-2994.
   try {
     const rewritten = await rewriteEncryptedAlterColumns(outDir, {
       skip: generatedMigrationPath,
     })
     if (rewritten.length > 0) {
       p.log.info(
-        `Rewrote ${rewritten.length} migration file(s) to use safe ADD+migrate+DROP for encrypted columns:`,
+        `Rewrote ${rewritten.length} migration file(s) into a runnable ADD+DROP+RENAME for encrypted columns (safe on empty tables; see each file's header before running against populated data):`,
       )
       for (const file of rewritten) p.log.step(`  - ${file}`)
     }
