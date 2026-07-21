@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { Integration, SchemaDef } from './types.js'
+import type { DataType, Integration, SchemaDef, SearchOp } from './types.js'
 
 /**
  * Checks if a package is installed and loadable from the current project.
@@ -264,105 +264,55 @@ function toCamelCase(str: string): string {
   return str.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
 }
 
-function drizzleTsType(dataType: string): string {
+/**
+ * Map a column's v2-style capability request ({@link DataType} plus the set of
+ * requested {@link SearchOp}s) to the name of the concrete EQL **v3** domain
+ * factory on the `types` namespace (e.g. `'TextSearch'`, `'IntegerOrd'`).
+ *
+ * v3 has no chainable capability tuners — each domain's query capabilities are
+ * FIXED by the type — so a `{ equality, orderAndRange, freeTextSearch }` request
+ * does not map mechanically to a flag object; it picks the domain whose fixed
+ * capability set is the tightest match. The mapping mirrors the capability sets
+ * in `@cipherstash/stack/eql/v3` (`columns.ts`):
+ *
+ *   storage-only  → `Text` / `Integer` / `Date` / …    (no searchOps)
+ *   equality      → `TextEq` / `IntegerEq` / `DateEq`   (EQUALITY_ONLY)
+ *   order & range → `TextOrd` / `IntegerOrd` / `DateOrd` (ORDER_AND_RANGE, also answers equality)
+ *   free-text     → `TextMatch` (MATCH_ONLY), or `TextSearch` when combined with eq/ord (TEXT_SEARCH)
+ *
+ * `boolean` and `json` each have a single domain (no searchable variants), so
+ * their searchOps are informational only.
+ *
+ * The numeric `DataType` collapses to the `Integer*` family — the scaffold has
+ * no width/precision signal to distinguish `Numeric`/`Real`/`Double`/`Bigint`,
+ * exactly as the v2 scaffold collapsed every number to one `dataType: 'number'`.
+ * The user's real schema files stay authoritative; they pick the precise domain.
+ */
+function v3DomainFactory(dataType: DataType, searchOps: SearchOp[]): string {
+  const eq = searchOps.includes('equality')
+  const ord = searchOps.includes('orderAndRange')
+  const text = searchOps.includes('freeTextSearch')
+
   switch (dataType) {
-    case 'number':
-      return 'number'
-    case 'boolean':
-      return 'boolean'
-    case 'date':
-      return 'Date'
     case 'json':
-      return 'Record<string, unknown>'
-    default:
-      return 'string'
-  }
-}
-
-function generateDrizzleFromSchema(schema: SchemaDef): string {
-  const varName = `${toCamelCase(schema.tableName)}Table`
-  const schemaVarName = `${toCamelCase(schema.tableName)}Schema`
-
-  const columnDefs = schema.columns.map((col) => {
-    const opts: string[] = []
-    if (col.dataType !== 'string') {
-      opts.push(`dataType: '${col.dataType}'`)
-    }
-    if (col.searchOps.includes('equality')) {
-      opts.push('equality: true')
-    }
-    if (col.searchOps.includes('orderAndRange')) {
-      opts.push('orderAndRange: true')
-    }
-    if (col.searchOps.includes('freeTextSearch')) {
-      opts.push('freeTextSearch: true')
-    }
-
-    const tsType = drizzleTsType(col.dataType)
-    const optsStr =
-      opts.length > 0 ? `, {\n    ${opts.join(',\n    ')},\n  }` : ''
-    return `  ${col.name}: encryptedType<${tsType}>('${col.name}'${optsStr}),`
-  })
-
-  return `import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
-import { encryptedType, extractEncryptionSchema } from '@cipherstash/stack-drizzle'
-import { Encryption } from '@cipherstash/stack'
-
-export const ${varName} = pgTable('${schema.tableName}', {
-  id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
-${columnDefs.join('\n')}
-  createdAt: timestamp('created_at').defaultNow(),
-})
-
-const ${schemaVarName} = extractEncryptionSchema(${varName})
-
-export const encryptionClient = await Encryption({
-  schemas: [${schemaVarName}],
-})
-`
-}
-
-function generateSchemaFromDef(schema: SchemaDef): string {
-  const varName = `${toCamelCase(schema.tableName)}Table`
-
-  const columnDefs = schema.columns.map((col) => {
-    const parts: string[] = [`  ${col.name}: encryptedColumn('${col.name}')`]
-
-    if (col.dataType !== 'string') {
-      parts.push(`.dataType('${col.dataType}')`)
-    }
-
-    for (const op of col.searchOps) {
-      parts.push(`.${op}()`)
-    }
-
-    return `${parts.join('\n    ')},`
-  })
-
-  return `import { encryptedTable, encryptedColumn } from '@cipherstash/stack/schema'
-import { Encryption } from '@cipherstash/stack'
-
-export const ${varName} = encryptedTable('${schema.tableName}', {
-${columnDefs.join('\n')}
-})
-
-export const encryptionClient = await Encryption({
-  schemas: [${varName}],
-})
-`
-}
-
-/** Generates the encryption client file contents for a given integration and schema. */
-export function generateClientFromSchema(
-  integration: Integration,
-  schema: SchemaDef,
-): string {
-  switch (integration) {
-    case 'drizzle':
-      return generateDrizzleFromSchema(schema)
-    case 'supabase':
-    case 'postgresql':
-      return generateSchemaFromDef(schema)
+      return 'Json'
+    case 'boolean':
+      // Boolean is storage-only in v3 — no eq/ord/match domain exists.
+      return 'Boolean'
+    case 'number':
+      if (ord) return 'IntegerOrd'
+      if (eq) return 'IntegerEq'
+      return 'Integer'
+    case 'date':
+      if (ord) return 'DateOrd'
+      if (eq) return 'DateEq'
+      return 'Date'
+    case 'string':
+      if (text && (eq || ord)) return 'TextSearch'
+      if (text) return 'TextMatch'
+      if (ord) return 'TextOrd'
+      if (eq) return 'TextEq'
+      return 'Text'
   }
 }
 
@@ -372,24 +322,8 @@ function generateDrizzleFromSchemas(schemas: SchemaDef[]): string {
     const schemaVarName = `${toCamelCase(schema.tableName)}Schema`
 
     const columnDefs = schema.columns.map((col) => {
-      const opts: string[] = []
-      if (col.dataType !== 'string') {
-        opts.push(`dataType: '${col.dataType}'`)
-      }
-      if (col.searchOps.includes('equality')) {
-        opts.push('equality: true')
-      }
-      if (col.searchOps.includes('orderAndRange')) {
-        opts.push('orderAndRange: true')
-      }
-      if (col.searchOps.includes('freeTextSearch')) {
-        opts.push('freeTextSearch: true')
-      }
-
-      const tsType = drizzleTsType(col.dataType)
-      const optsStr =
-        opts.length > 0 ? `, {\n    ${opts.join(',\n    ')},\n  }` : ''
-      return `  ${col.name}: encryptedType<${tsType}>('${col.name}'${optsStr}),`
+      const factory = v3DomainFactory(col.dataType, col.searchOps)
+      return `  ${col.name}: types.${factory}('${col.name}'),`
     })
 
     return `export const ${varName} = pgTable('${schema.tableName}', {
@@ -398,18 +332,18 @@ ${columnDefs.join('\n')}
   createdAt: timestamp('created_at').defaultNow(),
 })
 
-const ${schemaVarName} = extractEncryptionSchema(${varName})`
+const ${schemaVarName} = extractEncryptionSchemaV3(${varName})`
   })
 
   const schemaVarNames = schemas.map((s) => `${toCamelCase(s.tableName)}Schema`)
 
   return `import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
-import { encryptedType, extractEncryptionSchema } from '@cipherstash/stack-drizzle'
-import { Encryption } from '@cipherstash/stack'
+import { types, extractEncryptionSchemaV3 } from '@cipherstash/stack-drizzle/v3'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 
 ${tableDefs.join('\n\n')}
 
-export const encryptionClient = await Encryption({
+export const encryptionClient = await EncryptionV3({
   schemas: [${schemaVarNames.join(', ')}],
 })
 `
@@ -420,17 +354,8 @@ function generateGenericFromSchemas(schemas: SchemaDef[]): string {
     const varName = `${toCamelCase(schema.tableName)}Table`
 
     const columnDefs = schema.columns.map((col) => {
-      const parts: string[] = [`  ${col.name}: encryptedColumn('${col.name}')`]
-
-      if (col.dataType !== 'string') {
-        parts.push(`.dataType('${col.dataType}')`)
-      }
-
-      for (const op of col.searchOps) {
-        parts.push(`.${op}()`)
-      }
-
-      return `${parts.join('\n    ')},`
+      const factory = v3DomainFactory(col.dataType, col.searchOps)
+      return `  ${col.name}: types.${factory}('${col.name}'),`
     })
 
     return `export const ${varName} = encryptedTable('${schema.tableName}', {
@@ -440,12 +365,11 @@ ${columnDefs.join('\n')}
 
   const tableVarNames = schemas.map((s) => `${toCamelCase(s.tableName)}Table`)
 
-  return `import { encryptedTable, encryptedColumn } from '@cipherstash/stack/schema'
-import { Encryption } from '@cipherstash/stack'
+  return `import { EncryptionV3, encryptedTable, types } from '@cipherstash/stack/v3'
 
 ${tableDefs.join('\n\n')}
 
-export const encryptionClient = await Encryption({
+export const encryptionClient = await EncryptionV3({
   schemas: [${tableVarNames.join(', ')}],
 })
 `
@@ -485,7 +409,7 @@ export function generateClientFromSchemas(
  * schemas yet, and explicitly tells the agent that the user's existing
  * schema files remain authoritative. The agent's job during the handoff
  * is to declare encrypted columns directly in those files and update the
- * `Encryption({ schemas: [...] })` call below to reference them.
+ * `EncryptionV3({ schemas: [...] })` call below to reference them.
  */
 export function generatePlaceholderClient(integration: Integration): string {
   if (integration === 'drizzle') {
@@ -500,47 +424,57 @@ const DRIZZLE_PLACEHOLDER = `/**
  * \`stash init\` wrote this file. It is intentionally NOT a real Drizzle
  * schema. Your existing schema files (typically under \`src/db/\`) remain
  * authoritative — your agent will edit those directly when you encrypt a
- * column, then update the \`Encryption({ schemas: [...] })\` call below
+ * column, then update the \`EncryptionV3({ schemas: [...] })\` call below
  * to reference the encrypted tables you declared there.
  *
  * Until that happens, the encryption client is initialised with no
  * schemas, and \`stash encrypt\` commands will surface a clear error
  * pointing at this file.
  *
+ * This project uses EQL v3. Encrypted columns are concrete Postgres domains
+ * built with the \`types.*\` factories from \`@cipherstash/stack-drizzle/v3\`.
+ * Each domain's query capabilities are FIXED by the type you pick — there is
+ * no capability config object. Choose the factory whose capabilities you need:
+ *   types.Text / types.Integer / …     storage only (encrypt/decrypt, no queries)
+ *   types.TextEq / types.IntegerEq     equality (eq, inArray)
+ *   types.IntegerOrd / types.DateOrd   equality + order/range (gt/lt/between/sort)
+ *   types.TextMatch                    free-text match only
+ *   types.TextSearch                   equality + order/range + free-text
+ *   types.Json                         encrypted-JSONB containment + selectors
+ *
  * --- Pattern reference (copy into your real schema, do NOT use as-is) ---
  *
  * Encrypted twin column for an existing populated column (path 3 — lifecycle):
  *
- *   import { encryptedType } from '@cipherstash/stack-drizzle'
+ *   import { pgTable, integer, text } from 'drizzle-orm/pg-core'
+ *   import { types } from '@cipherstash/stack-drizzle/v3'
  *
  *   export const users = pgTable('users', {
  *     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
- *     email: text('email').notNull(),                                   // existing plaintext, unchanged for now
- *     email_encrypted: encryptedType<string>('email_encrypted', {       // encrypted twin, NULLABLE — never .notNull()
- *       freeTextSearch: true,
- *       equality: true,
- *     }),
+ *     email: text('email').notNull(),                        // existing plaintext, unchanged for now
+ *     email_encrypted: types.TextSearch('email_encrypted'),  // encrypted twin, NULLABLE — never .notNull()
  *   })
  *
  * Net-new encrypted column (path 1 — declare encrypted from the start):
  *
  *   export const orders = pgTable('orders', {
  *     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
- *     billing_address: encryptedType<string>('billing_address', { equality: true }),
+ *     billing_address: types.TextEq('billing_address'),
  *   })
  *
- * Once you have encrypted tables declared, harvest them and pass to Encryption():
+ * Once you have encrypted tables declared, harvest them and pass to EncryptionV3():
  *
- *   import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
+ *   import { extractEncryptionSchemaV3 } from '@cipherstash/stack-drizzle/v3'
+ *   import { EncryptionV3 } from '@cipherstash/stack/v3'
  *   import { users, orders } from './db/schema'
  *
- *   export const encryptionClient = await Encryption({
- *     schemas: [extractEncryptionSchema(users), extractEncryptionSchema(orders)],
+ *   export const encryptionClient = await EncryptionV3({
+ *     schemas: [extractEncryptionSchemaV3(users), extractEncryptionSchemaV3(orders)],
  *   })
  */
-import { Encryption } from '@cipherstash/stack'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 
-export const encryptionClient = await Encryption({ schemas: [] })
+export const encryptionClient = await EncryptionV3({ schemas: [] })
 `
 
 const GENERIC_PLACEHOLDER = `/**
@@ -549,39 +483,50 @@ const GENERIC_PLACEHOLDER = `/**
  * \`stash init\` wrote this file. It is intentionally NOT a real schema
  * definition. Your existing schema files remain authoritative — your
  * agent will declare encrypted columns there and update the
- * \`Encryption({ schemas: [...] })\` call below to reference them.
+ * \`EncryptionV3({ schemas: [...] })\` call below to reference them.
  *
  * Until that happens, the encryption client is initialised with no
  * schemas, and \`stash encrypt\` commands will surface a clear error
  * pointing at this file.
  *
+ * This project uses EQL v3. Encrypted columns are concrete Postgres domains
+ * built with the \`types.*\` factories from \`@cipherstash/stack/eql/v3\`
+ * (also re-exported from \`@cipherstash/stack/v3\`). Each domain's query
+ * capabilities are FIXED by the type you pick — there is no chainable
+ * capability tuner. Choose the factory whose capabilities you need:
+ *   types.Text / types.Integer / …     storage only (encrypt/decrypt, no queries)
+ *   types.TextEq / types.IntegerEq     equality
+ *   types.IntegerOrd / types.DateOrd   equality + order/range
+ *   types.TextMatch                    free-text match only
+ *   types.TextSearch                   equality + order/range + free-text
+ *   types.Json                         encrypted-JSONB containment + selectors
+ *
  * --- Pattern reference (copy into your real schema, do NOT use as-is) ---
  *
  * Encrypted twin column for an existing populated column (path 3 — lifecycle):
  *
- *   import { encryptedTable, encryptedColumn } from '@cipherstash/stack/schema'
+ *   import { encryptedTable, types } from '@cipherstash/stack/v3'
  *
  *   export const users = encryptedTable('users', {
- *     email_encrypted: encryptedColumn('email_encrypted')
- *       .freeTextSearch()
- *       .equality(),
+ *     email_encrypted: types.TextSearch('email_encrypted'),
  *   })
  *
  * Net-new encrypted column (path 1 — declare encrypted from the start):
  *
  *   export const orders = encryptedTable('orders', {
- *     billing_address: encryptedColumn('billing_address').equality(),
+ *     billing_address: types.TextEq('billing_address'),
  *   })
  *
- * Once you have encrypted tables declared, pass them to Encryption():
+ * Once you have encrypted tables declared, pass them to EncryptionV3():
  *
+ *   import { EncryptionV3 } from '@cipherstash/stack/v3'
  *   import { users, orders } from './db/schema'
  *
- *   export const encryptionClient = await Encryption({
+ *   export const encryptionClient = await EncryptionV3({
  *     schemas: [users, orders],
  *   })
  */
-import { Encryption } from '@cipherstash/stack'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
 
-export const encryptionClient = await Encryption({ schemas: [] })
+export const encryptionClient = await EncryptionV3({ schemas: [] })
 `
