@@ -30,6 +30,16 @@ const usersV2 = encryptedTableV2('users_v2', {
   email: encryptedColumn('email').equality(),
 })
 
+// Exercises the INNERMOST `true` arm of `HasSearchTerm` (types.ts): a text
+// domain that is BOTH equality- and order/range-capable — text equality is
+// always HMAC-based, so it mints `__hmac`. `usersV3.age` (IntegerOrd) reaches
+// the same conditional but over `number`, taking the `false` arm; without a
+// text-ordering column here that `true` arm had no type-level witness.
+const searchV3 = encryptedTableV3('search_v3', {
+  title: types.TextOrd('title'), // equality + orderAndRange over string → __source + __hmac
+  bio: types.TextMatch('bio'), // free-text only, no equality → __source, NO __hmac
+})
+
 type V3Model = { pk: string; email?: string; age?: number; role?: string }
 
 // The two client shapes. `EncryptionV3` returns a `TypedEncryptionClient`
@@ -207,6 +217,67 @@ describe('the v3 overload types the DynamoDB storage split', () => {
     if (encrypted.failure) return
 
     expectTypeOf(dynamo.decryptModel).toBeCallableWith(encrypted.data, usersV3)
+  })
+})
+
+describe('a text-ordering domain reaches the HasSearchTerm `true` arm', () => {
+  it('mints __hmac for a text equality+ordering column, but not for free-text-only', async () => {
+    const result = await dynamo.encryptModel(
+      { pk: 'a', title: 'Hello', bio: 'about me' },
+      searchV3,
+    )
+    if (result.failure) return
+
+    // TextOrd is equality- AND order/range-capable over `string`: the innermost
+    // `[PlaintextForColumn<C>] extends [string] ? true : false` resolves `true`,
+    // so the queryable HMAC term is present. This is the arm no prior column
+    // instantiated — `usersV3.age` (IntegerOrd) takes the `false` (number) arm.
+    expectTypeOf(result.data.title__source).toEqualTypeOf<string>()
+    expectTypeOf(result.data.title__hmac).toEqualTypeOf<string | undefined>()
+
+    // A free-text-only domain (`TextMatch`) is NOT equality-capable, so it never
+    // reaches the ordering/text arms and writes no HMAC term — the distinct,
+    // adjacent behaviour that makes the `true` arm meaningful.
+    expectTypeOf(result.data.bio__source).toEqualTypeOf<string>()
+    expectTypeOf(result.data).not.toHaveProperty('bio__hmac')
+  })
+})
+
+describe('decrypt passes through suffixed keys whose base names no column', () => {
+  it('folds a declared column but leaves unrelated __hmac / __source keys intact', async () => {
+    // `email` IS a declared column; `legit` and `img` are NOT. A stored item can
+    // legitimately carry a customer attribute that merely ends in `__hmac`
+    // (an app-level signature) or `__source` (a renamed/foreign column) — the
+    // runtime read path preserves both, and these two `DecryptedAttributes` arms
+    // type that: a suffixed key whose base names no column is returned untouched.
+    const result = await dynamo.decryptModel(
+      {
+        pk: 'a',
+        email__source: 'ct',
+        email__hmac: 'hm',
+        legit__hmac: 'sig',
+        img__source: 'raw',
+      },
+      usersV3,
+    )
+    if (result.failure) return
+
+    // Declared column: `email__source` folds to `email`, `email__hmac` (its base
+    // IS a column) is dropped as a query term.
+    expectTypeOf(result.data.email).toEqualTypeOf<string>()
+    expectTypeOf(result.data).not.toHaveProperty('email__source')
+    expectTypeOf(result.data).not.toHaveProperty('email__hmac')
+
+    // Non-column suffixed keys: neither folded nor dropped — the two "names no
+    // column" arms. `legit__hmac`'s base is not a column, so unlike `email__hmac`
+    // it survives; `img__source`'s base is not a column, so unlike `email__source`
+    // it is NOT folded to `img`.
+    expectTypeOf(result.data.legit__hmac).toEqualTypeOf<string>()
+    expectTypeOf(result.data.img__source).toEqualTypeOf<string>()
+    expectTypeOf(result.data).not.toHaveProperty('img')
+
+    // Ordinary passthrough attribute, for contrast.
+    expectTypeOf(result.data.pk).toEqualTypeOf<string>()
   })
 })
 

@@ -3,6 +3,7 @@ import { ProtectError as FfiProtectError } from '@cipherstash/protect-ffi'
 import { resolveEncryptColumnMap } from '@/encryption/helpers/model-helpers'
 import type { AnyV3Table } from '@/eql/v3'
 import type { EncryptedValue } from '@/types'
+import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
 import type { AnyEncryptedTable, EncryptedDynamoDBError } from './types'
 
@@ -18,10 +19,7 @@ export const searchTermAttrSuffix = '__hmac'
  * as *the* signal. Only v3 tables define it.
  */
 export function isV3Table(table: AnyEncryptedTable): table is AnyV3Table {
-  return (
-    'buildColumnKeyMap' in table &&
-    typeof table.buildColumnKeyMap === 'function'
-  )
+  return hasBuildColumnKeyMap(table)
 }
 
 export class EncryptedDynamoDBErrorImpl
@@ -119,6 +117,22 @@ export async function resolveDecryptResult<T>(
       ? await chainable.audit(auditData)
       : await operation
 
+  // A conforming client resolves to `{ data }` or `{ failure }`. A bare value
+  // (or wrong shape) has neither, so casting it straight through would surface a
+  // fake success carrying `undefined`. Reject it as a failure instead.
+  if (
+    resolved === null ||
+    typeof resolved !== 'object' ||
+    (!('data' in resolved) && !('failure' in resolved))
+  ) {
+    return {
+      failure: {
+        message:
+          'DynamoDB: decrypt returned a malformed result — expected { data } or { failure }.',
+      },
+    }
+  }
+
   return resolved as
     | { data: T; failure?: never }
     | { data?: never; failure: DecryptFailure }
@@ -149,8 +163,10 @@ export function throwPreservingCode(failure: {
  * `Date` values — making the whole `types.Timestamp*` / `types.Date*` domain
  * family unusable through this adapter — and blew the stack on a circular
  * reference. `structuredClone` handles Date, Map, Set, TypedArray and cycles
- * natively. Values it cannot structurally clone fall back to the original
- * reference rather than throwing.
+ * natively. Values it cannot structurally clone (a function/symbol/WeakMap-valued
+ * property) fall back to a per-key shallow copy into a FRESH object rather than
+ * throwing — the offending value passes through by reference, every other key
+ * is copied, so the caller's original is never handed to the FFI.
  */
 export function deepClone<T>(obj: T): T {
   if (obj === null || typeof obj !== 'object') {
@@ -160,7 +176,16 @@ export function deepClone<T>(obj: T): T {
   try {
     return structuredClone(obj)
   } catch {
-    return obj
+    // `structuredClone` rejects function/symbol/WeakMap-valued properties. Fall
+    // back to a per-key shallow copy into a FRESH object so the caller's
+    // original is never handed to the FFI — otherwise the docblock guarantee
+    // "encryption never mutates a caller's object" is silently voided. The
+    // offending value passes through by reference; every other key is copied,
+    // and a class instance is flattened to a plain object (prototype dropped).
+    if (Array.isArray(obj)) {
+      return [...obj] as T
+    }
+    return { ...(obj as Record<string, unknown>) } as T
   }
 }
 
@@ -263,7 +288,8 @@ export function toEncryptedDynamoItem(
       ).reduce(
         (acc, [key, val]) => {
           const processed = processValue(key, val, true)
-          return Object.assign({}, acc, processed)
+          Object.assign(acc, processed)
+          return acc
         },
         {} as Record<string, unknown>,
       )
@@ -277,7 +303,8 @@ export function toEncryptedDynamoItem(
   return Object.entries(encrypted).reduce(
     (putItem, [attrName, attrValue]) => {
       const processed = processValue(attrName, attrValue, false)
-      return Object.assign({}, putItem, processed)
+      Object.assign(putItem, processed)
+      return putItem
     },
     {} as Record<string, unknown>,
   )
@@ -346,7 +373,6 @@ export function toItemWithEqlPayloads(
   function processValue(
     attrName: string,
     attrValue: unknown,
-    isNested: boolean,
     prefix = '',
   ): Record<string, unknown> {
     if (attrValue === null || attrValue === undefined) {
@@ -369,6 +395,17 @@ export function toItemWithEqlPayloads(
     // property form) and falls back to the bare leaf (`encryptedField('amount')`
     // under a `details` group), so both authoring conventions resolve.
     const matched = matchColumn(columnName, prefix)
+
+    // A stored ciphertext attribute that names no declared column is almost
+    // always a schema rename: the value reads back as raw base64 with no error.
+    // Leave the passthrough behaviour intact (an unmatched `*__source` is not an
+    // envelope), but make the silent drop observable.
+    if (attrName.endsWith(ciphertextAttrSuffix) && !matched) {
+      const dotted = prefix ? `${prefix}.${attrName}` : attrName
+      logger.debug(
+        `DynamoDB: attribute "${dotted}" ends in ${ciphertextAttrSuffix} but names no declared column — passing it through as raw ciphertext (a column rename can cause this).`,
+      )
+    }
 
     // Handle encrypted payload. An unmatched attribute is NOT an envelope, even
     // when nested — previously `|| isNested` made every nested `*__source` a
@@ -422,10 +459,10 @@ export function toItemWithEqlPayloads(
           const processed = processValue(
             key,
             val,
-            true,
             prefix ? `${prefix}.${attrName}` : attrName,
           )
-          return Object.assign({}, acc, processed)
+          Object.assign(acc, processed)
+          return acc
         },
         {} as Record<string, unknown>,
       )
@@ -438,8 +475,9 @@ export function toItemWithEqlPayloads(
 
   return Object.entries(decrypted).reduce(
     (formattedItem, [attrName, attrValue]) => {
-      const processed = processValue(attrName, attrValue, false)
-      return Object.assign({}, formattedItem, processed)
+      const processed = processValue(attrName, attrValue)
+      Object.assign(formattedItem, processed)
+      return formattedItem
     },
     {} as Record<string, unknown>,
   )

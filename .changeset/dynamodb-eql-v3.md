@@ -39,6 +39,20 @@ Notes on capability:
 The DynamoDB adapter also gains its first test coverage — across the v2 and v3
 paths, where it previously had none.
 
+Robustness, from review:
+
+- Passing a v3 table to a client that never registered it (one built for a
+  different schema set, so it is not in v3 mode for that table) now throws a
+  clear, actionable error naming the table, instead of failing opaquely deep in
+  the FFI.
+- A malformed decrypt result from a non-conforming client is surfaced as a
+  failure rather than resolving as a silent `undefined` success.
+- Reading back a `<attr>__source` attribute that matches no declared column now
+  logs a debug diagnostic instead of silently returning the raw ciphertext.
+- Caller input that cannot be structurally cloned no longer reaches the FFI by
+  reference — the "encryption never mutates a caller's object" guarantee holds
+  on that path too.
+
 The v3 overloads are strongly typed. `encryptModel` / `bulkEncryptModels` check
 the input model against the table's column domains, and return the DynamoDB
 attribute map that is actually written — the new exported `EncryptedAttributes`

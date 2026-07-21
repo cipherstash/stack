@@ -55,6 +55,8 @@ Non-encrypted attributes pass through unchanged. On decryption, the `__source` a
 
 There is no infrastructure migration between them — DynamoDB has no EQL extension to install and no schema to alter — but there is no automatic *data* migration path either. The two write **different wire formats**, so items written under one version cannot be decrypted by the other. Pick one per table and stay on it; to switch an existing table you must re-encrypt every item.
 
+The client must be built for the table. Build the client with the same v3 table you hand to `encryptedDynamoDB` — `EncryptionV3({ schemas: [users] })` (or `Encryption({ schemas: [users], config: { eqlVersion: 3 } })`). Passing a v3 table to a client that never registered it (a client built for a different schema set) throws a clear error naming the table on the first operation, instead of failing later with an opaque FFI deserialization error.
+
 **Nested attributes work in both versions**, with different authoring syntax.
 
 DynamoDB items are natively nested, so this matters here more than on Postgres. Both versions encrypt *selected leaves in place*: the item keeps its shape and unlisted siblings stay plaintext.
@@ -76,17 +78,23 @@ const users = encryptedTable("users", {
 })
 ```
 
-Both produce the same DynamoDB attribute *layout* — and the v3 form keeps equality queryability on the nested attribute — but the encrypted contents are version-specific: an item written under one version cannot be decrypted under the other (see the compatibility note above).
+Both produce the same nested DynamoDB attribute *layout*, but the encrypted contents are version-specific: an item written under one version cannot be decrypted under the other (see the compatibility note above).
 
 ```jsonc
 { "pk": "u#1",
   "profile": {
     "ssn__source": "<ciphertext>",
-    "ssn__hmac": "<hmac>",        // key-condition on profile.ssn__hmac
+    "ssn__hmac": "<hmac>",        // equality term — FilterExpression only, not a key condition
     "note__source": "<ciphertext>",
     "city": "Sydney"              // not in schema, stays plaintext
   } }
 ```
+
+> A nested equality term like `profile.ssn__hmac` lives *inside* the `profile`
+> map, so it can only be matched with a `FilterExpression` — DynamoDB key
+> conditions and secondary-index keys must be top-level scalar attributes. If you
+> need the HMAC to back a key condition or GSI, declare the field as a top-level
+> column (`ssn: types.TextEq("ssn")`) so it is stored as a top-level `ssn__hmac`.
 
 > The dotted string is the *property key* as well as the column name — the model
 > is matched by dotted path, so `{ profile: { ssn } }` resolves correctly.

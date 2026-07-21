@@ -5,8 +5,9 @@
  * reachable through a live ZeroKMS decrypt; these move that assurance onto the
  * pure CI lane. No credentials, no network.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { resolveDecryptResult, throwPreservingCode } from '@/dynamodb/helpers'
+import { logger } from '@/utils/logger'
 
 describe('resolveDecryptResult', () => {
   it('awaits a plain promise when the operation has no .audit (typed client)', async () => {
@@ -41,6 +42,47 @@ describe('resolveDecryptResult', () => {
     await expect(
       resolveDecryptResult(Promise.resolve(failure), { metadata: {} }),
     ).resolves.toEqual(failure)
+  })
+
+  it('returns a failure — not a silent undefined success — for a malformed result', async () => {
+    // A non-conforming client that resolves to a bare value (or `{}`) has
+    // neither `data` nor `failure`. Casting it straight through would surface a
+    // fake success carrying `undefined`; the shape must be rejected instead.
+    for (const malformed of [{}, 42, undefined]) {
+      const result = await resolveDecryptResult(Promise.resolve(malformed), {})
+
+      expect(result.failure).toBeDefined()
+      expect(typeof result.failure?.message).toBe('string')
+      expect(result.data).toBeUndefined()
+    }
+  })
+
+  it('logs when audit metadata is dropped for a non-chainable operation', async () => {
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      await resolveDecryptResult(Promise.resolve({ data: { x: 1 } }), {
+        metadata: { m: 42 },
+      })
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('audit metadata ignored'),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('does not log about audit metadata when none is passed', async () => {
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      await resolveDecryptResult(Promise.resolve({ data: { x: 1 } }), {})
+
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 

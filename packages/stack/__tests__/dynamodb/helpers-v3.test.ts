@@ -13,8 +13,9 @@
  *  - a v3 JSON document keeps `k: 'sv'`, which is mandatory — deserialization
  *    fails with "missing field `k`" without it.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  buildReadContext,
   deepClone,
   isV3Table,
   toEncryptedDynamoItem,
@@ -26,6 +27,7 @@ import {
   encryptedField,
   encryptedTable as encryptedTableV2,
 } from '@/schema'
+import { logger } from '@/utils/logger'
 
 const users = encryptedTable('users', {
   email: types.TextEq('email'),
@@ -229,6 +231,25 @@ describe('regressions found in review', () => {
     expect(toItemWithEqlPayloads(item, users)).toEqual(item)
   })
 
+  it('logs a debug when a *__source attribute names no declared column', () => {
+    // A schema rename leaves the stored `<old>__source` orphaned; it reads back
+    // as raw base64 with no error. Make the silent drop observable.
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      toItemWithEqlPayloads({ unknown__source: 'CT' }, users)
+
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('unknown__source'),
+      )
+      expect(spy).toHaveBeenCalledWith(
+        expect.stringContaining('no declared column'),
+      )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('does not rebuild a nested <leaf>__source whose leaf collides with a top-level column', () => {
     // `note` is a TOP-LEVEL column; there is no `profile.note`. A v3 table
     // registers full dotted paths, so a nested `note__source` must NOT match
@@ -299,6 +320,31 @@ describe('regressions found in review', () => {
   })
 })
 
+describe('read context is resolved once per batch', () => {
+  it('does not call table.build() per item when a context is passed', () => {
+    // `buildReadContext` resolves the row-invariant facts once; the 3-arg form
+    // of `toItemWithEqlPayloads` reuses them. Dropping the 3rd arg would rebuild
+    // (and re-`build()`) per item — the invariant this pins.
+    const buildSpy = vi.spyOn(users, 'build')
+
+    const context = buildReadContext(users)
+    buildSpy.mockClear()
+
+    const items = [
+      { email__source: 'a' },
+      { email__source: 'b' },
+      { email__source: 'c' },
+    ]
+    for (const item of items) {
+      toItemWithEqlPayloads(item, users, context)
+    }
+
+    expect(buildSpy).not.toHaveBeenCalled()
+
+    buildSpy.mockRestore()
+  })
+})
+
 describe('deepClone preserves structured values', () => {
   it('preserves Date instances — the whole Timestamp domain family depends on it', () => {
     const at = new Date('2020-01-02T03:04:05.000Z')
@@ -318,5 +364,32 @@ describe('deepClone preserves structured values', () => {
     o.self = o
 
     expect(() => deepClone(o)).not.toThrow()
+  })
+
+  it('never hands back the caller original when structuredClone throws', () => {
+    // A function-valued property makes `structuredClone` throw. The catch must
+    // still produce a NEW object — returning the original voids the docblock
+    // guarantee that encryption never mutates a caller's object.
+    const input = { pk: 'u#1', onSave: () => {} }
+
+    const cloned = deepClone(input)
+
+    expect(cloned).not.toBe(input)
+    expect(cloned.pk).toBe('u#1')
+  })
+
+  it('clones a class instance into a plain object, dropping the prototype', () => {
+    class Model {
+      pk = 'u#1'
+      // An own function property forces the structuredClone fallback.
+      onSave = () => {}
+    }
+    const input = new Model()
+
+    const cloned = deepClone(input)
+
+    expect(cloned).not.toBe(input)
+    expect(cloned).not.toBeInstanceOf(Model)
+    expect(cloned.pk).toBe('u#1')
   })
 })
