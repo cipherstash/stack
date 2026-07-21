@@ -367,7 +367,7 @@ The hard case: a Drizzle table that already exists in production with live data 
 
 CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads + drop — under EQL v2 the switch is a rename, under v3 it is an application-side change). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
-> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a v3 column reports "not applicable" and exits 0.
+> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -492,7 +492,7 @@ If something goes wrong (e.g. you discover the dual-write code wasn't actually l
 its own name — you switch the application to it by name, verify reads, then drop
 the plaintext column. Point your queries at `email_encrypted`, deploy, and
 confirm reads decrypt correctly; then skip ahead to the drop step. Running
-`stash encrypt cutover` on a v3 column reports "not applicable" and exits 0.
+`stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
 
 The rest of this subsection is the **EQL v2** path (a `eql_v2_encrypted` twin),
 kept for existing v2 deployments.

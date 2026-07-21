@@ -627,7 +627,7 @@ The hard case: a Supabase table that already exists with live data in a plaintex
 
 CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and an **encryption cutover** (backfill + rename + drop). The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Supabase-specific shape.
 
-> **EQL version note.** The `stash encrypt *` tooling works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what this section's schema uses) is `rollout → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a v3 column reports "not applicable" and exits 0.
+> **EQL version note.** The `stash encrypt *` tooling works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what this section's schema uses) is `rollout → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
 
 > **Using CipherStash Proxy?** If you query encrypted data through [CipherStash Proxy](https://github.com/cipherstash/proxy) instead of the SDK, also run `stash db push` after schema-add and again before cutover to register the encrypted column shape with EQL.
 
@@ -751,8 +751,9 @@ If something goes wrong (e.g. you discover the dual-write code wasn't actually l
 **EQL v3 (the schema above): there is no cut-over.** The encrypted column keeps
 its own name — point your application at `email_encrypted` through the
 `encryptedSupabaseV3` wrapper, deploy, verify reads decrypt correctly, then skip
-ahead to the drop step. Running `stash encrypt cutover` on a v3 column reports
-"not applicable" and exits 0.
+ahead to the drop step. Running `stash encrypt cutover` on a **backfilled** v3
+column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't
+finished).
 
 The rest of this subsection is the **EQL v2** path (an `eql_v2_encrypted` twin
 queried through the legacy `encryptedSupabase` wrapper), kept for existing v2
