@@ -15,6 +15,7 @@ normal = ["aquamarine"]
 
 [dependencies]
 aquamarine = "0.6"
+base64 = { workspace = true }
 cts-common = { workspace = true }
 miette = { workspace = true }
 reqwest = { workspace = true }
@@ -33,14 +34,16 @@ zeroize = { workspace = true }
 # Native-only:
 # - `stack-profile` is the filesystem-backed token store
 # - `open` launches a browser for device-code auth
-# - `jsonwebtoken` pulls `ring`, which doesn't compile on wasm32
+# - `jsonwebtoken` pulls `ring`, which doesn't compile on wasm32; it is now used
+#   only by native tests (to mint fixture JWTs). Claim decoding itself no longer
+#   uses it — see `decode_jwt_payload`.
 # - `tokio` with `full` features pulls `mio` (network IO), which doesn't
 #   compile on wasm32. Workspace dep is `features = ["full"]` so we can't
 #   subtract — split target-conditionally instead.
 #
-# Wasm consumers use `DeviceSessionStrategy::with_token` (in-memory) or
-# `AccessKeyStrategy`, and JWT claim decoding falls back to a manual
-# base64+JSON path that doesn't need `ring`.
+# JWT claim decoding uses a manual base64+JSON path (`decode_jwt_payload`) on
+# every target — `base64` above is shared. Wasm consumers use
+# `DeviceSessionStrategy::with_token` (in-memory) or `AccessKeyStrategy`.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 stack-profile = { workspace = true }
 open = "5.3.2"
@@ -48,7 +51,6 @@ jsonwebtoken = { workspace = true }
 tokio = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-base64 = { workspace = true }
 tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
 
 [features]

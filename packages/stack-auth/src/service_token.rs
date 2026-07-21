@@ -188,32 +188,14 @@ impl ServiceToken {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> {
-    use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
-    use std::collections::HashSet;
-
-    let header =
-        decode_header(token_str).map_err(|e| format!("failed to decode JWT header: {e}"))?;
-
-    let dummy_key = DecodingKey::from_secret(&[]);
-    let mut validation = Validation::new(header.alg);
-    validation.validate_exp = false;
-    validation.validate_aud = false;
-    validation.required_spec_claims = HashSet::new();
-    validation.insecure_disable_signature_validation();
-
-    decode(token_str, &dummy_key, &validation)
-        .map(|data| data.claims)
-        .map_err(|e| format!("failed to decode JWT claims: {e}"))
-}
-
-#[cfg(target_arch = "wasm32")]
+/// Decode the JWT payload into [`Claims`](cts_common::claims::Claims) without
+/// verifying the signature — we only read claims from a token we already hold.
+/// See [`crate::decode_jwt_payload`] for why we parse by hand.
 fn decode_claims(token_str: &str) -> Result<cts_common::claims::Claims, String> {
     // Strip the `AuthError::InvalidToken` prefix — callers re-wrap this string
     // in `AuthError::InvalidToken(reason)`, and we don't want "Invalid token:
     // Invalid token: ..." in the final message.
-    crate::decode_jwt_payload_wasm(token_str).map_err(|e| match e {
+    crate::decode_jwt_payload(token_str).map_err(|e| match e {
         crate::AuthError::InvalidToken(crate::error::InvalidToken(reason)) => reason,
         other => other.to_string(),
     })
@@ -279,7 +261,7 @@ mod tests {
 
         let err = token.issuer().unwrap_err().to_string();
         assert!(
-            err.contains("failed to decode JWT header"),
+            err.contains("three segments"),
             "expected specific decode error, got: {err}"
         );
     }
@@ -356,7 +338,7 @@ mod tests {
         let token = ServiceToken::new(SecretToken::new("not-a-jwt"));
         let err = token.services().unwrap_err().to_string();
         assert!(
-            err.contains("failed to decode JWT header"),
+            err.contains("three segments"),
             "expected specific decode error, got: {err}"
         );
     }
