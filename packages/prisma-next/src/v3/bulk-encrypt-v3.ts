@@ -20,10 +20,11 @@
  *     and routes the operand through the client's `encryptQuery`
  *     (a ciphertext-free term), never the storage encrypt. The
  *     resulting term is written back as JSONB text — exactly what the
- *     operator's `$N::eql_v3.query_<domain>` template expects — but is
- *     NOT stamped into the envelope's ciphertext slot (a query term is
- *     not the cell's storage ciphertext; stamping it would poison
- *     later write-path reuse of the same envelope).
+ *     operator's `$N::eql_v3.query_<domain>` template expects. The one
+ *     exception is `steVecSelector`: protect-ffi returns a bare selector hash
+ *     consumed as SQL `text`, so it must stay bare rather than becoming a
+ *     JSON-string literal with quote characters. Query terms are NOT stamped
+ *     into the envelope's ciphertext slot (they are not cell ciphertext).
  *
  * The `(table, column)` routing-key stamping is NOT forked: the AST walk
  * is version-neutral (it touches only the shared envelope base) and is
@@ -125,18 +126,33 @@ export function bulkEncryptMiddlewareV3(sdk: CipherstashSdk): SqlMiddleware {
         params.replaceValues(
           group.map((t, i) => {
             const ciphertext = ciphertexts[i]
-            if (v3QueryTermTypeOf(t.envelope) === undefined) {
+            const queryType = v3QueryTermTypeOf(t.envelope)
+            if (queryType === undefined) {
               setHandleCiphertext(t.envelope, ciphertext)
             }
+            const newValue =
+              queryType === 'steVecSelector'
+                ? selectorHashToDriver(ciphertext)
+                : v3ToDriver(ciphertext)
             return {
               ref: t.ref,
-              newValue: v3ToDriver(ciphertext),
+              newValue,
             }
           }),
         )
       }
     },
   }
+}
+
+/** A selector is a SQL text operand, not a JSONB query-domain value. */
+function selectorHashToDriver(value: unknown): string {
+  if (typeof value !== 'string') {
+    throw new Error(
+      `cipherstash v3 bulk-encrypt: steVecSelector must resolve to a bare string hash, got ${value === null ? 'null' : typeof value}.`,
+    )
+  }
+  return value
 }
 
 function collectV3Targets(
