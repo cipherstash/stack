@@ -11,7 +11,8 @@ import pg from 'pg'
 import { CliExit } from '@/cli/exit.js'
 import {
   detectPackageManager,
-  runnerArgv,
+  execArgv,
+  execCommand,
   runnerCommand,
 } from '@/commands/init/utils.js'
 import { resolveDatabaseUrl } from '@/config/database-url.js'
@@ -506,23 +507,18 @@ export async function generateDrizzleMigration(
   }
   const outDir = resolve(options.out ?? DEFAULT_DRIZZLE_OUT)
 
-  // Invoke via spawnSync with an argv array (no shell), so a `--name` carrying
-  // spaces or shell metacharacters is one inert token, never word-split or
-  // executed. `--out` is always passed so drizzle-kit WRITES where we then
-  // LOOK — otherwise a project whose drizzle.config.ts points elsewhere would
-  // have drizzle-kit write there while we search `drizzle/` and fail in step 2.
-  //
-  // Runner: `runnerArgv` is the download-and-run form (`pnpm dlx` / `npx` /
-  // `bunx`) this v2 path has always used. The v3 generator
-  // (`commands/eql/migration.ts`) deliberately uses `execArgv` instead
-  // (`pnpm exec` / `npx --no-install`) so it resolves THIS project's local
-  // drizzle-kit and drizzle.config.ts. v2 keeps `dlx` to preserve established
-  // behaviour for existing users; aligning it with v3's project-local form is
-  // a deliberate, separate change, not made here. The exact argv (including
-  // `dlx`) is pinned in the tests so this divergence stays a conscious
-  // contract rather than drifting silently.
+  // Run the PROJECT-LOCAL drizzle-kit (`pnpm exec` / `npx --no-install`), not
+  // the download-and-run form (`pnpm dlx`) — it must resolve THIS project's
+  // drizzle.config.ts and schema, and `--no-install` fails loudly instead of
+  // surprise-downloading a possibly-different drizzle-kit major. Matches the v3
+  // generator (`commands/eql/migration.ts`). Invoke via spawnSync with an argv
+  // array (no shell), so a `--name` carrying spaces or shell metacharacters is
+  // one inert token, never word-split or executed. `--out` is always passed so
+  // drizzle-kit WRITES where we then LOOK — otherwise a project whose
+  // drizzle.config.ts points elsewhere would have drizzle-kit write there while
+  // we search `drizzle/` and fail in step 2.
   const pm = detectPackageManager()
-  const { command, prefixArgs } = runnerArgv(pm)
+  const { command, prefixArgs } = execArgv(pm)
   const drizzleArgs = [
     ...prefixArgs,
     'drizzle-kit',
@@ -531,7 +527,7 @@ export async function generateDrizzleMigration(
     `--name=${migrationName}`,
     `--out=${outDir}`,
   ]
-  const drizzleCmd = `${runnerCommand(pm, '').trim()} ${drizzleArgs.slice(prefixArgs.length).join(' ')}`
+  const drizzleCmd = `${execCommand(pm)} ${drizzleArgs.slice(prefixArgs.length).join(' ')}`
 
   if (options.dryRun) {
     p.log.info('Dry run — no changes will be made.')
@@ -662,7 +658,7 @@ export async function generateDrizzleMigration(
 
   p.log.success(`Migration created: ${generatedMigrationPath}`)
   p.note(
-    `Run your Drizzle migrations to install EQL:\n\n  ${runnerCommand(detectPackageManager(), '').trim()} drizzle-kit migrate`,
+    `Run your Drizzle migrations to install EQL:\n\n  ${execCommand(detectPackageManager())} drizzle-kit migrate`,
     'Next Steps',
   )
   printNextSteps()

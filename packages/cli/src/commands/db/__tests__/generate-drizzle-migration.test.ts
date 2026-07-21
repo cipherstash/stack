@@ -62,7 +62,7 @@ vi.mock('@/installer/index.js', async (importOriginal) => ({
 
 // Pin the package manager so the argv assertion below is exact. Detection reads
 // the lockfile in cwd and npm_config_user_agent, both of which vary by how the
-// suite was launched. The runner MAPPING stays real — `pnpm` + `['dlx', …]` is
+// suite was launched. The runner MAPPING stays real — `pnpm` + `['exec', …]` is
 // part of what's being asserted, so mocking it would defeat the test.
 vi.mock('@/commands/init/utils.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/commands/init/utils.js')>()),
@@ -145,13 +145,15 @@ describe('generateDrizzleMigration', () => {
     expect(spawnMock).toHaveBeenCalledTimes(1)
     const [command, argv] = spawnMock.mock.calls[0]
     // The whole argv, exactly — not `toContain` checks, which would still pass
-    // if the runner prefix (`dlx`) were dropped and drizzle-kit ran under the
+    // if the runner prefix (`exec`) were dropped and drizzle-kit ran under the
     // wrong resolver. DEFECT 1: name and out are discrete inert tokens in an
     // array, never interpolated into a shell string. DEFECT 2: `--out` is
-    // actually passed, so drizzle-kit writes where step 2 then looks.
+    // actually passed, so drizzle-kit writes where step 2 then looks. The
+    // project-local `exec` form (not `dlx`) is asserted so a regression back to
+    // download-and-run — which resolves a different drizzle.config.ts — fails.
     expect(command).toBe('pnpm')
     expect(argv).toEqual([
-      'dlx',
+      'exec',
       'drizzle-kit',
       'generate',
       '--custom',
