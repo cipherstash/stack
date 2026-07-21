@@ -1,9 +1,17 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Integration } from '../../types.js'
 import {
+  availableSkills,
   installSkills,
   readBundledSkill,
   SKILL_MAP,
@@ -103,6 +111,38 @@ describe('installSkills', () => {
     )
     // Does not write to .claude/ when codex is the target.
     expect(existsSync(join(tmp, '.claude'))).toBe(false)
+  })
+
+  // #736: a Codex sandbox denies writes under `.codex/`, and the unguarded
+  // `mkdirSync` threw PAST the per-skill fallback and past the caller — so the
+  // whole handoff step died and AGENTS.md / .cipherstash were never written.
+  // Degrading to `[]` is what lets the caller fall back to inlining.
+  it('returns [] instead of throwing when destDir cannot be created', () => {
+    // A FILE where the skills directory needs to be: mkdirSync recursive
+    // fails with ENOTDIR/EEXIST rather than succeeding.
+    mkdirSync(join(tmp, '.codex'), { recursive: true })
+    writeFileSync(join(tmp, '.codex/skills'), 'not a directory', 'utf-8')
+
+    let copied: string[] | undefined
+    expect(() => {
+      copied = installSkills(tmp, '.codex/skills', 'drizzle')
+    }).not.toThrow()
+    expect(copied).toEqual([])
+  })
+
+  it('leaves the caller able to distinguish "unwritable" from "nothing to install"', () => {
+    // `availableSkills` reports what the BUNDLE has, independent of whether
+    // the destination could be written — the signal the Codex handoff uses to
+    // decide whether an inline fallback is honest.
+    mkdirSync(join(tmp, '.codex'), { recursive: true })
+    writeFileSync(join(tmp, '.codex/skills'), 'not a directory', 'utf-8')
+
+    expect(installSkills(tmp, '.codex/skills', 'drizzle')).toEqual([])
+    expect(availableSkills('drizzle')).toEqual([
+      'stash-encryption',
+      'stash-drizzle',
+      'stash-cli',
+    ])
   })
 
   it('is idempotent — re-running does not throw and yields the same result', () => {

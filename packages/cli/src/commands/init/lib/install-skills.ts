@@ -35,6 +35,24 @@ export function skillsFor(integration: Integration): readonly string[] {
 }
 
 /**
+ * Which of an integration's skills actually exist in THIS build's bundle.
+ *
+ * Separate from {@link installSkills} because callers need to tell "there were
+ * no skills to install" apart from "there were skills but they could not be
+ * written" — the two look identical in an empty return, and only the second
+ * has a fallback worth mentioning to the user. Claiming a fallback happened
+ * when the bundle was empty would be exactly the kind of false success #714
+ * and #687 removed elsewhere in init.
+ */
+export function availableSkills(integration: Integration): string[] {
+  const bundledRoot = findBundledDir('skills')
+  if (!bundledRoot) return []
+  return skillsFor(integration).filter((name) =>
+    existsSync(join(bundledRoot, name)),
+  )
+}
+
+/**
  * Copy the per-integration set of skills into `<cwd>/<destDir>/<skill>/`.
  *
  * Unlike the wizard's variant, this does NOT prompt — by the time it runs,
@@ -46,13 +64,18 @@ export function skillsFor(integration: Integration): readonly string[] {
  *
  * Idempotent: re-runs overwrite the skill folders so the user always gets
  * the latest content shipped with this CLI.
+ *
+ * **Never throws.** Every filesystem step degrades to a warning and a shorter
+ * return, because the destination is not always writable: Codex sandboxes deny
+ * writes under `.codex/`, which took out all five Codex runs of the rc.3
+ * skilltester matrix (#736). The caller decides what to do with an empty
+ * result — the Codex handoff inlines the skills into AGENTS.md instead.
  */
 export function installSkills(
   cwd: string,
   destDir: string,
   integration: Integration,
 ): string[] {
-  const skills = skillsFor(integration)
   const bundledRoot = findBundledDir('skills')
   if (!bundledRoot) {
     p.log.warn(
@@ -61,11 +84,20 @@ export function installSkills(
     return []
   }
 
-  const available = skills.filter((name) => existsSync(join(bundledRoot, name)))
+  const available = availableSkills(integration)
   if (available.length === 0) return []
 
   const destRoot = resolve(cwd, destDir)
-  mkdirSync(destRoot, { recursive: true })
+  try {
+    mkdirSync(destRoot, { recursive: true })
+  } catch (err) {
+    // Previously unguarded, and therefore FATAL: it threw past the per-skill
+    // fallback below and past the caller, so a sandboxed `.codex/` aborted the
+    // whole handoff step — no skills, no AGENTS.md, no context.json.
+    const message = err instanceof Error ? err.message : String(err)
+    p.log.warn(`Could not create ${destDir}/: ${message}`)
+    return []
+  }
 
   const copied: string[] = []
   for (const name of available) {

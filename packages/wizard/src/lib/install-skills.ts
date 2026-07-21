@@ -46,7 +46,19 @@ export async function maybeInstallSkills(
   if (p.isCancel(confirmed) || !confirmed) return []
 
   const destRoot = resolve(cwd, '.claude', 'skills')
-  mkdirSync(destRoot, { recursive: true })
+  try {
+    mkdirSync(destRoot, { recursive: true })
+  } catch (err) {
+    // Guarded for the same reason as the copy loop below, which it sat above
+    // unprotected: an unwritable destination (read-only mount, restrictive
+    // permissions, a sandbox) threw past every fallback and took the caller
+    // with it. The `stash` copy of this function hit exactly that on
+    // `.codex/skills` — see cipherstash/stack#736. Degrade to "no skills"
+    // instead; the wizard's remaining output is still useful.
+    const message = err instanceof Error ? err.message : String(err)
+    p.log.warn(`Could not create ./.claude/skills/: ${message}`)
+    return []
+  }
 
   const copied: string[] = []
   for (const name of available) {
