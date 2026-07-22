@@ -243,6 +243,24 @@ export interface BuildableTable {
   buildColumnKeyMap?(): Record<string, string>
 }
 
+/**
+ * The canonical EQL v3 marker: v3 tables expose `buildColumnKeyMap()`, v2 tables
+ * don't. This is the single predicate the codebase uses to decide which wire
+ * version a table targets — a second hand-written spelling of the check is how a
+ * v2 envelope eventually gets built for a v3 table once the marker drifts, so
+ * every site (`encryption/index.ts`, `wasm-inline.ts`, `dynamodb/helpers.ts`)
+ * routes through here.
+ */
+export function hasBuildColumnKeyMap<T extends object>(
+  table: T,
+): table is T & { buildColumnKeyMap: () => Record<string, string> } {
+  return (
+    'buildColumnKeyMap' in table &&
+    typeof (table as { buildColumnKeyMap?: unknown }).buildColumnKeyMap ===
+      'function'
+  )
+}
+
 export type EncryptionClientConfig = {
   schemas: AtLeastOneCsTable<BuildableTable>
   config?: ClientConfig

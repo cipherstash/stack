@@ -113,6 +113,7 @@ import type {
   Plaintext,
   QueryTypeName,
 } from '@/types'
+import { hasBuildColumnKeyMap } from '@/types'
 
 // -----------------------------------------------------------------------
 // Schema + type re-exports
@@ -982,9 +983,7 @@ export async function Encryption(
   // `buildColumnKeyMap` marker) with a clear message rather than pinning the
   // client to v3 wire against a v2 schema and failing opaquely inside the FFI.
   for (const table of schemas) {
-    const isV3 =
-      typeof (table as { buildColumnKeyMap?: unknown }).buildColumnKeyMap ===
-      'function'
+    const isV3 = hasBuildColumnKeyMap(table)
     if (!isV3) {
       throw new Error(
         '[encryption]: `@cipherstash/stack/wasm-inline` is EQL v3 only — author schemas with `types` / `encryptedTable` from this entry. (EQL v2 is available on the native `@cipherstash/stack` entry.)',

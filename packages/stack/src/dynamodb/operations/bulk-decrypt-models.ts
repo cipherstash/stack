@@ -1,10 +1,19 @@
 import { type Result, withResult } from '@byteslice/result'
-import type { EncryptionClient } from '@/encryption'
-import type { EncryptedTable, EncryptedTableColumn } from '@/schema'
 import type { Decrypted, EncryptedValue } from '@/types'
 import { logger } from '@/utils/logger'
-import { handleError, toItemWithEqlPayloads } from '../helpers'
-import type { EncryptedDynamoDBError } from '../types'
+import {
+  buildReadContext,
+  handleError,
+  resolveDecryptResult,
+  throwPreservingCode,
+  toItemWithEqlPayloads,
+} from '../helpers'
+import type {
+  AnyEncryptedTable,
+  CallableEncryptionClient,
+  DynamoDBEncryptionClient,
+  EncryptedDynamoDBError,
+} from '../types'
 import {
   DynamoDBOperation,
   type DynamoDBOperationOptions,
@@ -13,14 +22,14 @@ import {
 export class BulkDecryptModelsOperation<
   T extends Record<string, unknown>,
 > extends DynamoDBOperation<Decrypted<T>[]> {
-  private encryptionClient: EncryptionClient
+  private encryptionClient: DynamoDBEncryptionClient
   private items: Record<string, EncryptedValue | unknown>[]
-  private table: EncryptedTable<EncryptedTableColumn>
+  private table: AnyEncryptedTable
 
   constructor(
-    encryptionClient: EncryptionClient,
+    encryptionClient: DynamoDBEncryptionClient,
     items: Record<string, EncryptedValue | unknown>[],
-    table: EncryptedTable<EncryptedTableColumn>,
+    table: AnyEncryptedTable,
     options?: DynamoDBOperationOptions,
   ) {
     super(options)
@@ -35,22 +44,23 @@ export class BulkDecryptModelsOperation<
     logger.debug(`DynamoDB: bulk decrypting ${this.items.length} models.`)
     return await withResult(
       async () => {
+        // Resolve the table's read context once, not once per item — `build()`
+        // and the column map are row-invariant.
+        const readContext = buildReadContext(this.table)
         const itemsWithEqlPayloads = this.items.map((item) =>
-          toItemWithEqlPayloads(item, this.table),
+          toItemWithEqlPayloads(item, this.table, readContext),
         )
 
-        const decryptResult = await this.encryptionClient
-          .bulkDecryptModels<T>(itemsWithEqlPayloads as T[])
-          .audit(this.getAuditData())
+        const client = this.encryptionClient as CallableEncryptionClient
+        const decryptResult = await resolveDecryptResult<Decrypted<T>[]>(
+          // The second argument is required by the typed client and ignored by
+          // the nominal one, which derives the table from the payloads.
+          client.bulkDecryptModels(itemsWithEqlPayloads, this.table),
+          this.getAuditData(),
+        )
 
         if (decryptResult.failure) {
-          // Create an Error object that preserves the FFI error code
-          // This is necessary because withResult's ensureError wraps non-Error objects
-          const error = new Error(decryptResult.failure.message) as Error & {
-            code?: string
-          }
-          error.code = decryptResult.failure.code
-          throw error
+          throwPreservingCode(decryptResult.failure)
         }
 
         return decryptResult.data

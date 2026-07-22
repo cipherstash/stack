@@ -29,6 +29,7 @@ import type {
   Plaintext,
   ScalarQueryTerm,
 } from '@/types'
+import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
 import { toFfiKeysetIdentifier } from './helpers'
 import { isScalarQueryTermArray } from './helpers/type-guards'
@@ -88,9 +89,7 @@ export function resolveEqlVersion(
   schemas: readonly BuildableTable[],
   explicit?: 2 | 3,
 ): 2 | 3 | undefined {
-  const v3Count = schemas.filter(
-    (schema) => typeof schema.buildColumnKeyMap === 'function',
-  ).length
+  const v3Count = schemas.filter(hasBuildColumnKeyMap).length
 
   if (v3Count > 0 && v3Count < schemas.length) {
     throw new Error(
