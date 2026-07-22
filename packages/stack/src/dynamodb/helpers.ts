@@ -229,11 +229,19 @@ type StoredEqlPayload = {
  * enough — `c` is an ordinary attribute name (country, currency, count), and
  * treating `{ c: 'AU', d: 1 }` as a payload silently rewrites it to
  * `<attr>__source` and DISCARDS every sibling key.
+ *
+ * The shape checks (`v` a number, `i` an object) mirror the core
+ * `isEncryptedPayload` exactly, so the two envelope detectors cannot drift
+ * apart. The `matchColumn` gate already means this only runs against values at
+ * a declared encrypted column, but pinning the same predicate closes the
+ * residual window where a plaintext `{ v, i }` lookalike could be split.
  */
 function isStoredEqlPayload(value: unknown): value is StoredEqlPayload {
   if (value === null || typeof value !== 'object') return false
-  if (!('v' in value) || !('i' in value)) return false
-  return 'c' in value || 'sv' in value
+  const obj = value as Record<string, unknown>
+  if (!('v' in obj) || typeof obj.v !== 'number') return false
+  if (!('i' in obj) || typeof obj.i !== 'object') return false
+  return 'c' in obj || 'sv' in obj
 }
 
 /**

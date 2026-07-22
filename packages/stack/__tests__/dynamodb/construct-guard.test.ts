@@ -42,7 +42,7 @@ function stubClient(knownTables: string[]) {
     bulkEncryptModels: unreached,
     decryptModel: unreached,
     bulkDecryptModels: unreached,
-    // biome-ignore lint/suspicious/noExplicitAny: test stub, .test.ts is not typechecked
+    // biome-ignore lint/suspicious/noExplicitAny: deliberately permissive test-stub client
   } as any
 }
 
@@ -116,7 +116,7 @@ describe('encryptedDynamoDB client/table version guard', () => {
         bulkEncryptModels: unreached,
         decryptModel: unreached,
         bulkDecryptModels: unreached,
-        // biome-ignore lint/suspicious/noExplicitAny: test stub
+        // biome-ignore lint/suspicious/noExplicitAny: deliberately permissive test-stub client
       } as any,
     })
     expect(() =>
