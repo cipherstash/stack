@@ -29,7 +29,7 @@ import {
   V3_MATRIX,
 } from '@cipherstash/test-kit/catalog'
 import { describe, expect, it } from 'vitest'
-import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
+import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
 import {
   createMockEncryptionClient,
   createMockSupabase,
