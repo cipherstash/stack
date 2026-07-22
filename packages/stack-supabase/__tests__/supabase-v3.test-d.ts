@@ -9,6 +9,7 @@ import {
 } from '@cipherstash/stack/schema'
 import { describe, expectTypeOf, it } from 'vitest'
 import {
+  type EncryptedQueryBuilder,
   type EncryptedQueryBuilderV3,
   type EncryptedSupabaseResponse,
   encryptedSupabase,
@@ -335,21 +336,6 @@ describe('encryptedSupabaseV3 untyped surface (no schemas)', () => {
     builder.contains('tags', 'vip')
   })
 
-  it('keeps like/ilike on the v2 builder', () => {
-    const v2Users = v2EncryptedTable('users', {
-      email: encryptedColumn('email').freeTextSearch(),
-    })
-    const v2 = encryptedSupabase({
-      encryptionClient: {} as never,
-      supabaseClient,
-    })
-    const builder = v2.from<{ email: string }>('users', v2Users)
-    builder.like('email', '%ada%')
-    builder.ilike('email', '%ada%')
-    // @ts-expect-error — contains is the v3 dialect's method
-    builder.contains('email', 'ada')
-  })
-
   it('supports a no-arg select(), like supabase-js', async () => {
     const supabase = await encryptedSupabaseV3(supabaseClient)
     supabase.from('users').select()
@@ -443,5 +429,34 @@ describe('withLockContext accepts the plain { identityClaim } form (not only Loc
   it('rejects an object with an unknown key', () => {
     // @ts-expect-error — `claim` is not `identityClaim`
     mixedBuilder.withLockContext({ claim: ['sub'] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// De-suffixed canonical names (encryptedSupabase / EncryptedQueryBuilder)
+//
+// `encryptedSupabaseV3` and `EncryptedQueryBuilderV3` remain as type-identical
+// `@deprecated` aliases (exercised throughout the tests above); these assert the
+// unsuffixed names are the same surface.
+// ---------------------------------------------------------------------------
+
+describe('canonical (unsuffixed) exports', () => {
+  it('encryptedSupabase is the same factory as encryptedSupabaseV3', () => {
+    expectTypeOf(encryptedSupabase).toEqualTypeOf(encryptedSupabaseV3)
+  })
+
+  it('EncryptedQueryBuilder is the same type as EncryptedQueryBuilderV3', () => {
+    expectTypeOf<EncryptedQueryBuilder<typeof users, UserRow>>().toEqualTypeOf<
+      EncryptedQueryBuilderV3<typeof users, UserRow>
+    >()
+  })
+
+  it('a typed builder narrows to the documented shape', async () => {
+    const supabase = await encryptedSupabase(supabaseClient, {
+      schemas: { users },
+    })
+    expectTypeOf(supabase.from('users')).toEqualTypeOf<
+      EncryptedQueryBuilder<typeof users, UserRow>
+    >()
   })
 })

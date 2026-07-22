@@ -33,7 +33,7 @@ import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { databaseUrl } from '@cipherstash/test-kit'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
+import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
 import { makePostgrestClient, reloadSchemaCache } from './helpers/pgrest'
 import { narrowedQueryTerm, storageEnvelope } from './helpers/v3-envelope'
 

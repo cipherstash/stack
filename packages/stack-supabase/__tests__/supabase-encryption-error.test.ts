@@ -1,13 +1,8 @@
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { EncryptionErrorTypes } from '@cipherstash/stack/errors'
-import {
-  encryptedColumn,
-  encryptedTable as encryptedTableV2,
-} from '@cipherstash/stack/schema'
 import { describe, expect, it } from 'vitest'
 import { EncryptedQueryBuilderImpl } from '../src/query-builder'
-import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
 import {
   createMockEncryptionClient,
   createMockSupabase,
@@ -18,17 +13,13 @@ import {
 /**
  * Regression coverage for #626: the query builder's catch block used to hardcode
  * `encryptionError: undefined`, so the typed `EncryptedSupabaseError.encryptionError`
- * field was dead. The v2 tests pin that a genuine encryption failure now threads its
- * `EncryptionError` through the shared base `execute()` catch, while a plain
- * (non-encryption) throw leaves it unset. The v3 tests cover the dialect's own
- * `encryptionFailure` path, which synthesizes an `EncryptionError` for its two
- * query-term contract-violation cases (length mismatch, null envelope) that have
- * no operation failure to wrap.
+ * field was dead. The `execute()` tests pin that a genuine encryption failure now
+ * threads its `EncryptionError` through the shared `execute()` catch, while a plain
+ * (non-encryption) throw leaves it unset. The `encryptionFailure` tests cover the
+ * dialect's own `encryptionFailure` path, which synthesizes an `EncryptionError`
+ * for its two query-term contract-violation cases (length mismatch, null envelope)
+ * that have no operation failure to wrap.
  */
-
-const usersV2 = encryptedTableV2('users', {
-  email: encryptedColumn('email').freeTextSearch().equality(),
-})
 
 const usersV3 = encryptedTable('users', {
   email: types.TextEq('email'),
@@ -48,7 +39,7 @@ function failingOperation(failure: { type: string; message: string }) {
 }
 
 describe('EncryptedSupabaseError.encryptionError (#626)', () => {
-  it('v2: threads the EncryptionError through on an encryption failure', async () => {
+  it('threads the EncryptionError through on an encryption failure', async () => {
     const failure = {
       type: EncryptionErrorTypes.EncryptionError,
       message: 'zerokms unreachable',
@@ -62,7 +53,7 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
     const { client: supabase } = createMockSupabase()
     const builder = new EncryptedQueryBuilderImpl(
       'users',
-      usersV2,
+      usersV3,
       encryptionClient as unknown as EncryptionClient,
       supabase,
     )
@@ -77,7 +68,7 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
     )
   })
 
-  it('v2: leaves encryptionError unset on a plain (non-encryption) error', async () => {
+  it('leaves encryptionError unset on a plain (non-encryption) error', async () => {
     const encryptionClient = createMockEncryptionClient()
     const { client: supabase } = createMockSupabase()
     // Make the underlying supabase call throw a non-encryption error: an insert
@@ -88,7 +79,7 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
 
     const builder = new EncryptedQueryBuilderImpl(
       'users',
-      usersV2,
+      usersV3,
       encryptionClient,
       supabase,
     )
@@ -105,8 +96,8 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
     // wrap for its contract-violation cases, so it synthesizes an EncryptionError.
     // Drive it directly: a two-element `in` list whose bulkEncrypt returns one
     // term trips the length-mismatch check. (The base `execute()` threading is
-    // already covered by the v2 test above; overriding `encryptModel` here would
-    // only re-run that shared path, not this v3-specific branch.)
+    // already covered by the `execute()` tests above; overriding `encryptModel`
+    // here would only re-run that shared path, not this v3-specific branch.)
     const encryptionClient = createMockEncryptionClient() as unknown as {
       bulkEncrypt: (...args: unknown[]) => unknown
     }
@@ -114,7 +105,7 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
       operation([{ data: fakeEnvelope('ada', 'email') }])
 
     const { client: supabase } = createMockSupabase()
-    const { error, status } = await new EncryptedQueryBuilderV3Impl(
+    const { error, status } = await new EncryptedQueryBuilderImpl(
       'users',
       usersV3,
       encryptionClient as unknown as EncryptionClient,
@@ -144,7 +135,7 @@ describe('EncryptedSupabaseError.encryptionError (#626)', () => {
       operation([{ data: null }, { data: fakeEnvelope('grace', 'email') }])
 
     const { client: supabase } = createMockSupabase()
-    const { error, status } = await new EncryptedQueryBuilderV3Impl(
+    const { error, status } = await new EncryptedQueryBuilderImpl(
       'users',
       usersV3,
       encryptionClient as unknown as EncryptionClient,

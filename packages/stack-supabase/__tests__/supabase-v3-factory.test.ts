@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SupabaseClientLike } from '../src/index.js'
 import { encryptedSupabaseV3 } from '../src/index.js'
 import type { IntrospectionData } from '../src/introspect'
-import { EncryptedQueryBuilderV3Impl } from '../src/query-builder-v3'
+import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
 
 // --- Mocks -----------------------------------------------------------------
 //
