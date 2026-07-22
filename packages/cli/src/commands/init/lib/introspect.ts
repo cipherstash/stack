@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts'
 import pg from 'pg'
-import type { ColumnDef, DataType, SchemaDef, SearchOp } from '../types.js'
+import type { ColumnDef, DataType, SchemaDef, V3Domain } from '../types.js'
 
 export interface DbColumn {
   columnName: string
@@ -99,12 +99,56 @@ export async function introspectDatabase(
   }
 }
 
-function allSearchOps(dataType: DataType): SearchOp[] {
-  const ops: SearchOp[] = ['equality', 'orderAndRange']
-  if (dataType === 'string') {
-    ops.push('freeTextSearch')
+/**
+ * The v3 domains offerable for a scaffolded column of the given `DataType`,
+ * ordered narrowest→widest so the interactive picker reads as an escalating
+ * ladder. Each domain's query capability is fixed by its type — there is no
+ * capability tuple. `boolean` and `json` have exactly one domain (storage
+ * only); numeric and date types collapse to the `Integer*` / `Date*` families
+ * because `pgTypeToDataType` carries no width/precision signal.
+ */
+export function candidateDomains(
+  dataType: DataType,
+): Array<{ value: V3Domain; label: string; hint: string }> {
+  switch (dataType) {
+    case 'string':
+      return [
+        { value: 'Text', label: 'Text', hint: 'storage only — encrypt/decrypt, no queries' },
+        { value: 'TextEq', label: 'TextEq', hint: 'equality (=, IN)' },
+        { value: 'TextOrd', label: 'TextOrd', hint: 'equality + order/range (<, >, BETWEEN, sort)' },
+        { value: 'TextMatch', label: 'TextMatch', hint: 'free-text match only' },
+        { value: 'TextSearch', label: 'TextSearch', hint: 'equality + order/range + free-text' },
+      ]
+    case 'number':
+      return [
+        { value: 'Integer', label: 'Integer', hint: 'storage only' },
+        { value: 'IntegerEq', label: 'IntegerEq', hint: 'equality (=, IN)' },
+        { value: 'IntegerOrd', label: 'IntegerOrd', hint: 'equality + order/range' },
+      ]
+    case 'date':
+      return [
+        { value: 'Date', label: 'Date', hint: 'storage only' },
+        { value: 'DateEq', label: 'DateEq', hint: 'equality (=, IN)' },
+        { value: 'DateOrd', label: 'DateOrd', hint: 'equality + order/range' },
+      ]
+    case 'boolean':
+      return [{ value: 'Boolean', label: 'Boolean', hint: 'storage only' }]
+    case 'json':
+      return [{ value: 'Json', label: 'Json', hint: 'encrypted-JSONB containment + selectors' }]
   }
-  return ops
+}
+
+/**
+ * The default domain pre-selected in the picker: the widest searchable domain
+ * for the type. Mirrors the pre-v3 scaffold, which enabled every capability on
+ * every selected column by default. Derived from `candidateDomains` (whose
+ * lists are ordered narrowest→widest) so the "widest is the default" invariant
+ * has a single source of truth — reordering a candidate list moves the default
+ * with it, and the two can never silently drift.
+ */
+export function defaultDomain(dataType: DataType): V3Domain {
+  const options = candidateDomains(dataType)
+  return options[options.length - 1].value
 }
 
 /**
