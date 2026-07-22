@@ -25,7 +25,6 @@ on:
       # suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
@@ -45,7 +44,6 @@ on:
       # suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'

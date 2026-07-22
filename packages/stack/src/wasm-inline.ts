@@ -882,7 +882,7 @@ export class WasmEncryptionClient {
         (term) => term.value !== null && term.value !== undefined,
         async (live) =>
           // The FFI's batch field is `queries` (matching the native
-          // ffiEncryptQueryBulk call in packages/protect).
+          // ffiEncryptQueryBulk call in the encryption client).
           (await wasmEncryptQueryBulk(
             // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
             this.client as never,

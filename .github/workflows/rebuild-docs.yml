@@ -3,7 +3,7 @@ name: Rebuild Docs
 on:
   push:
     tags:
-      - '@cipherstash/protect@*'
+      - '@cipherstash/stack@*'
 
 jobs:
   trigger-docs-rebuild:
