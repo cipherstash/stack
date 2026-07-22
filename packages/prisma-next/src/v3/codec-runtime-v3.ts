@@ -287,6 +287,15 @@ export class CipherstashV3CellCodec<
    * never carries ciphertext. Round-tripping an `encodeJson` marker back
    * through here is not supported and raises below — the two methods
    * serve the write and read directions of different planes.
+   *
+   * No NULL handling here by design: the SQL runtime short-circuits a
+   * NULL cell before ever reaching a codec — the include-decode loop
+   * (`sql-orm-client` `collection-dispatch`) skips `null`/`undefined`
+   * column values, and the many-typed path skips `null` elements — so
+   * this method, like `decode` (guarded by the runtime's `decodeField`),
+   * only receives a non-null JSON payload. NULL-handling is the runtime's
+   * contract, not the codec's; returning `null` here would also break the
+   * framework's `decodeJson(json): TInput` (envelope) signature.
    */
   decodeJson(json: JsonValue): E {
     const routing = routingKeyFromPayload(json)
