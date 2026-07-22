@@ -14,8 +14,10 @@
  */
 
 import type { Contract } from '@prisma-next/contract/types'
-import { parsePslDocument } from '@prisma-next/psl-parser'
+import { buildSymbolTable } from '@prisma-next/psl-parser'
+import { parse } from '@prisma-next/psl-parser/syntax'
 import { interpretPslDocumentToSqlContract } from '@prisma-next/sql-contract-psl'
+import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
 import { describe, expect, it } from 'vitest'
 import cipherstashControl from '../src/exports/control'
 import cipherstashPack from '../src/exports/pack'
@@ -36,9 +38,22 @@ const postgresScalarTypeDescriptors = new Map([
   ['Int', { codecId: 'pg/int4@1', nativeType: 'int4' }],
 ])
 
+// Since 0.15 the SQL PSL interpreter consumes a symbol table built from
+// the CST parser instead of the legacy `parsePslDocument` AST, and the
+// SQL family no longer materialises a placeholder namespace — the target's
+// `createNamespace` factory and its capability matrix are both required.
 function interpret(schema: string) {
+  const { document, sourceFile } = parse(schema)
+  const { table } = buildSymbolTable({
+    document,
+    sourceFile,
+    scalarTypes: [...postgresScalarTypeDescriptors.keys()],
+    pslBlockDescriptors: {},
+  })
   return interpretPslDocumentToSqlContract({
-    document: parsePslDocument({ schema, sourceId: 'schema.prisma' }),
+    symbolTable: table,
+    sourceFile,
+    sourceId: 'schema.prisma',
     target: postgresTarget,
     scalarTypeDescriptors: postgresScalarTypeDescriptors,
     composedExtensionPacks: [cipherstashControl.id],
@@ -49,6 +64,8 @@ function interpret(schema: string) {
       ],
     ]),
     authoringContributions: { type: cipherstashPack.authoring.type, field: {} },
+    createNamespace: postgresCreateNamespace,
+    capabilities: { sql: { scalarList: true } },
   })
 }
 

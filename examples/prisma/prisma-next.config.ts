@@ -7,6 +7,7 @@ import sql from '@prisma-next/family-sql/control'
 import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
 import postgres from '@prisma-next/target-postgres/control'
 import postgresPack from '@prisma-next/target-postgres/pack'
+import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
 
 const databaseUrl = process.env['DATABASE_URL']
 
@@ -21,6 +22,9 @@ export default defineConfig({
     // Since 0.14 `prismaContract` takes the target PACK ref (carrying
     // `defaultNamespaceId`), not the control descriptor.
     target: postgresPack,
+    // Since 0.15 the SQL family no longer materialises a placeholder
+    // namespace, so the target's namespace factory is required.
+    createNamespace: postgresCreateNamespace,
   }),
   migrations: {
     dir: 'migrations',

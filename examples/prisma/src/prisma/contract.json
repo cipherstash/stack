@@ -249,7 +249,8 @@
       "defaultInInsert": true,
       "enums": true,
       "lateral": true,
-      "returning": true
+      "returning": true,
+      "scalarList": true
     }
   },
   "extensionPacks": {
@@ -261,167 +262,6 @@
       "types": {
         "codecTypes": {
           "codecInstances": [
-            {
-              "descriptor": {
-                "codecId": "cipherstash/string@1",
-                "meta": {
-                  "db": {
-                    "sql": {
-                      "postgres": {
-                        "nativeType": "eql_v2_encrypted"
-                      }
-                    }
-                  }
-                },
-                "paramsSchema": {
-                  "~standard": {
-                    "vendor": "cipherstash",
-                    "version": 1
-                  }
-                },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:equality",
-                  "cipherstash:free-text-search",
-                  "cipherstash:order-and-range"
-                ]
-              }
-            },
-            {
-              "descriptor": {
-                "codecId": "cipherstash/double@1",
-                "meta": {
-                  "db": {
-                    "sql": {
-                      "postgres": {
-                        "nativeType": "eql_v2_encrypted"
-                      }
-                    }
-                  }
-                },
-                "paramsSchema": {
-                  "~standard": {
-                    "vendor": "cipherstash",
-                    "version": 1
-                  }
-                },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:equality",
-                  "cipherstash:order-and-range"
-                ]
-              }
-            },
-            {
-              "descriptor": {
-                "codecId": "cipherstash/bigint@1",
-                "meta": {
-                  "db": {
-                    "sql": {
-                      "postgres": {
-                        "nativeType": "eql_v2_encrypted"
-                      }
-                    }
-                  }
-                },
-                "paramsSchema": {
-                  "~standard": {
-                    "vendor": "cipherstash",
-                    "version": 1
-                  }
-                },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:equality",
-                  "cipherstash:order-and-range"
-                ]
-              }
-            },
-            {
-              "descriptor": {
-                "codecId": "cipherstash/date@1",
-                "meta": {
-                  "db": {
-                    "sql": {
-                      "postgres": {
-                        "nativeType": "eql_v2_encrypted"
-                      }
-                    }
-                  }
-                },
-                "paramsSchema": {
-                  "~standard": {
-                    "vendor": "cipherstash",
-                    "version": 1
-                  }
-                },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:equality",
-                  "cipherstash:order-and-range"
-                ]
-              }
-            },
-            {
-              "descriptor": {
-                "codecId": "cipherstash/boolean@1",
-                "meta": {
-                  "db": {
-                    "sql": {
-                      "postgres": {
-                        "nativeType": "eql_v2_encrypted"
-                      }
-                    }
-                  }
-                },
-                "paramsSchema": {
-                  "~standard": {
-                    "vendor": "cipherstash",
-                    "version": 1
-                  }
-                },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:equality"
-                ]
-              }
-            },
-            {
-              "descriptor": {
-                "codecId": "cipherstash/json@1",
-                "meta": {
-                  "db": {
-                    "sql": {
-                      "postgres": {
-                        "nativeType": "eql_v2_encrypted"
-                      }
-                    }
-                  }
-                },
-                "paramsSchema": {
-                  "~standard": {
-                    "vendor": "cipherstash",
-                    "version": 1
-                  }
-                },
-                "targetTypes": [
-                  "eql_v2_encrypted"
-                ],
-                "traits": [
-                  "cipherstash:searchable-json"
-                ]
-              }
-            },
             {
               "descriptor": {
                 "codecId": "cipherstash/eql-v3/eql_v3_integer@1",
@@ -1505,11 +1345,6 @@
               "package": "@prisma-next/extension-cipherstash/runtime"
             },
             {
-              "alias": "EncryptedDouble",
-              "named": "EncryptedDouble",
-              "package": "@prisma-next/extension-cipherstash/runtime"
-            },
-            {
               "alias": "EncryptedBigInt",
               "named": "EncryptedBigInt",
               "package": "@prisma-next/extension-cipherstash/runtime"
@@ -1544,42 +1379,6 @@
           }
         },
         "storage": [
-          {
-            "familyId": "sql",
-            "nativeType": "eql_v2_encrypted",
-            "targetId": "postgres",
-            "typeId": "cipherstash/string@1"
-          },
-          {
-            "familyId": "sql",
-            "nativeType": "eql_v2_encrypted",
-            "targetId": "postgres",
-            "typeId": "cipherstash/double@1"
-          },
-          {
-            "familyId": "sql",
-            "nativeType": "eql_v2_encrypted",
-            "targetId": "postgres",
-            "typeId": "cipherstash/bigint@1"
-          },
-          {
-            "familyId": "sql",
-            "nativeType": "eql_v2_encrypted",
-            "targetId": "postgres",
-            "typeId": "cipherstash/date@1"
-          },
-          {
-            "familyId": "sql",
-            "nativeType": "eql_v2_encrypted",
-            "targetId": "postgres",
-            "typeId": "cipherstash/boolean@1"
-          },
-          {
-            "familyId": "sql",
-            "nativeType": "eql_v2_encrypted",
-            "targetId": "postgres",
-            "typeId": "cipherstash/json@1"
-          },
           {
             "familyId": "sql",
             "nativeType": "public.eql_v3_integer",

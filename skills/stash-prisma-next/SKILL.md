@@ -77,13 +77,25 @@ column — there is no capability tuner.
 ```typescript
 import cipherstash from '@cipherstash/prisma-next/control'
 import { defineConfig } from 'prisma-next'
-// ... family, target, adapter, contract
+import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
+import postgresPack from '@prisma-next/target-postgres/pack'
+import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
+// ... family, target, adapter
 
 export default defineConfig({
   // ... your existing config
   extensionPacks: [cipherstash],
+  contract: prismaContract('./prisma/schema.prisma', {
+    output: 'src/prisma/contract.json',
+    target: postgresPack,
+    createNamespace: postgresCreateNamespace,
+  }),
 })
 ```
+
+`createNamespace` is **required** since Prisma Next 0.15 — the SQL family no
+longer materialises a placeholder namespace. Omitting it fails at runtime with
+`createNamespace is not a function` when you run `prisma-next contract emit`.
 
 ### 3. Wire the runtime with `cipherstashFromStack` in `src/db.ts`
 
