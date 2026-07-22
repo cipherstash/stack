@@ -1,77 +1,17 @@
 import { Encryption } from '@cipherstash/stack'
-import type {
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
 import type { UnmodelledColumn } from './introspect'
 import { eqlRequiresQueryDomains, introspect } from './introspect'
 import { EncryptedQueryBuilderImpl } from './query-builder'
-import { EncryptedQueryBuilderV3Impl } from './query-builder-v3'
 import { mergeDeclaredTables, synthesizeTables } from './schema-builder'
 import type {
-  EncryptedQueryBuilder,
-  EncryptedSupabaseConfig,
+  EncryptedQueryBuilderUntyped,
   EncryptedSupabaseInstance,
-  EncryptedSupabaseV3Instance,
-  EncryptedSupabaseV3Options,
+  EncryptedSupabaseOptions,
   SupabaseClientLike,
-  TypedEncryptedSupabaseV3Instance,
+  TypedEncryptedSupabaseInstance,
   V3Schemas,
 } from './types'
 import { verifyDeclaredSchemas } from './verify'
-
-/**
- * Create an encrypted Supabase wrapper that transparently handles encryption
- * and decryption for queries on encrypted columns.
- *
- * @param config - Configuration containing the encryption client and Supabase client.
- * @returns An object with a `from()` method that mirrors `supabase.from()` but
- *   auto-encrypts mutations, adds `::jsonb` casts, encrypts filter values, and
- *   decrypts results.
- *
- * @example
- * ```typescript
- * import { Encryption } from '@cipherstash/stack'
- * import { encryptedSupabase } from '@cipherstash/stack-supabase'
- * import { encryptedTable, encryptedColumn } from '@cipherstash/stack/schema'
- *
- * const users = encryptedTable('users', {
- *   name: encryptedColumn('name').freeTextSearch().equality(),
- *   email: encryptedColumn('email').freeTextSearch().equality(),
- * })
- *
- * const client = await Encryption({ schemas: [users] })
- * const eSupabase = encryptedSupabase({ encryptionClient: client, supabaseClient: supabase })
- *
- * // INSERT - auto-encrypts, auto-converts to PG composite
- * await eSupabase.from('users', users)
- *   .insert({ name: 'John', email: 'john@example.com', age: 30 })
- *
- * // SELECT with filter - auto-casts ::jsonb, auto-encrypts search term, auto-decrypts
- * const { data } = await eSupabase.from('users', users)
- *   .select('id, email, name')
- *   .eq('email', 'john@example.com')
- * ```
- */
-export function encryptedSupabase(
-  config: EncryptedSupabaseConfig,
-): EncryptedSupabaseInstance {
-  const { encryptionClient, supabaseClient } = config
-
-  return {
-    from<T extends Record<string, unknown> = Record<string, unknown>>(
-      tableName: string,
-      schema: EncryptedTable<EncryptedTableColumn>,
-    ) {
-      return new EncryptedQueryBuilderImpl<T>(
-        tableName,
-        schema,
-        encryptionClient,
-        supabaseClient,
-      )
-    },
-  }
-}
 
 /**
  * Throw if `tableName` carries an EQL v3 column this SDK version cannot model.
@@ -101,11 +41,17 @@ function assertTableIsModelled(
 }
 
 /**
- * Create an encrypted Supabase wrapper for **EQL v3** schemas by introspecting
- * the database at connect time. Detects EQL v3 columns by their Postgres domain
- * and derives each column's encryption config from it — callers no longer pass a
- * schema to `from()`. Supplying `schemas` is optional: it adds compile-time
- * types and verifies the declared tables against the database at construction.
+ * Create an encrypted Supabase wrapper over **native EQL v3 column domains** by
+ * introspecting the database at connect time. Detects EQL v3 columns by their
+ * Postgres domain and derives each column's encryption config from it — callers
+ * do not pass a schema to `from()`. Supplying `schemas` is optional: it adds
+ * compile-time types and verifies the declared tables against the database at
+ * construction.
+ *
+ * Encrypted data is stored as EQL v3 payloads. The generation-agnostic decrypt
+ * path in `@cipherstash/stack` still reads existing EQL v2 payloads, but this
+ * wrapper only AUTHORS EQL v3 — the legacy v2 authoring surface (a hand-written
+ * client-side schema and `from(tableName, schema)`) has been removed.
  *
  * Requires a Postgres connection (`options.databaseUrl` or `DATABASE_URL`) for
  * introspection, so it cannot run in a Worker or the browser.
@@ -125,45 +71,45 @@ function assertTableIsModelled(
  *
  * @example
  * ```typescript
- * const supabase = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
+ * const supabase = await encryptedSupabase(supabaseUrl, supabaseKey)
  * await supabase.from('users').insert({ email: 'alice@example.com' })
  * const { data } = await supabase.from('users').select().eq('email', 'alice@example.com')
  * ```
  */
-export async function encryptedSupabaseV3<S extends V3Schemas>(
+export async function encryptedSupabase<S extends V3Schemas>(
   supabaseUrl: string,
   supabaseKey: string,
-  options: EncryptedSupabaseV3Options<S> & { schemas: S },
-): Promise<TypedEncryptedSupabaseV3Instance<S>>
-export async function encryptedSupabaseV3(
+  options: EncryptedSupabaseOptions<S> & { schemas: S },
+): Promise<TypedEncryptedSupabaseInstance<S>>
+export async function encryptedSupabase(
   supabaseUrl: string,
   supabaseKey: string,
-  options?: EncryptedSupabaseV3Options,
-): Promise<EncryptedSupabaseV3Instance>
-export async function encryptedSupabaseV3<S extends V3Schemas>(
+  options?: EncryptedSupabaseOptions,
+): Promise<EncryptedSupabaseInstance>
+export async function encryptedSupabase<S extends V3Schemas>(
   supabaseClient: SupabaseClientLike,
-  options: EncryptedSupabaseV3Options<S> & { schemas: S },
-): Promise<TypedEncryptedSupabaseV3Instance<S>>
-export async function encryptedSupabaseV3(
+  options: EncryptedSupabaseOptions<S> & { schemas: S },
+): Promise<TypedEncryptedSupabaseInstance<S>>
+export async function encryptedSupabase(
   supabaseClient: SupabaseClientLike,
-  options?: EncryptedSupabaseV3Options,
-): Promise<EncryptedSupabaseV3Instance>
-// The implementation's option params are `EncryptedSupabaseV3Options<V3Schemas |
+  options?: EncryptedSupabaseOptions,
+): Promise<EncryptedSupabaseInstance>
+// The implementation's option params are `EncryptedSupabaseOptions<V3Schemas |
 // undefined>`, NOT `<V3Schemas>`. The no-schemas overloads take
-// `EncryptedSupabaseV3Options` — i.e. `<undefined>`, whose `schemas` is typed
+// `EncryptedSupabaseOptions` — i.e. `<undefined>`, whose `schemas` is typed
 // `undefined` — and TS2394s against an implementation param whose `schemas` is
 // typed `V3Schemas`. Widening the type argument to the full constraint makes
 // every overload relatable to the implementation signature.
-export async function encryptedSupabaseV3(
+export async function encryptedSupabase(
   clientOrUrl: SupabaseClientLike | string,
-  keyOrOptions?: string | EncryptedSupabaseV3Options<V3Schemas | undefined>,
-  maybeOptions?: EncryptedSupabaseV3Options<V3Schemas | undefined>,
+  keyOrOptions?: string | EncryptedSupabaseOptions<V3Schemas | undefined>,
+  maybeOptions?: EncryptedSupabaseOptions<V3Schemas | undefined>,
 ): Promise<
-  EncryptedSupabaseV3Instance | TypedEncryptedSupabaseV3Instance<V3Schemas>
+  EncryptedSupabaseInstance | TypedEncryptedSupabaseInstance<V3Schemas>
 > {
   // 1. Resolve the Supabase client + options from the overload shape.
   let supabaseClient: SupabaseClientLike
-  let options: EncryptedSupabaseV3Options<V3Schemas | undefined>
+  let options: EncryptedSupabaseOptions<V3Schemas | undefined>
   if (typeof clientOrUrl === 'string') {
     const url = clientOrUrl
     const key = keyOrOptions as string
@@ -180,10 +126,10 @@ export async function encryptedSupabaseV3(
       if (code !== 'MODULE_NOT_FOUND' && code !== 'ERR_MODULE_NOT_FOUND')
         throw err
       throw new Error(
-        "[supabase v3]: encryptedSupabaseV3(url, key) needs '@supabase/supabase-js' " +
+        "[supabase v3]: encryptedSupabase(url, key) needs '@supabase/supabase-js' " +
           'to build the client, but that optional peer dependency is not installed. ' +
           'Install it (`npm install @supabase/supabase-js`), or pass an existing ' +
-          'client: encryptedSupabaseV3(supabaseClient, options).',
+          'client: encryptedSupabase(supabaseClient, options).',
         { cause: err },
       )
     }
@@ -191,7 +137,7 @@ export async function encryptedSupabaseV3(
   } else {
     supabaseClient = clientOrUrl
     options =
-      (keyOrOptions as EncryptedSupabaseV3Options<V3Schemas | undefined>) ?? {}
+      (keyOrOptions as EncryptedSupabaseOptions<V3Schemas | undefined>) ?? {}
   }
 
   // 2. Resolve the database URL for introspection.
@@ -273,34 +219,46 @@ export async function encryptedSupabaseV3(
       // ciphertext for one. Never make it optional.
       assertTableIsModelled(tableName, unmodelled)
       const allColumns = synth.allColumns.get(tableName) ?? null
-      return new EncryptedQueryBuilderV3Impl(
+      return new EncryptedQueryBuilderImpl(
         tableName,
         table,
         encryptionClient,
         supabaseClient,
         allColumns,
         queryDomainsRequired,
-      ) as unknown as EncryptedQueryBuilder<Record<string, unknown>>
+      ) as unknown as EncryptedQueryBuilderUntyped<Record<string, unknown>>
     },
   }
   return instance as unknown as
-    | EncryptedSupabaseV3Instance
-    | TypedEncryptedSupabaseV3Instance<V3Schemas>
+    | EncryptedSupabaseInstance
+    | TypedEncryptedSupabaseInstance<V3Schemas>
 }
+
+/**
+ * @deprecated Use {@link encryptedSupabase}. `encryptedSupabaseV3` is a
+ * type-identical alias kept for existing imports; the `V3` suffix is redundant
+ * now that EQL v3 is the only generation this wrapper authors.
+ */
+export const encryptedSupabaseV3 = encryptedSupabase
 
 export type {
   EncryptedQueryBuilder,
   EncryptedQueryBuilderCore,
+  EncryptedQueryBuilderUntyped,
+  // Deprecated `*V3` aliases (Decision 5 — supabase keeps type-identical aliases).
   EncryptedQueryBuilderV3,
   EncryptedQueryBuilderV3Untyped,
-  EncryptedSupabaseConfig,
   EncryptedSupabaseError,
   EncryptedSupabaseInstance,
+  EncryptedSupabaseOptions,
   EncryptedSupabaseResponse,
   EncryptedSupabaseV3Instance,
   EncryptedSupabaseV3Options,
+  FilterableKeys,
+  FreeTextSearchableKeys,
   PendingOrCondition,
   SupabaseClientLike,
+  TypedEncryptedSupabaseInstance,
   TypedEncryptedSupabaseV3Instance,
   V3FilterableKeys,
   V3FreeTextSearchableKeys,

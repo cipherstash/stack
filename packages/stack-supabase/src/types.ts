@@ -19,32 +19,16 @@ import type { V3Schemas } from './schema-builder'
 // Config & instance
 // ---------------------------------------------------------------------------
 
-export type EncryptedSupabaseConfig = {
-  encryptionClient: EncryptionClient
-  supabaseClient: SupabaseClientLike
-}
-
-export interface EncryptedSupabaseInstance {
-  from<T extends Record<string, unknown> = Record<string, unknown>>(
-    tableName: string,
-    schema: EncryptedTable<EncryptedTableColumn>,
-  ): EncryptedQueryBuilder<T>
-}
-
-// ---------------------------------------------------------------------------
-// EQL v3 config & instance
-// ---------------------------------------------------------------------------
-
 export type { V3Schemas }
 
 /**
- * Options for {@link import('./index').encryptedSupabaseV3}.
+ * Options for {@link import('./index').encryptedSupabase}.
  *
  * @typeParam S - declared v3 tables. When present, `from()` is constrained to
  *   the declared table names and returns typed builders, and the tables are
  *   verified against the database at construction.
  */
-export type EncryptedSupabaseV3Options<
+export type EncryptedSupabaseOptions<
   S extends V3Schemas | undefined = undefined,
 > = {
   /** Postgres connection string for introspection. Defaults to
@@ -61,7 +45,7 @@ export type EncryptedSupabaseV3Options<
    * Declaring a `text_search` column does NOT change its match behaviour: a
    * declared and a synthesized `text_search` column build byte-identically, and
    * neither `types.TextSearch` nor `EncryptedTextSearchColumn` accepts match
-   * options. See the `contains` note on `EncryptedQueryBuilderV3Impl`.
+   * options. See the `contains` note on `EncryptedQueryBuilderImpl`.
    */
   schemas?: S
 }
@@ -82,7 +66,7 @@ type V3ColumnsOfTable<Table> = Table extends {
  * the filterable keys so a filter on one is a type error, matching the runtime
  * guard in the v3 term encryption path.
  */
-export type NonQueryableV3Keys<Table extends AnyV3Table> = {
+export type NonQueryableKeys<Table extends AnyV3Table> = {
   [K in Extract<keyof V3ColumnsOfTable<Table>, string>]: [
     QueryTypesForColumn<V3ColumnsOfTable<Table>[K]>,
   ] extends [never]
@@ -124,7 +108,7 @@ type NonScalarQueryableV3Keys<Table extends AnyV3Table> = {
  * before #650's `searchableJson` arm the two sets coincided). Plaintext
  * (non-schema) columns pass through untouched, exactly as in v2.
  */
-export type V3FilterableKeys<
+export type FilterableKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > = Exclude<Extract<keyof Row, string>, NonScalarQueryableV3Keys<Table>>
@@ -150,7 +134,7 @@ type NonFreeTextSearchV3Keys<Table extends AnyV3Table> = {
  * table's encrypted columns that lack a match index. Plaintext columns pass
  * through, where `contains` is PostgREST's native jsonb/array containment.
  */
-export type V3FreeTextSearchableKeys<
+export type FreeTextSearchableKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > = Exclude<Extract<keyof Row, string>, NonFreeTextSearchV3Keys<Table>>
@@ -159,13 +143,13 @@ export type V3FreeTextSearchableKeys<
  * Row keys `matches()` accepts: ONLY the table's ENCRYPTED columns that carry a
  * `freeTextSearch` capability (`public.eql_v3_text_match` / `text_search`).
  *
- * Unlike {@link V3FreeTextSearchableKeys} (which additionally lets plaintext keys
+ * Unlike {@link FreeTextSearchableKeys} (which additionally lets plaintext keys
  * through, because the old `contains` also served native containment), this
  * excludes plaintext columns entirely — `matches()` is encrypted free-text only,
  * so calling it on a plaintext column is a compile error, not a runtime throw.
  * Derived from the encrypted-column keys minus the non-free-text ones.
  */
-export type V3EncryptedFreeTextKeys<
+export type EncryptedFreeTextKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > = Exclude<
@@ -194,9 +178,9 @@ type NonSearchableJsonV3Keys<Table extends AnyV3Table> = {
  * columns whose domain is `public.eql_v3_json_search` (`types.Json`). Plaintext
  * columns are excluded — on those, `contains()` is PostgREST-native containment
  * and the selector methods do not apply. Mirror of
- * {@link V3EncryptedFreeTextKeys} for the `searchableJson` capability.
+ * {@link EncryptedFreeTextKeys} for the `searchableJson` capability.
  */
-export type V3SearchableJsonKeys<
+export type SearchableJsonKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > = Exclude<
@@ -265,7 +249,7 @@ type PlaintextContainsValue<V> = V extends readonly unknown[]
  *    excluded here to match the runtime rejection in `validateTransforms`,
  *    rather than type-checking clean and throwing at execute time.
  */
-export type NonOrderableV3Keys<Table extends AnyV3Table> = {
+export type NonOrderableKeys<Table extends AnyV3Table> = {
   [K in Extract<
     keyof V3ColumnsOfTable<Table>,
     string
@@ -285,25 +269,25 @@ export type NonOrderableV3Keys<Table extends AnyV3Table> = {
  * `jsonb_cmp` and compares the random ciphertext first. But the builder does not
  * emit a bare `ORDER BY`: for an encrypted ordering column it emits the jsonb
  * path `col->op`, which selects the OPE term, and OPE is order-preserving. See
- * `EncryptedQueryBuilderV3Impl.orderColumnName`.
+ * `EncryptedQueryBuilderImpl.orderColumnName`.
  *
  * ORE-backed (`*_ord_ore`) columns are excluded at compile time by
- * {@link NonOrderableV3Keys} — the builder sorts through a jsonb path that
+ * {@link NonOrderableKeys} — the builder sorts through a jsonb path that
  * cannot reach their superuser-only ORE opclass, so `.order()` on one is a type
  * error, matching the runtime rejection in `validateTransforms` (defense in
  * depth for the untyped `.order(someString)` path).
  */
-export type V3OrderableKeys<
+export type OrderableKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
-> = Exclude<Extract<keyof Row, string>, NonOrderableV3Keys<Table>>
+> = Exclude<Extract<keyof Row, string>, NonOrderableKeys<Table>>
 
 /**
  * Row keys that are NOT encrypted v3 columns. Used where a method's operand is a
  * SQL value rather than a ciphertext envelope — `is(col, true)` in particular,
  * since an encrypted column holds jsonb and can never be `IS TRUE`.
  */
-export type V3PlaintextKeys<
+export type PlaintextKeys<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > = Exclude<
@@ -313,86 +297,86 @@ export type V3PlaintextKeys<
 
 /**
  * The v3 builder type: the shared {@link EncryptedQueryBuilderCore} surface with
- * filter methods narrowed to {@link V3FilterableKeys} and `order()` to
- * {@link V3OrderableKeys}.
+ * filter methods narrowed to {@link FilterableKeys} and `order()` to
+ * {@link OrderableKeys}.
  *
  * `like`/`ilike` are absent by construction. EQL v3 free-text search is fuzzy
  * bloom-filter token matching (`@>`), not SQL wildcard matching — `%` is
  * tokenized like any other character, so a `like` pattern is a category error.
  * The v3 dialect of Drizzle omits them for the same reason. Use `matches`.
  */
-export interface EncryptedQueryBuilderV3<
+export interface EncryptedQueryBuilder<
   Table extends AnyV3Table,
   Row extends Record<string, unknown>,
 > extends EncryptedQueryBuilderCore<
     Row,
-    V3FilterableKeys<Table, Row> & StringKeyOf<Row>,
-    EncryptedQueryBuilderV3<Table, Row>,
-    V3OrderableKeys<Table, Row> & StringKeyOf<Row>,
+    FilterableKeys<Table, Row> & StringKeyOf<Row>,
+    EncryptedQueryBuilder<Table, Row>,
+    OrderableKeys<Table, Row> & StringKeyOf<Row>,
     // `is(col, true)` is legal only on a PLAINTEXT column: an encrypted column
     // holds a jsonb envelope, never a SQL boolean. The two axes were threaded
     // separately "so they can diverge", and now they have — `order()` admits
     // encrypted ordering columns (sorted by their `op` term), `is(col, true)`
     // still admits none.
-    V3PlaintextKeys<Table, Row> & StringKeyOf<Row>
+    PlaintextKeys<Table, Row> & StringKeyOf<Row>
   > {
   /** Encrypted free-text token match on legacy EQL versions. EQL 3.0.2+
    * requires a query-domain cast PostgREST cannot express, so this fails fast. */
-  matches<K extends V3EncryptedFreeTextKeys<Table, Row> & StringKeyOf<Row>>(
+  matches<K extends EncryptedFreeTextKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     value: string,
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
   /** Native (exact) jsonb/array containment (`@>`). Plaintext columns only — an
    * encrypted column is a compile error (use {@link matches}). A scalar plaintext
    * column resolves its operand to `never` (`@>` is array/jsonb only). */
-  contains<K extends V3PlaintextKeys<Table, Row> & StringKeyOf<Row>>(
+  contains<K extends PlaintextKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     value: PlaintextContainsValue<Row[K]>,
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
   /** Encrypted JSON containment on legacy EQL versions. EQL 3.0.2+ requires an
    * `eql_v3.query_json` cast PostgREST cannot express, so this fails fast before
    * encrypting an operand into the request URL. */
-  contains<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+  contains<K extends SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     value: EncryptedJsonContainsValue,
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
   /** Encrypted JSONPath equality on legacy EQL versions. EQL 3.0.2+ fails fast
    * because PostgREST cannot express the required query-domain cast. */
-  selectorEq<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+  selectorEq<K extends SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
   /** Encrypted JSONPath inequality on legacy EQL versions. EQL 3.0.2+ fails
    * fast because PostgREST cannot express the required query-domain cast. */
-  selectorNe<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+  selectorNe<K extends SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
   /** Raw legacy containment spelling. EQL 3.0.2+ rejects this before sending. */
-  filter<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+  filter<K extends SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     operator: 'cs',
     value: EncryptedJsonContainsValue,
-  ): EncryptedQueryBuilderV3<Table, Row>
-  filter<K extends V3FilterableKeys<Table, Row> & StringKeyOf<Row>>(
+  ): EncryptedQueryBuilder<Table, Row>
+  filter<K extends FilterableKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     operator: string,
     value: Row[K],
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
   /** Negated legacy containment spelling. EQL 3.0.2+ rejects this before
    * sending. */
-  not<K extends V3SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
+  not<K extends SearchableJsonKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     operator: 'contains',
     value: EncryptedJsonContainsValue,
-  ): EncryptedQueryBuilderV3<Table, Row>
-  not<K extends V3FilterableKeys<Table, Row> & StringKeyOf<Row>>(
+  ): EncryptedQueryBuilder<Table, Row>
+  not<K extends FilterableKeys<Table, Row> & StringKeyOf<Row>>(
     column: K,
     operator: string,
     value: Row[K],
-  ): EncryptedQueryBuilderV3<Table, Row>
+  ): EncryptedQueryBuilder<Table, Row>
 }
 
 /**
@@ -407,12 +391,12 @@ export interface EncryptedQueryBuilderV3<
  * union (which subsumes the encrypted column's `string`); the runtime resolves
  * the column and picks the encoding (and rejects the wrong-column-kind pairing).
  */
-export interface EncryptedQueryBuilderV3Untyped<
+export interface EncryptedQueryBuilderUntyped<
   Row extends Record<string, unknown>,
 > extends EncryptedQueryBuilderCore<
     Row,
     StringKeyOf<Row>,
-    EncryptedQueryBuilderV3Untyped<Row>
+    EncryptedQueryBuilderUntyped<Row>
   > {
   /** Fuzzy free-text token match on an encrypted match/search column. The
    * operand is always the string term to tokenize (never an array/object), even
@@ -420,33 +404,33 @@ export interface EncryptedQueryBuilderV3Untyped<
   matches<K extends StringKeyOf<Row>>(
     column: K,
     value: string,
-  ): EncryptedQueryBuilderV3Untyped<Row>
+  ): EncryptedQueryBuilderUntyped<Row>
   /** Native jsonb/array containment on plaintext columns. Encrypted JSON
    * containment fails fast on EQL 3.0.2+. */
   contains<K extends StringKeyOf<Row>>(
     column: K,
     value: NativeContainsValue,
-  ): EncryptedQueryBuilderV3Untyped<Row>
+  ): EncryptedQueryBuilderUntyped<Row>
   /** Legacy encrypted JSONPath equality; fails fast on EQL 3.0.2+. */
   selectorEq<K extends StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
-  ): EncryptedQueryBuilderV3Untyped<Row>
+  ): EncryptedQueryBuilderUntyped<Row>
   /** Legacy encrypted JSONPath inequality; fails fast on EQL 3.0.2+. */
   selectorNe<K extends StringKeyOf<Row>>(
     column: K,
     path: string,
     value: SelectorLeafValue,
-  ): EncryptedQueryBuilderV3Untyped<Row>
+  ): EncryptedQueryBuilderUntyped<Row>
 }
 
 /** Untyped instance (no `schemas`): rows default to `Record<string, unknown>`
  * and `from` accepts any table name. */
-export interface EncryptedSupabaseV3Instance {
+export interface EncryptedSupabaseInstance {
   from<Row extends Record<string, unknown> = Record<string, unknown>>(
     tableName: string,
-  ): EncryptedQueryBuilderV3Untyped<Row>
+  ): EncryptedQueryBuilderUntyped<Row>
 }
 
 /** Typed instance (with `schemas: S`): a declared table name resolves to the
@@ -463,13 +447,13 @@ export interface EncryptedSupabaseV3Instance {
  * Overload order matters: the literal-constrained signature is declared first,
  * so TypeScript prefers it whenever the argument is a declared key and only
  * falls through to `string` otherwise. */
-export interface TypedEncryptedSupabaseV3Instance<S extends V3Schemas> {
+export interface TypedEncryptedSupabaseInstance<S extends V3Schemas> {
   from<K extends keyof S & string>(
     table: K,
-  ): EncryptedQueryBuilderV3<S[K], InferPlaintext<S[K]>>
+  ): EncryptedQueryBuilder<S[K], InferPlaintext<S[K]>>
   from<Row extends Record<string, unknown> = Record<string, unknown>>(
     table: string,
-  ): EncryptedQueryBuilderV3Untyped<Row>
+  ): EncryptedQueryBuilderUntyped<Row>
 }
 
 // ---------------------------------------------------------------------------
@@ -801,7 +785,7 @@ export interface EncryptedQueryBuilderCore<
   FK extends StringKeyOf<T>,
   Self,
   /** Keys `order()` accepts. Defaults to `FK`, so the v2 surface is unchanged;
-   * v3 narrows it to plaintext columns (see {@link V3OrderableKeys}). */
+   * v3 narrows it to plaintext columns (see {@link OrderableKeys}). */
   OK extends StringKeyOf<T> = FK,
   /** Keys the BOOLEAN form of `is()` accepts. Defaults to `FK`, so the v2
    * surface is unchanged; v3 narrows it to plaintext columns. Distinct from
@@ -905,19 +889,84 @@ export interface EncryptedQueryBuilderCore<
   csv(): Self
   abortSignal(signal: AbortSignal): Self
   throwOnError(): Self
-  /** Escape hatch: re-types the rows and drops back to the v2 builder surface. */
-  returns<U extends Record<string, unknown>>(): EncryptedQueryBuilder<U>
+  /** Escape hatch: re-types the rows and drops back to the untyped v3 builder
+   * surface. */
+  returns<U extends Record<string, unknown>>(): EncryptedQueryBuilderUntyped<U>
   /** Bind identity-aware encryption. Accepts either a plain
    * `{ identityClaim }` (the common form) or a `LockContext` instance. */
   withLockContext(lockContext: LockContextInput): Self
   audit(config: AuditConfig): Self
 }
 
-/** The v2 builder: free-text search via SQL wildcard matching. */
-export interface EncryptedQueryBuilder<
-  T extends Record<string, unknown> = Record<string, unknown>,
-  FK extends StringKeyOf<T> = StringKeyOf<T>,
-> extends EncryptedQueryBuilderCore<T, FK, EncryptedQueryBuilder<T, FK>> {
-  like<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
-  ilike<K extends FK>(column: K, pattern: string): EncryptedQueryBuilder<T, FK>
-}
+// ---------------------------------------------------------------------------
+// Deprecated `*V3` aliases (Decision 5 — supabase keeps type-identical aliases).
+// The v3 names are now the unsuffixed canonical exports; these aliases keep
+// existing `*V3` imports compiling.
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link EncryptedSupabaseOptions}. */
+export type EncryptedSupabaseV3Options<
+  S extends V3Schemas | undefined = undefined,
+> = EncryptedSupabaseOptions<S>
+
+/** @deprecated Use {@link NonQueryableKeys}. */
+export type NonQueryableV3Keys<Table extends AnyV3Table> =
+  NonQueryableKeys<Table>
+
+/** @deprecated Use {@link FilterableKeys}. */
+export type V3FilterableKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = FilterableKeys<Table, Row>
+
+/** @deprecated Use {@link FreeTextSearchableKeys}. */
+export type V3FreeTextSearchableKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = FreeTextSearchableKeys<Table, Row>
+
+/** @deprecated Use {@link EncryptedFreeTextKeys}. */
+export type V3EncryptedFreeTextKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = EncryptedFreeTextKeys<Table, Row>
+
+/** @deprecated Use {@link SearchableJsonKeys}. */
+export type V3SearchableJsonKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = SearchableJsonKeys<Table, Row>
+
+/** @deprecated Use {@link NonOrderableKeys}. */
+export type NonOrderableV3Keys<Table extends AnyV3Table> =
+  NonOrderableKeys<Table>
+
+/** @deprecated Use {@link OrderableKeys}. */
+export type V3OrderableKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = OrderableKeys<Table, Row>
+
+/** @deprecated Use {@link PlaintextKeys}. */
+export type V3PlaintextKeys<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = PlaintextKeys<Table, Row>
+
+/** @deprecated Use {@link EncryptedQueryBuilder}. */
+export type EncryptedQueryBuilderV3<
+  Table extends AnyV3Table,
+  Row extends Record<string, unknown>,
+> = EncryptedQueryBuilder<Table, Row>
+
+/** @deprecated Use {@link EncryptedQueryBuilderUntyped}. */
+export type EncryptedQueryBuilderV3Untyped<
+  Row extends Record<string, unknown>,
+> = EncryptedQueryBuilderUntyped<Row>
+
+/** @deprecated Use {@link EncryptedSupabaseInstance}. */
+export type EncryptedSupabaseV3Instance = EncryptedSupabaseInstance
+
+/** @deprecated Use {@link TypedEncryptedSupabaseInstance}. */
+export type TypedEncryptedSupabaseV3Instance<S extends V3Schemas> =
+  TypedEncryptedSupabaseInstance<S>
