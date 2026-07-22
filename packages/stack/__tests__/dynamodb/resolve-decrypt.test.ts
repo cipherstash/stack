@@ -5,8 +5,12 @@
  * reachable through a live ZeroKMS decrypt; these move that assurance onto the
  * pure CI lane. No credentials, no network.
  */
+import type { Result } from '@byteslice/result'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveDecryptResult, throwPreservingCode } from '@/dynamodb/helpers'
+import { EncryptionOperation } from '@/encryption/operations/base-operation'
+import { MappedDecryptOperation } from '@/encryption/operations/mapped-decrypt'
+import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { logger } from '@/utils/logger'
 
 // The metadata-drop tests `vi.spyOn(logger, 'debug')` — the same shared singleton
@@ -91,6 +95,63 @@ describe('resolveDecryptResult', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('forwards audit metadata through a MappedDecryptOperation and applies its map', async () => {
+    // The typed EQL v3 client returns a `MappedDecryptOperation` on decrypt.
+    // resolveDecryptResult sees its `.audit()` and chains it; the wrapper
+    // forwards the metadata to the underlying op (whose `execute` reads it) and
+    // maps the successful result. This is the DynamoDB half of acceptance #2b.
+    let seenMetadata: Record<string, unknown> | undefined
+    class Underlying extends EncryptionOperation<{ v: number }> {
+      override async execute(): Promise<
+        Result<{ v: number }, EncryptionError>
+      > {
+        seenMetadata = this.getAuditData().metadata
+        return { data: { v: 1 } }
+      }
+    }
+
+    const mapped = new MappedDecryptOperation<
+      { v: number },
+      { mapped: number }
+    >(new Underlying(), (value) => ({ mapped: value.v + 1 }), {
+      failure: {
+        type: EncryptionErrorTypes.DecryptionError,
+        message: 'unknown table',
+      },
+    })
+
+    const result = await resolveDecryptResult(mapped, { metadata: { m: 7 } })
+
+    expect(result).toEqual({ data: { mapped: 2 } })
+    expect(seenMetadata).toEqual({ m: 7 })
+  })
+
+  it('returns the precomputed failure from a MappedDecryptOperation with no map (unknown table)', async () => {
+    class Underlying extends EncryptionOperation<{ v: number }> {
+      override async execute(): Promise<
+        Result<{ v: number }, EncryptionError>
+      > {
+        return { data: { v: 1 } }
+      }
+    }
+
+    const unknownTableFailure = {
+      failure: {
+        type: EncryptionErrorTypes.DecryptionError,
+        message: 'unknown table',
+      },
+    }
+    const mapped = new MappedDecryptOperation<
+      { v: number },
+      { mapped: number }
+    >(new Underlying(), undefined, unknownTableFailure)
+
+    const result = await resolveDecryptResult(mapped, { metadata: { m: 7 } })
+
+    expect(result.failure?.message).toBe('unknown table')
+    expect(result.data).toBeUndefined()
   })
 })
 

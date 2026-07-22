@@ -1,9 +1,10 @@
 /**
- * Type-level pin of a real v3 asymmetry: audit metadata is available on the
- * encrypt-side operations (which are chainable) but NOT on `decryptModel` /
- * `bulkDecryptModels`, which return a bare `Promise<Result<…>>` rather than a
- * chainable operation. Documented here as an executable invariant so the gap
- * (v2's `decryptModel().audit(...)` has no v3 equivalent) can't silently change.
+ * Type-level pin that audit + lock-context are chainable on BOTH the encrypt-side
+ * operations AND `decryptModel` / `bulkDecryptModels`. The typed client's decrypt
+ * methods now return a chainable {@link MappedDecryptOperation} (was a bare
+ * `Promise<Result<…>>`), restoring the v2-era `decryptModel().audit(...)` surface
+ * on the v3 client. Documented here as an executable invariant so the capability
+ * can't silently regress.
  *
  * Runs via `pnpm test:types`.
  */
@@ -22,10 +23,16 @@ describe('v3 typed client audit/lock-context chainability (types)', () => {
     expectTypeOf(op).toHaveProperty('withLockContext')
   })
 
-  it('does NOT expose .audit()/.withLockContext() on decryptModel (bare Promise)', () => {
-    const result = typed.decryptModel({ email: {} as never }, users)
-    // A Promise, not a chainable operation — no audit/lock-context hook.
-    expectTypeOf(result).not.toHaveProperty('audit')
-    expectTypeOf(result).not.toHaveProperty('withLockContext')
+  it('exposes .audit()/.withLockContext() on decryptModel (chainable operation)', () => {
+    const op = typed.decryptModel({ email: {} as never }, users)
+    // A chainable operation, not a bare Promise — audit + lock-context hooks.
+    expectTypeOf(op).toHaveProperty('audit')
+    expectTypeOf(op).toHaveProperty('withLockContext')
+  })
+
+  it('exposes .audit()/.withLockContext() on bulkDecryptModels (chainable operation)', () => {
+    const op = typed.bulkDecryptModels([{ email: {} as never }], users)
+    expectTypeOf(op).toHaveProperty('audit')
+    expectTypeOf(op).toHaveProperty('withLockContext')
   })
 })

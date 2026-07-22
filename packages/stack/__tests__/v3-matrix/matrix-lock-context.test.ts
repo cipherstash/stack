@@ -37,7 +37,7 @@ vi.mock('@cipherstash/protect-ffi', () => ({
 }))
 
 import * as ffi from '@cipherstash/protect-ffi'
-import { encryptedTable, typedClient, types } from '@/encryption/v3'
+import { encryptedTable, types } from '@/encryption/v3'
 
 const users = encryptedTable('users', {
   email: types.TextEq('email'),
@@ -68,14 +68,16 @@ function unwrap(result: any) {
 // biome-ignore lint/suspicious/noExplicitAny: reading recorded mock args
 const lastOpts = (fn: any) => fn.mock.calls.at(-1)[1]
 
-let typed: ReturnType<typeof typedClient>
+// `Encryption` returns the typed client directly for an all-v3 schema set (the
+// collapse of `EncryptionV3`), so there is no separate `typedClient` wrap here.
+let typed: Awaited<ReturnType<typeof Encryption<readonly [typeof users]>>>
 let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {
   vi.clearAllMocks()
   prevWorkspaceCrn = process.env.CS_WORKSPACE_CRN
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
-  typed = typedClient(await Encryption({ schemas: [users] as never }), users)
+  typed = await Encryption({ schemas: [users] })
 })
 
 afterEach(() => {

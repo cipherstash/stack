@@ -219,6 +219,9 @@ export type EncryptConfig = z.infer<typeof encryptConfigSchema>
  * Builder for a nested encrypted field (encrypted but not searchable).
  * Create with {@link encryptedField}. Use inside nested objects in {@link encryptedTable};
  * supports `.dataType()` for plaintext type. No index methods (equality, orderAndRange, etc.).
+ *
+ * @deprecated EQL v2 authoring. The client authors EQL v3; this class backs the
+ * v2 `encryptedField` builder, retained only for reading/migrating legacy v2 data.
  */
 export class EncryptedField {
   private valueName: string
@@ -263,6 +266,12 @@ export class EncryptedField {
   }
 }
 
+/**
+ * Builder for an EQL v2 encrypted column. Create with {@link encryptedColumn}.
+ *
+ * @deprecated EQL v2 authoring. The client authors EQL v3; this class backs the
+ * v2 `encryptedColumn` builder, retained only for reading/migrating legacy v2 data.
+ */
 export class EncryptedColumn {
   private columnName: string
   private castAsValue: CastAs
@@ -602,6 +611,11 @@ export type InferEncrypted<T extends EncryptedTable<any>> =
  * so you can reference columns as `users.email` when calling `encrypt`, `decrypt`,
  * and `encryptQuery`.
  *
+ * @deprecated EQL v2 authoring. The client authors EQL v3 — build tables with
+ * `encryptedTable` + the `types.*` factories from `@cipherstash/stack/v3`. This
+ * v2 builder remains only for reading/migrating legacy v2 data and will be
+ * removed once the v2 adapters are gone.
+ *
  * @param tableName - The name of the database table this schema represents.
  * @param columns - An object whose keys are logical column names and values are
  *   {@link EncryptedColumn} from {@link encryptedColumn}, or nested objects whose
@@ -649,6 +663,11 @@ export function encryptedTable<T extends EncryptedTableColumn>(
  * `.searchableJson()`) and/or `.dataType()` to configure searchable encryption
  * and the plaintext data type.
  *
+ * @deprecated EQL v2 authoring. The client authors EQL v3 — define columns with
+ * the `types.*` concrete-domain factories from `@cipherstash/stack/v3`. This v2
+ * builder remains only for reading/migrating legacy v2 data and will be removed
+ * once the v2 adapters are gone.
+ *
  * @param columnName - The name of the database column to encrypt.
  * @returns A new `EncryptedColumn` builder.
  *
@@ -671,6 +690,11 @@ export function encryptedColumn(columnName: string) {
  * `encryptedField` is similar to {@link encryptedColumn} but creates an {@link EncryptedField}
  * for nested fields that are encrypted but not searchable (no indexes). Use `.dataType()`
  * to specify the plaintext type.
+ *
+ * @deprecated EQL v2 authoring. The client authors EQL v3 — model nested fields
+ * with a dotted v3 column path (`'profile.ssn': types.TextEq(...)`) from
+ * `@cipherstash/stack/v3`. This v2 builder remains only for reading/migrating
+ * legacy v2 data and will be removed once the v2 adapters are gone.
  *
  * @param valueName - The name of the value field.
  * @returns A new `EncryptedField` builder.

@@ -11,14 +11,32 @@ const table = encryptedTable('t', {
 })
 
 /**
- * A minimal client stub whose model-decrypt methods resolve to a fixed
- * `Result` payload. `typedClient` only `await`s these, so a plain Promise is a
- * sufficient thenable.
+ * A minimal operation stub resolving to a fixed `Result`. `typedClient` now
+ * wraps the underlying decrypt op in a `MappedDecryptOperation` and calls
+ * `.execute()` on it (rather than awaiting a bare promise), so the stub must be
+ * operation-like: `.execute()` plus the chainable `.audit()` / `.withLockContext()`
+ * the wrapper may delegate to.
+ */
+function fakeOp<R>(result: R) {
+  return {
+    execute: () => Promise.resolve(result),
+    audit() {
+      return this
+    },
+    withLockContext() {
+      return this
+    },
+  }
+}
+
+/**
+ * A minimal client stub whose model-decrypt methods return an operation
+ * resolving to a fixed `Result` payload.
  */
 function fakeClient(data: Record<string, unknown>): EncryptionClient {
   return {
-    decryptModel: () => Promise.resolve({ data }),
-    bulkDecryptModels: () => Promise.resolve({ data: [data] }),
+    decryptModel: () => fakeOp({ data }),
+    bulkDecryptModels: () => fakeOp({ data: [data] }),
   } as unknown as EncryptionClient
 }
 
@@ -77,7 +95,7 @@ describe('typedClient — decrypt reconstruction', () => {
   it('propagates a failure result unchanged', async () => {
     const failing = {
       decryptModel: () =>
-        Promise.resolve({
+        fakeOp({
           failure: { type: 'DecryptionError', message: 'boom' },
         }),
     } as unknown as EncryptionClient
