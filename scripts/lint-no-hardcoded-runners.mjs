@@ -10,7 +10,6 @@ const ALLOWLISTED_PATHS = new Set([
   'packages/wizard/src/lib/detect.ts', // npm row of the PM table
   'packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
   'packages/cli/src/commands/init/lib/setup-prompt.ts', // execCommand `case 'npm':` switch
-  'packages/protect/src/bin/runner.ts', // Pre-allowlisted: helper for Task 11
   'packages/drizzle/src/bin/runner.ts', // Pre-allowlisted: helper for Task 13
   'scripts/lint-no-hardcoded-runners.mjs', // this script's own docs
 ])

@@ -23,7 +23,6 @@ on:
       # suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       # The WASM family suite (integration/wasm/**) exercises this entry:
       - 'packages/stack/src/wasm-inline.ts'
@@ -46,7 +45,6 @@ on:
       # suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       # The WASM family suite (integration/wasm/**) exercises this entry:
       - 'packages/stack/src/wasm-inline.ts'
