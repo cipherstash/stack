@@ -9,9 +9,9 @@ Depends on `@cipherstash/stack`; install both:
 npm install @cipherstash/stack @cipherstash/stack-supabase @supabase/supabase-js
 ```
 
-## EQL v3 (recommended)
+## EQL v3
 
-`encryptedSupabaseV3` introspects the database at connect time (native
+`encryptedSupabase` introspects the database at connect time (native
 `public.eql_v3_*` column domains) — no schema argument, `select('*')` support,
 equality/range filters, and encrypted `order()` on OPE columns.
 
@@ -22,18 +22,23 @@ Use the Drizzle or Prisma Next adapter, or a carefully scoped direct SQL/RPC
 path.
 
 ```ts
-import { encryptedSupabaseV3 } from '@cipherstash/stack-supabase'
+import { encryptedSupabase } from '@cipherstash/stack-supabase'
 
-const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
+const es = await encryptedSupabase(supabaseUrl, supabaseKey)
 await es.from('users').select('id, email').eq('email', 'a@b.com')
 ```
+
+`encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias of
+`encryptedSupabase`, so existing imports keep working.
 
 Introspection needs a direct Postgres connection (`DATABASE_URL`), so `pg` is an
 optional peer and the factory cannot run in a Worker or the browser.
 
-## EQL v2 (legacy)
+## EQL v2 (removed)
 
-`encryptedSupabase` wraps a supabase-js client with a v2 schema; still shipped for
-existing v2 deployments.
+The legacy EQL v2 authoring wrapper — `encryptedSupabase({ encryptionClient,
+supabaseClient }).from(tableName, schema)` — has been removed; this package now
+authors and queries EQL v3 only. Migrate existing v2 columns to an `eql_v3_*`
+domain, or pin the last release that shipped the v2 wrapper.
 
 See the `stash-supabase` agent skill and https://cipherstash.com/docs for the full guide.
