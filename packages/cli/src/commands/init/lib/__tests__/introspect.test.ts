@@ -93,6 +93,14 @@ describe('defaultDomain', () => {
       expect(values).toContain(defaultDomain(dt))
     }
   })
+
+  it('returns the last value of a supplied candidate list (array overload)', () => {
+    // The picker loop passes its already-computed options through this branch;
+    // asserts it reads the widest (last), not the narrowest (first).
+    expect(defaultDomain([{ value: 'TextEq' }, { value: 'TextSearch' }])).toBe(
+      'TextSearch',
+    )
+  })
 })
 
 describe('selectTableColumns', () => {
@@ -204,6 +212,30 @@ describe('selectTableColumns', () => {
     // …and the column is mapped through pgTypeToDataType('eql_v2_encrypted')
     // which falls back to 'string', so it still receives its chosen domain.
     expect(schema?.columns).toEqual([{ name: 'ssn', domain: 'TextSearch' }])
+  })
+
+  it('pre-selects the widest searchable domain as the per-column default', async () => {
+    // Asserts the ARGS to the domain prompt, not just its return: the picker
+    // must pass initialValue: defaultDomain(options) so the widest searchable
+    // domain is pre-highlighted. Regressing to options[0] (narrowest) or
+    // dropping initialValue would still return the mocked value and pass every
+    // other test — only this one catches it.
+    selectMock
+      .mockResolvedValueOnce('users') // table pick
+      .mockResolvedValueOnce('TextSearch') // email domain
+      .mockResolvedValueOnce('IntegerOrd') // age domain
+    multiselectMock.mockResolvedValueOnce(['email', 'age'])
+
+    await selectTableColumns(tables)
+
+    expect(selectMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ initialValue: 'TextSearch' }),
+    )
+    expect(selectMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ initialValue: 'IntegerOrd' }),
+    )
   })
 })
 

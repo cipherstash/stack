@@ -39,6 +39,16 @@ describe('generateClientFromSchemas', () => {
       expect(out).not.toMatch(/freeTextSearch|orderAndRange|\.equality\(/)
     }
   })
+
+  it('routes supabase through the generic generator, not drizzle', () => {
+    // `supabase` and `postgresql` share generateGenericFromSchemas; a misroute
+    // (dropping the `case 'supabase':` fallthrough, or routing it to drizzle)
+    // is otherwise uncovered — the other cases only exercise postgresql/drizzle.
+    const out = generateClientFromSchemas('supabase', schemas)
+    expect(out).toContain("email: types.TextSearch('email'),")
+    expect(out).toContain("from '@cipherstash/stack/v3'")
+    expect(out).not.toContain('@cipherstash/stack-drizzle')
+  })
 })
 
 // Exhaustive round-trip over the closed V3Domain union: the sample fixtures
