@@ -19,7 +19,6 @@ on:
       # trigger the live suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -38,7 +37,6 @@ on:
       # trigger the live suite that would catch it.
       - 'packages/stack/src/encryption/**'
       - 'packages/stack/src/schema/**'
-      - 'packages/schema/**'
       - 'packages/stack/integration/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'

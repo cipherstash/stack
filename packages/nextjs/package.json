@@ -1,7 +1,7 @@
 {
 	"name": "@cipherstash/nextjs",
 	"version": "4.1.1",
-	"description": "Nextjs package for use with @cipherstash/protect",
+	"description": "Nextjs package for use with @cipherstash/stack",
 	"keywords": [
 		"encrypted",
 		"typescript",

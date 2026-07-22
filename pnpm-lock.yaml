@@ -86,9 +86,6 @@ importers:
 
   e2e:
     dependencies:
-      '@cipherstash/protect':
-        specifier: workspace:*
-        version: link:../packages/protect
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../packages/stack
@@ -455,97 +452,6 @@ importers:
       postgres:
         specifier: ^3.4.8
         version: 3.4.9
-      tsup:
-        specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
-      typescript:
-        specifier: catalog:repo
-        version: 5.9.3
-      vitest:
-        specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-
-  packages/protect:
-    dependencies:
-      '@byteslice/result':
-        specifier: ^0.2.0
-        version: 0.2.0
-      '@cipherstash/protect-ffi':
-        specifier: 0.23.0
-        version: 0.23.0
-      '@cipherstash/schema':
-        specifier: workspace:*
-        version: link:../schema
-      '@stricli/core':
-        specifier: ^1.2.9
-        version: 1.2.9
-      dotenv:
-        specifier: 17.4.2
-        version: 17.4.2
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
-    devDependencies:
-      '@supabase/supabase-js':
-        specifier: ^2.110.2
-        version: 2.110.2
-      execa:
-        specifier: ^9.5.2
-        version: 9.6.1
-      json-schema-to-typescript:
-        specifier: ^15.0.2
-        version: 15.0.4
-      postgres:
-        specifier: ^3.4.7
-        version: 3.4.9
-      tsup:
-        specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
-      tsx:
-        specifier: catalog:repo
-        version: 4.23.0
-      typescript:
-        specifier: catalog:repo
-        version: 5.9.3
-      vitest:
-        specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-    optionalDependencies:
-      '@rollup/rollup-linux-x64-gnu':
-        specifier: 4.62.2
-        version: 4.62.2
-
-  packages/protect-dynamodb:
-    dependencies:
-      '@byteslice/result':
-        specifier: ^0.2.0
-        version: 0.2.0
-    devDependencies:
-      '@cipherstash/protect':
-        specifier: workspace:*
-        version: link:../protect
-      dotenv:
-        specifier: ^17.4.2
-        version: 17.4.2
-      tsup:
-        specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
-      tsx:
-        specifier: catalog:repo
-        version: 4.23.0
-      typescript:
-        specifier: catalog:repo
-        version: 5.9.3
-      vitest:
-        specifier: catalog:repo
-        version: 3.2.7(@types/node@26.1.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.0)(yaml@2.9.0)
-
-  packages/schema:
-    dependencies:
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
-    devDependencies:
       tsup:
         specifier: catalog:repo
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.14)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
@@ -1082,19 +988,9 @@ packages:
   '@cipherstash/eql@3.0.2':
     resolution: {integrity: sha512-E85o0aoOqgCW6RReLtJ0YLh/ExRlmDJo7LlJGpWPoMTVaw+CW8o11DJ4oJIF1vFtuxSVxNULuPzzBuVmpTvvcA==}
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
-    resolution: {integrity: sha512-DhkKC+trOfk3RLDvPXqGsrpWdVnLAMEVLUI59OuR9tdTcJeiABtbQx8VaXdbzvNxnbkoDnOqbFRE5D11Z7nerQ==}
-    cpu: [arm64]
-    os: [darwin]
-
   '@cipherstash/protect-ffi-darwin-arm64@0.30.0':
     resolution: {integrity: sha512-MbUfH0em2ysQxEV8+ed6442Q/EPQbAh5p17p1p4+JLUgbQJwPvxP8gm0yjeVrYBuGnZodsMqZwgOgEGt7360Ig==}
     cpu: [arm64]
-    os: [darwin]
-
-  '@cipherstash/protect-ffi-darwin-x64@0.23.0':
-    resolution: {integrity: sha512-YuEn2RDHOaj9s8qDIX9cpQuBmsN2SZp/RjiNX72LxhV7JEDJuLSt0ySrl+k6MHoLiZotjkp7I1u6tq3vuLCC0Q==}
-    cpu: [x64]
     os: [darwin]
 
   '@cipherstash/protect-ffi-darwin-x64@0.30.0':
@@ -1102,28 +998,13 @@ packages:
     cpu: [x64]
     os: [darwin]
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.23.0':
-    resolution: {integrity: sha512-I1kID2JqWnJUd0VHzNQo4gxeOAhEgzeXg3Fn0iDHnGKy+HDHd7+t/qEei9YLrV0wAXDnDFRhXXWRRVs8CxDzZA==}
-    cpu: [arm64]
-    os: [linux]
-
   '@cipherstash/protect-ffi-linux-arm64-gnu@0.30.0':
     resolution: {integrity: sha512-R/DWCDQDDx/hRksRueJLvqxyQCSpGOZIummKqcVvBNkIhF/6Aos1SZ+zXTHAZ4gvBlfu3ovnRfMMI6eAstZDog==}
     cpu: [arm64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.23.0':
-    resolution: {integrity: sha512-n4aCDK0os4iY1BQIHVVUBgt8WnfIb8R3gLXTRrTkMVug0dcoQ0ZZaL5ltIUgFGJG4bvfW8+7zWLRZ51CZkqKsQ==}
-    cpu: [x64]
-    os: [linux]
-
   '@cipherstash/protect-ffi-linux-x64-gnu@0.30.0':
     resolution: {integrity: sha512-uLi9kiKkJ9jUki75hgvLnDsDrJOj0RtZ8G0fVaKl4nnhZjCIVqpkn0EMlf0GOq2Bj8WiGSnca7kTGrhVkvgY9w==}
-    cpu: [x64]
-    os: [linux]
-
-  '@cipherstash/protect-ffi-linux-x64-musl@0.23.0':
-    resolution: {integrity: sha512-62WG6ayFJ/1+M7W/AWGEDskLo6aHtr8PFoHoXkSTdhWf29RPb4+yU1pPNYVCitVWB1sdGs+lXSO6MFD4N6IIXw==}
     cpu: [x64]
     os: [linux]
 
@@ -1132,18 +1013,10 @@ packages:
     cpu: [x64]
     os: [linux]
 
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.23.0':
-    resolution: {integrity: sha512-z+jErHcPw1RwiwhSqqx/QzKqkk06gulh6YJl4TlSBPlJPjhR30TEcxQpQ2zf7kuv86JqsBRHv8UazLNePSiEww==}
-    cpu: [x64]
-    os: [win32]
-
   '@cipherstash/protect-ffi-win32-x64-msvc@0.30.0':
     resolution: {integrity: sha512-xew3mH+jf9RlfuIjXQ7KFWTs44Wjur//Ed1U48yFK3zmsyzkZGYVwfN8zieKpKgKqvj844s5x/0kvFXtrJDB0A==}
     cpu: [x64]
     os: [win32]
-
-  '@cipherstash/protect-ffi@0.23.0':
-    resolution: {integrity: sha512-Ca8MKLrrumC561VoPDOhuUZcF8C8YenqO1Ig9hSJSRUB+jFeIJXeyn7glExsvKYWtxOx/pRub9FV8A0RyuPHMg==}
 
   '@cipherstash/protect-ffi@0.30.0':
     resolution: {integrity: sha512-Xh8X/71ZOW6B6iEKPQlG4KrDgsKYZBw29ohsFnmMKOaTWVR7EodCE6MpSRDJ4uc+zYftp3QWsvUDEFz9gDpg6w==}
@@ -2086,9 +1959,6 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
-
-  '@stricli/core@1.2.9':
-    resolution: {integrity: sha512-vKniyS+0GtarIaUpMRMQ5+Ck9mXeaBqdN/7otznkBTWU0EXfkMJAHt2QdOCmOudR9eciQZQf09DmYm14yfPWzw==}
 
   '@supabase/auth-js@2.110.2':
     resolution: {integrity: sha512-Qj7a6EDP+AMMQFWqGv+qFa8r6re//dk+qQI5bA0KK+PZmnI3JPu97TDeNt6SMiQ2FkklP79hP2yDFYSnA989OA==}
@@ -4179,52 +4049,23 @@ snapshots:
 
   '@cipherstash/eql@3.0.2': {}
 
-  '@cipherstash/protect-ffi-darwin-arm64@0.23.0':
-    optional: true
-
   '@cipherstash/protect-ffi-darwin-arm64@0.30.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-darwin-x64@0.23.0':
     optional: true
 
   '@cipherstash/protect-ffi-darwin-x64@0.30.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-arm64-gnu@0.23.0':
-    optional: true
-
   '@cipherstash/protect-ffi-linux-arm64-gnu@0.30.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-linux-x64-gnu@0.23.0':
     optional: true
 
   '@cipherstash/protect-ffi-linux-x64-gnu@0.30.0':
     optional: true
 
-  '@cipherstash/protect-ffi-linux-x64-musl@0.23.0':
-    optional: true
-
   '@cipherstash/protect-ffi-linux-x64-musl@0.30.0':
-    optional: true
-
-  '@cipherstash/protect-ffi-win32-x64-msvc@0.23.0':
     optional: true
 
   '@cipherstash/protect-ffi-win32-x64-msvc@0.30.0':
     optional: true
-
-  '@cipherstash/protect-ffi@0.23.0':
-    dependencies:
-      '@neon-rs/load': 0.1.82
-    optionalDependencies:
-      '@cipherstash/protect-ffi-darwin-arm64': 0.23.0
-      '@cipherstash/protect-ffi-darwin-x64': 0.23.0
-      '@cipherstash/protect-ffi-linux-arm64-gnu': 0.23.0
-      '@cipherstash/protect-ffi-linux-x64-gnu': 0.23.0
-      '@cipherstash/protect-ffi-linux-x64-musl': 0.23.0
-      '@cipherstash/protect-ffi-win32-x64-msvc': 0.23.0
 
   '@cipherstash/protect-ffi@0.30.0':
     dependencies:
@@ -5061,8 +4902,6 @@ snapshots:
   '@stablelib/base64@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
-
-  '@stricli/core@1.2.9': {}
 
   '@supabase/auth-js@2.110.2':
     dependencies:

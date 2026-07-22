@@ -21,7 +21,7 @@
   "license": "MIT",
   "scripts": {
     "build": "turbo build --filter './packages/*'",
-    "build:js": "turbo build --filter './packages/protect' --filter './packages/nextjs'",
+    "build:js": "turbo build --filter './packages/nextjs'",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish",
