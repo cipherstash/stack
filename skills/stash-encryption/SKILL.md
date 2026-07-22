@@ -458,7 +458,19 @@ if (decrypted.failure) throw new Error(decrypted.failure.message)
 // one ZeroKMS round trip for the whole list, not one per row
 ```
 
-`null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS. Because each entry names its own column, one call can cover several columns across many rows. When items fail to decrypt, `failure.message` names every failing index. The model helpers (`encryptModel` / `bulkEncryptModels` / …) are **not** available on the WASM entry.
+`null` / `undefined` entries yield `null` at the same index without reaching ZeroKMS. Because each entry names its own column, one call can cover several columns across many rows. When items fail to decrypt, `failure.message` names every failing index.
+
+**The model helpers are available on the WASM entry too**: `encryptModel(model, table)`, `decryptModel(model, table)`, `bulkEncryptModels(models, table)`, `bulkDecryptModels(models, table)`. They run the same schema walk as the native client — declared columns are encrypted (matched by JS property name; nested fields via the column's dotted path), everything else passes through, and `null`/`undefined` fields are preserved without reaching ZeroKMS — and each call is **one ZeroKMS round trip** no matter how many fields or models it covers. `types.Date` / `types.Timestamp` columns round-trip `Date` → `Date` (on the wire they travel as ISO strings). Differences from the native typed client: every method returns a plain `Promise` of the `{ data } | { failure }` Result (no `.audit()` chaining), and there is **no lock-context argument** — identity-bound encryption on the edge is configured at client construction via `config.authStrategy`. Decrypt failures name every failing field by its model path (e.g. `[model 1] profile.ssn`).
+
+```typescript
+const row = await client.encryptModel({ id: 1, email: "alice@example.com" }, users)
+if (row.failure) throw new Error(row.failure.message)
+// row.data = { id: 1, email: <EQL envelope> } — only schema columns encrypted
+
+const back = await client.bulkDecryptModels(encryptedRows, users)
+if (back.failure) throw new Error(back.failure.message)
+// back.data = plaintext models, index-aligned with the input
+```
 
 ## Searchable Encryption
 

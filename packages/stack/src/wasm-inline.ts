@@ -94,10 +94,22 @@ import {
 } from '@cipherstash/protect-ffi/wasm-inline'
 import { resolveIndexType } from '@/encryption/helpers/infer-index-type'
 import {
+  prepareBulkModelsForOperation,
+  resolveEncryptColumnMap,
+  setNestedValue,
+} from '@/encryption/helpers/model-traversal'
+import {
   assertValidNumericValue,
   assertValueIndexCompatibility,
 } from '@/encryption/helpers/validation'
-import { type AnyV3Table, buildEncryptConfig } from '@/eql/v3'
+import {
+  type AnyV3Table,
+  buildEncryptConfig,
+  type V3DecryptedModel,
+  type V3EncryptedModel,
+  type V3ModelInput,
+} from '@/eql/v3'
+import { DATE_LIKE_CASTS } from '@/eql/v3/columns'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type CastAs,
@@ -503,9 +515,11 @@ function wasmResult<T>(
  * result paired with the INPUT index it belongs to.
  *
  * Hand-rolled in three places before — the very code the length guard exists
- * because it is easy to get subtly wrong. A fourth batch method (the model
- * helpers, when they land) could have omitted {@link assertBatchLength}
- * without failing a build; routing through here makes that impossible.
+ * because it is easy to get subtly wrong. (The model helpers do NOT route
+ * through here: their batches are never sparse — nulls stay in the model —
+ * and each entry carries `{ modelIndex, fieldKey }` structure instead of a
+ * positional slot, so they pair results directly and call
+ * {@link assertBatchLength} themselves.)
  *
  * `out` is built with `Array.from`, NOT `items.map(() => null)`: `map` SKIPS
  * holes in a sparse input, so `bulkDecrypt([a, , b])` would leave index 1 an
@@ -555,6 +569,36 @@ function assertBatchLength(op: string, received: number, sent: number): void {
 }
 
 /**
+ * One item of a `decryptBulkFallible` response: the decrypted plaintext, or
+ * this item's own failure (the batch call itself still resolves). Shared by
+ * {@link WasmEncryptionClient.bulkDecrypt} and the model decrypt engine.
+ */
+type FallibleDecryptItem =
+  | { data: WasmPlaintext }
+  | { error: string; code?: string }
+
+/**
+ * The JS property paths of `table`'s date-like columns (`cast_as: 'date' |
+ * 'timestamp'`). The model decrypt path rebuilds these into `Date` values:
+ * the FFI returns date plaintexts in their serialized form (this entry sends
+ * them as ISO strings — see the model encrypt engine), and the native v3
+ * client performs the same reconstruction (`rowReconstructor` in
+ * `@/encryption/v3`), so a model round-trips `Date` → `Date` on both entries.
+ */
+function datePropertyPaths(table: AnyV3Table): Set<string> {
+  const { columns } = table.build()
+  const propToDb = table.buildColumnKeyMap()
+  const paths = new Set<string>()
+  for (const [property, dbName] of Object.entries(propToDb)) {
+    const castAs = columns[dbName]?.cast_as
+    if ((DATE_LIKE_CASTS as readonly string[]).includes(castAs as string)) {
+      paths.add(property)
+    }
+  }
+  return paths
+}
+
+/**
  * Internal token used to gate the {@link WasmEncryptionClient}
  * constructor. Symbols are unique by reference, so external code can't
  * forge one even if they recreate `WasmEncryptionClient` via type
@@ -567,9 +611,10 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  *
  * Wraps an opaque `wasmNewClient` handle and exposes `encrypt`, `decrypt`,
  * `isEncrypted`, `encryptQuery` / `encryptQueryBulk` for minting v3 query
- * terms (#662, which made searchable encryption reachable on the edge), and
+ * terms (#662, which made searchable encryption reachable on the edge),
  * `bulkEncrypt` / `bulkDecrypt` for single-round-trip list reads and writes
- * (#737).
+ * (#737), and the model helpers `encryptModel` / `decryptModel` /
+ * `bulkEncryptModels` / `bulkDecryptModels` (#742).
  *
  * ## Every fallible method returns a Result
  *
@@ -589,12 +634,15 @@ const INTERNAL_CONSTRUCT = Symbol('cs-wasm-client')
  * `isEncrypted` is the one exception, and stays a plain `boolean`: it is a
  * pure predicate with nothing to fail at, exactly as on the native entry.
  *
- * Still Node-only: the MODEL helpers (`encryptModel` / `decryptModel` and
- * their bulk forms). Those are a separate port — this entry has no
- * single-model operation to build a bulk one on top of, so adding
- * `bulkEncryptModels` alone would be incoherent. Port lazily as Deno / edge
- * consumers demand it; the value-level bulk primitives above are what the
- * round-trip cost actually hangs on.
+ * The model helpers run the SAME traversal the native entry uses
+ * (`@/encryption/helpers/model-traversal` — shared, not ported, so the two
+ * entries cannot drift on which fields get encrypted), and each call is one
+ * ZeroKMS round trip regardless of how many fields or models it covers. What
+ * still differs from the native surface is deliberate and local: arguments
+ * are plain models and a v3 table (no `{ id, … }` envelopes), failures come
+ * back as this entry's `{ failure }` Results, and there is no
+ * `.withLockContext()` — identity-bound encryption on the edge is configured
+ * at client construction via `config.authStrategy` instead (#663 context).
  *
  * Construct via {@link Encryption} — the constructor is private to
  * prevent callers from wrapping arbitrary objects in this type.
@@ -908,13 +956,9 @@ export class WasmEncryptionClient {
     ciphertexts: readonly (Encrypted | null | undefined)[],
   ): Promise<WasmResult<Array<WasmPlaintext | null>>> {
     return wasmResult(async () => {
-      type FallibleItem =
-        | { data: WasmPlaintext }
-        | { error: string; code?: string }
-
       const { out, placed } = await runBatch<
         Encrypted,
-        FallibleItem,
+        FallibleDecryptItem,
         WasmPlaintext
       >(
         'bulkDecrypt',
@@ -928,7 +972,7 @@ export class WasmEncryptionClient {
             {
               ciphertexts: live.map((ciphertext) => ({ ciphertext })),
             } as never,
-          )) as FallibleItem[],
+          )) as FallibleDecryptItem[],
       )
 
       // Collect every failure before raising: the FFI already did the work for
@@ -957,6 +1001,275 @@ export class WasmEncryptionClient {
       }
       return out
     }, EncryptionErrorTypes.DecryptionError)
+  }
+
+  /**
+   * Encrypt a model's schema-declared fields in ONE ZeroKMS round trip.
+   *
+   * Walks `model` against `table`'s columns — matched by JS property name,
+   * nested fields via a column's dotted path (`'profile.ssn'`) — and encrypts
+   * exactly the declared fields. Everything else passes through untouched,
+   * and a `null`/`undefined` schema field is preserved as-is without
+   * reaching ZeroKMS. The traversal is the native entry's own, shared from
+   * `@/encryption/helpers/model-traversal` (#742): a column added to the
+   * schema is picked up by construction, instead of by remembering to extend
+   * a hand-written `bulkEncrypt` mapping — the failure mode of that mapping
+   * is a field that silently persists in PLAINTEXT.
+   *
+   * `Date` plaintexts (date/timestamp domains) are sent as ISO-8601 strings —
+   * {@link WasmPlaintext} carries no `Date` across the WASM serde boundary —
+   * and {@link decryptModel} rebuilds them into `Date` values on the way out.
+   *
+   * @example
+   * ```ts
+   * const row = await client.encryptModel(
+   *   { id: 1, email: "alice@example.com", verified: true },
+   *   users,
+   * )
+   * if (row.failure) throw new Error(row.failure.message)
+   * // row.data = { id: 1, email: <EQL envelope>, verified: true }
+   * ```
+   */
+  async encryptModel<
+    Table extends AnyV3Table,
+    T extends Record<string, unknown>,
+  >(
+    model: V3ModelInput<Table, T>,
+    table: Table,
+  ): Promise<WasmResult<V3EncryptedModel<Table, T>>> {
+    return wasmResult(async () => {
+      const [encrypted] = await this.encryptModelsBatch(
+        [model as Record<string, unknown>],
+        table,
+        'encryptModel',
+      )
+      return encrypted as V3EncryptedModel<Table, T>
+    }, EncryptionErrorTypes.EncryptionError)
+  }
+
+  /**
+   * Encrypt many models in ONE ZeroKMS round trip — {@link encryptModel}'s
+   * traversal applied per model, with every collected field across every
+   * model batched into a single FFI call. N models × M columns is still one
+   * crossing, the same economics as {@link bulkEncrypt}.
+   *
+   * The result array is index-aligned with `models`. An empty input returns
+   * `{ data: [] }` without contacting ZeroKMS.
+   */
+  async bulkEncryptModels<
+    Table extends AnyV3Table,
+    T extends Record<string, unknown>,
+  >(
+    models: Array<V3ModelInput<Table, T>>,
+    table: Table,
+  ): Promise<WasmResult<Array<V3EncryptedModel<Table, T>>>> {
+    return wasmResult(
+      async () =>
+        (await this.encryptModelsBatch(
+          models as Record<string, unknown>[],
+          table,
+          'bulkEncryptModels',
+        )) as Array<V3EncryptedModel<Table, T>>,
+      EncryptionErrorTypes.EncryptionError,
+    )
+  }
+
+  /**
+   * Decrypt every encrypted payload in a model, in ONE ZeroKMS round trip.
+   *
+   * Schema-blind on the way in — any value that IS an EQL envelope is
+   * decrypted, wherever it nests; everything else (nulls included) passes
+   * through untouched. Schema-aware on the way out: `table`'s date-like
+   * columns (`date` / `timestamp` domains) are rebuilt into `Date` values
+   * from their `cast_as`, matching the native v3 client's reconstruction, so
+   * a model round-trips `Date` → `Date`.
+   *
+   * ## Partial failure
+   *
+   * Built on the same per-item-fallible primitive as {@link bulkDecrypt}:
+   * one undecryptable field does not mask the rest. Any failure collapses to
+   * a single `{ failure }` whose message names EVERY failed field by its
+   * path in the model (e.g. `profile.ssn`), with its per-item code.
+   */
+  async decryptModel<
+    Table extends AnyV3Table,
+    T extends Record<string, unknown>,
+  >(model: T, table: Table): Promise<WasmResult<V3DecryptedModel<Table, T>>> {
+    return wasmResult(async () => {
+      const [decrypted] = await this.decryptModelsBatch(
+        [model as Record<string, unknown>],
+        table,
+        'decryptModel',
+        (_modelIndex, fieldKey) => fieldKey,
+      )
+      return decrypted as V3DecryptedModel<Table, T>
+    }, EncryptionErrorTypes.DecryptionError)
+  }
+
+  /**
+   * Decrypt many models in ONE ZeroKMS round trip — {@link decryptModel}
+   * across a list, which is the shape a page of database rows arrives in.
+   * The result array is index-aligned with `models`; an empty input returns
+   * `{ data: [] }` without contacting ZeroKMS. Failures are reported for
+   * every bad field across the whole batch, labelled `[model <i>] <field>`.
+   */
+  async bulkDecryptModels<
+    Table extends AnyV3Table,
+    T extends Record<string, unknown>,
+  >(
+    models: T[],
+    table: Table,
+  ): Promise<WasmResult<Array<V3DecryptedModel<Table, T>>>> {
+    return wasmResult(
+      async () =>
+        (await this.decryptModelsBatch(
+          models as Record<string, unknown>[],
+          table,
+          'bulkDecryptModels',
+          (modelIndex, fieldKey) => `[model ${modelIndex}] ${fieldKey}`,
+        )) as Array<V3DecryptedModel<Table, T>>,
+      EncryptionErrorTypes.DecryptionError,
+    )
+  }
+
+  /**
+   * The shared model-encrypt engine behind {@link encryptModel} and
+   * {@link bulkEncryptModels}: run the shared traversal per model, send every
+   * collected field in one `encryptBulk` crossing, and rebuild each model
+   * with its encrypted fields set back in place (null fields verbatim,
+   * passthrough fields untouched).
+   *
+   * Results pair with fields positionally — `fields` flattens the traversal's
+   * per-model maps in the order the walk visited them — so the count is
+   * guarded by {@link assertBatchLength} exactly as the value-level batches
+   * guard theirs through {@link runBatch}.
+   */
+  private async encryptModelsBatch(
+    models: Record<string, unknown>[],
+    table: AnyV3Table,
+    op: string,
+  ): Promise<Record<string, unknown>[]> {
+    const { otherFields, operationFields, nullFields } =
+      prepareBulkModelsForOperation(models, table)
+    const { toColumnName } = resolveEncryptColumnMap(table)
+
+    const fields = operationFields.flatMap((modelFields, modelIndex) =>
+      Object.entries(modelFields).map(([fieldKey, value]) => ({
+        modelIndex,
+        fieldKey,
+        value,
+      })),
+    )
+
+    let results: Encrypted[] = []
+    if (fields.length > 0) {
+      results = (await wasmEncryptBulk(
+        // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+        this.client as never,
+        // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+        {
+          plaintexts: fields.map(({ fieldKey, value }) => ({
+            // Date → ISO-8601 here, NOT pass-through: a JS Date has no
+            // enumerable properties, so the wasm serde would carry it as `{}`
+            // — silent corruption of every date column. The model decrypt
+            // engine rebuilds the Date on the way out.
+            plaintext: value instanceof Date ? value.toISOString() : value,
+            table: table.tableName,
+            column: toColumnName(fieldKey),
+          })),
+        } as never,
+      )) as Encrypted[]
+      assertBatchLength(op, results.length, fields.length)
+    }
+
+    return models.map((_, modelIndex) => {
+      const rebuilt: Record<string, unknown> = { ...otherFields[modelIndex] }
+      for (const [key, value] of Object.entries(nullFields[modelIndex])) {
+        setNestedValue(rebuilt, key.split('.'), value)
+      }
+      fields.forEach((field, i) => {
+        if (field.modelIndex !== modelIndex) return
+        setNestedValue(rebuilt, field.fieldKey.split('.'), results[i])
+      })
+      return rebuilt
+    })
+  }
+
+  /**
+   * The shared model-decrypt engine behind {@link decryptModel} and
+   * {@link bulkDecryptModels}. The traversal runs WITHOUT a table (it
+   * collects every value that is an encrypted payload — decryption needs no
+   * schema to find its work); the table drives only the `Date`
+   * reconstruction. `label` renders a failed field's coordinate for the
+   * aggregate error, so the single-model caller reports `profile.ssn` while
+   * the bulk caller reports `[model 2] profile.ssn`.
+   */
+  private async decryptModelsBatch(
+    models: Record<string, unknown>[],
+    table: AnyV3Table,
+    op: string,
+    label: (modelIndex: number, fieldKey: string) => string,
+  ): Promise<Record<string, unknown>[]> {
+    const { otherFields, operationFields, nullFields } =
+      prepareBulkModelsForOperation(models)
+    const dateFields = datePropertyPaths(table)
+
+    const fields = operationFields.flatMap((modelFields, modelIndex) =>
+      Object.entries(modelFields).map(([fieldKey, value]) => ({
+        modelIndex,
+        fieldKey,
+        value,
+      })),
+    )
+
+    let results: FallibleDecryptItem[] = []
+    if (fields.length > 0) {
+      results = (await wasmDecryptBulkFallible(
+        // biome-ignore lint/plugin: the FFI handle is an opaque wasm-bindgen pointer with no JS-side type
+        this.client as never,
+        // biome-ignore lint/plugin: the batch crosses the serde boundary, whose shape protect-ffi types as `any`
+        {
+          ciphertexts: fields.map(({ value }) => ({ ciphertext: value })),
+        } as never,
+      )) as FallibleDecryptItem[]
+      assertBatchLength(op, results.length, fields.length)
+    }
+
+    // Same all-failures-at-once contract as bulkDecrypt, labelled by model
+    // field rather than input index — the caller handed us models, so "which
+    // field of which model" is the coordinate they can act on.
+    const failures: string[] = []
+    results.forEach((result, i) => {
+      if ('error' in result) {
+        const code = result.code ? ` (${result.code})` : ''
+        const field = fields[i]
+        failures.push(
+          `  ${label(field.modelIndex, field.fieldKey)}${code}: ${result.error}`,
+        )
+      }
+    })
+    if (failures.length > 0) {
+      throw new Error(
+        `${op} failed for ${failures.length} of ${fields.length} payload(s):\n${failures.join('\n')}`,
+      )
+    }
+
+    return models.map((_, modelIndex) => {
+      const rebuilt: Record<string, unknown> = { ...otherFields[modelIndex] }
+      for (const [key, value] of Object.entries(nullFields[modelIndex])) {
+        setNestedValue(rebuilt, key.split('.'), value)
+      }
+      fields.forEach((field, i) => {
+        if (field.modelIndex !== modelIndex) return
+        const item = results[i] as { data: WasmPlaintext }
+        const plain =
+          dateFields.has(field.fieldKey) && item.data != null
+            ? new Date(item.data as string | number)
+            : item.data
+        setNestedValue(rebuilt, field.fieldKey.split('.'), plain)
+      })
+      return rebuilt
+    })
   }
 }
 

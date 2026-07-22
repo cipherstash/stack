@@ -221,5 +221,57 @@ Deno.test({
     )
     // Round-trips at the ORIGINAL indices, with the null hole preserved.
     assertEquals(bulkDecrypted.data, [plaintext, null, second])
+
+    // 7. (#742) The model helpers — the surface that walks a model against
+    //    its schema, so edge code never hand-rolls the field mapping whose
+    //    failure mode is a column silently persisted in plaintext. Each call
+    //    is one ZeroKMS round trip regardless of field or model count.
+    const rowA = { id: 'row-a', email: plaintext, note: null }
+    const modelResult = await client.encryptModel(rowA, users)
+    assertEquals(
+      modelResult.failure,
+      undefined,
+      `encryptModel() failed: ${modelResult.failure?.message}`,
+    )
+    const encryptedRow = modelResult.data
+    assertEquals(encryptedRow.id, 'row-a', 'passthrough field was altered')
+    assertEquals(encryptedRow.note, null, 'null field was altered')
+    assertEquals(
+      isEncrypted(encryptedRow.email),
+      true,
+      'schema field was not encrypted by encryptModel',
+    )
+
+    const modelBack = await client.decryptModel(encryptedRow, users)
+    assertEquals(
+      modelBack.failure,
+      undefined,
+      `decryptModel() failed: ${modelBack.failure?.message}`,
+    )
+    assertEquals(modelBack.data, rowA, 'model round-trip mismatch')
+
+    const rowB = { id: 'row-b', email: second, note: 'kept' }
+    const bulkModels = await client.bulkEncryptModels([rowA, rowB], users)
+    assertEquals(
+      bulkModels.failure,
+      undefined,
+      `bulkEncryptModels() failed: ${bulkModels.failure?.message}`,
+    )
+    assertEquals(bulkModels.data.length, 2, 'bulkEncryptModels misaligned')
+
+    const bulkModelsBack = await client.bulkDecryptModels(
+      bulkModels.data,
+      users,
+    )
+    assertEquals(
+      bulkModelsBack.failure,
+      undefined,
+      `bulkDecryptModels() failed: ${bulkModelsBack.failure?.message}`,
+    )
+    assertEquals(
+      bulkModelsBack.data,
+      [rowA, rowB],
+      'bulk model round-trip mismatch',
+    )
   },
 })
