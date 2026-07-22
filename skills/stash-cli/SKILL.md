@@ -458,7 +458,7 @@ Not implemented — prints a warning and exits. Placeholder for future encrypt-c
 
 #### `schema build`
 
-Connects to the database, lets you select tables and columns, asks about searchable indexes, and generates a typed encryption client. Flags: `--supabase`, `--database-url`.
+Connects to the database, lets you select tables and columns, and for each column picks a concrete EQL v3 domain (`TextSearch`, `IntegerOrd`, `TextEq`, …) — defaulting to the widest searchable domain for the column's type, with `boolean`/`json` columns assigned their single storage-only domain automatically — then generates a typed encryption client. Flags: `--supabase`, `--database-url`.
 
 For AI-guided integration that edits your existing schema files in place, prefer `stash plan` → `stash impl`.
 
