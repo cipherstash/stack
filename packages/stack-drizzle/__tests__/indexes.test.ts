@@ -6,8 +6,8 @@ import {
   pgTable,
 } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
-import { encryptedIndexes } from '../../src/v3/indexes'
-import { types } from '../../src/v3/types'
+import { encryptedIndexes } from '../src/indexes'
+import { types } from '../src/types'
 
 // #753: the integration emitted the encrypted operators but no index DDL, so
 // encrypted predicates sequential-scanned by default. `encryptedIndexes`

@@ -5,6 +5,7 @@
   "description": "Performance / index-engagement benchmarks for stack integrations (Drizzle, encryptedSupabase, Prisma).",
   "type": "module",
   "scripts": {
+    "build": "tsc --noEmit",
     "db:setup": "tsx src/cli/setup.ts",
     "db:reset": "tsx src/cli/reset.ts",
     "test:local": "vitest run",

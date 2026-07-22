@@ -43,13 +43,13 @@ import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { makeEqlV3Column } from '../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
+  createEncryptionOperators,
   EncryptionOperatorError,
-  extractEncryptionSchemaV3,
+  extractEncryptionSchema,
   types as v3drizzle,
-} from '../src/v3/index.js'
+} from '../src/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -128,8 +128,8 @@ const BIGINT_LEDGER = -9223372036854775808n
 const BIGINT_B_BALANCE = -5n
 const BIGINT_B_LEDGER = 100n
 
-const schema = extractEncryptionSchemaV3(matrixTable)
-const bigintSchema = extractEncryptionSchemaV3(bigintTable)
+const schema = extractEncryptionSchema(matrixTable)
+const bigintSchema = extractEncryptionSchema(bigintTable)
 
 type PlainValue = string | number | bigint | boolean | Date
 type RowKey = (typeof ROWS)[number]
@@ -137,7 +137,7 @@ type MatrixPlainRow = Record<string, PlainValue | null | string>
 type SelectRow = { rowKey: string }
 type Db = ReturnType<typeof drizzle>
 type Client = Awaited<ReturnType<typeof EncryptionV3>>
-type Ops = ReturnType<typeof createEncryptionOperatorsV3>
+type Ops = ReturnType<typeof createEncryptionOperators>
 type ComparisonOperator = 'gt' | 'gte' | 'lt' | 'lte'
 
 let client: Client
@@ -213,7 +213,7 @@ function encryptedInsertRows(): MatrixPlainRow[] {
 
 beforeAll(async () => {
   client = await EncryptionV3({ schemas: [schema, bigintSchema] })
-  ops = createEncryptionOperatorsV3(client)
+  ops = createEncryptionOperators(client)
   db = drizzle({ client: sqlClient })
 
   const columnDefs = matrixEntries

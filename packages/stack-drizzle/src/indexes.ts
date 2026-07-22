@@ -14,7 +14,7 @@ import { EQL_V3_FN_SCHEMA } from './sql-dialect.js'
  *
  * ```ts
  * import { integer, pgTable } from 'drizzle-orm/pg-core'
- * import { encryptedIndexes, types } from '@cipherstash/stack-drizzle/v3'
+ * import { encryptedIndexes, types } from '@cipherstash/stack-drizzle'
  *
  * export const users = pgTable(
  *   'users',

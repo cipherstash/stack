@@ -41,11 +41,11 @@ import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { makeEqlV3Column } from '../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
-} from '../src/v3/index.js'
+  createEncryptionOperators,
+  extractEncryptionSchema,
+} from '../src/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -67,12 +67,12 @@ const secretTable = pgTable(TABLE_NAME, {
   secret: makeEqlV3Column(V3_MATRIX['public.eql_v3_text_eq'].builder('secret')),
 } as never)
 
-const schema = extractEncryptionSchemaV3(secretTable)
+const schema = extractEncryptionSchema(secretTable)
 
 type SelectRow = { rowKey: string }
 
 let client: Awaited<ReturnType<typeof EncryptionV3>>
-let ops: ReturnType<typeof createEncryptionOperatorsV3>
+let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 
 /**
@@ -159,7 +159,7 @@ beforeAll(async () => {
     schemas: [schema],
     config: { authStrategy: federation.data },
   })
-  ops = createEncryptionOperatorsV3(client)
+  ops = createEncryptionOperators(client)
   db = drizzle({ client: sqlClient })
 
   await sqlClient.unsafe(`
