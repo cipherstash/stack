@@ -6,12 +6,32 @@ export type Integration = 'drizzle' | 'supabase' | 'prisma-next' | 'postgresql'
 
 export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json'
 
-export type SearchOp = 'equality' | 'orderAndRange' | 'freeTextSearch'
+/**
+ * A concrete EQL v3 domain factory name on the `types` namespace
+ * (`@cipherstash/stack/eql/v3`). v3 has no chainable capability tuners — a
+ * column's query capabilities are fixed by which domain you pick. The scaffold
+ * offers the subset below; the full numeric/date lattice
+ * (Smallint/Bigint/Numeric/Real/Double/Timestamp) is left to the user's real
+ * schema files, exactly as `pgTypeToDataType` collapses those types today.
+ */
+export type V3Domain =
+  | 'Text'
+  | 'TextEq'
+  | 'TextOrd'
+  | 'TextMatch'
+  | 'TextSearch'
+  | 'Integer'
+  | 'IntegerEq'
+  | 'IntegerOrd'
+  | 'Date'
+  | 'DateEq'
+  | 'DateOrd'
+  | 'Boolean'
+  | 'Json'
 
 export interface ColumnDef {
   name: string
-  dataType: DataType
-  searchOps: SearchOp[]
+  domain: V3Domain
 }
 
 export interface SchemaDef {
