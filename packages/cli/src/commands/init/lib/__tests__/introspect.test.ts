@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as p from '@clack/prompts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   candidateDomains,
   defaultDomain,
@@ -44,7 +44,13 @@ describe('pgTypeToDataType', () => {
 describe('candidateDomains', () => {
   it('offers the full text ladder for strings', () => {
     const values = candidateDomains('string').map((o) => o.value)
-    expect(values).toEqual(['Text', 'TextEq', 'TextOrd', 'TextMatch', 'TextSearch'])
+    expect(values).toEqual([
+      'Text',
+      'TextEq',
+      'TextOrd',
+      'TextMatch',
+      'TextSearch',
+    ])
   })
 
   it('offers the integer ladder for numbers', () => {
@@ -97,9 +103,24 @@ describe('selectTableColumns', () => {
     {
       tableName: 'users',
       columns: [
-        { columnName: 'email', dataType: 'text', udtName: 'text', isEqlEncrypted: false },
-        { columnName: 'age', dataType: 'integer', udtName: 'int4', isEqlEncrypted: false },
-        { columnName: 'verified', dataType: 'boolean', udtName: 'bool', isEqlEncrypted: false },
+        {
+          columnName: 'email',
+          dataType: 'text',
+          udtName: 'text',
+          isEqlEncrypted: false,
+        },
+        {
+          columnName: 'age',
+          dataType: 'integer',
+          udtName: 'int4',
+          isEqlEncrypted: false,
+        },
+        {
+          columnName: 'verified',
+          dataType: 'boolean',
+          udtName: 'bool',
+          isEqlEncrypted: false,
+        },
       ],
     },
   ]
@@ -160,7 +181,12 @@ describe('selectTableColumns', () => {
       {
         tableName: 'accounts',
         columns: [
-          { columnName: 'ssn', dataType: 'text', udtName: 'eql_v2_encrypted', isEqlEncrypted: true },
+          {
+            columnName: 'ssn',
+            dataType: 'text',
+            udtName: 'eql_v2_encrypted',
+            isEqlEncrypted: true,
+          },
         ],
       },
     ]

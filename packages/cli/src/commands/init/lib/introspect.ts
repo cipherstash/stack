@@ -113,17 +113,37 @@ export function candidateDomains(
   switch (dataType) {
     case 'string':
       return [
-        { value: 'Text', label: 'Text', hint: 'storage only — encrypt/decrypt, no queries' },
+        {
+          value: 'Text',
+          label: 'Text',
+          hint: 'storage only — encrypt/decrypt, no queries',
+        },
         { value: 'TextEq', label: 'TextEq', hint: 'equality (=, IN)' },
-        { value: 'TextOrd', label: 'TextOrd', hint: 'equality + order/range (<, >, BETWEEN, sort)' },
-        { value: 'TextMatch', label: 'TextMatch', hint: 'free-text match only' },
-        { value: 'TextSearch', label: 'TextSearch', hint: 'equality + order/range + free-text' },
+        {
+          value: 'TextOrd',
+          label: 'TextOrd',
+          hint: 'equality + order/range (<, >, BETWEEN, sort)',
+        },
+        {
+          value: 'TextMatch',
+          label: 'TextMatch',
+          hint: 'free-text match only',
+        },
+        {
+          value: 'TextSearch',
+          label: 'TextSearch',
+          hint: 'equality + order/range + free-text',
+        },
       ]
     case 'number':
       return [
         { value: 'Integer', label: 'Integer', hint: 'storage only' },
         { value: 'IntegerEq', label: 'IntegerEq', hint: 'equality (=, IN)' },
-        { value: 'IntegerOrd', label: 'IntegerOrd', hint: 'equality + order/range' },
+        {
+          value: 'IntegerOrd',
+          label: 'IntegerOrd',
+          hint: 'equality + order/range',
+        },
       ]
     case 'date':
       return [
@@ -134,7 +154,13 @@ export function candidateDomains(
     case 'boolean':
       return [{ value: 'Boolean', label: 'Boolean', hint: 'storage only' }]
     case 'json':
-      return [{ value: 'Json', label: 'Json', hint: 'encrypted-JSONB containment + selectors' }]
+      return [
+        {
+          value: 'Json',
+          label: 'Json',
+          hint: 'encrypted-JSONB containment + selectors',
+        },
+      ]
   }
 }
 

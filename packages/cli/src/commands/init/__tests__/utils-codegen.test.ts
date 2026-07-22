@@ -47,20 +47,31 @@ describe('generateClientFromSchemas', () => {
 // unions, so enumeration is complete — a fast-check property would sample the
 // same finite set and add nothing (and `packages/cli` has no fast-check dep).
 const ALL_DOMAINS: import('../types.js').V3Domain[] = [
-  'Text', 'TextEq', 'TextOrd', 'TextMatch', 'TextSearch',
-  'Integer', 'IntegerEq', 'IntegerOrd',
-  'Date', 'DateEq', 'DateOrd',
-  'Boolean', 'Json',
+  'Text',
+  'TextEq',
+  'TextOrd',
+  'TextMatch',
+  'TextSearch',
+  'Integer',
+  'IntegerEq',
+  'IntegerOrd',
+  'Date',
+  'DateEq',
+  'DateOrd',
+  'Boolean',
+  'Json',
 ]
 
-describe.each(['postgresql', 'drizzle'] as const)(
-  'generateClientFromSchemas domain round-trip (%s)',
-  (integration) => {
-    it.each(ALL_DOMAINS)('emits types.%s verbatim', (domain) => {
-      const s: SchemaDef[] = [{ tableName: 'x', columns: [{ name: 'c', domain }] }]
-      expect(generateClientFromSchemas(integration, s)).toContain(
-        `c: types.${domain}('c'),`,
-      )
-    })
-  },
-)
+describe.each([
+  'postgresql',
+  'drizzle',
+] as const)('generateClientFromSchemas domain round-trip (%s)', (integration) => {
+  it.each(ALL_DOMAINS)('emits types.%s verbatim', (domain) => {
+    const s: SchemaDef[] = [
+      { tableName: 'x', columns: [{ name: 'c', domain }] },
+    ]
+    expect(generateClientFromSchemas(integration, s)).toContain(
+      `c: types.${domain}('c'),`,
+    )
+  })
+})

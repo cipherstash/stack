@@ -34,16 +34,28 @@ describe('build flow (introspect → pick → codegen)', () => {
     confirmMock.mockReset()
     queryMock.mockResolvedValue({
       rows: [
-        { table_name: 'users', column_name: 'email', data_type: 'text', udt_name: 'text' },
-        { table_name: 'orders', column_name: 'total', data_type: 'integer', udt_name: 'int4' },
+        {
+          table_name: 'users',
+          column_name: 'email',
+          data_type: 'text',
+          udt_name: 'text',
+        },
+        {
+          table_name: 'orders',
+          column_name: 'total',
+          data_type: 'integer',
+          udt_name: 'int4',
+        },
       ],
     })
   })
 
   it('walks two tables and emits a v3 client with the chosen domains', async () => {
     selectMock
-      .mockResolvedValueOnce('users').mockResolvedValueOnce('TextEq') // table 1 + email
-      .mockResolvedValueOnce('orders').mockResolvedValueOnce('IntegerOrd') // table 2 + total
+      .mockResolvedValueOnce('users')
+      .mockResolvedValueOnce('TextEq') // table 1 + email
+      .mockResolvedValueOnce('orders')
+      .mockResolvedValueOnce('IntegerOrd') // table 2 + total
     multiselectMock
       .mockResolvedValueOnce(['email'])
       .mockResolvedValueOnce(['total'])
