@@ -149,6 +149,25 @@ interface DbColumn {
   isEqlEncrypted: boolean
 }
 
+/**
+ * Is a Postgres domain-type (`udt_name`) an EQL-encrypted column?
+ *
+ * Used purely for DETECTION — telling the agent "this column is already
+ * encrypted, don't scaffold over it". It therefore recognises BOTH generations:
+ * the legacy single `eql_v2_encrypted` type AND the EQL v3 concrete-domain
+ * family (`eql_v3_text_search`, `eql_v3_integer_ord`, …). The wizard now only
+ * *emits* v3, but a project may already carry v2-encrypted columns whose
+ * ciphertext stays valid — misreporting them as plaintext would let the agent
+ * clobber real encrypted data.
+ *
+ * The `eql_v3_` prefix (trailing underscore included) matches the convention in
+ * `@cipherstash/migrate`'s `classifyEqlDomain` — a bare `eql_v3` would also
+ * claim a hypothetical future major like `eql_v30_*`.
+ */
+function isEqlEncryptedDomain(udtName: string): boolean {
+  return udtName === 'eql_v2_encrypted' || udtName.startsWith('eql_v3_')
+}
+
 interface DbTable {
   tableName: string
   columns: DbColumn[]
@@ -183,7 +202,7 @@ export async function introspectDatabase(
         columnName: row.column_name,
         dataType: row.data_type,
         udtName: row.udt_name,
-        isEqlEncrypted: row.udt_name === 'eql_v2_encrypted',
+        isEqlEncrypted: isEqlEncryptedDomain(row.udt_name),
       })
       tableMap.set(row.table_name, cols)
     }

@@ -76,8 +76,10 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
       cwd,
     )
 
-    // Rewrite any `ALTER COLUMN ... SET DATA TYPE eql_v2_encrypted` that
-    // drizzle-kit just produced — those fail in Postgres. CIP-2991 + CIP-2994.
+    // Rewrite any `ALTER COLUMN ... SET DATA TYPE <eql domain>` that
+    // drizzle-kit just produced — those fail in Postgres (no cast from
+    // text/numeric to an EQL domain). Covers the EQL v3 family the wizard now
+    // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
     await rewriteEncryptedMigrations(cwd)
 
     const shouldMigrate = await p.confirm({
@@ -118,15 +120,21 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<void> {
     if (!existsSync(abs)) continue
 
     try {
-      const rewritten = await rewriteEncryptedAlterColumns(abs)
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(abs)
       if (rewritten.length > 0) {
         p.log.info(
           `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to use ADD+DROP+RENAME for encrypted columns.`,
         )
         for (const file of rewritten) p.log.step(`  - ${file}`)
         p.log.warn(
-          'If any of these tables already have rows, backfill the new column via @cipherstash/stack before running the migration in production. See the comments in the rewritten SQL.',
+          'This rewrite is data-destroying — safe only on an EMPTY table. If any of these tables already have rows, do NOT run the migration; use the staged `stash encrypt` flow (add -> backfill via @cipherstash/stack -> cutover -> drop) instead. See the comments in the rewritten SQL.',
         )
+      }
+      if (skipped.length > 0) {
+        p.log.warn(
+          `${skipped.length} statement(s) look like an ALTER-to-encrypted the rewrite could not safely repair (e.g. a hand-authored SET DATA TYPE ... USING ...). Review them before migrating:`,
+        )
+        for (const s of skipped) p.log.step(`  - ${s.file}: ${s.statement}`)
       }
       // Only rewrite the first dir that matches — running again on a
       // different candidate would double-transform already-rewritten SQL.
