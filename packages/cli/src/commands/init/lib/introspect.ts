@@ -201,24 +201,33 @@ export async function selectTableColumns(
 
   if (p.isCancel(selectedColumns)) return undefined
 
-  const searchable = await p.confirm({
-    message:
-      'Enable searchable encryption on these columns? (you can fine-tune indexes later)',
-    initialValue: true,
-  })
-
-  if (p.isCancel(searchable)) return undefined
-
-  const columns: ColumnDef[] = selectedColumns.map((colName) => {
+  const columns: ColumnDef[] = []
+  for (const colName of selectedColumns) {
     const dbCol = table.columns.find((c) => c.columnName === colName)
     if (!dbCol) {
       // Unreachable — multiselect only emits values from the source array.
       throw new Error(`Column ${colName} not found in table ${selectedTable}`)
     }
     const dataType = pgTypeToDataType(dbCol.udtName)
-    const searchOps = searchable ? allSearchOps(dataType) : []
-    return { name: colName, dataType, searchOps }
-  })
+    const options = candidateDomains(dataType)
+
+    // Single-domain types (boolean, json) have nothing to choose — assign the
+    // only domain without interrupting the user with a one-option prompt.
+    if (options.length === 1) {
+      columns.push({ name: colName, domain: options[0].value })
+      continue
+    }
+
+    const domain = await p.select<V3Domain>({
+      message: `Encryption domain for "${colName}" (${dataType})?`,
+      options,
+      initialValue: defaultDomain(dataType),
+    })
+
+    if (p.isCancel(domain)) return undefined
+
+    columns.push({ name: colName, domain })
+  }
 
   p.log.success(
     `Schema defined: ${selectedTable} with ${columns.length} encrypted column${columns.length !== 1 ? 's' : ''}`,
