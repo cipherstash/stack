@@ -189,10 +189,10 @@ export async function loadPg(
     if (code !== 'MODULE_NOT_FOUND' && code !== 'ERR_MODULE_NOT_FOUND')
       throw err
     throw new Error(
-      '[supabase v3]: encryptedSupabaseV3 introspects the database over a direct ' +
+      '[supabase v3]: encryptedSupabase introspects the database over a direct ' +
         "Postgres connection, but the optional peer dependency 'pg' is not installed. " +
-        'Install it (`npm install pg`). This also means encryptedSupabaseV3 cannot run ' +
-        'in a Worker or the browser — use encryptedSupabase (EQL v2) there.',
+        'Install it (`npm install pg`). This also means encryptedSupabase cannot run ' +
+        'in a Worker or the browser, where a direct Postgres connection is unavailable.',
       { cause: err },
     )
   }
