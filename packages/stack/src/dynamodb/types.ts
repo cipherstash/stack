@@ -37,12 +37,12 @@ export type AnyEncryptedTable =
  * nominal `TypedEncryptionClient<S>` parameter would reject a client built for
  * a narrower schema tuple.
  *
- * The two clients differ at runtime on the decrypt paths — the nominal client
- * returns a chainable operation carrying `.audit()`, the typed wrapper returns
- * a plain `Promise<Result<…>>` and takes the table as a second argument. The
- * operation classes handle both; see `DecryptModelOperation`. The consequence
- * for callers is that **audit metadata on decrypt requires the nominal
- * client** — with a client from `EncryptionV3` there is nowhere to put it.
+ * Both clients now return a chainable operation on the decrypt paths — the
+ * nominal client's `DecryptModelOperation` and the typed wrapper's
+ * `MappedDecryptOperation` each carry `.audit()` (the typed wrapper also takes
+ * the table as a second argument). The operation classes handle both; see
+ * `DecryptModelOperation` and `resolveDecryptResult`. Audit metadata on decrypt
+ * is therefore forwarded regardless of which client shape is supplied.
  */
 export type DynamoDBEncryptionClient = {
   encryptModel(input: never, table: never): unknown
@@ -169,8 +169,8 @@ type Simplify<T> = { [K in keyof T]: T[K] }
  *
  * A declared column `email` does NOT survive as `email`: the adapter deletes it
  * and writes `email__source` (plus `email__hmac` for equality domains). Typing
- * the result as the input model — what the v2 overload still does — is a lie
- * that type-checks `result.data.email` (always `undefined` at runtime) and
+ * the result as the input model — what the removed v2 write overload did — is a
+ * lie that type-checks `result.data.email` (always `undefined` at runtime) and
  * rejects `result.data.email__source` (the value you actually want).
  *
  * Keys that name no column pass through untouched — partition/sort keys, GSI
@@ -240,16 +240,6 @@ export interface EncryptedDynamoDBInstance {
     item: V3ModelInput<Table, T>,
     table: Table,
   ): EncryptModelOperation<EncryptedAttributes<Table, T>>
-  /**
-   * EQL v2. Unchanged, so existing callers keep compiling — v2 columns do not
-   * carry their index configuration in the type, so the storage split cannot be
-   * derived. The returned `T` is the INPUT model, not what is on the wire; read
-   * `<attr>__source` / `<attr>__hmac` through a type of your own.
-   */
-  encryptModel<T extends Record<string, unknown>>(
-    item: T,
-    table: EncryptedTable<EncryptedTableColumn>,
-  ): EncryptModelOperation<T>
 
   /** EQL v3. See {@link EncryptedDynamoDBInstance.encryptModel}. */
   bulkEncryptModels<
@@ -259,11 +249,6 @@ export interface EncryptedDynamoDBInstance {
     items: Array<V3ModelInput<Table, T>>,
     table: Table,
   ): BulkEncryptModelsOperation<EncryptedAttributes<Table, T>>
-  /** EQL v2. See {@link EncryptedDynamoDBInstance.encryptModel}. */
-  bulkEncryptModels<T extends Record<string, unknown>>(
-    items: T[],
-    table: EncryptedTable<EncryptedTableColumn>,
-  ): BulkEncryptModelsOperation<T>
 
   /**
    * EQL v3: `item` is the stored attribute map (`<col>__source` /

@@ -68,9 +68,11 @@ function assertClientTableVersionMatch(
  * and `bulkDecryptModels` methods that transparently encrypt/decrypt DynamoDB
  * items according to the provided table schema.
  *
- * Accepts EQL v3 tables (`types.*` domains) and EQL v2 tables
- * (`encryptedColumn`/`encryptedField`) alike — the table decides which wire
- * format is synthesized on read.
+ * **Encrypt/write is EQL v3 only** — `encryptModel` / `bulkEncryptModels` accept
+ * only EQL v3 tables (`types.*` domains). **Decrypt still reads existing EQL v2
+ * items**: `decryptModel` / `bulkDecryptModels` continue to accept an EQL v2
+ * table (`encryptedColumn`/`encryptedField`) so previously stored v2 data
+ * remains readable. The table decides which wire format is reconstructed on read.
  *
  * Only equality is meaningful on DynamoDB: an `hm` term is stored alongside the
  * ciphertext as `<attr>__hmac` and can back a key condition. Ordering and
