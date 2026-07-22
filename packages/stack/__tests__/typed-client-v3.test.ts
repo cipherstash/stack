@@ -140,4 +140,52 @@ describe('typedClient — decrypt reconstruction', () => {
     const data = result.data as Record<string, unknown>
     expect(data.when).toBeInstanceOf(Date)
   })
+
+  // `Encryption` now returns THIS typed client for a v3 schema set, so a consumer
+  // typed against the nominal overload (e.g. stack-supabase's query builder,
+  // which casts to it and calls the one-arg `decryptModel(row)` /
+  // `bulkDecryptModels(rows)`) reaches the typed methods with NO table argument.
+  // They must decrypt without throwing — degrading to nominal behaviour (no date
+  // reconstruction) — not dereference `undefined.tableName`.
+  it('tolerates a one-arg (nominal-style) decryptModel call with no table', async () => {
+    const client = typedClient(
+      fakeClient({ when: '2020-01-02T03:04:05.000Z', note: 'hi' }),
+      table,
+    )
+    // The typed signature forbids the one-arg form; a nominal-typed caller does
+    // it at runtime. Exercise that runtime path.
+    // biome-ignore lint/suspicious/noExplicitAny: exercising the nominal-arity runtime path
+    const decryptOneArg = client.decryptModel as any
+
+    const result = await decryptOneArg({
+      when: '2020-01-02T03:04:05.000Z',
+      note: 'hi',
+    })
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    const data = result.data as Record<string, unknown>
+    // No table → no reconstruction: `when` stays the raw string, exactly as the
+    // nominal client would return it.
+    expect(data.when).toBe('2020-01-02T03:04:05.000Z')
+    expect(data.note).toBe('hi')
+  })
+
+  it('tolerates a one-arg (nominal-style) bulkDecryptModels call with no table', async () => {
+    const client = typedClient(
+      fakeClient({ when: '2021-06-01T00:00:00.000Z', note: 'x' }),
+      table,
+    )
+    // biome-ignore lint/suspicious/noExplicitAny: exercising the nominal-arity runtime path
+    const bulkOneArg = client.bulkDecryptModels as any
+
+    const result = await bulkOneArg([{ when: '2021-06-01T00:00:00.000Z' }])
+    expect(result.failure).toBeFalsy()
+    if (result.failure) return
+
+    const rows = result.data as Array<Record<string, unknown>>
+    expect(rows).toHaveLength(1)
+    // No table → no reconstruction: raw string, not a Date.
+    expect(rows[0].when).toBe('2021-06-01T00:00:00.000Z')
+  })
 })

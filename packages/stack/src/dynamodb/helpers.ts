@@ -86,11 +86,11 @@ export function handleError(
 /**
  * Resolve a decrypt call against either client shape.
  *
- * The nominal `EncryptionClient` returns a chainable operation that carries
- * `.audit()`; the `TypedEncryptionClient` from `EncryptionV3` returns a plain
- * `Promise<Result<…>>`. Chain the audit metadata when the client can carry it,
- * otherwise await the promise directly — a typed client has no audit surface
- * on decrypt, so the metadata has nowhere to go.
+ * Both the nominal `EncryptionClient` and the typed client return a chainable
+ * operation carrying `.audit()` on decrypt (the typed client's is a
+ * `MappedDecryptOperation`). Chain the audit metadata onto it; the branch that
+ * awaits a bare promise remains only for a non-conforming custom client that
+ * exposes no `.audit()`. Audit metadata is forwarded regardless of client shape.
  */
 export async function resolveDecryptResult<T>(
   operation: unknown,
