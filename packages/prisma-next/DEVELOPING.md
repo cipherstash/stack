@@ -49,7 +49,7 @@ packages/prisma-next/
 │   │   └── from-stack-v3.ts             cipherstashFromStack({ contractJson })
 │   ├── migration/
 │   │   ├── cipherstash-codec-v3.ts      v3 control-plane hooks (identity expandNativeType)
-│   │   └── eql-bundle-v3.ts             runtime EQL v3 install-SQL injection
+│   │   └── eql-bundle-v3.ts             digest-verified EQL v3 install-SQL reader (baked at emit)
 │   ├── extension-metadata/
 │   │   ├── constants.ts                 shared ids: space id, version, cipherstash:* traits
 │   │   ├── constants-v3.ts              v3 codec-id tuple, invariants, baseline name, guards
@@ -70,9 +70,11 @@ packages/prisma-next/
 │       ├── operation-types.ts           operation-types augmentation re-export
 │       └── contract-space-typing.ts     helper types for contract-space consumers
 └── migrations/
-    ├── 20260601T0100_install_eql_v3_bundle/   the SOLE migration — invariant-only genesis
-    │                                           edge (from: null) installing the EQL v3 bundle
-    └── refs/head.json                          hand-pinned head ref (v3 invariant only)
+    ├── 20260601T0100_install_eql_v3_bundle/   genesis edge (from: null) installing the
+    │                                           EQL v3 bundle (baked, digest-verified SQL)
+    ├── 20260720T0000_upgrade_eql_v3_3_0_2/    invariant-only self-edge upgrading
+    │                                           already-baselined DBs to the pinned release
+    └── refs/head.json                          hand-pinned head ref (both v3 invariants)
 ```
 
 ## The v3 domain surface is DERIVED, not hand-wired
@@ -313,32 +315,53 @@ with a `Number.MAX_SAFE_INTEGER` bounds check; the decrypt side's
 `BigInt(...)`. Values beyond the safe-integer range cannot be encrypted
 today — a known limitation requiring upstream SDK / ZeroKMS work.
 
-## The migration is an invariant-only genesis edge
+## The migrations are invariant-only genesis + upgrade edges
 
-`migrations/20260601T0100_install_eql_v3_bundle/` is the **sole**
-migration and the contract space's root: `describe()` returns
-`{ from: null, to: <empty-storage hash> }`. The v3 bundle creates the
-`public.eql_v3_*` domains, the `eql_v3.*` operator functions, the
-`eql_v3.query_*` operand domains, and the `eql_v3_internal` helper schema
-— but **no contract-space storage** (no config table), so the contract
-models no tables and the storage hash is the empty-storage hash.
+`migrations/20260601T0100_install_eql_v3_bundle/` is the contract space's
+root: `describe()` returns `{ from: null, to: <empty-storage hash> }`.
+`migrations/20260720T0000_upgrade_eql_v3_3_0_2/` is a second, invariant-only
+self-edge (`from === to === <empty-storage hash>`) that carries a distinct
+upgrade invariant so already-baselined databases still install the pinned
+release. The v3 bundle creates the `public.eql_v3_*` domains, the `eql_v3.*`
+operator functions, the `eql_v3.query_*` operand domains, and the
+`eql_v3_internal` helper schema — but **no contract-space storage** (no
+config table), so the contract models no tables and the storage hash is the
+empty-storage hash.
 
-The op is `operationClass: 'data'` (not `additive`): a genesis edge that
-moves no contract storage must carry a `data`-class op or the aggregate
-integrity checker rejects it. The install SQL is **not baked** into
-`ops.json` — the committed op carries `RUNTIME_EQL_SQL_SENTINEL`, and
-`control.ts` injects `readInstallSql()` from the installed
-`@cipherstash/eql` at descriptor-build time and recomputes the
-content-addressed migration hash (`src/migration/eql-bundle-v3.ts`), so
-bumping the pinned EQL version needs a dependency bump and rebuild, not a
-migration re-emit.
+The op is `operationClass: 'data'` (not `additive`): a genesis/self edge
+that moves no contract storage must carry a `data`-class op or the aggregate
+integrity checker rejects it.
 
-Authoring loop: `migration.ts` is hand-edited; re-emit `ops.json` /
-`migration.json` after edits via
-`pnpm exec tsx migrations/20260601T0100_install_eql_v3_bundle/migration.ts`.
-The contract-space artefacts (`src/contract.{json,d.ts}`) are re-emitted
-via `pnpm exec prisma-next contract emit`; `refs/head.json` is hand-pinned
-to the head migration's `to` hash and its invariant.
+### The install SQL is baked at emit and digest-verified — NOT injected
+
+Each migration's `ops.json` embeds the full ~2.6 MB EQL install SQL. The
+self-emit script reads it from the installed `@cipherstash/eql` via
+`readVerifiedInstallSql()` (`src/migration/eql-bundle-v3.ts`), which refuses
+any bytes whose sha256 does not match the release manifest's
+`installSqlSha256`. The descriptor (`control.ts`) then wires the committed
+artefacts **verbatim** — no runtime transformation, so the migration's
+content-addressed identity is byte-identical in this repo, in the
+descriptor, and in every consumer's vendored `migrations/cipherstash/` copy.
+This is load-bearing: the CLI seed phase copies each package into a
+consumer's repo only when missing and applies from disk without the
+descriptor, so a design where identity varied with the installed EQL version
+(the previous runtime-injection scheme) orphaned every vendored copy on each
+bump (`PN-MIG-5002`).
+
+**Published migration directories are immutable — DO NOT re-emit them.**
+Their bytes live in consumers' repos and database ledgers; `migration-v3.test.ts`
+freezes each one's `migrationHash` and baked-SQL digest, and re-emitting
+would rewrite content-addressed history. An EQL version bump ships as a NEW
+`migrations/<ts>_upgrade_eql_v3_<x>_<y>_<z>/` directory carrying a fresh
+invariant (modelled on `20260720T0000_upgrade_eql_v3_3_0_2`), never as an
+edit to an existing one.
+
+Authoring loop (pre-publication of a NEW migration only): `migration.ts` is
+hand-edited, then `ops.json` / `migration.json` are emitted via
+`pnpm exec tsx migrations/<dirName>/migration.ts`. The contract-space
+artefacts (`src/contract.{json,d.ts}`) are re-emitted via
+`pnpm exec prisma-next contract emit`; `refs/head.json` is hand-pinned to
+the head migration's `to` hash and its invariants.
 
 ## Other design choices worth knowing
 
@@ -426,15 +449,19 @@ alongside.
 
 ### Contract space & migration
 
-- The descriptor exposes a contract space that models **no storage**, one
-  migration (the v3 baseline), an invariant-only genesis edge
-  (`from: null`), and a head ref requiring only
-  `cipherstash:install-eql-v3-bundle-v1`. Self-consistency
+- The descriptor exposes a contract space that models **no storage**, two
+  invariant-only migrations (the v3 baseline genesis edge `from: null` and
+  the 3.0.2 upgrade self-edge), and a head ref requiring both
+  `cipherstash:install-eql-v3-bundle-v1` and
+  `cipherstash:upgrade-eql-v3-bundle-3.0.2-v1`. Self-consistency
   (`headRef.hash === contract.storageHash`) holds. Pinned by
   `test/descriptor.test.ts` and `test/v3/migration-v3.test.ts`.
-- The v3 baseline op carries the runtime sentinel (not baked SQL); the
-  descriptor injects `readInstallSql()` and the injected package survives
-  the canonical disk writer + integrity-checking reader round-trip.
+- Each migration op carries the baked, digest-verified EQL install SQL (not
+  a sentinel placeholder); the descriptor wires the committed artefacts
+  verbatim, and the package survives the canonical disk writer +
+  integrity-checking reader round-trip. `migration-v3.test.ts` freezes each
+  published migration's `migrationHash` and baked-SQL digest, and asserts the
+  installed `@cipherstash/eql` release is baked by some published migration.
 
 ### Catalog & authoring
 

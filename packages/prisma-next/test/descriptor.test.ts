@@ -10,9 +10,12 @@
  *   - `<package>/refs/head.json`
  *
  * These assertions lock down the wiring: the descriptor exposes
- * structurally correct values; the EQL v3 install SQL is injected at
- * descriptor-build time from `@cipherstash/eql`; and the head ref tracks
- * the sole migration's `to` hash.
+ * structurally correct values; the EQL v3 install SQL is baked into the
+ * committed `ops.json` (digest-verified against `@cipherstash/eql`'s
+ * release manifest at emit time — see `src/migration/eql-bundle-v3.ts`)
+ * and wired verbatim; and the head ref tracks the latest migration's
+ * `to` hash. The exact bytes and provenance of each migration are pinned
+ * in `test/v3/migration-v3.test.ts`.
  *
  * **EQL v3 only.** The package installs EQL v3 exclusively. The contract
  * models no storage (the v3 bundle creates `public.eql_v3_*` domains +
@@ -27,7 +30,6 @@
  * @see docs/architecture docs/adrs/ADR 212 - Contract spaces.md
  */
 
-import { readInstallSql } from '@cipherstash/eql/sql'
 import { assertDescriptorSelfConsistency } from '@prisma-next/migration-tools/spaces'
 import { sqlContractCanonicalizationHooks } from '@prisma-next/sql-contract/canonicalization-hooks'
 import { describe, expect, it } from 'vitest'
@@ -106,7 +108,7 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
     }
   })
 
-  it('injects the runtime EQL v3 install SQL into ops.json (not the sentinel placeholder)', () => {
+  it('carries the baked EQL v3 install SQL in ops.json (not a placeholder)', () => {
     const v3Baseline =
       cipherstashExtensionDescriptor.contractSpace!.migrations[0]!
     const installOp = v3Baseline.ops.find(
@@ -115,9 +117,16 @@ describe('cipherstash extension descriptor (contract-space package layout)', () 
       | { readonly execute?: ReadonlyArray<{ readonly sql: string }> }
       | undefined
     expect(installOp).toBeDefined()
-    // The descriptor swaps the committed sentinel placeholder for the
-    // real install SQL from the installed `@cipherstash/eql`.
-    expect(installOp?.execute?.[0]?.sql).toBe(readInstallSql())
+    // The install SQL is baked into the committed ops.json at emit time and
+    // wired verbatim — the descriptor performs no runtime injection. Its
+    // exact bytes and digest provenance are pinned in
+    // test/v3/migration-v3.test.ts; here we assert only that the op carries
+    // the real bundle rather than a placeholder. (Not compared against a
+    // live readInstallSql() read: a published migration's SQL is frozen at
+    // its own release and must not track the currently-installed one.)
+    const sql = installOp?.execute?.[0]?.sql
+    expect(sql).toContain('EQL v3 schema creation')
+    expect((sql ?? '').length).toBeGreaterThan(100_000)
   })
 
   it("points the head ref at the latest migration's destination hash with every migration's invariants", () => {

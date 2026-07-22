@@ -11,16 +11,21 @@
  * migration identity is byte-identical in this repo, in the descriptor,
  * and in every consumer's vendored `migrations/cipherstash/` copy.
  *
- * The provenance pin below (sha256 of the baked SQL === the installed
- * manifest's `installSqlSha256`) is what keeps "the EQL SQL comes from
- * the @cipherstash/eql npm package" true: CI fails if the committed
- * artefact and the pinned dependency ever skew — a version bump without
- * a new migration, or a hand-edit of the artefact.
+ * Provenance is pinned two ways, kept deliberately separate so the guard
+ * survives an EQL version bump. Each published migration has a FROZEN
+ * baked-SQL digest tied to its OWN release (never the currently-installed
+ * one), so editing published history fails. A single bump-safe LOCKSTEP
+ * check then asserts the currently-installed `@cipherstash/eql` release is
+ * the SQL baked into *some* published migration — so bumping the dependency
+ * without shipping a migration that bakes exactly that release fails, while
+ * historical migrations keep their frozen digests untouched.
  */
 import { createHash } from 'node:crypto'
+import { readdirSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { readInstallSql, releaseManifest } from '@cipherstash/eql/sql'
 import {
   materialiseMigrationPackage,
@@ -73,6 +78,40 @@ function descriptorMigration(dirName: string) {
   return migration
 }
 
+// The published migration set, with the two content-addressed facts this
+// suite freezes for each: the full artefact identity (`migrationHash`) and
+// the sha256 of the EQL install SQL baked into its `ops.json`. Both are
+// FROZEN literals tied to each migration's own release — a future EQL bump
+// ADDS an entry and never edits an existing one. See the 'every published
+// migration is frozen' and 'lockstep' tests below for the rules.
+const PUBLISHED_MIGRATIONS = [
+  {
+    dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+    metadata: v3Metadata,
+    ops: v3Ops,
+    migrationHash:
+      'sha256:2c8739076699b81bcf515f1f8ff23501ff1f2582b933cfd80c5fb5bcc3de9e12',
+    installSqlSha256:
+      '05860ae47b3760cbba9842b22ddf89cf3f03aa49c33b6386f736c271784094b1',
+  },
+  {
+    dirName: CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
+    metadata: v3UpgradeMetadata,
+    ops: v3UpgradeOps,
+    migrationHash:
+      'sha256:7bb960435f9cdb7d7c25e4ff70b02fa050a1b8e695541facc47dd87ec3cc634e',
+    installSqlSha256:
+      '05860ae47b3760cbba9842b22ddf89cf3f03aa49c33b6386f736c271784094b1',
+  },
+] as const
+
+const MIGRATIONS_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'migrations',
+)
+
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
   it('installs under the v3 invariant with a single data-class rawSql op', () => {
     expect(v3Ops).toHaveLength(1)
@@ -87,17 +126,54 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(op.operationClass).toBe('data')
   })
 
-  it('bakes the install SQL whose digest the pinned @cipherstash/eql release attests (provenance pin)', () => {
-    const sql = firstExecuteSql(v3Ops)
-    // The baked bytes ARE the installed package's bundle — never
-    // hand-maintained. This is the lockstep guard: a @cipherstash/eql
-    // bump without a matching migration re-emit (or any edit to the
-    // committed artefact) fails here.
-    expect(sha256Hex(sql)).toBe(releaseManifest.installSqlSha256)
-    expect(sql).toBe(readInstallSql())
-    expect(sql).toContain('EQL v3 schema creation')
+  it('every published migration is frozen — artefact identity and baked-SQL provenance are pinned', () => {
+    // Each entry pins two content-addressed facts about a PUBLISHED
+    // migration: its full artefact identity (`migrationHash`) and the digest
+    // of the EQL install SQL baked into its `ops.json`. Both are frozen
+    // literals — these artefacts live byte-for-byte in consumers' repos and
+    // database ledgers, so a change here is a history rewrite (revert it and
+    // ship a NEW migration directory instead). Crucially these are pinned to
+    // each migration's OWN release, NOT to the currently-installed
+    // @cipherstash/eql, so a future EQL bump leaves them untouched — the
+    // lockstep test below is what ties the installed release to a migration.
+    for (const m of PUBLISHED_MIGRATIONS) {
+      expect(m.metadata.migrationHash, `${m.dirName} migrationHash`).toBe(
+        m.migrationHash,
+      )
+      const sql = firstExecuteSql(m.ops)
+      expect(sha256Hex(sql), `${m.dirName} baked SQL digest`).toBe(
+        m.installSqlSha256,
+      )
+      expect(sql).toContain('EQL v3 schema creation')
+    }
+  })
+
+  it('the migration set on disk is fully pinned — no unpinned or stale entries', () => {
+    // Completeness: adding a migration directory without a
+    // PUBLISHED_MIGRATIONS entry (or leaving a stale entry after a rename)
+    // fails here, so the frozen-history guard above can never silently miss a
+    // migration.
+    const onDisk = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== 'refs')
+      .map((e) => e.name)
+      .sort()
+    expect(onDisk).toEqual(
+      [...PUBLISHED_MIGRATIONS.map((m) => m.dirName)].sort(),
+    )
+  })
+
+  it('the installed @cipherstash/eql release is baked by some published migration (lockstep)', () => {
+    // Bump-safe lockstep: the currently-pinned EQL release must be the SQL
+    // baked into at least one published migration. Bumping @cipherstash/eql
+    // without adding (or already shipping) a migration that bakes exactly
+    // that release's SQL fails here — while historical migrations keep their
+    // own frozen digests above, so this never self-destructs on a bump.
+    expect(PUBLISHED_MIGRATIONS.map((m) => m.installSqlSha256)).toContain(
+      releaseManifest.installSqlSha256,
+    )
     // @cipherstash/eql is pinned exact (matching @cipherstash/stack, which
-    // encodes the v3 domain types against this same release).
+    // encodes the v3 domain types against this same release). Bump this
+    // marker together with the dependency and the new migration.
     expect(releaseManifest.eqlVersion).toBe('3.0.2')
   })
 
@@ -175,13 +251,11 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(v3UpgradeMetadata.providedInvariants).toEqual([
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
     ])
-    // The upgrade bakes the same digest-attested bundle (the install SQL
-    // is re-install-safe: it drops/recreates the eql_v3 operator schemas
-    // and guards the public.eql_v3_* domain creation).
+    // The upgrade bakes a re-install-safe bundle (the install SQL
+    // drops/recreates the eql_v3 operator schemas and guards the
+    // public.eql_v3_* domain creation); its baked-SQL provenance is pinned
+    // in PUBLISHED_MIGRATIONS above.
     expect(v3UpgradeOps).toHaveLength(1)
-    expect(sha256Hex(firstExecuteSql(v3UpgradeOps))).toBe(
-      releaseManifest.installSqlSha256,
-    )
 
     const runtimeUpgrade = descriptorMigration(
       CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
@@ -196,21 +270,5 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
       CIPHERSTASH_V3_INVARIANTS.installBundle,
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
     ])
-  })
-
-  it('published migration hashes are FROZEN — history is append-only', () => {
-    // These literals are the content-addressed identity of migrations that
-    // live, byte-for-byte, in consumers' repos and database ledgers. A
-    // failure here means published history was rewritten — a re-emit, a
-    // label tweak, ANY byte change. There is no legitimate reason for
-    // these values to change: revert the edit and ship the change as a
-    // NEW migration directory instead. On an EQL version bump, ADD a pin
-    // for the new upgrade migration; never modify an existing one.
-    expect(v3Metadata.migrationHash).toBe(
-      'sha256:2c8739076699b81bcf515f1f8ff23501ff1f2582b933cfd80c5fb5bcc3de9e12',
-    )
-    expect(v3UpgradeMetadata.migrationHash).toBe(
-      'sha256:7bb960435f9cdb7d7c25e4ff70b02fa050a1b8e695541facc47dd87ec3cc634e',
-    )
   })
 })
