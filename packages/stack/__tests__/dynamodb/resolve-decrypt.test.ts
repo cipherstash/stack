@@ -5,9 +5,17 @@
  * reachable through a live ZeroKMS decrypt; these move that assurance onto the
  * pure CI lane. No credentials, no network.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveDecryptResult, throwPreservingCode } from '@/dynamodb/helpers'
 import { logger } from '@/utils/logger'
+
+// The metadata-drop tests `vi.spyOn(logger, 'debug')` — the same shared singleton
+// `helpers-v3.test.ts` also spies. Each test restores its own spy in a `finally`;
+// this hook is the safety net so a patched method can never survive a test
+// boundary (`restoreAllMocks` un-patches; `clearAllMocks` only clears calls).
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('resolveDecryptResult', () => {
   it('awaits a plain promise when the operation has no .audit (typed client)', async () => {

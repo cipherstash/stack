@@ -13,7 +13,7 @@
  *  - a v3 JSON document keeps `k: 'sv'`, which is mandatory — deserialization
  *    fails with "missing field `k`" without it.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildReadContext,
   deepClone,
@@ -37,6 +37,16 @@ const users = encryptedTable('users', {
 })
 
 const encryptedAttrs = Object.keys(users.build().columns)
+
+// Several tests here `vi.spyOn(logger, 'debug')` — the same shared singleton that
+// `resolve-decrypt.test.ts` also spies. Each test restores its own spy in a
+// `finally`, but this hook is the safety net: it guarantees no spy on any shared
+// object survives a test boundary, so a thrown assertion can never leak a patched
+// method into the next test (`clearAllMocks` only clears calls; `restoreAllMocks`
+// un-patches).
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 /** A v3 scalar payload as the FFI returns it — note the absent `k`. */
 const scalar = (
@@ -457,6 +467,13 @@ describe('read context is resolved once per batch', () => {
     }
 
     expect(buildSpy).not.toHaveBeenCalled()
+
+    // ...and the 3-arg (prebuilt context) form produces the same item as the
+    // 2-arg (default context) form — passing a context is an optimisation, not a
+    // behaviour change.
+    expect(toItemWithEqlPayloads(items[0], users, context)).toEqual(
+      toItemWithEqlPayloads(items[0], users),
+    )
 
     buildSpy.mockRestore()
   })

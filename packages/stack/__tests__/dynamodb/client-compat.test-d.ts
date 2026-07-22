@@ -311,6 +311,27 @@ describe('a dotted-path v3 column is not modelled in EncryptedAttributes', () =>
   })
 })
 
+describe('a required-nullable v3 column keeps __source required', () => {
+  it('preserves the optional modifier only for optional columns', () => {
+    // `email` is required + nullable; `name` is optional. The `__source` half of
+    // `EncryptedAttributes` is a homomorphic key-remapped mapped type (types.ts),
+    // so it preserves the `?` modifier from the model key: a required-nullable
+    // column stays required, an optional column stays optional. The `| null` of
+    // the plaintext is dropped — `SourceAttribute` returns a flat `string` — so a
+    // null value writing no attribute at runtime is a deliberate, pinned mismatch
+    // with the optimistic type. `__hmac` is always optional regardless.
+    type Model = { pk: string; email: string | null; name?: string }
+    type Mapped = EncryptedAttributes<typeof usersV3, Model>
+
+    expectTypeOf<Mapped>().toEqualTypeOf<{
+      pk: string
+      email__source: string
+      email__hmac?: string
+      name__source?: string
+    }>()
+  })
+})
+
 describe('the v2 overload still returns the input model', () => {
   it('keeps an existing v2 caller compiling unchanged', async () => {
     const result = await dynamo.encryptModel<{ pk: string; email?: string }>(
