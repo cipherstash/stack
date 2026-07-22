@@ -18,8 +18,13 @@ function mockClient(rows: Array<Record<string, unknown>>) {
 }
 
 describe('classifyEqlDomain', () => {
-  it('maps eql_v2_encrypted to 2', () => {
-    expect(classifyEqlDomain('eql_v2_encrypted')).toBe(2)
+  it('no longer classifies eql_v2_encrypted — v3 is the sole authored generation', () => {
+    // The v2 branch was removed: this workspace authors/backfills v3 only, so
+    // the domain classifier recognises `eql_v3_*` alone. A legacy v2 column's
+    // version now comes from the manifest's recorded `eqlVersion`, not here.
+    // (Existing v2 ciphertext stays decryptable — only classification of v2 as
+    // an authorable generation is dropped.)
+    expect(classifyEqlDomain('eql_v2_encrypted')).toBeNull()
   })
 
   it('maps any eql_v3_* domain to 3', () => {
@@ -46,10 +51,20 @@ describe('classifyEqlDomain', () => {
 
 describe('detectColumnEqlVersion', () => {
   it('classifies from the domain type', async () => {
-    const { client } = mockClient([{ domain_name: 'eql_v2_encrypted' }])
+    const { client } = mockClient([{ domain_name: 'eql_v3_text_search' }])
     expect(
       await detectColumnEqlVersion(client, 'users', 'email_encrypted'),
-    ).toBe(2)
+    ).toBe(3)
+  })
+
+  it('returns null for a legacy eql_v2_encrypted domain (v2 no longer classified)', async () => {
+    // A v2 column still exists physically, but the classifier no longer treats
+    // it as an authorable EQL generation — callers fall back to the manifest's
+    // recorded eqlVersion.
+    const { client } = mockClient([{ domain_name: 'eql_v2_encrypted' }])
+    expect(
+      await detectColumnEqlVersion(client, 'users', 'ssn_encrypted'),
+    ).toBeNull()
   })
 
   it('returns null for a plaintext column (base type, not a domain)', async () => {
@@ -88,16 +103,17 @@ describe('detectColumnEqlVersion', () => {
 })
 
 describe('listEncryptedColumns', () => {
-  it('returns only EQL-domain columns, classified', async () => {
+  it('returns only EQL v3-domain columns, classified (legacy v2 domains excluded)', async () => {
     const { client } = mockClient([
       { column: 'id', domain_name: 'int8' },
       { column: 'email', domain_name: 'text' },
       { column: 'email_enc', domain_name: 'eql_v3_text_search' },
+      // A legacy v2 column is no longer classified as EQL, so it drops out of
+      // the encrypted-column listing entirely.
       { column: 'ssn_encrypted', domain_name: 'eql_v2_encrypted' },
     ])
     expect(await listEncryptedColumns(client, 'users')).toEqual([
       { column: 'email_enc', domain: 'eql_v3_text_search', version: 3 },
-      { column: 'ssn_encrypted', domain: 'eql_v2_encrypted', version: 2 },
     ])
   })
 })
@@ -153,10 +169,10 @@ describe('pickEncryptedColumn', () => {
   })
 
   it('never resolves the plaintext column to itself', () => {
-    // Post-cutover v2: `email` itself carries the v2 domain. It is the
-    // ciphertext, not a counterpart of itself.
+    // A column that IS the plaintext argument cannot be its own encrypted
+    // counterpart, even when it's the table's sole EQL-domain column.
     expect(
-      pickEncryptedColumn([col('email', 'eql_v2_encrypted', 2)], 'email'),
+      pickEncryptedColumn([col('email', 'eql_v3_encrypted')], 'email'),
     ).toBeNull()
   })
 
