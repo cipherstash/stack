@@ -48,7 +48,9 @@ Corrections vs. the design's PR-1 paragraph:
   from the `changesets` array (keeps it consistent with the deleted file).
 - Add deletion-notice changeset `.changeset/remove-eql-v2-packages.md`:
   `'@cipherstash/stack': patch` (successor surface for all three; group already major via
-  `stack-1-0-0-rc`), prose body naming each removed package and its migration path
+  `stack-1-0-0-rc`) and `'@cipherstash/nextjs': patch` (its `package.json` description changes
+  from `@cipherstash/protect` to `@cipherstash/stack` — a published-metadata edit), prose body
+  naming each removed package and its migration path
   (`@cipherstash/protect` → `@cipherstash/stack`; `@cipherstash/schema` → `@cipherstash/stack/schema`;
   `@cipherstash/protect-dynamodb` → `@cipherstash/stack/dynamodb` `encryptedDynamoDB`).
   Follows the `remove-legacy-drizzle-package.md` precedent.
@@ -66,5 +68,7 @@ Corrections vs. the design's PR-1 paragraph:
 - `pnpm changeset status` — no changeset references a missing package.
 - `pnpm run build` — whole-repo turbo build; proves no dangling import/reference.
 - `pnpm run code:check` — biome, error-free.
-- `git grep -n "@cipherstash/protect\b\|@cipherstash/schema\|@cipherstash/protect-dynamodb"` —
-  only intentional survivors (e.g. migration-path prose, `protect-ffi` which is unrelated).
+- `git grep -nP "@cipherstash/protect(?!-ffi)|@cipherstash/schema|@cipherstash/protect-dynamodb"` —
+  only intentional survivors (e.g. migration-path prose). The `(?!-ffi)` lookahead (PCRE, hence
+  `-P`) excludes the unrelated `@cipherstash/protect-ffi`; a plain `\b` would not, since a word
+  boundary sits between `protect` and `-ffi`.
