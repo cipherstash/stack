@@ -79,27 +79,25 @@ describe('encryptedDynamoDB accepts both client shapes without a cast', () => {
 
 const dynamo = encryptedDynamoDB({ encryptionClient: typedClient })
 
-describe('all four methods accept both a v3 and a v2 table', () => {
-  it('encryptModel', () => {
+describe('write is EQL v3 only; read accepts both a v3 and a v2 table', () => {
+  it('encryptModel accepts a v3 table and rejects a v2 table', () => {
     expectTypeOf(dynamo.encryptModel).toBeCallableWith(
       { pk: 'a', email: 'a@b.com' },
       usersV3,
     )
-    expectTypeOf(dynamo.encryptModel).toBeCallableWith(
-      { pk: 'a', email: 'a@b.com' },
-      usersV2,
-    )
+    // Write is EQL v3 only — the v2 write overload was removed, so a v2 table is
+    // rejected on encrypt (decrypt below still accepts it).
+    // @ts-expect-error - encryptModel no longer accepts an EQL v2 table
+    dynamo.encryptModel({ pk: 'a', email: 'a@b.com' }, usersV2)
   })
 
-  it('bulkEncryptModels', () => {
+  it('bulkEncryptModels accepts a v3 table and rejects a v2 table', () => {
     expectTypeOf(dynamo.bulkEncryptModels).toBeCallableWith(
       [{ pk: 'a', email: 'a@b.com' }],
       usersV3,
     )
-    expectTypeOf(dynamo.bulkEncryptModels).toBeCallableWith(
-      [{ pk: 'a', email: 'a@b.com' }],
-      usersV2,
-    )
+    // @ts-expect-error - bulkEncryptModels no longer accepts an EQL v2 table
+    dynamo.bulkEncryptModels([{ pk: 'a', email: 'a@b.com' }], usersV2)
   })
 
   it('decryptModel', () => {
@@ -332,24 +330,38 @@ describe('a required-nullable v3 column keeps __source required', () => {
   })
 })
 
-describe('the v2 overload still returns the input model', () => {
-  it('keeps an existing v2 caller compiling unchanged', async () => {
-    const result = await dynamo.encryptModel<{ pk: string; email?: string }>(
-      { pk: 'a', email: 'a@b.com' },
-      usersV2,
-    )
-    if (result.failure) throw new Error(result.failure.message)
-
-    expectTypeOf(result.data).toEqualTypeOf<{ pk: string; email?: string }>()
-  })
-})
-
 describe('operations chain and resolve', () => {
   it('.audit() returns the operation so it stays chainable', () => {
     const op = dynamo.encryptModel({ pk: 'a', email: 'a@b.com' }, usersV3)
     expectTypeOf(op.audit({ metadata: { sub: 'u1' } })).toEqualTypeOf<
       typeof op
     >()
+  })
+
+  it('.audit() is chainable on decryptModel and returns the operation', () => {
+    // The DynamoDB decrypt op is chainable; audit metadata now forwards to the
+    // underlying client decrypt regardless of client shape (see
+    // resolve-decrypt.test.ts / decrypt-audit-forwarding.test.ts for the runtime
+    // proof). Here we lock the type-level surface.
+    const op = dynamo.decryptModel({ pk: 'a', email__source: 'ct' }, usersV3)
+    expectTypeOf(op).toHaveProperty('audit')
+    expectTypeOf(op.audit({ metadata: { sub: 'u1' } })).toEqualTypeOf<
+      typeof op
+    >()
+  })
+
+  it('awaiting decryptModel yields a discriminated Result', async () => {
+    const result = await dynamo.decryptModel(
+      { pk: 'a', email__source: 'ct' },
+      usersV3,
+    )
+
+    if (result.failure) {
+      expectTypeOf(result.failure.message).toEqualTypeOf<string>()
+      return
+    }
+
+    expectTypeOf(result.data.email).toEqualTypeOf<string>()
   })
 
   it('awaiting yields a discriminated Result', async () => {
