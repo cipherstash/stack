@@ -1,6 +1,7 @@
 import { type Result, withResult } from '@byteslice/result'
 import { newClient } from '@cipherstash/protect-ffi'
 import { validate as uuidValidate } from 'uuid'
+import type { AnyV3Table } from '@/eql/v3'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 // `LockContext` is imported type-only so the TSDoc {@link} references in the
 // comments below resolve; it is erased at compile time.
@@ -20,6 +21,7 @@ import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
   Client,
+  ClientConfig,
   Encrypted,
   EncryptedFromBuildableTable,
   EncryptionClientConfig,
@@ -43,6 +45,13 @@ import { DecryptModelOperation } from './operations/decrypt-model'
 import { EncryptOperation } from './operations/encrypt'
 import { EncryptModelOperation } from './operations/encrypt-model'
 import { EncryptQueryOperation } from './operations/encrypt-query'
+// `typedClient` wraps the nominal client into the strongly-typed EQL v3 client.
+// This is a deliberate circular import with `./v3` (which imports `Encryption`
+// from here): both `Encryption` and `typedClient` are hoisted `function`
+// declarations, and the only module-eval cross-reference — `EncryptionV3 =
+// Encryption` in `./v3` — reads the hoisted `Encryption`, so neither binding is
+// observed uninitialised regardless of which module evaluates first.
+import { type TypedEncryptionClient, typedClient } from './v3'
 
 // Re-export the operation classes returned by EncryptionClient methods so they
 // are part of the public API and appear in the generated reference, allowing
@@ -852,9 +861,24 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * @see {@link ClientConfig.authStrategy} for the auth strategy field.
  * @see {@link EncryptionClient} for available methods after initialization.
  */
-export const Encryption = async (
+// Overload 1 — v3-typed: an array literal of concrete EQL v3 tables (from
+// `@cipherstash/stack/v3`) yields the strongly-typed {@link TypedEncryptionClient},
+// the collapse of the former `EncryptionV3`. The wire format is forced to v3.
+export function Encryption<const S extends readonly AnyV3Table[]>(config: {
+  schemas: S
+  config?: ClientConfig
+}): Promise<TypedEncryptionClient<S>>
+// Overload 2 — nominal: loose/dynamic schemas (introspection-derived, e.g.
+// stack-supabase) or EQL v2 tables yield the generation-neutral
+// {@link EncryptionClient}, which auto-detects its wire version. Declared LAST
+// so `Parameters<typeof Encryption>` / `ReturnType<typeof Encryption>` resolve
+// to this signature (stack-supabase casts its schemas against it).
+export function Encryption(
   config: EncryptionClientConfig,
-): Promise<EncryptionClient> => {
+): Promise<EncryptionClient>
+export async function Encryption(
+  config: EncryptionClientConfig,
+): Promise<unknown> {
   const { schemas, config: clientConfig } = config
 
   if (!schemas.length) {
@@ -885,10 +909,16 @@ export const Encryption = async (
   const client = new EncryptionClient()
   const encryptConfig = buildEncryptConfig(...schemas)
 
-  // Resolve the wire format for this client: an explicit
-  // `config.eqlVersion` wins; otherwise it is auto-detected from the
-  // schema set (v3 tables → 3, v2 tables → the FFI's v2 default). A mixed
-  // v2 + v3 schema set throws — one client emits exactly one wire format.
+  // A schema set of exclusively concrete EQL v3 tables is the typed-client path
+  // (the collapse of the former `EncryptionV3`). Every other set — EQL v2 tables,
+  // or the introspection-derived loose tables stack-supabase passes — stays
+  // nominal.
+  const isV3Only = schemas.every(hasBuildColumnKeyMap)
+
+  // Resolve the wire format: an explicit `config.eqlVersion` wins (the retained
+  // migration escape hatch — e.g. deliberately writing v2 wire from a v3 schema
+  // set), otherwise it is auto-detected (v3 tables → 3, v2 tables → the FFI's v2
+  // default). A mixed v2 + v3 schema set throws inside `resolveEqlVersion`.
   const eqlVersion = resolveEqlVersion(schemas, clientConfig?.eqlVersion)
 
   const result = await client.init({
@@ -902,5 +932,12 @@ export const Encryption = async (
     throw new Error(`[encryption]: ${result.failure.message}`)
   }
 
-  return result.data
+  // Return the typed client only when the client is genuinely in EQL v3 mode: an
+  // all-v3 schema set that resolved to the v3 wire format. A caller that forced
+  // `eqlVersion: 2` over v3 schemas gets the nominal client for that deliberate,
+  // low-level v2-wire migration path (the typed client cannot encrypt v3 columns
+  // in v2 mode anyway).
+  return isV3Only && eqlVersion === 3
+    ? typedClient(result.data, ...(schemas as unknown as readonly AnyV3Table[]))
+    : result.data
 }

@@ -171,6 +171,12 @@ export type ClientConfig = {
   strategy?: AuthStrategy
 
   /**
+   * @deprecated The client authors EQL v3 — an all-v3 schema set forces `3`
+   * automatically and yields the typed client. This field remains only to read
+   * or write legacy EQL v2 during migration (e.g. `eqlVersion: 2` with a v2
+   * schema set), and will be removed once the v2 adapters are gone. New code
+   * should not set it.
+   *
    * The EQL wire version the client emits — one FFI client always emits
    * exactly one wire format.
    *
