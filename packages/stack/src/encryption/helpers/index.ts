@@ -11,10 +11,9 @@ import type { Encrypted, EncryptedQueryResult, KeysetIdentifier } from '@/types'
  * payload, or a v3 ciphertext-free scalar/SteVec query term (including the
  * bare selector hash and `eql_v3.query_json` containment needle).
  *
- * TODO: duplicated in `@cipherstash/protect` — see
- * `packages/protect/src/helpers/index.ts`. Both copies should be removed once
- * `@cipherstash/protect-ffi` exports a named alias for the `encryptQuery`
- * return type (https://github.com/cipherstash/stack/pull/473).
+ * TODO: replace this local union once `@cipherstash/protect-ffi` exports a
+ * named alias for the `encryptQuery` return type
+ * (https://github.com/cipherstash/stack/pull/473).
  */
 type EncryptedQueryTerm =
   | CipherStashEncrypted
