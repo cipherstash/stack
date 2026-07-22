@@ -139,7 +139,7 @@ describe('the v3 overload types the DynamoDB storage split', () => {
       { pk: 'a', email: 'a@b.com', age: 3, role: 'admin' },
       usersV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     // Equality domain: ciphertext + the queryable HMAC term.
     expectTypeOf(result.data.email__source).toEqualTypeOf<string>()
@@ -159,7 +159,7 @@ describe('the v3 overload types the DynamoDB storage split', () => {
       { pk: 'a', meta: { a: 1 } },
       usersV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     // A SteVec document is stored as `{ h, sv }` — the entries plus the
     // per-document KeyHeader `h` that protect-ffi 0.30 decrypt requires.
@@ -175,7 +175,7 @@ describe('the v3 overload types the DynamoDB storage split', () => {
       [{ pk: 'a', email: 'a@b.com', age: 3 }],
       usersV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     expectTypeOf(result.data[0].email__source).toEqualTypeOf<string>()
     expectTypeOf(result.data[0].email__hmac).toEqualTypeOf<string | undefined>()
@@ -188,7 +188,7 @@ describe('the v3 overload types the DynamoDB storage split', () => {
       [{ pk: 'a', email__source: 'ct', email__hmac: 'hm' }],
       usersV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     expectTypeOf(result.data[0].email).toEqualTypeOf<string>()
     expectTypeOf(result.data[0]).not.toHaveProperty('email__source')
@@ -206,7 +206,7 @@ describe('the v3 overload types the DynamoDB storage split', () => {
       { pk: 'a', email__source: 'ct', email__hmac: 'hm', role: 'admin' },
       usersV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     expectTypeOf(result.data.email).toEqualTypeOf<string>()
     // The query term is not data — it does not survive the read.
@@ -219,7 +219,7 @@ describe('the v3 overload types the DynamoDB storage split', () => {
   it('round-trips a declared model shape', async () => {
     const model: V3Model = { pk: 'a', email: 'a@b.com', role: 'admin' }
     const encrypted = await dynamo.encryptModel(model, usersV3)
-    if (encrypted.failure) return
+    if (encrypted.failure) throw new Error(encrypted.failure.message)
 
     expectTypeOf(dynamo.decryptModel).toBeCallableWith(encrypted.data, usersV3)
   })
@@ -231,7 +231,7 @@ describe('a text-ordering domain reaches the HasSearchTerm `true` arm', () => {
       { pk: 'a', title: 'Hello', bio: 'about me' },
       searchV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     // TextOrd is equality- AND order/range-capable over `string`: the innermost
     // `[PlaintextForColumn<C>] extends [string] ? true : false` resolves `true`,
@@ -265,7 +265,7 @@ describe('decrypt passes through suffixed keys whose base names no column', () =
       },
       usersV3,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     // Declared column: `email__source` folds to `email`, `email__hmac` (its base
     // IS a column) is dropped as a query term.
@@ -338,7 +338,7 @@ describe('the v2 overload still returns the input model', () => {
       { pk: 'a', email: 'a@b.com' },
       usersV2,
     )
-    if (result.failure) return
+    if (result.failure) throw new Error(result.failure.message)
 
     expectTypeOf(result.data).toEqualTypeOf<{ pk: string; email?: string }>()
   })
