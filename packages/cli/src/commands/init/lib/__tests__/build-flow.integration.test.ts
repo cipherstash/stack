@@ -63,8 +63,9 @@ describe('build flow (introspect → pick → codegen)', () => {
 
     const schemas = await buildSchemasFromDatabase('postgresql://x')
     expect(schemas).toHaveLength(2)
+    if (!schemas) throw new Error('expected schemas to be defined')
 
-    const out = generateClientFromSchemas('postgresql', schemas!)
+    const out = generateClientFromSchemas('postgresql', schemas)
     expect(out).toContain("email: types.TextEq('email'),")
     expect(out).toContain("total: types.IntegerOrd('total'),")
     expect(out).not.toMatch(/searchOps|v3DomainFactory/)

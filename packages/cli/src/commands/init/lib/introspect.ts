@@ -167,13 +167,19 @@ export function candidateDomains(
 /**
  * The default domain pre-selected in the picker: the widest searchable domain
  * for the type. Mirrors the pre-v3 scaffold, which enabled every capability on
- * every selected column by default. Derived from `candidateDomains` (whose
- * lists are ordered narrowest→widest) so the "widest is the default" invariant
- * has a single source of truth — reordering a candidate list moves the default
- * with it, and the two can never silently drift.
+ * every selected column by default. Reads the last entry of the `candidateDomains`
+ * list (ordered narrowest→widest) so the "widest is the default" invariant has a
+ * single source of truth — reordering a candidate list moves the default with it,
+ * and the two can never silently drift.
+ *
+ * Accepts either a `DataType` (looks the candidates up) or an already-computed
+ * candidate list, so a caller that already holds the options — like the picker
+ * loop — can reuse them instead of recomputing `candidateDomains`.
  */
-export function defaultDomain(dataType: DataType): V3Domain {
-  const options = candidateDomains(dataType)
+export function defaultDomain(
+  from: DataType | Array<{ value: V3Domain }>,
+): V3Domain {
+  const options = Array.isArray(from) ? from : candidateDomains(from)
   return options[options.length - 1].value
 }
 
@@ -247,7 +253,7 @@ export async function selectTableColumns(
     const domain = await p.select<V3Domain>({
       message: `Encryption domain for "${colName}" (${dataType})?`,
       options,
-      initialValue: defaultDomain(dataType),
+      initialValue: defaultDomain(options),
     })
 
     if (p.isCancel(domain)) return undefined

@@ -80,7 +80,7 @@ export interface InitState {
   /** Schema definitions written to the encryption client. Carries every
    *  table the user picked during introspection (or the single placeholder
    *  for empty databases). The generated client file is still the canonical
-   *  source for the full set of column types and search ops. */
+   *  source for the full set of column domains. */
   schemas?: SchemaDef[]
   /** Names of env keys observed in `.env*` files at init time. Never the
    *  values. Set by build-schema (so the baseline context.json has them);
