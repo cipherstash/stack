@@ -101,6 +101,14 @@ Both produce the same nested DynamoDB attribute *layout*, but the encrypted cont
 
 To encrypt a whole subtree as one value instead of per-leaf, use `types.Json`, which stores it as a single ste_vec attribute (`profile__source`).
 
+> **Arrays are not descended into.** The adapter splits encrypted leaves inside
+> nested *objects* only. A value inside an array is stored whole — it is not
+> split into `__source`/`__hmac`, so its ciphertext still decrypts on read but
+> can never back a key condition, and it does not appear in the `__source`/`__hmac`
+> attribute layout above. A DynamoDB key condition cannot target an array element
+> in any case. To encrypt list data, either promote the searched field to a
+> top-level column, or wrap the subtree in a single `types.Json` column.
+
 ## Rolling Encryption Out to Production
 
 DynamoDB encryption is **single-deploy**. There is no rollout/cutover split — unlike the Postgres path, DynamoDB has no row-level rename swap and no shared-state proxy. The application owns every write, so adding encryption is an application-side change that ships in one PR:

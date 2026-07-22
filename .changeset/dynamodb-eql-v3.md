@@ -52,6 +52,16 @@ Robustness, from review:
 - Caller input that cannot be structurally cloned no longer reaches the FFI by
   reference — the "encryption never mutates a caller's object" guarantee holds
   on that path too.
+- The write path now splits only declared columns, matched on the same property
+  path the read path rebuilds from. A pre-encrypted payload placed under an
+  undeclared nested name is stored whole (and round-trips) instead of being
+  split into a `<attr>__source` the read path could never reassemble.
+- A degenerate payload with an empty-string ciphertext is split like any other
+  ciphertext rather than falling through and being written as a raw map, which
+  had leaked its `v`/`i` envelope metadata into storage.
+- Arrays are documented as a deliberate carve-out: the mapping does not descend
+  into them, so a payload inside a list is stored whole (still decryptable, but
+  not queryable and not part of the `__source`/`__hmac` layout).
 
 The v3 overloads are strongly typed. `encryptModel` / `bulkEncryptModels` check
 the input model against the table's column domains, and return the DynamoDB

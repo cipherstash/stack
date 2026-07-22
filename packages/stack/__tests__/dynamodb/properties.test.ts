@@ -70,8 +70,13 @@ const safeName = fc
   .stringMatching(/^[a-z][a-z0-9_]{0,7}$/)
   .filter((n) => !RESERVED_COLUMN_NAMES.has(n) && n !== PLAINTEXT_KEY)
 
-/** Ciphertexts are never empty in practice, and the write path tests truthiness. */
-const ciphertext = fc.string({ minLength: 1 })
+/**
+ * Includes the empty string deliberately. The write path detects a scalar by
+ * the PRESENCE of `c`, not its truthiness, so `c: ''` must split to
+ * `<attr>__source: ''` and round-trip like any other ciphertext rather than
+ * falling through and leaking its `v`/`i` envelope into a stored raw map.
+ */
+const ciphertext = fc.string()
 
 /** ste_vec entries, as the FFI emits them for a JSON document. */
 const steVecEntries = fc.array(
@@ -550,6 +555,62 @@ describe('property: attributes are keyed by property name, identified by DB name
           })
         },
       ),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. ARRAY CARVE-OUT: the mapping descends into objects, never arrays
+// ---------------------------------------------------------------------------
+
+describe('property: a payload inside an array is stored and read whole', () => {
+  // The write and read paths both skip arrays (`!Array.isArray`), so a real
+  // envelope wrapped in a list is stored as its whole self — never split into
+  // `<attr>__source`/`__hmac` — and passes back through unchanged, still
+  // decryptable. A regression that started recursing arrays would split the
+  // element and break this for any generated column/array-key combination.
+  it('never splits an array-nested envelope, in either direction, for any column set', () => {
+    fc.assert(
+      fc.property(safeName, safeName, ciphertext, (col, arrKey, ct) => {
+        const table = encryptedTable('t', { [col]: types.TextEq(col) })
+        const attrs = Object.keys(table.buildColumnKeyMap())
+        // A genuine payload (v+i+c+hm) wrapped in an array — under an arbitrary
+        // key, declared or not: arrays are skipped regardless.
+        const item = {
+          [arrKey]: [{ v: 3, i: { t: 't', c: col }, c: ct, hm: 'H' }],
+        }
+
+        const stored = toEncryptedDynamoItem(item, attrs, true)
+        expect(stored).toEqual(item)
+        expect(toItemWithEqlPayloads(stored, table)).toEqual(item)
+      }),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. COLUMN-AWARE WRITE GATE: split only declared columns
+// ---------------------------------------------------------------------------
+
+describe('property: the write path never splits a payload naming no declared column', () => {
+  // The write path is column-aware, matched on the same property path the read
+  // path rebuilds from. A pre-encrypted payload placed under an UNDECLARED name
+  // — top-level or nested — must be left whole and round-trip, never split into
+  // a `<attr>__source` the read path (which rebuilds only declared columns)
+  // could never reassemble.
+  it('leaves an undeclared payload whole and round-trips it, top-level and nested', () => {
+    fc.assert(
+      fc.property(safeName, safeName, ciphertext, (col, other, ct) => {
+        fc.pre(col !== other)
+        const table = encryptedTable('t', { [col]: types.TextEq(col) })
+        const attrs = Object.keys(table.buildColumnKeyMap())
+        const payload = { v: 3, i: { t: 't', c: other }, c: ct, hm: 'H' }
+        const item = { [other]: payload, grp: { [other]: payload } }
+
+        const stored = toEncryptedDynamoItem(item, attrs, true)
+        expect(stored).toEqual(item)
+        expect(toItemWithEqlPayloads(stored, table)).toEqual(item)
+      }),
     )
   })
 })

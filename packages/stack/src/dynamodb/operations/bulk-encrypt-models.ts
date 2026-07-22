@@ -4,6 +4,7 @@ import { logger } from '@/utils/logger'
 import {
   deepClone,
   handleError,
+  isV3Table,
   throwPreservingCode,
   toEncryptedDynamoItem,
 } from '../helpers'
@@ -63,8 +64,10 @@ export class BulkEncryptModelsOperation<
           this.table,
         )
 
+        const isV3 = isV3Table(this.table)
         return data.map(
-          (encrypted) => toEncryptedDynamoItem(encrypted, encryptedAttrs) as T,
+          (encrypted) =>
+            toEncryptedDynamoItem(encrypted, encryptedAttrs, isV3) as T,
         )
       },
       (error) =>

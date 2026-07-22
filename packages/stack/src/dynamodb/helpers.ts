@@ -236,26 +236,56 @@ function isStoredEqlPayload(value: unknown): value is StoredEqlPayload {
   return 'c' in value || 'sv' in value
 }
 
+/**
+ * Resolve an attribute (`leaf` under `prefix`) back to the column path it was
+ * declared under, or `undefined` if it names no declared column. Shared by the
+ * write and read paths so the two split and rebuild EXACTLY the same set of
+ * attributes — an asymmetry here writes data one side can never reassemble.
+ *
+ * `columnPaths` are the JS property paths a model's fields are matched on. The
+ * dotted form is tried first; a v2 grouped `encryptedField('amount')` registers
+ * the bare leaf, so a nested `amount` falls back to it. v3 always registers the
+ * full dotted path (`'profile.ssn'`), so it never needs the fallback — and must
+ * NOT use it, or a nested `note` would match a same-named TOP-LEVEL `note`
+ * column. Scope the fallback to nested v2 attributes only.
+ */
+export function makeColumnMatcher(isV3: boolean, columnPaths: string[]) {
+  return function matchColumn(
+    leaf: string,
+    prefix: string,
+  ): string | undefined {
+    const dotted = prefix ? `${prefix}.${leaf}` : leaf
+    if (columnPaths.includes(dotted)) return dotted
+    if (!isV3 && prefix && columnPaths.includes(leaf)) return leaf
+    return undefined
+  }
+}
+
 export function toEncryptedDynamoItem(
   encrypted: Record<string, unknown>,
   encryptedAttrs: string[],
+  // `false` (v2) by default so existing 2-arg callers keep the v2 bare-leaf
+  // fallback; the operations pass `isV3Table(table)` so a v3 write splits the
+  // same columns a v3 read rebuilds.
+  isV3 = false,
 ): Record<string, unknown> {
+  const matchColumn = makeColumnMatcher(isV3, encryptedAttrs)
+
   function processValue(
     attrName: string,
     attrValue: unknown,
-    isNested: boolean,
+    prefix: string,
   ): Record<string, unknown> {
     if (attrValue === null || attrValue === undefined) {
       return { [attrName]: attrValue }
     }
 
-    // Handle encrypted payload. Both arms require the value to actually BE a
-    // payload — a registered attribute name is not sufficient on its own, and
-    // for a nested value the name tells us nothing at all.
-    if (
-      (encryptedAttrs.includes(attrName) || isNested) &&
-      isStoredEqlPayload(attrValue)
-    ) {
+    // Handle encrypted payload. Split only a value that BOTH is a payload and
+    // names a declared column — matched on its property path, exactly as the
+    // read path rebuilds it. Splitting an undeclared nested payload (matched by
+    // shape alone) would write a `<leaf>__source` the read path never
+    // reassembles, i.e. silent undecryptable data.
+    if (matchColumn(attrName, prefix) && isStoredEqlPayload(attrValue)) {
       const encryptPayload = attrValue
 
       // A JSON document keeps its `k: 'sv'` tag. Its index terms live *inside*
@@ -276,8 +306,10 @@ export function toEncryptedDynamoItem(
       // Scalars. v2 tags every payload `k: 'ct'`; v3 scalars carry NO `k`
       // discriminator at all, so the presence of a ciphertext is the signal —
       // gating on `k === 'ct'` would drop every v3 scalar through to the
-      // nested-object branch below and write it out as a raw map.
-      if (encryptPayload?.c) {
+      // nested-object branch below and write it out as a raw map. Test
+      // PRESENCE, not truthiness: a `{ v, i, c: '' }` payload is still a
+      // payload, and letting it fall through would leak `v`/`i` into storage.
+      if ('c' in encryptPayload) {
         const result: Record<string, unknown> = {}
         // `hm` is the deterministic equality term, and the only one a DynamoDB
         // key condition can use. Ordering terms (`op`/`ob`) and the match
@@ -292,13 +324,25 @@ export function toEncryptedDynamoItem(
       }
     }
 
-    // Handle nested objects recursively
+    // Handle nested objects recursively, carrying the path so a nested column
+    // is matched against its registered dotted name.
+    //
+    // Arrays are a deliberate carve-out: they are NOT recursed into, so a
+    // payload inside an array is stored as its whole envelope rather than split
+    // into `<attr>__source`/`<attr>__hmac`. A DynamoDB key condition cannot
+    // target an array element anyway, so there is nothing to gain from a split;
+    // the read path skips arrays symmetrically, so such a value still
+    // round-trips and decrypts. Documented in the DynamoDB skill's limitations.
     if (typeof attrValue === 'object' && !Array.isArray(attrValue)) {
       const nestedResult = Object.entries(
         attrValue as Record<string, unknown>,
       ).reduce(
         (acc, [key, val]) => {
-          const processed = processValue(key, val, true)
+          const processed = processValue(
+            key,
+            val,
+            prefix ? `${prefix}.${attrName}` : attrName,
+          )
           Object.assign(acc, processed)
           return acc
         },
@@ -313,7 +357,7 @@ export function toEncryptedDynamoItem(
 
   return Object.entries(encrypted).reduce(
     (putItem, [attrName, attrValue]) => {
-      const processed = processValue(attrName, attrValue, false)
+      const processed = processValue(attrName, attrValue, '')
       Object.assign(putItem, processed)
       return putItem
     },
@@ -365,21 +409,8 @@ export function toItemWithEqlPayloads(
 ): Record<string, unknown> {
   const { isV3, v, encryptConfig, columnPaths, toColumnName } = context
 
-  /** Resolve an attribute back to the column path it was written from. */
-  function matchColumn(leaf: string, prefix: string): string | undefined {
-    const dotted = prefix ? `${prefix}.${leaf}` : leaf
-    if (columnPaths.includes(dotted)) return dotted
-
-    // Bare-leaf fallback, v2-only. A v2 `encryptedField('amount')` inside a
-    // group registers the bare leaf `amount`, so a nested `amount__source` has
-    // to match it by leaf. v3 always registers the full dotted path
-    // (`'profile.ssn': types.TextEq('profile.ssn')`), so it never needs this —
-    // and must NOT use it: a nested `note__source` would otherwise match a
-    // same-named TOP-LEVEL `note` column and rewrite a plaintext sibling as an
-    // envelope. Scope the fallback to nested v2 attributes only.
-    if (!isV3 && prefix && columnPaths.includes(leaf)) return leaf
-    return undefined
-  }
+  // The same matcher the write path splits with, so the two stay symmetric.
+  const matchColumn = makeColumnMatcher(isV3, columnPaths)
 
   function processValue(
     attrName: string,
@@ -463,7 +494,9 @@ export function toItemWithEqlPayloads(
     }
 
     // Handle nested objects recursively, carrying the path so a nested column
-    // can be matched against its registered dotted name.
+    // can be matched against its registered dotted name. Arrays are skipped
+    // symmetrically with the write path (which stores array-nested payloads
+    // whole), so such a value passes straight to the FFI and still decrypts.
     if (typeof attrValue === 'object' && !Array.isArray(attrValue)) {
       const nestedResult = Object.entries(
         attrValue as Record<string, unknown>,

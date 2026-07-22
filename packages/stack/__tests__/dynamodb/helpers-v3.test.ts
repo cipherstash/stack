@@ -314,6 +314,41 @@ describe('regressions found in review', () => {
     })
   })
 
+  it('does not split a nested payload whose path names no declared column', () => {
+    // The write path must only split DECLARED columns. A pre-encrypted payload
+    // under an undeclared nested name used to be split into `<leaf>__source`
+    // by shape alone — but the read path rebuilds only declared columns, so it
+    // would never reassemble it: silent, undecryptable data. Leave the whole
+    // envelope in place so write and read stay symmetric and it round-trips.
+    const item = { profile: { secret: scalar('secret', 'CT', { hm: 'H' }) } }
+
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+
+    expect(stored).toEqual(item)
+    expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
+  })
+
+  it('splits a detected payload with an empty-string ciphertext rather than leaking its envelope', () => {
+    // `{ v, i, c: '' }` is DETECTED as a payload (it has v+i+c), but the scalar
+    // arm gated on truthiness (`if (payload.c)`), so an empty ciphertext fell
+    // through and was written out as a RAW MAP — leaking v/i into storage, the
+    // exact thing the "no envelope metadata leak" invariant forbids. Split it
+    // as `<attr>__source: ''` like any other ciphertext.
+    const stored = toEncryptedDynamoItem(
+      { email: { v: 3, i: { t: 'users', c: 'email' }, c: '' } },
+      encryptedAttrs,
+    )
+
+    expect(stored).toEqual({ email__source: '' })
+
+    // The other half of the contract: read must rebuild `c: ''` intact — not
+    // drop it or treat the empty source as a missing attribute — or the value
+    // is unrecoverable. A truthiness regression on the read side would strip it.
+    expect(toItemWithEqlPayloads(stored, users)).toEqual({
+      email: { i: { c: 'email', t: 'users' }, v: 3, c: '' },
+    })
+  })
+
   it('identifies a column by its DB name when it differs from the property', () => {
     // `emailAddress: types.TextEq('email_address')` — matching must happen on
     // the property name, identification on the DB name.
@@ -340,6 +375,65 @@ describe('regressions found in review', () => {
     expect(toItemWithEqlPayloads(stored, t)).toEqual({
       emailAddress: { i: { c: 'email_address', t: 't' }, v: 3, c: 'CT' },
     })
+  })
+})
+
+describe('arrays are a deliberate carve-out', () => {
+  // The mapping descends into nested OBJECTS but never ARRAYS. A payload inside
+  // an array is therefore stored as its whole envelope, symmetrically skipped on
+  // read, so it still decrypts — it is just never split into a queryable
+  // `__source`/`__hmac`. These pin that carve-out with REAL payloads (the older
+  // "leaves arrays untouched" test used a `{ c }` lookalike the detector would
+  // skip anyway, so it did not characterise the skip).
+
+  it('leaves a real payload inside an array whole rather than splitting it', () => {
+    const item = { tags: [scalar('tags', 'CT', { hm: 'H' })] }
+
+    // Whole envelope retained (v, i, c, hm all present); no tags__source/__hmac.
+    expect(toEncryptedDynamoItem(item, encryptedAttrs, true)).toEqual(item)
+  })
+
+  it('passes an envelope nested in an array straight through on read', () => {
+    const item = { tags: [{ v: 3, i: { t: 'users', c: 'email' }, c: 'CT' }] }
+
+    // Not recursed, not rebuilt, not dropped — the array element reaches the
+    // caller/FFI unchanged, which is what lets it decrypt.
+    expect(toItemWithEqlPayloads(item, users)).toEqual(item)
+  })
+
+  it('round-trips a payload nested in an array', () => {
+    const item = { tags: [scalar('tags', 'CT', { hm: 'H' })] }
+
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    expect(stored).toEqual(item)
+    expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
+  })
+
+  it('does not split a declared column whose value is an array', () => {
+    // The one shape where the split branch's column gate DOES match
+    // (`matchColumn('email', '')` succeeds) — only `isStoredEqlPayload([...])`
+    // being false stops a split. That guard interaction is otherwise untested.
+    const item = { email: [scalar('email', 'CT', { hm: 'H' })] }
+
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    expect(stored).toEqual(item)
+    expect(stored).not.toHaveProperty('email__source')
+    expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
+  })
+
+  it('leaves an array of objects each holding a payload whole, and round-trips it', () => {
+    // The realistic customer shape: a list of records, each with an encrypted
+    // field. Every element is stored and read whole.
+    const item = {
+      history: [
+        { at: 'day1', email: scalar('email', 'CT1', { hm: 'H1' }) },
+        { at: 'day2', email: scalar('email', 'CT2') },
+      ],
+    }
+
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs, true)
+    expect(stored).toEqual(item)
+    expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
   })
 })
 

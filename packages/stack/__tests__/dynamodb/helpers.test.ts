@@ -122,6 +122,30 @@ describe('toEncryptedDynamoItem (write path)', () => {
 
     expect(result).toEqual({ items: [{ c: 'looks-like-a-payload' }] })
   })
+
+  it('leaves a real v2 payload inside an array whole and round-trips it', () => {
+    // The array carve-out with a genuine `v+i+c` payload (the case above uses a
+    // `{ c }` lookalike the detector skips anyway): stored whole, not split, and
+    // symmetrically passed through on read so it still decrypts.
+    const item = { tags: [ct('array-ct', 'array-hmac')] }
+
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
+    expect(stored).toEqual(item)
+    expect(stored).not.toHaveProperty('tags__source')
+    expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
+  })
+
+  it('does not split a nested payload whose leaf names no declared v2 column', () => {
+    // The v2 branch carries the bare-leaf fallback; its POSITIVE case is tested
+    // above. The negative — a nested leaf that is NOT a declared column must be
+    // left whole (the read path rebuilds only declared columns, so a split here
+    // would be unrecoverable). Only the v3 branch (no fallback) covered this.
+    const item = { profile: { secret: ct('CT', 'H') } }
+
+    const stored = toEncryptedDynamoItem(item, encryptedAttrs)
+    expect(stored).toEqual(item)
+    expect(toItemWithEqlPayloads(stored, users)).toEqual(item)
+  })
 })
 
 describe('toItemWithEqlPayloads (read path)', () => {
@@ -201,6 +225,42 @@ describe('toItemWithEqlPayloads (read path)', () => {
     )
 
     expect(result).toEqual({
+      details: {
+        amount: { i: { c: 'amount', t: 'orders' }, v: 2, k: 'ct', c: 'ct' },
+      },
+    })
+  })
+
+  it('splits and drops a nested v2 grouped field __hmac via the bare-leaf fallback', () => {
+    // `encryptedField('amount')` under a `details` group registers the bare
+    // leaf `amount`. A nested equality payload must split to `amount__hmac` on
+    // write and have it dropped on read through the v2 bare-leaf fallback — the
+    // v2 twin of the v3 dotted-path __hmac coverage, which was otherwise only
+    // exercised in the live suite.
+    const orders = encryptedTable('orders', {
+      details: { amount: encryptedField('amount') },
+    })
+    const attrs = Object.keys(orders.build().columns)
+
+    const stored = toEncryptedDynamoItem(
+      {
+        details: {
+          amount: {
+            k: 'ct',
+            v: 2,
+            i: { t: 'orders', c: 'amount' },
+            c: 'ct',
+            hm: 'h',
+          },
+        },
+      },
+      attrs,
+    )
+    expect(stored).toEqual({
+      details: { amount__source: 'ct', amount__hmac: 'h' },
+    })
+
+    expect(toItemWithEqlPayloads(stored, orders)).toEqual({
       details: {
         amount: { i: { c: 'amount', t: 'orders' }, v: 2, k: 'ct', c: 'ct' },
       },

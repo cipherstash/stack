@@ -12,7 +12,7 @@
  * awaiting yields a discriminated Result — are locked here, where `tsc` runs.
  */
 import { describe, expectTypeOf, it } from 'vitest'
-import type { EncryptedDynamoDBInstance } from '@/dynamodb'
+import type { EncryptedAttributes, EncryptedDynamoDBInstance } from '@/dynamodb'
 import { encryptedDynamoDB } from '@/dynamodb'
 import type { EncryptionClient } from '@/encryption'
 import type { EncryptionV3 } from '@/encryption/v3'
@@ -283,6 +283,31 @@ describe('decrypt passes through suffixed keys whose base names no column', () =
 
     // Ordinary passthrough attribute, for contrast.
     expectTypeOf(result.data.pk).toEqualTypeOf<string>()
+  })
+})
+
+describe('a dotted-path v3 column is not modelled in EncryptedAttributes', () => {
+  it('passes the parent key through untyped and mints no split attribute', () => {
+    const dotted = encryptedTableV3('dotted_v3', {
+      'profile.ssn': types.TextEq('profile.ssn'),
+    })
+    type Model = { pk: string; profile: { ssn: string; name: string } }
+    type Mapped = EncryptedAttributes<typeof dotted, Model>
+
+    // LIMITATION pinned (see the `EncryptedAttributes` docblock in types.ts): a
+    // column declared under a dotted path is split INSIDE the nested `profile`
+    // map at runtime, but the model key is `profile`, not `profile.ssn`. The
+    // mapped type does not recognise `profile` as a column, so it passes through
+    // with its input type unchanged and no `<col>__source`/`__hmac` term is
+    // minted at the type level. If a future change starts (or stops) modelling
+    // the nested split, this assertion breaks on purpose.
+    expectTypeOf<Mapped['profile']>().toEqualTypeOf<{
+      ssn: string
+      name: string
+    }>()
+    expectTypeOf<Mapped>().not.toHaveProperty('profile.ssn__source')
+    expectTypeOf<Mapped>().not.toHaveProperty('profile__source')
+    expectTypeOf<Mapped['pk']>().toEqualTypeOf<string>()
   })
 })
 

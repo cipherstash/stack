@@ -180,6 +180,12 @@ type Simplify<T> = { [K in keyof T]: T[K] }
  * split *inside* the nested `profile` map at runtime. The model key is
  * `profile`, not `profile.ssn`, so it passes through here unchanged and the
  * nested split is not modelled.
+ *
+ * LIMITATION: values inside an ARRAY are not descended into — the write path
+ * skips arrays, so a payload in a list is stored whole rather than split into
+ * `<attr>__source`/`__hmac`. It still decrypts on read, but this mapped type
+ * describes it as its plaintext input shape, not a split. Documented in the
+ * DynamoDB skill's limitations.
  */
 export type EncryptedAttributes<Table extends AnyV3Table, T> = Simplify<
   {
