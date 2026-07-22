@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
@@ -195,8 +195,13 @@ export async function planCommand(
   // because the complete-rollout confirmation needs it too.
   const isInteractive = isInteractiveTty()
 
+  // Stat (not just existence) so the post-handoff check can tell a revised
+  // plan from a pre-existing one the run never touched (#738).
+  const planAbs = resolve(cwd, PLAN_REL_PATH)
+  const planBefore = statSync(planAbs, { throwIfNoEntry: false })
+
   try {
-    if (existsSync(resolve(cwd, PLAN_REL_PATH))) {
+    if (planBefore) {
       p.log.warn(
         `Plan already exists at \`${PLAN_REL_PATH}\`. The agent will be told to revise it; delete the file first if you want to start fresh.`,
       )
@@ -235,11 +240,52 @@ export async function planCommand(
       return
     }
 
-    await howToProceedStep.run(target ? { ...state, handoff: target } : state)
+    const handedOff = await howToProceedStep.run(
+      target ? { ...state, handoff: target } : state,
+    )
+
+    // The plan file is written by the handed-off agent, not by this command,
+    // so the outcome is only knowable from the disk. Verify before claiming
+    // anything — the unconditional "Plan drafted" this replaces let a failed
+    // handoff exit 0 and send `stash impl` after a file that never existed
+    // (#738).
+    const planAfter = statSync(planAbs, { throwIfNoEntry: false })
+
+    if (!planAfter) {
+      if (handedOff.agentLaunched) {
+        // An agent ran and was told to write the plan, but didn't — the
+        // deliverable is missing. Non-zero, so automation never reads this
+        // as "a plan exists".
+        p.log.error(
+          `${messages.plan.notWritten} to \`${PLAN_REL_PATH}\`. The agent may have been interrupted before saving it — re-run \`${cli} plan\` to try again.`,
+        )
+        p.outro('No plan was drafted.')
+        throw new CliExit(1)
+      }
+      // Deferred handoff (AGENTS.md target, or a CLI target that isn't
+      // installed): the files-and-instructions contract was delivered and
+      // the plan is written later, when the user drives their agent. That's
+      // a success for what was runnable — but never claim the plan exists.
+      p.outro(
+        `${messages.plan.noPlanYet} — complete the handoff above, then review \`${PLAN_REL_PATH}\` and run \`${cli} impl\` to implement.`,
+      )
+      return
+    }
+
+    // A pre-existing plan the run didn't modify is still usable (the agent
+    // may have judged it current), but "drafted" would be a false claim —
+    // report which of the two happened.
+    const wrote =
+      !planBefore ||
+      planAfter.mtimeMs !== planBefore.mtimeMs ||
+      planAfter.size !== planBefore.size
+    const planLine = wrote
+      ? `${messages.plan.drafted} \`${PLAN_REL_PATH}\``
+      : `Plan at \`${PLAN_REL_PATH}\` ${messages.plan.unchanged}`
 
     if (isInteractive) {
       const proceed = await p.confirm({
-        message: `Plan drafted at \`${PLAN_REL_PATH}\`. Continue to \`${cli} impl\` now?`,
+        message: `${planLine}. Continue to \`${cli} impl\` now?`,
         initialValue: true,
       })
       if (!p.isCancel(proceed) && proceed) {
@@ -248,15 +294,13 @@ export async function planCommand(
         await implCommand({}, {})
         return
       }
-      p.outro(
-        `Plan drafted at \`${PLAN_REL_PATH}\`. Review it, then run \`${cli} impl\` to implement.`,
-      )
+      p.outro(`${planLine}. Review it, then run \`${cli} impl\` to implement.`)
     } else {
       // Mirror init's non-TTY hint: the next command will also hit the
       // agent-target picker, so name `--target` here rather than letting
       // the user re-discover the flag on the next exit-cleanly hint.
       p.outro(
-        `Plan drafted at \`${PLAN_REL_PATH}\`. Review it, then run \`${cli} impl --target <claude-code|codex|agents-md|wizard>\` to implement. The \`--target\` flag is required when running non-interactively.`,
+        `${planLine}. Review it, then run \`${cli} impl --target <claude-code|codex|agents-md|wizard>\` to implement. The \`--target\` flag is required when running non-interactively.`,
       )
     }
   } catch (err) {

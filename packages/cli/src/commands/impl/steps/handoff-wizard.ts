@@ -44,6 +44,6 @@ export const handoffWizardStep: HandoffStep = {
       )
     }
 
-    return state
+    return { ...state, agentLaunched: true }
   },
 }

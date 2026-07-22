@@ -263,6 +263,8 @@ Each column carries `path: "new" | "migrate"`. `stash impl` parses this to rende
 
 To re-plan, delete `.cipherstash/plan.md` first — otherwise the agent is told to revise it rather than start fresh. `--complete-rollout` is the escape hatch for databases with no deployed application (local dev, sandboxes, test DBs); it's only safe when nothing in production writes to that database.
 
+**The outro reports what actually happened.** The plan file is written by the handed-off agent, so `plan` verifies it on disk before claiming anything: `Plan drafted at .cipherstash/plan.md` appears only when the file exists after the handoff. If a launched agent exits without writing it, `plan` errors and **exits non-zero**. Deferred handoffs — `--target agents-md`, or a Claude Code / Codex target whose CLI isn't installed — end with `No plan drafted yet` and exit 0: the plan lands later, when you drive the agent yourself. A pre-existing plan the run didn't modify is reported as `left unchanged by this run`, not drafted. Either way, check that `.cipherstash/plan.md` exists before acting on it.
+
 ### `impl` — execute
 
 ```bash
