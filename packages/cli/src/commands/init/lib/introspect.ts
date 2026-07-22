@@ -111,6 +111,11 @@ export async function introspectDatabase(
 export function candidateDomains(
   dataType: DataType,
 ): Array<{ value: V3Domain; label: string; hint: string }> {
+  // Hints show capability + the operators/functions each domain answers.
+  // EQL v3 emits `eql_v3.*()` function calls for comparison/match (not native
+  // SQL operators); JSON is the exception, using real `@>` (containment) and
+  // `->` (selector) operators. The bracketed sets below are logical shorthand
+  // matching the Drizzle-facing operator names, grounded in the v3 sql-dialect.
   switch (dataType) {
     case 'string':
       return [
@@ -119,38 +124,46 @@ export function candidateDomains(
           label: 'Text',
           hint: 'storage only — encrypt/decrypt, no queries',
         },
-        { value: 'TextEq', label: 'TextEq', hint: 'equality (=, IN)' },
+        { value: 'TextEq', label: 'TextEq', hint: 'equality (=, <>, IN)' },
         {
           value: 'TextOrd',
           label: 'TextOrd',
-          hint: 'equality + order/range (<, >, BETWEEN, sort)',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
         },
         {
           value: 'TextMatch',
           label: 'TextMatch',
-          hint: 'free-text match only',
+          hint: 'free-text match only (matches())',
         },
         {
           value: 'TextSearch',
           label: 'TextSearch',
-          hint: 'equality + order/range + free-text',
+          hint: 'equality + order/range + free-text (=, <, >, BETWEEN, ORDER BY, matches())',
         },
       ]
     case 'number':
       return [
         { value: 'Integer', label: 'Integer', hint: 'storage only' },
-        { value: 'IntegerEq', label: 'IntegerEq', hint: 'equality (=, IN)' },
+        {
+          value: 'IntegerEq',
+          label: 'IntegerEq',
+          hint: 'equality (=, <>, IN)',
+        },
         {
           value: 'IntegerOrd',
           label: 'IntegerOrd',
-          hint: 'equality + order/range',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
         },
       ]
     case 'date':
       return [
         { value: 'Date', label: 'Date', hint: 'storage only' },
-        { value: 'DateEq', label: 'DateEq', hint: 'equality (=, IN)' },
-        { value: 'DateOrd', label: 'DateOrd', hint: 'equality + order/range' },
+        { value: 'DateEq', label: 'DateEq', hint: 'equality (=, <>, IN)' },
+        {
+          value: 'DateOrd',
+          label: 'DateOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
       ]
     case 'boolean':
       return [{ value: 'Boolean', label: 'Boolean', hint: 'storage only' }]
@@ -159,7 +172,7 @@ export function candidateDomains(
         {
           value: 'Json',
           label: 'Json',
-          hint: 'encrypted-JSONB containment + selectors',
+          hint: 'encrypted-JSONB containment + selectors (@>, ->; =, <, >, BETWEEN, ORDER BY at a path)',
         },
       ]
   }

@@ -1,5 +1,7 @@
+import { types } from '@cipherstash/stack/eql/v3'
 import * as p from '@clack/prompts'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DataType } from '../../types.js'
 import {
   candidateDomains,
   defaultDomain,
@@ -202,5 +204,36 @@ describe('selectTableColumns', () => {
     // …and the column is mapped through pgTypeToDataType('eql_v2_encrypted')
     // which falls back to 'string', so it still receives its chosen domain.
     expect(schema?.columns).toEqual([{ name: 'ssn', domain: 'TextSearch' }])
+  })
+})
+
+describe('v3 domain drift guard', () => {
+  // The picker's V3Domain names are a curated subset of the factory names on
+  // the real `types` namespace from `@cipherstash/stack/eql/v3` — codegen emits
+  // `types.<domain>(...)`, so a domain the picker offers that no longer exists
+  // upstream would generate a client that fails to compile in the user's repo.
+  // This asserts every offered domain resolves to a real factory, so a rename
+  // or removal in stack fails here (in CI) rather than silently. It is the
+  // enforced counterpart to the reviewer's "avoid drift" concern; a plain type
+  // alias is not enough because `packages/cli` has no `tsc --noEmit` step (its
+  // build is tsup + Biome + vitest, none of which check an unused type).
+  it('every domain the picker can offer is a real @cipherstash/stack/eql/v3 factory', () => {
+    const dataTypes: DataType[] = [
+      'string',
+      'number',
+      'boolean',
+      'date',
+      'json',
+    ]
+    const offered = dataTypes.flatMap((dt) =>
+      candidateDomains(dt).map((o) => o.value),
+    )
+
+    for (const domain of offered) {
+      expect(
+        types,
+        `@cipherstash/stack/eql/v3 has no "${domain}" factory — the picker would emit types.${domain}(...) which no longer exists`,
+      ).toHaveProperty(domain)
+    }
   })
 })
