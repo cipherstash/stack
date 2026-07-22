@@ -1,9 +1,5 @@
-import { Encryption } from '@cipherstash/stack'
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
-import {
-  encryptedType,
-  extractEncryptionSchema,
-} from '@cipherstash/stack-drizzle'
+import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { extractEncryptionSchema, types } from '@cipherstash/stack-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { pgTable, serial } from 'drizzle-orm/pg-core'
 import pg from 'pg'
@@ -12,34 +8,23 @@ import { getDatabaseUrl } from '../harness/db.js'
 /**
  * Drizzle schema for the bench table. Mirrors `sql/schema.sql`.
  *
- * `id` is `serial`; the encrypted columns are `eql_v2_encrypted` composites
- * driven by `@cipherstash/stack-drizzle`'s `encryptedType`.
+ * `id` is `serial`; the encrypted columns are concrete `eql_v3_*` Postgres
+ * domains emitted by `@cipherstash/stack-drizzle`'s `types.*` factories.
  *
- * Index config flags (`equality`, `freeTextSearch`, `orderAndRange`,
- * `searchableJson`) are deliberately all on — the bench needs to exercise
- * every query family that lands on the table.
+ * The domains are chosen to exercise every query family the bench lands on the
+ * table: `TextSearch` (equality + free-text + order/range), `IntegerOrd`
+ * (equality + order/range), and `Json` (encrypted-JSONB containment + selector).
  */
 export const benchTable = pgTable('bench', {
   id: serial('id').primaryKey(),
-  encText: encryptedType<string>('enc_text', {
-    equality: true,
-    freeTextSearch: true,
-    orderAndRange: true,
-  }),
-  encInt: encryptedType<number>('enc_int', {
-    dataType: 'number',
-    equality: true,
-    orderAndRange: true,
-  }),
-  encJsonb: encryptedType<{ idx: number; group: number }>('enc_jsonb', {
-    dataType: 'json',
-    searchableJson: true,
-  }),
+  encText: types.TextSearch('enc_text'),
+  encInt: types.IntegerOrd('enc_int'),
+  encJsonb: types.Json('enc_jsonb'),
 })
 
 /**
- * Encryption schema for the stack `Encryption()` client. Derived from the
- * Drizzle table above so the two can't drift apart.
+ * Encryption schema for the `EncryptionV3()` client. Derived from the Drizzle
+ * table above so the two can't drift apart.
  */
 export const encryptionBenchTable = extractEncryptionSchema(benchTable)
 
@@ -49,11 +34,14 @@ export type BenchPlaintextRow = {
   enc_jsonb: { idx: number; group: number }
 }
 
+/** The typed EQL v3 client this bench drives. */
+export type BenchEncryptionClient = Awaited<ReturnType<typeof EncryptionV3>>
+
 export type BenchHandle = {
   pgClient: pg.Client
   pool: pg.Pool
   db: ReturnType<typeof drizzle>
-  encryptionClient: EncryptionClient
+  encryptionClient: BenchEncryptionClient
 }
 
 /**
@@ -69,7 +57,9 @@ export async function buildBench(): Promise<BenchHandle> {
 
   const db = drizzle(pool)
 
-  const encryptionClient = await Encryption({ schemas: [encryptionBenchTable] })
+  const encryptionClient = await EncryptionV3({
+    schemas: [encryptionBenchTable],
+  })
 
   return { pgClient, pool, db, encryptionClient }
 }

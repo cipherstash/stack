@@ -1,90 +1,96 @@
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
+import type { Result } from '@byteslice/result'
+import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
+import {
+  jsonPathOf,
+  matchNeedleError,
+  parseSelectorSegments,
+  reconstructSelectorDocument,
+  stripDomainSchema,
+  unsupportedLeafReason,
+} from '@cipherstash/stack/adapter-kit'
 import type {
-  EncryptedColumn,
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
-import { type QueryTypeName, queryTypes } from '@cipherstash/stack/types'
+  AnyEncryptedV3Column,
+  AnyV3Table,
+} from '@cipherstash/stack/eql/v3'
+import type { EncryptionError } from '@cipherstash/stack/errors'
+import type { LockContext } from '@cipherstash/stack/identity'
+import type { ColumnSchema } from '@cipherstash/stack/schema'
+import type {
+  EncryptedQueryResult,
+  QueryTypeName,
+} from '@cipherstash/stack/types'
 import {
   and,
-  arrayContained,
-  arrayContains,
-  arrayOverlaps,
   asc,
-  between,
-  bindIfParam,
+  Column,
   desc,
-  eq,
   exists,
-  gt,
-  gte,
-  ilike,
-  inArray,
+  is,
   isNotNull,
   isNull,
-  like,
-  lt,
-  lte,
-  ne,
   not,
-  notBetween,
   notExists,
-  notIlike,
-  notInArray,
   or,
   type SQL,
   type SQLWrapper,
   sql,
 } from 'drizzle-orm'
 import type { PgTable } from 'drizzle-orm/pg-core'
-import type { EncryptedColumnConfig } from './index.js'
-import { getEncryptedColumnConfig } from './index.js'
-import { extractEncryptionSchema } from './schema-extraction.js'
-
-// ============================================================================
-// Type Definitions and Type Guards
-// ============================================================================
+import { getEqlV3Column } from './column.js'
+import {
+  extractEncryptionSchema,
+  getDrizzleTableName,
+} from './schema-extraction.js'
+import { type ComparisonOp, type EqualityOp, v3Dialect } from './sql-dialect.js'
 
 /**
- * Branded type for Drizzle table with encrypted columns
+ * The client capability this factory consumes: `encryptQuery`, in both its
+ * single (`value, opts`) and batch (`terms[]`) forms. Declared structurally —
+ * with maximally-permissive operands — so it is satisfied by the nominal
+ * `EncryptionClient`, by the `TypedEncryptionClient` that `EncryptionV3` returns
+ * (whatever its schema tuple), AND by a hand-rolled test double, none needing a
+ * cast. Typing the parameter to the nominal `TypedEncryptionClient<S>` would
+ * reject a client built for a narrower schema tuple (it accepts fewer tables than
+ * `readonly AnyV3Table[]`); the structural surface sidesteps that variance.
+ *
+ * Every operand is a QUERY TERM, not a storage envelope: `encryptQuery` mints a
+ * ciphertext-free term (no `c`) carrying all of the column's configured index
+ * terms, which the operator layer casts to the column's `eql_v3.query_<domain>`
+ * type. This reaches the bundle's `(domain, query_<domain>)` overloads and keeps
+ * WHERE-clause payloads free of the ciphertext a query never needs (#622).
+ *
+ * `never` operands: the real client's `encryptQuery` is generic (`queryType` is
+ * constrained to the column's own query types), which a concrete signature here
+ * cannot match. `never` params keep the structural surface satisfiable by that
+ * generic method AND by a test double; the call sites cast their real operands.
  */
-// biome-ignore lint/suspicious/noExplicitAny: Drizzle table types don't expose Symbol properties
-type EncryptedDrizzleTable = PgTable<any> & {
-  readonly __isEncryptedTable?: true
+type OperandEncryptionClient = {
+  encryptQuery(
+    value: never,
+    opts: never,
+  ): ChainableOperation<EncryptedQueryResult>
+  encryptQuery(terms: never): ChainableOperation<EncryptedQueryResult[]>
 }
 
-/**
- * Type guard to check if a value is a Drizzle SQLWrapper
- */
-function isSQLWrapper(value: unknown): value is SQLWrapper {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'sql' in value &&
-    typeof (value as { sql: unknown }).sql !== 'undefined'
-  )
-}
+// Path helpers now live in @cipherstash/stack/adapter-kit (shared with the
+// Supabase adapter, #650); re-exported so existing imports keep working.
+export { parseSelectorSegments, reconstructSelectorDocument }
 
 /**
- * Type guard to check if a value is a Drizzle table
- */
-function isPgTable(value: unknown): value is EncryptedDrizzleTable {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Symbol.for('drizzle:Name') in value
-  )
-}
-
-/**
- * Custom error types for better debugging
+ * A dedicated error for v3 operator gating and operand-encryption failures,
+ * carrying the offending column/table/operator for diagnostics.
+ *
+ * INTENTIONAL FORK: this mirrors the v2 adapter's `EncryptionOperatorError`
+ * rather than sharing it. Unifying the two would couple `./drizzle` and
+ * `./eql/v3/drizzle` — two independently-versioned public entry points — so the
+ * duplication is deliberate, not an oversight.
  */
 export class EncryptionOperatorError extends Error {
   constructor(
     message: string,
     public readonly context?: {
-      tableName?: string
       columnName?: string
+      tableName?: string
       operator?: string
     },
   ) {
@@ -93,1853 +99,861 @@ export class EncryptionOperatorError extends Error {
   }
 }
 
-export class EncryptionConfigError extends EncryptionOperatorError {
-  constructor(message: string, context?: EncryptionOperatorError['context']) {
-    super(message, context)
-    this.name = 'EncryptionConfigError'
-  }
+interface ColumnContext {
+  builder: AnyEncryptedV3Column
+  table: AnyV3Table
+  indexes: ColumnSchema['indexes']
+  columnName: string
+  tableName: string
+  /** The `eql_v3.query_<domain>` type an operand for this column casts to, so
+   * `encryptQuery`'s ciphertext-free term reaches the narrowed-query overloads.
+   * `null` for storage-only columns (no query domain); those never encrypt an
+   * operand — every operator gates on a query capability first. JSON columns
+   * override this at the call site (`query_json`, an irregular name). */
+  queryCast: string | null
 }
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
 /**
- * Helper to extract table name from a Drizzle table
+ * The `eql_v3.query_<domain>` cast for a column's storage domain — e.g.
+ * `public.eql_v3_text_search` → `eql_v3.query_text_search`. Uniform across the
+ * queryable column domains (`_eq`, `_ord`, `_ord_ore`, `_match`, `_search`); the
+ * two irregular cases are handled elsewhere: storage-only domains
+ * (`eql_v3_boolean`, the bare base types) have no query domain and return `null`
+ * (they are never queried), and `eql_v3_json_search` maps to `query_json`, cast
+ * explicitly on the JSON path.
  */
-function getDrizzleTableName(drizzleTable: unknown): string | undefined {
-  if (!isPgTable(drizzleTable)) {
-    return undefined
+function queryCastForDomain(eqlType: string): string | null {
+  const bare = stripDomainSchema(eqlType) // public.eql_v3_text_search → eql_v3_text_search
+  const prefix = 'eql_v3_'
+  if (!bare.startsWith(prefix)) return null
+  const suffix = bare.slice(prefix.length)
+  // No index suffix (bare storage-only domain like `boolean`, `text`) → no query
+  // domain exists. These are gated out before any operand is encrypted. The
+  // suffixes match the column factories in `@/eql/v3/columns` exactly: ope
+  // ordering is the `_ord` domain (not `_ord_ope`) and text search is `_search`
+  // (there is no `_search_ore` column), so those two never occur here.
+  if (!/_(eq|ord|ord_ore|match|search)$/.test(suffix)) {
+    return null
   }
-  // Access Symbol property using Record type to avoid indexing errors
-  const tableWithSymbol = drizzleTable as unknown as Record<
-    symbol,
-    string | undefined
-  >
-  return tableWithSymbol[Symbol.for('drizzle:Name')]
+  return `eql_v3.query_${suffix}`
+}
+
+export type EncryptionOperatorCallOpts = {
+  lockContext?: LockContext
+  audit?: AuditConfig
 }
 
 /**
- * Helper to get the drizzle table from a drizzle column
+ * An SDK encryption operation after its lock context has been applied: still
+ * auditable and awaitable, but not re-lockable. `withLockContext` returns this,
+ * not the full {@link ChainableOperation}, mirroring the real
+ * `EncryptOperationWithLockContext`, which drops `withLockContext` (you cannot
+ * lock-context twice). Modelling that is what lets the real client type satisfy
+ * the structural surface with no cast.
  */
-function getDrizzleTableFromColumn(drizzleColumn: SQLWrapper): unknown {
-  const column = drizzleColumn as unknown as Record<string, unknown>
-  return column.table as unknown
+type AuditableOperation<T> = {
+  audit(config: AuditConfig): AuditableOperation<T>
+  then: PromiseLike<Result<T, EncryptionError>>['then']
 }
 
 /**
- * Helper to extract encrypted table from a drizzle column by deriving it from the column's parent table
- */
-function getEncryptedTableFromColumn(
-  drizzleColumn: SQLWrapper,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): EncryptedTable<EncryptedTableColumn> | undefined {
-  const drizzleTable = getDrizzleTableFromColumn(drizzleColumn)
-  if (!drizzleTable) {
-    return undefined
-  }
-
-  const tableName = getDrizzleTableName(drizzleTable)
-  if (!tableName) {
-    return undefined
-  }
-
-  // Check cache first
-  let encryptedTable = tableCache.get(tableName)
-  if (encryptedTable) {
-    return encryptedTable
-  }
-
-  // Extract encryption schema from drizzle table and cache it
-  try {
-    // biome-ignore lint/suspicious/noExplicitAny: PgTable type doesn't expose all needed properties
-    encryptedTable = extractEncryptionSchema(drizzleTable as PgTable<any>)
-    tableCache.set(tableName, encryptedTable)
-    return encryptedTable
-  } catch {
-    // Table doesn't have encrypted columns or extraction failed
-    return undefined
-  }
-}
-
-/**
- * Helper to get the encrypted column definition for a Drizzle column from the encrypted table
- */
-function getEncryptedColumn(
-  drizzleColumn: SQLWrapper,
-  encryptedTable: EncryptedTable<EncryptedTableColumn>,
-): EncryptedColumn | undefined {
-  const column = drizzleColumn as unknown as Record<string, unknown>
-  const columnName = column.name as string | undefined
-  if (!columnName) {
-    return undefined
-  }
-
-  const tableRecord = encryptedTable as unknown as Record<string, unknown>
-  return tableRecord[columnName] as EncryptedColumn | undefined
-}
-
-/**
- * Column metadata extracted from a Drizzle column
- */
-interface ColumnInfo {
-  readonly encryptedColumn: EncryptedColumn | undefined
-  readonly config: (EncryptedColumnConfig & { name: string }) | undefined
-  readonly encryptedTable: EncryptedTable<EncryptedTableColumn> | undefined
-  readonly columnName: string
-  readonly tableName: string | undefined
-}
-
-/**
- * Helper to get the encrypted column and column config for a Drizzle column
- * If encryptedTable is not provided, it will be derived from the column
- */
-function getColumnInfo(
-  drizzleColumn: SQLWrapper,
-  encryptedTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): ColumnInfo {
-  const column = drizzleColumn as unknown as Record<string, unknown>
-  const columnName = (column.name as string | undefined) || 'unknown'
-
-  // If encryptedTable not provided, try to derive it from the column
-  let resolvedTable = encryptedTable
-  if (!resolvedTable) {
-    resolvedTable = getEncryptedTableFromColumn(drizzleColumn, tableCache)
-  }
-
-  const drizzleTable = getDrizzleTableFromColumn(drizzleColumn)
-  const tableName = getDrizzleTableName(drizzleTable)
-
-  if (!resolvedTable) {
-    // Column is not from an encrypted table
-    const config = getEncryptedColumnConfig(columnName, drizzleColumn)
-    return {
-      encryptedColumn: undefined,
-      config,
-      encryptedTable: undefined,
-      columnName,
-      tableName,
-    }
-  }
-
-  const encryptedColumn = getEncryptedColumn(drizzleColumn, resolvedTable)
-  const config = getEncryptedColumnConfig(columnName, drizzleColumn)
-
-  return {
-    encryptedColumn,
-    config,
-    encryptedTable: resolvedTable,
-    columnName,
-    tableName,
-  }
-}
-
-/**
- * Helper to convert a value to plaintext format
- */
-function toPlaintext(value: unknown): string | number | bigint {
-  if (typeof value === 'boolean') {
-    return value ? 1 : 0
-  }
-  if (
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    // `bigint` (int8 columns) must pass through as a native bigint, NOT via the
-    // `String(value)` fallthrough below — a stringified bigint would be
-    // encrypted as text and silently mismatch the column's bigint domain. The
-    // downstream `encryptQuery` term type is `Plaintext`, which carries bigint,
-    // and protect-ffi 0.28 i64-bounds-checks it at the boundary.
-    typeof value === 'bigint'
-  ) {
-    return value
-  }
-  if (value instanceof Date) {
-    return value.toISOString()
-  }
-  return String(value)
-}
-
-/**
- * Value to encrypt with its associated column
- */
-interface ValueToEncrypt {
-  readonly value: string | number | bigint
-  readonly column: SQLWrapper
-  readonly columnInfo: ColumnInfo
-  readonly queryType?: QueryTypeName
-  readonly originalIndex: number
-}
-
-/**
- * Helper to encrypt multiple values for use in a query
- * Returns an array of encrypted search terms or original values if not encrypted
- */
-async function encryptValues(
-  encryptionClient: EncryptionClient,
-  values: Array<{
-    value: unknown
-    column: SQLWrapper
-    queryType?: QueryTypeName
-  }>,
-  encryptedTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): Promise<unknown[]> {
-  if (values.length === 0) {
-    return []
-  }
-
-  // Single pass: collect values to encrypt with their metadata
-  const valuesToEncrypt: ValueToEncrypt[] = []
-  const results: unknown[] = new Array(values.length)
-
-  for (let i = 0; i < values.length; i++) {
-    const { value, column, queryType } = values[i]
-    const columnInfo = getColumnInfo(column, encryptedTable, tableCache)
-
-    if (
-      !columnInfo.encryptedColumn ||
-      !columnInfo.config ||
-      !columnInfo.encryptedTable
-    ) {
-      // Column is not encrypted, return value as-is
-      results[i] = value
-      continue
-    }
-
-    const plaintextValue = toPlaintext(value)
-    valuesToEncrypt.push({
-      value: plaintextValue,
-      column,
-      columnInfo,
-      queryType,
-      originalIndex: i,
-    })
-  }
-
-  if (valuesToEncrypt.length === 0) {
-    return results
-  }
-
-  // Group values by column to batch encrypt with same column/table
-  const columnGroups = new Map<
-    string,
-    {
-      column: EncryptedColumn
-      table: EncryptedTable<EncryptedTableColumn>
-      columnName: string
-      values: Array<{
-        value: string | number | bigint
-        index: number
-        queryType?: QueryTypeName
-      }>
-      resultIndices: number[]
-    }
-  >()
-
-  let valueIndex = 0
-  for (const {
-    value,
-    columnInfo,
-    queryType,
-    originalIndex,
-  } of valuesToEncrypt) {
-    // Safe access with validation - we know these exist from earlier checks
-    if (
-      !columnInfo.config ||
-      !columnInfo.encryptedColumn ||
-      !columnInfo.encryptedTable
-    ) {
-      continue
-    }
-
-    const columnName = columnInfo.config.name
-    const groupKey = `${columnInfo.tableName ?? 'unknown'}/${columnName}`
-    let group = columnGroups.get(groupKey)
-    if (!group) {
-      group = {
-        column: columnInfo.encryptedColumn,
-        table: columnInfo.encryptedTable,
-        columnName,
-        values: [],
-        resultIndices: [],
-      }
-      columnGroups.set(groupKey, group)
-    }
-    group.values.push({ value, index: valueIndex++, queryType })
-    group.resultIndices.push(originalIndex)
-  }
-
-  // Encrypt all values for each column in batches
-  for (const [, group] of columnGroups) {
-    const { columnName } = group
-    try {
-      const terms = group.values.map((v) => ({
-        value: v.value,
-        column: group.column,
-        table: group.table,
-        queryType: v.queryType,
-      }))
-
-      const encryptedTerms = await encryptionClient.encryptQuery(terms)
-
-      if (encryptedTerms.failure) {
-        throw new EncryptionOperatorError(
-          `Failed to encrypt query terms for column "${columnName}": ${encryptedTerms.failure.message}`,
-          { columnName },
-        )
-      }
-
-      // Map results back to original indices
-      for (let i = 0; i < group.values.length; i++) {
-        const resultIndex = group.resultIndices[i] ?? -1
-        if (resultIndex >= 0 && resultIndex < results.length) {
-          results[resultIndex] = encryptedTerms.data[i]
-        }
-      }
-    } catch (error) {
-      if (error instanceof EncryptionOperatorError) {
-        throw error
-      }
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-      throw new EncryptionOperatorError(
-        `Unexpected error encrypting values for column "${columnName}": ${errorMessage}`,
-        { columnName },
-      )
-    }
-  }
-
-  return results
-}
-
-/**
- * Helper to encrypt a single value for use in a query
- * Returns the encrypted search term or the original value if not encrypted
- */
-async function encryptValue(
-  encryptionClient: EncryptionClient,
-  value: unknown,
-  drizzleColumn: SQLWrapper,
-  encryptedTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-  queryType?: QueryTypeName,
-): Promise<unknown> {
-  const results = await encryptValues(
-    encryptionClient,
-    [{ value, column: drizzleColumn, queryType }],
-    encryptedTable,
-    tableCache,
-  )
-  return results[0]
-}
-
-// ============================================================================
-// Lazy Operator Pattern
-// ============================================================================
-
-/**
- * Simplified lazy operator that defers encryption until awaited or batched
- */
-interface LazyOperator {
-  readonly __isLazyOperator: true
-  readonly operator: string
-  readonly queryType?: QueryTypeName
-  readonly left: SQLWrapper
-  readonly right: unknown
-  readonly min?: unknown
-  readonly max?: unknown
-  readonly needsEncryption: boolean
-  readonly columnInfo: ColumnInfo
-  execute(
-    encrypted: unknown,
-    encryptedMin?: unknown,
-    encryptedMax?: unknown,
-  ): SQL
-}
-
-/**
- * Type guard for lazy operators
- */
-function isLazyOperator(value: unknown): value is LazyOperator {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    '__isLazyOperator' in value &&
-    (value as LazyOperator).__isLazyOperator === true
-  )
-}
-
-/**
- * Creates a lazy operator that defers execution
- */
-function createLazyOperator(
-  operator: string,
-  left: SQLWrapper,
-  right: unknown,
-  execute: (
-    encrypted: unknown,
-    encryptedMin?: unknown,
-    encryptedMax?: unknown,
-  ) => SQL,
-  needsEncryption: boolean,
-  columnInfo: ColumnInfo,
-  encryptionClient: EncryptionClient,
-  defaultTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-  min?: unknown,
-  max?: unknown,
-  queryType?: QueryTypeName,
-): LazyOperator & Promise<SQL> {
-  let resolvedSQL: SQL | undefined
-  let encryptionPromise: Promise<SQL> | undefined
-
-  const lazyOp: LazyOperator = {
-    __isLazyOperator: true,
-    operator,
-    queryType,
-    left,
-    right,
-    min,
-    max,
-    needsEncryption,
-    columnInfo,
-    execute,
-  }
-
-  // Create a promise that will be resolved when encryption completes
-  const promise = new Promise<SQL>((resolve, reject) => {
-    // Auto-execute when awaited directly
-    queueMicrotask(async () => {
-      if (resolvedSQL !== undefined) {
-        resolve(resolvedSQL)
-        return
-      }
-
-      try {
-        if (!encryptionPromise) {
-          encryptionPromise = executeLazyOperatorDirect(
-            lazyOp,
-            encryptionClient,
-            defaultTable,
-            tableCache,
-          )
-        }
-        const sql = await encryptionPromise
-        resolvedSQL = sql
-        resolve(sql)
-      } catch (error) {
-        reject(error)
-      }
-    })
-  })
-
-  // Attach lazy operator properties to the promise
-  return Object.assign(promise, lazyOp)
-}
-
-/**
- * Executes a lazy operator with pre-encrypted values (used in batched mode)
- */
-async function executeLazyOperator(
-  lazyOp: LazyOperator,
-  encryptedValues?: { value: unknown; encrypted: unknown }[],
-): Promise<SQL> {
-  if (!lazyOp.needsEncryption) {
-    return lazyOp.execute(lazyOp.right)
-  }
-
-  if (lazyOp.min !== undefined && lazyOp.max !== undefined) {
-    // Between operator - use provided encrypted values
-    let encryptedMin: unknown
-    let encryptedMax: unknown
-
-    if (encryptedValues && encryptedValues.length >= 2) {
-      encryptedMin = encryptedValues[0]?.encrypted
-      encryptedMax = encryptedValues[1]?.encrypted
-    } else {
-      throw new EncryptionOperatorError(
-        'Between operator requires both min and max encrypted values',
-        {
-          columnName: lazyOp.columnInfo.columnName,
-          tableName: lazyOp.columnInfo.tableName,
-          operator: lazyOp.operator,
-        },
-      )
-    }
-
-    if (encryptedMin === undefined || encryptedMax === undefined) {
-      throw new EncryptionOperatorError(
-        'Between operator requires both min and max values to be encrypted',
-        {
-          columnName: lazyOp.columnInfo.columnName,
-          tableName: lazyOp.columnInfo.tableName,
-          operator: lazyOp.operator,
-        },
-      )
-    }
-
-    return lazyOp.execute(undefined, encryptedMin, encryptedMax)
-  }
-
-  // Single value operator
-  let encrypted: unknown
-
-  if (encryptedValues && encryptedValues.length > 0) {
-    encrypted = encryptedValues[0]?.encrypted
-  } else {
-    throw new EncryptionOperatorError(
-      'Operator requires encrypted value but none provided',
-      {
-        columnName: lazyOp.columnInfo.columnName,
-        tableName: lazyOp.columnInfo.tableName,
-        operator: lazyOp.operator,
-      },
-    )
-  }
-
-  if (encrypted === undefined) {
-    throw new EncryptionOperatorError(
-      'Encryption failed or value was not encrypted',
-      {
-        columnName: lazyOp.columnInfo.columnName,
-        tableName: lazyOp.columnInfo.tableName,
-        operator: lazyOp.operator,
-      },
-    )
-  }
-
-  return lazyOp.execute(encrypted)
-}
-
-/**
- * Executes a lazy operator directly by encrypting values on demand
- * Used when operator is awaited directly (not batched)
- */
-async function executeLazyOperatorDirect(
-  lazyOp: LazyOperator,
-  encryptionClient: EncryptionClient,
-  defaultTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): Promise<SQL> {
-  if (!lazyOp.needsEncryption) {
-    return lazyOp.execute(lazyOp.right)
-  }
-
-  if (lazyOp.min !== undefined && lazyOp.max !== undefined) {
-    // Between operator - encrypt min and max
-    const [encryptedMin, encryptedMax] = await encryptValues(
-      encryptionClient,
-      [
-        { value: lazyOp.min, column: lazyOp.left, queryType: lazyOp.queryType },
-        { value: lazyOp.max, column: lazyOp.left, queryType: lazyOp.queryType },
-      ],
-      defaultTable,
-      tableCache,
-    )
-    return lazyOp.execute(undefined, encryptedMin, encryptedMax)
-  }
-
-  // Single value operator
-  const encrypted = await encryptValue(
-    encryptionClient,
-    lazyOp.right,
-    lazyOp.left,
-    defaultTable,
-    tableCache,
-    lazyOp.queryType,
-  )
-
-  return lazyOp.execute(encrypted)
-}
-
-// ============================================================================
-// Operator Factory Functions
-// ============================================================================
-
-/**
- * Creates a comparison operator (eq, ne, gt, gte, lt, lte)
- */
-function createComparisonOperator(
-  operator: 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte',
-  left: SQLWrapper,
-  right: unknown,
-  columnInfo: ColumnInfo,
-  encryptionClient: EncryptionClient,
-  defaultTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): Promise<SQL> | SQL {
-  const { config } = columnInfo
-
-  // Operators requiring orderAndRange index
-  const requiresOrderAndRange = ['gt', 'gte', 'lt', 'lte'].includes(operator)
-
-  if (requiresOrderAndRange) {
-    if (!config?.orderAndRange) {
-      // Return regular Drizzle operator for non-encrypted columns
-      switch (operator) {
-        case 'gt':
-          return gt(left, right)
-        case 'gte':
-          return gte(left, right)
-        case 'lt':
-          return lt(left, right)
-        case 'lte':
-          return lte(left, right)
-      }
-    }
-
-    // This will be replaced with encrypted value in executeLazyOperator
-    const executeFn = (encrypted: unknown) => {
-      if (encrypted === undefined) {
-        throw new EncryptionOperatorError(
-          `Encryption failed for ${operator} operator`,
-          {
-            columnName: columnInfo.columnName,
-            tableName: columnInfo.tableName,
-            operator,
-          },
-        )
-      }
-      return sql`eql_v2.${sql.raw(operator)}(${left}, ${bindIfParam(encrypted, left)})`
-    }
-
-    return createLazyOperator(
-      operator,
-      left,
-      right,
-      executeFn,
-      true,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-      undefined, // min
-      undefined, // max
-      queryTypes.orderAndRange,
-    ) as Promise<SQL>
-  }
-
-  // Equality operators (eq, ne)
-  const requiresEquality = ['eq', 'ne'].includes(operator)
-
-  if (requiresEquality && config?.equality) {
-    const executeFn = (encrypted: unknown) => {
-      if (encrypted === undefined) {
-        throw new EncryptionOperatorError(
-          `Encryption failed for ${operator} operator`,
-          {
-            columnName: columnInfo.columnName,
-            tableName: columnInfo.tableName,
-            operator,
-          },
-        )
-      }
-      return operator === 'eq' ? eq(left, encrypted) : ne(left, encrypted)
-    }
-
-    return createLazyOperator(
-      operator,
-      left,
-      right,
-      executeFn,
-      true,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-      undefined, // min
-      undefined, // max
-      queryTypes.equality,
-    ) as Promise<SQL>
-  }
-
-  // Fallback to regular Drizzle operators
-  return operator === 'eq' ? eq(left, right) : ne(left, right)
-}
-
-/**
- * Creates a range operator (between, notBetween)
- */
-function createRangeOperator(
-  operator: 'between' | 'notBetween',
-  left: SQLWrapper,
-  min: unknown,
-  max: unknown,
-  columnInfo: ColumnInfo,
-  encryptionClient: EncryptionClient,
-  defaultTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): Promise<SQL> | SQL {
-  const { config } = columnInfo
-
-  if (!config?.orderAndRange) {
-    return operator === 'between'
-      ? between(left, min, max)
-      : notBetween(left, min, max)
-  }
-
-  const executeFn = (
-    _encrypted: unknown,
-    encryptedMin?: unknown,
-    encryptedMax?: unknown,
-  ) => {
-    if (encryptedMin === undefined || encryptedMax === undefined) {
-      throw new EncryptionOperatorError(
-        `${operator} operator requires both min and max values`,
-        {
-          columnName: columnInfo.columnName,
-          tableName: columnInfo.tableName,
-          operator,
-        },
-      )
-    }
-
-    const rangeCondition = sql`eql_v2.gte(${left}, ${bindIfParam(encryptedMin, left)}) AND eql_v2.lte(${left}, ${bindIfParam(encryptedMax, left)})`
-
-    return operator === 'between'
-      ? rangeCondition
-      : sql`NOT (${rangeCondition})`
-  }
-
-  return createLazyOperator(
-    operator,
-    left,
-    undefined,
-    executeFn,
-    true,
-    columnInfo,
-    encryptionClient,
-    defaultTable,
-    tableCache,
-    min,
-    max,
-    queryTypes.orderAndRange,
-  ) as Promise<SQL>
-}
-
-/**
- * Creates a text search operator (like, ilike, notIlike)
- */
-function createTextSearchOperator(
-  operator: 'like' | 'ilike' | 'notIlike',
-  left: SQLWrapper,
-  right: unknown,
-  columnInfo: ColumnInfo,
-  encryptionClient: EncryptionClient,
-  defaultTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): Promise<SQL> | SQL {
-  const { config } = columnInfo
-
-  if (!config?.freeTextSearch) {
-    // Cast to satisfy TypeScript
-    const rightValue = right as string | SQLWrapper
-    switch (operator) {
-      case 'like':
-        return like(left as Parameters<typeof like>[0], rightValue)
-      case 'ilike':
-        return ilike(left as Parameters<typeof ilike>[0], rightValue)
-      case 'notIlike':
-        return notIlike(left as Parameters<typeof notIlike>[0], rightValue)
-    }
-  }
-
-  const executeFn = (encrypted: unknown) => {
-    if (encrypted === undefined) {
-      throw new EncryptionOperatorError(
-        `Encryption failed for ${operator} operator`,
-        {
-          columnName: columnInfo.columnName,
-          tableName: columnInfo.tableName,
-          operator,
-        },
-      )
-    }
-
-    const sqlFn = sql`eql_v2.${sql.raw(operator === 'notIlike' ? 'ilike' : operator)}(${left}, ${bindIfParam(encrypted, left)})`
-    return operator === 'notIlike' ? sql`NOT (${sqlFn})` : sqlFn
-  }
-
-  return createLazyOperator(
-    operator,
-    left,
-    right,
-    executeFn,
-    true,
-    columnInfo,
-    encryptionClient,
-    defaultTable,
-    tableCache,
-    undefined, // min
-    undefined, // max
-    queryTypes.freeTextSearch,
-  ) as Promise<SQL>
-}
-
-/**
- * Creates a JSONB operator that encrypts a JSON path selector and wraps it
- * in the appropriate `eql_v2` function call.
+ * The subset of an SDK encryption operation this factory drives: the fluent
+ * `withLockContext`/`audit` chain, and a `then` that resolves the operation's
+ * `Result`. Generic over the resolved payload `T` so the single `encryptQuery`
+ * carries an `EncryptedQueryResult` term and the batch form an
+ * `EncryptedQueryResult[]`, rather than the `unknown` this erased to before.
  *
- * Supports `jsonbPathQueryFirst`, `jsonbGet`, and `jsonbPathExists`.
- * The column must have `searchableJson` enabled in its {@link EncryptedColumnConfig}.
+ * Structural, not the concrete `EncryptQueryOperation` class, because the client
+ * is passed in and the factory must accept any implementation with this surface.
  */
-function createJsonbOperator(
-  operator: 'jsonbPathQueryFirst' | 'jsonbGet' | 'jsonbPathExists',
-  left: SQLWrapper,
-  right: unknown,
-  columnInfo: ColumnInfo,
-  encryptionClient: EncryptionClient,
-  defaultTable: EncryptedTable<EncryptedTableColumn> | undefined,
-  tableCache: Map<string, EncryptedTable<EncryptedTableColumn>>,
-): Promise<SQL> {
-  const { config } = columnInfo
-  const encryptedSelector = (value: unknown) =>
-    sql`${bindIfParam(value, left)}::eql_v2_encrypted`
-
-  if (!config?.searchableJson) {
-    throw new EncryptionOperatorError(
-      `The ${operator} operator requires searchableJson to be enabled on the column configuration.`,
-      {
-        columnName: columnInfo.columnName,
-        tableName: columnInfo.tableName,
-        operator,
-      },
-    )
-  }
-
-  const executeFn = (encrypted: unknown) => {
-    if (encrypted === undefined) {
-      throw new EncryptionOperatorError(
-        `Encryption failed for ${operator} operator`,
-        {
-          columnName: columnInfo.columnName,
-          tableName: columnInfo.tableName,
-          operator,
-        },
-      )
-    }
-    switch (operator) {
-      case 'jsonbPathQueryFirst':
-        return sql`eql_v2.jsonb_path_query_first(${left}, ${encryptedSelector(encrypted)})`
-      case 'jsonbGet':
-        return sql`${left} -> ${encryptedSelector(encrypted)}`
-      case 'jsonbPathExists':
-        return sql`eql_v2.jsonb_path_exists(${left}, ${encryptedSelector(encrypted)})`
-    }
-  }
-
-  return createLazyOperator(
-    operator,
-    left,
-    right,
-    executeFn,
-    true,
-    columnInfo,
-    encryptionClient,
-    defaultTable,
-    tableCache,
-    undefined,
-    undefined,
-    queryTypes.steVecSelector,
-  ) as Promise<SQL>
+type ChainableOperation<T> = {
+  withLockContext(lockContext: LockContext): AuditableOperation<T>
+  audit(config: AuditConfig): AuditableOperation<T>
+  then: PromiseLike<Result<T, EncryptionError>>['then']
 }
 
-// ============================================================================
-// Public API: createEncryptionOperators
-// ============================================================================
-
 /**
- * Creates a set of encryption-aware operators that automatically encrypt values
- * for encrypted columns before using them with Drizzle operators.
+ * Build v3-aware query operators (`eq`, `gte`, `matches`, `contains`, `asc`, …) bound to an
+ * encryption `client`. Each comparison/containment operator AUTO-ENCRYPTS its
+ * plaintext operand into an EQL v3 query term before handing it to Drizzle, so
+ * callers pass plaintext and the emitted SQL compares encrypted values. Every
+ * operator also gates on the target column's capabilities and throws
+ * {@link EncryptionOperatorError} when the column can't answer the operator
+ * (e.g. ordering a non-`ore` column).
  *
- * For equality and text search operators (eq, ne, like, ilike, inArray, etc.):
- * Values are encrypted and then passed to regular Drizzle operators, which use
- * PostgreSQL's built-in operators for eql_v2_encrypted types.
- *
- * For order and range operators (gt, gte, lt, lte, between, notBetween):
- * Values are encrypted and then use eql_v2.* functions (eql_v2.gt(), eql_v2.gte(), etc.)
- * which are required for ORE (Order-Revealing Encryption) comparisons.
- *
- * @param encryptionClient - The EncryptionClient instance
- * @returns An object with all Drizzle operators wrapped for encrypted columns
+ * @param client - anything that can `encryptQuery` — the nominal
+ *   `EncryptionClient` or the `TypedEncryptionClient` from `EncryptionV3` (no
+ *   cast needed).
+ * @param defaults - lock context / audit applied to every operand encryption
+ *   unless a per-call override is supplied.
  *
  * @example
- * ```ts
- * // Initialize operators
- * const ops = createEncryptionOperators(encryptionClient)
- *
- * // Equality search - automatically encrypts and uses PostgreSQL operators
- * const results = await db
- *   .select()
- *   .from(usersTable)
- *   .where(await ops.eq(usersTable.email, 'user@example.com'))
- *
- * // Range query - automatically encrypts and uses eql_v2.gte()
- * const olderUsers = await db
- *   .select()
- *   .from(usersTable)
- *   .where(await ops.gte(usersTable.age, 25))
+ * ```typescript
+ * const ops = createEncryptionOperators(await EncryptionV3({ schemas: [users] }))
+ * await db.select().from(users).where(await ops.eq(users.email, 'a@b.com'))
  * ```
  */
-export function createEncryptionOperators(encryptionClient: EncryptionClient): {
-  // Comparison operators
-  /**
-   * Equality operator - encrypts value for encrypted columns.
-   * Requires either `equality` or `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users with a specific email address.
-   * ```ts
-   * const condition = await ops.eq(usersTable.email, 'user@example.com')
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  eq: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
+export function createEncryptionOperators(
+  client: OperandEncryptionClient,
+  defaults: EncryptionOperatorCallOpts = {},
+) {
+  const tableCache = new WeakMap<PgTable, AnyV3Table>()
+  // Per-column context memo. `resolveContext` is value-independent, so caching
+  // by column identity makes `inArray`/`notInArray` build the context (and its
+  // deep-cloned match block) once for the whole list instead of once per value.
+  const contextCache = new WeakMap<SQLWrapper, ColumnContext>()
 
-  /**
-   * Not equal operator - encrypts value for encrypted columns.
-   * Requires either `equality` or `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users whose email address is not a specific value.
-   * ```ts
-   * const condition = await ops.ne(usersTable.email, 'user@example.com')
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  ne: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * Greater than operator for encrypted columns with ORE index.
-   * Requires `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users older than a specific age.
-   * ```ts
-   * const condition = await ops.gt(usersTable.age, 30)
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  gt: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * Greater than or equal operator for encrypted columns with ORE index.
-   * Requires `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users older than or equal to a specific age.
-   * ```ts
-   * const condition = await ops.gte(usersTable.age, 30)
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  gte: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * Less than operator for encrypted columns with ORE index.
-   * Requires `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users younger than a specific age.
-   * ```ts
-   * const condition = await ops.lt(usersTable.age, 30)
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  lt: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * Less than or equal operator for encrypted columns with ORE index.
-   * Requires `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users younger than or equal to a specific age.
-   * ```ts
-   * const condition = await ops.lte(usersTable.age, 30)
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  lte: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * Between operator for encrypted columns with ORE index.
-   * Requires `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users within a specific age range.
-   * ```ts
-   * const condition = await ops.between(usersTable.age, 20, 30)
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  between: (left: SQLWrapper, min: unknown, max: unknown) => Promise<SQL> | SQL
-
-  /**
-   * Not between operator for encrypted columns with ORE index.
-   * Requires `orderAndRange` to be set on {@link EncryptedColumnConfig}.
-   *
-   * @example
-   * Select users outside a specific age range.
-   * ```ts
-   * const condition = await ops.notBetween(usersTable.age, 20, 30)
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  notBetween: (
-    left: SQLWrapper,
-    min: unknown,
-    max: unknown,
-  ) => Promise<SQL> | SQL
-
-  /**
-   * Like operator for encrypted columns with free text search.
-   * Requires `freeTextSearch` to be set on {@link EncryptedColumnConfig}.
-   *
-   * > [!IMPORTANT]
-   * > Case sensitivity on encrypted columns depends on the {@link EncryptedColumnConfig}.
-   * > Ensure that the column is configured for case-insensitive search if needed.
-   *
-   * @example
-   * Select users with email addresses matching a pattern.
-   * ```ts
-   * const condition = await ops.like(usersTable.email, '%@example.com')
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  like: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * ILike operator for encrypted columns with free text search.
-   * Requires `freeTextSearch` to be set on {@link EncryptedColumnConfig}.
-   *
-   * > [!IMPORTANT]
-   * > Case sensitivity on encrypted columns depends on the {@link EncryptedColumnConfig}.
-   * > Ensure that the column is configured for case-insensitive search if needed.
-   *
-   * @example
-   * Select users with email addresses matching a pattern (case-insensitive).
-   * ```ts
-   * const condition = await ops.ilike(usersTable.email, '%@example.com')
-   * const results = await db.select().from(usersTable).where(condition)
-   * ```
-   */
-  ilike: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-  notIlike: (left: SQLWrapper, right: unknown) => Promise<SQL> | SQL
-
-  /**
-   * JSONB path query first operator for encrypted columns with searchable JSON.
-   * Requires `searchableJson` to be set on {@link EncryptedColumnConfig}.
-   *
-   * Encrypts the JSON path selector and calls `eql_v2.jsonb_path_query_first()`,
-   * casting the parameter to `eql_v2_encrypted`.
-   *
-   * @throws {EncryptionOperatorError} If the column does not have `searchableJson` enabled.
-   */
-  jsonbPathQueryFirst: (left: SQLWrapper, right: unknown) => Promise<SQL>
-
-  /**
-   * JSONB get operator for encrypted columns with searchable JSON.
-   * Requires `searchableJson` to be set on {@link EncryptedColumnConfig}.
-   *
-   * Encrypts the JSON path selector and uses the `->` operator,
-   * casting the parameter to `eql_v2_encrypted`.
-   *
-   * @throws {EncryptionOperatorError} If the column does not have `searchableJson` enabled.
-   */
-  jsonbGet: (left: SQLWrapper, right: unknown) => Promise<SQL>
-
-  /**
-   * JSONB path exists operator for encrypted columns with searchable JSON.
-   * Requires `searchableJson` to be set on {@link EncryptedColumnConfig}.
-   *
-   * Encrypts the JSON path selector and calls `eql_v2.jsonb_path_exists()`,
-   * casting the parameter to `eql_v2_encrypted`.
-   *
-   * @throws {EncryptionOperatorError} If the column does not have `searchableJson` enabled.
-   */
-  jsonbPathExists: (left: SQLWrapper, right: unknown) => Promise<SQL>
-  // Array operators
-  inArray: (left: SQLWrapper, right: unknown[] | SQLWrapper) => Promise<SQL>
-  notInArray: (left: SQLWrapper, right: unknown[] | SQLWrapper) => Promise<SQL>
-  // Sorting operators
-  asc: (column: SQLWrapper) => SQL
-  desc: (column: SQLWrapper) => SQL
-  and: (
-    ...conditions: (SQL | SQLWrapper | Promise<SQL> | undefined)[]
-  ) => Promise<SQL>
-  or: (
-    ...conditions: (SQL | SQLWrapper | Promise<SQL> | undefined)[]
-  ) => Promise<SQL>
-  // Operators that don't need encryption (pass through to Drizzle)
-  exists: typeof exists
-  notExists: typeof notExists
-  isNull: typeof isNull
-  isNotNull: typeof isNotNull
-  not: typeof not
-  // Array operators that work with arrays directly (not encrypted values)
-  arrayContains: typeof arrayContains
-  arrayContained: typeof arrayContained
-  arrayOverlaps: typeof arrayOverlaps
-} {
-  // Create a cache for encrypted tables keyed by table name
-  const tableCache = new Map<string, EncryptedTable<EncryptedTableColumn>>()
-  const defaultTable: EncryptedTable<EncryptedTableColumn> | undefined =
-    undefined
-
-  /**
-   * Equality operator - encrypts value and uses regular Drizzle operator
-   */
-  const encryptedEq = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createComparisonOperator(
-      'eq',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
+  function drizzleTableOf(column: SQLWrapper): PgTable | undefined {
+    return is(column, Column)
+      ? (column.table as PgTable | undefined)
+      : undefined
   }
 
-  /**
-   * Not equal operator - encrypts value and uses regular Drizzle operator
-   */
-  const encryptedNe = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createComparisonOperator(
-      'ne',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
+  function resolveContext(column: SQLWrapper, operator: string): ColumnContext {
+    const cached = contextCache.get(column)
+    if (cached) return cached
 
-  /**
-   * Greater than operator - uses eql_v2.gt() for encrypted columns with ORE index
-   */
-  const encryptedGt = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createComparisonOperator(
-      'gt',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Greater than or equal operator - uses eql_v2.gte() for encrypted columns with ORE index
-   */
-  const encryptedGte = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createComparisonOperator(
-      'gte',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Less than operator - uses eql_v2.lt() for encrypted columns with ORE index
-   */
-  const encryptedLt = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createComparisonOperator(
-      'lt',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Less than or equal operator - uses eql_v2.lte() for encrypted columns with ORE index
-   */
-  const encryptedLte = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createComparisonOperator(
-      'lte',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Between operator - uses eql_v2.gte() and eql_v2.lte() for encrypted columns with ORE index
-   */
-  const encryptedBetween = (
-    left: SQLWrapper,
-    min: unknown,
-    max: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createRangeOperator(
-      'between',
-      left,
-      min,
-      max,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Not between operator - uses eql_v2.gte() and eql_v2.lte() for encrypted columns with ORE index
-   */
-  const encryptedNotBetween = (
-    left: SQLWrapper,
-    min: unknown,
-    max: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createRangeOperator(
-      'notBetween',
-      left,
-      min,
-      max,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Like operator - encrypts value and uses eql_v2.like() for encrypted columns with match index
-   */
-  const encryptedLike = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createTextSearchOperator(
-      'like',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Case-insensitive like operator - encrypts value and uses eql_v2.ilike() for encrypted columns with match index
-   */
-  const encryptedIlike = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createTextSearchOperator(
-      'ilike',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * Not like operator (case insensitive) - encrypts value and uses eql_v2.ilike() for encrypted columns with match index
-   */
-  const encryptedNotIlike = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> | SQL => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createTextSearchOperator(
-      'notIlike',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * JSONB path query first operator - encrypts the selector and calls
-   * `eql_v2.jsonb_path_query_first()` for encrypted columns with searchable JSON.
-   */
-  const encryptedJsonbPathQueryFirst = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createJsonbOperator(
-      'jsonbPathQueryFirst',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * JSONB get operator - encrypts the selector and uses the `->` operator
-   * for encrypted columns with searchable JSON.
-   */
-  const encryptedJsonbGet = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createJsonbOperator(
-      'jsonbGet',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * JSONB path exists operator - encrypts the selector and calls
-   * `eql_v2.jsonb_path_exists()` for encrypted columns with searchable JSON.
-   */
-  const encryptedJsonbPathExists = (
-    left: SQLWrapper,
-    right: unknown,
-  ): Promise<SQL> => {
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-    return createJsonbOperator(
-      'jsonbPathExists',
-      left,
-      right,
-      columnInfo,
-      encryptionClient,
-      defaultTable,
-      tableCache,
-    )
-  }
-
-  /**
-   * In array operator - encrypts all values in the array
-   */
-  const encryptedInArray = async (
-    left: SQLWrapper,
-    right: unknown[] | SQLWrapper,
-  ): Promise<SQL> => {
-    // If right is a SQLWrapper (subquery), pass through to Drizzle
-    if (isSQLWrapper(right)) {
-      return inArray(left, right as unknown as Parameters<typeof inArray>[1])
-    }
-
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
-
-    if (!columnInfo.config?.equality || !Array.isArray(right)) {
-      return inArray(left, right as unknown[])
-    }
-
-    // Encrypt all values in the array in a single batch
-    const encryptedValues = await encryptValues(
-      encryptionClient,
-      right.map((value) => ({
-        value,
-        column: left,
-        queryType: queryTypes.equality,
-      })),
-      defaultTable,
-      tableCache,
-    )
-
-    // Use regular eq for each encrypted value - PostgreSQL operators handle it
-    const conditions = encryptedValues
-      .filter((encrypted) => encrypted !== undefined)
-      .map((encrypted) => eq(left, encrypted))
-
-    if (conditions.length === 0) {
-      return sql`false`
-    }
-
-    const combined = or(...conditions)
-    return combined ?? sql`false`
-  }
-
-  /**
-   * Not in array operator
-   */
-  const encryptedNotInArray = async (
-    left: SQLWrapper,
-    right: unknown[] | SQLWrapper,
-  ): Promise<SQL> => {
-    // If right is a SQLWrapper (subquery), pass through to Drizzle
-    if (isSQLWrapper(right)) {
-      return notInArray(
-        left,
-        right as unknown as Parameters<typeof notInArray>[1],
+    const columnName = is(column, Column) ? column.name : 'unknown'
+    const builder = getEqlV3Column(columnName, column)
+    if (!builder) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" requires an encrypted v3 column, but "${columnName}" is not one.`,
+        { columnName, operator },
       )
     }
 
-    const columnInfo = getColumnInfo(left, defaultTable, tableCache)
+    const drizzleTable = drizzleTableOf(column)
+    const tableName = getDrizzleTableName(drizzleTable) ?? 'unknown'
 
-    if (!columnInfo.config?.equality || !Array.isArray(right)) {
-      return notInArray(left, right as unknown[])
+    let table = drizzleTable ? tableCache.get(drizzleTable) : undefined
+    if (!table && drizzleTable) {
+      table = extractEncryptionSchema(drizzleTable)
+      tableCache.set(drizzleTable, table)
+    }
+    if (!table) {
+      throw new EncryptionOperatorError(
+        `Unable to resolve the encrypted table for column "${columnName}".`,
+        { columnName, operator },
+      )
     }
 
-    // Encrypt all values in the array in a single batch
-    const encryptedValues = await encryptValues(
-      encryptionClient,
-      right.map((value) => ({
-        value,
-        column: left,
-        queryType: queryTypes.equality,
-      })),
-      defaultTable,
-      tableCache,
+    const context: ColumnContext = {
+      builder,
+      table,
+      indexes: builder.build().indexes,
+      columnName,
+      tableName,
+      queryCast: queryCastForDomain(builder.getEqlType()),
+    }
+    contextCache.set(column, context)
+    return context
+  }
+
+  /**
+   * Gate an operator on the column's indexes. `indexes` is a disjunction — any
+   * one of them grants the capability — so equality (`unique` OR `ore`) and the
+   * single-index gates share one rule and one diagnostic shape.
+   */
+  function requireIndex(
+    ctx: ColumnContext,
+    indexes: readonly ('unique' | 'ore' | 'ope' | 'match' | 'ste_vec')[],
+    operator: string,
+    capability: string,
+  ): void {
+    if (!indexes.some((index) => ctx.indexes[index])) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" requires ${capability} on column "${ctx.columnName}" (domain ${ctx.builder.getEqlType()} does not support it).`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+  }
+
+  // Ordering flavour is pinned by the column's domain (eql-3.0.0): `_ord`
+  // domains carry `ope` (`op` CLLW-OPE term), `_ord_ore` domains carry `ore`
+  // (`ob` block-ORE term). Either satisfies the order/range operators, and an
+  // order-capable column answers equality via its ordering term too.
+  const EQUALITY_INDEXES = ['unique', 'ore', 'ope'] as const
+  const ORDERING_INDEXES = ['ore', 'ope'] as const
+  // Two DISTINCT operators, split by semantics (#617):
+  // - `matches` is bloom free-text (`match`, a `text_search`/`text_match`
+  //   column): a one-sided, order- and multiplicity-insensitive token match that
+  //   may false-positive. It emits `eql_v3.matches(col, operand)` (the SQL
+  //   function keeps its bundle name) but is NOT containment.
+  // - `contains` is encrypted-JSONB containment (an `eql_v3_json_search` column,
+  //   `ste_vec` index): exact jsonb `@>`, no false positives — genuine
+  //   containment, so it keeps the `contains` name.
+  const MATCH_INDEXES = ['match'] as const
+  const JSON_CONTAINMENT_INDEXES = ['ste_vec'] as const
+
+  function applyOperationOptions<T>(
+    op: ChainableOperation<T>,
+    opts?: EncryptionOperatorCallOpts,
+  ): AuditableOperation<T> {
+    const lockContext = opts?.lockContext ?? defaults.lockContext
+    const audit = opts?.audit ?? defaults.audit
+    const withLock = lockContext ? op.withLockContext(lockContext) : op
+    if (audit) withLock.audit(audit)
+    return withLock
+  }
+
+  function requireNonNullOperand(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+  ): void {
+    if (value == null) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot encrypt a null operand for column "${ctx.columnName}". Use isNull() or isNotNull() for NULL checks.`,
+        {
+          columnName: ctx.columnName,
+          tableName: ctx.tableName,
+          operator,
+        },
+      )
+    }
+  }
+
+  /**
+   * Reject a free-text needle the column's match index cannot answer. A needle
+   * shorter than the tokenizer's `token_length` yields an empty bloom filter,
+   * and `stored_bf @> '{}'` holds for every row — so without this the query
+   * silently returns the whole table.
+   */
+  function requireAnswerableNeedle(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+  ): void {
+    const match = ctx.indexes.match
+    if (!match) return
+    const reason = matchNeedleError(value, match)
+    if (reason) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot search column "${ctx.columnName}": ${reason}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+  }
+
+  function operandFailure(
+    ctx: ColumnContext,
+    operator: string,
+    reason: string,
+  ): EncryptionOperatorError {
+    return new EncryptionOperatorError(
+      `Failed to encrypt query operand for "${ctx.columnName}": ${reason}`,
+      { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+    )
+  }
+
+  /**
+   * Render a query term as a cast operand: `'<json>'::eql_v3.query_<domain>`.
+   * The cast is what reaches the bundle's `(domain, query_<domain>)` overloads —
+   * a bare `::jsonb` would hit the storage-domain overload, whose CHECK demands
+   * the ciphertext `c` a query term deliberately omits. `queryCast` is derived
+   * from the column's own domain (see `queryCastForDomain`), so `sql.raw` is safe.
+   */
+  function castOperand(
+    ctx: ColumnContext,
+    operator: string,
+    term: EncryptedQueryResult,
+  ): SQL {
+    if (ctx.queryCast === null) {
+      throw operandFailure(
+        ctx,
+        operator,
+        `column domain "${ctx.builder.getEqlType()}" has no query operand type.`,
+      )
+    }
+    return sql`${JSON.stringify(term)}::${sql.raw(ctx.queryCast)}`
+  }
+
+  async function encryptOperand(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+    queryType: QueryTypeName,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    requireNonNullOperand(ctx, value, operator)
+
+    const result = await applyOperationOptions(
+      client.encryptQuery(
+        value as never,
+        {
+          table: ctx.table,
+          column: ctx.builder,
+          queryType,
+        } as never,
+      ),
+      opts,
+    )
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+    return castOperand(ctx, operator, result.data)
+  }
+
+  /**
+   * Encrypt a whole operand list in ONE `encryptQuery` batch crossing (rather
+   * than one per value). The batch is position-stable, so the returned terms
+   * align index-for-index with `values`; a response of a different length means
+   * the contract was violated and is rejected rather than silently truncating
+   * the predicate (which would widen an `inArray` or narrow a `notInArray`).
+   * Null operands are rejected up front, so no term is filtered out of the batch.
+   */
+  async function encryptOperands(
+    ctx: ColumnContext,
+    values: unknown[],
+    operator: string,
+    queryType: QueryTypeName,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL[]> {
+    for (const value of values) requireNonNullOperand(ctx, value, operator)
+
+    const terms = values.map((value) => ({
+      value,
+      column: ctx.builder,
+      table: ctx.table,
+      queryType,
+    }))
+    const result = await applyOperationOptions(
+      client.encryptQuery(terms as never),
+      opts,
+    )
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+
+    const encrypted = result.data as EncryptedQueryResult[]
+    if (encrypted.length !== values.length) {
+      throw operandFailure(
+        ctx,
+        operator,
+        `batch query encryption returned ${encrypted.length} terms for ${values.length} values.`,
+      )
+    }
+    return encrypted.map((term) => castOperand(ctx, operator, term))
+  }
+
+  const colSql = (column: SQLWrapper): SQL => sql`${column}`
+
+  async function equality(
+    op: EqualityOp,
+    left: SQLWrapper,
+    right: unknown,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, op)
+    requireIndex(ctx, EQUALITY_INDEXES, op, 'equality')
+    const enc = await encryptOperand(ctx, right, op, 'equality', opts)
+    return v3Dialect.equality(op, colSql(left), enc)
+  }
+
+  async function comparison(
+    op: ComparisonOp,
+    left: SQLWrapper,
+    right: unknown,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, op)
+    requireIndex(ctx, ORDERING_INDEXES, op, 'order/range')
+    const enc = await encryptOperand(ctx, right, op, 'orderAndRange', opts)
+    return v3Dialect.comparison(op, colSql(left), enc)
+  }
+
+  async function range(
+    left: SQLWrapper,
+    min: unknown,
+    max: unknown,
+    negate: boolean,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, operator)
+    requireIndex(ctx, ORDERING_INDEXES, operator, 'order/range')
+    // Independent operands — encrypt concurrently rather than paying two
+    // sequential round-trips to the crypto backend.
+    const [encMin, encMax] = await Promise.all([
+      encryptOperand(ctx, min, operator, 'orderAndRange', opts),
+      encryptOperand(ctx, max, operator, 'orderAndRange', opts),
+    ])
+    // `v3Dialect.range` is already parenthesised, so `NOT` binds to the whole
+    // conjunction without a wrapper here.
+    const condition = v3Dialect.range(colSql(left), encMin, encMax)
+    return negate ? sql`NOT ${condition}` : condition
+  }
+
+  /**
+   * Fuzzy free-text token match on a `text_search`/`text_match` column. NOT
+   * containment: it tests whether the needle's downcased 3-gram set is a subset
+   * of the haystack's, via a bloom filter — order- and multiplicity-insensitive
+   * and one-sided (a `true` may be a false positive, a `false` never is). Emits
+   * `eql_v3.matches(col, operand)` (the SQL function's bundle name).
+   */
+  async function matches(
+    left: SQLWrapper,
+    right: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, operator)
+    requireIndex(ctx, MATCH_INDEXES, operator, 'free-text search')
+    // The answerable-needle rule applies (a sub-`token_length` needle blooms to
+    // nothing and would match every row); the `query_<domain>` cast reaches the
+    // match overload.
+    requireAnswerableNeedle(ctx, right, operator)
+    const enc = await encryptOperand(
+      ctx,
+      right,
+      operator,
+      'freeTextSearch',
+      opts,
+    )
+    return v3Dialect.contains(colSql(left), enc)
+  }
+
+  /**
+   * Exact encrypted-JSONB containment on an `eql_v3_json_search` (`ste_vec`) column:
+   * genuine jsonb `@>`, no false positives — hence it keeps the `contains` name.
+   * `eql_v3_json_search` has no `eql_v3.matches` overload; containment is the `@>`
+   * operator, whose `(eql_v3_json_search, eql_v3.query_json)` form takes a NARROWED
+   * query term (searchableJson → no ciphertext), cast to `eql_v3.query_json`.
+   */
+  async function containsJsonOp(
+    left: SQLWrapper,
+    right: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, operator)
+    requireIndex(ctx, JSON_CONTAINMENT_INDEXES, operator, 'JSON containment')
+    const needle = await encryptJsonContainmentTerm(ctx, right, operator, opts)
+    return v3Dialect.containsJson(colSql(left), needle)
+  }
+
+  /**
+   * Build a `query_json` containment needle for a `json` column — the JSON query
+   * term carries no ciphertext and satisfies the `eql_v3.query_json` CHECK the
+   * `@>` overload needs. Cast here (not by `queryCastForDomain`): a json column's
+   * domain is `eql_v3_json_search` but its query operand type is the irregular
+   * `eql_v3.query_json`.
+   */
+  async function encryptJsonContainmentTerm(
+    ctx: ColumnContext,
+    value: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    requireNonNullOperand(ctx, value, operator)
+    // Reject the empty-object needle. `doc @> '{}'` holds for EVERY document
+    // (jsonb `{} ⊆ anything`), so `contains(col, {})` would silently return the
+    // whole table — the same whole-table footgun the bloom path guards against
+    // with `requireAnswerableNeedle`. An accidental empty filter is a bug, not a
+    // match-all request; callers wanting every row should omit the predicate.
+    if (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === 0
+    ) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot take an empty object needle on column "${ctx.columnName}": it matches every row. Pass a non-empty sub-object, or omit the predicate to select all rows.`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+    const result = await applyOperationOptions(
+      client.encryptQuery(
+        value as never,
+        {
+          table: ctx.table,
+          column: ctx.builder,
+          queryType: 'searchableJson',
+        } as never,
+      ),
+      opts,
+    )
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+    return sql`${JSON.stringify(result.data)}::eql_v3.query_json`
+  }
+
+  /**
+   * JSONPath selector-with-constraint on an `eql_v3_json_search` (`ste_vec`)
+   * column. Equality uses a value-selector containment needle, allowing the
+   * functional GIN index to answer the query. Ordering extracts the path entry
+   * with a selector hash and compares it to a ciphertext-free scalar ordering
+   * term. No storage ciphertext is placed in the WHERE clause.
+   */
+  async function selectorCompare(
+    col: SQLWrapper,
+    path: string,
+    op: EqualityOp | ComparisonOp,
+    value: unknown,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(col, operator)
+    requireIndex(
+      ctx,
+      JSON_CONTAINMENT_INDEXES,
+      operator,
+      'JSON selector (searchableJson)',
+    )
+    requireNonNullOperand(ctx, value, operator)
+
+    // A selector compares a scalar leaf — reject non-scalars / non-orderable
+    // types up front with a clear error, not a deferred DB failure.
+    const ordering = op !== 'eq' && op !== 'ne'
+    const leafReason = unsupportedLeafReason(value, ordering)
+    if (leafReason) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" cannot compare column "${ctx.columnName}": ${leafReason}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+
+    // Surface path-validation failures as EncryptionOperatorError with context.
+    let segments: string[]
+    try {
+      segments = parseSelectorSegments(path)
+    } catch (err) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" on column "${ctx.columnName}": ${err instanceof Error ? err.message : String(err)}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
+    }
+
+    const canonicalPath = jsonPathOf(segments)
+
+    if (op === 'eq' || op === 'ne') {
+      const result = await applyOperationOptions(
+        client.encryptQuery(
+          { path: canonicalPath, value } as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+            queryType: 'steVecValueSelector',
+          } as never,
+        ),
+        opts,
+      )
+      if (result.failure) {
+        throw operandFailure(ctx, operator, result.failure.message)
+      }
+      const contains = v3Dialect.containsJson(
+        colSql(col),
+        sql`${JSON.stringify(result.data)}::eql_v3.query_json`,
+      )
+      return op === 'eq'
+        ? contains
+        : sql`(NOT ${contains} OR ${colSql(col)} IS NULL)`
+    }
+
+    // Selector hashing and scalar-term encryption are independent, so order
+    // them concurrently. `steVecTerm` accepts only the JSON-orderable scalar
+    // families (string and number), enforced above.
+    const [selResult, termResult] = await Promise.all([
+      applyOperationOptions(
+        client.encryptQuery(
+          canonicalPath as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+            queryType: 'steVecSelector',
+          } as never,
+        ),
+        opts,
+      ),
+      applyOperationOptions(
+        client.encryptQuery(
+          value as never,
+          {
+            table: ctx.table,
+            column: ctx.builder,
+            queryType: 'steVecTerm',
+          } as never,
+        ),
+        opts,
+      ),
+    ])
+    if (selResult.failure) {
+      throw operandFailure(ctx, operator, selResult.failure.message)
+    }
+    if (termResult.failure) {
+      throw operandFailure(ctx, operator, termResult.failure.message)
+    }
+
+    // A v3 selector term is the bare HMAC hash string; guard the shape so a
+    // wrapped envelope can't silently bind as a JSON blob and match no rows.
+    const selValue = selResult.data
+    if (typeof selValue !== 'string') {
+      throw operandFailure(
+        ctx,
+        operator,
+        `expected a bare selector hash, got ${typeof selValue}.`,
+      )
+    }
+
+    const selSql = sql`${selValue}::text`
+    const leftEntry = v3Dialect.selectorEntry(colSql(col), selSql)
+    const termCast =
+      typeof value === 'string'
+        ? 'eql_v3.query_text_ord'
+        : 'eql_v3.query_double_ord'
+    const rightTerm = sql`${JSON.stringify(termResult.data)}::${sql.raw(termCast)}`
+    return v3Dialect.comparison(op, leftEntry, rightTerm)
+  }
+
+  /** Comparison methods bound to a `col->'path'` selector, mirroring the scalar
+   * operators. Async: each encrypts its operand. */
+  function selectorOps(col: SQLWrapper, path: string) {
+    const at =
+      (op: EqualityOp | ComparisonOp) =>
+      (value: unknown, opts?: EncryptionOperatorCallOpts) =>
+        selectorCompare(col, path, op, value, `selector(${path}).${op}`, opts)
+    return {
+      /** `col->'path' = value` (encrypted equality at the selector). A row whose
+       * document lacks `path` is excluded (it is not equal to `value`). */
+      eq: at('eq'),
+      /** `col->'path' <> value`, INCLUDING rows whose document lacks `path`
+       * ("not equal to value" covers "has no value"). */
+      ne: at('ne'),
+      /** `col->'path' > value` (encrypted ordering at the selector). */
+      gt: at('gt'),
+      /** `col->'path' >= value`. */
+      gte: at('gte'),
+      /** `col->'path' < value`. */
+      lt: at('lt'),
+      /** `col->'path' <= value`. */
+      lte: at('lte'),
+      /** Order rows ascending by the encrypted scalar at `path`. Missing paths
+       * produce SQL NULL and follow PostgreSQL's normal NULL ordering. */
+      asc: (opts?: EncryptionOperatorCallOpts) =>
+        selectorOrder(col, path, 'asc', opts),
+      /** Order rows descending by the encrypted scalar at `path`. Missing paths
+       * produce SQL NULL and follow PostgreSQL's normal NULL ordering. */
+      desc: (opts?: EncryptionOperatorCallOpts) =>
+        selectorOrder(col, path, 'desc', opts),
+    }
+  }
+
+  /** Build `ORDER BY eql_v3.ord_term(col -> selector::text)`.
+   * The selector is encrypted, but the extracted SteVec entry already carries
+   * its OPE ordering term, so no plaintext comparison operand is needed. */
+  async function selectorOrder(
+    col: SQLWrapper,
+    path: string,
+    direction: 'asc' | 'desc',
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const operator = `selector(${path}).${direction}`
+    const ctx = resolveContext(col, operator)
+    requireIndex(
+      ctx,
+      JSON_CONTAINMENT_INDEXES,
+      operator,
+      'JSON selector (searchableJson)',
     )
 
-    // Use regular ne for each encrypted value - PostgreSQL operators handle it
-    const conditions = encryptedValues
-      .filter((encrypted) => encrypted !== undefined)
-      .map((encrypted) => ne(left, encrypted))
-
-    if (conditions.length === 0) {
-      return sql`true`
+    let canonicalPath: string
+    try {
+      canonicalPath = jsonPathOf(parseSelectorSegments(path))
+    } catch (err) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" on column "${ctx.columnName}": ${err instanceof Error ? err.message : String(err)}`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
     }
 
-    const combined = and(...conditions)
-    return combined ?? sql`true`
-  }
-
-  /**
-   * Ascending order helper - uses eql_v2.order_by() for encrypted columns with ORE index
-   */
-  const encryptedAsc = (column: SQLWrapper): SQL => {
-    const columnInfo = getColumnInfo(column, defaultTable, tableCache)
-
-    if (columnInfo.config?.orderAndRange) {
-      return asc(sql`eql_v2.order_by(${column})`)
-    }
-
-    return asc(column)
-  }
-
-  /**
-   * Descending order helper - uses eql_v2.order_by() for encrypted columns with ORE index
-   */
-  const encryptedDesc = (column: SQLWrapper): SQL => {
-    const columnInfo = getColumnInfo(column, defaultTable, tableCache)
-
-    if (columnInfo.config?.orderAndRange) {
-      return desc(sql`eql_v2.order_by(${column})`)
-    }
-
-    return desc(column)
-  }
-
-  /**
-   * Batched AND operator - collects lazy operators, batches encryption, and combines conditions
-   */
-  const encryptedAnd = async (
-    ...conditions: (SQL | SQLWrapper | Promise<SQL> | undefined)[]
-  ): Promise<SQL> => {
-    // Single pass: separate lazy operators from regular conditions
-    const lazyOperators: LazyOperator[] = []
-    const regularConditions: (SQL | SQLWrapper | undefined)[] = []
-    const regularPromises: Promise<SQL>[] = []
-
-    for (const condition of conditions) {
-      if (condition === undefined) {
-        continue
-      }
-
-      if (isLazyOperator(condition)) {
-        lazyOperators.push(condition)
-      } else if (condition instanceof Promise) {
-        // Check if promise is also a lazy operator
-        if (isLazyOperator(condition)) {
-          lazyOperators.push(condition)
-        } else {
-          regularPromises.push(condition)
-        }
-      } else {
-        regularConditions.push(condition)
-      }
-    }
-
-    // If there are no lazy operators, just use Drizzle's and()
-    if (lazyOperators.length === 0) {
-      const allConditions: (SQL | SQLWrapper | undefined)[] = [
-        ...regularConditions,
-        ...(await Promise.all(regularPromises)),
-      ]
-      return and(...allConditions) ?? sql`true`
-    }
-
-    // Single pass: collect all values to encrypt with metadata
-    const valuesToEncrypt: Array<{
-      value: unknown
-      column: SQLWrapper
-      columnInfo: ColumnInfo
-      queryType?: QueryTypeName
-      lazyOpIndex: number
-      isMin?: boolean
-      isMax?: boolean
-    }> = []
-
-    for (let i = 0; i < lazyOperators.length; i++) {
-      const lazyOp = lazyOperators[i]
-      if (!lazyOp.needsEncryption) {
-        continue
-      }
-
-      if (lazyOp.min !== undefined && lazyOp.max !== undefined) {
-        valuesToEncrypt.push({
-          value: lazyOp.min,
-          column: lazyOp.left,
-          columnInfo: lazyOp.columnInfo,
-          queryType: lazyOp.queryType,
-          lazyOpIndex: i,
-          isMin: true,
-        })
-        valuesToEncrypt.push({
-          value: lazyOp.max,
-          column: lazyOp.left,
-          columnInfo: lazyOp.columnInfo,
-          queryType: lazyOp.queryType,
-          lazyOpIndex: i,
-          isMax: true,
-        })
-      } else if (lazyOp.right !== undefined) {
-        valuesToEncrypt.push({
-          value: lazyOp.right,
-          column: lazyOp.left,
-          columnInfo: lazyOp.columnInfo,
-          queryType: lazyOp.queryType,
-          lazyOpIndex: i,
-        })
-      }
-    }
-
-    // Batch encrypt all values
-    const encryptedResults = await encryptValues(
-      encryptionClient,
-      valuesToEncrypt.map((v) => ({
-        value: v.value,
-        column: v.column,
-        queryType: v.queryType,
-      })),
-      defaultTable,
-      tableCache,
+    const result = await applyOperationOptions(
+      client.encryptQuery(
+        canonicalPath as never,
+        {
+          table: ctx.table,
+          column: ctx.builder,
+          queryType: 'steVecSelector',
+        } as never,
+      ),
+      opts,
     )
-
-    // Group encrypted values by lazy operator index
-    const encryptedByLazyOp = new Map<
-      number,
-      { value?: unknown; min?: unknown; max?: unknown }
-    >()
-
-    for (let i = 0; i < valuesToEncrypt.length; i++) {
-      const { lazyOpIndex, isMin, isMax } = valuesToEncrypt[i]
-      const encrypted = encryptedResults[i]
-
-      let group = encryptedByLazyOp.get(lazyOpIndex)
-      if (!group) {
-        group = {}
-        encryptedByLazyOp.set(lazyOpIndex, group)
-      }
-
-      if (isMin) {
-        group.min = encrypted
-      } else if (isMax) {
-        group.max = encrypted
-      } else {
-        group.value = encrypted
-      }
+    if (result.failure) {
+      throw operandFailure(ctx, operator, result.failure.message)
+    }
+    if (typeof result.data !== 'string') {
+      throw operandFailure(
+        ctx,
+        operator,
+        `expected a bare selector hash, got ${typeof result.data}.`,
+      )
     }
 
-    // Execute all lazy operators with their encrypted values
-    const sqlConditions: SQL[] = []
-    for (let i = 0; i < lazyOperators.length; i++) {
-      const lazyOp = lazyOperators[i]
-      const encrypted = encryptedByLazyOp.get(i)
-
-      let sqlCondition: SQL
-      if (lazyOp.needsEncryption && encrypted) {
-        const encryptedValues: Array<{ value: unknown; encrypted: unknown }> =
-          []
-        if (encrypted.value !== undefined) {
-          encryptedValues.push({
-            value: lazyOp.right,
-            encrypted: encrypted.value,
-          })
-        }
-        if (encrypted.min !== undefined) {
-          encryptedValues.push({ value: lazyOp.min, encrypted: encrypted.min })
-        }
-        if (encrypted.max !== undefined) {
-          encryptedValues.push({ value: lazyOp.max, encrypted: encrypted.max })
-        }
-        sqlCondition = await executeLazyOperator(lazyOp, encryptedValues)
-      } else {
-        sqlCondition = lazyOp.execute(lazyOp.right)
-      }
-
-      sqlConditions.push(sqlCondition)
-    }
-
-    // Await any regular promises
-    const regularPromisesResults = await Promise.all(regularPromises)
-
-    // Combine all conditions
-    const allConditions: (SQL | SQLWrapper | undefined)[] = [
-      ...regularConditions,
-      ...sqlConditions,
-      ...regularPromisesResults,
-    ]
-
-    return and(...allConditions) ?? sql`true`
+    const entry = v3Dialect.selectorEntry(
+      colSql(col),
+      sql`${result.data}::text`,
+    )
+    const term = v3Dialect.orderBy(entry, 'ope')
+    return direction === 'asc' ? asc(term) : desc(term)
   }
 
-  /**
-   * Batched OR operator - collects lazy operators, batches encryption, and combines conditions
-   */
-  const encryptedOr = async (
-    ...conditions: (SQL | SQLWrapper | Promise<SQL> | undefined)[]
-  ): Promise<SQL> => {
-    const lazyOperators: LazyOperator[] = []
-    const regularConditions: (SQL | SQLWrapper | undefined)[] = []
-    const regularPromises: Promise<SQL>[] = []
-
-    for (const condition of conditions) {
-      if (condition === undefined) {
-        continue
-      }
-
-      if (isLazyOperator(condition)) {
-        lazyOperators.push(condition)
-      } else if (condition instanceof Promise) {
-        if (isLazyOperator(condition)) {
-          lazyOperators.push(condition)
-        } else {
-          regularPromises.push(condition)
-        }
-      } else {
-        regularConditions.push(condition)
-      }
+  async function inArrayOp(
+    left: SQLWrapper,
+    values: unknown[],
+    negate: boolean,
+    operator: string,
+    opts?: EncryptionOperatorCallOpts,
+  ): Promise<SQL> {
+    const ctx = resolveContext(left, operator)
+    if (values.length === 0) {
+      throw new EncryptionOperatorError(
+        `Operator "${operator}" requires a non-empty list of values for column "${ctx.columnName}".`,
+        { columnName: ctx.columnName, tableName: ctx.tableName, operator },
+      )
     }
-
-    if (lazyOperators.length === 0) {
-      const allConditions: (SQL | SQLWrapper | undefined)[] = [
-        ...regularConditions,
-        ...(await Promise.all(regularPromises)),
-      ]
-      return or(...allConditions) ?? sql`false`
-    }
-
-    const valuesToEncrypt: Array<{
-      value: unknown
-      column: SQLWrapper
-      columnInfo: ColumnInfo
-      queryType?: QueryTypeName
-      lazyOpIndex: number
-      isMin?: boolean
-      isMax?: boolean
-    }> = []
-
-    for (let i = 0; i < lazyOperators.length; i++) {
-      const lazyOp = lazyOperators[i]
-      if (!lazyOp.needsEncryption) {
-        continue
-      }
-
-      if (lazyOp.min !== undefined && lazyOp.max !== undefined) {
-        valuesToEncrypt.push({
-          value: lazyOp.min,
-          column: lazyOp.left,
-          columnInfo: lazyOp.columnInfo,
-          queryType: lazyOp.queryType,
-          lazyOpIndex: i,
-          isMin: true,
-        })
-        valuesToEncrypt.push({
-          value: lazyOp.max,
-          column: lazyOp.left,
-          columnInfo: lazyOp.columnInfo,
-          queryType: lazyOp.queryType,
-          lazyOpIndex: i,
-          isMax: true,
-        })
-      } else if (lazyOp.right !== undefined) {
-        valuesToEncrypt.push({
-          value: lazyOp.right,
-          column: lazyOp.left,
-          columnInfo: lazyOp.columnInfo,
-          queryType: lazyOp.queryType,
-          lazyOpIndex: i,
-        })
-      }
-    }
-
-    const encryptedResults = await encryptValues(
-      encryptionClient,
-      valuesToEncrypt.map((v) => ({
-        value: v.value,
-        column: v.column,
-        queryType: v.queryType,
-      })),
-      defaultTable,
-      tableCache,
+    // Gate and resolve the context once for the whole list, then encrypt it in
+    // a single `encryptQuery` batch crossing.
+    requireIndex(ctx, EQUALITY_INDEXES, operator, 'equality')
+    const op: EqualityOp = negate ? 'ne' : 'eq'
+    const encrypted = await encryptOperands(
+      ctx,
+      values,
+      operator,
+      'equality',
+      opts,
     )
+    const conditions = encrypted.map((enc) =>
+      v3Dialect.equality(op, colSql(left), enc),
+    )
+    // The empty-list guard above leaves `conditions` non-empty, so `and`/`or`
+    // never return undefined here.
+    return (negate ? and(...conditions) : or(...conditions)) as SQL
+  }
 
-    const encryptedByLazyOp = new Map<
-      number,
-      { value?: unknown; min?: unknown; max?: unknown }
-    >()
+  function orderTerm(column: SQLWrapper, operator: string): SQL {
+    const ctx = resolveContext(column, operator)
+    requireIndex(ctx, ORDERING_INDEXES, operator, 'order/range')
+    return v3Dialect.orderBy(colSql(column), ctx.indexes.ore ? 'ore' : 'ope')
+  }
 
-    for (let i = 0; i < valuesToEncrypt.length; i++) {
-      const { lazyOpIndex, isMin, isMax } = valuesToEncrypt[i]
-      const encrypted = encryptedResults[i]
-
-      let group = encryptedByLazyOp.get(lazyOpIndex)
-      if (!group) {
-        group = {}
-        encryptedByLazyOp.set(lazyOpIndex, group)
-      }
-
-      if (isMin) {
-        group.min = encrypted
-      } else if (isMax) {
-        group.max = encrypted
-      } else {
-        group.value = encrypted
-      }
-    }
-
-    const sqlConditions: SQL[] = []
-    for (let i = 0; i < lazyOperators.length; i++) {
-      const lazyOp = lazyOperators[i]
-      const encrypted = encryptedByLazyOp.get(i)
-
-      let sqlCondition: SQL
-      if (lazyOp.needsEncryption && encrypted) {
-        const encryptedValues: Array<{ value: unknown; encrypted: unknown }> =
-          []
-        if (encrypted.value !== undefined) {
-          encryptedValues.push({
-            value: lazyOp.right,
-            encrypted: encrypted.value,
-          })
-        }
-        if (encrypted.min !== undefined) {
-          encryptedValues.push({ value: lazyOp.min, encrypted: encrypted.min })
-        }
-        if (encrypted.max !== undefined) {
-          encryptedValues.push({ value: lazyOp.max, encrypted: encrypted.max })
-        }
-        sqlCondition = await executeLazyOperator(lazyOp, encryptedValues)
-      } else {
-        sqlCondition = lazyOp.execute(lazyOp.right)
-      }
-
-      sqlConditions.push(sqlCondition)
-    }
-
-    const regularPromisesResults = await Promise.all(regularPromises)
-
-    const allConditions: (SQL | SQLWrapper | undefined)[] = [
-      ...regularConditions,
-      ...sqlConditions,
-      ...regularPromisesResults,
-    ]
-
-    return or(...allConditions) ?? sql`false`
+  async function combine(
+    joiner: typeof and,
+    empty: SQL,
+    conditions: (SQL | SQLWrapper | Promise<SQL> | undefined)[],
+  ): Promise<SQL> {
+    const present = conditions.filter(
+      (c): c is SQL | SQLWrapper | Promise<SQL> => c !== undefined,
+    )
+    const resolved = await Promise.all(present)
+    return joiner(...resolved) ?? empty
   }
 
   return {
-    // Comparison operators
-    eq: encryptedEq,
-    ne: encryptedNe,
-    gt: encryptedGt,
-    gte: encryptedGte,
-    lt: encryptedLt,
-    lte: encryptedLte,
-
-    // Range operators
-    between: encryptedBetween,
-    notBetween: encryptedNotBetween,
-
-    // Text search operators
-    like: encryptedLike,
-    ilike: encryptedIlike,
-    notIlike: encryptedNotIlike,
-
-    // Searchable JSON operators
-    jsonbPathQueryFirst: encryptedJsonbPathQueryFirst,
-    jsonbGet: encryptedJsonbGet,
-    jsonbPathExists: encryptedJsonbPathExists,
-
-    // Array operators
-    inArray: encryptedInArray,
-    notInArray: encryptedNotInArray,
-
-    // Sorting operators
-    asc: encryptedAsc,
-    desc: encryptedDesc,
-
-    // AND operator - batches encryption operations
-    and: encryptedAnd,
-
-    // OR operator - batches encryption operations
-    or: encryptedOr,
-
-    // Operators that don't need encryption (pass through to Drizzle)
-    exists,
-    notExists,
+    /** Equality: `column = value`. Encrypts `r` and emits `eql_v3.eq`.
+     * Requires a `unique` or `ore` index on the column. */
+    eq: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      equality('eq', l, r, opts),
+    /** Inequality: `column <> value`. Encrypts `r` and emits `eql_v3.neq`.
+     * Requires a `unique` or `ore` index on the column. */
+    ne: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      equality('ne', l, r, opts),
+    /** Greater-than: `column > value`. Encrypts `r` and emits `eql_v3.gt`.
+     * Requires an `ore` (order/range) index. */
+    gt: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      comparison('gt', l, r, opts),
+    /** Greater-than-or-equal: `column >= value`. Encrypts `r` and emits
+     * `eql_v3.gte`. Requires an `ore` (order/range) index. */
+    gte: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      comparison('gte', l, r, opts),
+    /** Less-than: `column < value`. Encrypts `r` and emits `eql_v3.lt`.
+     * Requires an `ore` (order/range) index. */
+    lt: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      comparison('lt', l, r, opts),
+    /** Less-than-or-equal: `column <= value`. Encrypts `r` and emits
+     * `eql_v3.lte`. Requires an `ore` (order/range) index. */
+    lte: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      comparison('lte', l, r, opts),
+    /** Inclusive range `min <= column <= max`. Encrypts both bounds
+     * concurrently. Requires an `ore` (order/range) index. */
+    between: (
+      l: SQLWrapper,
+      min: unknown,
+      max: unknown,
+      opts?: EncryptionOperatorCallOpts,
+    ) => range(l, min, max, false, 'between', opts),
+    /** Negated inclusive range `NOT (min <= column <= max)`. Encrypts both
+     * bounds concurrently. Requires an `ore` (order/range) index. */
+    notBetween: (
+      l: SQLWrapper,
+      min: unknown,
+      max: unknown,
+      opts?: EncryptionOperatorCallOpts,
+    ) => range(l, min, max, true, 'notBetween', opts),
+    /** Fuzzy free-text token match — the needle's 3-gram set is (bloom-)tested
+     * as a subset of the column's. NOT containment: order/multiplicity-
+     * insensitive and one-sided (a `true` may be a false positive). Encrypts
+     * `r`. Requires a `match` (free-text search) index. */
+    matches: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      matches(l, r, 'matches', opts),
+    /** Exact encrypted-JSONB containment (`@>`): matches rows whose document
+     * contains the given sub-object. No false positives. Encrypts `r`. Requires
+     * a `ste_vec` index (a `types.Json` column). */
+    contains: (l: SQLWrapper, r: unknown, opts?: EncryptionOperatorCallOpts) =>
+      containsJsonOp(l, r, 'contains', opts),
+    /** JSONPath selector-with-constraint on a `types.Json` (`ste_vec`) column.
+     * Returns comparison and ordering methods bound to `col->'path'` — e.g.
+     * `await ops.selector(users.doc, '$.age').gt(21)` emits
+     * `col->'<sel>' > <entry>`, while `.asc()` emits
+     * `ORDER BY eql_v3.ord_term(col->'<sel>')`. Its unique power over `contains`
+     * is ordering at a path (`gt`/`gte`/`lt`/`lte` and `asc`/`desc`); `eq`/`ne`
+     * are also provided. Dot-notation object paths only in v1. */
+    selector: (l: SQLWrapper, path: string) => selectorOps(l, path),
+    /** Membership: ORs one encrypted `eq` term per value. The whole list is
+     * encrypted in one `encryptQuery` batch crossing. Rejects an empty list;
+     * requires a `unique` or `ore` index. */
+    inArray: (
+      l: SQLWrapper,
+      values: unknown[],
+      opts?: EncryptionOperatorCallOpts,
+    ) => inArrayOp(l, values, false, 'inArray', opts),
+    /** Non-membership: ANDs one encrypted `ne` term per value. The whole list
+     * is encrypted in one `encryptQuery` batch crossing. Rejects an empty list;
+     * requires a `unique` or `ore` index. */
+    notInArray: (
+      l: SQLWrapper,
+      values: unknown[],
+      opts?: EncryptionOperatorCallOpts,
+    ) => inArrayOp(l, values, true, 'notInArray', opts),
+    /** Ascending order by the encrypted order term (`eql_v3.ord_term` /
+     * `eql_v3.ord_term_ore`, by the column's ordering flavour).
+     * Synchronous (no operand to encrypt). Requires an ordering index. */
+    asc: (c: SQLWrapper) => asc(orderTerm(c, 'asc')),
+    /** Descending order by the encrypted order term (`eql_v3.ord_term` /
+     * `eql_v3.ord_term_ore`, by the column's ordering flavour).
+     * Synchronous (no operand to encrypt). Requires an ordering index. */
+    desc: (c: SQLWrapper) => desc(orderTerm(c, 'desc')),
+    /** Conjunction of the given conditions, awaiting any async operands and
+     * dropping `undefined`. Empty input resolves to `true`. */
+    and: (...conds: (SQL | SQLWrapper | Promise<SQL> | undefined)[]) =>
+      combine(and, sql`true`, conds),
+    /** Disjunction of the given conditions, awaiting any async operands and
+     * dropping `undefined`. Empty input resolves to `false`. */
+    or: (...conds: (SQL | SQLWrapper | Promise<SQL> | undefined)[]) =>
+      combine(or, sql`false`, conds),
+    /** Drizzle's `isNull`, re-exported unchanged — `column IS NULL` needs no
+     * encryption and works on any (nullable) encrypted column. */
     isNull,
+    /** Drizzle's `isNotNull`, re-exported unchanged — `column IS NOT NULL`
+     * needs no encryption. */
     isNotNull,
+    /** Drizzle's `not`, re-exported unchanged — negates an already-built
+     * (encrypted) predicate. Safe over any operator here, including `between`,
+     * whose fragment is self-parenthesising. */
     not,
-    // Array operators that work with arrays directly (not encrypted values)
-    arrayContains,
-    arrayContained,
-    arrayOverlaps,
+    /** Drizzle's `exists`, re-exported unchanged — for correlated subqueries. */
+    exists,
+    /** Drizzle's `notExists`, re-exported unchanged — for correlated
+     * subqueries. */
+    notExists,
   }
 }

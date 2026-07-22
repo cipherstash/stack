@@ -104,13 +104,12 @@ async function tryExplainWhere(name: string, where: SQL): Promise<void> {
 
 // --- #421: equality + array operators -------------------------------------
 //
-// `bench_text_hmac_idx` (functional hash on eql_v2.hmac_256) is the expected
-// fast path. Pre-fix Drizzle emits bare `=` / `<>` / `IN (...)` which falls
-// back to seq scan. Post-fix it emits `eql_v2.hmac_256(col) =
-// eql_v2.hmac_256(value)` and the index scan kicks in.
+// `bench_text_hmac_idx` (functional hash on eql_v3.eq_term) is the expected
+// fast path. The v3 operators emit `eql_v3.eq_term(col) = eql_v3.hmac_256(value)`
+// so the functional hash index scan kicks in instead of a seq scan.
 //
 // `eq` and `inArray` are naturally high-selectivity (only a few rows match),
-// so the planner should pick the hmac index — assertion enforces it.
+// so the planner should pick the eq_term index — assertion enforces it.
 //
 // `ne` and `notInArray` are naturally low-selectivity (almost all rows match);
 // even with the hmac index available the planner correctly chooses a seq
@@ -161,14 +160,10 @@ describe('#421: equality and array operators', () => {
 // We don't yet know which call-shaped forms the planner inlines. Record plan
 // shape; assertions land in a follow-up once #422 closes.
 describe('#422: call-shaped operators (recorded, not asserted)', () => {
-  it('records like / ilike plan shapes', async () => {
+  it('records matches plan shape', async () => {
     await tryExplainWhere(
-      'like',
-      (await ops.like(benchTable.encText, '%value-00000%')) as SQL,
-    )
-    await tryExplainWhere(
-      'ilike',
-      (await ops.ilike(benchTable.encText, '%VALUE-00000%')) as SQL,
+      'matches',
+      (await ops.matches(benchTable.encText, 'value')) as SQL,
     )
   })
 
@@ -190,20 +185,15 @@ describe('#422: call-shaped operators (recorded, not asserted)', () => {
     )
   })
 
-  it('records jsonb operator plan shapes', async () => {
-    for (const [name, build] of [
-      [
-        'jsonbPathQueryFirst',
-        () => ops.jsonbPathQueryFirst(benchTable.encJsonb, '$.idx'),
-      ],
-      ['jsonbGet', () => ops.jsonbGet(benchTable.encJsonb, '$.idx')],
-      [
-        'jsonbPathExists',
-        () => ops.jsonbPathExists(benchTable.encJsonb, '$.idx'),
-      ],
-    ] as const) {
-      await tryExplainWhere(name, await build())
-    }
+  it('records encrypted-JSONB plan shapes (contains / selector)', async () => {
+    await tryExplainWhere(
+      'contains',
+      (await ops.contains(benchTable.encJsonb, { idx: 42 })) as SQL,
+    )
+    await tryExplainWhere(
+      'selector.gt',
+      (await ops.selector(benchTable.encJsonb, '$.idx').gt(5000)) as SQL,
+    )
   })
 
   it('records ORDER BY plan shape (asc / desc)', async () => {

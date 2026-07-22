@@ -12,7 +12,7 @@ import {
   getEqlV3Column,
   isEqlV3Column,
   makeEqlV3Column,
-} from '../../src/v3/column'
+} from '../src/column'
 
 describe('makeEqlV3Column', () => {
   it('sets dataType() to the BARE eql_v3 domain (no schema qualifier)', () => {

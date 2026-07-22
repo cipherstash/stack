@@ -17,13 +17,13 @@ import {
 } from 'drizzle-orm'
 import { integer, PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
-import { makeEqlV3Column } from '../../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
+  createEncryptionOperators,
   EncryptionOperatorError,
-} from '../../src/v3/operators'
-import { extractEncryptionSchemaV3 } from '../../src/v3/schema-extraction'
-import { types } from '../../src/v3/types'
+} from '../src/operators'
+import { extractEncryptionSchema } from '../src/schema-extraction'
+import { types } from '../src/types'
 
 // A query TERM (from `encryptQuery`), not a storage envelope: it carries index
 // terms but NO ciphertext `c` — that is the whole point of the encrypt →
@@ -75,7 +75,7 @@ function setup(termImpl: (value?: unknown) => unknown = () => TERM) {
   // The factory's `client` parameter is the structural `{ encryptQuery }`
   // surface, so this hand-rolled double satisfies it with no cast.
   const client = { encryptQuery }
-  const ops = createEncryptionOperatorsV3(client, { lockContext, audit })
+  const ops = createEncryptionOperators(client, { lockContext, audit })
   const dialect = new PgDialect()
   const render = (s: unknown) => dialect.sqlToQuery(s as SQL)
   return { ops, encryptQuery, render }
@@ -138,7 +138,7 @@ const users = pgTable('users', {
   flag: types.Boolean('flag'),
 })
 
-describe('createEncryptionOperatorsV3 - equality', () => {
+describe('createEncryptionOperators - equality', () => {
   it.each(
     equalityDomains,
   )('%s eq emits the latest two-arg eql_v3.eq with a query-term operand', async (eqlType, spec) => {
@@ -198,7 +198,7 @@ describe('createEncryptionOperatorsV3 - equality', () => {
     await ops.eq(second.age, 37)
 
     expect(encryptQuery.mock.calls[1]?.[1]?.table.build()).toEqual(
-      extractEncryptionSchemaV3(second).build(),
+      extractEncryptionSchema(second).build(),
     )
   })
 
@@ -228,7 +228,7 @@ describe('createEncryptionOperatorsV3 - equality', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - comparison & range', () => {
+describe('createEncryptionOperators - comparison & range', () => {
   it.each([
     ['gt', 'eql_v3.gt'],
     ['gte', 'eql_v3.gte'],
@@ -355,7 +355,7 @@ describe('createEncryptionOperatorsV3 - comparison & range', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - free-text match', () => {
+describe('createEncryptionOperators - free-text match', () => {
   it.each(
     matchDomains,
   )('%s matches emits latest eql_v3.matches with a query-term operand', async (eqlType, spec) => {
@@ -413,7 +413,7 @@ describe('createEncryptionOperatorsV3 - free-text match', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - JSON containment', () => {
+describe('createEncryptionOperators - JSON containment', () => {
   const JSON_TYPE = 'public.eql_v3_json_search'
 
   // json has no `eql_v3.matches` overload: containment is the `@>` operator,
@@ -476,7 +476,7 @@ describe('createEncryptionOperatorsV3 - JSON containment', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - JSON selectors', () => {
+describe('createEncryptionOperators - JSON selectors', () => {
   const JSON_TYPE = 'public.eql_v3_json_search'
   const column = matrixColumn(JSON_TYPE)
   const VALUE_SELECTOR = { sv: [{ s: 'value-selector' }] }
@@ -565,7 +565,7 @@ describe('createEncryptionOperatorsV3 - JSON selectors', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - domains with no scalar query', () => {
+describe('createEncryptionOperators - domains with no scalar query', () => {
   it.each(nonScalarQueryDomains)('%s eq throws', async (eqlType, spec) => {
     const { ops } = setup()
     await expect(
@@ -588,7 +588,7 @@ describe('createEncryptionOperatorsV3 - domains with no scalar query', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
+describe('createEncryptionOperators - array, ordering, combinators', () => {
   it('inArray ORs one eq term per value; empty array throws', async () => {
     const { ops, render } = setup()
     const q = render(await ops.inArray(users.nickname, ['ada', 'grace']))
@@ -784,7 +784,7 @@ describe('createEncryptionOperatorsV3 - array, ordering, combinators', () => {
   })
 })
 
-describe('createEncryptionOperatorsV3 - gating errors', () => {
+describe('createEncryptionOperators - gating errors', () => {
   it('wraps encryption failures with operator context', async () => {
     const { ops, encryptQuery } = setup()
     encryptQuery.mockReturnValueOnce(

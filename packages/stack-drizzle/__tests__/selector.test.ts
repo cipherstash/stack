@@ -1,12 +1,12 @@
 import { integer, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import {
-  createEncryptionOperatorsV3,
+  createEncryptionOperators,
   EncryptionOperatorError,
   parseSelectorSegments,
   reconstructSelectorDocument,
-} from '../../src/v3/operators.js'
-import { types } from '../../src/v3/types.js'
+} from '../src/operators.js'
+import { types } from '../src/types.js'
 
 describe('parseSelectorSegments', () => {
   it('parses $-rooted, bare, and whitespace-padded dot paths', () => {
@@ -70,7 +70,7 @@ describe('ops.selector — up-front guards (no encryption reached)', () => {
   const failIfCalled = () => {
     throw new Error('guard should reject before encrypting')
   }
-  const ops = createEncryptionOperatorsV3({
+  const ops = createEncryptionOperators({
     encryptQuery: failIfCalled,
     encrypt: failIfCalled,
   } as never)
