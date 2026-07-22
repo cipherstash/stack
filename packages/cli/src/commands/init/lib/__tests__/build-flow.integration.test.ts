@@ -86,4 +86,22 @@ describe('build flow (introspect → pick → codegen)', () => {
     queryMock.mockResolvedValueOnce({ rows: [] })
     expect(await buildSchemasFromDatabase('postgresql://x')).toBeUndefined()
   })
+
+  it('returns undefined when the database connection/introspection fails', async () => {
+    // introspectDatabase throws → buildSchemasFromDatabase catches, stops the
+    // spinner, logs the error, and returns undefined rather than propagating.
+    queryMock.mockReset()
+    queryMock.mockRejectedValueOnce(new Error('ECONNREFUSED'))
+    expect(await buildSchemasFromDatabase('postgresql://x')).toBeUndefined()
+  })
+
+  it('returns undefined when the "another table?" prompt is cancelled', async () => {
+    // Distinct from declining (false): cancelling (Ctrl-C) mid-loop must abort
+    // the whole build, not return the tables gathered so far.
+    selectMock.mockResolvedValueOnce('users').mockResolvedValueOnce('TextEq')
+    multiselectMock.mockResolvedValueOnce(['email'])
+    confirmMock.mockResolvedValueOnce(CANCEL) // cancel the "another table?" prompt
+
+    expect(await buildSchemasFromDatabase('postgresql://x')).toBeUndefined()
+  })
 })

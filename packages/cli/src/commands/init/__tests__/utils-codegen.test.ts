@@ -49,6 +49,15 @@ describe('generateClientFromSchemas', () => {
     expect(out).toContain("from '@cipherstash/stack/v3'")
     expect(out).not.toContain('@cipherstash/stack-drizzle')
   })
+
+  it('throws for prisma-next instead of returning an undefined client', () => {
+    // prisma-next is unreachable from schema/build.ts, but the switch must stay
+    // total: fail loudly rather than silently returning undefined (which would
+    // write a broken client file) if a caller ever routes it here.
+    expect(() => generateClientFromSchemas('prisma-next', schemas)).toThrow(
+      /does not generate a prisma-next client/,
+    )
+  })
 })
 
 // Exhaustive round-trip over the closed V3Domain union: the sample fixtures

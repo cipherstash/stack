@@ -338,6 +338,17 @@ export function generateClientFromSchemas(
     case 'supabase':
     case 'postgresql':
       return generateGenericFromSchemas(schemas)
+    case 'prisma-next':
+      // `schema build` doesn't scaffold a prisma-next client — that integration
+      // uses its own per-domain constructors (`cipherstash.TextSearch()` …) and
+      // a migration-based flow, not the `types.*` client this emits. It never
+      // reaches here (schema/build.ts only produces 'supabase' | 'postgresql'),
+      // but fail loudly rather than writing an `undefined` client if it ever
+      // does. Naming every case also keeps the switch exhaustive, so a new
+      // Integration can't silently fall through to `undefined` again.
+      throw new Error(
+        '`stash schema build` does not generate a prisma-next client; use `stash plan` → `stash impl` instead.',
+      )
   }
 }
 
