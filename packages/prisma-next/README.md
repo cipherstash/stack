@@ -65,7 +65,7 @@ export const db = postgres<Contract>({
 npx stash auth login                      # one-time, per developer
 npx prisma-next contract emit
 npx prisma-next migration plan --name initial
-npx prisma-next migration apply           # installs EQL bundle + your schema
+npx prisma-next migrate                   # installs EQL bundle + your schema (top-level `migrate`, not `migration apply`)
 ```
 
 ```typescript

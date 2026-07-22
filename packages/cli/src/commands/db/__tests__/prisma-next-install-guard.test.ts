@@ -20,7 +20,7 @@ describe('prismaNextInstallGuard', () => {
     const msg = prismaNextInstallGuard(dir, {})
     expect(msg).not.toBeNull()
     expect(msg).toContain(messages.eql.prismaNextDetected)
-    expect(msg).toContain('prisma-next migration apply')
+    expect(msg).toContain('prisma-next migrate')
     expect(msg).toContain('--force')
   })
 

@@ -128,7 +128,7 @@ export const registry: CommandGroup[] = [
           {
             name: '--prisma-next',
             description:
-              'Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migration apply).',
+              'Use Prisma Next-specific setup flow (EQL bundle installed via prisma-next migrate).',
           },
           {
             name: '--proxy',

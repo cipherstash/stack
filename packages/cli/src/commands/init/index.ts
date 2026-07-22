@@ -140,7 +140,7 @@ export async function initCommand(
 
     // EQL is required for encryption. Some integrations install it out-of-band
     // and legitimately leave `eqlInstalled` false here: Prisma Next installs it
-    // via `migration apply`, and the Drizzle flow generates a migration the
+    // via `prisma-next migrate`, and the Drizzle flow generates a migration the
     // user applies with `drizzle-kit migrate` (`eqlMigrationPending`). Only a
     // run that neither installed EQL nor generated a migration to install it is
     // genuinely incomplete — say so and exit non-zero so automation can't read

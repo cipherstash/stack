@@ -730,7 +730,7 @@ export function routeInstallPathForEqlVersion(
 /**
  * `stash eql install` is the wrong tool in a Prisma Next project: Prisma Next
  * contributes a `migrations/cipherstash/` control space that installs the EQL
- * bundle as part of `prisma-next migration apply`, in the same ledger as the
+ * bundle as part of `prisma-next migrate`, in the same ledger as the
  * app schema. Running the standalone installer applies EQL out-of-band from
  * that ledger. `stash init --prisma-next` already skips the installer; this
  * guards the manual-invocation path too.
@@ -748,7 +748,7 @@ export function prismaNextInstallGuard(
   return (
     `${messages.eql.prismaNextDetected} (found prisma-next.config.* or @cipherstash/prisma-next). ` +
     'Prisma Next installs the EQL bundle through its own migration system — run ' +
-    '`prisma-next migration apply` instead of `stash eql install`. ' +
+    '`prisma-next migrate` instead of `stash eql install`. ' +
     'Pass --force to run the standalone installer against this database anyway.'
   )
 }

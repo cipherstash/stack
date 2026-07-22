@@ -14,7 +14,7 @@ export default defineConfig({
     maxWorkers: 1,
     isolate: false,
     fileParallelism: false,
-    // Live SDK round-trips + per-file connect + migration apply (the
+    // Live SDK round-trips + per-file connect + prisma-next migrate (the
     // first run on a cold container) need the long fuse.
     testTimeout: 60_000,
     hookTimeout: 120_000,

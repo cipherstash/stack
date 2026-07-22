@@ -100,7 +100,7 @@ describe('initCommand — honest summary', () => {
   })
 
   it('completes (no throw) when EQL was not installed but the integration is prisma-next', async () => {
-    // Prisma Next installs EQL via `migration apply`, so eqlInstalled=false is
+    // Prisma Next installs EQL via `prisma-next migrate`, so eqlInstalled=false is
     // expected there and must NOT be treated as an incomplete setup.
     eqlRun.mockImplementationOnce(async (s: InitState) => ({
       ...s,

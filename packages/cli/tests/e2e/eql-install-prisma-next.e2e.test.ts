@@ -29,7 +29,7 @@ describe('stash eql install — Prisma Next guard', () => {
     expect(r.exitCode).toBe(1)
     const out = r.stdout + r.stderr
     expect(out).toContain(messages.eql.prismaNextDetected)
-    expect(out).toContain('prisma-next migration apply')
+    expect(out).toContain('prisma-next migrate')
     expect(out).toContain('--force')
   })
 })

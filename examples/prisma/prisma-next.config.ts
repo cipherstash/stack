@@ -30,9 +30,9 @@ export default defineConfig({
     dir: 'migrations',
   },
   // `contract emit` does not need a database connection; only
-  // `migration apply` does. We pass `connection` through when
+  // `prisma-next migrate` does. We pass `connection` through when
   // `DATABASE_URL` is set so the same config supports every CLI
-  // subcommand, and let `migration apply` error explicitly if the
+  // subcommand, and let `prisma-next migrate` error explicitly if the
   // connection is missing.
   ...(databaseUrl ? { db: { connection: databaseUrl } } : {}),
 })
