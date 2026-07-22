@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EqlV3CodecError, v3FromDriver, v3ToDriver } from '../../src/v3/codec'
+import { EqlV3CodecError, v3FromDriver, v3ToDriver } from '../src/codec'
 
 // A realistic `public.eql_v3_text_eq` envelope: schema version, table/column
 // identifier, mp_base85 ciphertext, HMAC term. The trivial `{v:1,c:'ct'}`

@@ -6,12 +6,12 @@ import type { LockContext } from '@cipherstash/stack/identity'
 import type { EncryptedQueryResult } from '@cipherstash/stack/types'
 import type { EncryptionV3 } from '@cipherstash/stack/v3'
 import { describe, expectTypeOf, it } from 'vitest'
-import { createEncryptionOperatorsV3 } from '../../src/v3/index.js'
+import { createEncryptionOperators } from '../src/index.js'
 
 /**
- * Static regression guard for M1: `createEncryptionOperatorsV3` must accept the
+ * Static regression guard for M1: `createEncryptionOperators` must accept the
  * `TypedEncryptionClient` that `EncryptionV3` resolves to — the documented
- * `createEncryptionOperatorsV3(await EncryptionV3({ schemas }))` usage — as well
+ * `createEncryptionOperators(await EncryptionV3({ schemas }))` usage — as well
  * as the nominal `EncryptionClient` and a hand-rolled `{ encryptQuery }` double,
  * none requiring a cast. Typing the parameter to `EncryptionClient` (the
  * original bug) makes the first call below a compile error, which this suite
@@ -20,7 +20,7 @@ import { createEncryptionOperatorsV3 } from '../../src/v3/index.js'
  * forms; the doubles model that. Lives in a `*.test-d.ts` so it is inside the
  * existing typecheck scope without dragging the loose-typed runtime suites in.
  */
-describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
+describe('createEncryptionOperators - client parameter (M1)', () => {
   type V3Client = Awaited<ReturnType<typeof EncryptionV3>>
 
   // A query operation resolving `Result<T, …>` — the surface the factory drives.
@@ -31,11 +31,11 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
   }
 
   it('accepts the client EncryptionV3 returns with no cast', () => {
-    expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith({} as V3Client)
+    expectTypeOf(createEncryptionOperators).toBeCallableWith({} as V3Client)
   })
 
   it('still accepts the nominal EncryptionClient', () => {
-    expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith(
+    expectTypeOf(createEncryptionOperators).toBeCallableWith(
       {} as EncryptionClient,
     )
   })
@@ -57,7 +57,7 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
       // the operand-client contract, so a structural double must supply it too.
       encrypt: (_value: never, _opts: never): QueryOp<unknown> => ({}) as never,
     }
-    expectTypeOf(createEncryptionOperatorsV3).toBeCallableWith(double)
+    expectTypeOf(createEncryptionOperators).toBeCallableWith(double)
   })
 
   it('rejects an { encryptQuery } double that resolves `unknown` (the erasure regression)', () => {
@@ -76,6 +76,6 @@ describe('createEncryptionOperatorsV3 - client parameter (M1)', () => {
     }
     // @ts-expect-error — `encryptQuery` resolving `unknown` does not satisfy the
     // factory's `ChainableOperation<EncryptedQueryResult>` client contract.
-    createEncryptionOperatorsV3(erased)
+    createEncryptionOperators(erased)
   })
 })

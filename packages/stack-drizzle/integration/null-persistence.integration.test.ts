@@ -20,11 +20,11 @@ import { integer, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { makeEqlV3Column } from '../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
-} from '../src/v3/index.js'
+  createEncryptionOperators,
+  extractEncryptionSchema,
+} from '../src/index.js'
 
 const sqlClient = postgres(databaseUrl(), { prepare: false })
 
@@ -80,12 +80,12 @@ const TIERS = [
   },
 ] as const
 
-const schema = extractEncryptionSchemaV3(nullableTable)
+const schema = extractEncryptionSchema(nullableTable)
 
 type SelectRow = { rowKey: string }
 
 let client: Awaited<ReturnType<typeof EncryptionV3>>
-let ops: ReturnType<typeof createEncryptionOperatorsV3>
+let ops: ReturnType<typeof createEncryptionOperators>
 let db: ReturnType<typeof drizzle>
 
 function unwrap<T>(result: { data?: T; failure?: { message: string } }): T {
@@ -108,7 +108,7 @@ async function selectRowKeys(condition: SQL): Promise<string[]> {
 beforeAll(async () => {
   // EQL v3 is installed once per run by `global-setup.ts`.
   client = await EncryptionV3({ schemas: [schema] })
-  ops = createEncryptionOperatorsV3(client)
+  ops = createEncryptionOperators(client)
   db = drizzle({ client: sqlClient })
 
   const columnDefs = TIERS.map((t) => `"${t.db}" ${t.domain}`).join(',\n      ')

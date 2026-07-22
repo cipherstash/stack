@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import * as barrel from '../../src/v3/index.js'
+import * as barrel from '../src/index.js'
 
 // Exhaustive, so ADDING an export fails here too. The previous version asserted
 // only four names, leaving the codec/column re-exports unpinned and letting a
@@ -7,9 +7,9 @@ import * as barrel from '../../src/v3/index.js'
 const PUBLIC_SURFACE = [
   'EncryptionOperatorError',
   'EqlV3CodecError',
-  'createEncryptionOperatorsV3',
+  'createEncryptionOperators',
   'encryptedIndexes',
-  'extractEncryptionSchemaV3',
+  'extractEncryptionSchema',
   'getEqlV3Column',
   'isEqlV3Column',
   'makeEqlV3Column',
