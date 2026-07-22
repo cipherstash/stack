@@ -1,34 +1,39 @@
 import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
 import {
-  bulkModelsToEncryptedPgComposites,
+  DATE_LIKE_CASTS,
+  EncryptedV3Column,
   logger,
-  modelToEncryptedPgComposites,
+  matchNeedleError,
+  parseSelectorSegments,
+  reconstructSelectorDocument,
+  unsupportedLeafReason,
 } from '@cipherstash/stack/adapter-kit'
 import type { EncryptionClient } from '@cipherstash/stack/encryption'
-import type { EncryptionError } from '@cipherstash/stack/errors'
+import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
+import {
+  type EncryptionError,
+  EncryptionErrorTypes,
+} from '@cipherstash/stack/errors'
 import type { LockContextInput } from '@cipherstash/stack/identity'
-import type {
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
-import { EncryptedColumn } from '@cipherstash/stack/schema'
+import type { ColumnSchema } from '@cipherstash/stack/schema'
 import type {
   BuildableQueryColumn,
+  Encrypted,
   EncryptedQueryResult,
   QueryTypeName,
   ScalarQueryTerm,
 } from '@cipherstash/stack/types'
 import {
-  addJsonbCasts,
+  addJsonbCastsV3,
   formatContainmentOperand,
   formatInListOperand,
-  getEncryptedColumnNames,
   isEncryptableTerm,
   isEncryptedColumn,
   mapFilterOpToQueryType,
   parseOrString,
   rebuildOrString,
+  selectKeyToDbV3,
 } from './helpers'
 import type {
   DbConflictList,
@@ -57,26 +62,158 @@ import type {
   TransformOp,
 } from './types'
 
+/** cast_as kinds that reconstruct to a JS `Date` — shared with the typed v3
+ * client's decrypt-model path (see `encryption/v3.ts`). */
+const DATE_LIKE_CAST_SET = new Set<string>(DATE_LIKE_CASTS)
+
+/**
+ * The subset of a v3 column builder the dialect relies on. Structural rather
+ * than the concrete class union so the runtime `instanceof EncryptedV3Column`
+ * gate and this type stay independent.
+ */
+type V3ColumnLike = {
+  getName(): string
+  getEqlType(): string
+  getQueryCapabilities(): {
+    equality: boolean
+    orderAndRange: boolean
+    freeTextSearch: boolean
+    /** Optional: only `public.eql_v3_json_search` (`types.Json`) carries it. */
+    searchableJson?: boolean
+  }
+  build(): ColumnSchema
+}
+
+/**
+ * Validate an encrypted-JSON containment operand: a NON-EMPTY plain object or a
+ * non-empty array. Everything else is rejected with an actionable steer:
+ *
+ * - Scalars/strings: the caller meant free-text (`matches` on a text column) or
+ *   a selector — a raw JSON string is NOT parsed, by design (parsing would make
+ *   `'{"a":1}'` and `{a:1}` silently different queries on other surfaces).
+ * - Non-plain objects (`Date`, `Map`, `RegExp`, class instances): these JSON-
+ *   serialize to scalars or `{}` — not the sub-document the caller believes.
+ * - `{}` and `[]`: jsonb containment holds for EVERY document (`doc @> '{}'`),
+ *   so an accidentally-empty needle would silently return (and decrypt) the
+ *   whole table. The Drizzle adapter rejects the same needle for the same
+ *   reason — the two first-party adapters must agree that this is an error.
+ */
+function assertJsonContainmentOperand(column: string, value: unknown): void {
+  const isPlainObject =
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype ||
+      Object.getPrototypeOf(value) === null)
+  if (!isPlainObject && !Array.isArray(value)) {
+    // Array.isArray is false on this branch by construction, so the label only
+    // distinguishes null / non-plain object / scalar.
+    const got =
+      value === null
+        ? 'null'
+        : typeof value === 'object'
+          ? (value as object).constructor?.name || 'a non-plain object'
+          : typeof value
+    throw new Error(
+      `[supabase v3]: encrypted JSON containment on column "${column}" takes a sub-document (plain object or array) to match, got ${got}.`,
+    )
+  }
+  const empty = Array.isArray(value)
+    ? value.length === 0
+    : Object.keys(value as object).length === 0
+  if (empty) {
+    throw new Error(
+      `[supabase v3]: encrypted JSON containment on column "${column}" cannot take an empty ${Array.isArray(value) ? 'array' : 'object'} needle: it matches every row. Pass a non-empty sub-document, or omit the predicate to select all rows.`,
+    )
+  }
+}
+
+/**
+ * Reject a declared property name that is also a DIFFERENT physical column.
+ *
+ * `select('*')` expands the introspected DB names into property names, so a
+ * column renamed `created_at → createdAt` and a distinct plaintext column
+ * literally named `createdAt` both emit the token `createdAt`, which
+ * `addJsonbCastsV3` turns into `createdAt:created_at::jsonb` — twice. PostgREST
+ * returns the encrypted column under that key and the plaintext one is never
+ * selected, silently yielding the wrong value for a field the row type
+ * guarantees.
+ *
+ * Nothing downstream can disambiguate the two, and `EncryptedTable.build()`'s
+ * duplicate check only fires when two BUILDERS share a `getName()`. Refuse to
+ * construct instead.
+ */
+function assertNoPropertyDbNameCollision(
+  tableName: string,
+  propToDb: Record<string, string>,
+  allColumns: string[] | null,
+): void {
+  if (!allColumns) return
+  const dbNames = new Set(allColumns)
+
+  for (const [property, dbName] of Object.entries(propToDb)) {
+    if (property === dbName) continue
+    if (!dbNames.has(property)) continue
+    throw new Error(
+      `[supabase v3]: property "${property}" on table "${tableName}" renames DB column "${dbName}", but "${property}" is also a distinct column in the database — the two collide in select('*'). Rename the property, or drop the declared rename.`,
+    )
+  }
+}
+
 /**
  * A deferred query builder that wraps Supabase's query builder to automatically
- * handle encryption and decryption of data.
+ * handle encryption and decryption of data for native EQL v3 concrete-domain
+ * columns (`public.*` type domains, `eql_v3` operators).
  *
  * All chained operations are recorded synchronously. When the builder is awaited,
  * it encrypts mutation data, adds `::jsonb` casts, batch-encrypts filter values,
  * executes the real Supabase query, and decrypts results.
+ *
+ * v3 columns are `EncryptedV3Column` builders and may map a JS property name to a
+ * different DB column name (`buildColumnKeyMap`). Filters, select casts, and
+ * mutations resolve property → DB name; select casts alias the DB column back to
+ * the property (`prop:db_name::jsonb`) so result rows keep property keys. The raw
+ * encrypted payload object is sent on mutations (the `public.*` domains are
+ * `DOMAIN … AS jsonb`), and scalar equality/range filters use the FULL storage
+ * envelope from `encrypt()`, serialized as jsonb text.
+ *
+ * EQL 3.0.2 removed the storage/jsonb escape hatch for free-text and JSON
+ * operators: those now require typed query-domain operands PostgREST cannot
+ * express. The factory reads the installed EQL version and this builder fails
+ * those operators before encryption, so a decryptable storage envelope never
+ * enters a GET URL.
+ *
+ * Decrypted rows additionally get `Date` reconstruction from the encrypt-config
+ * `cast_as`, mirroring the typed v3 client. `decryptModel`/`bulkDecryptModels`
+ * are generation-agnostic in `@cipherstash/stack`, so a stored EQL v2 payload
+ * still decrypts through this builder's read path.
  */
 export class EncryptedQueryBuilderImpl<
   T extends Record<string, unknown> = Record<string, unknown>,
 > {
   protected tableName: string
-  protected schema: EncryptedTable<EncryptedTableColumn>
+  protected table: AnyV3Table
   protected encryptionClient: EncryptionClient
   protected supabaseClient: SupabaseClientLike
   protected encryptedColumnNames: string[]
   /** All column names for the table (encrypted + plaintext), in ordinal order,
    * used to expand `select('*')`. `null` when the caller supplied no column
-   * list (v2, or a v3 client that could not introspect). */
+   * list (a v3 client that could not introspect). */
   protected allColumns: string[] | null = null
+
+  /** JS property name → DB column name, for every encrypted column. */
+  private propToDb: Record<string, string>
+  /** DB column name → JS property name — the inverse of {@link propToDb}, used
+   * to expand `select('*')` back into property names. Null prototype: a DB
+   * column literally named `constructor` / `toString` would otherwise resolve
+   * to an inherited `Object.prototype` member and be emitted as a select token. */
+  private dbToProp: Record<string, string>
+  /** Built column schemas keyed by DB column name (for `cast_as`). */
+  private columnSchemas: Record<string, ColumnSchema>
+  /** Column builders keyed by BOTH property name and DB name. */
+  private v3Columns: Record<string, V3ColumnLike>
+  /** EQL 3.0.2+ requires query-domain casts PostgREST cannot express. */
+  private queryDomainsRequired: boolean
 
   // Recorded operations
   protected mutation: MutationOp | null = null
@@ -99,17 +236,43 @@ export class EncryptedQueryBuilderImpl<
 
   constructor(
     tableName: string,
-    schema: EncryptedTable<EncryptedTableColumn>,
+    table: AnyV3Table,
     encryptionClient: EncryptionClient,
     supabaseClient: SupabaseClientLike,
     allColumns: string[] | null = null,
+    queryDomainsRequired = false,
   ) {
     this.tableName = tableName
-    this.schema = schema
+    this.table = table
     this.encryptionClient = encryptionClient
     this.supabaseClient = supabaseClient
-    this.encryptedColumnNames = getEncryptedColumnNames(schema)
     this.allColumns = allColumns
+    this.queryDomainsRequired = queryDomainsRequired
+    this.propToDb = table.buildColumnKeyMap()
+    this.columnSchemas = table.build().columns
+
+    this.dbToProp = Object.create(null) as Record<string, string>
+    for (const [property, dbName] of Object.entries(this.propToDb)) {
+      this.dbToProp[dbName] = property
+    }
+
+    assertNoPropertyDbNameCollision(tableName, this.propToDb, allColumns)
+
+    // Null-prototype: keyed by DB column names, and `validateTransforms` reads
+    // it without an own-key guard — an inherited `constructor`/`toString` would
+    // otherwise resolve truthy for a plaintext column of that name.
+    this.v3Columns = Object.create(null) as Record<string, V3ColumnLike>
+    for (const [property, builder] of Object.entries(table.columnBuilders)) {
+      if (builder instanceof EncryptedV3Column) {
+        const col = builder as unknown as V3ColumnLike
+        this.v3Columns[property] = col
+        this.v3Columns[col.getName()] = col
+      }
+    }
+
+    // Filters and select strings address columns by JS property name AND by DB
+    // name, so recognition must cover both.
+    this.encryptedColumnNames = Object.keys(this.v3Columns)
   }
 
   // ---------------------------------------------------------------------------
@@ -135,14 +298,23 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * Turn the introspected column list (DB names) into select tokens. The base
-   * returns them unchanged — v2 never supplies a column list, so this is dead
-   * for v2. The v3 dialect overrides it to emit JS property names, which is
-   * what makes `addJsonbCastsV3` alias a renamed column back to its property
-   * (`createdAt:created_at::jsonb`) rather than returning it under its DB name.
+   * Expand the introspected column list (DB names) into JS property names.
+   *
+   * Load-bearing for `select('*')` on a DECLARED table that renames a column.
+   * `addJsonbCastsV3` only emits the `prop:db_name::jsonb` alias — the thing
+   * that makes PostgREST return the column under its property name — when the
+   * token it sees is a property name. Feeding it the raw DB name instead takes
+   * the unaliased `dbNames.has(...)` branch, so the row comes back keyed
+   * `created_at` while the declared row type promises `createdAt`, silently
+   * yielding `undefined` for a field TypeScript guarantees.
+   *
+   * A DB column with no encrypted builder (plaintext passthrough, and every
+   * synthesized column, where property == DB name) maps to itself.
    */
   protected expandAllColumns(columns: string[]): string[] {
-    return columns
+    return columns.map((dbName) =>
+      Object.hasOwn(this.dbToProp, dbName) ? this.dbToProp[dbName] : dbName,
+    )
   }
 
   insert(
@@ -229,28 +401,79 @@ export class EncryptedQueryBuilderImpl<
     return this
   }
 
+  /**
+   * `like`/`ilike` on an ENCRYPTED column are a best-effort compatibility shim,
+   * delegated to `matches`. EQL v3 free-text search is fuzzy bloom token
+   * matching, not SQL pattern matching, so the result is APPROXIMATE — matching
+   * is case-insensitive and one-sided (may false-positive), and anchoring is
+   * lost. Leading/trailing `%` are stripped; an internal `%` or any `_` cannot be
+   * approximated by trigram matching and throws. A plaintext column keeps real
+   * SQL LIKE.
+   */
   like(column: string, pattern: string): this {
-    this.filters.push({ op: 'like', column, value: pattern })
-    return this
+    if (!this.isEncryptedV3Column(column)) {
+      this.filters.push({ op: 'like', column, value: pattern })
+      return this
+    }
+    return this.matches(column, this.likeNeedle(column, 'like', pattern))
   }
 
   ilike(column: string, pattern: string): this {
-    this.filters.push({ op: 'ilike', column, value: pattern })
-    return this
+    if (!this.isEncryptedV3Column(column)) {
+      this.filters.push({ op: 'ilike', column, value: pattern })
+      return this
+    }
+    return this.matches(column, this.likeNeedle(column, 'ilike', pattern))
   }
 
+  /**
+   * `contains` on the v3 surface is EXACT containment: native jsonb/array `@>`
+   * on a plaintext column, ENCRYPTED ste_vec `@>` on a `types.Json` column (the
+   * sub-document operand is storage-encrypted whole; every leaf must match at
+   * its path — #650). On an encrypted match/search TEXT column containment is
+   * not the operation (that is the fuzzy `matches`), so refuse loudly rather
+   * than silently emit a bloom match under a name that promises exactness.
+   */
   contains(column: string, value: unknown): this {
+    if (this.isSearchableJsonColumn(column)) {
+      this.assertPostgrestCanQueryEncryptedOperator('contains', column)
+      // Same validator the term resolver enforces — failing here just surfaces
+      // the error at the call site instead of at execution.
+      assertJsonContainmentOperand(column, value)
+      this.filters.push({ op: 'contains', column, value })
+      return this
+    }
+    if (this.isEncryptedV3Column(column)) {
+      throw new Error(
+        `[supabase v3]: contains() is native (exact) containment and does not apply to encrypted column "${column}". Use matches() for encrypted free-text search.`,
+      )
+    }
     this.filters.push({ op: 'contains', column, value })
     return this
   }
 
   /**
-   * Encrypted free-text token match (v3 encrypted columns). Emits the same
-   * `cs`/`@>` wire operator as `contains`, but on a match-indexed encrypted
-   * column it is fuzzy bloom-filter token matching, not containment — see the v3
-   * builder. The v3 dialect encrypts the operand as a free-text query term.
+   * `matches` is the encrypted free-text operator: fuzzy bloom-filter token
+   * matching, one-sided (may false-positive), NOT containment. It requires an
+   * encrypted match/search column; on a plaintext column, `contains` (native
+   * `@>`) is what the caller means — and on an encrypted JSON column,
+   * `contains`/`selectorEq` are (matching a document is containment, not
+   * free-text). Guarded here because both spellings collect the same
+   * `freeTextSearch` term, which the capability resolver would otherwise
+   * silently accept as containment of the raw string.
    */
   matches(column: string, value: unknown): this {
+    if (this.isSearchableJsonColumn(column)) {
+      throw new Error(
+        `[supabase v3]: matches() is encrypted free-text search and does not apply to encrypted JSON column "${column}". Use contains("${column}", subDocument) or selectorEq("${column}", path, value).`,
+      )
+    }
+    if (!this.isEncryptedV3Column(column)) {
+      throw new Error(
+        `[supabase v3]: matches() is encrypted free-text search and requires an encrypted column; "${column}" is not one. Use contains() for native containment.`,
+      )
+    }
+    this.assertPostgrestCanQueryEncryptedOperator('matches', column)
     this.filters.push({ op: 'matches', column, value })
     return this
   }
@@ -270,7 +493,36 @@ export class EncryptedQueryBuilderImpl<
     return this
   }
 
+  /**
+   * `not(col, 'contains', …)` on an encrypted TEXT column would negate a fuzzy
+   * bloom match under the `contains` name — the exact confusion #617 removes —
+   * because the `not()` path rewrites the `contains` spelling to the `cs` wire
+   * operator. Reject it and steer to the `matches` spelling (or the raw `cs`
+   * operator, which is honest about the wire op).
+   *
+   * On an encrypted JSON column negated containment IS the honest exact
+   * operation (`not.cs` over ste_vec containment — {@link selectorNe} compiles
+   * to it), so it passes through. Plaintext columns keep native negated
+   * containment, and every other operator is recorded unchanged.
+   */
   not(column: string, operator: string, value: unknown): this {
+    if (
+      operator === 'contains' &&
+      this.isEncryptedV3Column(column) &&
+      !this.isSearchableJsonColumn(column)
+    ) {
+      throw new Error(
+        `[supabase v3]: not("${column}", 'contains', …) does not apply to encrypted column "${column}" — that is fuzzy free-text matching, not containment. Use not("${column}", 'matches', …) or the raw 'cs' operator.`,
+      )
+    }
+    // Mirror of the matches() guard: a `matches` spelling on a JSON column
+    // would otherwise resolve to containment (the two share the `cs` wire op),
+    // silently negating an EXACT operation under a name that promises FUZZY.
+    if (operator === 'matches' && this.isSearchableJsonColumn(column)) {
+      throw new Error(
+        `[supabase v3]: not("${column}", 'matches', …) does not apply to encrypted JSON column "${column}" — matches() is free-text search. Use not("${column}", 'contains', subDocument) or selectorNe("${column}", path, value).`,
+      )
+    }
     this.notFilters.push({ column, op: operator as FilterOp, value })
     return this
   }
@@ -297,6 +549,41 @@ export class EncryptedQueryBuilderImpl<
   match(query: Record<string, unknown>): this {
     this.matchFilters.push({ query })
     return this
+  }
+
+  /**
+   * Encrypted JSONPath-selector equality: matches rows whose document carries
+   * exactly `value` at `path`. Equality at a path IS containment of the
+   * path-shaped needle (`{user: {role: 'admin'}}`), so this compiles to
+   * {@link contains} — the ste_vec entry at the selector matches on its
+   * equality/ordering term. Selector ORDERING (`gt`/`lt`/…) is not expressible
+   * over PostgREST until the bundle grows a needle-comparison overload
+   * (cipherstash/encrypt-query-language#407); the Drizzle adapter's
+   * `ops.selector()` supports it today.
+   */
+  selectorEq(column: string, path: string, value: unknown): this {
+    this.assertPostgrestCanQueryEncryptedOperator('selectorEq', column)
+    const needle = this.selectorNeedle('selectorEq', column, path, value)
+    return this.contains(column, needle)
+  }
+
+  /**
+   * Encrypted JSONPath-selector inequality: rows whose document does NOT carry
+   * `value` at `path` — INCLUDING rows where the path is absent AND rows whose
+   * document column is SQL NULL, matching the Drizzle selector's `ne` (whose
+   * `OR entry IS NULL` arm covers both absence cases). A bare `not.cs` would
+   * drop NULL documents under three-valued logic (`NOT (NULL @> x)` is NULL),
+   * so this compiles to a structured OR:
+   * `column.is.null, column.not.cs.<needle>` — the containment condition's
+   * operand is encrypted through the normal or-condition term path.
+   */
+  selectorNe(column: string, path: string, value: unknown): this {
+    this.assertPostgrestCanQueryEncryptedOperator('selectorNe', column)
+    const needle = this.selectorNeedle('selectorNe', column, path, value)
+    return this.or([
+      { column, op: 'is', value: null },
+      { column, op: 'contains', negate: true, value: needle },
+    ])
   }
 
   // ---------------------------------------------------------------------------
@@ -432,10 +719,10 @@ export class EncryptedQueryBuilderImpl<
       )
 
       // A failure inside any of the encrypt/decrypt steps above is thrown as an
-      // `EncryptionFailedError` wrapping the operation's `EncryptionError` (or, in
-      // the v3 dialect, a synthesized one for its contract-violation cases).
-      // Thread it through so callers can branch on `error.encryptionError`; a plain
-      // PostgREST/API error is not an `EncryptionFailedError` and leaves it unset.
+      // `EncryptionFailedError` wrapping the operation's `EncryptionError` (or a
+      // synthesized one for its contract-violation cases). Thread it through so
+      // callers can branch on `error.encryptionError`; a plain PostgREST/API
+      // error is not an `EncryptionFailedError` and leaves it unset.
       const error: EncryptedSupabaseError = {
         message,
         encryptionError:
@@ -473,7 +760,7 @@ export class EncryptedQueryBuilderImpl<
 
     if (Array.isArray(data)) {
       // Bulk encrypt
-      const baseOp = this.encryptionClient.bulkEncryptModels(data, this.schema)
+      const baseOp = this.encryptionClient.bulkEncryptModels(data, this.table)
       const op = this.lockContext
         ? baseOp.withLockContext(this.lockContext)
         : baseOp
@@ -495,7 +782,7 @@ export class EncryptedQueryBuilderImpl<
     }
 
     // Single model
-    const baseOp = this.encryptionClient.encryptModel(data, this.schema)
+    const baseOp = this.encryptionClient.encryptModel(data, this.table)
     const op = this.lockContext
       ? baseOp.withLockContext(this.lockContext)
       : baseOp
@@ -517,22 +804,24 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * Encode an encrypted model for the Supabase request body. v2 wraps each
-   * encrypted value in the `{ data: ... }` object expected by the
-   * `eql_v2_encrypted` composite type. The v3 dialect overrides this — native
-   * `eql_v3.*` domains are plain jsonb, so the raw payload is sent instead
+   * Encode an encrypted model for the Supabase request body. The native
+   * `eql_v3.*` domains are plain jsonb, so the raw encrypted payload is sent
    * (keyed by DB column name).
    */
   protected transformEncryptedMutationModel(
     model: Record<string, unknown>,
   ): Record<string, unknown> {
-    return modelToEncryptedPgComposites(model)
+    const out: Record<string, unknown> = Object.create(null)
+    for (const [key, value] of Object.entries(model)) {
+      out[this.dbNameFor(key)] = value
+    }
+    return out
   }
 
   protected transformEncryptedMutationModels(
     models: Record<string, unknown>[],
   ): Record<string, unknown>[] {
-    return bulkModelsToEncryptedPgComposites(models)
+    return models.map((model) => this.transformEncryptedMutationModel(model))
   }
 
   // ---------------------------------------------------------------------------
@@ -541,7 +830,7 @@ export class EncryptedQueryBuilderImpl<
 
   protected buildSelectString(): DbSelect | null {
     if (this.selectColumns === null) return null
-    return addJsonbCasts(this.selectColumns, this.encryptedColumnNames)
+    return addJsonbCastsV3(this.selectColumns, this.propToDb)
   }
 
   // ---------------------------------------------------------------------------
@@ -566,7 +855,7 @@ export class EncryptedQueryBuilderImpl<
       terms.push({
         value,
         column,
-        table: this.schema,
+        table: this.table,
         queryType,
         returnType: 'composite-literal',
       })
@@ -757,35 +1046,225 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * Encrypt the collected filter terms, returning one encoded value per term
-   * (in order). v2 batch-encrypts via `encryptQuery` with the
-   * `composite-literal` return type — the `("json")` string the
-   * `eql_v2_encrypted` composite operators compare. The v3 dialect overrides
-   * this to produce full-envelope jsonb operands instead.
+   * Encrypt every filter operand as a full storage envelope, serialized to jsonb
+   * text for the PostgREST filter value.
+   *
+   * Terms are grouped by column and each group takes ONE `bulkEncrypt` crossing.
+   * `in(col, [a, b, c])` collects one term per element (the list must never be
+   * encrypted whole), so encrypting per term spent N ZeroKMS/FFI round-trips
+   * where one would do. `bulkEncrypt` carries a single `{table, column}` for the
+   * whole payload, so the grouping is mandatory, not an optimisation: one bulk
+   * call over a mixed-column term array would stamp one column onto every
+   * plaintext. Results are scattered back onto the terms' original indices,
+   * which is the contract `termMap` downstream relies on.
+   *
+   * Mirrors `eql/v3/drizzle/operators.ts` `encryptOperands` — same batching
+   * contract, same length assertion, same fallback. Kept separate because that
+   * one encrypts a single-column operand list and returns `SQL[]`, while this
+   * must group a multi-column term array and preserve positions.
    */
   protected async encryptCollectedTerms(
     terms: ScalarQueryTerm[],
   ): Promise<EncryptedQueryResult[]> {
-    // Batch encrypt all terms in one call
-    const baseOp = this.encryptionClient.encryptQuery(terms)
+    const groups = new Map<
+      V3ColumnLike,
+      { indices: number[]; values: ScalarQueryTerm['value'][] }
+    >()
+    terms.forEach((term, index) => {
+      const column = this.assertTermQueryable(term)
+      const group = groups.get(column) ?? { indices: [], values: [] }
+      group.indices.push(index)
+      group.values.push(term.value)
+      groups.set(column, group)
+    })
+
+    const bulkEncrypt = this.encryptionClient.bulkEncrypt?.bind(
+      this.encryptionClient,
+    )
+    // Each term becomes the `JSON.stringify`'d storage envelope — a `string`,
+    // which is one arm of `EncryptedQueryResult`. PostgREST cannot cast a filter
+    // value to the `eql_v3.query_<name>` twins, so v3 sends full envelopes,
+    // serialized to jsonb text.
+    const results = new Array<EncryptedQueryResult>(terms.length)
+
+    await Promise.all(
+      Array.from(groups, async ([column, { indices, values }]) => {
+        const encrypted = bulkEncrypt
+          ? await this.bulkEncryptGroup(bulkEncrypt, column, values)
+          : await this.encryptGroupPerTerm(column, values)
+
+        encrypted.forEach((envelope, i) => {
+          results[indices[i]] = JSON.stringify(envelope)
+        })
+      }),
+    )
+
+    return results
+  }
+
+  /**
+   * Validate a term's query type against its column's declared capabilities.
+   * Pure validation: `encrypt`/`bulkEncrypt` never receive the query type. On
+   * EQL 3.0.2+, free-text/JSON terms are rejected before this storage-encryption
+   * path can place ciphertext in a GET URL.
+   */
+  private assertTermQueryable(term: ScalarQueryTerm): V3ColumnLike {
+    const column = term.column as unknown as V3ColumnLike
+    let queryType = term.queryType ?? 'equality'
+    const capabilities = column.getQueryCapabilities()
+
+    // The `cs` wire operator is capability-overloaded: bloom free-text on a
+    // match/search TEXT column, encrypted ste_vec containment on a `types.Json`
+    // DOCUMENT column. Both arrive here as `freeTextSearch` (contains/matches/
+    // raw `cs` all map there); resolve to the capability the column actually
+    // carries. The two are mutually exclusive by construction, so this can
+    // never reinterpret a real free-text column.
+    if (
+      queryType === 'freeTextSearch' &&
+      !capabilities.freeTextSearch &&
+      capabilities.searchableJson
+    ) {
+      queryType = 'searchableJson'
+    }
+
+    if (
+      queryType !== 'equality' &&
+      queryType !== 'orderAndRange' &&
+      queryType !== 'freeTextSearch' &&
+      queryType !== 'searchableJson'
+    ) {
+      throw new Error(
+        `[supabase v3]: query type "${queryType}" is not supported on EQL v3 columns`,
+      )
+    }
+
+    if (!capabilities[queryType]) {
+      throw new Error(
+        `[supabase v3]: column "${column.getName()}" (${column.getEqlType()}) does not support ${queryType} queries — declare the column with a domain that carries that capability`,
+      )
+    }
+
+    if (queryType === 'freeTextSearch' || queryType === 'searchableJson') {
+      // This is the common boundary for every spelling that collects an
+      // encrypted match/containment term: matches(), contains(), not(), raw
+      // filter(), and both forms of or(). Method-level checks provide earlier
+      // errors for the direct helpers, but cannot cover the raw filter paths on
+      // their own.
+      this.assertPostgrestCanQueryEncryptedOperator('filter', column.getName())
+    }
+
+    if (queryType === 'searchableJson') {
+      // THE single enforced operand boundary for encrypted-JSON containment.
+      // Terms reach this resolver from every spelling — contains(), raw
+      // .filter(col,'cs',…), not(col,'contains'|'matches',…), and .or()
+      // string/structured conditions — and only contains() has a method-level
+      // guard. Without this check a raw string (e.g. a free-text term ported
+      // from a text column, or an .or() condition value, which is always a
+      // string) would be storage-encrypted as a JSON SCALAR and silently match
+      // nothing; pre-#650 every such spelling failed loudly on capability.
+      assertJsonContainmentOperand(column.getName(), term.value)
+    }
+
+    // Free-text (bloom) needle floor. A needle shorter than the tokenizer's
+    // token_length produces NO tokens, so `bf @> '{}'` holds for every row and
+    // the query would silently return (and the caller decrypt) the whole table
+    // — a fail-open over-exposure. Reject it up front, mirroring the Drizzle v3
+    // adapter (matchNeedleError) so both first-party surfaces guard identically.
+    // JSON containment terms (searchableJson) are validated separately above.
+    if (queryType === 'freeTextSearch') {
+      const match = column.build().indexes?.match
+      const reason = match ? matchNeedleError(term.value, match) : undefined
+      if (reason) {
+        throw new Error(
+          `[supabase v3]: cannot search column "${column.getName()}": ${reason}`,
+        )
+      }
+    }
+
+    return column
+  }
+
+  private encryptionFailure(message: string, cause?: EncryptionError): never {
+    logger.error(
+      `Supabase: failed to encrypt query terms for table "${this.tableName}"`,
+    )
+    // Most callers pass the operation's own `EncryptionError`; the contract-
+    // violation cases (bulk length mismatch, null envelope) have none, so
+    // synthesize one — a broken query encryption is still an encryption failure,
+    // and callers branch on `error.encryptionError` regardless.
+    throw new EncryptionFailedError(
+      `Failed to encrypt query terms: ${message}`,
+      cause ?? { type: EncryptionErrorTypes.EncryptionError, message },
+    )
+  }
+
+  /** One FFI crossing for a column's whole operand list. */
+  private async bulkEncryptGroup(
+    bulkEncrypt: NonNullable<EncryptionClient['bulkEncrypt']>,
+    column: V3ColumnLike,
+    values: ScalarQueryTerm['value'][],
+  ): Promise<Array<Encrypted | null>> {
+    const baseOp = bulkEncrypt(
+      values.map((plaintext) => ({ plaintext })) as never,
+      { column, table: this.table } as never,
+    )
     const op = this.lockContext
       ? baseOp.withLockContext(this.lockContext)
       : baseOp
     if (this.auditConfig) op.audit(this.auditConfig)
 
     const result = await op
-    if (result.failure) {
-      logger.error(
-        `Supabase: failed to encrypt query terms for table "${this.tableName}"`,
-      )
+    if (result.failure)
+      this.encryptionFailure(result.failure.message, result.failure)
 
-      throw new EncryptionFailedError(
-        `Failed to encrypt query terms: ${result.failure.message}`,
-        result.failure,
+    // `bulkEncrypt` is position-stable, so a length mismatch means the contract
+    // was violated. Truncating instead would silently widen an `in` predicate
+    // (or narrow a `not.in`) to whatever came back. `result.data` is now
+    // `BulkEncryptedData` — `{ id?, data: Encrypted | null }[]` — not `unknown`.
+    const encrypted = result.data
+    if (encrypted.length !== values.length) {
+      this.encryptionFailure(
+        `bulk encryption returned ${encrypted.length} terms for ${values.length} values on column "${column.getName()}".`,
       )
     }
+    return encrypted.map((term, i) => {
+      // `BulkEncryptedData` types the element as `Encrypted | null`. A `null`
+      // envelope here would be `JSON.stringify`'d to the literal string `"null"`
+      // and sent as the filter operand — silently matching whatever `"null"`
+      // encodes to rather than failing. A query term should never encrypt to a
+      // null envelope, so treat it as a contract violation, not a value.
+      if (term.data === null) {
+        this.encryptionFailure(
+          `bulk encryption returned a null envelope at position ${i} for column "${column.getName()}".`,
+        )
+      }
+      return term.data
+    })
+  }
 
-    return result.data
+  /** Fallback for a client that predates `bulkEncrypt`. */
+  private async encryptGroupPerTerm(
+    column: V3ColumnLike,
+    values: ScalarQueryTerm['value'][],
+  ): Promise<Encrypted[]> {
+    return Promise.all(
+      values.map(async (value) => {
+        const baseOp = this.encryptionClient.encrypt(value, {
+          column,
+          table: this.table,
+        })
+        const op = this.lockContext
+          ? baseOp.withLockContext(this.lockContext)
+          : baseOp
+        if (this.auditConfig) op.audit(this.auditConfig)
+
+        const result = await op
+        if (result.failure) {
+          this.encryptionFailure(result.failure.message, result.failure)
+        }
+        return result.data
+      }),
+    )
   }
 
   // ---------------------------------------------------------------------------
@@ -803,9 +1282,9 @@ export class EncryptedQueryBuilderImpl<
    * the order in which capability errors surface.
    *
    * Safe to run BEFORE encryption: `getColumnMap()`/`encryptedColumnNames` are
-   * keyed by both property and DB name in v3 (and property == DB name in v2),
-   * so column lookup resolves identically either side of the translation, and
-   * `tableColumns[prop]` is the very same builder object as `tableColumns[db]`.
+   * keyed by both property and DB name, so column lookup resolves identically
+   * either side of the translation, and `tableColumns[prop]` is the very same
+   * builder object as `tableColumns[db]`.
    */
   protected toDbSpace(): DbQuerySpace {
     return {
@@ -856,12 +1335,43 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * The column expression `order()` sends to PostgREST. Its own seam, separate
-   * from {@link filterColumnName}: v3 orders an encrypted column by a jsonb path
-   * into its ordering term, which must not leak into filters.
+   * Encrypted ordering columns sort by their `op` term, not by the envelope.
+   *
+   * `order=col->op` is the one ordering expression PostgREST can emit that
+   * reaches the OPE term. It must NOT leak into filters — those compare whole
+   * envelopes through the `eql_v3.*` operators — which is why this is its own
+   * seam rather than a change to `filterColumnName`.
+   *
+   * The canonical EQL form is `ORDER BY eql_v3.ord_term(col)`, which returns
+   * `eql_v3_internal.ope_cllw` — a domain over `bytea`, ordered by the native
+   * btree. PostgREST cannot call a function, so it orders the `op` term where it
+   * sits, inside the envelope. The two agree because the term is what
+   * `ord_term()` returns.
+   *
+   * `->` (jsonb) rather than `->>` (text) keeps the comparison on the typed
+   * value. Note this does NOT avoid the database collation: Postgres compares
+   * jsonb strings with `varstr_cmp` under the default collation, exactly as it
+   * does text. What makes the ordering collation-independent is the term itself
+   * — fixed-width lowercase hex (`[0-9a-f]`, 130 chars for `integer_ord`, 82 for
+   * `text_search`) — and every collation orders digits before letters and hex
+   * letters among themselves. `match-bloom`'s sibling assertion pins that shape.
+   *
+   * This runs at column-name-mapping time (`transformToDbSpace`), BEFORE
+   * `buildAndExecuteQuery` calls `validateTransforms`. For an encrypted column
+   * with no `ope` index it therefore returns a bare `dbName` here — a name that
+   * would sort by `jsonb_cmp` over the ciphertext if it reached PostgREST — but
+   * it never does: `validateTransforms` throws (with a domain-specific reason)
+   * before the query executes, so the bare name is only ever an intermediate
+   * value on a request that is about to be rejected.
    */
   protected orderColumnName(column: string): DbName {
-    return this.filterColumnName(column)
+    const dbName = this.dbNameFor(column)
+    const encrypted = this.v3Columns[column]
+    if (!encrypted) return dbName as DbName
+
+    return (
+      this.columnSchemas[dbName]?.indexes?.ope ? `${dbName}->op` : dbName
+    ) as DbName
   }
 
   private transformToDbSpace(t: TransformOp): DbTransformOp {
@@ -889,8 +1399,6 @@ export class EncryptedQueryBuilderImpl<
     switch (m.kind) {
       case 'insert':
       case 'upsert':
-        // `resolveMutationOptions` returns the SAME reference when no column
-        // needed renaming, which v2 relies on.
         return { ...m, options: this.resolveMutationOptions(m.options) }
       case 'update':
       case 'delete':
@@ -1189,8 +1697,8 @@ export class EncryptedQueryBuilderImpl<
         } else {
           // Every condition names a plaintext column, whose property name IS
           // its DB name — nothing to map. Forward the caller's ORIGINAL string
-          // byte-for-byte: v2 relies on this for nested `and()` and quoted
-          // values that `parseOrString`/`rebuildOrString` cannot round-trip.
+          // byte-for-byte: relied on for nested `and()` and quoted values that
+          // `parseOrString`/`rebuildOrString` cannot round-trip.
           q = q.or(of_.original as DbFilterString, {
             referencedTable: of_.referencedTable,
           })
@@ -1233,30 +1741,31 @@ export class EncryptedQueryBuilderImpl<
   }
 
   // ---------------------------------------------------------------------------
-  // Dialect seams — every default preserves the v2 behaviour byte-for-byte.
-  // The v3 builder (see ./query-builder-v3) overrides these for native
-  // `eql_v3.*` domain columns.
+  // Dialect seams for native `eql_v3.*` domain columns.
   // ---------------------------------------------------------------------------
 
+  /** Resolve a JS property name to its DB column name. `Object.hasOwn` guards
+   * the inherited-member hazard described on {@link EncryptedTable.buildColumnKeyMap}. */
+  private dbNameFor(name: string): string {
+    return Object.hasOwn(this.propToDb, name) ? this.propToDb[name] : name
+  }
+
   /**
-   * Map a filter's column name to the DB column name PostgREST must see.
-   * v2 schemas key columns by their DB name already, so this is the identity;
-   * the v3 dialect resolves a JS property name to its DB name.
+   * Map a filter's column name to the DB column name PostgREST must see —
+   * resolving a JS property name to its DB name.
    *
    * This is the ONLY place a {@link DbName} is minted. The
    * {@link SupabaseQueryBuilder} seam accepts nothing else, so every column
    * name reaching PostgREST must pass through here.
    */
   protected filterColumnName(column: string): DbName {
-    return column as DbName
+    return this.dbNameFor(column) as DbName
   }
 
   /**
    * Resolve the column names carried by a mutation's options. `onConflict` is a
    * comma-separated column list, so it needs the same property→DB mapping as a
-   * filter. Returns the original object when nothing changed, so v2 — where
-   * {@link filterColumnName} is the identity — passes the caller's reference on
-   * untouched.
+   * filter. Returns the original object when nothing changed.
    */
   protected resolveMutationOptions<
     O extends { onConflict?: string } | undefined,
@@ -1274,26 +1783,86 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * Validate the accumulated transforms before the query is built. Called from
-   * inside {@link execute}'s try, so a throw surfaces as a `status: 500` error
-   * result (or rethrows under `throwOnError`), matching the filter-path
-   * capability guard. v2 imposes no constraints.
+   * `ORDER BY` on an OPE-backed column is supported; on every other encrypted
+   * column it is rejected.
+   *
+   * A bare `ORDER BY col` IS wrong. The `*_ord` domains are
+   * `CREATE DOMAIN … AS jsonb`, and the bundle declares no btree operator class
+   * on any domain — it actively lints against one (`domain_opclass`), because an
+   * opclass on a domain bypasses operator resolution. So the sort resolves
+   * through jsonb's default `jsonb_cmp` and compares the envelope's keys in
+   * storage order, starting at the random ciphertext `c`. No error, and a
+   * stable, meaningless row order.
+   *
+   * But the correct sort key is reachable without a function call. `eql_v3.ord_term`
+   * returns the domain's `op` term, and OPE is order-preserving by construction:
+   * ordering by the term reproduces the plaintext order. PostgREST cannot emit
+   * `ORDER BY eql_v3.ord_term(col)`, but it CAN emit a jsonb path —
+   * `order=col->op.asc` — which selects exactly that term.
+   *
+   * So the guard is on the ordering FLAVOUR, not on encryption:
+   *
+   * - `ope` present → order by `col->op`. Every plain `_ord` domain, plus
+   *   `text_ord` and `text_search`.
+   * - `ore` present → reject. The `ob` term is an array of ORE blocks whose
+   *   comparison needs the superuser-only opclass; a jsonb-path sort over it is
+   *   meaningless.
+   * - neither → reject. Storage-only, equality-only and match-only columns
+   *   carry no ordering term to sort by.
+   *
+   * A column absent from {@link v3Columns} is a plaintext passthrough and orders
+   * normally. This runtime guard is the only protection the untyped
+   * (no-`schemas`) surface has.
    */
-  protected validateTransforms(): void {}
+  protected validateTransforms(): void {
+    for (const t of this.transforms) {
+      if (t.kind !== 'order') continue
+      const column = this.v3Columns[t.column]
+      if (!column) continue
+
+      const indexes = this.columnSchemas[column.getName()]?.indexes
+      if (indexes?.ope) continue
+
+      const reason = indexes?.ore
+        ? 'its ORE ordering term (`ob`) needs the superuser-only ORE operator class, which PostgREST cannot reach through a jsonb path'
+        : 'it carries no ordering term to sort by'
+
+      throw new Error(
+        `[supabase v3]: cannot order by encrypted column "${column.getName()}" (${column.getEqlType()}) — ${reason}. ` +
+          'Order by a plaintext column, or use an OPE-backed ordering domain ' +
+          '(`*_ord`, `text_ord`, `text_search`), or use the EQL v3 Drizzle integration.',
+      )
+    }
+  }
 
   /**
-   * The CipherStash query type to encrypt a raw `.filter(column, operator, …)`
-   * term under. `operator` is an arbitrary PostgREST operator string, not a
-   * {@link FilterOp}, so it cannot go through `mapFilterOpToQueryType`.
+   * Resolve a raw `.filter()` operator to the capability it exercises. A
+   * supported v3 operand is a full storage envelope, so `queryType` never
+   * selects a narrowing — it only tells {@link assertTermQueryable} which
+   * capability to demand of the column.
    *
-   * v2 encrypts every raw filter as an equality term. That is wrong — a raw
-   * `.filter('amount', 'gte', …)` wants an ORE term — but in v2 `queryType`
-   * selects the `encryptQuery` narrowing, so correcting it changes the
-   * ciphertext on the wire. Preserved verbatim here and tracked separately;
-   * the v3 dialect, where `queryType` is only a capability gate, overrides it.
+   * Unknown operators throw rather than silently defaulting to equality, which
+   * would encrypt a term the column may not even be able to compare.
    */
-  protected queryTypeForRawOp(_operator: string): QueryTypeName {
-    return 'equality'
+  protected queryTypeForRawOp(operator: string): QueryTypeName {
+    switch (operator) {
+      case 'cs':
+        return 'freeTextSearch'
+      case 'gt':
+      case 'gte':
+      case 'lt':
+      case 'lte':
+        return 'orderAndRange'
+      case 'eq':
+      case 'neq':
+      case 'in':
+      case 'is':
+        return 'equality'
+      default:
+        throw new Error(
+          `[supabase v3]: unsupported raw filter operator "${operator}" on an encrypted column`,
+        )
+    }
   }
 
   /**
@@ -1317,10 +1886,9 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * Apply a `like`/`ilike` filter. v2 relies on the `~~` operator defined on
-   * `eql_v2_encrypted`; the v3 dialect overrides this for encrypted columns
-   * because the `eql_v3.*` domains expose free-text match via `@>`
-   * (PostgREST `cs`) rather than a LIKE operator.
+   * Apply a `like`/`ilike` filter. On an encrypted column `like`/`ilike` were
+   * rewritten to `matches` at record time, so a `like`/`ilike` pending filter
+   * only ever names a plaintext column, which keeps real SQL LIKE.
    */
   protected applyPatternFilter(
     q: SupabaseQueryBuilder,
@@ -1336,20 +1904,27 @@ export class EncryptedQueryBuilderImpl<
 
   /**
    * Apply a `contains` filter. On a plaintext column this is PostgREST's native
-   * jsonb/array containment. The v3 dialect overrides it for encrypted columns,
-   * where `cs` resolves to the `@>` operator the EQL bundle declares on the
-   * domain, backed by `eql_v3.matches` (bloom-filter containment).
+   * jsonb/array containment. On an encrypted column `cs` resolves to the `@>`
+   * operator the EQL bundle declares on the domain, backed by `eql_v3.matches`
+   * (bloom-filter containment) — and the operand is the full storage envelope,
+   * already `JSON.stringify`d, emitted via `filter(col, 'cs', json)` rather than
+   * `q.contains` (postgrest-js's `contains` re-serializes a non-string operand).
    *
-   * A structured operand is serialized here rather than by postgrest-js, which
-   * joins array elements on `,` without quoting them — so `['with,comma']` would
-   * reach Postgres as two elements. Scalars keep the native path.
+   * A structured plaintext operand is serialized here rather than by
+   * postgrest-js, which joins array elements on `,` without quoting them — so
+   * `['with,comma']` would reach Postgres as two elements. Scalars keep the
+   * native path.
    */
   protected applyContainsFilter(
     q: SupabaseQueryBuilder,
     column: DbName,
     value: unknown,
-    _wasEncrypted: boolean,
+    wasEncrypted: boolean,
   ): SupabaseQueryBuilder {
+    if (wasEncrypted) {
+      this.assertPostgrestCanQueryEncryptedOperator('filter', column)
+      return q.filter(column, 'cs', value)
+    }
     const literal = formatContainmentOperand(value)
     return literal !== null
       ? q.filter(column, 'cs', literal)
@@ -1359,10 +1934,17 @@ export class EncryptedQueryBuilderImpl<
   /**
    * The CipherStash query type for an `.or()` condition's operator on an
    * encrypted column. String-form conditions carry raw PostgREST operators
-   * (`cs`), which are not {@link FilterOp}s; the v3 dialect maps those.
+   * (`cs`), which are not {@link FilterOp}s.
    */
   protected queryTypeForOrOp(op: FilterOp): QueryTypeName {
-    return mapFilterOpToQueryType(op)
+    if (op === 'matches') return 'freeTextSearch'
+    // Structured conditions may carry the `contains` METHOD spelling (the wire
+    // token becomes `cs` in rebuildOrString). It maps to the same capability
+    // gate as `cs`; on a JSON column the term resolver then re-types it to
+    // searchableJson and validates the operand. selectorNe's IS-NULL-inclusive
+    // or-form relies on this arm.
+    if (op === 'contains') return 'freeTextSearch'
+    return this.queryTypeForRawOp(op)
   }
 
   /**
@@ -1375,13 +1957,41 @@ export class EncryptedQueryBuilderImpl<
   }
 
   /**
-   * Post-process a decrypted result row. The v3 dialect reconstructs `Date`
-   * values from the encrypt-config `cast_as`; v2 returns rows unchanged.
+   * Post-process a decrypted result row: rebuild `Date` values from the
+   * encrypt-config `cast_as` (date/timestamp), mirroring the typed v3 client's
+   * decrypt-model path.
    */
   protected postprocessDecryptedRow(
     row: Record<string, unknown>,
   ): Record<string, unknown> {
-    return row
+    // Every key an encrypted column can appear under: the keys this select
+    // actually produces (including caller-chosen aliases like `ts:createdAt`),
+    // plus the static property and DB names as a fallback for paths that record
+    // no select. Aliases win. Derived here from `this.selectColumns` (the row in
+    // hand) rather than cached from `buildSelectString`, so a reused builder can
+    // never postprocess a row with a previous operation's stale select map.
+    const keyToDb: Record<string, string> = Object.assign(
+      Object.create(null),
+      this.selectColumns === null
+        ? undefined
+        : selectKeyToDbV3(this.selectColumns, this.propToDb),
+    )
+    for (const [property, dbName] of Object.entries(this.propToDb)) {
+      keyToDb[property] ??= dbName
+      keyToDb[dbName] ??= dbName
+    }
+
+    const out: Record<string, unknown> = { ...row }
+    for (const [key, dbName] of Object.entries(keyToDb)) {
+      const castAs = this.columnSchemas[dbName]?.cast_as
+      if (!DATE_LIKE_CAST_SET.has(castAs as string)) continue
+      const value = out[key]
+      if (value == null || value instanceof Date) continue
+      if (typeof value === 'string' || typeof value === 'number') {
+        out[key] = new Date(value)
+      }
+    }
+    return out
   }
 
   // ---------------------------------------------------------------------------
@@ -1523,17 +2133,105 @@ export class EncryptedQueryBuilderImpl<
   // ---------------------------------------------------------------------------
 
   protected getColumnMap(): Record<string, BuildableQueryColumn> {
-    const map: Record<string, BuildableQueryColumn> = {}
-    const schema = this.schema as unknown as Record<string, unknown>
+    return this.v3Columns as unknown as Record<string, BuildableQueryColumn>
+  }
 
-    for (const colName of this.encryptedColumnNames) {
-      const col = schema[colName]
-      if (col instanceof EncryptedColumn) {
-        map[colName] = col
-      }
+  /** Warn once per (op, column) that a `like`/`ilike` was delegated to `matches`. */
+  private static readonly warnedLikeDelegation = new Set<string>()
+
+  /** True when `column` is one of this table's encrypted v3 columns. */
+  private isEncryptedV3Column(column: string): boolean {
+    return Boolean(this.v3Columns[column])
+  }
+
+  /** True when `column` is an encrypted `types.Json` document column. */
+  private isSearchableJsonColumn(column: string): boolean {
+    const builder: V3ColumnLike | undefined = this.v3Columns[column]
+    return Boolean(builder?.getQueryCapabilities().searchableJson)
+  }
+
+  private assertPostgrestCanQueryEncryptedOperator(
+    method: string,
+    column: string,
+  ): void {
+    if (!this.queryDomainsRequired) return
+    throw new Error(
+      `[supabase v3]: ${method}() on encrypted column "${column}" is unavailable with EQL 3.0.2+: the SQL operator requires an eql_v3.query_* cast that PostgREST cannot express. Use the Drizzle or Prisma Next adapter, or a scoped SQL/RPC function.`,
+    )
+  }
+
+  /**
+   * Validate + reconstruct a selector needle: `('$.user.role', 'admin')` →
+   * `{user: {role: 'admin'}}`. Shared by {@link selectorEq}/{@link selectorNe};
+   * throws with column context for a non-JSON column, an invalid path, or a
+   * non-scalar leaf.
+   */
+  private selectorNeedle(
+    method: string,
+    column: string,
+    path: string,
+    value: unknown,
+  ): Record<string, unknown> {
+    if (!this.isSearchableJsonColumn(column)) {
+      throw new Error(
+        `[supabase v3]: ${method}() requires an encrypted JSON (types.Json) column; "${column}" is not one.`,
+      )
     }
+    // Selector comparisons compare a scalar LEAF (null included in the shared
+    // helper's rejection; eq/ne arm — `ordering: false`;
+    // PostgREST cannot express selector ordering yet, see
+    // cipherstash/encrypt-query-language#407).
+    const leafReason = unsupportedLeafReason(value, false)
+    if (leafReason) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", "${path}", …): ${leafReason}`,
+      )
+    }
+    // Stricter than the shared helper (whose Date/bigint arms serve the Drizzle
+    // surface): a stored JsonDocument leaf is a JSON scalar, so a Date/bigint
+    // needle could never match one — reject with the serialization steer
+    // instead of running a query that structurally returns nothing.
+    if (
+      typeof value !== 'string' &&
+      typeof value !== 'number' &&
+      typeof value !== 'boolean'
+    ) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", "${path}", …): a JSON document leaf is a JSON scalar (string/number/boolean); got ${value instanceof Date ? 'a Date — pass date.toISOString() (or the stored form)' : typeof value}.`,
+      )
+    }
+    let segments: string[]
+    try {
+      segments = parseSelectorSegments(path)
+    } catch (err) {
+      throw new Error(
+        `[supabase v3]: ${method}("${column}", …): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    return reconstructSelectorDocument(segments, value)
+  }
 
-    return map
+  /**
+   * Reduce a SQL LIKE pattern to a fuzzy-match needle, or throw when it cannot be
+   * approximated. Strips surrounding `%` (prefix/suffix wildcards, which fuzzy
+   * matching subsumes); an internal `%` or any `_` is unapproximable. Warns once
+   * per (op, column) that the delegation is approximate.
+   */
+  private likeNeedle(column: string, op: string, pattern: string): string {
+    const needle = pattern.replace(/^%+/, '').replace(/%+$/, '')
+    if (needle.includes('%') || pattern.includes('_')) {
+      throw new Error(
+        `[supabase v3]: "${op}" pattern "${pattern}" on encrypted column "${column}" has wildcards fuzzy free-text matching cannot honor (an internal "%" or any "_"). Use matches("${column}", term) with a literal search term.`,
+      )
+    }
+    const key = `${op}:${column}`
+    if (!EncryptedQueryBuilderImpl.warnedLikeDelegation.has(key)) {
+      EncryptedQueryBuilderImpl.warnedLikeDelegation.add(key)
+      logger.warn(
+        `[supabase v3]: "${op}" on encrypted column "${column}" is delegated to matches() (fuzzy bloom token search). Results are APPROXIMATE — case-insensitive, one-sided (may false-positive), and wildcards/anchoring are not honored. Call matches() directly to make this explicit.`,
+      )
+    }
+    return needle
   }
 }
 
