@@ -218,6 +218,16 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     },
   }
 
+  // Pass-through maps for a one-arg (nominal-style) decrypt call, where `table`
+  // is absent: decrypt WITHOUT date reconstruction, exactly as the nominal
+  // `EncryptionClient` does. This client is now what `Encryption` returns for a
+  // v3 schema set, so a consumer typed against the nominal overload (e.g.
+  // stack-supabase's query builder, which casts to it) can call `decryptModel(x)`
+  // / `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
+  // dereferencing `undefined.tableName`.
+  const passthroughRow = (row: Record<string, unknown>) => row
+  const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
+
   // Overloaded so the implementation is checked against BOTH forms directly —
   // no whole-value cast. The two public signatures mirror the interface member;
   // the hidden implementation signature is broad and forwards to the nominal
@@ -258,9 +268,14 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
     decryptModel: (input, table, lockContext) => {
-      // `reconstruct` is undefined for a table this client was not initialized
-      // with; the mapped op then resolves to `unknownTableFailure` on execute.
-      const reconstruct = reconstructors.get(table.tableName)
+      // `table` is absent on a nominal-style one-arg call (see `passthroughRow`).
+      // Given a table: reconstruct dates from its cast_as, or — if it was never
+      // registered — leave `map` undefined so the mapped op resolves to
+      // `unknownTableFailure` on execute.
+      const maybeTable = table as AnyV3Table | undefined
+      const reconstruct = maybeTable
+        ? reconstructors.get(maybeTable.tableName)
+        : passthroughRow
       const op = client.decryptModel(input as never)
       const base = lockContext ? op.withLockContext(lockContext) : op
       return new MappedDecryptOperation(
@@ -270,13 +285,23 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
       ) as never
     },
     bulkDecryptModels: (input, table, lockContext) => {
-      const reconstruct = reconstructors.get(table.tableName)
+      const maybeTable = table as AnyV3Table | undefined
       const op = client.bulkDecryptModels(input as never)
       const base = lockContext ? op.withLockContext(lockContext) : op
-      // The underlying op resolves to an array of rows; reconstruct each.
-      const mapRows = reconstruct
-        ? (rows: Array<Record<string, unknown>>) => rows.map(reconstruct)
-        : undefined
+      // No table → pass rows through (nominal behaviour). Registered table →
+      // reconstruct each row. Unregistered table → `undefined` map →
+      // `unknownTableFailure` on execute.
+      let mapRows:
+        | ((
+            rows: Array<Record<string, unknown>>,
+          ) => Array<Record<string, unknown>>)
+        | undefined
+      if (!maybeTable) {
+        mapRows = passthroughRows
+      } else {
+        const reconstruct = reconstructors.get(maybeTable.tableName)
+        mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
+      }
       return new MappedDecryptOperation(
         base,
         mapRows,

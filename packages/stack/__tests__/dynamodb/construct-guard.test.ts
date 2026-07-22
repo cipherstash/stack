@@ -68,7 +68,9 @@ describe('encryptedDynamoDB client/table version guard', () => {
       message = (e as Error).message
     }
     expect(message).toContain('users_v3')
-    expect(message).toMatch(/EncryptionV3|eqlVersion/)
+    // Post-collapse the fix guidance points at `Encryption` (which auto-selects
+    // the v3 wire format for a v3 schema set), not `EncryptionV3`/`eqlVersion`.
+    expect(message).toMatch(/build it with Encryption\(/)
   })
 
   it('guards every operation method, not just encryptModel', () => {

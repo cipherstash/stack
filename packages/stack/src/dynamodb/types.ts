@@ -94,10 +94,9 @@ export type CallableEncryptionClient = {
 
 export interface EncryptedDynamoDBConfig {
   /**
-   * Either the nominal client from `Encryption(...)` / `Encryption({ schemas,
-   * config: { eqlVersion: 3 } })`, or the typed client from `EncryptionV3(...)`.
-   * For EQL v3 tables the client must be in v3 mode — `EncryptionV3` forces
-   * this; with `Encryption` you must pass `config: { eqlVersion: 3 }` yourself.
+   * The client from `Encryption(...)` (or the deprecated `EncryptionV3(...)`
+   * alias). For an EQL v3 schema set `Encryption` auto-selects the v3 wire format
+   * and returns the typed client — no `config: { eqlVersion: 3 }` needed.
    */
   encryptionClient: EncryptionClient | DynamoDBEncryptionClient
   options?: {
