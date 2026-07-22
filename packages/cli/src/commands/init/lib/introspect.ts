@@ -103,9 +103,10 @@ export async function introspectDatabase(
  * The v3 domains offerable for a scaffolded column of the given `DataType`,
  * ordered narrowest→widest so the interactive picker reads as an escalating
  * ladder. Each domain's query capability is fixed by its type — there is no
- * capability tuple. `boolean` and `json` have exactly one domain (storage
- * only); numeric and date types collapse to the `Integer*` / `Date*` families
- * because `pgTypeToDataType` carries no width/precision signal.
+ * capability tuple. `boolean` has exactly one storage-only domain; `json` has
+ * exactly one queryable domain (encrypted containment + selectors). Numeric
+ * and date types collapse to the `Integer*` / `Date*` families because
+ * `pgTypeToDataType` carries no width/precision signal.
  */
 export function candidateDomains(
   dataType: DataType,
