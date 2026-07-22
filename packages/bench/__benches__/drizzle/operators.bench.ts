@@ -44,8 +44,8 @@ describe('drizzle', () => {
     await handle.db.select().from(benchTable).where(where)
   })
 
-  bench('like (prefix)', async () => {
-    const where = (await ops.like(benchTable.encText, '%value-00000%')) as SQL
+  bench('matches (free-text)', async () => {
+    const where = (await ops.matches(benchTable.encText, 'value')) as SQL
     await handle.db.select().from(benchTable).where(where)
   })
 
