@@ -53,16 +53,6 @@ import {
 } from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
 import { cipherstashV3CodecControlHooks } from '../migration/cipherstash-codec-v3'
-import { withRuntimeEqlSqlPackage } from '../migration/eql-bundle-v3'
-
-const v3BaselineRuntimePackage = withRuntimeEqlSqlPackage(
-  v3BaselineMetadata,
-  v3BaselineOps,
-)
-const v3Upgrade302RuntimePackage = withRuntimeEqlSqlPackage(
-  v3Upgrade302Metadata,
-  v3Upgrade302Ops,
-)
 
 const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
   contractJson,
@@ -76,22 +66,26 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
     // exist for `typeParams`-carrying columns) — no `onFieldEvent`,
     // which is what guarantees v3 columns emit no `add_search_config` /
     // `remove_search_config` ops.
+    //
+    // The committed artefacts are wired VERBATIM — the install SQL is
+    // baked into `ops.json` at emit time, digest-verified against the
+    // pinned `@cipherstash/eql` release (see
+    // `../migration/eql-bundle-v3.ts`). No transformation happens here,
+    // so the descriptor's migration identity is byte-identical to the
+    // committed artefact, to the copy the CLI seed phase materialises
+    // into a consumer's `migrations/cipherstash/`, and to what
+    // `verifyMigrationHash` re-checks on every disk read.
     {
       dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
-      metadata: v3BaselineRuntimePackage.metadata,
-      // The committed `ops.json` carries a placeholder in place of the ~1.7 MB
-      // install SQL; inject it here from the installed `@cipherstash/eql` so
-      // bumping the pinned EQL version needs no re-emit of the migration. The
-      // helper also recomputes the content-addressed migration hash from the
-      // injected ops so the descriptor can be materialised and verified.
-      ops: v3BaselineRuntimePackage.ops,
+      metadata: v3BaselineMetadata,
+      ops: v3BaselineOps,
     },
     // A distinct invariant is required for upgrades: databases that already
     // recorded the baseline marker must still install the pinned 3.0.2 SQL.
     {
       dirName: CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
-      metadata: v3Upgrade302RuntimePackage.metadata,
-      ops: v3Upgrade302RuntimePackage.ops,
+      metadata: v3Upgrade302Metadata,
+      ops: v3Upgrade302Ops,
     },
   ],
   headRef,

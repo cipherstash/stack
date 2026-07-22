@@ -1,13 +1,23 @@
 /**
  * v3 baseline migration assertions — the on-disk emitted artefacts for
- * `20260601T0100_install_eql_v3_bundle`.
+ * `20260601T0100_install_eql_v3_bundle` and the 3.0.2 upgrade edge.
  *
- * The install SQL is NOT baked into `ops.json`: the committed op carries a
- * placeholder, and the descriptor (`control.ts`) injects `readInstallSql()`
- * from the installed `@cipherstash/eql` at build time. The package installs EQL
- * v3 only: the baseline is an invariant-only genesis edge (`from: null`), and
- * a second invariant-only edge upgrades already-baselined databases to 3.0.2.
+ * The install SQL IS baked into `ops.json`: each migration's self-emit
+ * script embeds `readVerifiedInstallSql()` — the installed
+ * `@cipherstash/eql`'s bundle, digest-verified against the release
+ * manifest — so the migration hash covers the exact bytes every
+ * consumer's apply executes. The descriptor (`control.ts`) wires the
+ * committed artefacts VERBATIM: no runtime transformation, so the
+ * migration identity is byte-identical in this repo, in the descriptor,
+ * and in every consumer's vendored `migrations/cipherstash/` copy.
+ *
+ * The provenance pin below (sha256 of the baked SQL === the installed
+ * manifest's `installSqlSha256`) is what keeps "the EQL SQL comes from
+ * the @cipherstash/eql npm package" true: CI fails if the committed
+ * artefact and the pinned dependency ever skew — a version bump without
+ * a new migration, or a hand-edit of the artefact.
  */
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,17 +46,29 @@ import {
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
-import {
-  RUNTIME_EQL_SQL_SENTINEL,
-  withRuntimeEqlSql,
-} from '../../src/migration/eql-bundle-v3'
+import { assertInstallSqlDigest } from '../../src/migration/eql-bundle-v3'
 
-function runtimeV3Baseline() {
+function sha256Hex(input: string): string {
+  return createHash('sha256').update(input).digest('hex')
+}
+
+function firstExecuteSql(ops: unknown): string {
+  const op = (
+    ops as ReadonlyArray<{
+      readonly execute?: ReadonlyArray<{ readonly sql?: unknown }>
+    }>
+  )[0]
+  const sql = op?.execute?.[0]?.sql
+  if (typeof sql !== 'string') throw new Error('op carries no execute[0].sql')
+  return sql
+}
+
+function descriptorMigration(dirName: string) {
   const migration = cipherstashDescriptor.contractSpace?.migrations.find(
-    ({ dirName }) => dirName === CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+    (m) => m.dirName === dirName,
   )
   if (!migration) {
-    throw new Error('runtime descriptor is missing the EQL v3 baseline')
+    throw new Error(`runtime descriptor is missing migration ${dirName}`)
   }
   return migration
 }
@@ -65,80 +87,66 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(op.operationClass).toBe('data')
   })
 
-  it('does NOT bake the install SQL into ops.json — it carries the runtime placeholder', () => {
-    const op = (
-      v3Ops as ReadonlyArray<{
-        readonly execute?: ReadonlyArray<{ readonly sql: string }>
-      }>
-    )[0]!
-    // The ~1.7 MB bundle must not be committed here — bumping @cipherstash/eql
-    // should not require re-emitting this file. The op carries the sentinel.
-    expect(op.execute?.[0]?.sql).toBe(RUNTIME_EQL_SQL_SENTINEL)
-    expect(op.execute?.[0]?.sql).not.toContain('CREATE')
-    expect(JSON.stringify(v3Ops).length).toBeLessThan(5_000)
+  it('bakes the install SQL whose digest the pinned @cipherstash/eql release attests (provenance pin)', () => {
+    const sql = firstExecuteSql(v3Ops)
+    // The baked bytes ARE the installed package's bundle — never
+    // hand-maintained. This is the lockstep guard: a @cipherstash/eql
+    // bump without a matching migration re-emit (or any edit to the
+    // committed artefact) fails here.
+    expect(sha256Hex(sql)).toBe(releaseManifest.installSqlSha256)
+    expect(sql).toBe(readInstallSql())
+    expect(sql).toContain('EQL v3 schema creation')
     // @cipherstash/eql is pinned exact (matching @cipherstash/stack, which
     // encodes the v3 domain types against this same release).
     expect(releaseManifest.eqlVersion).toBe('3.0.2')
   })
 
-  it('injects readInstallSql() from @cipherstash/eql into the descriptor at build time', () => {
-    // control.ts swaps the placeholder for the install SQL of the pinned
-    // @cipherstash/eql, so the applied SQL always matches the resolved version.
-    const v3Baseline = runtimeV3Baseline()
-    const op = (
-      v3Baseline.ops as ReadonlyArray<{
-        readonly id: string
-        readonly execute?: ReadonlyArray<{ readonly sql: string }>
-      }>
-    ).find((o) => o.id === 'cipherstash.install-eql-v3-bundle')
-    if (!op) throw new Error('runtime descriptor is missing the EQL v3 op')
-    expect(op.execute?.[0]?.sql).toBe(readInstallSql())
-    expect(op.execute?.[0]?.sql).toContain('EQL v3 schema creation')
+  it('the descriptor wires the committed artefacts verbatim — one identity everywhere', () => {
+    // No runtime transformation: the descriptor's package must be
+    // byte-identical to the committed artefact, which is what the CLI
+    // seed phase materialises into a consumer's migrations/cipherstash/
+    // and what verifyMigrationHash re-checks on every disk read. (The
+    // previous design injected SQL here and recomputed the hash, so the
+    // migration's identity varied with the installed @cipherstash/eql —
+    // every EQL bump orphaned consumers' vendored copies.)
+    const v3Baseline = descriptorMigration(
+      CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+    )
+    expect(v3Baseline.metadata).toEqual(v3Metadata)
+    expect(v3Baseline.ops).toEqual(v3Ops)
   })
 
-  it('materialises the runtime descriptor package and verifies it on read', async () => {
+  it('materialises the descriptor package and verifies it on read', async () => {
     // Round-trip property: the exact package Prisma Next receives from the
     // descriptor must survive its canonical disk writer + integrity-checking
-    // reader. This pins the migration hash to the injected SQL, not the
-    // sentinel committed in the maintainer artefact.
-    const v3Baseline = runtimeV3Baseline()
-    expect(v3Baseline.metadata.migrationHash).not.toBe(v3Metadata.migrationHash)
-
+    // reader (readMigrationPackage recomputes the hash over the read bytes).
+    const v3Baseline = descriptorMigration(
+      CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
+    )
     const root = await mkdtemp(join(tmpdir(), 'prisma-next-eql-v3-'))
     try {
       await materialiseMigrationPackage(root, v3Baseline)
       const reloaded = await readMigrationPackage(
         join(root, v3Baseline.dirName),
       )
-      expect(reloaded.metadata).toEqual(v3Baseline.metadata)
-      expect(reloaded.ops).toEqual(v3Baseline.ops)
+      expect(reloaded.metadata).toEqual(v3Metadata)
+      expect(reloaded.ops).toEqual(v3Ops)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
 
-  it('withRuntimeEqlSql throws if no op carries the sentinel (drift guard)', () => {
-    // Matching on the sentinel string (not an op id) makes injection immune to
-    // op-id/label drift; a missing sentinel means the emit source and injector
-    // diverged, so fail loudly rather than apply the inert comment as install.
-    expect(() =>
-      withRuntimeEqlSql([{ execute: [{ sql: 'SELECT 1' }] }]),
-    ).toThrow(/RUNTIME_EQL_SQL_SENTINEL/)
-    // A non-lossy swap: only the sentinel step's `sql` changes; sibling steps
-    // and extra fields on the matched op are preserved.
-    const [op] = withRuntimeEqlSql([
-      {
-        id: 'cipherstash.install-eql-v3-bundle',
-        execute: [
-          { description: 'keep me', sql: RUNTIME_EQL_SQL_SENTINEL },
-          { description: 'sibling', sql: 'SELECT 2' },
-        ],
-      },
-    ])
-    expect(op.id).toBe('cipherstash.install-eql-v3-bundle')
-    expect(op.execute[0].description).toBe('keep me')
-    expect(op.execute[0].sql).toBe(readInstallSql())
-    expect(op.execute[1]).toEqual({ description: 'sibling', sql: 'SELECT 2' })
+  it('assertInstallSqlDigest refuses SQL the release manifest does not attest to', () => {
+    // The emit-time tamper/corruption guard: only bytes matching the
+    // installed manifest's installSqlSha256 may enter an ops.json.
+    const genuine = readInstallSql()
+    expect(assertInstallSqlDigest(genuine)).toBe(genuine)
+    expect(() => assertInstallSqlDigest(`${genuine}\n-- appended`)).toThrow(
+      /digest verification/,
+    )
+    expect(() => assertInstallSqlDigest('DROP TABLE users;')).toThrow(
+      /digest verification/,
+    )
   })
 
   it('emits no add_search_config / remove_search_config ops', () => {
@@ -148,7 +156,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
   })
 
   it('is an invariant-only genesis edge (from: null → the empty-storage hash)', () => {
-    // The package is EQL v3 only, so this is the sole migration and its
+    // The package is EQL v3 only, so this is the genesis migration and its
     // root: `from: null`. The v3 bundle adds no contract-space storage,
     // so `to` is the empty-storage hash (the contract models no tables).
     expect(v3Metadata.from).toBeNull()
@@ -167,20 +175,19 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     expect(v3UpgradeMetadata.providedInvariants).toEqual([
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
     ])
+    // The upgrade bakes the same digest-attested bundle (the install SQL
+    // is re-install-safe: it drops/recreates the eql_v3 operator schemas
+    // and guards the public.eql_v3_* domain creation).
     expect(v3UpgradeOps).toHaveLength(1)
-    expect(v3UpgradeOps[0]?.execute[0]?.sql).toBe(RUNTIME_EQL_SQL_SENTINEL)
+    expect(sha256Hex(firstExecuteSql(v3UpgradeOps))).toBe(
+      releaseManifest.installSqlSha256,
+    )
 
-    const runtimeUpgrade = cipherstashDescriptor.contractSpace?.migrations.find(
-      ({ dirName }) => dirName === CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
+    const runtimeUpgrade = descriptorMigration(
+      CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
     )
-    expect(runtimeUpgrade).toBeDefined()
-    expect(runtimeUpgrade?.metadata.migrationHash).not.toBe(
-      v3UpgradeMetadata.migrationHash,
-    )
-    const runtimeOp = runtimeUpgrade?.ops[0] as
-      | { readonly execute?: ReadonlyArray<{ readonly sql: string }> }
-      | undefined
-    expect(runtimeOp?.execute?.[0]?.sql).toBe(readInstallSql())
+    expect(runtimeUpgrade.metadata).toEqual(v3UpgradeMetadata)
+    expect(runtimeUpgrade.ops).toEqual(v3UpgradeOps)
   })
 
   it('pins the head ref at the unchanged hash with all invariants', () => {
@@ -189,5 +196,21 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
       CIPHERSTASH_V3_INVARIANTS.installBundle,
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
     ])
+  })
+
+  it('published migration hashes are FROZEN — history is append-only', () => {
+    // These literals are the content-addressed identity of migrations that
+    // live, byte-for-byte, in consumers' repos and database ledgers. A
+    // failure here means published history was rewritten — a re-emit, a
+    // label tweak, ANY byte change. There is no legitimate reason for
+    // these values to change: revert the edit and ship the change as a
+    // NEW migration directory instead. On an EQL version bump, ADD a pin
+    // for the new upgrade migration; never modify an existing one.
+    expect(v3Metadata.migrationHash).toBe(
+      'sha256:2c8739076699b81bcf515f1f8ff23501ff1f2582b933cfd80c5fb5bcc3de9e12',
+    )
+    expect(v3UpgradeMetadata.migrationHash).toBe(
+      'sha256:7bb960435f9cdb7d7c25e4ff70b02fa050a1b8e695541facc47dd87ec3cc634e',
+    )
   })
 })
