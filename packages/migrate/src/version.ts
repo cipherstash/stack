@@ -17,7 +17,7 @@ export type EqlVersion = 2 | 3
 export interface EncryptedColumnInfo {
   /** The column's name, exactly as Postgres reports it. */
   column: string
-  /** The EQL domain name, e.g. `eql_v2_encrypted` or `eql_v3_text_search`. */
+  /** The EQL domain name, e.g. `eql_v3_text_search` or `eql_v3_integer_ord`. */
   domain: string
   version: EqlVersion
 }
@@ -30,12 +30,19 @@ export interface EncryptedColumnInfo {
  * rule lives, and why detection never relies on column NAMES: the
  * `<column>_encrypted` naming is a convention, neither enforced nor required.
  *
- * - `eql_v2_encrypted` → 2
  * - `eql_v3_*` (e.g. `eql_v3_text_search`, `eql_v3_integer_ord`) → 3
- * - anything else → `null` (not an EQL column)
+ * - anything else → `null` (not an EQL v3 column)
+ *
+ * v3 is the sole generation this workspace authors and backfills, so the
+ * classifier only recognises `eql_v3_*` domains. A legacy `eql_v2_encrypted`
+ * column is therefore no longer classified here — its version is carried by
+ * the manifest's recorded `eqlVersion` instead (see the `?? eqlVersion`
+ * fallbacks in the CLI's `encrypt status` / `status` renderers). Existing v2
+ * ciphertext stays decryptable; only its *classification as an authorable
+ * generation* is dropped. `EqlVersion` keeps the `2` member for those
+ * manifest-sourced legacy values.
  */
 export function classifyEqlDomain(domain: string): EqlVersion | null {
-  if (domain === 'eql_v2_encrypted') return 2
   // Underscore included: a bare `startsWith('eql_v3')` would also claim
   // hypothetical future generations like `eql_v30_*`.
   if (domain.startsWith('eql_v3_')) return 3
