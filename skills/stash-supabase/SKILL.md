@@ -1,18 +1,21 @@
 ---
 name: stash-supabase
-description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabaseV3 wrapper over native EQL v3 column domains, transparent encryption/decryption on insert/update/select, encrypted scalar filters (eq, gt/gte/lt/lte, in, or), ordering on encrypted columns, EQL 3.0.2 PostgREST query-domain limitations, identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
+description: Integrate CipherStash encryption with Supabase using @cipherstash/stack-supabase. Covers the encryptedSupabase wrapper over native EQL v3 column domains, transparent encryption/decryption on insert/update/select, encrypted scalar filters (eq, gt/gte/lt/lte, in, or), ordering on encrypted columns, EQL 3.0.2 PostgREST query-domain limitations, identity-aware encryption, and the complete query builder API. Use when adding encryption to a Supabase project, querying encrypted columns, or building secure Supabase applications.
 ---
 
 # CipherStash Stack - Supabase Integration
 
 Guide for integrating CipherStash field-level encryption with Supabase using
-the `encryptedSupabaseV3` wrapper over native EQL v3 column domains. The
+the `encryptedSupabase` wrapper over native EQL v3 column domains. The
 wrapper provides transparent encryption on mutations and decryption on
 selects, with support for equality, range, and ordering.
 
-A legacy EQL v2 wrapper (`encryptedSupabase`) still ships for existing
-deployments — see "Legacy: EQL v2" at the end. New projects should use
-`encryptedSupabaseV3`.
+> **Naming note.** `encryptedSupabase` is the current EQL v3 factory.
+> `encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias, so
+> existing imports keep working — prefer `encryptedSupabase` in new code. The
+> old EQL v2 authoring wrapper (`encryptedSupabase({ encryptionClient,
+> supabaseClient }).from(table, schema)`) has been **removed** — see
+> "Legacy: EQL v2" at the end.
 
 ## When to Use This Skill
 
@@ -102,17 +105,17 @@ SQL-standard type names (`integer`, `smallint`, `real`, `double`, `boolean`,
 ### 3. Initialize the wrapper
 
 ```typescript
-import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 // Introspects the database via options.databaseUrl or DATABASE_URL
-const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
-// or wrap an existing client: await encryptedSupabaseV3(supabaseClient, options)
+const es = await encryptedSupabase(supabaseUrl, supabaseKey)
+// or wrap an existing client: await encryptedSupabase(supabaseClient, options)
 
 await es.from("users").insert({ email: "a@b.com", amount: 30 })
 await es.from("users").select("id, email, amount").eq("email", "a@b.com")
 ```
 
-`encryptedSupabaseV3` **introspects the database at connect time**: it
+`encryptedSupabase` **introspects the database at connect time**: it
 detects EQL v3 columns by their Postgres domain, derives each column's
 encryption config from the domain, and builds the encryption client
 internally — there is no client-side schema to hand-maintain. Introspection
@@ -133,7 +136,7 @@ tables against the database at construction:
 
 ```typescript
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 const users = encryptedTable("users", {
   email:  types.TextSearch("email"),      // public.eql_v3_text_search — eq + range + free-text
@@ -141,7 +144,7 @@ const users = encryptedTable("users", {
   joined: types.TimestampOrd("joined_at") // public.eql_v3_timestamp_ord — eq + range, decrypts to Date
 })
 
-const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey, {
+const es = await encryptedSupabase(supabaseUrl, supabaseKey, {
   schemas: { users },
 })
 
@@ -411,7 +414,7 @@ third-party OIDC JWT (Clerk, Supabase, Auth0, ...) with
 
 ```typescript
 import { OidcFederationStrategy } from "@cipherstash/stack"
-import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
@@ -419,7 +422,7 @@ const strategy = OidcFederationStrategy.create(
 )
 if (strategy.failure) throw new Error(strategy.failure.error.message)
 
-const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey, {
+const es = await encryptedSupabase(supabaseUrl, supabaseKey, {
   config: { authStrategy: strategy.data },
 })
 ```
@@ -470,7 +473,7 @@ const { data, error } = await es
 
 ```typescript
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
-import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 // Optional declared schema — compile-time types. Introspection alone
 // (no `schemas`) also works.
@@ -479,7 +482,7 @@ const users = encryptedTable("users", {
   amount: types.IntegerOrd("amount"),
 })
 
-const es = await encryptedSupabaseV3(
+const es = await encryptedSupabase(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_ANON_KEY!,
   { schemas: { users } }, // databaseUrl defaults to DATABASE_URL
@@ -549,9 +552,15 @@ at all — only `.is(column, null)`.
 
 `@cipherstash/stack-supabase` also exports the following types:
 
-- `EncryptedSupabaseV3Options`, `EncryptedSupabaseV3Instance`, `TypedEncryptedSupabaseV3Instance`, `EncryptedQueryBuilderV3`, `EncryptedQueryBuilderV3Untyped`, `V3Schemas`
-- `SupabaseClientLike`
-- `EncryptedSupabaseConfig`, `EncryptedSupabaseInstance`, `EncryptedQueryBuilder`, `PendingOrCondition` (legacy EQL v2)
+- `EncryptedSupabaseOptions`, `EncryptedSupabaseInstance`, `TypedEncryptedSupabaseInstance`, `EncryptedQueryBuilder`, `EncryptedQueryBuilderUntyped`, `EncryptedQueryBuilderCore`, `V3Schemas`
+- `FilterableKeys`, `FreeTextSearchableKeys`
+- `EncryptedSupabaseResponse`, `EncryptedSupabaseError`, `PendingOrCondition`, `SupabaseClientLike`
+
+Each `*V3`-suffixed name from earlier releases (`EncryptedSupabaseV3Options`,
+`EncryptedSupabaseV3Instance`, `TypedEncryptedSupabaseV3Instance`,
+`EncryptedQueryBuilderV3`, `EncryptedQueryBuilderV3Untyped`, `V3FilterableKeys`,
+`V3FreeTextSearchableKeys`) is still exported as a `@deprecated`, type-identical
+alias of its unsuffixed counterpart above.
 
 ## Migrating an Existing Column to Encrypted
 
@@ -604,7 +613,7 @@ ALTER TABLE users
 
 Apply with `supabase db reset` locally or `supabase migration up` against the remote project.
 
-No client-side schema change is required — `encryptedSupabaseV3` introspects
+No client-side schema change is required — `encryptedSupabase` introspects
 the new column's domain at the next client startup. If you use declared
 `schemas`, add the column so it is typed:
 
@@ -633,7 +642,7 @@ Find **every** code path that writes to `users.email` and update it to also writ
 
 ```typescript
 // src/db/users.ts
-import { es } from './clients' // encryptedSupabaseV3 instance
+import { es } from './clients' // encryptedSupabase instance
 
 export async function insertUser(email: string) {
   return es.from('users').insert({
@@ -682,60 +691,20 @@ If something goes wrong (e.g. you discover the dual-write code wasn't actually l
 
 **EQL v3 (the schema above): there is no cut-over.** The encrypted column keeps
 its own name — point your application at `email_encrypted` through the
-`encryptedSupabaseV3` wrapper, deploy, verify reads decrypt correctly, then skip
+`encryptedSupabase` wrapper, deploy, verify reads decrypt correctly, then skip
 ahead to the drop step. Running `stash encrypt cutover` on a **backfilled** v3
 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't
 finished).
 
-The rest of this subsection is the **EQL v2** path (an `eql_v2_encrypted` twin
-queried through the legacy `encryptedSupabase` wrapper), kept for existing v2
-deployments.
-
-First, if you use declared `schemas`, update them to the post-cutover shape — the encrypted column will live under the original column name:
-
-```typescript
-// src/encryption/schema.ts (post-cutover)
-export const users = encryptedTable('users', {
-  email: types.TextSearch('email'),
-})
-```
-
-(Without declared schemas, introspection picks up the renamed column at the next client startup.)
-
-> **Known gap (EQL v2, SDK-only users):** `stash encrypt cutover` requires a pending EQL configuration, which is set by `stash db push`. If you're using the SDK without Proxy, you'll hit a "No pending EQL configuration" error from cutover. **Workaround:** run `stash db push` once before `stash encrypt cutover`. EQL v3 columns never hit this — cut-over doesn't apply to them.
->
-> **Using CipherStash Proxy?** Re-push the encryption config so EQL has a pending row that points at `email` (no `_encrypted` suffix):
->
-> ```bash
-> stash db push
-> # → writes the new config as `pending`. Active config (still pointing at
-> #   `email_encrypted`) keeps serving while we complete the cutover.
-> ```
-
-Now run the cutover:
-
-```bash
-stash encrypt cutover --table users --column email
-```
-
-Inside one transaction it: (1) renames `email` → `email_plaintext` and `email_encrypted` → `email`, (2) promotes the pending EQL config to `active` (and the prior active to `inactive`), (3) records a `cut_over` event in `cs_migrations`.
-
-App code that does `select('email')` now returns ciphertext that must be decrypted via the `encryptedSupabaseV3` wrapper. **This is the moment that breaks read paths if they aren't going through the wrapper.**
-
-Update read paths to use the wrapper:
-
-```typescript
-// Before
-const { data } = await supabase.from('users').select('email').eq('id', id).single()
-
-// After — the wrapper decrypts transparently
-const { data } = await es.from('users').select('email').eq('id', id).single()
-```
-
-For supported scalar queries that filter on `email`, the wrapper handles the
-encrypted operators internally — calls such as `.eq()` and `.gte()` keep the
-same shape, but values are encrypted before reaching the database. See
-`## Query Filters` above for the EQL 3.0.2 PostgREST limitations.
+> **EQL v2 cutover (`stash encrypt cutover`) via this SDK is no longer
+> supported.** `@cipherstash/stack-supabase` authors and queries EQL v3 only —
+> the v2 `encryptedSupabase({ encryptionClient, supabaseClient })` wrapper that
+> read the post-cutover `eql_v2_encrypted` column has been removed. The CLI
+> lifecycle commands still auto-detect a v2 column, but the SDK read path for one
+> is gone. If you have an in-flight v2 cutover, either pin the last
+> `@cipherstash/stack-supabase` release that shipped the v2 wrapper to finish it,
+> or (recommended) create an `eql_v3_*` twin and run the v3 rollout above. New
+> encryption should always target an `eql_v3_*` domain.
 
 #### Drop: remove the plaintext column
 
@@ -764,15 +733,24 @@ All three are read-only.
 
 ## Legacy: EQL v2
 
-Earlier versions of this integration stored ciphertext in `jsonb` /
-composite `eql_v2_encrypted` columns (enabled via `CREATE EXTENSION eql_v2`
-or the v2 EQL bundle) and queried them through the `encryptedSupabase({
-supabaseClient, encryptionClient })` factory, which takes a hand-written
-client-side schema and a two-argument `from(tableName, schema)`. That surface
-still ships in `@cipherstash/stack-supabase` and is unchanged — keep using it
-for existing v2 deployments — but it is not the recommended path for new
-projects: use `encryptedSupabaseV3`. The CLI rollout tooling (`stash encrypt
-backfill` / `cutover` / `drop`) supports both generations and auto-detects which
-one a column uses, so a v2 twin is no longer needed to get CLI-managed
-backfill — see the EQL version note in the migration section above. For the v2
-wrapper's full API and semantics, see the docs at https://cipherstash.com/docs.
+Earlier versions of this integration stored ciphertext in composite
+`eql_v2_encrypted` columns (enabled via `CREATE EXTENSION eql_v2` or the v2 EQL
+bundle) and both wrote and read them through the `encryptedSupabase({
+supabaseClient, encryptionClient })` factory — a hand-written client-side schema
+and a two-argument `from(tableName, schema)`.
+
+**That v2 wrapper has been removed.** `@cipherstash/stack-supabase` now authors
+and queries EQL v3 only, via the introspecting `encryptedSupabase(url, key)` /
+`encryptedSupabase(client, options)` factory described above. There is no longer
+a code path in this package that emits or reads `eql_v2_encrypted` columns.
+
+Existing v2 deployments have two options:
+
+- **Migrate to EQL v3** (recommended): add an `eql_v3_*` twin column and run the
+  rollout in "Migrating an Existing Column to Encrypted" above.
+- **Stay on v2 for now:** pin the last `@cipherstash/stack-supabase` release that
+  shipped the v2 wrapper. The CLI rollout tooling (`stash encrypt backfill` /
+  `cutover` / `drop`) still auto-detects a column's EQL generation.
+
+For the removed v2 wrapper's historical API and semantics, see the docs at
+https://cipherstash.com/docs.
