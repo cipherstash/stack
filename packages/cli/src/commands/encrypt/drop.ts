@@ -84,8 +84,9 @@ export async function dropCommand(options: DropCommandOptions) {
     // the wrong ciphertext and generate an irreversible drop of the wrong
     // data. (The post-cutover v2 state — `<col>` itself carries the v2
     // domain, counterpart legitimately unresolvable — falls through to the
-    // v2 path; live truth from the DB wins over the manifest's cached
-    // version throughout.)
+    // v2 path: the classifier recognises `eql_v3_*` only, so that column is
+    // not a candidate and the table reads as having no EQL columns. Live
+    // truth from the DB wins over the manifest's cached version throughout.)
     const unresolved = explainUnresolved(
       options.table,
       options.column,

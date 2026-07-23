@@ -141,8 +141,11 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     // v2 or v3 changes the rest of the LIFECYCLE (v3 has no cut-over — the
     // ladder is backfill → switch-by-name → drop), so detect it up front,
     // record it in the manifest, and tell the user which path they're on.
-    // `null` means the target column doesn't exist or isn't an EQL domain —
-    // let the existing checks below produce their specific errors.
+    // `null` means the target column doesn't exist, isn't an EQL domain, or is
+    // a legacy `eql_v2_encrypted` column (no longer classified — v3 is the sole
+    // authored generation). Every one of those falls through to the v2 ladder,
+    // which is the correct default for the v2 case and lets the existing checks
+    // below produce their specific errors for the other two.
     const eqlVersion = await detectColumnEqlVersion(
       db,
       options.table,
@@ -553,12 +556,19 @@ function buildManifestEntry(
     // convention only, never relied upon.
     encryptedColumn,
     // v2's ladder ends with the rename cut-over; v3 has none — its end
-    // state is the plaintext column dropped.
+    // state is the plaintext column dropped. An unclassified column (null,
+    // which now includes a legacy v2 domain) takes the v2 ladder.
     targetPhase: eqlVersion === 3 ? 'dropped' : 'cut-over',
   }
   if (pkColumn) entry.pkColumn = pkColumn
-  // Absent means UNKNOWN (detection couldn't see the column), not v2 —
-  // readers fall back to the domain type in the database.
+  // Absent means the classifier returned null: the column isn't there, isn't
+  // an EQL domain, or carries the legacy `eql_v2_encrypted` domain (which
+  // `classifyEqlDomain` no longer recognises — v3 is the sole authored
+  // generation). Readers fall back to the live domain type, which yields null
+  // for those same three cases, so `encrypt status` reports no version rather
+  // than guessing one. Manifests written before v2 classification was dropped
+  // still carry `eqlVersion: 2`, so existing v2 columns keep their version;
+  // only a v2 column backfilled from here on records none.
   if (eqlVersion) entry.eqlVersion = eqlVersion
   return entry
 }
