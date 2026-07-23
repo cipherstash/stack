@@ -155,6 +155,23 @@ export const messages = {
     /** Shown when `--yes` confirms the gate-skip (bypasses the prompt). */
     completeRolloutConfirmed:
       'Proceeding with --yes: the production-deploy gate is skipped',
+    /**
+     * Outcome honesty (#738): the plan file is written by the handed-off
+     * agent, not by the CLI, so `stash plan` verifies it on disk after the
+     * handoff and reports what actually happened. These are the stable
+     * leaders the e2e suite asserts on; the path and next-step hints are
+     * appended at the call sites.
+     */
+    drafted: 'Plan drafted at',
+    /** A pre-existing plan the run did not modify — usable, but not "drafted". */
+    unchanged: 'left unchanged by this run',
+    /** An agent was launched and told to write the plan, but the file is
+     *  absent. Exits non-zero — automation must not read this as success. */
+    notWritten: 'The agent handoff finished but no plan was written',
+    /** Deferred handoff (AGENTS.md target, or a CLI target that isn't
+     *  installed): the plan is written later, when the user drives their
+     *  agent. Exit 0, but never claim the plan exists. */
+    noPlanYet: 'No plan drafted yet',
   },
   init: {
     /**

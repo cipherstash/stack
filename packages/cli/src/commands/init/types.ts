@@ -90,6 +90,13 @@ export interface InitState {
   agents?: AgentEnvironment
   /** What the user picked at the "how to proceed" step. */
   handoff?: HandoffChoice
+  /** True when the handoff step actually launched an agent process
+   *  (`claude` / `codex` / the wizard), regardless of its exit code.
+   *  Deferred handoffs — AGENTS.md, or a CLI target that isn't installed —
+   *  leave it unset. `stash plan` uses this to tell "the agent ran but
+   *  wrote no plan" (an error) from "the plan is written later, when the
+   *  user drives their agent" (#738). */
+  agentLaunched?: boolean
   /** Whether the handoff is producing a plan or executing one. Set by the
    *  command itself: `stash plan` always sets `'plan'`, `stash impl` always
    *  sets `'implement'`. */

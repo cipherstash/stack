@@ -130,6 +130,6 @@ export const handoffCodexStep: HandoffStep = {
       )
     }
 
-    return state
+    return { ...state, agentLaunched: true }
   },
 }
