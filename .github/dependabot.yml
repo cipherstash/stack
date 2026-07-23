@@ -48,9 +48,11 @@ updates:
       - dependency-name: "@cipherstash/auth-*"
       # Release-managed manually alongside stack releases. Grouped bumps are
       # actively harmful here: Dependabot's "group consistency" once upgraded
-      # the sunsetting packages/protect off its 0.23.0 pin (0.24+ renames the
-      # exports it imports) while DOWNGRADING the stack packages from 0.29.0
-      # (see #673).
+      # the (since-removed) `protect` package off its 0.23.0 pin — 0.24+ renamed
+      # the exports it imported — while DOWNGRADING the stack packages from
+      # 0.29.0 (see #673). The surviving consumers (stack, stack-drizzle,
+      # stack-supabase) pin one version between them and must stay in lockstep,
+      # so the rule stands.
       - dependency-name: "@cipherstash/protect-ffi"
       # 0.x bumps ship breaking type changes (e.g. 0.2 → 0.3 tightened the
       # FailureOption constraint). Review and apply manually.

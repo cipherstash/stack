@@ -1,0 +1,3 @@
+ignore:
+  # Dependabot once bumped packages/protect off its pin.
+  - dependency-name: "@cipherstash/protect-ffi"
