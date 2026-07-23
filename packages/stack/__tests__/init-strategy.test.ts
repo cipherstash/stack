@@ -254,15 +254,17 @@ describe('Encryption config.eqlVersion', () => {
     expect(lastNewClientOpts().eqlVersion).toBe(3)
   })
 
-  it('EncryptionV3 overrides an explicit eqlVersion — v3 is an invariant', async () => {
-    // A v2-mode client cannot resolve v3 concrete-type columns (every encrypt
-    // fails inside the FFI), so EncryptionV3 pins the wire format rather than
-    // honouring a caller's eqlVersion.
+  it('EncryptionV3 is a deprecated alias of Encryption — it honours an explicit eqlVersion identically', async () => {
+    // Post-collapse `EncryptionV3` IS `Encryption` (a deprecated alias), so it no
+    // longer independently pins the wire format: an explicit `eqlVersion: 2` over
+    // a v3 schema set is honoured exactly as `Encryption` honours it (the
+    // migration escape hatch above). A v2-mode client still cannot encrypt v3
+    // concrete-type columns — this only pins the wire flag reaching the FFI.
     await EncryptionV3({
       schemas: [v3Table() as never],
       config: { eqlVersion: 2 },
     })
 
-    expect(lastNewClientOpts().eqlVersion).toBe(3)
+    expect(lastNewClientOpts().eqlVersion).toBe(2)
   })
 })

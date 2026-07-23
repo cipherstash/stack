@@ -1,7 +1,6 @@
 import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption'
-import { typedClient } from '@/encryption/v3'
 import { encryptedTable, types } from '@/eql/v3'
 import { Encryption } from '@/index'
 
@@ -173,7 +172,9 @@ describe('eql_v3 client integration', () => {
   // `Date` from the encrypt-config `cast_as` (`reconstructRow`), keyed by the
   // JS property (`createdOn`) even though the DB column is `created_on`.
   it('round-trips a representative date storage domain via decryptModel', async () => {
-    const typed = typedClient(protectClient, users)
+    // `Encryption` returns the typed client for an all-v3 schema set, so
+    // `protectClient` already carries the typed model methods — no extra wrap.
+    const typed = protectClient
     // Zero milliseconds so the FFI dropping sub-second precision (`...00Z` vs
     // `...000Z`) does not perturb the reconstructed instant.
     const day = new Date('2026-07-01T00:00:00.000Z')
@@ -203,7 +204,9 @@ describe('eql_v3 client integration', () => {
   // ENCRYPTED by the model path — not silently passed through as plaintext
   // because the field key (`createdOn`) fails to match the DB-keyed config.
   it('encrypts a property-vs-DB-name column through encryptModel (no plaintext leak)', async () => {
-    const typed = typedClient(protectClient, users)
+    // `Encryption` returns the typed client for an all-v3 schema set, so
+    // `protectClient` already carries the typed model methods — no extra wrap.
+    const typed = protectClient
     const day = new Date('2026-07-01T00:00:00.000Z')
 
     const encrypted = unwrapResult(
@@ -232,7 +235,9 @@ describe('eql_v3 client integration', () => {
   // ms-zeroed `12:34:56` value must round-trip exactly. (Was skipped while every
   // timestamp domain wrongly set `cast_as: 'date'`; re-enabled with that fix.)
   it('round-trips a timestamp occurredAt column through the model path', async () => {
-    const typed = typedClient(protectClient, users)
+    // `Encryption` returns the typed client for an all-v3 schema set, so
+    // `protectClient` already carries the typed model methods — no extra wrap.
+    const typed = protectClient
     // Zero milliseconds: the FFI drops sub-second precision, so a ms-bearing
     // instant would perturb the reconstructed value.
     const moment = new Date('2026-07-01T12:34:56.000Z')

@@ -1,12 +1,18 @@
 /**
- * Pure unit tests for the two client-shape helpers that bridge the nominal
- * `EncryptionClient` (chainable, carries `.audit()`) and the typed client from
- * `EncryptionV3` (plain `Promise<Result>`). Both branches were previously only
- * reachable through a live ZeroKMS decrypt; these move that assurance onto the
- * pure CI lane. No credentials, no network.
+ * Pure unit tests for the two client-shape helpers behind the DynamoDB adapter's
+ * decrypt path. Both shipped clients — nominal `EncryptionClient` and the typed
+ * EQL v3 client (whose decrypt returns a `MappedDecryptOperation`) — are
+ * chainable and carry `.audit()`; the bare-promise branch remains only for a
+ * non-conforming custom client. Every branch was previously reachable only
+ * through a live ZeroKMS decrypt; these move that assurance onto the pure CI
+ * lane. No credentials, no network.
  */
+import type { Result } from '@byteslice/result'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveDecryptResult, throwPreservingCode } from '@/dynamodb/helpers'
+import { EncryptionOperation } from '@/encryption/operations/base-operation'
+import { MappedDecryptOperation } from '@/encryption/operations/mapped-decrypt'
+import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { logger } from '@/utils/logger'
 
 // The metadata-drop tests `vi.spyOn(logger, 'debug')` — the same shared singleton
@@ -18,7 +24,7 @@ afterEach(() => {
 })
 
 describe('resolveDecryptResult', () => {
-  it('awaits a plain promise when the operation has no .audit (typed client)', async () => {
+  it('awaits a plain promise when the operation has no .audit (custom client)', async () => {
     const result = await resolveDecryptResult(
       Promise.resolve({ data: { x: 1 } }),
       { metadata: { ignored: true } },
@@ -81,6 +87,27 @@ describe('resolveDecryptResult', () => {
     }
   })
 
+  it('does not blame the typed client in the dropped-metadata message', async () => {
+    // Both shipped clients now carry `.audit()` on decrypt, so this branch is
+    // reachable only from a non-conforming custom client. The message used to
+    // tell the reader to switch to `Encryption({ config: { eqlVersion: 3 } })`
+    // for audited decrypts, which is no longer true of any shipped client.
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      await resolveDecryptResult(Promise.resolve({ data: { x: 1 } }), {
+        metadata: { m: 42 },
+      })
+
+      const message = spy.mock.calls.at(-1)?.[0] as string
+      expect(message).not.toMatch(/eqlVersion/)
+      expect(message).not.toMatch(/EncryptionV3/)
+      expect(message).not.toMatch(/typed client/)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('does not log about audit metadata when none is passed', async () => {
     const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
 
@@ -91,6 +118,63 @@ describe('resolveDecryptResult', () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it('forwards audit metadata through a MappedDecryptOperation and applies its map', async () => {
+    // The typed EQL v3 client returns a `MappedDecryptOperation` on decrypt.
+    // resolveDecryptResult sees its `.audit()` and chains it; the wrapper
+    // forwards the metadata to the underlying op (whose `execute` reads it) and
+    // maps the successful result. This is the DynamoDB half of acceptance #2b.
+    let seenMetadata: Record<string, unknown> | undefined
+    class Underlying extends EncryptionOperation<{ v: number }> {
+      override async execute(): Promise<
+        Result<{ v: number }, EncryptionError>
+      > {
+        seenMetadata = this.getAuditData().metadata
+        return { data: { v: 1 } }
+      }
+    }
+
+    const mapped = new MappedDecryptOperation<
+      { v: number },
+      { mapped: number }
+    >(new Underlying(), (value) => ({ mapped: value.v + 1 }), {
+      failure: {
+        type: EncryptionErrorTypes.DecryptionError,
+        message: 'unknown table',
+      },
+    })
+
+    const result = await resolveDecryptResult(mapped, { metadata: { m: 7 } })
+
+    expect(result).toEqual({ data: { mapped: 2 } })
+    expect(seenMetadata).toEqual({ m: 7 })
+  })
+
+  it('returns the precomputed failure from a MappedDecryptOperation with no map (unknown table)', async () => {
+    class Underlying extends EncryptionOperation<{ v: number }> {
+      override async execute(): Promise<
+        Result<{ v: number }, EncryptionError>
+      > {
+        return { data: { v: 1 } }
+      }
+    }
+
+    const unknownTableFailure = {
+      failure: {
+        type: EncryptionErrorTypes.DecryptionError,
+        message: 'unknown table',
+      },
+    }
+    const mapped = new MappedDecryptOperation<
+      { v: number },
+      { mapped: number }
+    >(new Underlying(), undefined, unknownTableFailure)
+
+    const result = await resolveDecryptResult(mapped, { metadata: { m: 7 } })
+
+    expect(result.failure?.message).toBe('unknown table')
+    expect(result.data).toBeUndefined()
   })
 })
 

@@ -1,4 +1,3 @@
-import type { Result } from '@byteslice/result'
 import type {
   AnyV3Table,
   ColumnsOf,
@@ -15,7 +14,6 @@ import type { LockContextInput } from '@/identity'
 import type {
   BulkDecryptPayload,
   BulkEncryptPayload,
-  ClientConfig,
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
@@ -33,6 +31,10 @@ import {
   type EncryptOperation,
   type EncryptQueryOperation,
 } from './index'
+import {
+  type AuditableDecryptModelOperation,
+  MappedDecryptOperation,
+} from './operations/mapped-decrypt'
 
 /**
  * A strongly-typed view over an {@link EncryptionClient} for EQL v3 schemas.
@@ -101,22 +103,24 @@ export interface TypedEncryptionClient<S extends readonly AnyV3Table[]> {
    * columns are reconstructed from the encrypt-config `cast_as`.
    *
    * Pass `lockContext` to decrypt identity-bound data — the same context that
-   * was supplied at encrypt time must be provided here.
+   * was supplied at encrypt time must be provided here (or chain
+   * `.withLockContext()` on the returned operation).
    *
-   * Unlike the encrypt operations this returns a plain `Promise<Result<…>>`
-   * rather than a chainable operation, because it maps the resolved value.
+   * Returns a chainable {@link AuditableDecryptModelOperation}: await it for the
+   * `Result`, or chain `.audit({ metadata })` / `.withLockContext()` first. The
+   * per-row `Date` reconstruction is applied to the successful result.
    */
   decryptModel<Table extends S[number], T extends Record<string, unknown>>(
     input: T,
     table: Table,
     lockContext?: LockContextInput,
-  ): Promise<Result<V3DecryptedModel<Table, T>, EncryptionError>>
+  ): AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>
 
   bulkDecryptModels<Table extends S[number], T extends Record<string, unknown>>(
     input: Array<T>,
     table: Table,
     lockContext?: LockContextInput,
-  ): Promise<Result<Array<V3DecryptedModel<Table, T>>, EncryptionError>>
+  ): AuditableDecryptModelOperation<Array<V3DecryptedModel<Table, T>>>
 
   // Parity passthroughs — not v3-strengthened, delegated as-is.
   bulkEncrypt(
@@ -214,6 +218,16 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     },
   }
 
+  // Pass-through maps for a one-arg (nominal-style) decrypt call, where `table`
+  // is absent: decrypt WITHOUT date reconstruction, exactly as the nominal
+  // `EncryptionClient` does. This client is now what `Encryption` returns for a
+  // v3 schema set, so a consumer typed against the nominal overload (e.g.
+  // stack-supabase's query builder, which casts to it) can call `decryptModel(x)`
+  // / `bulkDecryptModels(xs)` with no table. Degrade gracefully instead of
+  // dereferencing `undefined.tableName`.
+  const passthroughRow = (row: Record<string, unknown>) => row
+  const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
+
   // Overloaded so the implementation is checked against BOTH forms directly —
   // no whole-value cast. The two public signatures mirror the interface member;
   // the hidden implementation signature is broad and forwards to the nominal
@@ -253,25 +267,46 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
     bulkEncryptModels: (input, table) =>
       client.bulkEncryptModels(input as never, table as never) as never,
     decrypt: (encrypted) => client.decrypt(encrypted),
-    decryptModel: async (input, table, lockContext) => {
-      const reconstruct = reconstructors.get(table.tableName)
-      if (!reconstruct) return unknownTableFailure as never
+    decryptModel: (input, table, lockContext) => {
+      // `table` is absent on a nominal-style one-arg call (see `passthroughRow`).
+      // Given a table: reconstruct dates from its cast_as, or — if it was never
+      // registered — leave `map` undefined so the mapped op resolves to
+      // `unknownTableFailure` on execute.
+      const maybeTable = table as AnyV3Table | undefined
+      const reconstruct = maybeTable
+        ? reconstructors.get(maybeTable.tableName)
+        : passthroughRow
       const op = client.decryptModel(input as never)
-      const result = await (lockContext ? op.withLockContext(lockContext) : op)
-      if (result.failure) return result as never
-      return { data: reconstruct(result.data) } as never
+      const base = lockContext ? op.withLockContext(lockContext) : op
+      return new MappedDecryptOperation(
+        base,
+        reconstruct,
+        unknownTableFailure,
+      ) as never
     },
-    bulkDecryptModels: async (input, table, lockContext) => {
-      const reconstruct = reconstructors.get(table.tableName)
-      if (!reconstruct) return unknownTableFailure as never
+    bulkDecryptModels: (input, table, lockContext) => {
+      const maybeTable = table as AnyV3Table | undefined
       const op = client.bulkDecryptModels(input as never)
-      const result = await (lockContext ? op.withLockContext(lockContext) : op)
-      if (result.failure) return result as never
-      return {
-        data: result.data.map((row) =>
-          reconstruct(row as Record<string, unknown>),
-        ),
-      } as never
+      const base = lockContext ? op.withLockContext(lockContext) : op
+      // No table → pass rows through (nominal behaviour). Registered table →
+      // reconstruct each row. Unregistered table → `undefined` map →
+      // `unknownTableFailure` on execute.
+      let mapRows:
+        | ((
+            rows: Array<Record<string, unknown>>,
+          ) => Array<Record<string, unknown>>)
+        | undefined
+      if (!maybeTable) {
+        mapRows = passthroughRows
+      } else {
+        const reconstruct = reconstructors.get(maybeTable.tableName)
+        mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
+      }
+      return new MappedDecryptOperation(
+        base,
+        mapRows,
+        unknownTableFailure,
+      ) as never
     },
     bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
@@ -280,38 +315,22 @@ export function typedClient<const S extends readonly AnyV3Table[]>(
 }
 
 /**
- * Build a {@link TypedEncryptionClient} for EQL v3 schemas — the strongly-typed
- * counterpart to {@link Encryption}. Mirrors its config, then retypes the client
- * against the provided v3 `schemas`.
+ * @deprecated Use {@link Encryption} instead — it is now overloaded so an array
+ * of concrete EQL v3 tables yields the same strongly-typed client this used to.
+ * `EncryptionV3` is a type-identical alias of `Encryption`, retained for
+ * backwards compatibility, and will be removed in a future release.
  *
  * @example
  * ```typescript
- * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
+ * import { Encryption, encryptedTable, types } from "@cipherstash/stack/v3"
  *
  * const users = encryptedTable("users", { email: types.TextSearch("email") })
- * const client = await EncryptionV3({ schemas: [users] })
+ * const client = await Encryption({ schemas: [users] })
  *
  * await client.encrypt("a@b.com", { table: users, column: users.email })
  * ```
  */
-export async function EncryptionV3<
-  const S extends readonly AnyV3Table[],
->(config: {
-  schemas: S
-  config?: ClientConfig
-}): Promise<TypedEncryptionClient<S>> {
-  const client = await Encryption({
-    schemas: config.schemas as unknown as Parameters<
-      typeof Encryption
-    >[0]['schemas'],
-    // Force the v3 EQL wire format. protect-ffi's newClient defaults to
-    // eqlVersion 2; a v2-mode client cannot resolve v3 concrete-type columns
-    // and fails every encrypt with "Cannot convert undefined or null to
-    // object". This is a v3-only invariant, so it overrides any user value.
-    config: { ...config.config, eqlVersion: 3 },
-  })
-  return typedClient(client, ...config.schemas)
-}
+export const EncryptionV3 = Encryption
 
 // Single import surface: re-export the v3 `types` namespace + table API + type
 // helpers so `@cipherstash/stack/v3` provides everything needed to author and

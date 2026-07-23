@@ -57,7 +57,7 @@ function assertClientTableVersionMatch(
   if (table.tableName in config.tables) return
 
   throw new Error(
-    `encryptedDynamoDB: EQL version mismatch — the EQL v3 table "${table.tableName}" is not registered with this encryption client, so the client is not in EQL v3 mode for it. A v3 table requires a v3-mode client: build it with EncryptionV3({ schemas: [<table>] }) (or Encryption({ schemas: [<table>], config: { eqlVersion: 3 } })) and pass that client to encryptedDynamoDB. Otherwise encrypt/decrypt fails later inside the FFI with an opaque deserialization error.`,
+    `encryptedDynamoDB: EQL version mismatch — the EQL v3 table "${table.tableName}" is not registered with this encryption client, so the client is not in EQL v3 mode for it. A v3 table requires a v3-mode client: build it with Encryption({ schemas: [<table>] }) and pass that client to encryptedDynamoDB. Otherwise encrypt/decrypt fails later inside the FFI with an opaque deserialization error.`,
   )
 }
 
@@ -68,9 +68,11 @@ function assertClientTableVersionMatch(
  * and `bulkDecryptModels` methods that transparently encrypt/decrypt DynamoDB
  * items according to the provided table schema.
  *
- * Accepts EQL v3 tables (`types.*` domains) and EQL v2 tables
- * (`encryptedColumn`/`encryptedField`) alike — the table decides which wire
- * format is synthesized on read.
+ * **Encrypt/write is EQL v3 only** — `encryptModel` / `bulkEncryptModels` accept
+ * only EQL v3 tables (`types.*` domains). **Decrypt still reads existing EQL v2
+ * items**: `decryptModel` / `bulkDecryptModels` continue to accept an EQL v2
+ * table (`encryptedColumn`/`encryptedField`) so previously stored v2 data
+ * remains readable. The table decides which wire format is reconstructed on read.
  *
  * Only equality is meaningful on DynamoDB: an `hm` term is stored alongside the
  * ciphertext as `<attr>__hmac` and can back a key condition. Ordering and
@@ -83,7 +85,8 @@ function assertClientTableVersionMatch(
  *
  * @example EQL v3
  * ```typescript
- * import { EncryptionV3, encryptedTable, types } from "@cipherstash/stack/v3"
+ * import { Encryption } from "@cipherstash/stack"
+ * import { encryptedTable, types } from "@cipherstash/stack/v3"
  * import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"
  *
  * const users = encryptedTable("users", {
@@ -91,13 +94,13 @@ function assertClientTableVersionMatch(
  *   name: types.Text("name"),      // storage only
  * })
  *
- * const client = await EncryptionV3({ schemas: [users] })
+ * const client = await Encryption({ schemas: [users] })
  * const dynamo = encryptedDynamoDB({ encryptionClient: client })
  *
  * const encrypted = await dynamo.encryptModel({ email: "a@b.com" }, users)
  * ```
  *
- * @example EQL v2 (existing deployments)
+ * @example EQL v2 (reading existing deployments — decrypt only)
  * ```typescript
  * import { Encryption } from "@cipherstash/stack"
  * import { encryptedDynamoDB } from "@cipherstash/stack/dynamodb"

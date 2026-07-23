@@ -225,11 +225,11 @@ export async function encryptedSupabaseV3(
   }
 
   // 5. Build the raw (eqlVersion 3) encryption client from the merged tables.
-  //    NB: `Encryption`, not `EncryptionV3` — the query builder consumes the raw
-  //    chainable `EncryptionClient`, whereas `EncryptionV3` returns the typed
-  //    wrapper whose `decryptModel` returns a plain Promise<Result>. Pass only
-  //    tables that carry at least one encrypted column (`Encryption` requires a
-  //    non-empty schema list).
+  //    NB: the query builder consumes the raw chainable `EncryptionClient`, and
+  //    calls `decryptModel(row)` with no table — the typed client degrades to
+  //    nominal (passthrough) behaviour for that arity, so either shape works.
+  //    Pass only tables that carry at least one encrypted column (`Encryption`
+  //    requires a non-empty schema list).
   const encryptionSchemas = [...synth.tables.values()].filter(
     (t) => Object.keys(t.columnBuilders).length > 0,
   )
