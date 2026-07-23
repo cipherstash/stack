@@ -1,6 +1,8 @@
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
 import { describe, expect, it, vi } from 'vitest'
+import { ColumnMap } from '../src/column-map'
 import { EncryptedQueryBuilderImpl as EncryptedQueryBuilderV3Impl } from '../src/query-builder'
+import { assertTermQueryable } from '../src/query-encrypt'
 import {
   createMockEncryptionClient,
   createMockSupabase,
@@ -1475,37 +1477,33 @@ describe('v3 raw filter() resolves the query type from the operator', () => {
     ])
   })
 
-  // `encryptCollectedTerms` rejects any queryType outside the four supported EQL
+  // `assertTermQueryable` rejects any queryType outside the four supported EQL
   // v3 kinds. No public call path can produce a fifth — `mapFilterOpToQueryType`,
   // `queryTypeForRawOp` and `queryTypeForOrOp` are exhaustive — so this backstop
-  // is unreachable without breaking the internal contract, which is exactly what
-  // the subclass below does. Keep the guard: it is what a future producer
-  // gaining a new QueryTypeName would trip over. (`searchableJson` used to be
-  // the exemplar here until #650 made it a real, supported kind.)
-  it('rejects a query type outside the supported EQL v3 kinds', async () => {
-    const supabase = createMockSupabase()
+  // is only reachable by handing the resolver a term the internal contract says
+  // cannot exist. Keep the guard: it is what a future producer gaining a new
+  // QueryTypeName would trip over. (`searchableJson` used to be the exemplar
+  // here until #650 made it a real, supported kind.)
+  it('rejects a query type outside the supported EQL v3 kinds', () => {
+    const term = {
+      value: 'a@b.com',
+      column: users.columnBuilders.email,
+      table: users,
+      queryType: 'steVecSelector',
+      returnType: 'composite-literal',
+    } as unknown as Parameters<typeof assertTermQueryable>[0]
 
-    class BogusQueryType extends EncryptedQueryBuilderV3Impl<typeof users> {
-      protected override queryTypeForRawOp(_operator: string) {
-        return 'steVecSelector' as never
-      }
-    }
-
-    const builder = new BogusQueryType(
-      'users',
-      users,
-      createMockEncryptionClient(),
-      supabase.client,
-      USERS_ALL_COLUMNS,
-    )
-
-    const { error, status } = await builder
-      .select('id')
-      .filter('email', 'eq', 'a@b.com')
-
-    expect(status).toBe(500)
-    expect(error?.message).toContain('query type "steVecSelector"')
-    expect(error?.message).toContain('not supported on EQL v3 columns')
+    expect(() =>
+      assertTermQueryable(term, {
+        tableName: 'users',
+        table: users,
+        encryptionClient: createMockEncryptionClient(),
+        lockContext: null,
+        auditConfig: null,
+        columns: new ColumnMap('users', users, USERS_ALL_COLUMNS),
+        queryDomainsRequired: false,
+      }),
+    ).toThrow(/query type "steVecSelector".*not supported on EQL v3 columns/s)
   })
 })
 

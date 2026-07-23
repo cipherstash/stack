@@ -68,10 +68,19 @@ jobs:
       # blocking gate. No `continue-on-error`.
       # One step per package so a failure names the offending package. Each caps
       # at its current worst file (a ratchet, not an aspiration): stack src/eql/v3
-      # at 69, and the split adapter packages at their monolith maxima — drizzle
-      # 89 (operators.ts), supabase 91 (query-builder.ts). Lower a cap whenever a
-      # file is refactored below the next threshold; the v2 query-builder/operators
-      # monoliths are the debt to whittle down toward stack's 69.
+      # at 69, drizzle 89 (operators.ts, still a monolith), and supabase 71
+      # (query-encrypt.ts at 70.12, after the query-builder monolith was split
+      # across column-map / query-encrypt / query-mutation / query-dbspace /
+      # query-filters / query-results). Lower a cap whenever a file is refactored
+      # below the next threshold; drizzle's operators.ts is the remaining debt to
+      # whittle down toward stack's 69.
+      #
+      # NB supabase's top three now cluster tightly (query-encrypt 70.12,
+      # query-builder 70.05, helpers 69.13), so 71 is a ~0.9 margin. A cap set
+      # flush against its max is fragile — the 91 this replaced was 0.12 above
+      # its max and a single refactor blew straight through it. If a formatting
+      # reflow trips this step without a real complexity increase, re-measure
+      # (`npx fta src --format table`) before assuming the code got worse.
       - name: Analyze stack (eql/v3) complexity
         run: pnpm --filter @cipherstash/stack run analyze:complexity
 
