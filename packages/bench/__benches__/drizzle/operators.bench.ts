@@ -45,7 +45,14 @@ describe('drizzle', () => {
   })
 
   bench('matches (free-text)', async () => {
-    const where = (await ops.matches(benchTable.encText, 'value')) as SQL
+    // A FULL seeded value, not the shared `value` prefix: every row is
+    // `value-<7 digits>`, so a bare `value` needle matches all 10k rows and the
+    // bloom index has nothing to narrow — the number would measure a full scan
+    // rather than the index path this bench exists to measure.
+    const where = (await ops.matches(
+      benchTable.encText,
+      'value-0000042',
+    )) as SQL
     await handle.db.select().from(benchTable).where(where)
   })
 
