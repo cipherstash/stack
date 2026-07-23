@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs'
+import { type Stats, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { readManifest } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
@@ -24,6 +24,26 @@ import {
 } from '../init/lib/write-context.js'
 import { CancelledError, type InitState } from '../init/types.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
+
+/**
+ * Stat the plan file, treating "absent" as `undefined`.
+ *
+ * `throwIfNoEntry: false` turns the common ENOENT into `undefined`. Any OTHER
+ * fs error — ENOTDIR if `.cipherstash` is somehow a file, EACCES on a locked
+ * path, an ELOOP symlink — is converted into a controlled `CliExit(1)` with an
+ * actionable message instead of unwinding as a generic "Fatal error". This
+ * command exists to give automation a reliable signal about the plan's state
+ * (#738), so a filesystem hiccup must not become an opaque crash.
+ */
+function statPlan(planAbs: string): Stats | undefined {
+  try {
+    return statSync(planAbs, { throwIfNoEntry: false }) ?? undefined
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    p.log.error(`Could not read \`${PLAN_REL_PATH}\`: ${message}`)
+    throw new CliExit(1)
+  }
+}
 
 function buildStateFromContext(
   ctx: ContextFile,
@@ -195,12 +215,15 @@ export async function planCommand(
   // because the complete-rollout confirmation needs it too.
   const isInteractive = isInteractiveTty()
 
-  // Stat (not just existence) so the post-handoff check can tell a revised
-  // plan from a pre-existing one the run never touched (#738).
   const planAbs = resolve(cwd, PLAN_REL_PATH)
-  const planBefore = statSync(planAbs, { throwIfNoEntry: false })
 
   try {
+    // Stat (not just existence) so the post-handoff check can tell a revised
+    // plan from a pre-existing one the run never touched (#738). Inside the
+    // try so a filesystem error routes through the same controlled exit as the
+    // rest of the command rather than bypassing it.
+    const planBefore = statPlan(planAbs)
+
     if (planBefore) {
       p.log.warn(
         `Plan already exists at \`${PLAN_REL_PATH}\`. The agent will be told to revise it; delete the file first if you want to start fresh.`,
@@ -249,7 +272,7 @@ export async function planCommand(
     // anything — the unconditional "Plan drafted" this replaces let a failed
     // handoff exit 0 and send `stash impl` after a file that never existed
     // (#738).
-    const planAfter = statSync(planAbs, { throwIfNoEntry: false })
+    const planAfter = statPlan(planAbs)
 
     if (!planAfter) {
       if (handedOff.agentLaunched) {

@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -125,6 +126,22 @@ describe('stash plan — outcome reflects the plan file on disk', () => {
     expect(r.exitCode).toBe(0)
     const out = r.stdout + r.stderr
     expect(out).toContain(messages.plan.noPlanYet)
+    expect(out).not.toContain(messages.plan.drafted)
+  })
+
+  it('exits 1 with a clear message when the plan path cannot be statted', async () => {
+    // A self-referential symlink at plan.md makes `statSync` throw ELOOP, not
+    // ENOENT — a non-ENOENT fs error that must surface as a controlled exit
+    // (clear message + non-zero), never an opaque "Fatal error" crash.
+    symlinkSync('plan.md', join(dir, '.cipherstash', 'plan.md'))
+    const r = await runPiped(['plan', '--target', 'agents-md'], {
+      cwd: dir,
+      timeoutMs: 20000,
+    })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(1)
+    const out = r.stdout + r.stderr
+    expect(out).toContain('Could not read')
     expect(out).not.toContain(messages.plan.drafted)
   })
 })
