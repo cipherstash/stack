@@ -106,7 +106,7 @@ type NonScalarQueryableV3Keys<Table extends AnyV3Table> = {
  * the table's encrypted columns with no scalar capability (storage-only
  * columns, and `types.Json` documents — see {@link NonScalarQueryableV3Keys};
  * before #650's `searchableJson` arm the two sets coincided). Plaintext
- * (non-schema) columns pass through untouched, exactly as in v2.
+ * (non-schema) columns pass through untouched.
  */
 export type FilterableKeys<
   Table extends AnyV3Table,
@@ -380,11 +380,12 @@ export interface EncryptedQueryBuilder<
 }
 
 /**
- * The v3 builder for a table with no declared schema. Without capability
+ * The builder for a table with no declared schema. Without capability
  * information `contains` cannot be narrowed to match-indexed columns — the
- * runtime guard in the term-encryption path is the only protection — but the
- * DIALECT is still v3, so `like`/`ilike` are absent here too. Typing this as
- * {@link EncryptedQueryBuilder} would hand back the v2 surface.
+ * runtime guard in the term-encryption path is the only protection — and
+ * `order()`/`is(col, true)` cannot be narrowed either, so this surface takes
+ * {@link EncryptedQueryBuilderCore}'s `OK`/`BK` defaults. `like`/`ilike` are
+ * absent here as on the typed surface.
  *
  * For the same reason nothing here can tell an encrypted match column from a
  * plaintext jsonb one, so `matches`/`contains` accept the full native operand
@@ -631,7 +632,7 @@ export type DbMutationOptions = Record<string, unknown> & {
 // ---------------------------------------------------------------------------
 // DB-space IR — the recorded query, with every column name translated.
 //
-// `toDbSpace()` (see ./query-builder) maps the property-space IR above into
+// `toDbSpace()` (see ./query-dbspace) maps the property-space IR above into
 // this one, exactly once, before any column name can reach PostgREST. The
 // branded `column` fields make that translation a compile-time obligation:
 // `applyFilters`/`buildAndExecuteQuery` consume only these types, so feeding
@@ -680,6 +681,19 @@ export type DbMutationOp =
   | (Omit<UpsertOp, 'options'> & { options?: DbMutationOptions })
   | Extract<MutationOp, { kind: 'update' }>
   | Extract<MutationOp, { kind: 'delete' }>
+
+/** The whole recorded query, in PROPERTY space — the builder's chained state as
+ * handed to `toDbSpace()`. The mirror of {@link DbQuerySpace} on the untranslated
+ * side of that boundary. */
+export type RecordedOps = {
+  filters: PendingFilter[]
+  matchFilters: PendingMatchFilter[]
+  notFilters: PendingNotFilter[]
+  rawFilters: PendingRawFilter[]
+  orFilters: PendingOrFilter[]
+  transforms: TransformOp[]
+  mutation: MutationOp | null
+}
 
 /** The whole recorded query, in DB-space. */
 export type DbQuerySpace = {
@@ -771,33 +785,43 @@ export type {
 type StringKeyOf<T> = Extract<keyof T, string>
 
 /**
- * Every builder method shared by the v2 and v3 dialects. `Self` is the concrete
- * builder each method returns, so a dialect that omits a method (v3 omits
- * `like`/`ilike`) does not have it laundered back in by a chained call whose
- * return type widened to the base interface.
+ * Every builder method shared by the TYPED ({@link EncryptedQueryBuilder}) and
+ * UNTYPED ({@link EncryptedQueryBuilderUntyped}) surfaces. Both are EQL v3 —
+ * they differ only in how much they can narrow, not in dialect.
  *
- * Free-text search is the ONLY axis on which the two dialects differ: v2
- * matches with SQL wildcards (`like`/`ilike` → `~~`), v3 with token containment
- * (`contains` → `@>`). Each adds its own method below.
+ * `Self` is the concrete builder each method returns, so a surface that omits a
+ * method does not have it laundered back in by a chained call whose return type
+ * widened to the base interface.
+ *
+ * Free-text search lives on the sub-interfaces rather than here, because its
+ * key set differs between the two: `matches()` narrows to the encrypted
+ * match/search columns on the typed surface, and to every row key on the
+ * untyped one. Neither surface carries `like`/`ilike` — EQL v3 free-text is
+ * fuzzy bloom-token matching, not SQL pattern matching, so the builder rewrites
+ * a `like` on an encrypted column to `matches` at record time (see
+ * `query-builder.ts`). They survive in this file only as the internal
+ * {@link FilterOp} union and on the raw {@link SupabaseQueryBuilder} seam, both
+ * of which still serve plaintext columns.
  */
 export interface EncryptedQueryBuilderCore<
   T extends Record<string, unknown>,
   FK extends StringKeyOf<T>,
   Self,
-  /** Keys `order()` accepts. Defaults to `FK`, so the v2 surface is unchanged;
-   * v3 narrows it to plaintext columns (see {@link OrderableKeys}). */
+  /** Keys `order()` accepts. The typed surface narrows it to the orderable
+   * columns (see {@link OrderableKeys}); it defaults to `FK` for the untyped
+   * surface, which has no capability information to narrow with. */
   OK extends StringKeyOf<T> = FK,
-  /** Keys the BOOLEAN form of `is()` accepts. Defaults to `FK`, so the v2
-   * surface is unchanged; v3 narrows it to plaintext columns. Distinct from
-   * `OK` on purpose: "sortable" and "IS TRUE-able" are different capability
-   * axes that happen to select the same keys today, and narrowing `order()`
-   * later must not silently narrow `is()` with it. */
+  /** Keys the BOOLEAN form of `is()` accepts. The typed surface narrows it to
+   * plaintext columns; it defaults to `FK` for the untyped surface, as `OK`
+   * does. Distinct from `OK` on purpose: "sortable" and "IS TRUE-able" are
+   * different capability axes that happen to select the same keys today, and
+   * narrowing `order()` later must not silently narrow `is()` with it. */
   BK extends StringKeyOf<T> = FK,
 > extends PromiseLike<EncryptedSupabaseResponse<T[]>> {
   /** `columns` defaults to `'*'`, matching supabase-js. A `'*'` select expands
-   * to the introspected column list when one is available (v3), and otherwise
-   * throws — v2 has no column list to cast, so `select()` and `select('*')`
-   * both throw there. */
+   * to the introspected column list; when none is available (a client that
+   * could not introspect) both `select()` and `select('*')` throw, because an
+   * unexpanded `*` cannot cast the encrypted columns with `::jsonb`. */
   select(
     columns?: string,
     options?: { head?: boolean; count?: 'exact' | 'planned' | 'estimated' },
@@ -863,9 +887,10 @@ export interface EncryptedQueryBuilderCore<
     options?: { referencedTable?: string; foreignTable?: string },
   ): Self
   match(query: Partial<T>): Self
-  // `OK`, not `FK`: v3 cannot order by ANY encrypted column, because PostgREST
-  // cannot emit `ORDER BY eql_v3.ord_term(col)` and a bare `ORDER BY` sorts the
-  // ciphertext envelope. `OK` defaults to `FK`, so the v2 surface is unchanged.
+  // `OK`, not `FK`: an encrypted column is orderable only when its domain
+  // carries an OPE term (PostgREST reaches it as `col->op`); a bare `ORDER BY`
+  // would sort the ciphertext envelope. `OK` defaults to `FK` on the untyped
+  // surface, where the runtime `validateTransforms` guard is the only check.
   order<K extends OK>(
     column: K,
     options?: {
