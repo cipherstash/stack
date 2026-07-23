@@ -105,8 +105,15 @@ async function tryExplainWhere(name: string, where: SQL): Promise<void> {
 // --- #421: equality + array operators -------------------------------------
 //
 // `bench_text_hmac_idx` (functional hash on eql_v3.eq_term) is the expected
-// fast path. The v3 operators emit `eql_v3.eq_term(col) = eql_v3.hmac_256(value)`
-// so the functional hash index scan kicks in instead of a seq scan.
+// fast path. The v3 operators do NOT emit that expression directly — they emit
+// the wrapper `eql_v3.eq(col, $1::eql_v3.query_text_search)`. It engages the
+// index because the wrapper is `LANGUAGE sql IMMUTABLE STRICT` over a single
+// SELECT, so the planner inlines it to `eql_v3.eq_term(col) =
+// eql_v3.eq_term($1)` — and applies the same inlining to the stored index
+// expression, which is how the two meet. Break the inlinability (plpgsql body,
+// VOLATILE) and every assertion below silently degrades to a seq scan.
+// `scripts/__tests__/bench-index-expressions.test.mjs` pins that contract
+// against the shipped bundle without needing a database.
 //
 // `eq` and `inArray` are naturally high-selectivity (only a few rows match),
 // so the planner should pick the eq_term index — assertion enforces it.
@@ -163,7 +170,9 @@ describe('#422: call-shaped operators (recorded, not asserted)', () => {
   it('records matches plan shape', async () => {
     await tryExplainWhere(
       'matches',
-      (await ops.matches(benchTable.encText, 'value')) as SQL,
+      // A full seeded value — `value` alone is in every row, so the recorded
+      // plan would say nothing about the bloom index. See operators.bench.ts.
+      (await ops.matches(benchTable.encText, 'value-0000042')) as SQL,
     )
   })
 

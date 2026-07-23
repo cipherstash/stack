@@ -188,7 +188,7 @@ The SDK never logs plaintext data.
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
 | `@cipherstash/stack/errors` | `EncryptionErrorTypes`, `StackError`, error subtypes, `getErrorMessage` |
 | `@cipherstash/stack/types` | All TypeScript types |
-| `@cipherstash/stack-drizzle/v3` | Drizzle ORM integration for EQL v3 schemas (see the `stash-drizzle` skill) |
+| `@cipherstash/stack-drizzle` | Drizzle ORM integration for EQL v3 schemas — the package root, EQL v3 only (see the `stash-drizzle` skill) |
 | `@cipherstash/stack-supabase` | `encryptedSupabaseV3` wrapper for Supabase (see the `stash-supabase` skill) |
 | `@cipherstash/stack/wasm-inline` | The **edge** entry — Deno, Bun, Cloudflare Workers, Supabase Edge Functions. Its own `Encryption` factory plus the v3 authoring surface, `EncryptionErrorTypes`, and the WASM build of protect-ffi inlined into the bundle. No native binding, so no bundler externalisation needed. |
 | `@cipherstash/stack/dynamodb` | `encryptedDynamoDB` — encrypt/write is **EQL v3 only** (`types.*`); decrypt still reads existing v2 items. See the `stash-dynamodb` skill |
@@ -1005,7 +1005,7 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 
 | Target | Package / entry point | Skill |
 |---|---|---|
-| Drizzle ORM | `@cipherstash/stack-drizzle/v3` — v3 column factories (each `types.*` factory emits its domain as the column's SQL type for `drizzle-kit generate`), schema extraction, auto-encrypting operators (`ops.eq`, `ops.matches`, `ops.contains`, `ops.selector`, `ops.asc`, ...) | `stash-drizzle` |
+| Drizzle ORM | `@cipherstash/stack-drizzle` — v3 column factories (each `types.*` factory emits its domain as the column's SQL type for `drizzle-kit generate`), schema extraction, auto-encrypting operators (`ops.eq`, `ops.matches`, `ops.contains`, `ops.selector`, `ops.asc`, ...) | `stash-drizzle` |
 | Supabase | `encryptedSupabaseV3` from `@cipherstash/stack-supabase` — schema-aware query builder (`eq`, `matches`, `contains`, `selectorEq`/`selectorNe`, ...) that works through PostgREST, including as `anon` | `stash-supabase` |
 | Prisma | `@cipherstash/prisma-next` — searchable field-level encryption for Postgres | — |
 | DynamoDB | `encryptedDynamoDB` from `@cipherstash/stack/dynamodb` — encrypt is **EQL v3 only**; decrypt still reads existing v2 items | `stash-dynamodb` |
@@ -1054,6 +1054,6 @@ const users = encryptedTable("users", {
 const client = await Encryption({ schemas: [users] })
 ```
 
-The scalar v2 API — `Encryption` plus the `@cipherstash/stack/schema` builders, the v2 Drizzle/Supabase integrations (`@cipherstash/stack-drizzle`, `encryptedSupabase`), and `stash eql install --eql-version 2` — still exists for existing deployments. Legacy v2 `searchableJson()` is the exception: protect-ffi 0.30 cannot emit the removed selector envelope, so migrate those columns to v3 `types.Json`. Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/docs). Remember: v2 and v3 tables cannot be mixed in one client. (If you are migrating code from the old `@cipherstash/protect` package, its `protect`/`csTable`/`csColumn` names map onto this v2 surface.)
+The scalar v2 API — `Encryption` plus the `@cipherstash/stack/schema` builders, the v2 Supabase integration (`encryptedSupabase`), and `stash eql install --eql-version 2` — still exists for existing deployments, with two carve-outs. **Drizzle has no v2 surface at all**: `@cipherstash/stack-drizzle` dropped `encryptedType` and the `like`/`ilike` operators, so a v2 Drizzle column is read-only — decrypt it through `@cipherstash/stack` rather than through the adapter. **Legacy v2 `searchableJson()`** cannot be emitted by protect-ffi 0.30 (the selector envelope was removed), so migrate those columns to v3 `types.Json`. Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/docs). Remember: v2 and v3 tables cannot be mixed in one client. (If you are migrating code from the old `@cipherstash/protect` package, its `protect`/`csTable`/`csColumn` names map onto this v2 surface.)
 
 > **DynamoDB.** The DynamoDB integration (`encryptedDynamoDB` from `@cipherstash/stack/dynamodb`) now **encrypts EQL v3 only** — author tables with `types.*` from `@cipherstash/stack/eql/v3`. Its decrypt methods still accept a v2 table so previously stored v2 items remain readable. See the `stash-dynamodb` skill.
