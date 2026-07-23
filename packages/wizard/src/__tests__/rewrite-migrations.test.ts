@@ -2,7 +2,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { rewriteEncryptedAlterColumns } from '../lib/rewrite-migrations.js'
+import {
+  rewriteEncryptedAlterColumns,
+  sweepMigrationDirs,
+} from '../lib/rewrite-migrations.js'
 
 describe('rewriteEncryptedAlterColumns', () => {
   let tmpDir: string
@@ -379,6 +382,62 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(skipped).toEqual([])
   })
 
+  // A near-miss is quoted back to the user verbatim, so it must read as the
+  // offending statement alone. NEAR_MISS_RE opens with a lazy `[^;]*?`, which
+  // can only be bounded by the previous `;` — so without an explicit trim the
+  // reported "statement" drags in every comment and blank line since then.
+  it('reports a near-miss without the file-leading comment block', async () => {
+    const statement =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;'
+    const original = [
+      '-- Custom SQL migration file, put your code below! --',
+      '-- Hand-converts the email column in place.',
+      '',
+      statement,
+      '',
+    ].join('\n')
+    const filePath = path.join(tmpDir, '0022_preamble.sql')
+    fs.writeFileSync(filePath, original)
+
+    const { skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].statement).toBe(statement)
+  })
+
+  it('reports a near-miss without a preceding statement-breakpoint marker', async () => {
+    const statement =
+      'ALTER TABLE "users" ALTER COLUMN "meta" SET DATA TYPE eql_v3_json USING (meta)::jsonb;'
+    const original = [
+      'CREATE TABLE "users" ("id" integer PRIMARY KEY);',
+      '--> statement-breakpoint',
+      statement,
+      '',
+    ].join('\n')
+    const filePath = path.join(tmpDir, '0023_breakpoint-preamble.sql')
+    fs.writeFileSync(filePath, original)
+
+    const { skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].statement).toBe(statement)
+  })
+
+  it('keeps a multi-line near-miss statement intact after the preamble trim', async () => {
+    const statement = [
+      'ALTER TABLE "users"',
+      '  ALTER COLUMN "email"',
+      '  SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;',
+    ].join('\n')
+    const filePath = path.join(tmpDir, '0024_multiline.sql')
+    fs.writeFileSync(filePath, `-- leading note\n\n${statement}\n`)
+
+    const { skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].statement).toBe(statement)
+  })
+
   it('handles multiple ALTER statements in one file', async () => {
     const original = [
       'ALTER TABLE "a" ALTER COLUMN "x" SET DATA TYPE eql_v3_text_search;',
@@ -395,5 +454,111 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(updated.match(/DROP COLUMN/g)?.length).toBe(2)
     // Non-matching statement preserved
     expect(updated).toContain('CREATE INDEX "a_z" ON "a" ("z");')
+  })
+})
+
+describe('sweepMigrationDirs', () => {
+  let tmpDir: string
+
+  const ALTER =
+    'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n'
+
+  /** Create `dir` under the sandbox, optionally seeding `name` with `sql`. */
+  const seedDir = (dir: string, name?: string, sql?: string): string => {
+    const abs = path.join(tmpDir, dir)
+    fs.mkdirSync(abs, { recursive: true })
+    if (name) fs.writeFileSync(path.join(abs, name), sql ?? ALTER)
+    return abs
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wizard-sweep-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('skips candidate directories that do not exist', async () => {
+    const abs = seedDir('migrations', '0001_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle', 'migrations'])
+
+    expect(results.map((r) => r.dir)).toEqual(['migrations'])
+    expect(results[0].rewritten).toEqual([path.join(abs, '0001_alter.sql')])
+  })
+
+  // The regression this test locks in: the old loop `return`ed after the FIRST
+  // existing candidate, so a project with an empty `drizzle/` alongside a real
+  // `migrations/` had its actual migrations silently left unrepaired.
+  it('keeps sweeping when an earlier candidate directory yields no matches', async () => {
+    seedDir('drizzle')
+    const abs = seedDir('migrations', '0002_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle', 'migrations'])
+
+    expect(results.map((r) => r.dir)).toEqual(['drizzle', 'migrations'])
+    expect(results[0].rewritten).toEqual([])
+    expect(results[1].rewritten).toEqual([path.join(abs, '0002_alter.sql')])
+    expect(
+      fs.readFileSync(path.join(abs, '0002_alter.sql'), 'utf-8'),
+    ).not.toContain('SET DATA TYPE')
+  })
+
+  it('rewrites every candidate directory that holds encrypted alters', async () => {
+    const drizzle = seedDir('drizzle', '0001_alter.sql')
+    const nested = seedDir('src/db/migrations', '0002_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, [
+      'drizzle',
+      'src/db/migrations',
+    ])
+
+    expect(results.flatMap((r) => r.rewritten)).toEqual([
+      path.join(drizzle, '0001_alter.sql'),
+      path.join(nested, '0002_alter.sql'),
+    ])
+  })
+
+  it('is idempotent — a second sweep rewrites nothing', async () => {
+    const abs = seedDir('drizzle', '0001_alter.sql')
+
+    await sweepMigrationDirs(tmpDir, ['drizzle'])
+    const afterFirst = fs.readFileSync(
+      path.join(abs, '0001_alter.sql'),
+      'utf-8',
+    )
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle'])
+
+    expect(results[0].rewritten).toEqual([])
+    expect(fs.readFileSync(path.join(abs, '0001_alter.sql'), 'utf-8')).toBe(
+      afterFirst,
+    )
+  })
+
+  it('surfaces a failing directory as an error and still sweeps the rest', async () => {
+    // A directory named `*.sql` makes readFile throw EISDIR mid-sweep.
+    const broken = seedDir('drizzle')
+    fs.mkdirSync(path.join(broken, '0001_alter.sql'))
+    const abs = seedDir('migrations', '0002_alter.sql')
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle', 'migrations'])
+
+    expect(results[0].dir).toBe('drizzle')
+    expect(results[0].error).toBeDefined()
+    expect(results[1].rewritten).toEqual([path.join(abs, '0002_alter.sql')])
+  })
+
+  it('reports near-misses per directory', async () => {
+    const abs = seedDir(
+      'drizzle',
+      '0001_using.sql',
+      'ALTER TABLE "t" ALTER COLUMN "c" SET DATA TYPE eql_v3_json USING (c)::jsonb;\n',
+    )
+
+    const results = await sweepMigrationDirs(tmpDir, ['drizzle'])
+
+    expect(results[0].skipped).toHaveLength(1)
+    expect(results[0].skipped[0].file).toBe(path.join(abs, '0001_using.sql'))
   })
 })
