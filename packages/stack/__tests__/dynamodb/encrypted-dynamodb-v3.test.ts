@@ -624,7 +624,7 @@ describe('audit metadata with a v3 table', liveSuiteOptions, () => {
     expect(decrypted.data).toEqual(item)
   })
 
-  it('is accepted on the typed client, though decrypt cannot carry it', async () => {
+  it('is carried on every operation of the typed client too', async () => {
     const item: User = { pk: 'user#15', email: 'ken@example.com' }
 
     const encrypted = await typedDynamo
@@ -632,9 +632,11 @@ describe('audit metadata with a v3 table', liveSuiteOptions, () => {
       .audit({ metadata })
     if (encrypted.failure) throw new Error(encrypted.failure.message)
 
-    // The typed client's `decryptModel` returns a plain promise with no audit
-    // surface. The chain must still resolve correctly — the metadata is simply
-    // not forwarded. Use the nominal client if decrypt audit matters.
+    // The typed client's `decryptModel` now returns a `MappedDecryptOperation`,
+    // so the metadata forwards to ZeroKMS here as it does on the nominal client.
+    // That forwarding is proven credential-free in
+    // `__tests__/decrypt-audit-forwarding.test.ts`; this live test asserts the
+    // round-trip still decrypts with the chain attached.
     const decrypted = await typedDynamo
       .decryptModel(encrypted.data, users)
       .audit({ metadata })
