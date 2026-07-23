@@ -143,6 +143,11 @@ standalone installer for exactly this reason. The CLI enforces this: `stash eql
 install` detects a Prisma Next project and refuses (pointing you at `prisma-next
 migrate`) unless you pass `--force`.
 
+The adapter emits the encrypted query operators, but **no index DDL** — add the
+`eql_v3.*` functional-index `CREATE INDEX` statements in a migration applied
+through the same `prisma-next migrate` flow (never out-of-band of the migration
+history). Recipes per domain are in the `stash-indexing` skill.
+
 ## Writing and reading encrypted values
 
 At the value boundary you wrap plaintext in a **runtime envelope** (primitive-named,

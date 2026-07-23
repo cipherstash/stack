@@ -564,7 +564,7 @@ All values in the array must be non-null.
 
 ### On the Wire: Operators and Ordering
 
-Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`, `col > term`, ...), and `ORDER BY` on an encrypted column goes through the ordering extractors — `eql_v3.ord_term(col)` for OPE-backed (`Ord`/`Search`) domains, `eql_v3.ord_term_ore(col)` for `OrdOre`. The Drizzle v3 integration emits all of this for you (including `asc`/`desc`, which emit `ORDER BY eql_v3.ord_term(col)`). Over Supabase/PostgREST, the adapter's `order()` works on OPE-backed ordering columns (plain `*_ord`, `text_ord`, `text_search`) by sorting on the column's `col->op` term; `OrdOre`-flavour (`*_ord_ore`) domains and columns with no ordering term are rejected. See the `stash-drizzle` and `stash-supabase` skills.
+Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`, `col > term`, ...), and `ORDER BY` on an encrypted column goes through the ordering extractors — `eql_v3.ord_term(col)` for OPE-backed (`Ord`/`Search`) domains, `eql_v3.ord_term_ore(col)` for `OrdOre`. The Drizzle v3 integration emits all of this for you (including `asc`/`desc`, which emit `ORDER BY eql_v3.ord_term(col)`). Over Supabase/PostgREST, the adapter's `order()` works on OPE-backed ordering columns (plain `*_ord`, `text_ord`, `text_search`) by sorting on the column's `col->op` term; `OrdOre`-flavour (`*_ord_ore`) domains and columns with no ordering term are rejected. See the `stash-drizzle` and `stash-supabase` skills. These same extractor expressions are also what you index — the functional-index recipes are in the `stash-indexing` skill.
 
 ## Encrypted JSON (`types.Json`)
 
@@ -858,6 +858,8 @@ Once dual-writes are recorded as live in `cs_migrations`:
 | Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; the Supabase wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw `eql_v2_encrypted` payloads to end users. |
 | Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
 | `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
+
+> **Create the functional indexes between backfill and the read switch.** After `stash encrypt backfill` completes and before reads move to the encrypted column, create the `eql_v3.*` extractor indexes for every queried capability (and `ANALYZE`) — one bulk build instead of per-row maintenance during backfill, and the switched reads engage an index from the first query. Recipes in the `stash-indexing` skill.
 
 > **If you use CipherStash Proxy:** After the schema rename, run `stash db push` to register the renamed shape as `pending`. This is required for Proxy-based queries; SDK users skip this step.
 

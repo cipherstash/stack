@@ -79,6 +79,8 @@ CREATE TABLE users (
 
 You don't usually hand-write this: the `types.*` factories below emit the domain as the column's SQL type, so `drizzle-kit generate` produces the `ADD COLUMN "email" "eql_v3_text_search"` DDL for you. The generated type is **unqualified** (`eql_v3_text_search`, not `public.eql_v3_text_search`): drizzle-kit wraps a custom type's whole name in one pair of quotes, which would turn a schema-qualified name into the invalid identifier `"public.eql_v3_text_search"`. The bare name resolves via the search path because the domains live in `public` — so keep `public` on the search path (the default), and don't hand-edit the generated type back to a qualified name.
 
+Drizzle emits the encrypted query operators for you, but **no index DDL** — add the `eql_v3.*` functional-index `CREATE INDEX` statements in a drizzle-kit migration (custom SQL). Recipes per domain are in the `stash-indexing` skill.
+
 ## Schema Definition
 
 Use the `types` namespace from `@cipherstash/stack-drizzle/v3` to define encrypted columns. Each factory maps 1:1 to a Postgres domain, and the column's query capabilities are fixed by the type:

@@ -411,7 +411,7 @@ Whether EQL is installed and at which version; database permission status; wheth
 | No indexes on an encrypted column | Info |
 | `searchableJson` without `dataType("json")` | Error |
 
-Runs automatically before `db push`, where issues warn but don't block. Exits 1 on errors only.
+Runs automatically before `db push`, where issues warn but don't block. Exits 1 on errors only. The "No indexes" Info finding is resolved with the functional-index recipes in the `stash-indexing` skill.
 
 #### `db push` / `db activate` — EQL v2 + CipherStash Proxy only
 
@@ -635,7 +635,7 @@ Required: `SUPERUSER`, **or** `CREATE` on the database *and* on the `public` sch
 
 **Supabase.** Always pass `--supabase` (or `supabase: true`). It selects a compatible install script and grants `anon`, `authenticated`, and `service_role`.
 
-**`ORDER BY` on encrypted columns:** on EQL v3, ordering works on OPE-backed columns — Drizzle emits `ORDER BY eql_v3.ord_term(col)`, and the Supabase adapter's `order()` sorts by the `col->op` term. ORE-flavour (`*OrdOre`) domains need a superuser-only operator class (unavailable on managed Postgres/Supabase) and are rejected; storage-only and equality/match-only columns have no ordering term. For those, order by a plaintext column or sort application-side. (The legacy v2 surface — bare `eql_v2_encrypted` — cannot order encrypted columns without operator families.)
+**`ORDER BY` on encrypted columns:** on EQL v3, ordering works on OPE-backed columns — Drizzle emits `ORDER BY eql_v3.ord_term(col)`, and the Supabase adapter's `order()` sorts by the `col->op` term. ORE-flavour (`*OrdOre`) domains need a superuser-only operator class (unavailable on managed Postgres/Supabase) and are rejected; storage-only and equality/match-only columns have no ordering term. For those, order by a plaintext column or sort application-side. (The legacy v2 surface — bare `eql_v2_encrypted` — cannot order encrypted columns without operator families.) The ordering extractors are also the index expressions — see the `stash-indexing` skill for the `CREATE INDEX` recipes.
 
 **The native binary won't load.** Run `stash doctor`.
 

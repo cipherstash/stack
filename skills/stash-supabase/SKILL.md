@@ -74,6 +74,12 @@ No **Exposed schemas** change is needed: the column domains and their
 operators live in `public`, so bare `col = term` filters resolve under
 Supabase's default PostgREST configuration. Do not expose `eql_v3_internal`.
 
+Encrypted columns can and should be **indexed** on Supabase — index creation
+needs no superuser (only the ORE opclass behind the `_ord_ore` domains is
+restricted; the default equality / ordering / match / containment indexes all
+work as a normal role). Put the `CREATE INDEX` statements in a
+`supabase/migrations/` file; recipes in the `stash-indexing` skill.
+
 ### 2. Database schema (per-domain columns)
 
 Each encrypted column is declared with a concrete `public.eql_v3_*` domain —

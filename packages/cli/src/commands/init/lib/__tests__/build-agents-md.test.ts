@@ -27,6 +27,7 @@ describe('buildAgentsMdBody', () => {
     expect(out).toContain('# CipherStash')
     expect(out).toContain('# Skill: stash-encryption')
     expect(out).toContain('# Skill: stash-drizzle')
+    expect(out).toContain('# Skill: stash-indexing')
     expect(out).toContain('# Skill: stash-cli')
     // Frontmatter from individual skill files should be stripped — the
     // `name: <skill>` line is part of YAML frontmatter and should not leak.
