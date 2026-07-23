@@ -27,8 +27,15 @@ describe('generateClientFromSchemas', () => {
     const out = generateClientFromSchemas('drizzle', schemas)
     expect(out).toContain("email: types.TextSearch('email'),")
     expect(out).toContain("age: types.IntegerOrd('age'),")
-    expect(out).toContain('extractEncryptionSchemaV3')
-    expect(out).toContain("from '@cipherstash/stack-drizzle/v3'")
+    // The collapsed root: `@cipherstash/stack-drizzle` dropped its EQL v2
+    // surface and folded `./v3` into `.`, de-suffixing the exports. The
+    // negatives matter as much as the positives — this string is written into
+    // the user's repo as real source, and nothing type-checks a template
+    // literal, so the removed names can only be caught here.
+    expect(out).toContain('extractEncryptionSchema(')
+    expect(out).toContain("from '@cipherstash/stack-drizzle'")
+    expect(out).not.toContain('extractEncryptionSchemaV3')
+    expect(out).not.toContain('@cipherstash/stack-drizzle/v3')
   })
 
   it('carries no residual v2 capability vocabulary', () => {
