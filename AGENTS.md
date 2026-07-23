@@ -77,7 +77,7 @@ If these variables are missing, tests that require live encryption will fail or 
 - `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
 - `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
 - `packages/prisma-next`: Prisma Next integration (`@cipherstash/prisma-next`) — searchable field-level encryption for Postgres. **EQL v3 only**: per-domain constructors (`cipherstash.TextSearch()` / `text()` / `bigIntOrd()` / …) and `cipherstashFromStack` (the `./v3` and `./stack` entries). The EQL v2 surface was removed — the adapter's baseline migration installs the EQL v3 bundle only (works on Supabase as a non-superuser)
-- `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — EQL v2 (`.`) and EQL v3 (`./v3`). Split out of `@cipherstash/stack`.
+- `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — **EQL v3 only**, on the package root (the v2 surface was removed and the old `./v3` subpath collapsed into `.`). Split out of `@cipherstash/stack`.
 - `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — `encryptedSupabase` (v2) and `encryptedSupabaseV3` (v3). Split out of `@cipherstash/stack`.
 - `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
 - `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
@@ -154,7 +154,7 @@ Three rules to remember when editing CI or pnpm config:
   - `encryptQuery(terms[])` for batch query encryption
 - **Identity-aware encryption**: Authenticate the client as the end user with `OidcFederationStrategy` (`config.authStrategy`, re-exported from `@cipherstash/stack`), then chain `.withLockContext({ identityClaim })` on operations to bind the data key to a claim. The same claim must be used for encrypt and decrypt. (`LockContext.identify()` from `@cipherstash/stack/identity` is deprecated — the strategy now handles token acquisition; `.withLockContext()` also accepts a `LockContext`.)
 - **Integrations**:
-  - **Drizzle ORM**: `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack-drizzle` (EQL v3 factories from `@cipherstash/stack-drizzle/v3`)
+  - **Drizzle ORM**: `types.*` column factories, `extractEncryptionSchema`, `createEncryptionOperators` from `@cipherstash/stack-drizzle`
   - **Supabase**: `encryptedSupabase` (v2) / `encryptedSupabaseV3` (v3) from `@cipherstash/stack-supabase`
   - **DynamoDB**: `encryptedDynamoDB` from `@cipherstash/stack/dynamodb`
 
