@@ -146,6 +146,12 @@ jobs:
       - name: Typecheck (bench — guards the stack/stack-drizzle importers)
         run: pnpm exec turbo run build --filter @cipherstash/bench
 
+      # The wizard is built by tsup, which transpiles without typechecking, so
+      # nothing here caught the three `auth.AutoStrategy` resolution errors that
+      # sat in `main` until #771. Gate it so they cannot come back silently.
+      - name: Typecheck (wizard)
+        run: pnpm --filter @cipherstash/wizard run typecheck
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

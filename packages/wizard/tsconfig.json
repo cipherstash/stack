@@ -7,6 +7,17 @@
     "allowJs": true,
     "esModuleInterop": true,
     "moduleResolution": "bundler",
+
+    // `@cipherstash/auth` uses conditional exports — `node` picks `index.d.ts`
+    // (the full surface, including `AutoStrategy`), `default` picks
+    // `wasm-types.d.ts` (which has no `AutoStrategy`). Bundler resolution does
+    // not include `node` by default, so without this the wizard's three
+    // `auth.AutoStrategy` call sites fail to typecheck even though they run
+    // fine — the wizard is a Node CLI and always loads the `node` branch.
+    // Matches `packages/stack`, `packages/prisma-next`, `packages/test-kit`,
+    // `packages/stack-drizzle` and `packages/stack-supabase`.
+    "customConditions": ["node"],
+
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
