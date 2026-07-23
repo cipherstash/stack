@@ -8,21 +8,22 @@ import {
 // `stash init --drizzle` writes these strings into the USER's repo as real
 // source. Nothing type-checks a template literal, so a rename in
 // `@cipherstash/stack-drizzle` cannot break the build here — it breaks the
-// scaffolded project instead, in someone else's checkout. These assertions are
-// the only thing standing between a de-suffixed export and a broken `stash
-// init`.
+// scaffolded project instead, in someone else's checkout.
 //
-// Pinned by this suite (all three removed when `./v3` collapsed into the root):
-//   - the `@cipherstash/stack-drizzle/v3` specifier
-//   - `extractEncryptionSchemaV3`
-//   - `createEncryptionOperatorsV3`
+// `utils-codegen.test.ts` covers the generated client's happy path. This file
+// covers the surface that had no test at all — `generatePlaceholderClient`,
+// whose doc block is a copy-paste reference the handoff agent works from — and
+// asserts, for BOTH strings, that nothing removed with EQL v2 survives:
+//   - the `@cipherstash/stack-drizzle/v3` specifier (`./v3` collapsed into `.`)
+//   - `extractEncryptionSchemaV3` / `createEncryptionOperatorsV3`
+//   - `encryptedType`, the v2 config-flag column factory
 
 const SCHEMAS: SchemaDef[] = [
   {
     tableName: 'users',
     columns: [
-      { name: 'email', dataType: 'string', searchOps: ['equality'] },
-      { name: 'age', dataType: 'number', searchOps: ['orderAndRange'] },
+      { name: 'email', domain: 'TextSearch' },
+      { name: 'age', domain: 'IntegerOrd' },
     ],
   },
 ]
@@ -36,9 +37,9 @@ const GENERATED_SOURCES: Array<[string, string]> = [
 describe.each(
   GENERATED_SOURCES,
 )('drizzle scaffold — %s', (_name, generated) => {
-  it('imports the drizzle surface from the package ROOT, never the removed ./v3 subpath', () => {
-    expect(generated).not.toContain('@cipherstash/stack-drizzle/v3')
+  it('names the drizzle package root, never the removed ./v3 subpath', () => {
     expect(generated).toContain('@cipherstash/stack-drizzle')
+    expect(generated).not.toContain('@cipherstash/stack-drizzle/v3')
   })
 
   it('uses the de-suffixed export names, never the removed *V3 aliases', () => {
@@ -52,13 +53,13 @@ describe.each(
   })
 })
 
-describe('generateClientFromSchemas (drizzle)', () => {
-  const generated = generateClientFromSchemas('drizzle', SCHEMAS)
+describe('generatePlaceholderClient (drizzle)', () => {
+  const placeholder = generatePlaceholderClient('drizzle')
 
-  it('names extractEncryptionSchema in both the import and the call site', () => {
-    expect(generated).toContain(
-      "import { types, extractEncryptionSchema } from '@cipherstash/stack-drizzle'",
+  it('shows the harvest pattern with the collapsed root import', () => {
+    expect(placeholder).toContain(
+      "import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'",
     )
-    expect(generated).toContain('extractEncryptionSchema(usersTable)')
+    expect(placeholder).toContain('extractEncryptionSchema(users)')
   })
 })
