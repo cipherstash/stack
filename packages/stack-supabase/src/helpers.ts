@@ -109,7 +109,7 @@ function lookupDbName(
  *   property name.
  * - A DB column name used directly is cast in place (`db_name::jsonb`).
  * - Tokens that already carry a cast, or contain parens/dots (functions,
- *   foreign tables), are left untouched — same rules as the v2 helper.
+ *   foreign tables), are left untouched.
  */
 export function addJsonbCastsV3(
   columns: string,

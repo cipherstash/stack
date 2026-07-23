@@ -48,10 +48,15 @@ function assertTableIsModelled(
  * compile-time types and verifies the declared tables against the database at
  * construction.
  *
- * Encrypted data is stored as EQL v3 payloads. The generation-agnostic decrypt
- * path in `@cipherstash/stack` still reads existing EQL v2 payloads, but this
- * wrapper only AUTHORS EQL v3 — the legacy v2 authoring surface (a hand-written
- * client-side schema and `from(tableName, schema)`) has been removed.
+ * Encrypted data is stored as EQL v3 payloads. This wrapper is EQL v3 only — it
+ * both authors and reads v3, and the legacy v2 authoring surface (a hand-written
+ * client-side schema and `from(tableName, schema)`) has been removed. It does
+ * not auto-read an `eql_v2_encrypted` column: introspection recognises the
+ * `public.eql_v3_*` domains exclusively, so a v2 column never enters the
+ * encrypt config and is returned as an untouched passthrough. No v2 ciphertext
+ * is stranded — decryption in `@cipherstash/stack` is generation-agnostic, so
+ * legacy payloads still decrypt through the core client (`decrypt` /
+ * `decryptModel`). Handle mixed-generation data explicitly on the caller side.
  *
  * Requires a Postgres connection (`options.databaseUrl` or `DATABASE_URL`) for
  * introspection, so it cannot run in a Worker or the browser.
