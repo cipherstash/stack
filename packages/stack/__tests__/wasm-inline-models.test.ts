@@ -122,7 +122,11 @@ describe('WasmEncryptionClient.encryptModel', () => {
     )
 
     expect(ffi.encryptBulk).not.toHaveBeenCalled()
-    expect(expectData(out)).toEqual({
+    // `toStrictEqual`, not `toEqual`: the point of this test is that an
+    // explicit `undefined` is PRESERVED in place, and `toEqual` treats an
+    // `undefined` property as absent — it would pass even if `createdOn` were
+    // dropped entirely.
+    expect(expectData(out)).toStrictEqual({
       email: null,
       createdOn: undefined,
       id: 1,
@@ -394,6 +398,44 @@ describe('WasmEncryptionClient model helpers — hardening (#742 review)', () =>
       'not one this client was initialized with',
     )
     expect(ffi.decryptBulkFallible).not.toHaveBeenCalled()
+  })
+
+  it('fails encrypt against a table the client was not initialized with', async () => {
+    const c = await client()
+    const foreign = encryptedTable('foreign', { x: types.TextEq('x') })
+    // Both encrypt entrypoints call `requireTable`; cover them symmetrically
+    // with the decrypt case above.
+    const single = await c.encryptModel({ x: 'secret' }, foreign)
+    expect(single.failure?.type).toBe('EncryptionError')
+    expect(single.failure?.message).toContain(
+      'not one this client was initialized with',
+    )
+    const bulk = await c.bulkEncryptModels([{ x: 'secret' }], foreign)
+    expect(bulk.failure?.type).toBe('EncryptionError')
+    expect(bulk.failure?.message).toContain(
+      'not one this client was initialized with',
+    )
+    expect(ffi.encryptBulk).not.toHaveBeenCalled()
+  })
+
+  it('preserves a passthrough field literally named __proto__', async () => {
+    const c = await client()
+    // A non-schema, non-envelope field named `__proto__` (as `JSON.parse`
+    // materialises it) is a passthrough value. Plain `out.__proto__ = value`
+    // would hit the prototype setter and silently drop it; it must survive
+    // verbatim as an own property, and the global prototype must stay intact.
+    const model = JSON.parse('{"id":1,"__proto__":{"kept":true}}')
+    const out = await c.encryptModel(model, users)
+
+    expect(ffi.encryptBulk).not.toHaveBeenCalled()
+    const data = expectData(out) as Record<string, unknown>
+    // Stored as an OWN data property, not swallowed by the prototype setter.
+    expect(Object.getOwnPropertyNames(data)).toContain('__proto__')
+    expect(Object.getOwnPropertyDescriptor(data, '__proto__')?.value).toEqual({
+      kept: true,
+    })
+    // Untouched global prototype: no `kept` leaked onto `Object.prototype`.
+    expect('kept' in {}).toBe(false)
   })
 
   it('rejects an invalid Date with a field-named failure, before the FFI', async () => {

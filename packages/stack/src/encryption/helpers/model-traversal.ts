@@ -22,6 +22,12 @@ import type { BuildableTable } from '@/types'
 /**
  * Sets a value at a nested path in an object, creating intermediate objects as needed.
  * Includes prototype pollution protection.
+ *
+ * Intermediates are always plain objects, never arrays, so a hypothetical
+ * array-indexed column path (`items.0.secret`) rebuilds under `{ '0': … }`
+ * rather than `[ … ]`. Schema columns are declared by name, not index, so this
+ * has no known caller; passthrough arrays keep their shape via the array arm of
+ * `buildPassthroughTree`.
  */
 export function setNestedValue(
   obj: Record<string, unknown>,
@@ -155,6 +161,31 @@ function assertEncryptableValue(value: unknown, fullKey: string): void {
 }
 
 /**
+ * Store a passthrough field as an OWN property. Plain `out[key] = value` would,
+ * for a field literally named `__proto__` (e.g. straight off `JSON.parse`),
+ * invoke the prototype setter instead of storing the value — silently dropping
+ * the field (a fidelity gap, not a security one: it only mutates this fresh
+ * `out`, never global `Object.prototype`). `defineProperty` keeps the shape
+ * verbatim, mirroring the `setNestedValue` guard on the operation-field path.
+ */
+function assignOwn(
+  out: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  if (key === '__proto__') {
+    Object.defineProperty(out, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+  } else {
+    out[key] = value
+  }
+}
+
+/**
  * Walk `obj`, returning a fresh passthrough tree that OMITS every operation
  * field and streams those fields to `hooks.onOperationField` in visit order.
  * Arrays are preserved as arrays. Never mutates `obj`.
@@ -172,7 +203,7 @@ function buildPassthroughTree(
     // Nulls carry no schema meaning and are never an operation — keep them in
     // place so the output shape matches the input exactly.
     if (value === null || value === undefined) {
-      out[key] = value
+      assignOwn(out, key, value)
       continue
     }
 
@@ -188,16 +219,16 @@ function buildPassthroughTree(
       !isEncryptedPayload(value) &&
       hooks.shouldRecurse(fullKey)
     ) {
-      out[key] = buildPassthroughTree(
-        value as Record<string, unknown>,
-        fullKey,
-        hooks,
+      assignOwn(
+        out,
+        key,
+        buildPassthroughTree(value as Record<string, unknown>, fullKey, hooks),
       )
     } else {
       // Passthrough: a scalar, a Date / class instance, an already-encrypted
       // payload the schema didn't claim, or a plain object with no schema
       // column beneath it. Not mutated, so sharing the reference is safe.
-      out[key] = value
+      assignOwn(out, key, value)
     }
   }
 
