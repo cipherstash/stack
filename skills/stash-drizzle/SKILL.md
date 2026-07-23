@@ -79,7 +79,7 @@ CREATE TABLE users (
 
 You don't usually hand-write this: the `types.*` factories below emit the domain as the column's SQL type, so `drizzle-kit generate` produces the `ADD COLUMN "email" "eql_v3_text_search"` DDL for you. The generated type is **unqualified** (`eql_v3_text_search`, not `public.eql_v3_text_search`): drizzle-kit wraps a custom type's whole name in one pair of quotes, which would turn a schema-qualified name into the invalid identifier `"public.eql_v3_text_search"`. The bare name resolves via the search path because the domains live in `public` — so keep `public` on the search path (the default), and don't hand-edit the generated type back to a qualified name.
 
-Drizzle emits the encrypted query operators for you, but **no index DDL** — you declare the `eql_v3.*` functional indexes yourself. Drizzle's DSL supports expression indexes, so the cleanest path is on the table definition (tracked by `drizzle-kit generate`): ``index('users_email_eq').using('btree', sql`eql_v3.eq_term(${t.email})`)``; a custom-SQL statement in a drizzle-kit migration works too. Recipes per domain are in the `stash-indexing` skill.
+Encrypted predicates need functional indexes over the `eql_v3.*` extractors, and Drizzle does not add them on its own — spread `encryptedIndexes(t)` into the table definition to derive them per column; see [Indexing Encrypted Columns](#indexing-encrypted-columns) below.
 
 ## Schema Definition
 
@@ -371,6 +371,49 @@ if (!decrypted.failure) {
 ```
 
 `Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged.
+
+## Indexing Encrypted Columns
+
+Drizzle emits the encrypted query operators, but **no index DDL** — without functional indexes over the `eql_v3.*` term extractors, every encrypted predicate sequential-scans. `encryptedIndexes` derives the recommended indexes for every encrypted column in the table from its domain, so a schema column can't be forgotten:
+
+```typescript
+import { encryptedIndexes, types } from "@cipherstash/stack-drizzle/v3"
+import { integer, pgTable } from "drizzle-orm/pg-core"
+
+export const users = pgTable(
+  "users",
+  {
+    id: integer("id").primaryKey(),
+    email: types.TextEq("email"),
+    createdAt: types.TimestampOrd("created_at"),
+    bio: types.TextSearch("bio"),
+  },
+  (t) => [...encryptedIndexes(t)],
+)
+```
+
+The indexes are named `<table>_<column>_<capability>` and ride the normal `drizzle-kit generate` → `migrate` flow like any other index. What each column yields is fixed by its domain:
+
+| Column type | Indexes emitted |
+|---|---|
+| `types.TEq` | `<col>_eq` — btree on `eql_v3.eq_term` |
+| `types.TOrd` | `<col>_ord` — btree on `eql_v3.ord_term` (serves `=`, range, and `ORDER BY` — `_ord` domains have no `eq_term`) |
+| `types.TOrdOre` | `<col>_ord_ore` — btree on `eql_v3.ord_term_ore` (superuser installs only) |
+| `types.TextMatch` | `<col>_match` — GIN on `eql_v3.match_term` |
+| `types.TextSearch` | `<col>_eq` + `<col>_ord` + `<col>_match` |
+| `types.Json` | `<col>_json` — GIN on `(eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops` |
+| bare `types.T`, `types.Boolean` | none — storage-only, no term to index |
+
+To hand-pick instead (custom names, a subset, or a field-level selector index on encrypted JSON — those can't be derived, the selector hash is data, not schema), declare individual expression indexes with the same extractor expressions:
+
+```typescript
+import { sql } from "drizzle-orm"
+import { index } from "drizzle-orm/pg-core"
+
+;(t) => [index("users_email_eq").using("btree", sql`eql_v3.eq_term(${t.email})`)]
+```
+
+Run `ANALYZE <table>` after the migration applies — an expression index gathers no statistics at `CREATE INDEX` time. For when to create indexes during a rollout (after backfill, before switching reads), engagement rules, and `EXPLAIN` verification, see the `stash-indexing` skill.
 
 ## Migrating an Existing Column to Encrypted
 

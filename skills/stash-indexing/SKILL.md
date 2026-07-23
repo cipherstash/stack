@@ -7,7 +7,7 @@ description: Create and verify PostgreSQL indexes on EQL v3 encrypted columns �
 
 Encrypted columns **can** be indexed, and on any non-trivial table they **should** be. The model is one rule, uniform across every encrypted domain: **index a functional expression over the column's term extractor — never an operator class on the column itself.** The extractors are inlinable SQL functions, so bare-form predicates (`WHERE col = $1`, `WHERE col < $1`, `col @@ $1`) engage the index with no query rewriting.
 
-This covers EQL v3 — the bundle `stash eql install` applies (`@cipherstash/eql`). An integration that is otherwise correct (encrypted at rest, searchable, exact round-trip) but has no index on its encrypted predicates will sequential-scan every encrypted query; that is the default outcome unless you create these indexes, because **no ORM integration emits this DDL for you** (see below).
+This covers EQL v3 — the bundle `stash eql install` applies (`@cipherstash/eql`). An integration that is otherwise correct (encrypted at rest, searchable, exact round-trip) but has no index on its encrypted predicates will sequential-scan every encrypted query; that is the default outcome unless you put these indexes in place — the integrations emit query operators, not index DDL (see [Where the Index DDL Goes](#where-the-index-ddl-goes)).
 
 ## When to Use This Skill
 
@@ -23,13 +23,15 @@ Capability is fixed by the column's domain type, chosen at schema definition via
 
 | Schema factory | Postgres domain | Terms carried | Index recipes |
 |---|---|---|---|
-| `types.TEq` | `public.eql_v3_<t>_eq` | `hm` | equality |
-| `types.TOrd` | `public.eql_v3_<t>_ord` | `hm`, `op` | equality + ordering/range |
-| `types.TOrdOre` | `public.eql_v3_<t>_ord_ore` | `hm`, `ob` | equality + ORE ordering (superuser installs only) |
-| `types.TextMatch` | `public.eql_v3_text_match` | `bf` | free-text match |
-| `types.TextSearch` | `public.eql_v3_text_search` | `hm`, `op`, `bf` | equality + ordering/range + match |
+| `types.TEq` | `public.eql_v3_<t>_eq` | `hm` | equality (`eq_term`) |
+| `types.TOrd` | `public.eql_v3_<t>_ord` | `op` | **one** ordering index (`ord_term`) — serves equality, range, and `ORDER BY` |
+| `types.TOrdOre` | `public.eql_v3_<t>_ord_ore` | `ob` | **one** ORE ordering index (`ord_term_ore`) — equality + range; superuser installs only |
+| `types.TextMatch` | `public.eql_v3_text_match` | `bf` | free-text match (`match_term`) |
+| `types.TextSearch` | `public.eql_v3_text_search` | `hm`, `op`, `bf` | equality + ordering/range + match (three indexes) |
 | `types.Json` | `public.eql_v3_json_search` | `sv` (ste_vec) | containment GIN + field-level ordering |
 | `types.T` (bare), `types.Boolean` | `public.eql_v3_<t>` | none | **none — storage-only by design** |
+
+Note the `_ord` rows: those domains have **no `eq_term` overload at all** — `eql_v3.eq` on them inlines to an ordering-term comparison (`ord_term(a) = ord_term(b)`), so the single ordering btree is the index that serves `=` as well. Do not add an `eq_term` index to an `_ord` / `_ord_ore` column.
 
 The last row is deliberate, not a gap: a bare `types.Text` / `types.Integer` / `types.Boolean` column carries no query terms, so there is nothing to index and nothing to query server-side. If a column needs an index, it needs a term-carrying domain first.
 
@@ -39,7 +41,7 @@ Every recipe is a functional index over the extractor, followed by `ANALYZE` (se
 
 ### Equality — `eql_v3.eq_term`
 
-For any domain carrying `hm`: `_eq`, `_ord`, `_ord_ore`, `text_search`.
+For the domains carrying `hm`: `_eq` and `text_search`. (On `_ord` / `_ord_ore` columns, equality rides the ordering index below — there is no `eq_term` overload for those domains.)
 
 ```sql
 CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(encrypted_email));
@@ -63,7 +65,7 @@ ANALYZE events;
 SELECT * FROM events WHERE encrypted_at < $1;
 ```
 
-`eql_v3.ord_term` returns a `bytea`-backed domain, so this btree binds PostgreSQL's **default** `bytea_ops` operator class — nothing to install, no privilege required, works on Supabase and managed Postgres. The `<` `<=` `>` `>=` operators inline to comparisons on the extractor, so natural-form range predicates match the index. (`ORDER BY` needs the extractor form — see [Query-Shape Traps](#query-shape-traps).)
+`eql_v3.ord_term` returns a `bytea`-backed domain, so this btree binds PostgreSQL's **default** `bytea_ops` operator class — nothing to install, no privilege required, works on Supabase and managed Postgres. The `<` `<=` `>` `>=` operators inline to comparisons on the extractor, so natural-form range predicates match the index — and on `_ord` columns so does `=`, since equality on those domains also inlines to `ord_term`. One index, every scalar predicate. (`ORDER BY` needs the extractor form — see [Query-Shape Traps](#query-shape-traps).)
 
 ### ORE Ordering — `eql_v3.ord_term_ore` (superuser installs only)
 
@@ -142,7 +144,7 @@ SELECT i.relname, oc.opcname
 
 Functional-index engagement is **structural**: the planner inlines the operator into the same extractor expression the index was built on and matches the expression trees syntactically. All three of these must hold:
 
-1. **The value must carry the required term.** Equality needs `hm`, ordering needs `op` (or `ob` on `_ord_ore`), match needs `bf`, containment needs the ste_vec. The domain rows in the table above tell you which terms a column's values carry; a value with only a bloom term will never drive an equality index.
+1. **The value must carry the term the index extracts.** `eq_term` needs `hm`, `ord_term` needs `op`, `ord_term_ore` needs `ob`, `match_term` needs `bf`, containment needs the ste_vec. The domain rows in the table above tell you which terms a column's values carry; a value with only a bloom term will never drive an equality index.
 2. **The index must be created after the data carries the term.** If you change which terms a column's values carry (e.g. re-encrypt under a different domain), recreate the index — a functional index built before the term existed will not match.
 3. **The query operand must be typed** so the encrypted operator resolves, not the native `jsonb` one. A typed parameter (`$1`) or an explicit cast to the domain works; a bare `::jsonb` literal falls through to native jsonb semantics and skips the index. The Drizzle, Prisma Next, and Supabase integrations emit correctly-typed operands already — this requirement only bites hand-written SQL.
 
@@ -237,24 +239,18 @@ Index not being used:
 3. **Recreate the index** if the column's term composition changed after it was built.
 4. **Run `ANALYZE`.** Also note: on very small tables a `Seq Scan` is the *correct* plan — don't chase it below a few thousand rows.
 
-**`=` returns zero rows** on a column whose values lack `hm`: equality requires the `hm` term — the column must be an `_eq` / `_ord` / `_ord_ore` / `text_search` domain and the client must be emitting it.
+**`=` returns zero rows**: equality needs the domain's equality-serving term — `hm` on `_eq` / `text_search`, the ordering term (`op` / `ob`) on `_ord` / `_ord_ore`. A bare storage-only domain has neither; confirm the column's domain and that the client is emitting the term.
 
 **ORE index never engages:** run the `pg_opclass` query from the [superuser section](#supabase-and-managed-postgres-what-actually-needs-superuser) — a `record_ops` binding means the index is inert.
 
-## Where the Index DDL Goes (Per Integration)
+## Where the Index DDL Goes
 
-**Drizzle, Prisma Next, and the Supabase wrapper emit the query operators for you — none of them emits index DDL. Creating these indexes is always your job.**
+**The integrations emit the query operators for you — none applies index DDL on its own. Making sure these indexes exist is always your job.** This skill is the general model — recipes, engagement rules, verification. How to apply it in a specific integration lives in that integration's skill:
 
-- **Drizzle** — declare the index on the table in the Drizzle schema; the DSL supports expression indexes, so `drizzle-kit generate` emits and tracks the DDL:
-
-  ```typescript
-  (t) => [index('users_email_eq').using('btree', sql`eql_v3.eq_term(${t.email})`)]
-  ```
-
-  Alternatively, add the `CREATE INDEX` as custom SQL in a drizzle-kit migration.
-- **Prisma Next** — Prisma's schema language cannot express functional indexes, so the schema file is not an option. Put the `CREATE INDEX` in a migration applied through the adapter's migration flow — the same channel that installs the EQL bundle. Don't run index DDL out-of-band of the migration history.
-- **Supabase** — a file under `supabase/migrations/`, applied by the normal Supabase migration flow. No superuser needed (see above).
-- **Raw SQL / plain PostgreSQL** — whatever migration tool owns the schema. Never ad-hoc in production.
+- **Drizzle** — `encryptedIndexes(t)` from `@cipherstash/stack-drizzle/v3` derives the recommended indexes for every encrypted column in the table, or declare individual expression indexes in the schema DSL. See `stash-drizzle` § Indexing Encrypted Columns.
+- **Prisma Next** — Prisma's schema language cannot express functional indexes; the DDL goes in a migration in the adapter's flow. See `stash-prisma-next`.
+- **Supabase** — a `supabase/migrations/` file; no superuser needed (see above). See `stash-supabase`.
+- **Raw SQL / plain PostgreSQL** — the recipes in this skill, in whatever migration tool owns the schema. Never ad-hoc in production.
 
 ## When to Create Indexes During an Encryption Rollout
 

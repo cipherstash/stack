@@ -74,11 +74,35 @@ No **Exposed schemas** change is needed: the column domains and their
 operators live in `public`, so bare `col = term` filters resolve under
 Supabase's default PostgREST configuration. Do not expose `eql_v3_internal`.
 
-Encrypted columns can and should be **indexed** on Supabase — index creation
-needs no superuser (only the ORE opclass behind the `_ord_ore` domains is
-restricted; the default equality / ordering / match / containment indexes all
-work as a normal role). Put the `CREATE INDEX` statements in a
-`supabase/migrations/` file; recipes in the `stash-indexing` skill.
+### Indexing encrypted columns (no superuser needed)
+
+Encrypted columns can and should be **indexed** on Supabase. Index creation
+needs no superuser — only the ORE opclass behind the `_ord_ore` domains is
+restricted (and those domains are disabled on non-superuser installs anyway);
+the default equality / ordering / match / containment indexes all install as
+a normal role. Do not read the ORE warning as "encrypted columns can't be
+indexed on Supabase."
+
+Put the `CREATE INDEX` statements in a `supabase/migrations/` file, one index
+per capability the column's domain carries:
+
+```sql
+-- eql_v3_text_eq / eql_v3_text_search: equality
+CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(email));
+-- eql_v3_<t>_ord / eql_v3_text_search: ordering + range (serves = too on _ord)
+CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_at));
+-- eql_v3_text_match / eql_v3_text_search: free-text match
+CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));
+-- eql_v3_json_search: containment
+CREATE INDEX users_profile_json
+  ON users USING gin (eql_v3.to_ste_vec_query(profile)::jsonb jsonb_path_ops);
+
+ANALYZE users;
+```
+
+The `ANALYZE` is part of the recipe — an expression index has no statistics
+until it runs. For the full model (which domains take which index, engagement
+rules, `EXPLAIN` verification, rollout timing), see the `stash-indexing` skill.
 
 ### 2. Database schema (per-domain columns)
 

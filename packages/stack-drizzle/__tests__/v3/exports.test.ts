@@ -8,6 +8,7 @@ const PUBLIC_SURFACE = [
   'EncryptionOperatorError',
   'EqlV3CodecError',
   'createEncryptionOperatorsV3',
+  'encryptedIndexes',
   'extractEncryptionSchemaV3',
   'getEqlV3Column',
   'isEqlV3Column',
