@@ -937,7 +937,11 @@ export async function Encryption(
   // `eqlVersion: 2` over v3 schemas gets the nominal client for that deliberate,
   // low-level v2-wire migration path (the typed client cannot encrypt v3 columns
   // in v2 mode anyway).
-  return isV3Only && eqlVersion === 3
-    ? typedClient(result.data, ...(schemas as unknown as readonly AnyV3Table[]))
-    : result.data
+  if (isV3Only && eqlVersion === 3) {
+    // biome-ignore lint/plugin: the runtime `isV3Only` guard (every schema has
+    // buildColumnKeyMap) proves these are AnyV3Table — the compiler can't see it.
+    const v3Schemas = schemas as unknown as readonly AnyV3Table[]
+    return typedClient(result.data, ...v3Schemas)
+  }
+  return result.data
 }
