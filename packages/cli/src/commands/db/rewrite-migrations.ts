@@ -95,6 +95,27 @@ const ALTER_COLUMN_TO_ENCRYPTED_RE = new RegExp(
 const NEAR_MISS_RE =
   /[^;]*?\bSET\s+DATA\s+TYPE\b[^;]*?\beql_v[23][a-z0-9_]*[^;]*?;/gi
 
+/**
+ * Blank lines and `--` line comments (including drizzle-kit's
+ * `--> statement-breakpoint`) at the head of a {@link NEAR_MISS_RE} match.
+ *
+ * That regex opens with a lazy `[^;]*?`, whose only left boundary is the
+ * previous `;` — or the start of the file when there is no preceding statement.
+ * So the raw match drags in every comment and blank line since then, and a
+ * near-miss in a file that opens with a comment block gets reported to the user
+ * with that whole block glued to its front. Strip the preamble so the statement
+ * we quote back reads as the offending statement alone.
+ *
+ * Only line comments are handled — `/* … *\/` block comments are not something
+ * drizzle-kit emits, and a stray one costs cosmetics, not correctness.
+ */
+const STATEMENT_PREAMBLE_RE = /^(?:[^\S\n]*(?:--[^\n]*)?\n)+/
+
+/** Drop the leading blank/comment lines a `[^;]*?`-anchored match dragged in. */
+function trimStatementPreamble(statement: string): string {
+  return statement.replace(STATEMENT_PREAMBLE_RE, '').trim()
+}
+
 /** A statement the sweep recognised as ALTER-to-encrypted but did NOT rewrite. */
 export interface SkippedAlter {
   /** Absolute path of the migration file the statement lives in. */
@@ -189,7 +210,10 @@ export async function rewriteEncryptedAlterColumns(
     // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
     // that fails at migrate time.
     for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
-      skipped.push({ file: filePath, statement: nearMiss[0].trim() })
+      skipped.push({
+        file: filePath,
+        statement: trimStatementPreamble(nearMiss[0]),
+      })
     }
   }
 

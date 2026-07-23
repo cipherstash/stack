@@ -6,11 +6,9 @@
  */
 
 import { execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
 import * as p from '@clack/prompts'
 import type { GatheredContext } from './gather.js'
-import { rewriteEncryptedAlterColumns } from './rewrite-migrations.js'
+import { sweepMigrationDirs } from './rewrite-migrations.js'
 import type { DetectedPackageManager, Integration } from './types.js'
 
 interface PostAgentOptions {
@@ -21,8 +19,10 @@ interface PostAgentOptions {
 }
 
 /**
- * Candidate directories drizzle-kit may write migrations to. We check in
- * order and rewrite the first one that exists; `drizzle` is the default.
+ * Candidate directories drizzle-kit may write migrations to. `drizzle` is the
+ * default, but a project's configured `out` is not discoverable from here, so
+ * every candidate that exists is swept — see {@link sweepMigrationDirs} for why
+ * stopping at the first one loses migrations.
  */
 const DRIZZLE_OUT_DIRS = ['drizzle', 'migrations', 'src/db/migrations']
 
@@ -115,34 +115,29 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
 }
 
 async function rewriteEncryptedMigrations(cwd: string): Promise<void> {
-  for (const dir of DRIZZLE_OUT_DIRS) {
-    const abs = resolve(cwd, dir)
-    if (!existsSync(abs)) continue
+  const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
 
-    try {
-      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(abs)
-      if (rewritten.length > 0) {
-        p.log.info(
-          `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to use ADD+DROP+RENAME for encrypted columns.`,
-        )
-        for (const file of rewritten) p.log.step(`  - ${file}`)
-        p.log.warn(
-          'This rewrite is data-destroying — safe only on an EMPTY table. If any of these tables already have rows, do NOT run the migration; use the staged `stash encrypt` flow (add -> backfill via @cipherstash/stack -> cutover -> drop) instead. See the comments in the rewritten SQL.',
-        )
-      }
-      if (skipped.length > 0) {
-        p.log.warn(
-          `${skipped.length} statement(s) look like an ALTER-to-encrypted the rewrite could not safely repair (e.g. a hand-authored SET DATA TYPE ... USING ...). Review them before migrating:`,
-        )
-        for (const s of skipped) p.log.step(`  - ${s.file}: ${s.statement}`)
-      }
-      // Only rewrite the first dir that matches — running again on a
-      // different candidate would double-transform already-rewritten SQL.
-      return
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      p.log.warn(`Could not rewrite migrations in ${dir}: ${message}`)
-      return
+  for (const { dir, rewritten, skipped, error } of results) {
+    if (error) {
+      p.log.warn(`Could not rewrite migrations in ${dir}: ${error}`)
+      continue
+    }
+
+    if (rewritten.length > 0) {
+      p.log.info(
+        `Rewrote ${rewritten.length} migration file(s) in ${dir}/ to use ADD+DROP+RENAME for encrypted columns.`,
+      )
+      for (const file of rewritten) p.log.step(`  - ${file}`)
+      p.log.warn(
+        'This rewrite is data-destroying — safe only on an EMPTY table. If any of these tables already have rows, do NOT run the migration; use the staged `stash encrypt` flow (add -> backfill via @cipherstash/stack -> cutover -> drop) instead. See the comments in the rewritten SQL.',
+      )
+    }
+
+    if (skipped.length > 0) {
+      p.log.warn(
+        `${skipped.length} statement(s) look like an ALTER-to-encrypted the rewrite could not safely repair (e.g. a hand-authored SET DATA TYPE ... USING ...). Review them before migrating:`,
+      )
+      for (const s of skipped) p.log.step(`  - ${s.file}: ${s.statement}`)
     }
   }
 }
