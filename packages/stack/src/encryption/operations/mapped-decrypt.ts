@@ -22,6 +22,10 @@ type UnderlyingDecryptOperation<In> = EncryptionOperation<In> & {
 export interface AuditableDecryptModelOperation<Out>
   extends EncryptionOperation<Out> {
   audit(config: AuditConfig): this
+  /**
+   * @throws if the operation already took a lock context positionally — bind it
+   * once, either positionally or by chaining.
+   */
   withLockContext(
     lockContext: LockContextInput,
   ): AuditableDecryptModelOperation<Out>
@@ -45,7 +49,10 @@ export interface AuditableDecryptModelOperation<Out>
  *   audit data forward, and `.withLockContext().audit()` propagates because the
  *   wrapper forwards `.audit()` onto the now-lock-bound underlying op.
  * - `.withLockContext()` rebuilds the wrapper over `underlying.withLockContext(lc)`,
- *   preserving the same `map` and unknown-table failure.
+ *   preserving the same `map` and unknown-table failure. It throws if the
+ *   underlying op is already lock-bound (a positional lock context followed by a
+ *   chained one), because the wrapper — unlike the nominal path — still exposes
+ *   the method after binding, so the second call would otherwise be dropped.
  * - `execute()` never throws: an unknown table (no `map`) returns the precomputed
  *   `failure` Result, and `map` is a precomputed reconstructor — pure, no
  *   `build()` — so it cannot reject the Result contract.
@@ -71,12 +78,21 @@ export class MappedDecryptOperation<In, Out> extends EncryptionOperation<Out> {
   withLockContext(
     lockContext: LockContextInput,
   ): MappedDecryptOperation<In, Out> {
-    // A lock-bound underlying op exposes no `withLockContext`; there is nothing
-    // to re-bind, so keep the current underlying op.
-    const bound = this.underlying.withLockContext
-      ? this.underlying.withLockContext(lockContext)
-      : this.underlying
-    return new MappedDecryptOperation(bound, this.map, this.unknownTableFailure)
+    // A lock-bound underlying op exposes no `withLockContext` — it has already
+    // consumed its context. Unlike the nominal path, where the method is simply
+    // absent after binding, the wrapper always exposes it, so a second bind
+    // type-checks. Silently keeping the first would drop the caller's intent and
+    // surface later as an opaque ZeroKMS rejection; reject it here instead.
+    if (!this.underlying.withLockContext) {
+      throw new Error(
+        '[encryption]: this decrypt operation is already bound to a lock context. Pass the lock context positionally OR chain .withLockContext() — not both.',
+      )
+    }
+    return new MappedDecryptOperation(
+      this.underlying.withLockContext(lockContext),
+      this.map,
+      this.unknownTableFailure,
+    )
   }
 
   override async execute(): Promise<Result<Out, EncryptionError>> {

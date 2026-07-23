@@ -1,9 +1,11 @@
 /**
- * Pure unit tests for the two client-shape helpers that bridge the nominal
- * `EncryptionClient` (chainable, carries `.audit()`) and the typed client from
- * `EncryptionV3` (plain `Promise<Result>`). Both branches were previously only
- * reachable through a live ZeroKMS decrypt; these move that assurance onto the
- * pure CI lane. No credentials, no network.
+ * Pure unit tests for the two client-shape helpers behind the DynamoDB adapter's
+ * decrypt path. Both shipped clients — nominal `EncryptionClient` and the typed
+ * EQL v3 client (whose decrypt returns a `MappedDecryptOperation`) — are
+ * chainable and carry `.audit()`; the bare-promise branch remains only for a
+ * non-conforming custom client. Every branch was previously reachable only
+ * through a live ZeroKMS decrypt; these move that assurance onto the pure CI
+ * lane. No credentials, no network.
  */
 import type { Result } from '@byteslice/result'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -22,7 +24,7 @@ afterEach(() => {
 })
 
 describe('resolveDecryptResult', () => {
-  it('awaits a plain promise when the operation has no .audit (typed client)', async () => {
+  it('awaits a plain promise when the operation has no .audit (custom client)', async () => {
     const result = await resolveDecryptResult(
       Promise.resolve({ data: { x: 1 } }),
       { metadata: { ignored: true } },
@@ -80,6 +82,27 @@ describe('resolveDecryptResult', () => {
       expect(spy).toHaveBeenCalledWith(
         expect.stringContaining('audit metadata ignored'),
       )
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('does not blame the typed client in the dropped-metadata message', async () => {
+    // Both shipped clients now carry `.audit()` on decrypt, so this branch is
+    // reachable only from a non-conforming custom client. The message used to
+    // tell the reader to switch to `Encryption({ config: { eqlVersion: 3 } })`
+    // for audited decrypts, which is no longer true of any shipped client.
+    const spy = vi.spyOn(logger, 'debug').mockImplementation(() => {})
+
+    try {
+      await resolveDecryptResult(Promise.resolve({ data: { x: 1 } }), {
+        metadata: { m: 42 },
+      })
+
+      const message = spy.mock.calls.at(-1)?.[0] as string
+      expect(message).not.toMatch(/eqlVersion/)
+      expect(message).not.toMatch(/EncryptionV3/)
+      expect(message).not.toMatch(/typed client/)
     } finally {
       spy.mockRestore()
     }
