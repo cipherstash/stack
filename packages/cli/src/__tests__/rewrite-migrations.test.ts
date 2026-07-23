@@ -424,6 +424,66 @@ describe('rewriteEncryptedAlterColumns', () => {
     expect(fs.readFileSync(filePath, 'utf-8')).toBe(original)
   })
 
+  // A near-miss is quoted back to the user verbatim, so it must read as the
+  // offending statement alone. NEAR_MISS_RE opens with a lazy `[^;]*?`, which
+  // can only be bounded by the previous `;` — so without an explicit trim the
+  // reported "statement" drags in every comment and blank line since then.
+  it('reports a near-miss without the file-leading comment block', async () => {
+    const statement =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;'
+    const filePath = path.join(tmpDir, '0022_preamble.sql')
+    fs.writeFileSync(
+      filePath,
+      [
+        '-- Custom SQL migration file, put your code below! --',
+        '-- Hand-converts the email column in place.',
+        '',
+        statement,
+        '',
+      ].join('\n'),
+    )
+
+    const { skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].statement).toBe(statement)
+  })
+
+  it('reports a near-miss without a preceding statement-breakpoint marker', async () => {
+    const statement =
+      'ALTER TABLE "users" ALTER COLUMN "meta" SET DATA TYPE eql_v3_json USING (meta)::jsonb;'
+    const filePath = path.join(tmpDir, '0023_breakpoint-preamble.sql')
+    fs.writeFileSync(
+      filePath,
+      [
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY);',
+        '--> statement-breakpoint',
+        statement,
+        '',
+      ].join('\n'),
+    )
+
+    const { skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].statement).toBe(statement)
+  })
+
+  it('keeps a multi-line near-miss statement intact after the preamble trim', async () => {
+    const statement = [
+      'ALTER TABLE "users"',
+      '  ALTER COLUMN "email"',
+      '  SET DATA TYPE eql_v3_text_search USING (email)::eql_v3_text_search;',
+    ].join('\n')
+    const filePath = path.join(tmpDir, '0024_multiline.sql')
+    fs.writeFileSync(filePath, `-- leading note\n\n${statement}\n`)
+
+    const { skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(skipped).toHaveLength(1)
+    expect(skipped[0].statement).toBe(statement)
+  })
+
   it('reports no skipped statements for a clean file', async () => {
     const filePath = path.join(tmpDir, '0020_clean.sql')
     fs.writeFileSync(filePath, 'CREATE TABLE "t" ("id" integer);\n')
