@@ -136,6 +136,16 @@ jobs:
       - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
         run: pnpm --filter @cipherstash/prisma-next run typecheck
 
+      # `packages/bench` is a live importer of `@cipherstash/stack` and
+      # `@cipherstash/stack-drizzle`, but it has no `test` script (its suites
+      # need a database), so `pnpm run test` never reaches it and an adapter
+      # rename could break it unnoticed. Its `build` is `tsc --noEmit`, and
+      # turbo's `^build` builds the two adapters first. This also runs in the
+      # Bun job's full `turbo build`, but that job swallows its own test
+      # failures — the importer guard should not depend on it.
+      - name: Typecheck (bench — guards the stack/stack-drizzle importers)
+        run: pnpm exec turbo run build --filter @cipherstash/bench
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

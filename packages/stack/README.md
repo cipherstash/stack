@@ -362,7 +362,7 @@ The one limitation is the ORE-backed `*OrdOre` domains: their ordering term need
 
 ### Drizzle Integration
 
-The `@cipherstash/stack-drizzle/v3` subpath (of the separate `@cipherstash/stack-drizzle` package) provides Drizzle-native column factories, schema extraction, and auto-encrypting, capability-checked query operators.
+The separate `@cipherstash/stack-drizzle` package provides Drizzle-native column factories, schema extraction, and auto-encrypting, capability-checked query operators. It is EQL v3 only, all on the package root — the EQL v2 surface was removed and the old `./v3` subpath collapsed into `.`.
 
 Declare a Drizzle table using the `types` factories — each factory emits its domain as the column's SQL type, so `drizzle-kit generate` produces `ADD COLUMN email public.eql_v3_text_search` etc.:
 
@@ -371,9 +371,9 @@ import { pgTable, integer } from "drizzle-orm/pg-core"
 import { drizzle } from "drizzle-orm/postgres-js"
 import {
   types,
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
-} from "@cipherstash/stack-drizzle/v3"
+  createEncryptionOperators,
+  extractEncryptionSchema,
+} from "@cipherstash/stack-drizzle"
 import { EncryptionV3 } from "@cipherstash/stack/v3"
 
 // Capabilities come from the concrete type — no flags to configure.
@@ -389,9 +389,9 @@ const users = pgTable("users", {
 Derive the v3 schema from the table, build the typed client, and create the operators:
 
 ```ts
-const usersSchema = extractEncryptionSchemaV3(users)
+const usersSchema = extractEncryptionSchema(users)
 const client = await EncryptionV3({ schemas: [usersSchema] })
-const ops = createEncryptionOperatorsV3(client)
+const ops = createEncryptionOperators(client)
 
 const db = drizzle({ client: sqlClient })
 ```
@@ -762,9 +762,8 @@ depend on `@cipherstash/stack` (they are no longer subpaths of it):
 
 | Package | Provides |
 |-------|-----|
-| `@cipherstash/stack-drizzle/v3` | EQL v3 Drizzle integration: `types` column factories, `createEncryptionOperatorsV3`, `extractEncryptionSchemaV3`, `makeEqlV3Column`, `EncryptionOperatorError` |
+| `@cipherstash/stack-drizzle` | EQL v3 Drizzle integration (package root, v3 only): `types` column factories, `createEncryptionOperators`, `extractEncryptionSchema`, `makeEqlV3Column`, `EncryptionOperatorError` |
 | `@cipherstash/stack-supabase` | Supabase integration: `encryptedSupabaseV3` (and the legacy v2 `encryptedSupabase`) |
-| `@cipherstash/stack-drizzle` | Legacy EQL v2 Drizzle integration (root subpath): `encryptedType`, `extractEncryptionSchema`, `createEncryptionOperators` |
 
 ## Legacy: EQL v2
 
@@ -781,9 +780,11 @@ emitted by protect-ffi 0.30 and must migrate to v3 `types.Json`:
 - **Query formatting**: v2 query terms can be rendered as strings with
   `returnType: 'composite-literal'` / `'escaped-composite-literal'` for
   string-based APIs.
-- **Integrations**: the v2 Drizzle surface is the root of
-  `@cipherstash/stack-drizzle` (`encryptedType`, `extractEncryptionSchema`,
-  `createEncryptionOperators`); the v2 Supabase surface is `encryptedSupabase`.
+- **Integrations**: the v2 Supabase surface is `encryptedSupabase`. There is no
+  v2 Drizzle surface any more — `@cipherstash/stack-drizzle` dropped
+  `encryptedType` and the v2 operators, so existing v2 Drizzle columns are
+  read-only: decrypt them through `@cipherstash/stack` and migrate to a v3
+  domain.
 - **DynamoDB still requires v2**: `encryptedDynamoDB` from
   `@cipherstash/stack/dynamodb` works with the v2 API only — v3 support is
   tracked in [#657](https://github.com/cipherstash/stack/issues/657).

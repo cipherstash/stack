@@ -11,11 +11,11 @@ import { asc, type SQL } from 'drizzle-orm'
 import { type PgTable, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { makeEqlV3Column } from '../src/v3/column'
+import { makeEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
-} from '../src/v3/index.js'
+  createEncryptionOperators,
+  extractEncryptionSchema,
+} from '../src/index.js'
 
 /**
  * The Drizzle v3 adapter under real ZeroKMS ciphertext.
@@ -58,9 +58,9 @@ export function makeDrizzleAdapter(): IntegrationAdapter {
   let sqlClient: postgres.Sql
   let db: ReturnType<typeof drizzle>
   let client: Awaited<ReturnType<typeof EncryptionV3>>
-  let ops: ReturnType<typeof createEncryptionOperatorsV3>
+  let ops: ReturnType<typeof createEncryptionOperators>
   let table: AnyTable
-  let schema: ReturnType<typeof extractEncryptionSchemaV3>
+  let schema: ReturnType<typeof extractEncryptionSchema>
   let tableName: string
 
   const column = (slug: string) => table[slug]
@@ -140,7 +140,7 @@ export function makeDrizzleAdapter(): IntegrationAdapter {
         rowKey: text('row_key').primaryKey(),
         ...columns,
       })
-      schema = extractEncryptionSchemaV3(table)
+      schema = extractEncryptionSchema(table)
 
       // The DDL comes from the column builders, not from a hand-written list, so
       // a domain rename cannot silently desync the table from the schema.
@@ -158,7 +158,7 @@ export function makeDrizzleAdapter(): IntegrationAdapter {
       // The client must know this table's schema to encrypt for it. Rebuilt per
       // family, since each family has its own columns.
       client = await EncryptionV3({ schemas: [schema as never] })
-      ops = createEncryptionOperatorsV3(client)
+      ops = createEncryptionOperators(client)
     },
 
     async insertSingle(_spec: TableSpec, row: PlainRow) {

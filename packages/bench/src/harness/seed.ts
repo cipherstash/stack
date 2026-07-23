@@ -53,11 +53,10 @@ export async function seed(
     plaintexts.push(makePlaintextRow(rowsBefore + i))
   }
 
-  const encResult =
-    await h.encryptionClient.bulkEncryptModels<BenchPlaintextRow>(
-      plaintexts,
-      encryptionBenchTable,
-    )
+  const encResult = await h.encryptionClient.bulkEncryptModels(
+    plaintexts,
+    encryptionBenchTable,
+  )
   if (encResult.failure) {
     throw new Error(
       `[bench:seed] bulkEncryptModels failed: ${encResult.failure.message}`,
@@ -65,12 +64,12 @@ export async function seed(
   }
 
   // bulkEncryptModels returns rows keyed by the encryptedTable column names
-  // (snake_case here). Drizzle's `benchTable` uses camelCase TS field names —
-  // remap before insert.
+  // (snake_case here) with encrypted EQL v3 envelopes as values. Drizzle's
+  // `benchTable` uses camelCase TS field names — remap before insert.
   const encRows = encResult.data.map((r) => ({
-    encText: r.enc_text as unknown as string,
-    encInt: r.enc_int as unknown as number,
-    encJsonb: r.enc_jsonb as unknown as { idx: number; group: number },
+    encText: r.enc_text,
+    encInt: r.enc_int,
+    encJsonb: r.enc_jsonb,
   }))
 
   for (let i = 0; i < encRows.length; i += INSERT_BATCH) {

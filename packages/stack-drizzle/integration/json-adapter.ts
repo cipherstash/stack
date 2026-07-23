@@ -11,10 +11,10 @@ import { type PgTable, pgTable, text } from 'drizzle-orm/pg-core'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import {
-  createEncryptionOperatorsV3,
-  extractEncryptionSchemaV3,
+  createEncryptionOperators,
+  extractEncryptionSchema,
   types,
-} from '../src/v3/index.js'
+} from '../src/index.js'
 
 // biome-ignore lint/suspicious/noExplicitAny: the table name is supplied by the shared suite at runtime
 type AnyTable = any
@@ -26,7 +26,7 @@ export function makeDrizzleJsonAdapter(): JsonIntegrationAdapter {
   let tableName: string
   let table: AnyTable
   let client: Awaited<ReturnType<typeof EncryptionV3>>
-  let ops: ReturnType<typeof createEncryptionOperatorsV3>
+  let ops: ReturnType<typeof createEncryptionOperators>
 
   const rowsFor = async (
     where: SQL | undefined,
@@ -71,9 +71,9 @@ export function makeDrizzleJsonAdapter(): JsonIntegrationAdapter {
         rowKey: text('row_key').primaryKey(),
         document: types.Json('document'),
       })
-      const schema = extractEncryptionSchemaV3(table)
+      const schema = extractEncryptionSchema(table)
       client = await EncryptionV3({ schemas: [schema] })
-      ops = createEncryptionOperatorsV3(client)
+      ops = createEncryptionOperators(client)
 
       await sqlClient.unsafe(`DROP TABLE IF EXISTS ${tableName}`)
       await sqlClient.unsafe(`

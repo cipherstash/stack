@@ -1,12 +1,12 @@
 import { type SQL, sql } from 'drizzle-orm'
 import { integer, PgDialect, pgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it, vi } from 'vitest'
-import { getEqlV3Column, isEqlV3Column } from '../../src/v3/column'
+import { getEqlV3Column, isEqlV3Column } from '../src/column'
 import {
-  createEncryptionOperatorsV3,
+  createEncryptionOperators,
   EncryptionOperatorError,
-} from '../../src/v3/operators'
-import { types } from '../../src/v3/types'
+} from '../src/operators'
+import { types } from '../src/types'
 
 // A representative query TERM — what `client.encryptQuery` returns for a bigint
 // operand: a ciphertext-free term, deliberately NOT a plaintext bigint.
@@ -25,7 +25,7 @@ function chainable(result: unknown) {
 
 function setup() {
   const encryptQuery = vi.fn(() => chainable(Promise.resolve({ data: TERM })))
-  const ops = createEncryptionOperatorsV3({ encryptQuery })
+  const ops = createEncryptionOperators({ encryptQuery })
   const dialect = new PgDialect()
   const render = (s: SQL) => dialect.sqlToQuery(s)
   return { ops, encryptQuery, render }

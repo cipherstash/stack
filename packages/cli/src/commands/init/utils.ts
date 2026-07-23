@@ -279,13 +279,13 @@ ${columnDefs.join('\n')}
   createdAt: timestamp('created_at').defaultNow(),
 })
 
-const ${schemaVarName} = extractEncryptionSchemaV3(${varName})`
+const ${schemaVarName} = extractEncryptionSchema(${varName})`
   })
 
   const schemaVarNames = schemas.map((s) => `${toCamelCase(s.tableName)}Schema`)
 
   return `import { pgTable, integer, timestamp } from 'drizzle-orm/pg-core'
-import { types, extractEncryptionSchemaV3 } from '@cipherstash/stack-drizzle/v3'
+import { types, extractEncryptionSchema } from '@cipherstash/stack-drizzle'
 import { EncryptionV3 } from '@cipherstash/stack/v3'
 
 ${tableDefs.join('\n\n')}
@@ -389,7 +389,7 @@ const DRIZZLE_PLACEHOLDER = `/**
  * pointing at this file.
  *
  * This project uses EQL v3. Encrypted columns are concrete Postgres domains
- * built with the \`types.*\` factories from \`@cipherstash/stack-drizzle/v3\`.
+ * built with the \`types.*\` factories from \`@cipherstash/stack-drizzle\`.
  * Each domain's query capabilities are FIXED by the type you pick — there is
  * no capability config object. Choose the factory whose capabilities you need:
  *   types.Text / types.Integer / …     storage only (encrypt/decrypt, no queries)
@@ -404,7 +404,7 @@ const DRIZZLE_PLACEHOLDER = `/**
  * Encrypted twin column for an existing populated column (path 3 — lifecycle):
  *
  *   import { pgTable, integer, text } from 'drizzle-orm/pg-core'
- *   import { types } from '@cipherstash/stack-drizzle/v3'
+ *   import { types } from '@cipherstash/stack-drizzle'
  *
  *   export const users = pgTable('users', {
  *     id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -421,12 +421,12 @@ const DRIZZLE_PLACEHOLDER = `/**
  *
  * Once you have encrypted tables declared, harvest them and pass to EncryptionV3():
  *
- *   import { extractEncryptionSchemaV3 } from '@cipherstash/stack-drizzle/v3'
+ *   import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
  *   import { EncryptionV3 } from '@cipherstash/stack/v3'
  *   import { users, orders } from './db/schema'
  *
  *   export const encryptionClient = await EncryptionV3({
- *     schemas: [extractEncryptionSchemaV3(users), extractEncryptionSchemaV3(orders)],
+ *     schemas: [extractEncryptionSchema(users), extractEncryptionSchema(orders)],
  *   })
  */
 import { EncryptionV3 } from '@cipherstash/stack/v3'

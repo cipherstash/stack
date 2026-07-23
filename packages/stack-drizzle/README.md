@@ -9,7 +9,7 @@ Depends on `@cipherstash/stack`; install both:
 npm install @cipherstash/stack @cipherstash/stack-drizzle drizzle-orm
 ```
 
-## EQL v3 (`/v3` subpath)
+## Usage (EQL v3)
 
 Each encrypted column is a concrete `public.eql_v3_*` Postgres domain whose query
 capabilities are fixed by the `types.*` factory you choose — no per-column config
@@ -20,9 +20,9 @@ import { pgTable, integer } from 'drizzle-orm/pg-core'
 import { EncryptionV3 } from '@cipherstash/stack/v3'
 import {
   types as encryptedTypes,
-  extractEncryptionSchemaV3,
-  createEncryptionOperatorsV3,
-} from '@cipherstash/stack-drizzle/v3'
+  extractEncryptionSchema,
+  createEncryptionOperators,
+} from '@cipherstash/stack-drizzle'
 
 const users = pgTable('users', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -30,9 +30,9 @@ const users = pgTable('users', {
   age: encryptedTypes.IntegerOrd('age'),     // equality + order/range
 })
 
-const schema = extractEncryptionSchemaV3(users)
+const schema = extractEncryptionSchema(users)
 const client = await EncryptionV3({ schemas: [schema] })
-const ops = createEncryptionOperatorsV3(client)
+const ops = createEncryptionOperators(client)
 
 // Insert — encrypt models first
 const enc = await client.bulkEncryptModels(
@@ -59,20 +59,6 @@ For a `types.Json` column, `ops.selector(column, path)` supports encrypted
 comparisons and ordering at a scalar JSONPath leaf. For example,
 `.orderBy(await ops.selector(users.profile, '$.age').asc())` lowers to
 `ORDER BY eql_v3.ord_term(...)` over the selected encrypted entry.
-
-## EQL v2 (package root) — legacy
-
-The v2 integration predates the typed v3 domains and is kept for existing
-projects. New projects should use v3 above.
-
-```ts
-import { encryptedType, extractEncryptionSchema, createEncryptionOperators } from '@cipherstash/stack-drizzle'
-import { Encryption } from '@cipherstash/stack'
-```
-
-`encryptedType` defines an `eql_v2_encrypted` column; `createEncryptionOperators`
-returns query operators (`eq`, `like`, `gt`, `inArray`, …) that transparently
-encrypt search values.
 
 ## Docs
 
