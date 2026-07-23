@@ -80,10 +80,13 @@ function postprocessDecryptedRow(
  * than decrypted. To read v2 data, decrypt fetched rows with the core
  * `@cipherstash/stack` client, whose decrypt path is generation-agnostic.
  */
-export async function decryptResults<T extends Record<string, unknown>>(
+export async function decryptResults<
+  T extends Record<string, unknown>,
+  TData = T[],
+>(
   result: RawSupabaseResult,
   ctx: DecryptContext,
-): Promise<EncryptedSupabaseResponse<T[]>> {
+): Promise<EncryptedSupabaseResponse<TData>> {
   // If there's an error from Supabase, pass it through
   if (result.error) {
     return {
@@ -118,7 +121,7 @@ export async function decryptResults<T extends Record<string, unknown>>(
   if (!hasSelect && !hasMutationWithReturning) {
     // No select means no data to decrypt (e.g., insert without .select())
     return {
-      data: result.data as T[],
+      data: result.data as TData,
       error: null,
       count: result.count ?? null,
       status: result.status,
@@ -155,10 +158,12 @@ export async function decryptResults<T extends Record<string, unknown>>(
     }
 
     return {
+      // ONE row — `TData` is `T` on this path (`single`/`maybeSingle` narrow it),
+      // so no array wrapping and no cast pretending otherwise.
       data: postprocessDecryptedRow(
         decrypted.data as Record<string, unknown>,
         ctx,
-      ) as unknown as T[],
+      ) as TData,
       error: null,
       count: result.count ?? null,
       status: result.status,
@@ -170,7 +175,7 @@ export async function decryptResults<T extends Record<string, unknown>>(
   const dataArray = result.data as Record<string, unknown>[]
   if (dataArray.length === 0) {
     return {
-      data: [] as unknown as T[],
+      data: [] as TData,
       error: null,
       count: result.count ?? null,
       status: result.status,
@@ -196,7 +201,7 @@ export async function decryptResults<T extends Record<string, unknown>>(
   return {
     data: decrypted.data.map((row) =>
       postprocessDecryptedRow(row as Record<string, unknown>, ctx),
-    ) as unknown as T[],
+    ) as TData,
     error: null,
     count: result.count ?? null,
     status: result.status,
