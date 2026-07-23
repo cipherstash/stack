@@ -97,7 +97,7 @@ CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_
 CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));
 -- eql_v3_json_search: containment
 CREATE INDEX users_profile_json
-  ON users USING gin (eql_v3.to_ste_vec_query(profile)::jsonb jsonb_path_ops);
+  ON users USING gin ((eql_v3.to_ste_vec_query(profile)::jsonb) jsonb_path_ops);
 
 ANALYZE users;
 ```

@@ -394,7 +394,7 @@ After writing the migration, `--drizzle` sweeps the output directory for sibling
 
 #### `eql upgrade`
 
-The install SQL is idempotent. `upgrade` checks the current version, re-runs it, and reports the new one. If EQL isn't installed it points you at `eql install`. Same `--supabase`, `--exclude-operator-family`, `--eql-version`, `--latest`, `--dry-run`, `--database-url` flags.
+The install SQL is safe to re-run — columns and data survive — but it is not fully idempotent: it begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, which cascade-drops any **functional indexes** built on the `eql_v3` extractors (see `stash-indexing`). After an upgrade, re-run your index migrations and `ANALYZE`. `upgrade` checks the current version, re-runs the install SQL, and reports the new one. If EQL isn't installed it points you at `eql install`. Same `--supabase`, `--exclude-operator-family`, `--eql-version`, `--latest`, `--dry-run`, `--database-url` flags.
 
 #### `eql status`
 

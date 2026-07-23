@@ -97,7 +97,7 @@ For `public.eql_v3_json_search` (`types.Json`) document containment (`@>`):
 
 ```sql
 CREATE INDEX orders_data_gin
-  ON orders USING gin (eql_v3.to_ste_vec_query(data_encrypted)::jsonb jsonb_path_ops);
+  ON orders USING gin ((eql_v3.to_ste_vec_query(data_encrypted)::jsonb) jsonb_path_ops);
 ANALYZE orders;
 
 SELECT * FROM orders WHERE data_encrypted @> $1::eql_v3.query_json;
@@ -177,6 +177,8 @@ SELECT eql_v3.eq_term(encrypted_email), count(*)
 
 The term is small and deterministic, so `HashAggregate` fits in `work_mem` with no tuning. If an ORM insists on grouping the raw column, raising `work_mem` is the rescue knob — but the extractor form is the design.
 
+Pick the extractor the domain actually has: `eq_term` on the `hm`-carrying domains (`types.*Eq`, `types.TextOrd*`, `types.TextSearch`). The numeric/date/timestamp `types.*Ord` / `*OrdOre` domains have **no** `eq_term` — group on `eql_v3.ord_term(col)` (or `ord_term_ore(col)`); their ordering term is injective, so it is an exact grouping key, and the ordering btree covers it.
+
 ## Building Indexes at Scale
 
 Query performance and *build* performance are separate axes; on large encrypted tables the build is the one that bites.
@@ -232,12 +234,13 @@ Index not being used:
 
    ```sql
    SELECT encrypted_email::jsonb ? 'hm' AS has_hmac,
+          encrypted_email::jsonb ? 'op' AS has_ope,
           encrypted_email::jsonb ? 'ob' AS has_ore_block,
           encrypted_email::jsonb ? 'bf' AS has_bloom
    FROM users LIMIT 1;
    ```
 
-2. **Verify the operand is typed** (`$1` or `$1::public.eql_v3_text_eq` — not `$1::jsonb`).
+2. **Verify the operand is typed** (`$1` or `$1::eql_v3.query_text_eq` — not `$1::jsonb`, and not the column domain `public.eql_v3_text_eq`: query payloads are term-only, and the column domains' CHECK requires the ciphertext key `c` that query payloads deliberately omit).
 3. **Recreate the index** if the column's term composition changed after it was built.
 4. **Run `ANALYZE`.** Also note: on very small tables a `Seq Scan` is the *correct* plan — don't chase it below a few thousand rows.
 
@@ -258,6 +261,8 @@ Index not being used:
 
 - **Fresh encrypted column (new table or new field):** ship the `CREATE INDEX` in the **same migration** that adds the column. Every value written carries its terms from day one, so the index is correct from the first row.
 - **Encrypting an existing column** (the `stash encrypt` lifecycle): create the indexes **after `stash encrypt backfill` completes and before switching reads** to the encrypted column. Building after backfill is one bulk pass instead of per-row index maintenance across the whole backfill, and the reads you cut over to engage an index from the first query. Remember `ANALYZE` after the build. See `stash-encryption` § "Rolling Encryption Out to Production" for the full lifecycle.
+
+**These indexes do not survive an EQL reinstall or upgrade.** The install SQL begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, and every functional index on an extractor depends on that schema — so `stash eql upgrade` (or `eql install --force`, or re-applying the bundle by hand) cascade-drops all of them. Columns and data are untouched (the `public.eql_v3_*` domains deliberately don't depend on the `eql_v3` schema); only the indexes vanish, and queries fall back to sequential scans without erroring. After any EQL upgrade or reinstall, re-run your index migrations and `ANALYZE`, and confirm with the `EXPLAIN` checklist above.
 
 ## Reference
 
