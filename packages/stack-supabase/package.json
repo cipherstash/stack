@@ -51,7 +51,7 @@
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
 		"test:integration": "vitest run --config integration/vitest.config.ts",
-		"analyze:complexity": "fta src --score-cap 91"
+		"analyze:complexity": "fta src --score-cap 71"
 	},
 	"dependencies": {
 		"@cipherstash/stack": "workspace:*"
