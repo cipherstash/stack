@@ -81,7 +81,8 @@ export class MappedDecryptOperation<In, Out> extends EncryptionOperation<Out> {
 
   override async execute(): Promise<Result<Out, EncryptionError>> {
     if (!this.map) {
-      return this.unknownTableFailure
+      // Fresh Result so no two ops can alias (or mutate) a shared failure object.
+      return { failure: { ...this.unknownTableFailure.failure } }
     }
     const result = await this.underlying.execute()
     if (result.failure) {
