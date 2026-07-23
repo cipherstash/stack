@@ -149,6 +149,11 @@ jobs:
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
+      # Deleting or renaming a package leaves `packages/<name>` references
+      # dangling in docs and CI config. Nothing else catches it (#760 review).
+      - name: Lint — no references to deleted package directories
+        run: pnpm run lint:package-paths
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
@@ -361,7 +366,7 @@ jobs:
 
       - name: Run tests with Bun
         run: |
-          for dir in packages/stack packages/stack-forge; do
+          for dir in packages/stack; do
             if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/package.json" ]; then
               echo "--- Testing $dir ---"
               (cd "$dir" && bunx --bun vitest run) || true
