@@ -18,7 +18,7 @@
 
 import type { CodecInstanceContext } from '@prisma-next/framework-components/codec'
 import type { SqlCodecCallContext } from '@prisma-next/sql-relational-core/ast'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EncryptedBigInt } from '../../src/execution/envelope-bigint'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
@@ -221,6 +221,16 @@ describe('CipherstashV3CellCodec — decode', () => {
   const routedCtx = (table: string, name: string) =>
     ({ column: { table, name } }) as SqlCodecCallContext
 
+  // The routing-disagreement diagnostic uses console.warn; silence it here and
+  // assert on it where relevant so it neither pollutes output nor goes untested.
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
   it('parses JSONB text and constructs the per-castAs envelope with routing context', async () => {
     const sdk = emptySdk()
     const codec = codecFor(
@@ -300,6 +310,49 @@ describe('CipherstashV3CellCodec — decode', () => {
     const handle = (decoded as EncryptedString).expose()
     expect(handle.table).toBe('users')
     expect(handle.column).toBe('email')
+  })
+
+  it('warns once per distinct mismatch when the identifier disagrees with the projected column', async () => {
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    // Same mismatch twice → one warning (deduped, off the hot path).
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"a"}',
+      routedCtx('notes', 'body'),
+    )
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"b"}',
+      routedCtx('notes', 'body'),
+    )
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('users.email')
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('notes.body')
+
+    // A different mismatch warns again.
+    await codec.decode(
+      '{"i":{"t":"users","c":"ssn"},"c":"c"}',
+      routedCtx('notes', 'body'),
+    )
+    expect(warnSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not warn when the identifier agrees with the projected column', async () => {
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"a"}',
+      routedCtx('users', 'email'),
+    )
+    // …nor when there is no column context to disagree with (aggregates).
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"b"}',
+      {} as SqlCodecCallContext,
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 
   it('throws when the payload carries no identifier and there is no column context', async () => {

@@ -165,6 +165,10 @@ export class CipherstashV3CellCodec<
   // unregistered (the registry is add-only), so the WeakSet lookup is
   // paid once per codec rather than once per encoded cell.
   #middlewareCheckPassed = false
+  // Distinct `payload-identifier → projected-column` mismatches already
+  // warned about, so the routing-disagreement diagnostic fires once per
+  // distinct mismatch rather than once per decoded cell (see `decode`).
+  readonly #warnedRoutingDisagreements = new Set<string>()
 
   constructor(
     descriptor: AnyCodecDescriptor,
@@ -235,11 +239,30 @@ export class CipherstashV3CellCodec<
     // non-v3/malformed value the domain CHECK would have rejected on the
     // way in — so a well-routed query still decodes such a cell exactly
     // as it did before.
-    const routing =
-      routingKeyFromPayload(payload) ??
-      (ctx.column
-        ? { table: ctx.column.table, column: ctx.column.name }
-        : undefined)
+    const fromPayload = routingKeyFromPayload(payload)
+    const fromContext = ctx.column
+      ? { table: ctx.column.table, column: ctx.column.name }
+      : undefined
+
+    // Diagnostic, not a behaviour change. Routing by the payload identifier
+    // (below) is correct — ZeroKMS commits the cell key to it — but when the
+    // projected column disagrees, that is the signature of a value sitting in
+    // a column it was not encrypted for. Column-first routing used to surface
+    // that as a decrypt failure; identifier-first routing decrypts it by its
+    // true identity, so re-surface the lost signal. It WARNS rather than
+    // throws (and only once per distinct mismatch, off the hot path) because
+    // the same disagreement is the expected, benign shape of an
+    // un-re-encrypted column rename — the payload keeps its original `i`.
+    if (
+      fromPayload &&
+      fromContext &&
+      (fromPayload.table !== fromContext.table ||
+        fromPayload.column !== fromContext.column)
+    ) {
+      this.#warnRoutingDisagreement(fromPayload, fromContext)
+    }
+
+    const routing = fromPayload ?? fromContext
     if (!routing) {
       throw runtimeError(
         'RUNTIME.DECODE_FAILED',
@@ -263,6 +286,30 @@ export class CipherstashV3CellCodec<
       column: routing.column,
       sdk: this.#sdk,
     }) as E
+  }
+
+  /**
+   * Warn — once per distinct mismatch — that a decoded cell's EQL identifier
+   * names a different `(table, column)` than the column the query projected.
+   * Logs schema identifiers only (never plaintext or ciphertext). Mirrors the
+   * once-per-process `console.warn` diagnostic pattern used elsewhere in the
+   * stack (e.g. the deprecated-strategy warning in `@cipherstash/stack`).
+   */
+  #warnRoutingDisagreement(
+    fromPayload: { readonly table: string; readonly column: string },
+    fromContext: { readonly table: string; readonly column: string },
+  ): void {
+    const key = `${fromPayload.table}.${fromPayload.column}->${fromContext.table}.${fromContext.column}`
+    if (this.#warnedRoutingDisagreements.has(key)) return
+    this.#warnedRoutingDisagreements.add(key)
+    console.warn(
+      `[cipherstash] ${this.descriptor.codecId}: decoded a value whose EQL identifier ` +
+        `(${fromPayload.table}.${fromPayload.column}) differs from the projected column ` +
+        `(${fromContext.table}.${fromContext.column}). Routing by the identifier, which is ` +
+        'authoritative (ZeroKMS commits the cell key to it). This is expected after an ' +
+        'un-re-encrypted column rename; if you did not rename, it can indicate a value stored ' +
+        'in the wrong column. Warned once per distinct mismatch.',
+    )
   }
 
   encodeJson(_value: E): JsonValue {
