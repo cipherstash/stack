@@ -69,9 +69,11 @@ type ChainableEncryptOperation<T> = {
  * satisfy. The operation classes therefore cast to this shape at the call site
  * — the same split the Drizzle v3 operators use.
  *
- * `decryptModel` is intentionally untyped in its return: the nominal client
- * returns a chainable operation, the typed client a plain promise. See
- * `resolveDecryptResult`.
+ * `decryptModel` is intentionally untyped in its return: both shipped clients
+ * return a chainable operation, but different classes of one (the nominal
+ * client's `DecryptModelOperation`, the typed client's `MappedDecryptOperation`),
+ * and a custom client may return something else entirely. See
+ * `resolveDecryptResult`, which normalises all three.
  */
 export type CallableEncryptionClient = {
   encryptModel(

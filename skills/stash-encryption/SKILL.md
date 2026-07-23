@@ -1021,14 +1021,14 @@ Useful when the backfill needs to run in a worker, on a schedule, or alongside a
 | `encryptQuery` | `(plaintext, { table, column, queryType?, returnType? })` — queryable columns only; `queryType` constrained to the column's capabilities | `EncryptQueryOperation` |
 | `encryptQuery` | `(terms: readonly ScalarQueryTerm[])` — batch form | `BatchEncryptQueryOperation` |
 | `encryptModel` | `(model, table)` — schema fields validated against inferred plaintext types | `EncryptModelOperation<V3EncryptedModel<Table, T>>` |
-| `decryptModel` | `(model, table, lockContext?)` | `Promise<Result<V3DecryptedModel<Table, T>, EncryptionError>>` |
+| `decryptModel` | `(model, table, lockContext?)` | `AuditableDecryptModelOperation<V3DecryptedModel<Table, T>>` |
 | `bulkEncryptModels` | `(models, table)` | `BulkEncryptModelsOperation<V3EncryptedModel<Table, T>>` |
-| `bulkDecryptModels` | `(models, table, lockContext?)` | `Promise<Result<V3DecryptedModel<Table, T>[], EncryptionError>>` |
+| `bulkDecryptModels` | `(models, table, lockContext?)` | `AuditableDecryptModelOperation<V3DecryptedModel<Table, T>[]>` |
 | `bulkEncrypt` | `(plaintexts, { column, table })` — parity passthrough | `BulkEncryptOperation` |
 | `bulkDecrypt` | `(encryptedPayloads)` — parity passthrough | `BulkDecryptOperation` |
 | `getEncryptConfig` | `()` | The client's encrypt config |
 
-The encrypt-side operations are thenable (awaitable) and support `.withLockContext()` and `.audit()` chaining; `decryptModel`/`bulkDecryptModels` return plain promises and take the lock context as an argument.
+All of these operations are thenable (awaitable) and support `.withLockContext()` and `.audit()` chaining — including `decryptModel`/`bulkDecryptModels`, which also accept the lock context as a third argument. Use one or the other: chaining `.withLockContext()` onto a decrypt that already took a positional lock context throws.
 
 ### Schema Builders
 

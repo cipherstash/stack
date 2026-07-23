@@ -139,6 +139,28 @@ describe('typed v3 client: audit metadata forwards through decryptModel', () => 
     expect(lastCiphertextLockContext()).toEqual(IDENTITY_CLAIM)
   })
 
+  it('throws when a second lock context is chained onto an already-bound op', () => {
+    // The wrapper always exposes `withLockContext`, so a positional bind
+    // followed by a chained one type-checks. Silently keeping the first would
+    // drop the caller's intent (and fail later at ZeroKMS with an opaque
+    // rejection); reject the re-bind at the call site instead.
+    const op = client.decryptModel({ email: enc() }, users, IDENTITY_CLAIM)
+
+    expect(() => op.withLockContext({ identityClaim: ['other'] })).toThrow(
+      /already bound to a lock context/i,
+    )
+  })
+
+  it('throws on a re-bind for bulkDecryptModels too', () => {
+    const op = client.bulkDecryptModels([{ email: enc() }], users, {
+      identityClaim: ['sub'],
+    })
+
+    expect(() => op.withLockContext(IDENTITY_CLAIM)).toThrow(
+      /already bound to a lock context/i,
+    )
+  })
+
   it('forwards .audit({ metadata }) on bulkDecryptModels', async () => {
     unwrap(
       await client
