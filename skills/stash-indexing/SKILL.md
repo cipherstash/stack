@@ -19,19 +19,21 @@ This covers EQL v3 — the bundle `stash eql install` applies (`@cipherstash/eql
 
 ## Which Columns Support Which Index
 
-Capability is fixed by the column's domain type, chosen at schema definition via the `types.*` factories. `T` ranges over `Integer`, `Smallint`, `Bigint`, `Date`, `Timestamp`, `Numeric`, `Text`, `Real`, `Double`; `<t>` is the lowercase SQL name (`eql_v3_integer_eq`, `eql_v3_text_ord`, …).
+Capability is fixed by the column's domain type, chosen at schema definition via the `types.*` factories. `N` ranges over the numeric-and-time base types `Integer`, `Smallint`, `Bigint`, `Date`, `Timestamp`, `Numeric`, `Real`, `Double`; text is listed separately because its ordering domains behave differently (see the note below the table). `<t>` is the lowercase SQL name (`eql_v3_integer_eq`, `eql_v3_text_ord`, …).
 
 | Schema factory | Postgres domain | Terms carried | Index recipes |
 |---|---|---|---|
-| `types.TEq` | `public.eql_v3_<t>_eq` | `hm` | equality (`eq_term`) |
-| `types.TOrd` | `public.eql_v3_<t>_ord` | `op` | **one** ordering index (`ord_term`) — serves equality, range, and `ORDER BY` |
-| `types.TOrdOre` | `public.eql_v3_<t>_ord_ore` | `ob` | **one** ORE ordering index (`ord_term_ore`) — equality + range; superuser installs only |
+| `types.NEq`, `types.TextEq` | `public.eql_v3_<t>_eq` | `hm` | equality (`eq_term`) |
+| `types.NOrd` | `public.eql_v3_<t>_ord` | `op` | **one** ordering index (`ord_term`) — serves equality, range, and `ORDER BY` |
+| `types.NOrdOre` | `public.eql_v3_<t>_ord_ore` | `ob` | **one** ORE ordering index (`ord_term_ore`) — equality + range; superuser installs only |
+| `types.TextOrd` | `public.eql_v3_text_ord` | `hm`, `op` | equality (`eq_term`) **+** ordering (`ord_term`) — two indexes |
+| `types.TextOrdOre` | `public.eql_v3_text_ord_ore` | `hm`, `ob` | equality (`eq_term`) **+** ORE ordering (`ord_term_ore`; superuser) |
 | `types.TextMatch` | `public.eql_v3_text_match` | `bf` | free-text match (`match_term`) |
 | `types.TextSearch` | `public.eql_v3_text_search` | `hm`, `op`, `bf` | equality + ordering/range + match (three indexes) |
 | `types.Json` | `public.eql_v3_json_search` | `sv` (ste_vec) | containment GIN + field-level ordering |
-| `types.T` (bare), `types.Boolean` | `public.eql_v3_<t>` | none | **none — storage-only by design** |
+| bare `types.N` / `types.Text`, `types.Boolean` | `public.eql_v3_<t>` | none | **none — storage-only by design** |
 
-Note the `_ord` rows: those domains have **no `eq_term` overload at all** — `eql_v3.eq` on them inlines to an ordering-term comparison (`ord_term(a) = ord_term(b)`), so the single ordering btree is the index that serves `=` as well. Do not add an `eq_term` index to an `_ord` / `_ord_ore` column.
+**Why the numeric/text split**: the numeric-and-time ordering terms (OPE and ORE alike) are **injective** — distinct plaintexts produce distinct terms — so equality can ride the ordering term. Those domains carry no `hm`, the bundle defines **no `eq_term` overload** for them, and `eql_v3.eq` inlines to `ord_term(a) = ord_term(b)`: one ordering btree serves `=`, range, and `ORDER BY`. Text ordering terms are **non-injective** and cannot be relied on for equality, so `text_ord` / `text_ord_ore` also carry `hm` and answer `=` via `eq_term` — give those columns both indexes. Do not add an `eq_term` index to a numeric `_ord` / `_ord_ore` column; the overload does not exist.
 
 The last row is deliberate, not a gap: a bare `types.Text` / `types.Integer` / `types.Boolean` column carries no query terms, so there is nothing to index and nothing to query server-side. If a column needs an index, it needs a term-carrying domain first.
 
@@ -41,7 +43,7 @@ Every recipe is a functional index over the extractor, followed by `ANALYZE` (se
 
 ### Equality — `eql_v3.eq_term`
 
-For the domains carrying `hm`: `_eq` and `text_search`. (On `_ord` / `_ord_ore` columns, equality rides the ordering index below — there is no `eq_term` overload for those domains.)
+For the domains carrying `hm`: `_eq`, `text_ord`, `text_ord_ore`, and `text_search`. (On numeric/date/timestamp `_ord` / `_ord_ore` columns, equality rides the ordering index below instead — no `eq_term` overload exists for them.)
 
 ```sql
 CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(encrypted_email));
@@ -65,7 +67,7 @@ ANALYZE events;
 SELECT * FROM events WHERE encrypted_at < $1;
 ```
 
-`eql_v3.ord_term` returns a `bytea`-backed domain, so this btree binds PostgreSQL's **default** `bytea_ops` operator class — nothing to install, no privilege required, works on Supabase and managed Postgres. The `<` `<=` `>` `>=` operators inline to comparisons on the extractor, so natural-form range predicates match the index — and on `_ord` columns so does `=`, since equality on those domains also inlines to `ord_term`. One index, every scalar predicate. (`ORDER BY` needs the extractor form — see [Query-Shape Traps](#query-shape-traps).)
+`eql_v3.ord_term` returns a `bytea`-backed domain, so this btree binds PostgreSQL's **default** `bytea_ops` operator class — nothing to install, no privilege required, works on Supabase and managed Postgres. The `<` `<=` `>` `>=` operators inline to comparisons on the extractor, so natural-form range predicates match the index — and on the numeric/date/timestamp `_ord` domains so does `=`, since their injective ordering term also answers equality. One index, every scalar predicate. (A `text_ord` column answers `=` via `eq_term` instead — pair this index with the equality one. `ORDER BY` needs the extractor form — see [Query-Shape Traps](#query-shape-traps).)
 
 ### ORE Ordering — `eql_v3.ord_term_ore` (superuser installs only)
 
@@ -239,7 +241,7 @@ Index not being used:
 3. **Recreate the index** if the column's term composition changed after it was built.
 4. **Run `ANALYZE`.** Also note: on very small tables a `Seq Scan` is the *correct* plan — don't chase it below a few thousand rows.
 
-**`=` returns zero rows**: equality needs the domain's equality-serving term — `hm` on `_eq` / `text_search`, the ordering term (`op` / `ob`) on `_ord` / `_ord_ore`. A bare storage-only domain has neither; confirm the column's domain and that the client is emitting the term.
+**`=` returns zero rows**: equality needs the domain's equality-serving term — `hm` where the domain carries it (`_eq`, `text_ord`, `text_ord_ore`, `text_search`), the injective ordering term (`op` / `ob`) on the numeric/date/timestamp `_ord` / `_ord_ore` domains. A bare storage-only domain has neither; confirm the column's domain and that the client is emitting the term.
 
 **ORE index never engages:** run the `pg_opclass` query from the [superuser section](#supabase-and-managed-postgres-what-actually-needs-superuser) — a `record_ops` binding means the index is inert.
 

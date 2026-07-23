@@ -9,8 +9,11 @@ named `<table>_<column>_<capability>`, tracked by `drizzle-kit generate` like
 any other index. The mapping comes from the same per-domain capability record
 the operator layer gates on, so the emitted indexes and the operators that
 engage them cannot drift: equality → btree on `eql_v3.eq_term`, ordering →
-btree on `eql_v3.ord_term` (one index serves `=` and range on `_ord` domains,
-which have no `eq_term`), ORE ordering → `eql_v3.ord_term_ore`, free-text →
+btree on `eql_v3.ord_term` (on the numeric/date/timestamp `_ord` domains one
+index serves `=` and range — their injective ordering term answers equality
+and no `eq_term` overload exists; the non-injective `text_ord` / `text_ord_ore`
+also carry `hm` and get an `eq_term` index alongside), ORE ordering →
+`eql_v3.ord_term_ore`, free-text →
 GIN on `eql_v3.match_term`, encrypted JSON → GIN on
 `(eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops`. Storage-only and
 non-encrypted columns emit nothing. Closes the #753 gap where integrations

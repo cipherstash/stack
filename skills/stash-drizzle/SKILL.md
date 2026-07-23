@@ -396,9 +396,11 @@ The indexes are named `<table>_<column>_<capability>` and ride the normal `drizz
 
 | Column type | Indexes emitted |
 |---|---|
-| `types.TEq` | `<col>_eq` — btree on `eql_v3.eq_term` |
-| `types.TOrd` | `<col>_ord` — btree on `eql_v3.ord_term` (serves `=`, range, and `ORDER BY` — `_ord` domains have no `eq_term`) |
-| `types.TOrdOre` | `<col>_ord_ore` — btree on `eql_v3.ord_term_ore` (superuser installs only) |
+| `types.TextEq` / numeric `*Eq` | `<col>_eq` — btree on `eql_v3.eq_term` |
+| numeric/date/timestamp `*Ord` | `<col>_ord` — btree on `eql_v3.ord_term`; serves `=`, range, and `ORDER BY` (the injective ordering term answers equality — those domains have no `eq_term`) |
+| numeric/date/timestamp `*OrdOre` | `<col>_ord_ore` — btree on `eql_v3.ord_term_ore` (superuser installs only) |
+| `types.TextOrd` | `<col>_eq` **+** `<col>_ord` — text ordering terms are non-injective, so equality rides `eq_term` |
+| `types.TextOrdOre` | `<col>_eq` **+** `<col>_ord_ore` (superuser installs only) |
 | `types.TextMatch` | `<col>_match` — GIN on `eql_v3.match_term` |
 | `types.TextSearch` | `<col>_eq` + `<col>_ord` + `<col>_match` |
 | `types.Json` | `<col>_json` — GIN on `(eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops` |

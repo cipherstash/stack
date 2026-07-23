@@ -51,6 +51,8 @@ describe('encryptedIndexes', () => {
       email: types.TextEq('email'),
       createdOn: types.DateOrd('created_on'),
       weight: types.IntegerOrdOre('weight'),
+      title: types.TextOrd('title'),
+      slug: types.TextOrdOre('slug'),
       nickname: types.TextMatch('nickname'),
       bio: types.TextSearch('bio'),
       profile: types.Json('profile'),
@@ -65,13 +67,23 @@ describe('encryptedIndexes', () => {
       [
         // TextEq: hm
         'users_email_eq',
-        // DateOrd: op only — the bundle defines NO eq_term overload for the
-        // `_ord` domains; `eql_v3.eq` inlines to `ord_term(a) = ord_term(b)`,
-        // so the single ordering btree serves equality AND range. (Also pins
-        // the DB column name, `created_on`, over the `createdOn` property.)
+        // DateOrd: op only — numeric/date/timestamp ordering terms are
+        // INJECTIVE, so those `_ord` domains carry no hm, the bundle defines
+        // no eq_term overload for them, and `eql_v3.eq` inlines to
+        // `ord_term(a) = ord_term(b)`: the single ordering btree serves
+        // equality AND range. (Also pins the DB column name, `created_on`,
+        // over the `createdOn` property.)
         'users_created_on_ord',
         // IntegerOrdOre: ob only — same shape, via ord_term_ore
         'users_weight_ord_ore',
+        // TextOrd: hm + op — TEXT ordering terms are non-injective, so the
+        // domain carries hm too and equality rides eq_term, not the ordering
+        // term. Two indexes.
+        'users_title_eq',
+        'users_title_ord',
+        // TextOrdOre: hm + ob — same split, ORE flavour
+        'users_slug_eq',
+        'users_slug_ord_ore',
         // TextMatch: bf only
         'users_nickname_match',
         // TextSearch: hm + op + bf

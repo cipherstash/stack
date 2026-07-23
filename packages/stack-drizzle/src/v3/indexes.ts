@@ -32,11 +32,15 @@ import { EQL_V3_FN_SCHEMA } from './sql-dialect.js'
  * - free-text match (`bf`) → `USING gin (eql_v3.match_term(col))`
  * - encrypted JSON         → `USING gin ((eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops)`
  *
- * A `text_search` column therefore yields three indexes; an `_ord` /
- * `_ord_ore` column yields ONE — the bundle defines no `eq_term` overload for
- * those domains (`eql_v3.eq` inlines to an ordering-term comparison), so the
- * single ordering btree serves `=` and range alike. A storage-only column
- * (bare `types.T`, `types.Boolean`) yields none — it carries no term.
+ * A `text_search` column therefore yields three indexes. The ordering domains
+ * split on term injectivity: numeric/date/timestamp ordering terms are
+ * injective, so those `_ord` / `_ord_ore` domains carry no `hm` — the bundle
+ * defines no `eq_term` overload for them and `eql_v3.eq` inlines to an
+ * ordering-term comparison, meaning ONE ordering btree serves `=` and range
+ * alike. Text ordering terms are non-injective, so `text_ord` /
+ * `text_ord_ore` carry `hm` too and yield an `eq_term` index alongside the
+ * ordering one. A storage-only column (bare `types.T`, `types.Boolean`)
+ * yields none — it carries no term.
  * Non-encrypted columns are ignored. Field-level selector indexes on
  * encrypted JSON cannot be derived here (the selector hash is data the
  * crypto layer emits, not schema) — declare those by hand; see the

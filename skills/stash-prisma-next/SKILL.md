@@ -161,7 +161,9 @@ One index per capability the column's domain carries:
 ```sql
 -- cipherstash.TextEq / TextSearch: equality
 CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(email));
--- cipherstash.*Ord / TextSearch: ordering + range (serves = too on _ord domains)
+-- cipherstash.*Ord / TextSearch: ordering + range (on numeric/date/timestamp
+-- _ord domains this one index serves = too; TextOrd needs the eq_term index
+-- above as well)
 CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_at));
 -- cipherstash.TextMatch / TextSearch: free-text match
 CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));

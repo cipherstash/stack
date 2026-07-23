@@ -89,7 +89,9 @@ per capability the column's domain carries:
 ```sql
 -- eql_v3_text_eq / eql_v3_text_search: equality
 CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(email));
--- eql_v3_<t>_ord / eql_v3_text_search: ordering + range (serves = too on _ord)
+-- eql_v3_<t>_ord / eql_v3_text_search: ordering + range (on numeric/date/
+-- timestamp _ord domains this one index serves = too; text_ord needs the
+-- eq_term index above as well)
 CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_at));
 -- eql_v3_text_match / eql_v3_text_search: free-text match
 CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));
