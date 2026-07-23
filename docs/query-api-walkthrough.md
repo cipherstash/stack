@@ -37,7 +37,7 @@ flowchart TD
 | # | Layer | Entry point | Role |
 |---|-------|-------------|------|
 | 1 | Public API | `encryption/index.ts:259/270` `encryptQuery()` | Overloaded: single value → `EncryptQueryOperation`; `ScalarQueryTerm[]` → `BatchEncryptQueryOperation`. |
-| 1a | Query builders | `drizzle/operators.ts:976`, `supabase/query-builder.ts:44` | `eq/gt/...` operators & deferred builders that batch-encrypt RHS values, then emit a WHERE clause. |
+| 1a | Query builders | `stack-drizzle/src/operators.ts`, `stack-supabase/src/query-builder.ts` | `eq/gt/...` operators & deferred builders that batch-encrypt RHS values, then emit a WHERE clause. |
 | 2 | Operations | `operations/encrypt-query.ts:41`, `operations/batch-encrypt-query.ts:115` | `execute()`: validate → resolve index → call FFI. `*WithLockContext` resolves `LockContextInput` via `resolveLockContext` before the FFI call. |
 | 3 | EQL resolution | `helpers/infer-index-type.ts:89`, `types.ts:292` | `resolveIndexType` + `queryTypeToFfi`/`queryTypeToQueryOp` map public `QueryTypeName` → FFI `indexType`/`queryOp`. |
 | 4 | FFI JS wrapper | `protect-ffi/lib/index.cjs:155` | `encryptQuery`/`encryptQueryBulk` → `wrapAsync(native.*)`. |
@@ -73,5 +73,5 @@ flowchart LR
 - **Client init:** `EncryptionClient.init()` (`encryption/index.ts:81`) calls FFI `newClient()` once; the returned `Client` handle is passed into every `encryptQuery` call.
 - **`cipherstashclient`** = the CipherStash Client **Rust SDK**, compiled via Neon into the platform `.node` binary inside `@cipherstash/protect-ffi`. It performs the actual crypto and talks to ZeroKMS.
 - **Result shape:** `EncryptedQueryResult` (`types.ts:175`); shaped by `formatEncryptedResult(..., returnType)` (`eql` vs raw).
-- **Version:** `package.json` pins `@cipherstash/protect-ffi@0.24.0` (installed tree observed at `0.23.0` — confirm before relying on it).
-- `packages/protect/src/ffi/*` mirrors this flow under the older `protect` package name.
+- **Version:** `packages/stack/package.json` pins `@cipherstash/protect-ffi@0.30.0` (`stack-drizzle` and `stack-supabase` pin the same version — they must move in lockstep).
+- **Paths:** rows 1–3 and the notes above are relative to `packages/stack/src/`; row 1a is rooted at `packages/`; rows 4–5 are inside the installed `@cipherstash/protect-ffi`. Line numbers drift — search the symbol, don't trust the offset.
