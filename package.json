@@ -21,7 +21,7 @@
   "license": "MIT",
   "scripts": {
     "build": "turbo build --filter './packages/*'",
-    "build:js": "turbo build --filter './packages/protect' --filter './packages/nextjs'",
+    "build:js": "turbo build --filter './packages/nextjs'",
     "changeset": "changeset",
     "changeset:version": "changeset version",
     "changeset:publish": "changeset publish",
@@ -29,6 +29,7 @@
     "clean": "rimraf --glob **/.next **/.turbo **/dist **/node_modules",
     "code:fix": "biome check --write",
     "code:check": "biome check",
+    "lint:package-paths": "node scripts/lint-no-dead-package-paths.mjs",
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
     "lint:workflow-cache": "node scripts/lint-no-workflow-caching.mjs",
     "release": "pnpm run build && changeset publish",

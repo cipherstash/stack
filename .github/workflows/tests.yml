@@ -139,17 +139,13 @@ jobs:
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 
+      # Deleting or renaming a package leaves `packages/<name>` references
+      # dangling in docs and CI config. Nothing else catches it (#760 review).
+      - name: Lint — no references to deleted package directories
+        run: pnpm run lint:package-paths
+
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
-
-      - name: Create .env file in ./packages/protect/
-        run: |
-          touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
 
       - name: Create .env file in ./packages/stack/
         run: |
@@ -159,14 +155,6 @@ jobs:
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
-
-      - name: Create .env file in ./packages/protect-dynamodb/
-        run: |
-          touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
 
       # Run TurboRepo tests
       - name: Run tests
@@ -353,15 +341,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Create .env file in ./packages/protect/
-        run: |
-          touch ./packages/protect/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/protect/.env
-
       - name: Create .env file in ./packages/stack/
         run: |
           touch ./packages/stack/.env
@@ -371,21 +350,13 @@ jobs:
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
           echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
 
-      - name: Create .env file in ./packages/protect-dynamodb/
-        run: |
-          touch ./packages/protect-dynamodb/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/protect-dynamodb/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/protect-dynamodb/.env
-
       # Build with Node (turbo/tsup need Node), then run tests with Bun
       - name: Build packages
         run: pnpm turbo build --filter './packages/*'
 
       - name: Run tests with Bun
         run: |
-          for dir in packages/schema packages/protect packages/stack packages/protect-dynamodb packages/stack-forge; do
+          for dir in packages/stack; do
             if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/package.json" ]; then
               echo "--- Testing $dir ---"
               (cd "$dir" && bunx --bun vitest run) || true
