@@ -68,16 +68,21 @@ export async function resolveColumnLifecycle(
 
 /**
  * Explain a failed resolution (`info === null`) to the user, or return
- * `null` when the failure is fine to fall through to the v2 lifecycle:
+ * `null` when the failure is fine to fall through to the v2 lifecycle.
  *
- * - No EQL columns at all → the v2 phase/config preconditions produce the
- *   accurate error ("not backfilled", "no pending config", …).
- * - The plaintext column ITSELF carries the v2 domain → the normal
- *   post-cutover v2 state (`<col>` was renamed onto the ciphertext), where
- *   "no counterpart" is expected, not a problem.
+ * The one fall-through case is "no EQL columns at all", which the v2
+ * phase/config preconditions turn into an accurate error ("not backfilled",
+ * "no pending config", …). Since `classifyEqlDomain` recognises `eql_v3_*`
+ * only, that case now also covers the post-cutover v2 state — `<col>` was
+ * renamed onto the ciphertext, and its `eql_v2_encrypted` domain is no longer
+ * classified, so the column never appears as a candidate. (It used to arrive
+ * here as a `version: 2` candidate and needed its own exemption.)
  *
- * Anything else means EQL columns exist but none is identifiable — the
- * caller must fail closed with this message rather than guess a lifecycle.
+ * A non-empty candidate list therefore means EQL v3 columns exist but none is
+ * identifiable — the caller must fail closed with this message rather than
+ * guess a lifecycle, including when one candidate happens to share the
+ * plaintext column's name (v3 has no cut-over rename, so that is not the
+ * post-cutover state).
  */
 export function explainUnresolved(
   table: string,
@@ -85,9 +90,6 @@ export function explainUnresolved(
   candidates: readonly EncryptedColumnInfo[],
 ): string | null {
   if (candidates.length === 0) return null
-  if (candidates.some((c) => c.column === column && c.version === 2)) {
-    return null
-  }
   const listed = candidates
     .map((c) => `  - ${c.column} (${c.domain})`)
     .join('\n')
