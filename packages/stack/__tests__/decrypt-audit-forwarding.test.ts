@@ -12,7 +12,7 @@
  *
  * Credential-free: protect-ffi is mocked, so there is no ZeroKMS round-trip.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Encryption } from '@/index'
 
 // A protect-ffi-shaped encrypted payload so the SDK's `isEncryptedPayload`
@@ -67,11 +67,23 @@ const lastCiphertextLockContext = () =>
   lastDecryptOpts().ciphertexts[0]?.lockContext
 
 let client: Awaited<ReturnType<typeof Encryption<readonly [typeof users]>>>
+let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  prevWorkspaceCrn = process.env.CS_WORKSPACE_CRN
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
   client = await Encryption({ schemas: [users] })
+})
+
+afterEach(() => {
+  // Restore the prior value so this suite doesn't leak env state into other
+  // Vitest suites sharing the worker.
+  if (prevWorkspaceCrn === undefined) {
+    delete process.env.CS_WORKSPACE_CRN
+  } else {
+    process.env.CS_WORKSPACE_CRN = prevWorkspaceCrn
+  }
 })
 
 describe('typed v3 client: audit metadata forwards through decryptModel', () => {
