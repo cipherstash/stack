@@ -77,6 +77,152 @@ export function resolveEncryptColumnMap(table: BuildableTable): {
   return { columnPaths, toColumnName: (path) => path }
 }
 
+// ---------------------------------------------------------------------------
+// The non-mutating walk (#742 review)
+// ---------------------------------------------------------------------------
+//
+// The previous walk shallow-copied the model (`{ ...model }`) and then
+// `delete`d each matched field out of the copy. Because a shallow copy shares
+// every nested object with the caller, that `delete` mutated the CALLER's
+// input — and on a decrypt the sibling rebuild wrote decrypted PLAINTEXT back
+// into the object the caller believed was still encrypted. Locating the field
+// to delete meant re-`split('.')`-ing the dotted key and walking from the copy,
+// which crashed (or leaked plaintext) on a literal flat dotted key and could
+// reach `Object.prototype` via a `__proto__.x` key.
+//
+// This builder never touches the input. It returns a FRESH tree that omits the
+// operation fields and keeps nulls / passthrough values in place, so:
+//  - the caller's model is never mutated (no shared nested object is written);
+//  - a literal flat dotted key is simply omitted, not re-split — no crash, no
+//    surviving plaintext, no `Object.prototype` reach;
+//  - nulls stay where they sit, so a dotted null key no longer materialises a
+//    phantom nested object on rebuild (the rebuild no longer re-applies a
+//    separate null map).
+
+/**
+ * True only for a plain object (`{}` / `Object.create(null)`) or an array —
+ * the containers the walk descends into and clones. A `Date`, or any other
+ * class instance, is NOT a container: cloning it by iterating its enumerable
+ * keys would rebuild it as an empty `{}` (a `Date` has none), destroying the
+ * value. Those pass through by reference instead (they are never mutated).
+ */
+function isPlainContainer(value: object): boolean {
+  if (Array.isArray(value)) return true
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+interface WalkHooks {
+  /** True when this field should be handed to the FFI (a schema column on
+   *  encrypt, an EQL payload on decrypt) and omitted from the passthrough
+   *  tree. */
+  isOperationField: (fullKey: string, value: unknown) => boolean
+  /** True when the walk should descend into this object because a schema
+   *  column lives under it (always true on the schema-blind decrypt walk). */
+  shouldRecurse: (fullKey: string) => boolean
+  /** Receives each operation field in visit order. */
+  onOperationField: (fullKey: string, value: unknown) => void
+}
+
+/**
+ * Reject a top-level model that is not a plain record. A shallow-spread of a
+ * string (`{ ...'x@y' }`) explodes into a char-indexed object and a
+ * number/boolean into `{}`, which the old walk returned as a successful (but
+ * silently wrong) result; fail loudly instead (#742 review).
+ */
+function assertModelObject(
+  model: unknown,
+): asserts model is Record<string, unknown> {
+  if (typeof model !== 'object' || model === null || Array.isArray(model)) {
+    throw new Error('[encryption]: each model must be a non-null object')
+  }
+}
+
+/**
+ * Pre-FFI guards for a value about to be encrypted from the model path (the
+ * single/query paths guard at their own boundary). Out-of-range numbers and an
+ * invalid `Date` (`new Date(NaN)`) are rejected here, per field, so the failure
+ * names the column rather than surfacing as one coordinate-less batch error
+ * from inside the FFI.
+ */
+function assertEncryptableValue(value: unknown, fullKey: string): void {
+  assertValidNumericValue(value)
+  if (value instanceof Date && Number.isNaN(value.getTime())) {
+    throw new Error(
+      `[encryption]: field "${fullKey}" is an invalid Date and cannot be encrypted`,
+    )
+  }
+}
+
+/**
+ * Walk `obj`, returning a fresh passthrough tree that OMITS every operation
+ * field and streams those fields to `hooks.onOperationField` in visit order.
+ * Arrays are preserved as arrays. Never mutates `obj`.
+ */
+function buildPassthroughTree(
+  obj: Record<string, unknown>,
+  prefix: string,
+  hooks: WalkHooks,
+): unknown {
+  const out: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(obj)) {
+    const fullKey = prefix ? `${prefix}.${key}` : key
+
+    // Nulls carry no schema meaning and are never an operation — keep them in
+    // place so the output shape matches the input exactly.
+    if (value === null || value === undefined) {
+      out[key] = value
+      continue
+    }
+
+    if (hooks.isOperationField(fullKey, value)) {
+      hooks.onOperationField(fullKey, value)
+      // Omitted from `out`; the caller places the FFI result back here.
+      continue
+    }
+
+    if (
+      typeof value === 'object' &&
+      isPlainContainer(value) &&
+      !isEncryptedPayload(value) &&
+      hooks.shouldRecurse(fullKey)
+    ) {
+      out[key] = buildPassthroughTree(
+        value as Record<string, unknown>,
+        fullKey,
+        hooks,
+      )
+    } else {
+      // Passthrough: a scalar, a Date / class instance, an already-encrypted
+      // payload the schema didn't claim, or a plain object with no schema
+      // column beneath it. Not mutated, so sharing the reference is safe.
+      out[key] = value
+    }
+  }
+
+  // Preserve array shape. An operation field inside an array is omitted,
+  // leaving a hole at that index; the caller sets the FFI result back by path.
+  if (Array.isArray(obj)) {
+    const arr: unknown[] = []
+    for (const [key, value] of Object.entries(out)) {
+      arr[Number(key)] = value
+    }
+    return arr
+  }
+  return out
+}
+
+/** Recurse into an object only when a schema column lives at or under it. */
+function encryptShouldRecurse(
+  columnPaths: readonly string[],
+): (fullKey: string) => boolean {
+  return (fullKey) =>
+    columnPaths.some(
+      (path) => path === fullKey || path.startsWith(`${fullKey}.`),
+    )
+}
+
 /**
  * Helper function to prepare fields for decryption
  */
@@ -88,44 +234,26 @@ export function prepareFieldsForDecryption<T extends Record<string, unknown>>(
   keyMap: Record<string, string>
   nullFields: Record<string, null | undefined>
 } {
-  const otherFields = { ...model } as Record<string, unknown>
+  assertModelObject(model)
   const operationFields: Record<string, unknown> = {}
-  const nullFields: Record<string, null | undefined> = {}
   const keyMap: Record<string, string> = {}
   let index = 0
 
-  const processNestedFields = (obj: Record<string, unknown>, prefix = '') => {
-    for (const [key, value] of Object.entries(obj)) {
-      const fullKey = prefix ? `${prefix}.${key}` : key
+  // Top-level model is a non-array object (asserted above), so the tree is a
+  // Record; `buildPassthroughTree` returns `unknown` only to type its array arm.
+  const otherFields = buildPassthroughTree(model, '', {
+    isOperationField: (_fullKey, value) => isEncryptedPayload(value),
+    shouldRecurse: () => true,
+    onOperationField: (fullKey, value) => {
+      keyMap[index.toString()] = fullKey
+      operationFields[fullKey] = value
+      index++
+    },
+  }) as Record<string, unknown>
 
-      if (value === null || value === undefined) {
-        nullFields[fullKey] = value
-        continue
-      }
-
-      if (typeof value === 'object' && !isEncryptedPayload(value)) {
-        // Recursively process nested objects
-        processNestedFields(value as Record<string, unknown>, fullKey)
-      } else if (isEncryptedPayload(value)) {
-        // This is an encrypted field
-        const id = index.toString()
-        keyMap[id] = fullKey
-        operationFields[fullKey] = value
-        index++
-
-        // Remove from otherFields
-        const parts = fullKey.split('.')
-        let current = otherFields
-        for (let i = 0; i < parts.length - 1; i++) {
-          current = current[parts[i]] as Record<string, unknown>
-        }
-        delete current[parts[parts.length - 1]]
-      }
-    }
-  }
-
-  processNestedFields(model)
-  return { otherFields, operationFields, keyMap, nullFields }
+  // Nulls are retained in `otherFields` in place, so no separate null map is
+  // re-applied on rebuild (which is what materialised phantom nested objects).
+  return { otherFields, operationFields, keyMap, nullFields: {} }
 }
 
 /**
@@ -140,66 +268,29 @@ export function prepareFieldsForEncryption<T extends Record<string, unknown>>(
   keyMap: Record<string, string>
   nullFields: Record<string, null | undefined>
 } {
-  const otherFields = { ...model } as Record<string, unknown>
+  assertModelObject(model)
+  const { columnPaths } = resolveEncryptColumnMap(table)
+  const columnSet = new Set(columnPaths)
   const operationFields: Record<string, unknown> = {}
-  const nullFields: Record<string, null | undefined> = {}
   const keyMap: Record<string, string> = {}
   let index = 0
 
-  const processNestedFields = (
-    obj: Record<string, unknown>,
-    prefix = '',
-    columnPaths: string[] = [],
-  ) => {
-    for (const [key, value] of Object.entries(obj)) {
-      const fullKey = prefix ? `${prefix}.${key}` : key
+  const otherFields = buildPassthroughTree(model, '', {
+    // Skip a value that is ALREADY an EQL payload even at a schema path — it
+    // has been encrypted before (a read-modify-write of a fetched row); the
+    // old walk re-encrypted it, silently for a `types.Json` column (#742).
+    isOperationField: (fullKey, value) =>
+      columnSet.has(fullKey) && !isEncryptedPayload(value),
+    shouldRecurse: encryptShouldRecurse(columnPaths),
+    onOperationField: (fullKey, value) => {
+      assertEncryptableValue(value, fullKey)
+      keyMap[index.toString()] = fullKey
+      operationFields[fullKey] = value
+      index++
+    },
+  }) as Record<string, unknown>
 
-      if (value === null || value === undefined) {
-        nullFields[fullKey] = value
-        continue
-      }
-
-      if (
-        typeof value === 'object' &&
-        !isEncryptedPayload(value) &&
-        !columnPaths.includes(fullKey)
-      ) {
-        // Only process nested objects if they're in the schema
-        if (columnPaths.some((path) => path.startsWith(fullKey))) {
-          processNestedFields(
-            value as Record<string, unknown>,
-            fullKey,
-            columnPaths,
-          )
-        }
-      } else if (columnPaths.includes(fullKey)) {
-        // Only process fields that are explicitly defined in the schema.
-        // Reject an out-of-range numeric plaintext (NaN/±Infinity for `number`,
-        // outside i64 for `bigint`) here — the single-value/query paths guard
-        // at their own boundary, but the model path builds the FFI payload
-        // directly, so validate per field before it reaches protect-ffi.
-        assertValidNumericValue(value)
-        const id = index.toString()
-        keyMap[id] = fullKey
-        operationFields[fullKey] = value
-        index++
-
-        // Remove from otherFields
-        const parts = fullKey.split('.')
-        let current = otherFields
-        for (let i = 0; i < parts.length - 1; i++) {
-          current = current[parts[i]] as Record<string, unknown>
-        }
-        delete current[parts[parts.length - 1]]
-      }
-    }
-  }
-
-  // Get all column paths from the table schema (matched by JS property name).
-  const { columnPaths } = resolveEncryptColumnMap(table)
-  processNestedFields(model, '', columnPaths)
-
-  return { otherFields, operationFields, keyMap, nullFields }
+  return { otherFields, operationFields, keyMap, nullFields: {} }
 }
 
 /**
@@ -218,122 +309,46 @@ export function prepareBulkModelsForOperation<
 } {
   const otherFields: Record<string, unknown>[] = []
   const operationFields: Record<string, unknown>[] = []
-  const nullFields: Record<string, null | undefined>[] = []
   const keyMap: Record<string, { modelIndex: number; fieldKey: string }> = {}
   let index = 0
 
+  // Column paths are row-invariant, so resolve the map once for the whole batch
+  // rather than once per model (the old walk rebuilt it inside the loop).
+  const columnPaths = table ? resolveEncryptColumnMap(table).columnPaths : []
+  const columnSet = new Set(columnPaths)
+  const shouldRecurse = table ? encryptShouldRecurse(columnPaths) : () => true
+  const isOperationField = table
+    ? (fullKey: string, value: unknown) =>
+        columnSet.has(fullKey) && !isEncryptedPayload(value)
+    : (_fullKey: string, value: unknown) => isEncryptedPayload(value)
+
   for (let modelIndex = 0; modelIndex < models.length; modelIndex++) {
     const model = models[modelIndex]
-    const modelOtherFields = { ...model } as Record<string, unknown>
+    assertModelObject(model)
     const modelOperationFields: Record<string, unknown> = {}
-    const modelNullFields: Record<string, null | undefined> = {}
 
-    const processNestedFields = (
-      obj: Record<string, unknown>,
-      prefix = '',
-      columnPaths: string[] = [],
-    ) => {
-      for (const [key, value] of Object.entries(obj)) {
-        const fullKey = prefix ? `${prefix}.${key}` : key
+    const tree = buildPassthroughTree(model, '', {
+      isOperationField,
+      shouldRecurse,
+      onOperationField: (fullKey, value) => {
+        // Only the encrypt walk validates; the decrypt walk collects payloads.
+        if (table) assertEncryptableValue(value, fullKey)
+        keyMap[index.toString()] = { modelIndex, fieldKey: fullKey }
+        modelOperationFields[fullKey] = value
+        index++
+      },
+    }) as Record<string, unknown>
 
-        if (value === null || value === undefined) {
-          modelNullFields[fullKey] = value
-          continue
-        }
-
-        if (
-          typeof value === 'object' &&
-          !isEncryptedPayload(value) &&
-          !columnPaths.includes(fullKey)
-        ) {
-          // Only process nested objects if they're in the schema
-          if (columnPaths.some((path) => path.startsWith(fullKey))) {
-            processNestedFields(
-              value as Record<string, unknown>,
-              fullKey,
-              columnPaths,
-            )
-          }
-        } else if (columnPaths.includes(fullKey)) {
-          // Only process fields that are explicitly defined in the schema.
-          // Reject an out-of-range numeric plaintext (NaN/±Infinity for
-          // `number`, outside i64 for `bigint`) before it reaches the bulk FFI
-          // payload — the bulk path builds that payload directly. This arm runs
-          // only for encryption (`if (table)`); the decrypt walker below does
-          // not validate.
-          assertValidNumericValue(value)
-          const id = index.toString()
-          keyMap[id] = { modelIndex, fieldKey: fullKey }
-          modelOperationFields[fullKey] = value
-          index++
-
-          // Remove from otherFields
-          const parts = fullKey.split('.')
-          let current = modelOtherFields
-          for (let i = 0; i < parts.length - 1; i++) {
-            current = current[parts[i]] as Record<string, unknown>
-          }
-          delete current[parts[parts.length - 1]]
-        }
-      }
-    }
-
-    if (table) {
-      // Get all column paths from the table schema (matched by JS property name).
-      const { columnPaths } = resolveEncryptColumnMap(table)
-      processNestedFields(model, '', columnPaths)
-    } else {
-      // For decryption, process all encrypted fields
-      const processEncryptedFields = (
-        obj: Record<string, unknown>,
-        prefix = '',
-        columnPaths: string[] = [],
-      ) => {
-        for (const [key, value] of Object.entries(obj)) {
-          const fullKey = prefix ? `${prefix}.${key}` : key
-
-          if (value === null || value === undefined) {
-            modelNullFields[fullKey] = value
-            continue
-          }
-
-          if (
-            typeof value === 'object' &&
-            !isEncryptedPayload(value) &&
-            !columnPaths.includes(fullKey)
-          ) {
-            // Recursively process nested objects
-            processEncryptedFields(
-              value as Record<string, unknown>,
-              fullKey,
-              columnPaths,
-            )
-          } else if (isEncryptedPayload(value)) {
-            // This is an encrypted field
-            const id = index.toString()
-            keyMap[id] = { modelIndex, fieldKey: fullKey }
-            modelOperationFields[fullKey] = value
-            index++
-
-            // Remove from otherFields
-            const parts = fullKey.split('.')
-            let current = modelOtherFields
-            for (let i = 0; i < parts.length - 1; i++) {
-              current = current[parts[i]] as Record<string, unknown>
-            }
-            delete current[parts[parts.length - 1]]
-          }
-        }
-      }
-      processEncryptedFields(model)
-    }
-
-    otherFields.push(modelOtherFields)
+    otherFields.push(tree)
     operationFields.push(modelOperationFields)
-    nullFields.push(modelNullFields)
   }
 
-  return { otherFields, operationFields, keyMap, nullFields }
+  return {
+    otherFields,
+    operationFields,
+    keyMap,
+    nullFields: models.map(() => ({})),
+  }
 }
 
 /**

@@ -304,3 +304,146 @@ describe('WasmEncryptionClient.bulkDecryptModels', () => {
     expect(ffi.decryptBulkFallible).not.toHaveBeenCalled()
   })
 })
+
+// #742 review: the shared traversal was rewritten to be non-mutating and
+// unambiguous. These pin the behaviours that were bugs before the rewrite.
+describe('WasmEncryptionClient model helpers — hardening (#742 review)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('does not mutate the caller model on encrypt (nested column)', async () => {
+    const c = await client()
+    const input = { profile: { ssn: '123-45-6789', nick: 'al' } }
+    const out = await c.encryptModel(input, patients)
+
+    // The caller's own object is untouched — no envelope written back in.
+    expect(input.profile.ssn).toBe('123-45-6789')
+    expect(input.profile.nick).toBe('al')
+    const data = expectData(out) as { profile: { ssn: unknown; nick: string } }
+    expect(data.profile.ssn).toEqual({ v: 3, i: {}, c: 'ct-0' })
+    // The returned object is independent of the input.
+    expect(data.profile).not.toBe(input.profile)
+  })
+
+  it('does not write decrypted plaintext back into the caller (nested)', async () => {
+    const c = await client()
+    const envelope = ct('a')
+    const input = { profile: { ssn: envelope } }
+    const out = await c.decryptModel(input, patients)
+
+    // The input the caller believes is still encrypted is unchanged.
+    expect(input.profile.ssn).toBe(envelope)
+    const data = expectData(out) as { profile: { ssn: unknown } }
+    expect(data.profile.ssn).toBe('plain-0')
+  })
+
+  it('normalizes a literal flat dotted key without crashing or leaking plaintext', async () => {
+    const c = await client()
+    const out = await c.encryptModel(
+      { 'profile.ssn': 'secret' } as never,
+      patients,
+    )
+    const data = expectData(out) as Record<string, unknown> & {
+      profile?: { ssn?: unknown }
+    }
+    // The flat plaintext key is gone; the field is encrypted at its column path.
+    expect(data['profile.ssn']).toBeUndefined()
+    expect(data.profile?.ssn).toEqual({ v: 3, i: {}, c: 'ct-0' })
+  })
+
+  it('passes an already-encrypted schema field through without re-encrypting', async () => {
+    const c = await client()
+    const existing = ct('already')
+    const out = await c.encryptModel({ email: existing, id: 1 } as never, users)
+
+    expect(ffi.encryptBulk).not.toHaveBeenCalled()
+    const data = expectData(out) as { email: unknown; id: number }
+    expect(data.email).toBe(existing)
+    expect(data.id).toBe(1)
+  })
+
+  it('rejects a non-object model element with a clear failure', async () => {
+    const c = await client()
+    const out = await c.bulkEncryptModels(['x@y.com'] as never, users)
+    expect(out.failure?.type).toBe('EncryptionError')
+    expect(out.failure?.message).toContain(
+      'each model must be a non-null object',
+    )
+    expect(ffi.encryptBulk).not.toHaveBeenCalled()
+  })
+
+  it('returns { data: [] } for a null or undefined models argument', async () => {
+    const c = await client()
+    expect(await c.bulkEncryptModels(null as never, users)).toEqual({
+      data: [],
+    })
+    expect(await c.bulkDecryptModels(undefined as never, users)).toEqual({
+      data: [],
+    })
+    expect(ffi.encryptBulk).not.toHaveBeenCalled()
+    expect(ffi.decryptBulkFallible).not.toHaveBeenCalled()
+  })
+
+  it('fails decrypt against a table the client was not initialized with', async () => {
+    const c = await client()
+    const foreign = encryptedTable('foreign', { x: types.TextEq('x') })
+    const out = await c.decryptModel({ x: ct('a') }, foreign)
+    expect(out.failure?.type).toBe('DecryptionError')
+    expect(out.failure?.message).toContain(
+      'not one this client was initialized with',
+    )
+    expect(ffi.decryptBulkFallible).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid Date with a field-named failure, before the FFI', async () => {
+    const c = await client()
+    const out = await c.encryptModel(
+      { createdOn: new Date(Number.NaN) } as never,
+      users,
+    )
+    expect(out.failure?.type).toBe('EncryptionError')
+    expect(out.failure?.message).toContain('createdOn')
+    expect(ffi.encryptBulk).not.toHaveBeenCalled()
+  })
+
+  it('refuses a __proto__ dotted key instead of polluting the prototype', async () => {
+    const c = await client()
+    // A DB-influenced model with a prototype-shaped own key holding an envelope.
+    const malicious = JSON.parse(
+      `{"__proto__.toString": ${JSON.stringify(ct('x'))}}`,
+    )
+    const out = await c.decryptModel(malicious, patients)
+
+    expect(out.failure?.type).toBe('DecryptionError')
+    expect(out.failure?.message).toContain('Forbidden key')
+    // The global prototype is intact.
+    expect(typeof {}.toString).toBe('function')
+  })
+
+  it('rebuilds a valid Date but keeps an unparseable date value as-is', async () => {
+    ffi.decryptBulkFallible.mockResolvedValueOnce([
+      { data: 'not-a-date' },
+    ] as never)
+    const c = await client()
+    const out = await c.decryptModel({ createdOn: ct('d') }, users)
+    // No silent Invalid Date object — the raw value is returned instead.
+    expect(expectData(out).createdOn).toBe('not-a-date')
+  })
+
+  it('normalizes a Date at the value-level bulkEncrypt crossing (no `{}` corruption)', async () => {
+    const c = await client()
+    await c.bulkEncrypt([
+      {
+        // A plain-JS caller can pass a Date the WasmPlaintext type forbids.
+        plaintext: new Date('2026-07-22T00:00:00.000Z') as never,
+        table: users,
+        column: users.createdOn,
+      },
+    ])
+    const opts = ffi.encryptBulk.mock.calls[0][1] as {
+      plaintexts: Array<{ plaintext: unknown }>
+    }
+    expect(opts.plaintexts[0].plaintext).toBe('2026-07-22T00:00:00.000Z')
+  })
+})

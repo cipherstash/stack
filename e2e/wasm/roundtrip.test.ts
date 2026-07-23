@@ -258,6 +258,21 @@ Deno.test({
       `bulkEncryptModels() failed: ${bulkModels.failure?.message}`,
     )
     assertEquals(bulkModels.data.length, 2, 'bulkEncryptModels misaligned')
+    // Assert the payloads are actually ENCRYPTED — otherwise a passthrough
+    // no-op regression (the plaintext-persistence failure this surface exists
+    // to prevent) would still round-trip and pass every other assertion.
+    for (const [i, row] of bulkModels.data.entries()) {
+      assertEquals(
+        isEncrypted(row.email),
+        true,
+        `bulkEncryptModels[${i}].email is not an encrypted payload`,
+      )
+      assertEquals(
+        row.note,
+        i === 0 ? null : 'kept',
+        'passthrough field altered',
+      )
+    }
 
     const bulkModelsBack = await client.bulkDecryptModels(
       bulkModels.data,
