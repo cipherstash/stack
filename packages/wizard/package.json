@@ -26,6 +26,7 @@
 		"postbuild": "chmod +x ./dist/bin/wizard.js",
 		"dev": "tsup --watch",
 		"test": "vitest run",
+		"typecheck": "tsc --project tsconfig.json --noEmit",
 		"lint": "biome check ."
 	},
 	"dependencies": {
