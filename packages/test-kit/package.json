@@ -8,6 +8,7 @@
 		"./integration-clerk": "./src/integration/clerk.ts",
 		".": "./src/index.ts",
 		"./catalog": "./src/catalog.ts",
+		"./install": "./src/install.ts",
 		"./json-suite": "./src/run-json-suite.ts",
 		"./suite": "./src/run-family-suite.ts"
 	},
