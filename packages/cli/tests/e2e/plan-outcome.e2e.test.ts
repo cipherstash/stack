@@ -100,6 +100,40 @@ describe('stash plan — outcome reflects the plan file on disk', () => {
     expect(out).not.toContain(messages.plan.drafted)
   })
 
+  it('reports "drafted" when the agent revises a pre-existing plan', async () => {
+    writeFileSync(join(dir, '.cipherstash', 'plan.md'), '# old plan\n')
+    const r = await runPiped(['plan', '--target', 'claude-code'], {
+      cwd: dir,
+      // The agent appends — a real revision that changes size (and mtime), so
+      // the change-detection limb reports "drafted", not "unchanged".
+      env: { PATH: fakeClaudePath('echo "# revised" >> .cipherstash/plan.md') },
+      timeoutMs: 20000,
+    })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(0)
+    const out = r.stdout + r.stderr
+    expect(out).toContain(`${messages.plan.drafted} \`.cipherstash/plan.md\``)
+    expect(out).not.toContain(messages.plan.unchanged)
+  })
+
+  it('treats a plan.md directory as no plan, not a false "unchanged"', async () => {
+    // `statSync` succeeds for a directory, but no agent can write a plan there.
+    // Without the isFile() gate this would warn "already exists" and then, with
+    // an agent that writes nothing, report a false "unchanged" exit 0.
+    mkdirSync(join(dir, '.cipherstash', 'plan.md'))
+    const r = await runPiped(['plan', '--target', 'claude-code'], {
+      cwd: dir,
+      env: { PATH: fakeClaudePath('exit 0') },
+      timeoutMs: 20000,
+    })
+    expect(r.timedOut).toBe(false)
+    expect(r.exitCode).toBe(1)
+    const out = r.stdout + r.stderr
+    expect(out).toContain(messages.plan.notWritten)
+    expect(out).not.toContain(messages.plan.unchanged)
+    expect(out).not.toContain(messages.plan.drafted)
+  })
+
   it('agents-md handoff says "No plan drafted yet" instead of claiming success', async () => {
     const r = await runPiped(['plan', '--target', 'agents-md'], {
       cwd: dir,

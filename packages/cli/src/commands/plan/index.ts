@@ -26,18 +26,25 @@ import { CancelledError, type InitState } from '../init/types.js'
 import { detectPackageManager, runnerCommand } from '../init/utils.js'
 
 /**
- * Stat the plan file, treating "absent" as `undefined`.
+ * Stat the plan file, returning its `Stats` only when it's a regular FILE and
+ * treating "absent or not a usable plan" as `undefined`.
  *
- * `throwIfNoEntry: false` turns the common ENOENT into `undefined`. Any OTHER
- * fs error — ENOTDIR if `.cipherstash` is somehow a file, EACCES on a locked
- * path, an ELOOP symlink — is converted into a controlled `CliExit(1)` with an
- * actionable message instead of unwinding as a generic "Fatal error". This
- * command exists to give automation a reliable signal about the plan's state
- * (#738), so a filesystem hiccup must not become an opaque crash.
+ * `throwIfNoEntry: false` turns the common ENOENT into `undefined`. A non-file
+ * — most realistically a DIRECTORY at `.cipherstash/plan.md` — also maps to
+ * `undefined`: `statSync` succeeds for a directory, but the agent cannot have
+ * written a plan there, so without the `isFile()` gate it would read as a
+ * pre-existing/unchanged plan and let the command exit 0 against something no
+ * agent can consume. Any OTHER fs error — ENOTDIR if `.cipherstash` is somehow
+ * a file, EACCES on a locked path, an ELOOP symlink — is converted into a
+ * controlled `CliExit(1)` with an actionable message instead of unwinding as a
+ * generic "Fatal error". This command exists to give automation a reliable
+ * signal about the plan's state (#738), so a filesystem hiccup must not become
+ * an opaque crash, and a non-file must not read as success.
  */
 function statPlan(planAbs: string): Stats | undefined {
   try {
-    return statSync(planAbs, { throwIfNoEntry: false }) ?? undefined
+    const stats = statSync(planAbs, { throwIfNoEntry: false })
+    return stats?.isFile() ? stats : undefined
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     p.log.error(`Could not read \`${PLAN_REL_PATH}\`: ${message}`)
@@ -298,6 +305,12 @@ export async function planCommand(
     // A pre-existing plan the run didn't modify is still usable (the agent
     // may have judged it current), but "drafted" would be a false claim —
     // report which of the two happened.
+    //
+    // Heuristic, deliberately not a content hash: an in-place revision that
+    // preserves BOTH byte size and the mtime tick would misreport as
+    // "unchanged". Blast radius is a cosmetic wording error — the plan is
+    // usable either way, and a real agent write bumps mtime (and usually
+    // size) — so it isn't worth hashing a large file on every run.
     const wrote =
       !planBefore ||
       planAfter.mtimeMs !== planBefore.mtimeMs ||
