@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 /**
  * The encrypted column types this rewrite applies to: the single EQL v2 type,
@@ -102,6 +103,27 @@ const ALTER_COLUMN_TO_ENCRYPTED_RE = new RegExp(
 const NEAR_MISS_RE =
   /[^;]*?\bSET\s+DATA\s+TYPE\b[^;]*?\beql_v[23][a-z0-9_]*[^;]*?;/gi
 
+/**
+ * Blank lines and `--` line comments (including drizzle-kit's
+ * `--> statement-breakpoint`) at the head of a {@link NEAR_MISS_RE} match.
+ *
+ * That regex opens with a lazy `[^;]*?`, whose only left boundary is the
+ * previous `;` — or the start of the file when there is no preceding statement.
+ * So the raw match drags in every comment and blank line since then, and a
+ * near-miss in a file that opens with a comment block gets reported to the user
+ * with that whole block glued to its front. Strip the preamble so the statement
+ * we quote back reads as the offending statement alone.
+ *
+ * Only line comments are handled — `/* … *\/` block comments are not something
+ * drizzle-kit emits, and a stray one costs cosmetics, not correctness.
+ */
+const STATEMENT_PREAMBLE_RE = /^(?:[^\S\n]*(?:--[^\n]*)?\n)+/
+
+/** Drop the leading blank/comment lines a `[^;]*?`-anchored match dragged in. */
+function trimStatementPreamble(statement: string): string {
+  return statement.replace(STATEMENT_PREAMBLE_RE, '').trim()
+}
+
 /** A statement the sweep recognised as ALTER-to-encrypted but did NOT rewrite. */
 export interface SkippedAlter {
   /** Absolute path of the migration file the statement lives in. */
@@ -196,11 +218,65 @@ export async function rewriteEncryptedAlterColumns(
     // matcher. Flag it — non-fatally — rather than leave the user shipping SQL
     // that fails at migrate time.
     for (const nearMiss of updated.matchAll(NEAR_MISS_RE)) {
-      skipped.push({ file: filePath, statement: nearMiss[0].trim() })
+      skipped.push({
+        file: filePath,
+        statement: trimStatementPreamble(nearMiss[0]),
+      })
     }
   }
 
   return { rewritten, skipped }
+}
+
+/** One candidate migration directory's outcome from {@link sweepMigrationDirs}. */
+export interface DirRewriteResult extends RewriteResult {
+  /** The candidate directory as supplied (relative to `cwd`), for reporting. */
+  dir: string
+  /** Set when this directory's sweep threw; the sweep continues regardless. */
+  error?: string
+}
+
+/**
+ * Sweep every candidate migration directory under `cwd`, rewriting each one's
+ * unsafe ALTER-to-encrypted statements. Directories that don't exist are
+ * skipped; the returned array carries one entry per directory that did.
+ *
+ * **Why every directory, not just the first:** a project's drizzle-kit `out`
+ * directory is not discoverable from here, so the caller passes a candidate
+ * list. Stopping at the first candidate that merely *exists* means an empty or
+ * already-rewritten `drizzle/` sitting next to the project's real `migrations/`
+ * silently leaves those migrations unrepaired — they then fail at migrate time
+ * with the very `cannot cast type ...` error this function exists to prevent.
+ *
+ * Sweeping all of them is safe because the rewrite is idempotent: a rewritten
+ * statement no longer contains `SET DATA TYPE`, so neither
+ * {@link ALTER_COLUMN_TO_ENCRYPTED_RE} nor {@link NEAR_MISS_RE} can match it a
+ * second time. Two candidates resolving to the same directory (via a symlink)
+ * therefore cost a redundant read, not a double transform.
+ *
+ * A directory that throws mid-sweep is reported via `error` rather than
+ * aborting — one unreadable candidate must not strand the others.
+ */
+export async function sweepMigrationDirs(
+  cwd: string,
+  dirs: readonly string[],
+): Promise<DirRewriteResult[]> {
+  const results: DirRewriteResult[] = []
+
+  for (const dir of dirs) {
+    const abs = resolve(cwd, dir)
+    if (!existsSync(abs)) continue
+
+    try {
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(abs)
+      results.push({ dir, rewritten, skipped })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      results.push({ dir, rewritten: [], skipped: [], error: message })
+    }
+  }
+
+  return results
 }
 
 /**
@@ -241,6 +317,15 @@ function renderSafeAlter(
     '-- NOTE: constraints, defaults, and indexes on the original column are NOT',
     '-- carried over by this ADD/DROP/RENAME — re-add any NOT NULL, DEFAULT,',
     '-- UNIQUE, or index definitions manually.',
+    // The domain is emitted as `"public"."<domain>"` unconditionally: EQL
+    // installs its domains into `public` (both `stash eql install` and the
+    // adapters' baseline migrations do), and the qualifier makes the rewrite
+    // independent of the session `search_path`. It is an ASSUMPTION, not
+    // something read back from the matched SQL — the `schema` capture above is
+    // the TABLE's schema (from a pgSchema() table) and says nothing about where
+    // the domain lives. If EQL ever supports installing into a non-`public`
+    // schema, this needs the install schema threaded in, here and in the
+    // sibling `packages/cli/src/commands/db/rewrite-migrations.ts`.
     `ALTER TABLE ${qualifiedTable} ADD COLUMN "${tmp}" "public"."${domain}";`,
     `-- UPDATE ${qualifiedTable} SET "${tmp}" = /* encrypted value for ${column} */ NULL`,
     '--> statement-breakpoint',

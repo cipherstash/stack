@@ -21,6 +21,15 @@ warning that the ADD+DROP+RENAME is data-destroying and safe only on an empty
 table — a populated table must use the staged `stash encrypt` flow. This
 re-converges the rewriter with the sibling copy in the `stash` CLI.
 
+The post-agent step now sweeps **every** candidate migration directory
+(`drizzle/`, `migrations/`, `src/db/migrations/`) rather than stopping at the
+first one that exists. Previously an empty or already-rewritten `drizzle/`
+sitting next to a project's real `migrations/` caused those migrations to be
+skipped entirely, so they still failed at migrate time. A directory that can't
+be read is reported and the remaining candidates are still swept. Reported
+near-miss statements are also trimmed of any preceding comment block, so the
+statement quoted back to the user is the offending statement alone.
+
 Database introspection also recognises v3 encrypted columns: `isEqlEncrypted`
 now reports both `eql_v2_encrypted` and the `eql_v3_*` family as already
 encrypted, so the agent won't scaffold over existing encrypted data of either
