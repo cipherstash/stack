@@ -243,10 +243,16 @@ Index not being used:
 
 ## Where the Index DDL Goes (Per Integration)
 
-**Drizzle, Prisma Next, and the Supabase wrapper emit the query operators for you — none of them emits index DDL. Creating these indexes is always the developer's migration.**
+**Drizzle, Prisma Next, and the Supabase wrapper emit the query operators for you — none of them emits index DDL. Creating these indexes is always your job.**
 
-- **Drizzle** — a drizzle-kit migration (custom SQL statement in the generated migration file).
-- **Prisma Next** — a migration in the adapter's migration flow, the same channel that installs the EQL bundle. Don't run index DDL out-of-band of the migration history.
+- **Drizzle** — declare the index on the table in the Drizzle schema; the DSL supports expression indexes, so `drizzle-kit generate` emits and tracks the DDL:
+
+  ```typescript
+  (t) => [index('users_email_eq').using('btree', sql`eql_v3.eq_term(${t.email})`)]
+  ```
+
+  Alternatively, add the `CREATE INDEX` as custom SQL in a drizzle-kit migration.
+- **Prisma Next** — Prisma's schema language cannot express functional indexes, so the schema file is not an option. Put the `CREATE INDEX` in a migration applied through the adapter's migration flow — the same channel that installs the EQL bundle. Don't run index DDL out-of-band of the migration history.
 - **Supabase** — a file under `supabase/migrations/`, applied by the normal Supabase migration flow. No superuser needed (see above).
 - **Raw SQL / plain PostgreSQL** — whatever migration tool owns the schema. Never ad-hoc in production.
 
