@@ -106,6 +106,10 @@ const SKILL_PURPOSES: Record<string, string> = {
     'Drizzle-specific patterns: declaring encrypted columns, query operators, the rollout/cutover walkthrough for an existing column',
   'stash-supabase':
     'Supabase-specific patterns: `encryptedSupabase` wrapper, encrypted query filters, transparent decryption, the rollout/cutover walkthrough',
+  'stash-prisma-next':
+    'Prisma Next-specific patterns: `cipherstash.*` field constructors, migration flow, encrypted query operators',
+  'stash-indexing':
+    'index recipes for encrypted columns — the `eql_v3` extractor functional indexes, Supabase/managed-Postgres constraints, EXPLAIN verification',
   'stash-dynamodb':
     'DynamoDB encryption: per-item encrypt/decrypt, HMAC attribute keys, audit logging',
   'stash-cli':

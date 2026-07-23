@@ -143,6 +143,65 @@ standalone installer for exactly this reason. The CLI enforces this: `stash eql
 install` detects a Prisma Next project and refuses (pointing you at `prisma-next
 migrate`) unless you pass `--force`.
 
+## Indexing encrypted columns
+
+The adapter emits the encrypted query operators, but **no index DDL** — without
+functional indexes over the `eql_v3.*` extractors, every encrypted predicate
+sequential-scans. Two facts shape where the DDL goes:
+
+- **`schema.prisma` cannot express functional indexes** (`@@index` takes
+  fields, not expressions), so the schema file is not an option.
+- Prisma Next migrations execute **raw SQL operations**, so an index migration
+  is just an operation whose statements are the `CREATE INDEX` recipes —
+  authored in the same migration history that installs the EQL bundle, applied
+  by the same `prisma-next migrate`. Never run index DDL out-of-band.
+
+One index per capability the column's domain carries:
+
+```sql
+-- cipherstash.TextEq / TextSearch: equality
+CREATE INDEX users_email_eq ON users USING btree (eql_v3.eq_term(email));
+-- cipherstash.*Ord / TextSearch: ordering + range (on numeric/date/timestamp
+-- _ord domains this one index serves = too; TextOrd needs the eq_term index
+-- above as well)
+CREATE INDEX users_created_at_ord ON users USING btree (eql_v3.ord_term(created_at));
+-- cipherstash.TextMatch / TextSearch: free-text match
+CREATE INDEX users_bio_match ON users USING gin (eql_v3.match_term(bio));
+-- cipherstash.Json: containment
+CREATE INDEX users_profile_json
+  ON users USING gin ((eql_v3.to_ste_vec_query(profile)::jsonb) jsonb_path_ops);
+
+ANALYZE users;
+```
+
+The `ANALYZE` is part of the recipe — an expression index has no statistics
+until it runs. Works as a non-superuser role (Supabase included); only the
+ORE-flavour (`_ord_ore`) ordering opclass is superuser-gated. For the full
+model — which domains take which index, engagement rules, `EXPLAIN`
+verification, rollout timing — see the `stash-indexing` skill.
+
+In a migration, the recipes ride a raw-SQL operation (`rawSql` from
+`@prisma-next/postgres/migration`) in the migration's `operations`:
+
+```typescript
+rawSql({
+  id: 'index.users.encrypted',
+  label: 'Index encrypted columns on users',
+  operationClass: 'additive',
+  target: {
+    id: 'postgres',
+    details: { schema: 'public', objectType: 'index', name: 'users_email_eq', table: 'users' },
+  },
+  precheck: [],
+  execute: [
+    { description: 'equality index',
+      sql: 'CREATE INDEX IF NOT EXISTS users_email_eq ON "public"."users" USING btree (eql_v3.eq_term(email))' },
+    { description: 'refresh statistics', sql: 'ANALYZE "public"."users"' },
+  ],
+  postcheck: [],
+})
+```
+
 ## Writing and reading encrypted values
 
 At the value boundary you wrap plaintext in a **runtime envelope** (primitive-named,

@@ -60,6 +60,37 @@ comparisons and ordering at a scalar JSONPath leaf. For example,
 `.orderBy(await ops.selector(users.profile, '$.age').asc())` lowers to
 `ORDER BY eql_v3.ord_term(...)` over the selected encrypted entry.
 
+### Indexing encrypted columns
+
+Encrypted predicates only use an index if one exists over the matching
+`eql_v3.*` term-extractor expression — otherwise every encrypted query
+sequential-scans. `encryptedIndexes` derives the recommended indexes for
+every encrypted column in a table; spread it into `pgTable`'s third-argument
+callback and `drizzle-kit generate` picks the indexes up like any others:
+
+```ts
+import { integer, pgTable } from 'drizzle-orm/pg-core'
+import { encryptedIndexes, types } from '@cipherstash/stack-drizzle/v3'
+
+export const users = pgTable(
+  'users',
+  {
+    id: integer('id').primaryKey(),
+    email: types.TextEq('email'),
+    bio: types.TextSearch('bio'),
+  },
+  (t) => [...encryptedIndexes(t)],
+)
+```
+
+Each column gets indexes matching its domain's capabilities, named
+`<table>_<column>_<capability>` (equality btree, ordering btree, free-text
+GIN, JSON containment GIN); storage-only and non-encrypted columns get none.
+After the migration applies, run `ANALYZE <table>` — expression indexes have
+no statistics until then. For custom names, subsets, or field-level selector
+indexes on encrypted JSON, declare individual expression indexes instead;
+the bundled `stash-indexing` agent skill has the full recipes.
+
 ## EQL v2 (package root) — legacy
 
 The v2 integration predates the typed v3 domains and is kept for existing

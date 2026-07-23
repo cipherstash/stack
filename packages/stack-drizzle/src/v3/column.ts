@@ -4,7 +4,8 @@ import {
   types as v3Types,
 } from '@cipherstash/stack/eql/v3'
 import type { Encrypted } from '@cipherstash/stack/types'
-import { customType } from 'drizzle-orm/pg-core'
+import { is } from 'drizzle-orm'
+import { customType, ExtraConfigColumn } from 'drizzle-orm/pg-core'
 import { v3FromDriver, v3ToDriver } from './codec.js'
 
 /** The schema the concrete `eql_v3_*` domains are created in. */
@@ -78,6 +79,35 @@ function getCarrier(column: unknown): EqlV3ColumnCarrier | undefined {
 
 function getSqlType(column: unknown): string | undefined {
   if (!column || typeof column !== 'object') return undefined
+
+  // The extras-callback columns (`pgTable(name, cols, (t) => …)`) are
+  // ExtraConfigColumn wrappers whose `getSQLType()` in drizzle-orm ≤0.45 is
+  // `return this.getSQLType()` — unconditional self-recursion (upstream bug),
+  // so calling it blows the stack on ANY column, encrypted or not. Recover the
+  // type the way `PgCustomColumn`'s constructor does instead: the wrapper
+  // shares the real column's config, so `customTypeParams.dataType()` yields
+  // the same bare domain name. A non-custom column has no `customTypeParams`
+  // and resolves to undefined — correctly "not an EQL column".
+  if (is(column, ExtraConfigColumn)) {
+    // `config` is `protected` on the class, so the read goes through a plain
+    // structural view of the instance rather than the narrowed class type.
+    const view: unknown = column
+    const config = (
+      view as {
+        config?: {
+          customTypeParams?: { dataType?: (fieldConfig?: unknown) => unknown }
+          fieldConfig?: unknown
+        }
+      }
+    ).config
+    const viaCustomType = config?.customTypeParams?.dataType?.(
+      config?.fieldConfig,
+    )
+    return typeof viaCustomType === 'string'
+      ? qualifyDomain(viaCustomType)
+      : undefined
+  }
+
   const columnAny = column as {
     getSQLType?: () => unknown
     dataType?: unknown

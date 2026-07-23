@@ -47,4 +47,4 @@ The CipherStash setup skills carry the API details. Use them when you need speci
 - `.codex/skills/<skill>/SKILL.md` (Codex)
 - Under `## Skill references` at the bottom of this file (editor agents, or when a skills directory could not be written — if the section exists, it is the current copy)
 
-Skills relevant to this project depend on the integration. Common ones: `stash-encryption` (encryption API), `stash-cli` (`stash` commands), and one of `stash-drizzle` / `stash-supabase` / `stash-dynamodb` for the chosen ORM.
+Skills relevant to this project depend on the integration. Common ones: `stash-encryption` (encryption API), `stash-indexing` (indexes on encrypted columns), `stash-cli` (`stash` commands), and one of `stash-drizzle` / `stash-supabase` / `stash-prisma-next` / `stash-dynamodb` for the chosen ORM.

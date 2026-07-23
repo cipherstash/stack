@@ -55,6 +55,16 @@ describe('SKILL_MAP', () => {
     }
   })
 
+  // #753: integrations shipped without a single CREATE INDEX example, so
+  // agent-built integrations left every encrypted predicate unindexed. The
+  // indexing skill is cross-cutting (Drizzle, Prisma Next, Supabase, and raw
+  // SQL all need it), so every integration must install it.
+  it('always includes stash-indexing for every integration', () => {
+    for (const [integration, skills] of Object.entries(SKILL_MAP)) {
+      expect(skills, integration).toContain('stash-indexing')
+    }
+  })
+
   it('drizzle includes stash-drizzle', () => {
     expect(SKILL_MAP.drizzle).toContain('stash-drizzle')
   })
@@ -79,6 +89,7 @@ describe('skillsFor', () => {
     expect(skillsFor('prisma-next')).toEqual([
       'stash-encryption',
       'stash-prisma-next',
+      'stash-indexing',
       'stash-cli',
     ])
   })
@@ -86,7 +97,7 @@ describe('skillsFor', () => {
   it('falls back to the base skills for an unmapped integration (never crashes)', () => {
     // Simulate a future Integration variant with no SKILL_MAP entry.
     const skills = skillsFor('mystery-orm' as Integration)
-    expect(skills).toEqual(['stash-encryption', 'stash-cli'])
+    expect(skills).toEqual(['stash-encryption', 'stash-indexing', 'stash-cli'])
   })
 })
 
@@ -104,7 +115,12 @@ describe('installSkills', () => {
 
   it('copies the per-integration skills into destDir', () => {
     const { copied, failed } = installSkills(tmp, '.claude/skills', 'drizzle')
-    expect(copied).toEqual(['stash-encryption', 'stash-drizzle', 'stash-cli'])
+    expect(copied).toEqual([
+      'stash-encryption',
+      'stash-drizzle',
+      'stash-indexing',
+      'stash-cli',
+    ])
     expect(failed).toEqual([])
     for (const name of copied) {
       expect(
@@ -141,7 +157,12 @@ describe('installSkills', () => {
     }).not.toThrow()
     expect(result).toEqual({
       copied: [],
-      failed: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+      failed: [
+        'stash-encryption',
+        'stash-drizzle',
+        'stash-indexing',
+        'stash-cli',
+      ],
     })
     expect(warnings()).toContain('Could not create .codex/skills/')
   })
@@ -162,7 +183,7 @@ describe('installSkills', () => {
     )
 
     const { copied, failed } = installSkills(tmp, '.codex/skills', 'drizzle')
-    expect(copied).toEqual(['stash-encryption', 'stash-cli'])
+    expect(copied).toEqual(['stash-encryption', 'stash-indexing', 'stash-cli'])
     expect(failed).toEqual(['stash-drizzle'])
     expect(warnings()).toContain('Failed to install skill stash-drizzle')
   })
@@ -177,7 +198,12 @@ describe('installSkills', () => {
     const { copied, failed } = installSkills(tmp, '.codex/skills', 'drizzle')
     expect(copied).toEqual([])
     expect(failed).toEqual(availableSkills('drizzle'))
-    expect(failed).toEqual(['stash-encryption', 'stash-drizzle', 'stash-cli'])
+    expect(failed).toEqual([
+      'stash-encryption',
+      'stash-drizzle',
+      'stash-indexing',
+      'stash-cli',
+    ])
   })
 
   it('is idempotent — re-running does not throw and yields the same result', () => {

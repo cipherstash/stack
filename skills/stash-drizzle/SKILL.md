@@ -79,6 +79,8 @@ CREATE TABLE users (
 
 You don't usually hand-write this: the `types.*` factories below emit the domain as the column's SQL type, so `drizzle-kit generate` produces the `ADD COLUMN "email" "eql_v3_text_search"` DDL for you. The generated type is **unqualified** (`eql_v3_text_search`, not `public.eql_v3_text_search`): drizzle-kit wraps a custom type's whole name in one pair of quotes, which would turn a schema-qualified name into the invalid identifier `"public.eql_v3_text_search"`. The bare name resolves via the search path because the domains live in `public` — so keep `public` on the search path (the default), and don't hand-edit the generated type back to a qualified name.
 
+Encrypted predicates need functional indexes over the `eql_v3.*` extractors, and Drizzle does not add them on its own — spread `encryptedIndexes(t)` into the table definition to derive them per column; see [Indexing Encrypted Columns](#indexing-encrypted-columns) below.
+
 ## Schema Definition
 
 Use the `types` namespace from `@cipherstash/stack-drizzle/v3` to define encrypted columns. Each factory maps 1:1 to a Postgres domain, and the column's query capabilities are fixed by the type:
@@ -256,7 +258,7 @@ const results = await db
   .orderBy(ops.desc(usersTable.age))
 ```
 
-`ops.asc`/`ops.desc` emit `ORDER BY eql_v3.ord_term(col)` (`ord_term_ore(col)` for the `*OrdOre` domains). The ORE-flavoured domains require a superuser install and are unavailable on managed Postgres (Supabase, RDS, etc.) — prefer the plain `Ord` domains there; ordering works everywhere EQL v3 installs.
+`ops.asc`/`ops.desc` emit `ORDER BY eql_v3.ord_term(col)` (`ord_term_ore(col)` for the `*OrdOre` domains). The ORE-flavoured domains require the installer to create a custom operator class — supported on self-hosted Postgres and on AWS RDS/Aurora, but not on cloud-hosted Supabase (the one confirmed platform whose install role cannot create operator classes; the installer disables the `*OrdOre` domains there). Prefer the plain `Ord` domains when unsure; ordering works everywhere EQL v3 installs.
 
 ### Encrypted-JSONB Containment (`contains`)
 
@@ -369,6 +371,51 @@ if (!decrypted.failure) {
 ```
 
 `Date` columns are reconstructed to real `Date` instances on decrypt; `bigint` columns round-trip as native `bigint`. Non-schema fields pass through unchanged.
+
+## Indexing Encrypted Columns
+
+Drizzle emits the encrypted query operators, but **no index DDL** — without functional indexes over the `eql_v3.*` term extractors, every encrypted predicate sequential-scans. `encryptedIndexes` derives the recommended indexes for every encrypted column in the table from its domain, so a schema column can't be forgotten:
+
+```typescript
+import { encryptedIndexes, types } from "@cipherstash/stack-drizzle/v3"
+import { integer, pgTable } from "drizzle-orm/pg-core"
+
+export const users = pgTable(
+  "users",
+  {
+    id: integer("id").primaryKey(),
+    email: types.TextEq("email"),
+    createdAt: types.TimestampOrd("created_at"),
+    bio: types.TextSearch("bio"),
+  },
+  (t) => [...encryptedIndexes(t)],
+)
+```
+
+The indexes are named `<table>_<column>_<capability>` and ride the normal `drizzle-kit generate` → `migrate` flow like any other index. What each column yields is fixed by its domain:
+
+| Column type | Indexes emitted |
+|---|---|
+| `types.TextEq` / numeric/date/timestamp `*Eq` | `<col>_eq` — btree on `eql_v3.eq_term` |
+| numeric/date/timestamp `*Ord` | `<col>_ord` — btree on `eql_v3.ord_term`; serves `=`, range, and `ORDER BY` (the injective ordering term answers equality — those domains have no `eq_term`) |
+| numeric/date/timestamp `*OrdOre` | `<col>_ord_ore` — btree on `eql_v3.ord_term_ore` (needs the ORE opclass — not on Supabase) |
+| `types.TextOrd` | `<col>_eq` **+** `<col>_ord` — text ordering terms are non-injective, so equality rides `eq_term` |
+| `types.TextOrdOre` | `<col>_eq` **+** `<col>_ord_ore` (needs the ORE opclass — not on Supabase) |
+| `types.TextMatch` | `<col>_match` — GIN on `eql_v3.match_term` |
+| `types.TextSearch` | `<col>_eq` + `<col>_ord` + `<col>_match` |
+| `types.Json` | `<col>_json` — GIN on `(eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops` |
+| bare `types.T`, `types.Boolean` | none — storage-only, no term to index |
+
+To hand-pick instead (custom names, a subset, or a field-level selector index on encrypted JSON — those can't be derived, the selector hash is data, not schema), declare individual expression indexes with the same extractor expressions:
+
+```typescript
+import { sql } from "drizzle-orm"
+import { index } from "drizzle-orm/pg-core"
+
+;(t) => [index("users_email_eq").using("btree", sql`eql_v3.eq_term(${t.email})`)]
+```
+
+Run `ANALYZE <table>` after the migration applies — an expression index gathers no statistics at `CREATE INDEX` time. For when to create indexes during a rollout (after backfill, before switching reads), engagement rules, and `EXPLAIN` verification, see the `stash-indexing` skill.
 
 ## Migrating an Existing Column to Encrypted
 
@@ -616,7 +663,7 @@ All comparison/containment operators auto-encrypt their operands and are async; 
 | `asc(col)` | `ORDER BY eql_v3.ord_term(col)` ascending | order/range |
 | `desc(col)` | `ORDER BY eql_v3.ord_term(col)` descending | order/range |
 
-(`ord_term_ore` for `*OrdOre` domains — superuser-only, unavailable on managed Postgres.)
+(`ord_term_ore` for `*OrdOre` domains — needs the ORE opclass; available on RDS/Aurora and self-hosted, not on Supabase.)
 
 ### Logical Operators (async, concurrent)
 

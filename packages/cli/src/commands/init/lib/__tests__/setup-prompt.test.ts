@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SKILL_MAP } from '../install-skills.js'
 import { renderSetupPrompt, type SetupPromptContext } from '../setup-prompt.js'
 
 const baseCtx: SetupPromptContext = {
@@ -12,7 +13,12 @@ const baseCtx: SetupPromptContext = {
   handoff: 'claude-code',
   mode: 'implement',
   skills: {
-    installed: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
+    installed: [
+      'stash-encryption',
+      'stash-drizzle',
+      'stash-indexing',
+      'stash-cli',
+    ],
     inlined: [],
     failed: [],
   },
@@ -134,11 +140,28 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
     const out = renderSetupPrompt(baseCtx)
     expect(out).toContain('`stash-encryption`')
     expect(out).toContain('`stash-drizzle`')
+    expect(out).toContain('`stash-indexing`')
     expect(out).toContain('`stash-cli`')
     // Each skill line should explain what the skill is for, not just name it.
+    // A skill missing from SKILL_PURPOSES silently renders with no purpose
+    // line, so every skill SKILL_MAP can install must assert one here.
     expect(out).toMatch(/`stash-encryption`.*lifecycle/i)
     expect(out).toMatch(/`stash-drizzle`.*Drizzle/i)
+    expect(out).toMatch(/`stash-indexing`.*index recipes/i)
     expect(out).toMatch(/`stash-cli`.*command reference/i)
+  })
+
+  it('has a purpose line for every skill SKILL_MAP can install', () => {
+    // renderSkillIndex falls back to "(no description)" for a skill missing
+    // from SKILL_PURPOSES — a silent gap no per-skill assertion catches when
+    // a new skill lands (stash-prisma-next shipped that way). Render the
+    // union of every installable skill and require zero fallbacks.
+    const everyInstallable = [...new Set(Object.values(SKILL_MAP).flat())]
+    const out = renderSetupPrompt({
+      ...baseCtx,
+      skills: { installed: everyInstallable, inlined: [], failed: [] },
+    })
+    expect(out).not.toContain('(no description)')
   })
 
   it('points each handoff at the right rule location', () => {

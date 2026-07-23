@@ -11,14 +11,28 @@ import { findBundledDir } from './bundled-paths.js'
  * `dist/skills/` at build time.
  */
 export const SKILL_MAP: Record<Integration, readonly string[]> = {
-  drizzle: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
-  supabase: ['stash-encryption', 'stash-supabase', 'stash-cli'],
-  'prisma-next': ['stash-encryption', 'stash-prisma-next', 'stash-cli'],
-  postgresql: ['stash-encryption', 'stash-cli'],
+  drizzle: ['stash-encryption', 'stash-drizzle', 'stash-indexing', 'stash-cli'],
+  supabase: [
+    'stash-encryption',
+    'stash-supabase',
+    'stash-indexing',
+    'stash-cli',
+  ],
+  'prisma-next': [
+    'stash-encryption',
+    'stash-prisma-next',
+    'stash-indexing',
+    'stash-cli',
+  ],
+  postgresql: ['stash-encryption', 'stash-indexing', 'stash-cli'],
 }
 
 /** The skills every integration gets — the safe fallback for an unmapped one. */
-const BASE_SKILLS: readonly string[] = ['stash-encryption', 'stash-cli']
+const BASE_SKILLS: readonly string[] = [
+  'stash-encryption',
+  'stash-indexing',
+  'stash-cli',
+]
 
 /**
  * Skills for an integration, resilient to an unmapped one. `SKILL_MAP` is

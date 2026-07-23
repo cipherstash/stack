@@ -12,10 +12,15 @@ import type { Integration } from './types.js'
  * follow-up work.
  */
 const SKILL_MAP: Record<Integration, readonly string[]> = {
-  drizzle: ['stash-encryption', 'stash-drizzle', 'stash-cli'],
-  supabase: ['stash-encryption', 'stash-supabase', 'stash-cli'],
-  prisma: ['stash-encryption', 'stash-cli'],
-  generic: ['stash-encryption', 'stash-cli'],
+  drizzle: ['stash-encryption', 'stash-drizzle', 'stash-indexing', 'stash-cli'],
+  supabase: [
+    'stash-encryption',
+    'stash-supabase',
+    'stash-indexing',
+    'stash-cli',
+  ],
+  prisma: ['stash-encryption', 'stash-indexing', 'stash-cli'],
+  generic: ['stash-encryption', 'stash-indexing', 'stash-cli'],
 }
 
 /**
