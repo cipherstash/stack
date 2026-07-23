@@ -116,6 +116,45 @@ function v3CodecTraits(meta: V3DomainMeta): readonly CodecTrait[] {
   return v3TraitsForCapabilities(meta.capabilities) as readonly CodecTrait[]
 }
 
+/**
+ * The `(table, column)` routing key an EQL v3 payload carries in its own
+ * `i` identifier (wire shape `{"t": "...", "c": "..."}`) — a required key
+ * on every v3 domain, enforced by each `public.eql_v3_*` domain CHECK.
+ *
+ * This is the AUTHORITATIVE routing source, not a fallback for when the
+ * query context is missing. ZeroKMS commits the cell's key to this
+ * identifier, so a payload relocated to a different column cannot
+ * decrypt — the identifier is what that guarantee is built on. Reading
+ * routing from the value is therefore exactly as trustworthy as reading
+ * it from the query that projected the value, and it is available on
+ * paths where no column context exists at all: aggregates, computed
+ * projections, and `decodeJson` (relation includes, whose JSON cells the
+ * SQL runtime decodes without a `SqlColumnRef`).
+ *
+ * Returns `undefined` for a payload that carries no usable identifier —
+ * a malformed or non-v3 document — so callers can fall back or raise a
+ * diagnostic of their own.
+ */
+function routingKeyFromPayload(
+  payload: unknown,
+): { readonly table: string; readonly column: string } | undefined {
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined
+  }
+  const identifier = (payload as { readonly i?: unknown }).i
+  if (typeof identifier !== 'object' || identifier === null) {
+    return undefined
+  }
+  const { t, c } = identifier as {
+    readonly t?: unknown
+    readonly c?: unknown
+  }
+  if (typeof t !== 'string' || typeof c !== 'string' || !t || !c) {
+    return undefined
+  }
+  return { table: t, column: c }
+}
+
 export class CipherstashV3CellCodec<
   E extends EncryptedEnvelopeBase<unknown>,
 > extends CodecImpl<string, readonly CodecTrait[], unknown, E> {
@@ -126,6 +165,10 @@ export class CipherstashV3CellCodec<
   // unregistered (the registry is add-only), so the WeakSet lookup is
   // paid once per codec rather than once per encoded cell.
   #middlewareCheckPassed = false
+  // Distinct `payload-identifier → projected-column` mismatches already
+  // warned about, so the routing-disagreement diagnostic fires once per
+  // distinct mismatch rather than once per decoded cell (see `decode`).
+  readonly #warnedRoutingDisagreements = new Set<string>()
 
   constructor(
     descriptor: AnyCodecDescriptor,
@@ -189,17 +232,48 @@ export class CipherstashV3CellCodec<
   }
 
   async decode(wire: unknown, ctx: SqlCodecCallContext): Promise<E> {
-    const column = ctx.column
-    if (!column) {
+    const payload = v3FromDriver(wire as string | object | null | undefined)
+    // The payload's own `i` identifier is authoritative (see
+    // `routingKeyFromPayload`). `ctx.column` remains as a fallback for a
+    // document carrying no usable identifier — a NULL cell, or a
+    // non-v3/malformed value the domain CHECK would have rejected on the
+    // way in — so a well-routed query still decodes such a cell exactly
+    // as it did before.
+    const fromPayload = routingKeyFromPayload(payload)
+    const fromContext = ctx.column
+      ? { table: ctx.column.table, column: ctx.column.name }
+      : undefined
+
+    // Diagnostic, not a behaviour change. Routing by the payload identifier
+    // (below) is correct — ZeroKMS commits the cell key to it — but when the
+    // projected column disagrees, that is the signature of a value sitting in
+    // a column it was not encrypted for. Column-first routing used to surface
+    // that as a decrypt failure; identifier-first routing decrypts it by its
+    // true identity, so re-surface the lost signal. It WARNS rather than
+    // throws (and only once per distinct mismatch, off the hot path) because
+    // the same disagreement is the expected, benign shape of an
+    // un-re-encrypted column rename — the payload keeps its original `i`.
+    if (
+      fromPayload &&
+      fromContext &&
+      (fromPayload.table !== fromContext.table ||
+        fromPayload.column !== fromContext.column)
+    ) {
+      this.#warnRoutingDisagreement(fromPayload, fromContext)
+    }
+
+    const routing = fromPayload ?? fromContext
+    if (!routing) {
       throw runtimeError(
         'RUNTIME.DECODE_FAILED',
-        `cipherstash ${this.descriptor.codecId}: decode requires the projected-column routing context that the SQL runtime populates ` +
-          'for projected columns. The cell being decoded came from an aggregate, computed expression, or other unrouted source. ' +
-          'cipherstash codecs need a stable `(table, column)` routing key for envelope construction and bulk-decrypt grouping; ' +
-          'project the underlying encrypted column directly instead of through an aggregate.',
+        `cipherstash ${this.descriptor.codecId}: decode could not determine the (table, column) routing key. ` +
+          'The cell carries no EQL `i` identifier (so it is not a well-formed v3 payload), and the SQL runtime ' +
+          'supplied no projected-column context — the cell came from an aggregate, computed expression, or other ' +
+          'unrouted source. cipherstash codecs need a stable routing key for envelope construction and bulk-decrypt ' +
+          'grouping; project the underlying encrypted column directly instead of through an aggregate.',
         {
           codecId: this.descriptor.codecId,
-          reason: 'cipherstash-v3-decode-column-context-missing',
+          reason: 'cipherstash-v3-decode-routing-key-unresolvable',
         },
       )
     }
@@ -207,11 +281,35 @@ export class CipherstashV3CellCodec<
     // constructed with the factory matching its domain's castAs, so the
     // narrow to `E` holds by construction.
     return this.#fromInternal({
-      ciphertext: v3FromDriver(wire as string | object | null | undefined),
-      table: column.table,
-      column: column.name,
+      ciphertext: payload,
+      table: routing.table,
+      column: routing.column,
       sdk: this.#sdk,
     }) as E
+  }
+
+  /**
+   * Warn — once per distinct mismatch — that a decoded cell's EQL identifier
+   * names a different `(table, column)` than the column the query projected.
+   * Logs schema identifiers only (never plaintext or ciphertext). Mirrors the
+   * once-per-process `console.warn` diagnostic pattern used elsewhere in the
+   * stack (e.g. the deprecated-strategy warning in `@cipherstash/stack`).
+   */
+  #warnRoutingDisagreement(
+    fromPayload: { readonly table: string; readonly column: string },
+    fromContext: { readonly table: string; readonly column: string },
+  ): void {
+    const key = `${fromPayload.table}.${fromPayload.column}->${fromContext.table}.${fromContext.column}`
+    if (this.#warnedRoutingDisagreements.has(key)) return
+    this.#warnedRoutingDisagreements.add(key)
+    console.warn(
+      `[cipherstash] ${this.descriptor.codecId}: decoded a value whose EQL identifier ` +
+        `(${fromPayload.table}.${fromPayload.column}) differs from the projected column ` +
+        `(${fromContext.table}.${fromContext.column}). Routing by the identifier, which is ` +
+        'authoritative (ZeroKMS commits the cell key to it). This is expected after an ' +
+        'un-re-encrypted column rename; if you did not rename, it can indicate a value stored ' +
+        'in the wrong column. Warned once per distinct mismatch.',
+    )
   }
 
   encodeJson(_value: E): JsonValue {
@@ -219,10 +317,54 @@ export class CipherstashV3CellCodec<
     return { [marker]: '<opaque>' } as JsonValue
   }
 
-  decodeJson(_json: JsonValue): E {
-    throw new Error(
-      'cipherstash v3 codec: decodeJson is not supported; envelopes do not round-trip through JSON.',
-    )
+  /**
+   * Decode a v3 payload embedded in a database-produced JSON value —
+   * the path the SQL runtime takes for a relation `include()`, where a
+   * cell arrives inside a `json_agg` / `json_build_object` document with
+   * no `SqlColumnRef` attached.
+   *
+   * Routing comes from the payload's own `i` identifier, which is all
+   * this path needs: the codec instance already closes over the SDK, so
+   * the envelope it builds is indistinguishable from one built by
+   * `decode`, and `decryptAll` batches it into the same
+   * `(sdk, table, column)` group.
+   *
+   * Note this is NOT the inverse of `encodeJson`, which deliberately
+   * renders the opaque `$encrypted*` marker so a serialised envelope
+   * never carries ciphertext. Round-tripping an `encodeJson` marker back
+   * through here is not supported and raises below — the two methods
+   * serve the write and read directions of different planes.
+   *
+   * No NULL handling here by design: the SQL runtime short-circuits a
+   * NULL cell before ever reaching a codec — the include-decode loop
+   * (`sql-orm-client` `collection-dispatch`) skips `null`/`undefined`
+   * column values, and the many-typed path skips `null` elements — so
+   * this method, like `decode` (guarded by the runtime's `decodeField`),
+   * only receives a non-null JSON payload. NULL-handling is the runtime's
+   * contract, not the codec's; returning `null` here would also break the
+   * framework's `decodeJson(json): TInput` (envelope) signature.
+   */
+  decodeJson(json: JsonValue): E {
+    const routing = routingKeyFromPayload(json)
+    if (!routing) {
+      throw runtimeError(
+        'RUNTIME.DECODE_FAILED',
+        `cipherstash ${this.descriptor.codecId}: decodeJson requires a well-formed EQL v3 payload carrying its ` +
+          '`i` identifier (`{"t": "<table>", "c": "<column>"}`), which is what supplies the routing key on the ' +
+          'JSON plane. The value received carries no such identifier — an opaque `$encrypted*` marker produced by ' +
+          '`encodeJson` will not round-trip here, and neither will a non-v3 document.',
+        {
+          codecId: this.descriptor.codecId,
+          reason: 'cipherstash-v3-decode-json-identifier-missing',
+        },
+      )
+    }
+    return this.#fromInternal({
+      ciphertext: json,
+      table: routing.table,
+      column: routing.column,
+      sdk: this.#sdk,
+    }) as E
   }
 }
 

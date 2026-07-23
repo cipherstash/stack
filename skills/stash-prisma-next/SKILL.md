@@ -1,6 +1,6 @@
 ---
 name: stash-prisma-next
-description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (TextSearch, DoubleOrd, BigIntOrd, DateOrd, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migration apply, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
+description: Integrate CipherStash searchable field-level encryption with Prisma Next using @cipherstash/prisma-next (EQL v3). Covers the domain-named encrypted column types in schema.prisma (TextSearch, DoubleOrd, BigIntOrd, DateOrd, Boolean, Json), the one-call cipherstashFromStack wiring, the runtime value envelopes (EncryptedString/Number/BigInt/Date/Boolean/Json) and decryptAll, the eql* query operators (eqlEq, eqlMatch, eqlGt, eqlBetween, eqlIn, eqlJsonContains, eqlAsc/eqlDesc, eqlJsonPathAsc/eqlJsonPathDesc), EQL bundle installation via prisma-next migrate, and authentication. Use when adding encryption to a Prisma Next project or querying encrypted columns.
 ---
 
 # CipherStash Stack — Prisma Next Integration
@@ -77,13 +77,25 @@ column — there is no capability tuner.
 ```typescript
 import cipherstash from '@cipherstash/prisma-next/control'
 import { defineConfig } from 'prisma-next'
-// ... family, target, adapter, contract
+import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
+import postgresPack from '@prisma-next/target-postgres/pack'
+import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
+// ... family, target, adapter
 
 export default defineConfig({
   // ... your existing config
   extensionPacks: [cipherstash],
+  contract: prismaContract('./prisma/schema.prisma', {
+    output: 'src/prisma/contract.json',
+    target: postgresPack,
+    createNamespace: postgresCreateNamespace,
+  }),
 })
 ```
+
+`createNamespace` is **required** since Prisma Next 0.15 — the SQL family no
+longer materialises a placeholder namespace. Omitting it fails at runtime with
+`createNamespace is not a function` when you run `prisma-next contract emit`.
 
 ### 3. Wire the runtime with `cipherstashFromStack` in `src/db.ts`
 
@@ -119,14 +131,17 @@ schema:
 npx stash auth login                 # one-time, per developer
 npx prisma-next contract emit
 npx prisma-next migration plan --name initial
-npx prisma-next migration apply      # installs EQL bundle + your schema
+npx prisma-next migrate              # installs EQL bundle + your schema
 ```
 
+The apply command is the top-level `prisma-next migrate` (add `--yes` to skip the
+confirmation prompt in CI). There is no `prisma-next migration apply` subcommand.
+
 Do **not** run `stash eql install` for a Prisma Next project — `prisma-next
-migration apply` owns EQL installation, and `stash init --prisma-next` skips the
+migrate` owns EQL installation, and `stash init --prisma-next` skips the
 standalone installer for exactly this reason. The CLI enforces this: `stash eql
 install` detects a Prisma Next project and refuses (pointing you at `prisma-next
-migration apply`) unless you pass `--force`.
+migrate`) unless you pass `--force`.
 
 ## Writing and reading encrypted values
 
@@ -238,7 +253,7 @@ use `@cipherstash/stack/wasm-inline`.
 
 ## Gotchas
 
-- **EQL installs via `prisma-next migration apply`, never `stash eql install`.**
+- **EQL installs via `prisma-next migrate` (top-level, not `migration apply`), never `stash eql install`.**
 - **Column type (schema, domain-named) ≠ runtime envelope (value, primitive-named).**
   `DoubleOrd` column ↔ `EncryptedNumber.from(...)` value.
 - **Regenerate the contract** (`prisma-next contract emit`) after changing a

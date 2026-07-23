@@ -21,6 +21,7 @@ import { defineConfig } from '@prisma-next/cli/config-types'
 import sql from '@prisma-next/family-sql/control'
 import { prismaContract } from '@prisma-next/sql-contract-psl/provider'
 import postgres from '@prisma-next/target-postgres/control'
+import { postgresCreateNamespace } from '@prisma-next/target-postgres/types'
 
 export default defineConfig({
   family: sql,
@@ -29,6 +30,9 @@ export default defineConfig({
   contract: prismaContract('./src/contract.prisma', {
     output: 'src/contract.json',
     target: postgres,
+    // Since 0.15 the SQL family no longer materialises a placeholder
+    // namespace, so the target's namespace factory is required.
+    createNamespace: postgresCreateNamespace,
   }),
   migrations: {
     dir: 'migrations',

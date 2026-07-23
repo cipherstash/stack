@@ -4,8 +4,15 @@
  *
  * This is a separate invariant-only edge from the original v3 baseline. A
  * database that already recorded the baseline invariant must still traverse
- * this edge, otherwise changing the runtime SQL behind that historical marker
+ * this edge, otherwise changing the SQL behind that historical marker
  * would leave the database on the older EQL surface.
+ *
+ * PUBLISHED — DO NOT RE-EMIT. This package's bytes are content-addressed
+ * into consumer repos (the frozen-hash pin in
+ * `test/v3/migration-v3.test.ts` fails on any change). A future EQL
+ * version ships as a NEW `migrations/<ts>_upgrade_eql_v3_<x>_<y>_<z>/`
+ * directory with a fresh invariant, modelled on this one — never as an
+ * edit here.
  */
 import {
   Migration,
@@ -14,7 +21,7 @@ import {
 } from '@prisma-next/target-postgres/migration'
 import { CIPHERSTASH_V3_INVARIANTS } from '../../src/extension-metadata/constants-v3'
 import {
-  RUNTIME_EQL_SQL_SENTINEL,
+  readVerifiedInstallSql,
   releaseManifest,
 } from '../../src/migration/eql-bundle-v3'
 
@@ -22,9 +29,11 @@ const UPGRADE_LABEL = `Upgrade EQL v3 bundle to eql-${releaseManifest.eqlVersion
 
 export default class M extends Migration {
   override describe() {
+    // Invariant-only self-edge on the v3-only contract space's
+    // empty-storage hash — the same `to` the baseline lands on.
     return {
-      from: 'sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7',
-      to: 'sha256:1e86a0160ba305fa74516b6d9449218308b258a51a913c1fc907e629f44568a7',
+      from: 'sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e',
+      to: 'sha256:efd408cf8924b4d1805bf5acced8898114aa03cd46b465720179c82a4431d51e',
     }
   }
 
@@ -37,8 +46,12 @@ export default class M extends Migration {
         invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
         target: { id: 'postgres' },
         precheck: [],
+        // The full install SQL, digest-verified at emit time (the EQL v3
+        // install bundle is idempotent-by-reinstall: it drops and
+        // recreates the `eql_v3` operator schema while preserving the
+        // `public.eql_v3_*` storage domains customer columns depend on).
         execute: [
-          { description: UPGRADE_LABEL, sql: RUNTIME_EQL_SQL_SENTINEL },
+          { description: UPGRADE_LABEL, sql: readVerifiedInstallSql() },
         ],
         postcheck: [
           {

@@ -18,7 +18,7 @@
 
 import type { CodecInstanceContext } from '@prisma-next/framework-components/codec'
 import type { SqlCodecCallContext } from '@prisma-next/sql-relational-core/ast'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EncryptedBigInt } from '../../src/execution/envelope-bigint'
 import { EncryptedJson } from '../../src/execution/envelope-json'
 import { EncryptedString } from '../../src/execution/envelope-string'
@@ -221,6 +221,16 @@ describe('CipherstashV3CellCodec — decode', () => {
   const routedCtx = (table: string, name: string) =>
     ({ column: { table, name } }) as SqlCodecCallContext
 
+  // The routing-disagreement diagnostic uses console.warn; silence it here and
+  // assert on it where relevant so it neither pollutes output nor goes untested.
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  })
+  afterEach(() => {
+    warnSpy.mockRestore()
+  })
+
   it('parses JSONB text and constructs the per-castAs envelope with routing context', async () => {
     const sdk = emptySdk()
     const codec = codecFor(
@@ -265,24 +275,142 @@ describe('CipherstashV3CellCodec — decode', () => {
     expect(jsonDecoded).toBeInstanceOf(EncryptedJson)
   })
 
-  it('throws a routed error when the column routing context is missing', async () => {
+  it('routes from the payload’s own `i` identifier when no column context exists', async () => {
+    // The aggregate / computed-projection case: the SQL runtime resolves
+    // no `SqlColumnRef`, but an EQL v3 payload is self-describing. ZeroKMS
+    // commits the cell key to `i`, so this is the authoritative source.
+    const sdk = emptySdk()
+    const codec = codecFor(
+      createV3CodecDescriptors(sdk),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    const decoded = await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"abc"}',
+      {} as SqlCodecCallContext,
+    )
+    expect(decoded).toBeInstanceOf(EncryptedString)
+    const handle = (decoded as EncryptedString).expose()
+    expect(handle.table).toBe('users')
+    expect(handle.column).toBe('email')
+    expect(handle.sdk).toBe(sdk)
+  })
+
+  it('prefers the payload identifier over the query’s column context', async () => {
+    // Key commitment makes the payload authoritative: the identifier is
+    // what the cell key is bound to, so a value that disagrees with where
+    // the query found it must still route by its own identity.
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    const decoded = await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"abc"}',
+      routedCtx('other_table', 'other_column'),
+    )
+    const handle = (decoded as EncryptedString).expose()
+    expect(handle.table).toBe('users')
+    expect(handle.column).toBe('email')
+  })
+
+  it('warns once per distinct mismatch when the identifier disagrees with the projected column', async () => {
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    // Same mismatch twice → one warning (deduped, off the hot path).
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"a"}',
+      routedCtx('notes', 'body'),
+    )
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"b"}',
+      routedCtx('notes', 'body'),
+    )
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('users.email')
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('notes.body')
+
+    // A different mismatch warns again.
+    await codec.decode(
+      '{"i":{"t":"users","c":"ssn"},"c":"c"}',
+      routedCtx('notes', 'body'),
+    )
+    expect(warnSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not warn when the identifier agrees with the projected column', async () => {
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"a"}',
+      routedCtx('users', 'email'),
+    )
+    // …nor when there is no column context to disagree with (aggregates).
+    await codec.decode(
+      '{"i":{"t":"users","c":"email"},"c":"b"}',
+      {} as SqlCodecCallContext,
+    )
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('throws when the payload carries no identifier and there is no column context', async () => {
     const codec = codecFor(
       createV3CodecDescriptors(emptySdk()),
       'cipherstash/eql-v3/eql_v3_text_eq@1',
     )
     await expect(
       codec.decode('{"c":"abc"}', {} as SqlCodecCallContext),
-    ).rejects.toThrow(/routing context/)
+    ).rejects.toThrow(/routing key/)
   })
 })
 
 describe('CipherstashV3CellCodec — JSON plane', () => {
-  it('encodeJson renders the per-type opaque marker; decodeJson throws', () => {
+  it('encodeJson renders the per-type opaque marker', () => {
     const ds = createV3CodecDescriptors(emptySdk())
     const codec = codecFor(ds, 'cipherstash/eql-v3/eql_v3_integer_ord@1')
     expect(codec.encodeJson(EncryptedNumber.from(1))).toEqual({
       $encryptedNumber: '<opaque>',
     })
-    expect(() => codec.decodeJson({})).toThrow(/decodeJson/)
+  })
+
+  it('decodeJson builds a fully-routed envelope from the payload identifier', () => {
+    // The relation-`include()` path: the SQL runtime decodes cells nested
+    // in a `json_agg` / `json_build_object` document through `decodeJson`,
+    // with no column context. The payload's `i` supplies the routing key
+    // and the codec already closes over the SDK, so the envelope is
+    // indistinguishable from one built by `decode`.
+    const sdk = emptySdk()
+    const codec = codecFor(
+      createV3CodecDescriptors(sdk),
+      'cipherstash/eql-v3/eql_v3_text_eq@1',
+    )
+    const decoded = codec.decodeJson({
+      i: { t: 'users', c: 'email' },
+      c: 'abc',
+    })
+    expect(decoded).toBeInstanceOf(EncryptedString)
+    const handle = (decoded as EncryptedString).expose()
+    expect(handle.ciphertext).toEqual({
+      i: { t: 'users', c: 'email' },
+      c: 'abc',
+    })
+    expect(handle.table).toBe('users')
+    expect(handle.column).toBe('email')
+    expect(handle.sdk).toBe(sdk)
+  })
+
+  it('decodeJson rejects a value carrying no EQL identifier', () => {
+    const codec = codecFor(
+      createV3CodecDescriptors(emptySdk()),
+      'cipherstash/eql-v3/eql_v3_integer_ord@1',
+    )
+    expect(() => codec.decodeJson({})).toThrow(/identifier/)
+    // An `encodeJson` marker is not a round-trip input — the two methods
+    // serve different planes.
+    expect(() => codec.decodeJson({ $encryptedNumber: '<opaque>' })).toThrow(
+      /identifier/,
+    )
   })
 })

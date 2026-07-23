@@ -61,15 +61,17 @@ const CONTROL_FORBIDDEN = [
 
 /**
  * Forbidden in `runtime.js` / `v3.js` and their transitive chunk graph.
- * These are contract-space artefacts (the EQL v3 install SQL injector,
- * the contract-space builder, the codec-control lifecycle hook, and the
- * search-config migration-op terms) that must never reach a runtime
- * consumer.
+ * These are contract-space artefacts (the EQL v3 install-SQL reader and
+ * its digest guard, the contract-space builder, the codec-control
+ * lifecycle hook, and the search-config migration-op terms) that must
+ * never reach a runtime consumer — the install-SQL exclusion is also
+ * what keeps the ~2.7 MB baked `ops.json` artefacts out of the runtime
+ * chunk graph.
  */
 const RUNTIME_FORBIDDEN = [
   'contractSpaceFromJson',
-  'withRuntimeEqlSqlPackage',
-  'RUNTIME_EQL_SQL_SENTINEL',
+  'readVerifiedInstallSql',
+  'assertInstallSqlDigest',
   'cipherstashV3CodecControlHooks',
   'add_search_config',
   'remove_search_config',

@@ -13,7 +13,7 @@ describe('createPrismaNextProvider getNextSteps', () => {
     }
     const planApply = steps.find((s) => s.includes('migration plan'))
     expect(planApply).toBeDefined()
-    expect(planApply).toContain('migration apply')
+    expect(planApply).toContain('prisma-next migrate')
   })
 
   it('uses pnpm dlx for invocations when the package manager is pnpm', () => {

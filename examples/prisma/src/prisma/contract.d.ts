@@ -8,7 +8,6 @@ import type {
   EncryptedBigInt,
   EncryptedBoolean,
   EncryptedDate,
-  EncryptedDouble,
   EncryptedJson,
   EncryptedNumber,
   EncryptedString,
@@ -80,11 +79,39 @@ export type FieldInputTypes = {
     };
   };
 };
+export type StorageColumnTypes = {
+  readonly public: {
+    readonly users: {
+      readonly accountid: CodecTypes['cipherstash/eql-v3/eql_v3_bigint_ord@1']['output'];
+      readonly birthday: CodecTypes['cipherstash/eql-v3/eql_v3_date_ord@1']['output'];
+      readonly email: CodecTypes['cipherstash/eql-v3/eql_v3_text_search@1']['output'];
+      readonly emailverified: CodecTypes['cipherstash/eql-v3/eql_v3_boolean@1']['output'];
+      readonly id: CodecTypes['pg/text@1']['output'];
+      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json_search@1']['output'];
+      readonly salary: CodecTypes['cipherstash/eql-v3/eql_v3_double_ord@1']['output'];
+    };
+  };
+};
+export type StorageColumnInputTypes = {
+  readonly public: {
+    readonly users: {
+      readonly accountid: CodecTypes['cipherstash/eql-v3/eql_v3_bigint_ord@1']['input'];
+      readonly birthday: CodecTypes['cipherstash/eql-v3/eql_v3_date_ord@1']['input'];
+      readonly email: CodecTypes['cipherstash/eql-v3/eql_v3_text_search@1']['input'];
+      readonly emailverified: CodecTypes['cipherstash/eql-v3/eql_v3_boolean@1']['input'];
+      readonly id: CodecTypes['pg/text@1']['input'];
+      readonly preferences: CodecTypes['cipherstash/eql-v3/eql_v3_json_search@1']['input'];
+      readonly salary: CodecTypes['cipherstash/eql-v3/eql_v3_double_ord@1']['input'];
+    };
+  };
+};
 export type TypeMaps = TypeMapsType<
   CodecTypes,
   QueryOperationTypes,
   FieldOutputTypes,
-  FieldInputTypes
+  FieldInputTypes,
+  StorageColumnTypes,
+  StorageColumnInputTypes
 >;
 
 type ContractBase = Omit<
@@ -92,7 +119,7 @@ type ContractBase = Omit<
     readonly namespaces: {
       readonly public: {
         readonly id: 'public';
-        readonly kind: 'sql-namespace';
+        readonly kind: 'postgres-schema';
         readonly entries: {
           readonly table: {
             readonly users: {
@@ -335,6 +362,7 @@ type ContractBase = Omit<
       readonly enums: true;
       readonly lateral: true;
       readonly returning: true;
+      readonly scalarList: true;
     };
   };
   readonly extensionPacks: {
@@ -346,154 +374,6 @@ type ContractBase = Omit<
       readonly types: {
         readonly codecTypes: {
           readonly codecInstances: readonly [
-            {
-              readonly descriptor: {
-                readonly codecId: 'cipherstash/string@1';
-                readonly factory: unknown;
-                readonly isParameterized: false;
-                readonly meta: {
-                  readonly db: {
-                    readonly sql: {
-                      readonly postgres: { readonly nativeType: 'eql_v2_encrypted' };
-                    };
-                  };
-                };
-                readonly paramsSchema: {
-                  readonly '~standard': {
-                    readonly validate: unknown;
-                    readonly vendor: 'cipherstash';
-                    readonly version: 1;
-                  };
-                };
-                readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['eql_v2_encrypted'];
-                readonly traits: readonly [
-                  'cipherstash:equality',
-                  'cipherstash:free-text-search',
-                  'cipherstash:order-and-range',
-                ];
-              };
-            },
-            {
-              readonly descriptor: {
-                readonly codecId: 'cipherstash/double@1';
-                readonly factory: unknown;
-                readonly isParameterized: false;
-                readonly meta: {
-                  readonly db: {
-                    readonly sql: {
-                      readonly postgres: { readonly nativeType: 'eql_v2_encrypted' };
-                    };
-                  };
-                };
-                readonly paramsSchema: {
-                  readonly '~standard': {
-                    readonly validate: unknown;
-                    readonly vendor: 'cipherstash';
-                    readonly version: 1;
-                  };
-                };
-                readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['eql_v2_encrypted'];
-                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
-              };
-            },
-            {
-              readonly descriptor: {
-                readonly codecId: 'cipherstash/bigint@1';
-                readonly factory: unknown;
-                readonly isParameterized: false;
-                readonly meta: {
-                  readonly db: {
-                    readonly sql: {
-                      readonly postgres: { readonly nativeType: 'eql_v2_encrypted' };
-                    };
-                  };
-                };
-                readonly paramsSchema: {
-                  readonly '~standard': {
-                    readonly validate: unknown;
-                    readonly vendor: 'cipherstash';
-                    readonly version: 1;
-                  };
-                };
-                readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['eql_v2_encrypted'];
-                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
-              };
-            },
-            {
-              readonly descriptor: {
-                readonly codecId: 'cipherstash/date@1';
-                readonly factory: unknown;
-                readonly isParameterized: false;
-                readonly meta: {
-                  readonly db: {
-                    readonly sql: {
-                      readonly postgres: { readonly nativeType: 'eql_v2_encrypted' };
-                    };
-                  };
-                };
-                readonly paramsSchema: {
-                  readonly '~standard': {
-                    readonly validate: unknown;
-                    readonly vendor: 'cipherstash';
-                    readonly version: 1;
-                  };
-                };
-                readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['eql_v2_encrypted'];
-                readonly traits: readonly ['cipherstash:equality', 'cipherstash:order-and-range'];
-              };
-            },
-            {
-              readonly descriptor: {
-                readonly codecId: 'cipherstash/boolean@1';
-                readonly factory: unknown;
-                readonly isParameterized: false;
-                readonly meta: {
-                  readonly db: {
-                    readonly sql: {
-                      readonly postgres: { readonly nativeType: 'eql_v2_encrypted' };
-                    };
-                  };
-                };
-                readonly paramsSchema: {
-                  readonly '~standard': {
-                    readonly validate: unknown;
-                    readonly vendor: 'cipherstash';
-                    readonly version: 1;
-                  };
-                };
-                readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['eql_v2_encrypted'];
-                readonly traits: readonly ['cipherstash:equality'];
-              };
-            },
-            {
-              readonly descriptor: {
-                readonly codecId: 'cipherstash/json@1';
-                readonly factory: unknown;
-                readonly isParameterized: false;
-                readonly meta: {
-                  readonly db: {
-                    readonly sql: {
-                      readonly postgres: { readonly nativeType: 'eql_v2_encrypted' };
-                    };
-                  };
-                };
-                readonly paramsSchema: {
-                  readonly '~standard': {
-                    readonly validate: unknown;
-                    readonly vendor: 'cipherstash';
-                    readonly version: 1;
-                  };
-                };
-                readonly renderOutputType: unknown;
-                readonly targetTypes: readonly ['eql_v2_encrypted'];
-                readonly traits: readonly ['cipherstash:searchable-json'];
-              };
-            },
             {
               readonly descriptor: {
                 readonly codecId: 'cipherstash/eql-v3/eql_v3_integer@1';
@@ -1471,11 +1351,6 @@ type ContractBase = Omit<
               readonly package: '@prisma-next/extension-cipherstash/runtime';
             },
             {
-              readonly alias: 'EncryptedDouble';
-              readonly named: 'EncryptedDouble';
-              readonly package: '@prisma-next/extension-cipherstash/runtime';
-            },
-            {
               readonly alias: 'EncryptedBigInt';
               readonly named: 'EncryptedBigInt';
               readonly package: '@prisma-next/extension-cipherstash/runtime';
@@ -1510,42 +1385,6 @@ type ContractBase = Omit<
           };
         };
         readonly storage: readonly [
-          {
-            readonly familyId: 'sql';
-            readonly nativeType: 'eql_v2_encrypted';
-            readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/string@1';
-          },
-          {
-            readonly familyId: 'sql';
-            readonly nativeType: 'eql_v2_encrypted';
-            readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/double@1';
-          },
-          {
-            readonly familyId: 'sql';
-            readonly nativeType: 'eql_v2_encrypted';
-            readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/bigint@1';
-          },
-          {
-            readonly familyId: 'sql';
-            readonly nativeType: 'eql_v2_encrypted';
-            readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/date@1';
-          },
-          {
-            readonly familyId: 'sql';
-            readonly nativeType: 'eql_v2_encrypted';
-            readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/boolean@1';
-          },
-          {
-            readonly familyId: 'sql';
-            readonly nativeType: 'eql_v2_encrypted';
-            readonly targetId: 'postgres';
-            readonly typeId: 'cipherstash/json@1';
-          },
           {
             readonly familyId: 'sql';
             readonly nativeType: 'public.eql_v3_integer';
