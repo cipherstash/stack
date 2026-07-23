@@ -78,11 +78,8 @@ export const sharedAlias: Record<string, string> = {
     'packages/stack-supabase/src/index.ts',
   ),
   // The Drizzle adapter package (was `@cipherstash/stack/drizzle` +
-  // `@cipherstash/stack/eql/v3/drizzle`). `/v3` first — longest prefix wins.
-  '@cipherstash/stack-drizzle/v3': resolve(
-    repoRoot,
-    'packages/stack-drizzle/src/v3/index.ts',
-  ),
+  // `@cipherstash/stack/eql/v3/drizzle`). Root only: the `./v3` subpath
+  // collapsed into it, so there is no longer a longer prefix to order first.
   '@cipherstash/stack-drizzle': resolve(
     repoRoot,
     'packages/stack-drizzle/src/index.ts',
