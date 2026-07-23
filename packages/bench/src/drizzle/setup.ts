@@ -34,8 +34,20 @@ export type BenchPlaintextRow = {
   enc_jsonb: { idx: number; group: number }
 }
 
+/**
+ * Build the typed EQL v3 client this bench drives. Wrapped in a
+ * single-signature helper because `EncryptionV3` is now overloaded (typed v3
+ * vs. nominal) — `ReturnType<typeof EncryptionV3>` resolves to the *last*
+ * (nominal) overload, so we infer the return type through this helper instead.
+ */
+function makeEncryptionClient() {
+  return EncryptionV3({ schemas: [encryptionBenchTable] })
+}
+
 /** The typed EQL v3 client this bench drives. */
-export type BenchEncryptionClient = Awaited<ReturnType<typeof EncryptionV3>>
+export type BenchEncryptionClient = Awaited<
+  ReturnType<typeof makeEncryptionClient>
+>
 
 export type BenchHandle = {
   pgClient: pg.Client
@@ -57,9 +69,7 @@ export async function buildBench(): Promise<BenchHandle> {
 
   const db = drizzle(pool)
 
-  const encryptionClient = await EncryptionV3({
-    schemas: [encryptionBenchTable],
-  })
+  const encryptionClient = await makeEncryptionClient()
 
   return { pgClient, pool, db, encryptionClient }
 }
