@@ -461,6 +461,21 @@ export interface TypedEncryptedSupabaseInstance<S extends V3Schemas> {
 // Response
 // ---------------------------------------------------------------------------
 
+/**
+ * The builder returned by `single()`/`maybeSingle()`: awaits to a SINGLE row
+ * (`data: T | null`) instead of an array.
+ *
+ * Only the two post-hoc modifiers supabase-js also allows after `.single()` are
+ * carried over. Filters and transforms are deliberately absent — applying one
+ * after `single()` would change the query the single-row promise was made
+ * about.
+ */
+export interface EncryptedSingleQueryBuilder<T>
+  extends PromiseLike<EncryptedSupabaseResponse<T>> {
+  abortSignal(signal: AbortSignal): EncryptedSingleQueryBuilder<T>
+  throwOnError(): EncryptedSingleQueryBuilder<T>
+}
+
 export type EncryptedSupabaseResponse<T> = {
   data: T | null
   error: EncryptedSupabaseError | null
@@ -909,8 +924,21 @@ export interface EncryptedQueryBuilderCore<
     to: number,
     options?: { referencedTable?: string; foreignTable?: string },
   ): Self
-  single(): Self
-  maybeSingle(): Self
+  /**
+   * Return ONE row rather than an array — so the awaited `data` is `T | null`,
+   * not `T[]`. Returns {@link EncryptedSingleQueryBuilder} rather than `Self`
+   * because that change of shape is the whole point of the call: typing it
+   * `Self` would keep promising `T[]` while the runtime hands back one object,
+   * forcing every caller through a cast (`data as unknown as Row`).
+   *
+   * Filters and transforms are not chainable afterwards, matching supabase-js —
+   * `single()` is applied last.
+   */
+  single(): EncryptedSingleQueryBuilder<T>
+  /** As {@link single}, but a zero-row result is `data: null` rather than an
+   * error. Same `T | null` awaited shape — `single()` reports the missing row
+   * through `error` instead. */
+  maybeSingle(): EncryptedSingleQueryBuilder<T>
   csv(): Self
   abortSignal(signal: AbortSignal): Self
   throwOnError(): Self

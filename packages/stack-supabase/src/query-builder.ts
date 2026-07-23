@@ -88,6 +88,11 @@ const warnedLikeDelegation = new Set<string>()
  */
 export class EncryptedQueryBuilderImpl<
   T extends Record<string, unknown> = Record<string, unknown>,
+  /** The shape this builder awaits to. `T[]` normally; narrowed to `T` by
+   * {@link single}/{@link maybeSingle}, which return ONE row. Carried as a
+   * parameter so the promise cannot keep advertising `T[]` after the runtime
+   * has been switched to single-row mode. */
+  TData = T[],
 > {
   private tableName: string
   private table: AnyV3Table
@@ -465,16 +470,19 @@ export class EncryptedQueryBuilderImpl<
     return this
   }
 
-  single(): this {
+  single(): EncryptedQueryBuilderImpl<T, T> {
     this.resultMode = 'single'
     this.transforms.push({ kind: 'single' })
-    return this
+    // Type-level narrowing only; builder state is preserved. `TData` appears in
+    // `then`/`execute` return positions, so the two instantiations are not
+    // mutually assignable and `this` cannot be re-typed without an assertion.
+    return this as unknown as EncryptedQueryBuilderImpl<T, T>
   }
 
-  maybeSingle(): this {
+  maybeSingle(): EncryptedQueryBuilderImpl<T, T> {
     this.resultMode = 'maybeSingle'
     this.transforms.push({ kind: 'maybeSingle' })
-    return this
+    return this as unknown as EncryptedQueryBuilderImpl<T, T>
   }
 
   csv(): this {
@@ -493,9 +501,17 @@ export class EncryptedQueryBuilderImpl<
     return this
   }
 
-  returns<U extends Record<string, unknown>>(): EncryptedQueryBuilderImpl<U> {
+  /** Re-type the ROW. The awaited SHAPE is preserved: called after
+   * `single()`/`maybeSingle()` this still awaits one row, not `U[]`. */
+  returns<U extends Record<string, unknown>>(): EncryptedQueryBuilderImpl<
+    U,
+    TData extends readonly unknown[] ? U[] : U
+  > {
     // Type-level cast only; builder state is preserved
-    return this as unknown as EncryptedQueryBuilderImpl<U>
+    return this as unknown as EncryptedQueryBuilderImpl<
+      U,
+      TData extends readonly unknown[] ? U[] : U
+    >
   }
 
   // ---------------------------------------------------------------------------
@@ -516,10 +532,10 @@ export class EncryptedQueryBuilderImpl<
   // PromiseLike implementation (deferred execution)
   // ---------------------------------------------------------------------------
 
-  then<TResult1 = EncryptedSupabaseResponse<T[]>, TResult2 = never>(
+  then<TResult1 = EncryptedSupabaseResponse<TData>, TResult2 = never>(
     onfulfilled?:
       | ((
-          value: EncryptedSupabaseResponse<T[]>,
+          value: EncryptedSupabaseResponse<TData>,
         ) => TResult1 | PromiseLike<TResult1>)
       | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
@@ -531,7 +547,7 @@ export class EncryptedQueryBuilderImpl<
   // Core execution
   // ---------------------------------------------------------------------------
 
-  private async execute(): Promise<EncryptedSupabaseResponse<T[]>> {
+  private async execute(): Promise<EncryptedSupabaseResponse<TData>> {
     try {
       logger.debug(`Supabase encrypted query on table "${this.tableName}".`)
 
@@ -558,7 +574,7 @@ export class EncryptedQueryBuilderImpl<
       )
 
       // 6. Decrypt results
-      return await decryptResults<T>(result, {
+      return await decryptResults<T, TData>(result, {
         ...ctx,
         selectColumns: this.selectColumns,
         resultMode: this.resultMode,
