@@ -103,12 +103,12 @@ export async function resolveDecryptResult<T>(
   }
 
   if (typeof chainable?.audit !== 'function' && auditData.metadata) {
-    // The typed EncryptionV3 client returns a plain promise with no decrypt
-    // audit surface, so the metadata has nowhere to go. Make the drop
-    // observable rather than silent — use the nominal client for audited
-    // decrypts.
+    // Every client this package ships carries `.audit()` on decrypt, so this
+    // only fires for a custom client whose decrypt returns something else —
+    // there is then nowhere to put the metadata. Make the drop observable
+    // rather than silent.
     logger.debug(
-      'DynamoDB: decrypt audit metadata ignored — the typed client has no decrypt audit surface; use Encryption({ config: { eqlVersion: 3 } }) for audited decrypts.',
+      "DynamoDB: decrypt audit metadata ignored — this client's decrypt does not return a chainable operation with .audit(). Audited decrypts need a client built with Encryption({ schemas }).",
     )
   }
 

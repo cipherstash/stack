@@ -78,8 +78,10 @@ export async function cutoverCommand(options: CutoverCommandOptions) {
     // Fail closed on ambiguity: `info === null` with EQL columns present
     // means we can't tell WHICH lifecycle applies — running the v2 config
     // machine against (possibly) v3 columns would only produce a misleading
-    // downstream error. (No EQL columns at all, or the post-cutover v2
-    // same-name state, still falls through to the v2 preconditions below.)
+    // downstream error. (A table with no EQL v3 columns still falls through to
+    // the v2 preconditions below — which now also covers the post-cutover v2
+    // same-name state, since an `eql_v2_encrypted` column is no longer
+    // classified and so never appears as a candidate.)
     const unresolved = explainUnresolved(
       options.table,
       options.column,

@@ -430,10 +430,14 @@ describe('encrypt drop — EQL version awareness', () => {
     // After cutover renamed the ciphertext onto `email`, no counterpart is
     // resolvable BY DESIGN. The fail-closed guard must recognize this state
     // rather than blocking the one drop the lifecycle actually wants.
-    lifecycleMock.mockResolvedValue({
-      info: null,
-      candidates: [{ column: 'email', domain: 'eql_v2_encrypted', version: 2 }],
-    })
+    //
+    // `candidates` is EMPTY, not `[{ column: 'email', version: 2 }]`: the
+    // classifier no longer recognises `eql_v2_encrypted`, so a post-cutover v2
+    // column drops out of `listEncryptedColumns` entirely. The state reaches
+    // `explainUnresolved` as "no EQL columns at all", which is exactly the
+    // case it already falls through on. This pins that the v2 lifecycle still
+    // works through the narrower classifier.
+    lifecycleMock.mockResolvedValue({ info: null, candidates: [] })
     migrateMocks.progress.mockResolvedValueOnce({ phase: 'cut-over' })
 
     await dropCommand({ table: 'users', column: 'email' })

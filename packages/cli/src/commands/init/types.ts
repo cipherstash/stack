@@ -6,12 +6,32 @@ export type Integration = 'drizzle' | 'supabase' | 'prisma-next' | 'postgresql'
 
 export type DataType = 'string' | 'number' | 'boolean' | 'date' | 'json'
 
-export type SearchOp = 'equality' | 'orderAndRange' | 'freeTextSearch'
+/**
+ * A concrete EQL v3 domain factory name on the `types` namespace
+ * (`@cipherstash/stack/eql/v3`). v3 has no chainable capability tuners — a
+ * column's query capabilities are fixed by which domain you pick. The scaffold
+ * offers the subset below; the full numeric/date lattice
+ * (Smallint/Bigint/Numeric/Real/Double/Timestamp) is left to the user's real
+ * schema files, exactly as `pgTypeToDataType` collapses those types today.
+ */
+export type V3Domain =
+  | 'Text'
+  | 'TextEq'
+  | 'TextOrd'
+  | 'TextMatch'
+  | 'TextSearch'
+  | 'Integer'
+  | 'IntegerEq'
+  | 'IntegerOrd'
+  | 'Date'
+  | 'DateEq'
+  | 'DateOrd'
+  | 'Boolean'
+  | 'Json'
 
 export interface ColumnDef {
   name: string
-  dataType: DataType
-  searchOps: SearchOp[]
+  domain: V3Domain
 }
 
 export interface SchemaDef {
@@ -60,7 +80,7 @@ export interface InitState {
   /** Schema definitions written to the encryption client. Carries every
    *  table the user picked during introspection (or the single placeholder
    *  for empty databases). The generated client file is still the canonical
-   *  source for the full set of column types and search ops. */
+   *  source for the full set of column domains. */
   schemas?: SchemaDef[]
   /** Names of env keys observed in `.env*` files at init time. Never the
    *  values. Set by build-schema (so the baseline context.json has them);

@@ -1,6 +1,6 @@
 import * as p from '@clack/prompts'
 import pg from 'pg'
-import type { ColumnDef, DataType, SchemaDef, SearchOp } from '../types.js'
+import type { ColumnDef, DataType, SchemaDef, V3Domain } from '../types.js'
 
 export interface DbColumn {
   columnName: string
@@ -99,12 +99,102 @@ export async function introspectDatabase(
   }
 }
 
-function allSearchOps(dataType: DataType): SearchOp[] {
-  const ops: SearchOp[] = ['equality', 'orderAndRange']
-  if (dataType === 'string') {
-    ops.push('freeTextSearch')
+/**
+ * The v3 domains offerable for a scaffolded column of the given `DataType`,
+ * ordered narrowest→widest so the interactive picker reads as an escalating
+ * ladder. Each domain's query capability is fixed by its type — there is no
+ * capability tuple. `boolean` has exactly one storage-only domain; `json` has
+ * exactly one queryable domain (encrypted containment + selectors). Numeric
+ * and date types collapse to the `Integer*` / `Date*` families because
+ * `pgTypeToDataType` carries no width/precision signal.
+ */
+export function candidateDomains(
+  dataType: DataType,
+): Array<{ value: V3Domain; label: string; hint: string }> {
+  // Hints show capability + the operators/functions each domain answers.
+  // EQL v3 emits `eql_v3.*()` function calls for comparison/match (not native
+  // SQL operators); JSON is the exception, using real `@>` (containment) and
+  // `->` (selector) operators. The bracketed sets below are logical shorthand
+  // matching the Drizzle-facing operator names, grounded in the v3 sql-dialect.
+  switch (dataType) {
+    case 'string':
+      return [
+        {
+          value: 'Text',
+          label: 'Text',
+          hint: 'storage only — encrypt/decrypt, no queries',
+        },
+        { value: 'TextEq', label: 'TextEq', hint: 'equality (=, <>, IN)' },
+        {
+          value: 'TextOrd',
+          label: 'TextOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
+        {
+          value: 'TextMatch',
+          label: 'TextMatch',
+          hint: 'free-text match only (matches())',
+        },
+        {
+          value: 'TextSearch',
+          label: 'TextSearch',
+          hint: 'equality + order/range + free-text (=, <, >, BETWEEN, ORDER BY, matches())',
+        },
+      ]
+    case 'number':
+      return [
+        { value: 'Integer', label: 'Integer', hint: 'storage only' },
+        {
+          value: 'IntegerEq',
+          label: 'IntegerEq',
+          hint: 'equality (=, <>, IN)',
+        },
+        {
+          value: 'IntegerOrd',
+          label: 'IntegerOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
+      ]
+    case 'date':
+      return [
+        { value: 'Date', label: 'Date', hint: 'storage only' },
+        { value: 'DateEq', label: 'DateEq', hint: 'equality (=, <>, IN)' },
+        {
+          value: 'DateOrd',
+          label: 'DateOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
+      ]
+    case 'boolean':
+      return [{ value: 'Boolean', label: 'Boolean', hint: 'storage only' }]
+    case 'json':
+      return [
+        {
+          value: 'Json',
+          label: 'Json',
+          hint: 'encrypted-JSONB containment + selectors (@>, ->; =, <, >, BETWEEN, ORDER BY at a path)',
+        },
+      ]
   }
-  return ops
+}
+
+/**
+ * The default domain pre-selected in the picker: the widest searchable domain
+ * for the type. Mirrors the pre-v3 scaffold, which enabled every capability on
+ * every selected column by default. Reads the last entry of the `candidateDomains`
+ * list (ordered narrowest→widest) so the "widest is the default" invariant has a
+ * single source of truth — reordering a candidate list moves the default with it,
+ * and the two can never silently drift.
+ *
+ * Accepts either a `DataType` (looks the candidates up) or an already-computed
+ * candidate list, so a caller that already holds the options — like the picker
+ * loop — can reuse them instead of recomputing `candidateDomains`.
+ */
+export function defaultDomain(
+  from: DataType | Array<{ value: V3Domain }>,
+): V3Domain {
+  const options = Array.isArray(from) ? from : candidateDomains(from)
+  return options[options.length - 1].value
 }
 
 /**
@@ -157,24 +247,33 @@ export async function selectTableColumns(
 
   if (p.isCancel(selectedColumns)) return undefined
 
-  const searchable = await p.confirm({
-    message:
-      'Enable searchable encryption on these columns? (you can fine-tune indexes later)',
-    initialValue: true,
-  })
-
-  if (p.isCancel(searchable)) return undefined
-
-  const columns: ColumnDef[] = selectedColumns.map((colName) => {
+  const columns: ColumnDef[] = []
+  for (const colName of selectedColumns) {
     const dbCol = table.columns.find((c) => c.columnName === colName)
     if (!dbCol) {
       // Unreachable — multiselect only emits values from the source array.
       throw new Error(`Column ${colName} not found in table ${selectedTable}`)
     }
     const dataType = pgTypeToDataType(dbCol.udtName)
-    const searchOps = searchable ? allSearchOps(dataType) : []
-    return { name: colName, dataType, searchOps }
-  })
+    const options = candidateDomains(dataType)
+
+    // Single-domain types (boolean, json) have nothing to choose — assign the
+    // only domain without interrupting the user with a one-option prompt.
+    if (options.length === 1) {
+      columns.push({ name: colName, domain: options[0].value })
+      continue
+    }
+
+    const domain = await p.select<V3Domain>({
+      message: `Encryption domain for "${colName}" (${dataType})?`,
+      options,
+      initialValue: defaultDomain(options),
+    })
+
+    if (p.isCancel(domain)) return undefined
+
+    columns.push({ name: colName, domain })
+  }
 
   p.log.success(
     `Schema defined: ${selectedTable} with ${columns.length} encrypted column${columns.length !== 1 ? 's' : ''}`,

@@ -12,7 +12,7 @@
  *
  * Credential-free: protect-ffi is mocked, so there is no ZeroKMS round-trip.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Encryption } from '@/index'
 
 // A protect-ffi-shaped encrypted payload so the SDK's `isEncryptedPayload`
@@ -67,11 +67,23 @@ const lastCiphertextLockContext = () =>
   lastDecryptOpts().ciphertexts[0]?.lockContext
 
 let client: Awaited<ReturnType<typeof Encryption<readonly [typeof users]>>>
+let prevWorkspaceCrn: string | undefined
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  prevWorkspaceCrn = process.env.CS_WORKSPACE_CRN
   process.env.CS_WORKSPACE_CRN = 'crn:ap-southeast-2.aws:test-workspace'
   client = await Encryption({ schemas: [users] })
+})
+
+afterEach(() => {
+  // Restore the prior value so this suite doesn't leak env state into other
+  // Vitest suites sharing the worker.
+  if (prevWorkspaceCrn === undefined) {
+    delete process.env.CS_WORKSPACE_CRN
+  } else {
+    process.env.CS_WORKSPACE_CRN = prevWorkspaceCrn
+  }
 })
 
 describe('typed v3 client: audit metadata forwards through decryptModel', () => {
@@ -125,6 +137,28 @@ describe('typed v3 client: audit metadata forwards through decryptModel', () => 
     const opts = lastDecryptOpts()
     expect(opts.unverifiedContext).toEqual({ m: 3 })
     expect(lastCiphertextLockContext()).toEqual(IDENTITY_CLAIM)
+  })
+
+  it('throws when a second lock context is chained onto an already-bound op', () => {
+    // The wrapper always exposes `withLockContext`, so a positional bind
+    // followed by a chained one type-checks. Silently keeping the first would
+    // drop the caller's intent (and fail later at ZeroKMS with an opaque
+    // rejection); reject the re-bind at the call site instead.
+    const op = client.decryptModel({ email: enc() }, users, IDENTITY_CLAIM)
+
+    expect(() => op.withLockContext({ identityClaim: ['other'] })).toThrow(
+      /already bound to a lock context/i,
+    )
+  })
+
+  it('throws on a re-bind for bulkDecryptModels too', () => {
+    const op = client.bulkDecryptModels([{ email: enc() }], users, {
+      identityClaim: ['sub'],
+    })
+
+    expect(() => op.withLockContext(IDENTITY_CLAIM)).toThrow(
+      /already bound to a lock context/i,
+    )
   })
 
   it('forwards .audit({ metadata }) on bulkDecryptModels', async () => {

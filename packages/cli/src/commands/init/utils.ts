@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import type { DataType, Integration, SchemaDef, SearchOp } from './types.js'
+import type { Integration, SchemaDef } from './types.js'
 
 /**
  * Checks if a package is installed and loadable from the current project.
@@ -264,67 +264,14 @@ function toCamelCase(str: string): string {
   return str.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())
 }
 
-/**
- * Map a column's v2-style capability request ({@link DataType} plus the set of
- * requested {@link SearchOp}s) to the name of the concrete EQL **v3** domain
- * factory on the `types` namespace (e.g. `'TextSearch'`, `'IntegerOrd'`).
- *
- * v3 has no chainable capability tuners — each domain's query capabilities are
- * FIXED by the type — so a `{ equality, orderAndRange, freeTextSearch }` request
- * does not map mechanically to a flag object; it picks the domain whose fixed
- * capability set is the tightest match. The mapping mirrors the capability sets
- * in `@cipherstash/stack/eql/v3` (`columns.ts`):
- *
- *   storage-only  → `Text` / `Integer` / `Date` / …    (no searchOps)
- *   equality      → `TextEq` / `IntegerEq` / `DateEq`   (EQUALITY_ONLY)
- *   order & range → `TextOrd` / `IntegerOrd` / `DateOrd` (ORDER_AND_RANGE, also answers equality)
- *   free-text     → `TextMatch` (MATCH_ONLY), or `TextSearch` when combined with eq/ord (TEXT_SEARCH)
- *
- * `boolean` and `json` each have a single domain (no searchable variants), so
- * their searchOps are informational only.
- *
- * The numeric `DataType` collapses to the `Integer*` family — the scaffold has
- * no width/precision signal to distinguish `Numeric`/`Real`/`Double`/`Bigint`,
- * exactly as the v2 scaffold collapsed every number to one `dataType: 'number'`.
- * The user's real schema files stay authoritative; they pick the precise domain.
- */
-function v3DomainFactory(dataType: DataType, searchOps: SearchOp[]): string {
-  const eq = searchOps.includes('equality')
-  const ord = searchOps.includes('orderAndRange')
-  const text = searchOps.includes('freeTextSearch')
-
-  switch (dataType) {
-    case 'json':
-      return 'Json'
-    case 'boolean':
-      // Boolean is storage-only in v3 — no eq/ord/match domain exists.
-      return 'Boolean'
-    case 'number':
-      if (ord) return 'IntegerOrd'
-      if (eq) return 'IntegerEq'
-      return 'Integer'
-    case 'date':
-      if (ord) return 'DateOrd'
-      if (eq) return 'DateEq'
-      return 'Date'
-    case 'string':
-      if (text && (eq || ord)) return 'TextSearch'
-      if (text) return 'TextMatch'
-      if (ord) return 'TextOrd'
-      if (eq) return 'TextEq'
-      return 'Text'
-  }
-}
-
 function generateDrizzleFromSchemas(schemas: SchemaDef[]): string {
   const tableDefs = schemas.map((schema) => {
     const varName = `${toCamelCase(schema.tableName)}Table`
     const schemaVarName = `${toCamelCase(schema.tableName)}Schema`
 
-    const columnDefs = schema.columns.map((col) => {
-      const factory = v3DomainFactory(col.dataType, col.searchOps)
-      return `  ${col.name}: types.${factory}('${col.name}'),`
-    })
+    const columnDefs = schema.columns.map(
+      (col) => `  ${col.name}: types.${col.domain}('${col.name}'),`,
+    )
 
     return `export const ${varName} = pgTable('${schema.tableName}', {
   id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
@@ -353,10 +300,9 @@ function generateGenericFromSchemas(schemas: SchemaDef[]): string {
   const tableDefs = schemas.map((schema) => {
     const varName = `${toCamelCase(schema.tableName)}Table`
 
-    const columnDefs = schema.columns.map((col) => {
-      const factory = v3DomainFactory(col.dataType, col.searchOps)
-      return `  ${col.name}: types.${factory}('${col.name}'),`
-    })
+    const columnDefs = schema.columns.map(
+      (col) => `  ${col.name}: types.${col.domain}('${col.name}'),`,
+    )
 
     return `export const ${varName} = encryptedTable('${schema.tableName}', {
 ${columnDefs.join('\n')}
@@ -392,6 +338,17 @@ export function generateClientFromSchemas(
     case 'supabase':
     case 'postgresql':
       return generateGenericFromSchemas(schemas)
+    case 'prisma-next':
+      // `schema build` doesn't scaffold a prisma-next client — that integration
+      // uses its own per-domain constructors (`cipherstash.TextSearch()` …) and
+      // a migration-based flow, not the `types.*` client this emits. It never
+      // reaches here (schema/build.ts only produces 'supabase' | 'postgresql'),
+      // but fail loudly rather than writing an `undefined` client if it ever
+      // does. Naming every case also keeps the switch exhaustive, so a new
+      // Integration can't silently fall through to `undefined` again.
+      throw new Error(
+        '`stash schema build` does not generate a prisma-next client; use `stash plan` → `stash impl` instead.',
+      )
   }
 }
 
