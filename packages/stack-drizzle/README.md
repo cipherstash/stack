@@ -1,13 +1,22 @@
 # @cipherstash/stack-drizzle
 
-**Searchable, application-level encryption for [Drizzle ORM][drizzle-orm] and PostgreSQL.**
-Encrypt fields in your app and keep them fully queryable in Postgres — equality, range,
-`ORDER BY`, free-text match, encrypted JSON — with zero-knowledge key management built in,
+**Searchable, application-level encryption for [Drizzle ORM][drizzle-orm] and PostgreSQL**,
 from [CipherStash Stack][stack-repo].
 
-> **CipherStash never sees your plaintext — or your keys.** Every value is encrypted in your
-> application with a unique key via [ZeroKMS][zerokms], so a database breach — dump, backup,
-> replica, logs — leaks only ciphertext. [See the security architecture →][security-architecture]
+## Why
+
+Anyone with database access — a DBA, a leaked service account, a SQL injection — normally sees
+everything. CipherStash encrypts each value with its own key, derived at query time from the
+caller's identity. So a dump, an injection, or a compromised box yields ciphertext; you can
+only decrypt what you're explicitly authorized to, and every decryption is audited.
+
+The trick is queries still work: we build searchable encrypted indexes using deterministic
+encryption, ORE, and bloom filters, so equality, range, and fuzzy-text queries run against
+native Postgres indexes in milliseconds without decrypting the table.
+
+The trade-off is explicit and bounded: the indexes leak equality and order relationships,
+nothing else — it's not FHE, and we don't pretend it is.
+[Security architecture →][security-architecture]
 
 ## Encrypted columns. Real Drizzle queries.
 
