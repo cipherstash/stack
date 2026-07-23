@@ -1,6 +1,6 @@
 ---
 name: stash-cli
-description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/upgrade/status`, `db push/validate`, `encrypt backfill/cutover/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, the credential rules for `~/.cipherstash`, and the rollout-then-cutover lifecycle. Use when setting up CipherStash EQL in a database, running any `stash` command, creating `stash.config.ts`, or rolling encryption out to production.
+description: Drive CipherStash setup and encryption migrations through the `stash` CLI — `init`, `plan`, `impl`, `status`, `auth login`, `eql install/upgrade/status`, `db validate`, `encrypt backfill/cutover/drop`, `schema build`, and `manifest --json`. Covers the agent / non-interactive interface, the credential rules for `~/.cipherstash`, and the rollout-then-cutover lifecycle. Use when setting up CipherStash EQL in a database, running any `stash` command, creating `stash.config.ts`, or rolling encryption out to production.
 ---
 
 # CipherStash CLI (`stash`)
@@ -199,7 +199,7 @@ export default defineConfig({
 | Option | Required | Default | Purpose |
 |---|---|---|---|
 | `databaseUrl` | yes | — | PostgreSQL connection string |
-| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db push`, `db validate`, `schema build`, `encrypt *` |
+| `client` | no | `./src/encryption/index.ts` | Encryption client, loaded by `db validate`, `schema build`, `encrypt *` |
 
 Resolved by walking up from `process.cwd()`, like `tsconfig.json`. `stash init` scaffolds it; `stash eql install` offers to.
 
@@ -220,7 +220,7 @@ Seven mechanical steps, no agent handoff. It prompts only when it can't pick a s
 
 1. **Authenticate** — silent when a valid token exists.
 2. **Resolve database** — per the resolution order above; verifies the connection.
-3. **Resolve proxy choice** — CipherStash Proxy or direct SDK access (the default). Stored as `usesProxy` in `context.json`; this is what decides whether `db push` is part of your flow at all. Set by `--proxy` / `--no-proxy`; non-TTY without a flag defaults to SDK.
+3. **Resolve proxy choice** — CipherStash Proxy or direct SDK access (the default). Stored as `usesProxy` in `context.json`. Set by `--proxy` / `--no-proxy`; non-TTY without a flag defaults to SDK.
 4. **Build schema** — auto-detects Drizzle (`drizzle.config.*`, `drizzle-orm`/`drizzle-kit`), Supabase (from the `DATABASE_URL` host), and Prisma Next. Writes a placeholder encryption client; prompts only if a file already exists there.
 5. **Install dependencies** — one combined prompt for `@cipherstash/stack` and `stash`. Skipped when both are present.
 6. **Install EQL** — always EQL v3. **Drizzle** projects generate a v3 install migration (the same output as `eql migration --drizzle`, including the `cs_migrations` tracking schema) so the install lands in your migration history — apply it with `drizzle-kit migrate`; requires `drizzle-kit` to be installed and configured. **Prisma Next** is skipped (it installs EQL via `prisma-next migrate`). Everything else runs `eql install` directly against the resolved database, and is skipped when EQL is already installed.
@@ -394,7 +394,7 @@ After writing the migration, `--drizzle` sweeps the output directory for sibling
 
 #### `eql upgrade`
 
-The install SQL is safe to re-run — columns and data survive — but it is not fully idempotent: it begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, which cascade-drops any **functional indexes** built on the `eql_v3` extractors (see `stash-indexing`). After an upgrade, re-run your index migrations and `ANALYZE`. `upgrade` checks the current version, re-runs the install SQL, and reports the new one. If EQL isn't installed it points you at `eql install`. Same `--supabase`, `--exclude-operator-family`, `--eql-version`, `--latest`, `--dry-run`, `--database-url` flags.
+The install SQL is safe to re-run — columns and data survive — but it is not fully idempotent: it begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, which cascade-drops any **functional indexes** built on the `eql_v3` extractors (see `stash-indexing`). After an upgrade, recreate them: migration runners skip migrations already recorded as applied, so add a *new* migration that re-issues the `CREATE INDEX` statements (or run the DDL directly), then `ANALYZE` the affected tables. `upgrade` checks the current version, re-runs the install SQL, and reports the new one. If EQL isn't installed it points you at `eql install`. Same `--supabase`, `--exclude-operator-family`, `--eql-version`, `--latest`, `--dry-run`, `--database-url` flags.
 
 #### `eql status`
 
@@ -411,42 +411,7 @@ Whether EQL is installed and at which version; database permission status; wheth
 | No indexes on an encrypted column | Info |
 | `searchableJson` without `dataType("json")` | Error |
 
-Runs automatically before `db push`, where issues warn but don't block. Exits 1 on errors only. The "No indexes" Info finding is resolved with the functional-index recipes in the `stash-indexing` skill.
-
-#### `db push` / `db activate` — EQL v2 + CipherStash Proxy only
-
-> **SDK users skip both.** Drizzle, Supabase, and plain-PostgreSQL SDK users keep their encryption config in application code; the database needs no copy. These commands exist for **CipherStash Proxy**, which reads `public.eql_v2_configuration` to know which columns to encrypt and decrypt. `stash init` records this as `usesProxy`.
-
-```bash
-stash db push [--dry-run]
-stash db activate
-```
-
-`db push` loads the encryption client, validates it, maps SDK data types to EQL `cast_as` values, then writes to `eql_v2_configuration`:
-
-- **No active config** (first push) → writes `active` directly. Encryption is live immediately.
-- **Active config exists** → writes `pending`, replacing any prior pending. The active config keeps serving reads until you finalise.
-
-Finalising a `pending` push:
-
-| Situation | Command |
-|---|---|
-| Adding a new encrypted column, no rename | `stash db activate` |
-| Cutting over from a `<col>_encrypted` twin | `stash encrypt cutover --table T --column C` |
-
-`db activate` runs `eql_v2.migrate_config()` then `eql_v2.activate_config()` in one transaction, promoting `pending` → `active` and marking the prior active `inactive`. No physical rename. It errors when there is nothing pending.
-
-**SDK to EQL type mapping**
-
-| `dataType()` | EQL `cast_as` |
-|---|---|
-| `string`, `text` | `text` |
-| `number` | `double` |
-| `bigint` | `big_int` |
-| `boolean` | `boolean` |
-| `date` | `date` |
-| `timestamp` | `timestamp` |
-| `json` | `jsonb` |
+Exits 1 on errors only. The "No indexes" Info finding applies to term-carrying (queryable) columns — resolve it with the functional-index recipes in the `stash-indexing` skill. Storage-only columns (bare `types.T`, `types.Boolean`) have no index option by design; for them the finding needs no action.
 
 #### `db test-connection`
 
@@ -635,7 +600,7 @@ Required: `SUPERUSER`, **or** `CREATE` on the database *and* on the `public` sch
 
 **Supabase.** Always pass `--supabase` (or `supabase: true`). It selects a compatible install script and grants `anon`, `authenticated`, and `service_role`.
 
-**`ORDER BY` on encrypted columns:** on EQL v3, ordering works on OPE-backed columns — Drizzle emits `ORDER BY eql_v3.ord_term(col)`, and the Supabase adapter's `order()` sorts by the `col->op` term. ORE-flavour (`*OrdOre`) domains need a superuser-only operator class (unavailable on managed Postgres/Supabase) and are rejected; storage-only and equality/match-only columns have no ordering term. For those, order by a plaintext column or sort application-side. (The legacy v2 surface — bare `eql_v2_encrypted` — cannot order encrypted columns without operator families.) The ordering extractors are also the index expressions — see the `stash-indexing` skill for the `CREATE INDEX` recipes.
+**`ORDER BY` on encrypted columns:** on EQL v3, ordering works on OPE-backed columns — Drizzle emits `ORDER BY eql_v3.ord_term(col)`, and the Supabase adapter's `order()` sorts by the `col->op` term. ORE-flavour (`*OrdOre`) domains need a custom operator class the installer creates with `CREATE OPERATOR CLASS` — supported on self-hosted Postgres and on AWS RDS/Aurora, but not on cloud-hosted Supabase (the one confirmed platform whose install role cannot create operator classes; the installer skips the opclass there and disables the `*OrdOre` domains). Storage-only and equality/match-only columns have no ordering term. For those, order by a plaintext column or sort application-side. (The legacy v2 surface — bare `eql_v2_encrypted` — cannot order encrypted columns without operator families.) The ordering extractors are also the index expressions — see the `stash-indexing` skill for the `CREATE INDEX` recipes.
 
 **The native binary won't load.** Run `stash doctor`.
 

@@ -75,9 +75,10 @@ For the `_ord_ore` domains only:
 
 ```sql
 CREATE INDEX events_at_ord_ore ON events USING btree (eql_v3.ord_term_ore(encrypted_at));
+ANALYZE events;
 ```
 
-This one depends on an operator class the EQL installer can only create as **superuser**. On non-superuser installs it has a *silent* failure mode — read [Supabase and Managed Postgres](#supabase-and-managed-postgres-what-actually-needs-superuser) before using it. Prefer `types.TOrd` unless you specifically need ORE ordering on a self-hosted, superuser-installed database.
+This one depends on a custom operator class the EQL installer must be privileged enough to create — see [Supabase and Managed Postgres](#supabase-and-managed-postgres-what-actually-needs-superuser) for which platforms allow it and for the failure mode to check. Prefer `types.TOrd` unless you specifically need ORE ordering on a platform whose installer could create the opclass.
 
 ### Free-Text Match — `eql_v3.match_term`
 
@@ -113,11 +114,12 @@ For ordered access to a single field of a `types.Json` document, index the order
 ```sql
 CREATE INDEX orders_total_ord
   ON orders USING btree (eql_v3.ord_term(data_encrypted -> '<selector>'::text));
+ANALYZE orders;
 
 SELECT * FROM orders ORDER BY eql_v3.ord_term(data_encrypted -> '<selector>'::text) LIMIT 10;
 ```
 
-- `<selector>` is the deterministic selector hash the encryption client emits (each `sv` element's `s` field) — **not** a plaintext JSONPath. Obtain it via the client's selector query encoding (see `stash-encryption` on JSONPath selectors).
+- `<selector>` is the deterministic selector hash the encryption client emits (each `sv` element's `s` field) — **not** a plaintext JSONPath. To obtain it, encrypt the path through the client — `encryptQuery('$.total', { table, column, queryType: 'steVecSelector' })` — and read the selector from the returned query envelope; it is stable for a given column + path, so it can be pasted into migration DDL. (Cross-check: the same hash appears as `s` in the `sv` entries of any stored row that has the field.)
 - The `->` operand must be typed (`::text`); a bare literal falls through to native `jsonb ->`.
 - The extracted term is `bytea`-backed like top-level `ord_term` — default btree opclass, no superuser.
 - Entry-to-entry `=` / `<>` and exact `GROUP BY` / `DISTINCT` on extracted fields are **not supported** (an extracted entry carries no value selector). Use document containment with the GIN index above for exact field equality.
@@ -126,7 +128,7 @@ SELECT * FROM orders ORDER BY eql_v3.ord_term(data_encrypted -> '<selector>'::te
 
 **Only one thing on this page needs superuser: the ORE operator class behind `_ord_ore`.** Everything else — equality btree/hash, `_ord`/`text_search` ordering btree, match GIN, JSON containment GIN, field-level ordering — installs and engages with a plain non-superuser role. Do not generalize the ORE warning into "encrypted columns can't be indexed on Supabase"; the default ordering path (`_ord`, via CLLW-OPE) binds Postgres's native `bytea` btree operator class and needs nothing installed.
 
-The `_ord_ore` restriction, precisely: its btree ordering depends on a hand-written operator class created by the EQL installer, and `CREATE OPERATOR CLASS` requires superuser. On platforms whose installer role is not superuser (cloud-hosted Supabase, most managed Postgres), the installer detects this and **disables the `_ord_ore` domains** — using one raises `feature_not_supported` with a hint naming the alternatives.
+The `_ord_ore` restriction, precisely: its btree ordering depends on a hand-written operator class created by the EQL installer, and `CREATE OPERATOR CLASS` is a superuser-gated command in stock PostgreSQL. Whether that blocks ORE is per-platform, not a blanket managed-Postgres rule: **AWS RDS and Aurora fully support it** (their master role can create operator classes), while **cloud-hosted Supabase is the one confirmed platform that refuses it**. Where the install role can't create the opclass, the installer detects this and **disables the `_ord_ore` domains** — using one raises `feature_not_supported` with a hint naming the alternatives.
 
 **The silent-failure mode to check for:** if an `_ord_ore` column somehow exists without the opclass, `CREATE INDEX … USING btree (eql_v3.ord_term_ore(col))` does **not** fail — PostgreSQL binds the generic `record_ops` instead. The index builds, occupies space, and never engages. Verify which opclass an ORE index actually bound:
 
@@ -262,7 +264,7 @@ Index not being used:
 - **Fresh encrypted column (new table or new field):** ship the `CREATE INDEX` in the **same migration** that adds the column. Every value written carries its terms from day one, so the index is correct from the first row.
 - **Encrypting an existing column** (the `stash encrypt` lifecycle): create the indexes **after `stash encrypt backfill` completes and before switching reads** to the encrypted column. Building after backfill is one bulk pass instead of per-row index maintenance across the whole backfill, and the reads you cut over to engage an index from the first query. Remember `ANALYZE` after the build. See `stash-encryption` § "Rolling Encryption Out to Production" for the full lifecycle.
 
-**These indexes do not survive an EQL reinstall or upgrade.** The install SQL begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, and every functional index on an extractor depends on that schema — so `stash eql upgrade` (or `eql install --force`, or re-applying the bundle by hand) cascade-drops all of them. Columns and data are untouched (the `public.eql_v3_*` domains deliberately don't depend on the `eql_v3` schema); only the indexes vanish, and queries fall back to sequential scans without erroring. After any EQL upgrade or reinstall, re-run your index migrations and `ANALYZE`, and confirm with the `EXPLAIN` checklist above.
+**These indexes do not survive an EQL reinstall or upgrade.** The install SQL begins with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, and every functional index on an extractor depends on that schema — so `stash eql upgrade` (or `eql install --force`, or re-applying the bundle by hand) cascade-drops all of them. Columns and data are untouched (the `public.eql_v3_*` domains deliberately don't depend on the `eql_v3` schema); only the indexes vanish, and queries fall back to sequential scans without erroring. After any EQL upgrade or reinstall, recreate them — migration runners skip already-applied migrations, so add a *new* migration re-issuing the `CREATE INDEX` statements (or run the DDL directly), `ANALYZE`, and confirm with the `EXPLAIN` checklist above.
 
 ## Reference
 

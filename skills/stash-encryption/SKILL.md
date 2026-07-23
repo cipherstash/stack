@@ -233,7 +233,7 @@ Each factory in `types` maps 1:1 to a Postgres domain named `public.eql_v3_<name
 | `Search` (text only) | Equality + ordering/range + free-text | all three |
 | `Json` (no suffix) | Encrypted-JSONB containment + JSONPath selector queries | `'searchableJson'` |
 
-> **`Ord` vs `OrdOre`:** prefer `Ord`. The `OrdOre` domains are backed by an ORE operator class whose installation requires **superuser** — unavailable on managed Postgres (including Supabase), where the install bundle skips the ORE opclass and disables the `_ord_ore` domains it cannot support. The two ordering flavours produce different, non-cross-comparable terms (`Ord`/`Search` extract via `eql_v3.ord_term`; `OrdOre` via `eql_v3.ord_term_ore`).
+> **`Ord` vs `OrdOre`:** prefer `Ord`. The `OrdOre` domains are backed by an ORE operator class the installer creates with the superuser-gated `CREATE OPERATOR CLASS`. Platform support varies — AWS RDS and Aurora allow it; cloud-hosted Supabase does not (the one confirmed platform that refuses it), and there the install bundle skips the ORE opclass and disables the `_ord_ore` domains it cannot support. The two ordering flavours produce different, non-cross-comparable terms (`Ord`/`Search` extract via `eql_v3.ord_term`; `OrdOre` via `eql_v3.ord_term_ore`).
 
 **Domain families and plaintext types:**
 
@@ -859,9 +859,7 @@ Once dual-writes are recorded as live in `cs_migrations`:
 | Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
 | `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
 
-> **Create the functional indexes between backfill and the read switch.** After `stash encrypt backfill` completes and before reads move to the encrypted column, create the `eql_v3.*` extractor indexes for every queried capability (and `ANALYZE`) — one bulk build instead of per-row maintenance during backfill, and the switched reads engage an index from the first query. Recipes in the `stash-indexing` skill.
-
-> **If you use CipherStash Proxy:** After the schema rename, run `stash db push` to register the renamed shape as `pending`. This is required for Proxy-based queries; SDK users skip this step.
+**Create the functional indexes between backfill and the read switch** (EQL v3 columns). After `stash encrypt backfill` completes and before reads move to the encrypted column, create the `eql_v3.*` extractor indexes for every queried capability (and `ANALYZE`) — one bulk build instead of per-row maintenance during backfill, and the switched reads engage an index from the first query. Recipes in the `stash-indexing` skill. (Legacy v2 rollouts have no extractor indexes to create — skip this step.)
 
 ### State storage
 

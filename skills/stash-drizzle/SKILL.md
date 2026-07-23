@@ -258,7 +258,7 @@ const results = await db
   .orderBy(ops.desc(usersTable.age))
 ```
 
-`ops.asc`/`ops.desc` emit `ORDER BY eql_v3.ord_term(col)` (`ord_term_ore(col)` for the `*OrdOre` domains). The ORE-flavoured domains require a superuser install and are unavailable on managed Postgres (Supabase, RDS, etc.) — prefer the plain `Ord` domains there; ordering works everywhere EQL v3 installs.
+`ops.asc`/`ops.desc` emit `ORDER BY eql_v3.ord_term(col)` (`ord_term_ore(col)` for the `*OrdOre` domains). The ORE-flavoured domains require the installer to create a custom operator class — supported on self-hosted Postgres and on AWS RDS/Aurora, but not on cloud-hosted Supabase (the one confirmed platform whose install role cannot create operator classes; the installer disables the `*OrdOre` domains there). Prefer the plain `Ord` domains when unsure; ordering works everywhere EQL v3 installs.
 
 ### Encrypted-JSONB Containment (`contains`)
 
@@ -396,11 +396,11 @@ The indexes are named `<table>_<column>_<capability>` and ride the normal `drizz
 
 | Column type | Indexes emitted |
 |---|---|
-| `types.TextEq` / numeric `*Eq` | `<col>_eq` — btree on `eql_v3.eq_term` |
+| `types.TextEq` / numeric/date/timestamp `*Eq` | `<col>_eq` — btree on `eql_v3.eq_term` |
 | numeric/date/timestamp `*Ord` | `<col>_ord` — btree on `eql_v3.ord_term`; serves `=`, range, and `ORDER BY` (the injective ordering term answers equality — those domains have no `eq_term`) |
-| numeric/date/timestamp `*OrdOre` | `<col>_ord_ore` — btree on `eql_v3.ord_term_ore` (superuser installs only) |
+| numeric/date/timestamp `*OrdOre` | `<col>_ord_ore` — btree on `eql_v3.ord_term_ore` (needs the ORE opclass — not on Supabase) |
 | `types.TextOrd` | `<col>_eq` **+** `<col>_ord` — text ordering terms are non-injective, so equality rides `eq_term` |
-| `types.TextOrdOre` | `<col>_eq` **+** `<col>_ord_ore` (superuser installs only) |
+| `types.TextOrdOre` | `<col>_eq` **+** `<col>_ord_ore` (needs the ORE opclass — not on Supabase) |
 | `types.TextMatch` | `<col>_match` — GIN on `eql_v3.match_term` |
 | `types.TextSearch` | `<col>_eq` + `<col>_ord` + `<col>_match` |
 | `types.Json` | `<col>_json` — GIN on `(eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops` |
@@ -663,7 +663,7 @@ All comparison/containment operators auto-encrypt their operands and are async; 
 | `asc(col)` | `ORDER BY eql_v3.ord_term(col)` ascending | order/range |
 | `desc(col)` | `ORDER BY eql_v3.ord_term(col)` descending | order/range |
 
-(`ord_term_ore` for `*OrdOre` domains — superuser-only, unavailable on managed Postgres.)
+(`ord_term_ore` for `*OrdOre` domains — needs the ORE opclass; available on RDS/Aurora and self-hosted, not on Supabase.)
 
 ### Logical Operators (async, concurrent)
 

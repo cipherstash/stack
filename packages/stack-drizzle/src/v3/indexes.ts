@@ -13,6 +13,9 @@ import { EQL_V3_FN_SCHEMA } from './sql-dialect.js'
  * Call it inside `pgTable`'s third-argument callback and spread the result:
  *
  * ```ts
+ * import { integer, pgTable } from 'drizzle-orm/pg-core'
+ * import { encryptedIndexes, types } from '@cipherstash/stack-drizzle/v3'
+ *
  * export const users = pgTable(
  *   'users',
  *   {
@@ -32,16 +35,14 @@ import { EQL_V3_FN_SCHEMA } from './sql-dialect.js'
  * - free-text match (`bf`) → `USING gin (eql_v3.match_term(col))`
  * - encrypted JSON         → `USING gin ((eql_v3.to_ste_vec_query(col)::jsonb) jsonb_path_ops)`
  *
- * A `text_search` column therefore yields three indexes. The ordering domains
- * split on term injectivity: numeric/date/timestamp ordering terms are
- * injective, so those `_ord` / `_ord_ore` domains carry no `hm` — the bundle
- * defines no `eq_term` overload for them and `eql_v3.eq` inlines to an
- * ordering-term comparison, meaning ONE ordering btree serves `=` and range
- * alike. Text ordering terms are non-injective, so `text_ord` /
- * `text_ord_ore` carry `hm` too and yield an `eq_term` index alongside the
- * ordering one. A storage-only column (bare `types.T`, `types.Boolean`)
- * yields none — it carries no term.
- * Non-encrypted columns are ignored. Field-level selector indexes on
+ * A `types.TextSearch` column therefore yields three indexes. Ordering
+ * columns differ by type: a numeric, date, or timestamp `*Ord` / `*OrdOre`
+ * column yields a single ordering index that also serves `=` (EQL compares
+ * those columns by their ordering term directly), while `types.TextOrd` /
+ * `TextOrdOre` yield an equality index alongside the ordering one (text
+ * equality runs on a separate term). A storage-only column (bare
+ * `types.Text`, `types.Boolean`, …) yields none — it has no queryable term —
+ * and non-encrypted columns are ignored. Field-level selector indexes on
  * encrypted JSON cannot be derived here (the selector hash is data the
  * crypto layer emits, not schema) — declare those by hand; see the
  * `stash-indexing` skill for the recipe.
@@ -101,15 +102,22 @@ export function encryptedIndexes(
   return builders
 }
 
-/** `eql_v3.<fn>(col)` — the functional-index expression the planner's inlined
- *  operators match structurally (same `EQL_V3_FN_SCHEMA` as the dialect). */
+/**
+ * Build the SQL expression each index is defined over: the EQL term extractor
+ * applied to the column — e.g. `extractor('eq_term', users.email)` renders
+ * `eql_v3.eq_term("users"."email")`. Encrypted predicates compile to
+ * comparisons on these same expressions, which is what makes the index
+ * match. (Same `EQL_V3_FN_SCHEMA` as the query dialect.)
+ */
 function extractor(fn: string, column: Column): SQL {
   return sql`${sql.raw(`${EQL_V3_FN_SCHEMA}.${fn}`)}(${column})`
 }
 
 /**
- * Index names must be unique per Postgres schema, so they are prefixed with
- * the table name — read off the column's owning table, which exists exactly
+ * Read the name of the table a column belongs to — e.g. the `email` column
+ * of `pgTable('users', …)` gives `'users'`, so its indexes are named
+ * `users_email_eq`, `users_email_ord`, … (index names must be unique per
+ * Postgres schema, hence the table prefix). The owning table is set exactly
  * when the helper runs where it belongs: inside the `pgTable` callback.
  */
 function tableNameOf(column: Column): string {

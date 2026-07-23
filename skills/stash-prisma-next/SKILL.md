@@ -180,6 +180,28 @@ ORE-flavour (`_ord_ore`) ordering opclass is superuser-gated. For the full
 model — which domains take which index, engagement rules, `EXPLAIN`
 verification, rollout timing — see the `stash-indexing` skill.
 
+In a migration, the recipes ride a raw-SQL operation (`rawSql` from
+`@prisma-next/postgres/migration`) in the migration's `operations`:
+
+```typescript
+rawSql({
+  id: 'index.users.encrypted',
+  label: 'Index encrypted columns on users',
+  operationClass: 'additive',
+  target: {
+    id: 'postgres',
+    details: { schema: 'public', objectType: 'index', name: 'users_email_eq', table: 'users' },
+  },
+  precheck: [],
+  execute: [
+    { description: 'equality index',
+      sql: 'CREATE INDEX IF NOT EXISTS users_email_eq ON "public"."users" USING btree (eql_v3.eq_term(email))' },
+    { description: 'refresh statistics', sql: 'ANALYZE "public"."users"' },
+  ],
+  postcheck: [],
+})
+```
+
 ## Writing and reading encrypted values
 
 At the value boundary you wrap plaintext in a **runtime envelope** (primitive-named,
