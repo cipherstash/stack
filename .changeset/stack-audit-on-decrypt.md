@@ -34,12 +34,10 @@ return type changes, and the two-argument form reconstructs `Date` columns from
 `cast_as` instead of leaving them as ISO strings. Code that read those columns as
 strings needs updating.
 
-The v3 overload takes a non-empty tuple of tables and a `V3ClientConfig` —
-`ClientConfig` without the deprecated `eqlVersion` escape hatch. So
-`Encryption({ schemas: [] })` no longer type-checks (it used to compile and then
-throw), and `config: { eqlVersion: 2 }` selects the nominal overload, which is
-the client you actually get back. Callers passing a plain `AnyV3Table[]` rather
-than an array literal must narrow it to `readonly [AnyV3Table, ...AnyV3Table[]]`.
+The v3 overload takes a `V3ClientConfig` — `ClientConfig` without the deprecated
+`eqlVersion` escape hatch. So `Encryption({ schemas: [] })` no longer type-checks
+(it used to compile and then throw), and `config: { eqlVersion: 2 }` selects the
+nominal overload, which is the client you actually get back.
 `Awaited<ReturnType<typeof Encryption>>` names the nominal client whatever you
 pass, because `ReturnType` reads the last overload; use the exported
 `EncryptionClientFor<S>` to name the client for a schema tuple.
