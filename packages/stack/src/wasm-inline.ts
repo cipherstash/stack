@@ -64,17 +64,24 @@
  * import { OidcFederationStrategy } from "@cipherstash/stack/wasm-inline"
  * import { cookieStore } from "@cipherstash/auth/cookies"
  *
- * const authStrategy = OidcFederationStrategy.create(
+ * // `create` returns a Result — UNWRAP it. `config.authStrategy` takes the
+ * // strategy itself; handing it the Result fails later and opaquely.
+ * const strategy = OidcFederationStrategy.create(
  *   "crn:ap-southeast-2.aws:my-workspace-id", () => getClerkSessionToken(req),
  *   { store: cookieStore({ request: req, responseHeaders }) },
  * )
- * const client = await Encryption({ schemas, config: { authStrategy, clientId, clientKey } })
+ * if (strategy.failure) throw new Error(strategy.failure.error.message)
+ *
+ * const client = await Encryption({
+ *   schemas, config: { authStrategy: strategy.data, clientId, clientKey },
+ * })
  * ```
  *
  * For service-to-service / CI use with a custom token store, build an
  * `AccessKeyStrategy.create(workspaceCrn, accessKey, { store })` the same
- * way (it derives the region from the CRN). Both strategies are
- * re-exported from this entry.
+ * way — same Result-unwrapping, and it derives the region from the CRN. Both
+ * strategies are re-exported from this entry. An auth strategy and
+ * `config.accessKey` are mutually exclusive.
  */
 
 import { withResult } from '@byteslice/result'

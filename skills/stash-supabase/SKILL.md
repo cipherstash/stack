@@ -56,6 +56,14 @@ this is also how **Supabase Edge Functions** get credentials in local dev —
 `stash env --name edge-dev --write` and pass `--env-file`, or
 `supabase secrets set` them for deploys.
 
+> **One credential per environment, used by everything that writes.** EQL index
+> terms derive from the ZeroKMS client key, so rows written by a client with
+> different `CS_*` values decrypt correctly but never match a query — silently.
+> That includes `stash encrypt backfill`, seed scripts, and Edge Functions.
+> Encryption *inside* an Edge Function (Deno, no native modules) uses the
+> `@cipherstash/stack/wasm-inline` entry — see the `stash-edge` skill; SQL
+> written by hand in a migration or RPC is covered by `stash-sql`.
+
 ### 1. Install EQL v3 on the database
 
 ```bash
