@@ -159,6 +159,15 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
   it('defaults to No, and says why, when a file was rewritten', async () => {
     fs.mkdirSync(path.join(cwd, 'drizzle'))
+    // The sweep is fail-closed: it rewrites a column only when the corpus
+    // positively declares it (and it isn't already encrypted). A real drizzle
+    // corpus carries this declaration in an earlier migration — supply it so
+    // the fixture matches what the sweep actually requires, and the ALTER
+    // below is genuinely rewritten rather than skipped as source-unknown.
+    fs.writeFileSync(
+      path.join(cwd, 'drizzle', '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
     fs.writeFileSync(
       path.join(cwd, 'drizzle', '0001_encrypt.sql'),
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
