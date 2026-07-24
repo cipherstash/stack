@@ -468,10 +468,12 @@ describe('canonical (unsuffixed) exports', () => {
 // The single-row builder is a DIFFERENT type from the array builder, so every
 // method it does and does not carry is public API. Filters and transforms are
 // deliberately absent — one applied after `single()` would change the query the
-// single-row promise was made about — but everything that only re-types or
-// re-configures the pending request stays available. `returns<U>()` in
-// particular is documented in the changeset for this change and was unreachable
-// from the public surface until now (#772 review, SB-1).
+// single-row promise was made about. What stays available is exactly `then`,
+// `abortSignal`, `throwOnError`, `returns`, `withLockContext` and `audit`; this
+// is NOT parity with postgrest-js, whose `overrideTypes` and `setHeader` have no
+// adapter equivalent. `returns<U>()` in particular is documented in the
+// changeset for this change and was unreachable from the public surface until
+// now (#772 review, SB-1).
 // ---------------------------------------------------------------------------
 
 /** A typed builder for the single-row assertions below. */
@@ -516,5 +518,54 @@ describe('single-row builder surface', () => {
     builder.limit(1)
     // @ts-expect-error - single() is applied last
     builder.single()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Row-type generics accept an `interface`
+//
+// DO NOT "simplify" `InterfaceRow` below into a `type` alias — the whole point
+// of this block is the distinction. A `type` alias for an object literal gets an
+// IMPLICIT INDEX SIGNATURE, so it satisfies `Record<string, unknown>`; an
+// `interface` does NOT, so an interface row type fails a
+// `Row extends Record<string, unknown>` constraint with TS2344 ("Index signature
+// for type 'string' is missing"). Every other row-typed test in this file goes
+// through `type UserRow = InferPlaintext<typeof users>` (line ~33) — an alias —
+// which is exactly why none of them ever caught this.
+//
+// Interfaces are the ordinary way a Supabase user declares a row type (and what
+// `supabase gen types` emits alongside its aliases), and upstream postgrest-js
+// leaves the equivalent `returns<T>()` type parameter entirely unconstrained, so
+// the adapter must not be stricter than the API it mirrors.
+// ---------------------------------------------------------------------------
+
+interface InterfaceRow {
+  id: string
+  email: string
+}
+
+describe('row-type generics accept an interface (not just a type alias)', () => {
+  it('accepts an interface on the untyped instance from<Row>()', async () => {
+    const supabase = await encryptedSupabase(supabaseClient)
+    const { data } = await supabase.from<InterfaceRow>('users').select('*')
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow[] | null>()
+  })
+
+  it('accepts an interface on the typed instance fallback from<Row>()', async () => {
+    const supabase = await encryptedSupabase(supabaseClient, {
+      schemas: { users },
+    })
+    const { data } = await supabase.from<InterfaceRow>('orders').select('*')
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow[] | null>()
+  })
+
+  it('accepts an interface on returns<U>()', async () => {
+    const { data } = await mixedBuilder.returns<InterfaceRow>()
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow[] | null>()
+  })
+
+  it('accepts an interface on single().returns<U>()', async () => {
+    const { data } = await mixedBuilder.single().returns<InterfaceRow>()
+    expectTypeOf(data).toEqualTypeOf<InterfaceRow | null>()
   })
 })
