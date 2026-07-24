@@ -17,3 +17,7 @@ the concrete-domain `types.*` factories (`types.TextSearch`, `types.IntegerOrd`,
 `types.Text`, `types.Json`, …), and the `@cipherstash/stack-drizzle/v3` entry
 (`extractEncryptionSchemaV3`) for Drizzle. The `encryptionClient` export shape
 and the empty-schema "no schemas yet" error path are unchanged.
+
+**Superseded later in this release** by the `@cipherstash/stack-drizzle` EQL v2
+removal: the scaffolds now emit `Encryption` from `@cipherstash/stack/v3` and
+`extractEncryptionSchema` from the collapsed `@cipherstash/stack-drizzle` root.
