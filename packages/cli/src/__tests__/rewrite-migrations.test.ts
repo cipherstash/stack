@@ -493,17 +493,80 @@ describe('rewriteEncryptedAlterColumns', () => {
   // statement came back twice: once correctly as `source-unknown`, once as
   // `unrecognised-form` — contradictory advice (look for a hand-authored
   // `USING` clause) for a statement that has none.
+  //
+  // The block comment must NOT sit at the very start of the file — that is
+  // the one shape a previous, narrower version of the preamble regex happened
+  // to handle. A realistic migration file has a preceding statement, so
+  // NEAR_MISS_RE's match starts at THAT statement's `;`, dragging the newline
+  // before the comment in too; a regex that only strips a comment anchored to
+  // the very start of the match fails here.
   it('reports a block-comment-prefixed statement once, not twice', async () => {
     const alterSql =
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
     const filePath = path.join(tmpDir, '0040_block-preamble.sql')
-    fs.writeFileSync(filePath, `/* note */\n${alterSql}\n`)
+    fs.writeFileSync(
+      filePath,
+      [
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY);',
+        '/* note */',
+        alterSql,
+        '',
+      ].join('\n'),
+    )
 
     const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
 
     expect(rewritten).toEqual([])
     expect(skipped).toEqual([
       { file: filePath, statement: alterSql, reason: 'source-unknown' },
+    ])
+  })
+
+  // Same bug, but the comment sits on the ALTER's own line rather than its
+  // own — the preceding statement's `;` still starts the near-miss match
+  // before the (indented) comment, not at it.
+  it('reports an indented block-comment-prefixed statement once, not twice', async () => {
+    const alterSql =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+    const filePath = path.join(tmpDir, '0041_block-preamble-indented.sql')
+    fs.writeFileSync(
+      filePath,
+      [
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY);',
+        `  /* note */ ${alterSql}`,
+        '',
+      ].join('\n'),
+    )
+
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([])
+    expect(skipped).toEqual([
+      { file: filePath, statement: alterSql, reason: 'source-unknown' },
+    ])
+  })
+
+  // Same bug again, this time on the OTHER correct reason a near-miss can
+  // carry: the column is already encrypted, not merely undeclared.
+  it('reports a block-comment-prefixed statement once, not twice, for an already-encrypted column', async () => {
+    const alterSql =
+      'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+    const filePath = path.join(tmpDir, '0042_block-preamble-encrypted.sql')
+    fs.writeFileSync(
+      filePath,
+      [
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY, "email" "public"."eql_v3_text_eq");',
+        '/* note */',
+        alterSql,
+        '',
+      ].join('\n'),
+    )
+
+    const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+    expect(rewritten).toEqual([])
+    expect(skipped).toEqual([
+      { file: filePath, statement: alterSql, reason: 'already-encrypted' },
     ])
   })
 

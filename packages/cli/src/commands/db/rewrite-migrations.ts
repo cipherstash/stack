@@ -96,18 +96,30 @@ const NEAR_MISS_RE =
   /[^;]*?\bSET\s+DATA\s+TYPE\b[^;]*?\beql_v[23][a-z0-9_]*[^;]*?;/gi
 
 /**
- * Blank lines, a leading `/* … *\/` block comment, and `--` line comments
- * (including drizzle-kit's `--> statement-breakpoint`) at the head of a
+ * Strips any run of blank lines, `--` line comments (including drizzle-kit's
+ * `--> statement-breakpoint`), and `/* … *\/` block comments — in any order,
+ * repeated as many times as they occur — from the head of a
  * {@link NEAR_MISS_RE} match.
  *
  * That regex opens with a lazy `[^;]*?`, whose only left boundary is the
  * previous `;` — or the start of the file when there is no preceding statement.
  * So the raw match drags in every comment and blank line since then, and a
- * near-miss in a file that opens with a comment block gets reported to the user
- * with that whole block glued to its front. Strip the preamble so the statement
- * we quote back reads as the offending statement alone.
+ * near-miss preceded by a comment block gets reported to the user with that
+ * whole block glued to its front. Strip the preamble so the statement we quote
+ * back reads as the offending statement alone.
  *
- * The leading block comment is NOT cosmetic: a statement the strict
+ * The block comment is matched as its OWN loop alternative rather than a
+ * single group anchored ahead of the line-comment loop, because the latter
+ * only works when the block comment sits at the very start of the file: in
+ * the far more common case — a preceding statement earlier in the same file —
+ * the match starts at THAT statement's `;`, so it opens with the newline
+ * after it, not with the comment. An anchored `^(?:/\*…\*\/\s*)?` can't match
+ * past that newline to reach the comment, so it silently matches nothing and
+ * leaves the comment attached to the reported statement. Folding the block
+ * comment into the repeating loop lets it match after any number of leading
+ * newlines/line-comments, in any interleaving.
+ *
+ * The block comment strip is NOT cosmetic: a statement the strict
  * {@link ALTER_COLUMN_TO_ENCRYPTED_RE} matched but skipped (`already-encrypted`
  * or `source-unknown`) is left on disk unchanged, so it still contains
  * `SET DATA TYPE` and the broad scan below finds it again. Without stripping
@@ -119,9 +131,17 @@ const NEAR_MISS_RE =
  * wrong for a statement the strict matcher already matched. Stripping the
  * comment here makes both passes agree on the statement text so the second
  * report collapses into the first.
+ *
+ * Known residue, accepted rather than fixed: a NESTED closed block comment
+ * ahead of a live ALTER (`/* outer /* inner *\/ still *\/`) still
+ * double-reports. The block-comment alternative's `*?` is lazy, so it stops
+ * at the FIRST `*\/` — consuming only `/* outer /* inner *\/` — and leaves
+ * `` still *\/`` glued to the front of the next iteration, which the
+ * line-comment alternative doesn't recognise either. That residual text rides
+ * along into the `unrecognised-form` report.
  */
 const STATEMENT_PREAMBLE_RE =
-  /^(?:\/\*[\s\S]*?\*\/\s*)?(?:[^\S\n]*(?:--[^\n]*)?\n)*/
+  /^(?:\s*\/\*[\s\S]*?\*\/|[^\S\n]*(?:--[^\n]*)?\n)*/
 
 /** Drop the leading blank/comment lines a `[^;]*?`-anchored match dragged in. */
 function trimStatementPreamble(statement: string): string {
