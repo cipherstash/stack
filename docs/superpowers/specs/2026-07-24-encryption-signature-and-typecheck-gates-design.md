@@ -90,7 +90,7 @@ TypeScript's `ReturnType` reads the *last* overload, which is the nominal one. S
 `Awaited<ReturnType<typeof Encryption>>` yields `EncryptionClient` even for an all-v3
 schema set, and assigning the real client to it fails:
 
-```
+```text
 Type 'TypedEncryptionClient<…>' is missing the following properties
 from type 'EncryptionClient': client, encryptConfig, init
 ```
