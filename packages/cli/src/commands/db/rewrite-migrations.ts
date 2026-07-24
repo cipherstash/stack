@@ -298,16 +298,27 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
  *
  * **Residue, accepted.** The lookahead is a fixed keyword list, not a parser:
  * a predicate keyword it does not enumerate (`SIMILAR`, `ISNULL`, `NOTNULL`,
- * `OVERLAPS`, …) still lets a bare mention through, e.g.
- * `CHECK ("email" SIMILAR TO '...')`. This is inert unless that mention's name
- * exactly matches a DIFFERENT column that is both encrypted and genuinely
- * undeclared anywhere else in the corpus — contrived, and strictly narrower
- * than the gap this replaces.
+ * `OVERLAPS`, `ON`, …) still lets a bare mention through, e.g.
+ * `CHECK ("email" SIMILAR TO '...')`, or a `REFERENCES "email" ON DELETE
+ * CASCADE` where `"email"` names the referenced TABLE rather than the column
+ * being declared — `"id" integer REFERENCES "email" ON DELETE CASCADE` inside
+ * a `CREATE TABLE` body still registers `email` as declared. That one only
+ * bites when a column shares a referenced table's name, so like the rest of
+ * this residue it is inert unless that mention's name exactly matches a
+ * DIFFERENT column that is both encrypted and genuinely undeclared anywhere
+ * else in the corpus — contrived, and strictly narrower than the gap this
+ * replaces.
  */
 const DECLARED_COLUMN_RE =
   /"([^"]+)"\s+(?!(?:IS|IN|NOT|LIKE|ILIKE|BETWEEN|AND|OR|COLLATE|ASC|DESC|NULLS|UNIQUE|PRIMARY|FOREIGN|CHECK|EXCLUDE|REFERENCES|CONSTRAINT|USING|WITH)\b)["a-z]/gi
 
-/** `ALTER TABLE … ADD COLUMN "col" <any type>` — $1/$2 table, $3 column. */
+/**
+ * `ALTER TABLE … ADD COLUMN "col" <any type>` — $1/$2 table, $3 column.
+ *
+ * Needs no {@link DECLARED_COLUMN_RE}-style keyword lookahead: the token
+ * right after an ADD COLUMN's column name is always its type, so no SQL
+ * keyword can occupy that position.
+ */
 const ADD_COLUMN_RE = new RegExp(
   String.raw`ALTER TABLE\s+${TABLE_REF}\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?"([^"]+)"\s+["a-z]`,
   'gi',
