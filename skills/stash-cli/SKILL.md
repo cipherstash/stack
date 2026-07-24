@@ -352,9 +352,9 @@ Gets a project from zero to installed EQL. It loads an existing `stash.config.ts
 | `--force` | Reinstall even if EQL is present |
 | `--dry-run` | Show what would happen |
 | `--supabase` | Supabase-compatible install (no operator families; grants `anon`, `authenticated`, `service_role`) |
-| `--drizzle` | Generate a Drizzle migration (`--name`, `--out` tune it — `--name` accepts letters, numbers, `-`, `_` only; `--out` is passed to `drizzle-kit --out`, so set it to match your `drizzle.config.ts`) |
-| `--migration` / `--direct` | Supabase: write a migration file, or run SQL directly |
-| `--migrations-dir <path>` | Supabase migrations directory (default `supabase/migrations`) |
+| `--drizzle` | Generate a Drizzle migration (**v2 only — requires `--eql-version 2`**; for v3 use `eql migration --drizzle`). `--name`, `--out` tune it — `--name` accepts letters, numbers, `-`, `_` only; `--out` is passed to `drizzle-kit --out`, so set it to match your `drizzle.config.ts` |
+| `--migration` / `--direct` | Supabase: write a migration file, or run SQL directly. `--migration` is **v2 only — requires `--eql-version 2`**; for a v3 install as a migration use `eql migration` |
+| `--migrations-dir <path>` | Supabase migrations directory (default `supabase/migrations`). **v2 only — requires `--eql-version 2`** |
 | `--exclude-operator-family` | Skip operator families (non-superuser roles) |
 | `--eql-version <2\|3>` | EQL generation. **Default `3`** (the native `public.eql_v3_*` domain schema — the documented approach). `2` is the legacy composite schema. |
 | `--latest` | Fetch latest EQL from GitHub instead of the bundled copy (**v2 only**) |
@@ -433,7 +433,7 @@ For AI-guided integration that edits your existing schema files in place, prefer
 
 The database-side toolset that takes an existing plaintext column the rest of the way, **after** the rollout PR is deployed and dual-writes are live. It drives `@cipherstash/migrate`, recording every transition in `cipherstash.cs_migrations` (installed by `eql install`) and reading intent from `.cipherstash/migrations.json`.
 
-The phase ladder depends on the column's EQL version, which the commands detect from the column's **domain type** (EQL v3 types are self-describing; the `<col>_encrypted` naming is a convention only, never relied upon):
+The phase ladder depends on the column's EQL version, which the commands read off the column's **domain type** — never off the `<col>_encrypted` naming, which is a convention only. Detection is one-sided: a `public.eql_v3_*` domain is recognised as v3, and everything else (including a legacy `eql_v2_encrypted` column) falls through to the v2 ladder:
 
 - **EQL v3 (the default):** `schema-added → dual-writing → backfilling → backfilled → dropped`. There is no cut-over — the application switches to the encrypted column by name, then the plaintext column is dropped.
 - **EQL v2:** `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`, where cut-over renames the encrypted twin into the original column name.
@@ -451,7 +451,7 @@ stash encrypt backfill --table users --column email --chunk-size 5000
 
 Chunked, resumable, idempotent. Walks the table in keyset-pagination order, encrypts each chunk via `bulkEncryptModels`, and writes one `UPDATE ... FROM (VALUES ...)` per chunk in a transaction that also checkpoints to `cs_migrations`. SIGINT/SIGTERM finishes the current chunk and exits cleanly; re-running resumes. The `<col> IS NOT NULL AND <col>_encrypted IS NULL` guard makes concurrent runners and re-runs converge.
 
-Backfill **auto-detects the target column's EQL version** from its Postgres domain type and records it (plus the version-appropriate target phase) in `.cipherstash/migrations.json`. On an EQL v3 column it finishes by printing the v3 next steps: switch the application to `<col>_encrypted` by name, then `stash encrypt drop` — there is no cut-over.
+Backfill **detects a `public.eql_v3_*` target column as EQL v3** from its Postgres domain type and records it (plus the target phase) in `.cipherstash/migrations.json`. A column that is not a v3 domain — including a legacy `eql_v2_encrypted` one — does not classify and takes the v2 lifecycle, recording no version. On an EQL v3 column it finishes by printing the v3 next steps: switch the application to `<col>_encrypted` by name, then `stash encrypt drop` — there is no cut-over.
 
 **Dual-write precondition.** The application must already write both `<col>` and `<col>_encrypted` on every insert and update. Otherwise rows written *during* the backfill land in plaintext only, silently. The first run prompts (interactive) or requires `--confirm-dual-writes-deployed` (non-interactive), then records `dual_writing`. Resumes don't re-prompt.
 
