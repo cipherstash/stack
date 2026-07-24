@@ -15,7 +15,28 @@ describe('rewriteEncryptedAlterColumns', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  /**
+   * Declare `columns` on `tableRef` as PLAINTEXT, in a migration that sorts
+   * before every fixture below.
+   *
+   * The sweep is fail-closed: it rewrites a column only when the corpus shows
+   * the column exists and is not already encrypted. A fixture that is just an
+   * ALTER declares nothing, so it is `source-unknown` by design — a test that
+   * exercises the REWRITE has to supply the `CREATE TABLE` a real drizzle
+   * corpus would carry.
+   *
+   * `tableRef` is written exactly as it appears in the ALTER, so a pgSchema()
+   * table passes `'"app"."users"'` and the declaration lands on the same key.
+   */
+  const declarePlaintext = (tableRef: string, ...columns: string[]): void => {
+    const file = path.join(tmpDir, '0000_declare.sql')
+    const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : ''
+    const defs = columns.map((column) => `"${column}" text`).join(', ')
+    fs.writeFileSync(file, `${existing}CREATE TABLE ${tableRef} (${defs});\n`)
+  }
+
   it('rewrites an in-place ALTER COLUMN with the bare type name', async () => {
+    declarePlaintext('"transactions"', 'amount')
     const original = `ALTER TABLE "transactions" ALTER COLUMN "amount" SET DATA TYPE eql_v2_encrypted;\n`
     const filePath = path.join(tmpDir, '0002_alter.sql')
     fs.writeFileSync(filePath, original)
@@ -37,6 +58,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('rewrites the schema-qualified form produced by drizzle-kit', async () => {
+    declarePlaintext('"users"', 'email')
     const original =
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "public"."eql_v2_encrypted";\n'
     const filePath = path.join(tmpDir, '0003_alter.sql')
@@ -54,6 +76,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   it('rewrites a schema-qualified table produced by pgSchema()', async () => {
     // drizzle-kit emits `"app"."users"` for a table declared in a pgSchema();
     // the old `\s+` between the table and ALTER COLUMN could never cross the `.`.
+    declarePlaintext('"app"."users"', 'email')
     const original =
       'ALTER TABLE "app"."users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n'
     const filePath = path.join(tmpDir, '0014_qualified.sql')
@@ -75,6 +98,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('rewrites the "undefined" schema form drizzle-kit emits for bare custom types', async () => {
+    declarePlaintext('"transactions"', 'amount')
     const original =
       'ALTER TABLE "transactions" ALTER COLUMN "amount" SET DATA TYPE "undefined"."eql_v2_encrypted";\n'
     const filePath = path.join(tmpDir, '0005_undef.sql')
@@ -90,6 +114,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('rewrites the double-quoted form produced by stack 0.15.0', async () => {
+    declarePlaintext('"transactions"', 'description')
     const original =
       'ALTER TABLE "transactions" ALTER COLUMN "description" SET DATA TYPE "undefined".""public"."eql_v2_encrypted"";\n'
     const filePath = path.join(tmpDir, '0006_double.sql')
@@ -117,6 +142,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('skips the file passed in options.skip', async () => {
+    declarePlaintext('"t"', 'c')
     const install = path.join(tmpDir, '0000_install-eql.sql')
     const alter = path.join(tmpDir, '0002_alter.sql')
     fs.writeFileSync(install, 'CREATE SCHEMA eql_v2;\n')
@@ -169,6 +195,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   ]
 
   it.each(V3_DOMAINS)('rewrites an ALTER COLUMN to %s', async (domain) => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0007_v3.sql')
     fs.writeFileSync(
       filePath,
@@ -196,6 +223,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     ...V3_DOMAINS,
     'eql_v2_encrypted',
   ])('extracts the bare domain %s from a mangled ALTER', async (domain) => {
+    declarePlaintext('"t"', 'c')
     const filePath = path.join(tmpDir, '0015_drift.sql')
     fs.writeFileSync(
       filePath,
@@ -243,6 +271,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   ]
 
   it.each(MANGLED_FORMS)('rewrites the v3 %s form', async (_label, emitted) => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0008_form.sql')
     fs.writeFileSync(
       filePath,
@@ -265,6 +294,7 @@ describe('rewriteEncryptedAlterColumns', () => {
       '"undefined"."public.eql_v2_encrypted"',
     ],
   ])('rewrites the previously unmatched v2 %s form', async (_label, emitted) => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0009_v2form.sql')
     fs.writeFileSync(
       filePath,
@@ -281,6 +311,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('names the target domain in the guidance comment', async () => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0010_comment.sql')
     fs.writeFileSync(
       filePath,
@@ -295,6 +326,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('notes that constraints/defaults/indexes are not carried over', async () => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0016_constraints.sql')
     fs.writeFileSync(
       filePath,
@@ -309,6 +341,7 @@ describe('rewriteEncryptedAlterColumns', () => {
 
   it('does not terminate the commented UPDATE placeholder with a semicolon', async () => {
     // A runner that naively splits on `;` must not cut mid-comment.
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0017_semicolon.sql')
     fs.writeFileSync(
       filePath,
@@ -328,6 +361,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('separates ADD/DROP/RENAME with --> statement-breakpoint, one exec stmt per chunk', async () => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0018_breakpoint.sql')
     fs.writeFileSync(
       filePath,
@@ -353,6 +387,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('rewrites each statement to its own domain when v2 and v3 are mixed', async () => {
+    declarePlaintext('"a"', 'x', 'y')
     const filePath = path.join(tmpDir, '0011_mixed.sql')
     fs.writeFileSync(
       filePath,
@@ -495,6 +530,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   it('reports no skipped statements when the strict rewrite fully handled the file', async () => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0021_handled.sql')
     fs.writeFileSync(
       filePath,
@@ -577,6 +613,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     // The comment scan must not be fooled by `--` inside a string literal, or
     // it would skip a live statement and leave broken SQL to fail at migrate.
     it('still rewrites an ALTER that follows a "--" inside a string literal', async () => {
+      declarePlaintext('"users"', 'email')
       const filePath = path.join(tmpDir, '0030_literal.sql')
       fs.writeFileSync(
         filePath,
@@ -793,6 +830,7 @@ describe('rewriteEncryptedAlterColumns', () => {
     // The scoping matters: encrypting `contacts.email` must not be blocked by
     // an unrelated `users.email` that happens to share a column name.
     it('scopes the check to the table', async () => {
+      declarePlaintext('"contacts"', 'email')
       fs.writeFileSync(
         path.join(tmpDir, '0000_add.sql'),
         'ALTER TABLE "users" ADD COLUMN "email" eql_v3_text_eq;\n',
@@ -830,6 +868,7 @@ describe('rewriteEncryptedAlterColumns', () => {
 
     // A commented-out ADD never ran, so it says nothing about the live schema.
     it('ignores an encrypted ADD COLUMN that is commented out', async () => {
+      declarePlaintext('"users"', 'email')
       fs.writeFileSync(
         path.join(tmpDir, '0000_add.sql'),
         '-- ALTER TABLE "users" ADD COLUMN "email" eql_v3_text_eq;\n',
@@ -868,9 +907,42 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(rewritten).toEqual([])
       expect(skipped[0]?.reason).toBe('already-encrypted')
     })
+
+    // Ordering pin: this column is BOTH declared plaintext (0000) and made
+    // encrypted by a previous sweep (0001). `already-encrypted` is the more
+    // specific reason and must win over `source-unknown`.
+    it('reports already-encrypted even when the column was also declared plaintext', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY, "email" text);\n',
+      )
+      fs.writeFileSync(
+        path.join(tmpDir, '0001_swept.sql'),
+        [
+          'ALTER TABLE "users" ADD COLUMN "email__cipherstash_tmp" "public"."eql_v3_text_eq";',
+          '--> statement-breakpoint',
+          'ALTER TABLE "users" DROP COLUMN "email";',
+          '--> statement-breakpoint',
+          'ALTER TABLE "users" RENAME COLUMN "email__cipherstash_tmp" TO "email";',
+          '',
+        ].join('\n'),
+      )
+      const alter = path.join(tmpDir, '0002_domain-change.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(skipped[0].reason).toBe('already-encrypted')
+    })
   })
 
   it('handles multiple ALTER statements in one file', async () => {
+    declarePlaintext('"a"', 'x', 'y')
     const original = [
       'ALTER TABLE "a" ALTER COLUMN "x" SET DATA TYPE eql_v2_encrypted;',
       'ALTER TABLE "a" ALTER COLUMN "y" SET DATA TYPE eql_v2_encrypted;',
@@ -891,6 +963,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   // Regression pin, not a bug fix — the matchers carry `/gi`, so a
   // hand-lowercased migration is rewritten just like drizzle-kit's output.
   it('rewrites a lowercase alter table ... set data type', async () => {
+    declarePlaintext('"users"', 'email')
     const filePath = path.join(tmpDir, '0034_lowercase.sql')
     fs.writeFileSync(
       filePath,
@@ -907,5 +980,147 @@ describe('rewriteEncryptedAlterColumns', () => {
     )
     expect(updated).toContain('ALTER TABLE "users" DROP COLUMN "email";')
     expect(updated).not.toMatch(/set data type/i)
+  })
+
+  // A-2: the sweep is FAIL-CLOSED. A column the corpus never declares is
+  // UNKNOWN, not plaintext — it may already hold ciphertext, with its
+  // declaration sitting in a migration directory this sweep never sees.
+  describe('columns the corpus does not declare', () => {
+    it('refuses to rewrite a column the corpus never declares', async () => {
+      const alterSql =
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      const updated = fs.readFileSync(alter, 'utf-8')
+      expect(updated).toBe(`${alterSql}\n`)
+      expect(updated).not.toContain('DROP COLUMN')
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'source-unknown' },
+      ])
+    })
+
+    it('rewrites a column declared plaintext by an ADD COLUMN', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_add.sql'),
+        'ALTER TABLE "users" ADD COLUMN "email" text;\n',
+      )
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([alter])
+      expect(skipped).toEqual([])
+    })
+
+    // The skipped file is still part of the corpus: a column's current type
+    // comes from the migrations that ran before this one, edit-eligible or not.
+    it('counts a declaration living in the file passed to options.skip', async () => {
+      const install = path.join(tmpDir, '0000_install-eql.sql')
+      fs.writeFileSync(
+        install,
+        'CREATE TABLE "users" ("id" integer PRIMARY KEY, "email" text);\n',
+      )
+      const alter = path.join(tmpDir, '0002_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(
+        tmpDir,
+        {
+          skip: install,
+        },
+      )
+
+      expect(rewritten).toEqual([alter])
+      expect(skipped).toEqual([])
+    })
+
+    it('follows a RENAME when deciding a column is declared', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" ("id" integer PRIMARY KEY, "email_address" text);',
+          '--> statement-breakpoint',
+          'ALTER TABLE "users" RENAME COLUMN "email_address" TO "email";',
+          '',
+        ].join('\n'),
+      )
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([alter])
+      expect(skipped).toEqual([])
+    })
+
+    // A name inside a table/key constraint is a MENTION, not a declaration —
+    // it is followed by `)` or `,`, never by a type token. Counting one would
+    // put the rewrite back on the fail-open path.
+    it('does not treat a name inside PRIMARY KEY / REFERENCES as a declaration', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "sessions" (',
+          '\t"id" integer,',
+          '\t"user_id" integer,',
+          '\tPRIMARY KEY ("id", "email"),',
+          '\tFOREIGN KEY ("user_id") REFERENCES "users"("email")',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alterSql =
+        'ALTER TABLE "sessions" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;'
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(alter, `${alterSql}\n`)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([
+        { file: alter, statement: alterSql, reason: 'source-unknown' },
+      ])
+    })
+
+    // A column line commented out INSIDE a live CREATE TABLE never ran, so it
+    // declares nothing.
+    it('does not count a column commented out inside a live CREATE TABLE', async () => {
+      fs.writeFileSync(
+        path.join(tmpDir, '0000_create.sql'),
+        [
+          'CREATE TABLE "users" (',
+          '\t"id" integer PRIMARY KEY,',
+          '\t-- "email" text,',
+          '\t"name" text',
+          ');',
+          '',
+        ].join('\n'),
+      )
+      const alter = path.join(tmpDir, '0001_encrypt.sql')
+      fs.writeFileSync(
+        alter,
+        'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
+      )
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toHaveLength(1)
+      expect(skipped[0].reason).toBe('source-unknown')
+    })
   })
 })
