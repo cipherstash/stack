@@ -24,6 +24,26 @@ The sweep also refuses to rewrite a column the migration corpus already gives an
 encrypted type, so changing a column's encrypted domain no longer drops a column
 full of ciphertext. Skipped statements report why they were left alone.
 
+The sweep is now fail-closed about the columns it does not recognise at all.
+Previously a column missing from the corpus index was assumed to be plaintext
+and rewritten; absence is not evidence, and the declaration can simply live in a
+migration directory the sweep never reads — the wizard ships scanning three of
+them and indexes each separately. Such a statement is now reported for review
+rather than rewritten, so the ADD+DROP+RENAME no longer drops a column that the
+migration corpus itself shows already holds ciphertext. That is a guarantee
+about what the corpus says, not about the database: the sweep reasons entirely
+from migration files, and a database that has drifted from its migration
+history is outside what it can see. `stash encrypt cutover` is the sharpest
+example — it renames columns directly in the database and never writes drizzle
+SQL, so the corpus can still describe a column as plaintext after cutover has
+made it ciphertext; the same is true of any change made by hand via psql or the
+Supabase dashboard. If your migration history is squashed, the column's
+`CREATE TABLE` lives outside the directory being swept, or the database has
+simply drifted from what the migrations describe, you will see the statement
+flagged instead of repaired: check the column's current type in the database
+and either apply the rewrite by hand on an empty table, or use the staged
+`stash encrypt` lifecycle.
+
 An unreadable migration directory (`EACCES`) is reported rather than silently
 treated as empty, and the wizard's `Run the migration now?` prompt defaults to No
 whenever the sweep rewrote anything, flagged anything, or could not check a

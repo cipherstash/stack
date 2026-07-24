@@ -217,6 +217,14 @@ describe('eqlMigrationCommand — Drizzle', () => {
   it('rewrites a sibling migration with a broken v3 ALTER COLUMN', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
+    // The sweep is fail-closed: it rewrites a column only when the corpus
+    // positively declares it (and it isn't already encrypted). A real drizzle
+    // corpus carries this declaration in an earlier migration — supply it so
+    // the fixture matches what the sweep actually requires.
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
     const sibling = join(out, '0001_encrypt-email.sql')
     writeFileSync(
       sibling,
@@ -239,10 +247,17 @@ describe('eqlMigrationCommand — Drizzle', () => {
   it('does not rewrite the EQL install migration it just generated', async () => {
     const out = join(tmp, 'drizzle')
     mkdirSync(out, { recursive: true })
-    const generated = join(out, '0000_install-eql.sql')
+    // Fail-closed requires the corpus to positively declare the column before
+    // the sweep will touch it — supply the declaration a real drizzle corpus
+    // would carry, same as the sibling-rewrite test above.
+    writeFileSync(
+      join(out, '0000_declare.sql'),
+      'CREATE TABLE "users" ("email" text);\n',
+    )
+    const generated = join(out, '0001_install-eql.sql')
     // A sibling carrying the SAME statement — the differential that proves the
     // sweep ran at all, rather than no-opping over the whole directory.
-    const sibling = join(out, '0001_encrypt-email.sql')
+    const sibling = join(out, '0002_encrypt-email.sql')
     const unsafeAlter =
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE "undefined"."eql_v3_text_search";\n'
     writeFileSync(sibling, unsafeAlter)
