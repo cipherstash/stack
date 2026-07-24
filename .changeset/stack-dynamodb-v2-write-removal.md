@@ -3,8 +3,9 @@
 ---
 
 **Breaking (DynamoDB adapter):** `encryptedDynamoDB(...).encryptModel` and
-`bulkEncryptModels` no longer accept an EQL v2 table — write is EQL v3 only. The
-v2 write type overloads have been removed, narrowing encrypt to `AnyV3Table`.
+`bulkEncryptModels` no longer accept an EQL v2 table. The v2 write type overloads
+have been removed, narrowing encrypt to `AnyV3Table`. The narrowing is
+type-level — treat the type as the contract, not a runtime guard.
 
 **Decrypt still reads existing v2 items.** `decryptModel` / `bulkDecryptModels`
 continue to accept an EQL v2 table (`encryptedColumn` / `encryptedField` from

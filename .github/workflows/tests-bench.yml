@@ -13,6 +13,10 @@ on:
     paths:
       - 'packages/bench/**'
       - 'packages/stack/src/eql/v3/**'
+      # The bench drives the typed v3 CLIENT, which lives in `encryption/`, not
+      # `eql/v3/` (that is the authoring DSL). Without this the job stayed green
+      # by never running for the changes most likely to break it.
+      - 'packages/stack/src/encryption/**'
       - 'packages/stack-drizzle/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
@@ -26,6 +30,10 @@ on:
     paths:
       - 'packages/bench/**'
       - 'packages/stack/src/eql/v3/**'
+      # The bench drives the typed v3 CLIENT, which lives in `encryption/`, not
+      # `eql/v3/` (that is the authoring DSL). Without this the job stayed green
+      # by never running for the changes most likely to break it.
+      - 'packages/stack/src/encryption/**'
       - 'packages/stack-drizzle/**'
       - 'packages/test-kit/**'
       - 'packages/cli/src/installer/**'
