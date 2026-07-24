@@ -25,7 +25,7 @@
  */
 
 import type { AnyV3Table } from '@cipherstash/stack/eql/v3'
-import type { ClientConfig } from '@cipherstash/stack/types'
+import type { V3ClientConfig } from '@cipherstash/stack/types'
 import { EncryptionV3, type TypedEncryptionClient } from '@cipherstash/stack/v3'
 import type {
   SqlMiddleware,
@@ -55,8 +55,14 @@ export interface CipherstashFromStackV3Options {
    */
   readonly schemasV3?: ReadonlyArray<AnyV3Table>
 
-  /** Pass-through to `EncryptionV3({ config })` (keyset overrides, logging, …). */
-  readonly encryptionConfig?: ClientConfig
+  /**
+   * Pass-through to `EncryptionV3({ config })` (keyset overrides, logging, …).
+   *
+   * `V3ClientConfig`, not `ClientConfig`: this package is EQL v3 only, and the
+   * legacy `eqlVersion: 2` escape hatch returns the nominal (untyped) client at
+   * runtime, which is not what this entry point hands back.
+   */
+  readonly encryptionConfig?: V3ClientConfig
 }
 
 export interface CipherstashFromStackV3Result {
@@ -83,8 +89,11 @@ export async function cipherstashFromStack(
     )
   }
 
-  const derived = deriveStackSchemasV3(opts.contractJson)
-  if (derived.length === 0) {
+  // Destructured rather than length-checked so the non-emptiness survives into
+  // the type layer: `Encryption` requires a non-empty schema tuple (an empty one
+  // used to type-check and then throw at runtime).
+  const [firstDerived, ...restDerived] = deriveStackSchemasV3(opts.contractJson)
+  if (firstDerived === undefined) {
     throw new Error(
       'cipherstashFromStack: no v3 cipherstash columns found in contract.json. ' +
         'Declare at least one v3 `cipherstash.*()` column (e.g. `cipherstash.TextSearch()`) in prisma/schema.prisma ' +
@@ -92,7 +101,10 @@ export async function cipherstashFromStack(
     )
   }
 
-  const schemas = resolveV3Schemas(derived, opts.schemasV3)
+  const schemas = resolveV3Schemas(
+    [firstDerived, ...restDerived],
+    opts.schemasV3,
+  )
 
   const encryptionClient = await EncryptionV3({
     schemas,
@@ -132,15 +144,18 @@ function collectNonV3CipherstashCodecIds(
   return [...ids].sort()
 }
 
+/** A schema list carrying its non-emptiness in the type, as `Encryption` wants. */
+type NonEmptyV3Schemas = readonly [AnyV3Table, ...AnyV3Table[]]
+
 /**
  * Validate contract-declared tables against their overrides (exact
  * domain identity) and append override-only tables — same merge
  * semantics as the v2 `resolveSchemas`.
  */
 function resolveV3Schemas(
-  derived: ReadonlyArray<AnyV3Table>,
+  derived: NonEmptyV3Schemas,
   override: ReadonlyArray<AnyV3Table> | undefined,
-): ReadonlyArray<AnyV3Table> {
+): NonEmptyV3Schemas {
   if (override === undefined || override.length === 0) return derived
 
   const derivedByName = new Map(derived.map((t) => [t.tableName, t]))
@@ -153,7 +168,8 @@ function resolveV3Schemas(
   }
 
   return [
-    ...derived,
+    derived[0],
+    ...derived.slice(1),
     ...override.filter((t) => !derivedByName.has(t.tableName)),
   ]
 }
