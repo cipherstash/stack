@@ -80,10 +80,7 @@ function postprocessDecryptedRow(
  * than decrypted. To read v2 data, decrypt fetched rows with the core
  * `@cipherstash/stack` client, whose decrypt path is generation-agnostic.
  */
-export async function decryptResults<
-  T extends Record<string, unknown>,
-  TData = T[],
->(
+export async function decryptResults<T extends object, TData = T[]>(
   result: RawSupabaseResult,
   ctx: DecryptContext,
 ): Promise<EncryptedSupabaseResponse<TData>> {

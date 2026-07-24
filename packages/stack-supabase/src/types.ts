@@ -387,9 +387,8 @@ export interface EncryptedQueryBuilder<
  * union (which subsumes the encrypted column's `string`); the runtime resolves
  * the column and picks the encoding (and rejects the wrong-column-kind pairing).
  */
-export interface EncryptedQueryBuilderUntyped<
-  Row extends Record<string, unknown>,
-> extends EncryptedQueryBuilderCore<
+export interface EncryptedQueryBuilderUntyped<Row extends object>
+  extends EncryptedQueryBuilderCore<
     Row,
     StringKeyOf<Row>,
     EncryptedQueryBuilderUntyped<Row>
@@ -424,7 +423,7 @@ export interface EncryptedQueryBuilderUntyped<
 /** Untyped instance (no `schemas`): rows default to `Record<string, unknown>`
  * and `from` accepts any table name. */
 export interface EncryptedSupabaseInstance {
-  from<Row extends Record<string, unknown> = Record<string, unknown>>(
+  from<Row extends object = Record<string, unknown>>(
     tableName: string,
   ): EncryptedQueryBuilderUntyped<Row>
 }
@@ -447,7 +446,7 @@ export interface TypedEncryptedSupabaseInstance<S extends V3Schemas> {
   from<K extends keyof S & string>(
     table: K,
   ): EncryptedQueryBuilder<S[K], InferPlaintext<S[K]>>
-  from<Row extends Record<string, unknown> = Record<string, unknown>>(
+  from<Row extends object = Record<string, unknown>>(
     table: string,
   ): EncryptedQueryBuilderUntyped<Row>
 }
@@ -461,21 +460,32 @@ export interface TypedEncryptedSupabaseInstance<S extends V3Schemas> {
  * (`data: T | null`) instead of an array.
  *
  * FILTERS and TRANSFORMS are deliberately absent — applying one after `single()`
- * would change the query the single-row promise was made about. Everything that
- * only re-types or re-configures the pending request is carried over, which is
- * also what postgrest-js does: its `single()` returns a `PostgrestBuilder`,
- * carrying `returns`/`overrideTypes`/`throwOnError`/`setHeader` (and NOT
- * `abortSignal`, which lives on `PostgrestTransformBuilder`). This adapter keeps
- * `abortSignal` as a deliberate superset — an abort is not a query change — and
- * adds the two encryption-specific configurators, which the runtime reads at
- * execute time and so remain valid after `single()`.
+ * would change the query the single-row promise was made about.
+ *
+ * What IS carried is exactly: `then` (via `PromiseLike`), `abortSignal`,
+ * `throwOnError`, `returns`, `withLockContext` and `audit`. That is a
+ * hand-written list, not a passthrough — `single()`/`maybeSingle()` return the
+ * same builder instance, so a method absent here is absent at runtime too.
+ *
+ * It is therefore NOT parity with postgrest-js, which carries a different set:
+ * its `single()` returns a `PostgrestBuilder`, carrying
+ * `returns`/`overrideTypes`/`throwOnError`/`setHeader` (and NOT `abortSignal`,
+ * which lives on `PostgrestTransformBuilder`). Relative to that, this adapter
+ * keeps `abortSignal` as a deliberate superset — an abort is not a query change
+ * — and adds the two encryption-specific configurators, which the runtime reads
+ * at execute time and so remain valid after `single()`; but postgrest-js's
+ * `overrideTypes` and `setHeader` have NO adapter equivalent, on this surface or
+ * any other.
  */
 export interface EncryptedSingleQueryBuilder<T>
   extends PromiseLike<EncryptedSupabaseResponse<T>> {
   abortSignal(signal: AbortSignal): EncryptedSingleQueryBuilder<T>
   throwOnError(): EncryptedSingleQueryBuilder<T>
-  /** Re-type the ROW. The single-row awaited shape is preserved — `U`, not `U[]`. */
-  returns<U extends Record<string, unknown>>(): EncryptedSingleQueryBuilder<U>
+  /** Re-type the ROW. The single-row awaited shape is preserved — `U`, not `U[]`.
+   * `object`, not `Record<string, unknown>`: an `interface` row type has no
+   * implicit index signature and would be rejected by the latter (upstream
+   * postgrest-js constrains its `returns` type parameter not at all). */
+  returns<U extends object>(): EncryptedSingleQueryBuilder<U>
   /** Bind identity-aware encryption. Read at execute time, so order-independent. */
   withLockContext(lockContext: LockContextInput): EncryptedSingleQueryBuilder<T>
   /** Attach audit metadata. Read at execute time, so order-independent. */
@@ -825,7 +835,7 @@ type StringKeyOf<T> = Extract<keyof T, string>
  * of which still serve plaintext columns.
  */
 export interface EncryptedQueryBuilderCore<
-  T extends Record<string, unknown>,
+  T extends object,
   FK extends StringKeyOf<T>,
   Self,
   /** Keys `order()` accepts. The typed surface narrows it to the orderable
@@ -949,8 +959,10 @@ export interface EncryptedQueryBuilderCore<
   abortSignal(signal: AbortSignal): Self
   throwOnError(): Self
   /** Escape hatch: re-types the rows and drops back to the untyped v3 builder
-   * surface. */
-  returns<U extends Record<string, unknown>>(): EncryptedQueryBuilderUntyped<U>
+   * surface. `object`, not `Record<string, unknown>`: an `interface` row type
+   * has no implicit index signature and would be rejected by the latter, while
+   * `object` still excludes `string`/`number` row types. */
+  returns<U extends object>(): EncryptedQueryBuilderUntyped<U>
   /** Bind identity-aware encryption. Accepts either a plain
    * `{ identityClaim }` (the common form) or a `LockContext` instance. */
   withLockContext(lockContext: LockContextInput): Self
