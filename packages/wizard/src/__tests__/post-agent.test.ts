@@ -15,8 +15,18 @@ vi.mock('@clack/prompts', async (importOriginal) => {
   return { ...actual, confirm: vi.fn(async () => false) }
 })
 
+// Wraps the REAL sweep, so every test below still exercises it for free. Only
+// the empty-message case overrides it, because no real filesystem error is
+// reachable with a blank `message`.
+vi.mock('../lib/rewrite-migrations.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../lib/rewrite-migrations.js')>()
+  return { ...actual, sweepMigrationDirs: vi.fn(actual.sweepMigrationDirs) }
+})
+
 import * as childProcess from 'node:child_process'
 import * as p from '@clack/prompts'
+import { sweepMigrationDirs } from '../lib/rewrite-migrations.js'
 
 const bun: DetectedPackageManager = {
   name: 'bun',
@@ -172,5 +182,41 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
+  })
+
+  // A directory whose sweep threw contributes 0 to both totals, so a failed
+  // sweep used to be indistinguishable from a clean one: prompt defaulting to
+  // Yes over migrations nobody checked. Unknown is not the same as safe.
+  it('defaults to No when a directory could not be swept at all', async () => {
+    // A directory named `*.sql` makes readFile throw EISDIR mid-sweep.
+    fs.mkdirSync(path.join(cwd, 'drizzle'))
+    fs.mkdirSync(path.join(cwd, 'drizzle', '0001_alter.sql'))
+
+    await runDrizzle()
+
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    // Nothing is known about that directory, so the prompt must not claim the
+    // migration destroys data — only that it went unchecked.
+    expect(String(options?.message)).not.toContain('DESTROYS data')
+    expect(String(options?.message)).toContain('drizzle/')
+    expect(String(options?.message)).toContain('could not check 1 directory')
+  })
+
+  // `error` is built as `err instanceof Error ? err.message : String(err)`, and
+  // `new Error()` has an empty message — so a thrown error can arrive as `''`.
+  // Testing it for truthiness rather than presence would drop that directory
+  // back into the fail-open default, which is the exact bug above wearing a
+  // different hat.
+  it('treats an empty error message as a failed sweep, not a clean one', async () => {
+    vi.mocked(sweepMigrationDirs).mockResolvedValueOnce([
+      { dir: 'drizzle', rewritten: [], skipped: [], error: '' },
+    ])
+
+    await runDrizzle()
+
+    const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
+    expect(options?.initialValue).toBe(false)
+    expect(String(options?.message)).toContain('could not check 1 directory')
   })
 })

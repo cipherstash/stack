@@ -16,5 +16,7 @@ encrypted type, so changing a column's encrypted domain no longer drops a column
 full of ciphertext. Skipped statements report why they were left alone.
 
 An unreadable migration directory (`EACCES`) is reported rather than silently
-treated as empty, and the wizard's `Run the migration now?` prompt defaults to
-No whenever the sweep rewrote or flagged anything.
+treated as empty, and the wizard's `Run the migration now?` prompt defaults to No
+whenever the sweep rewrote anything, flagged anything, or could not check a
+directory at all — naming the directories that went unchecked, and making no
+claim about data destruction for a directory nothing is known about.

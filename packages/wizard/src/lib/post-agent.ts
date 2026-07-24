@@ -87,12 +87,35 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     // destroy data, so the prompt says so and defaults to NO — an
     // `initialValue: true` immediately under a "do NOT run the migration"
     // warning invites exactly the mistake the warning is about.
-    const destructive = sweep.rewritten > 0 || sweep.skipped > 0
+    const unsafe = sweep.rewritten > 0 || sweep.skipped > 0
+
+    // A directory whose sweep threw contributes 0 to both totals, so on its own
+    // it is indistinguishable from a clean sweep — except that it means the
+    // opposite: those migrations may still hold unrepaired `SET DATA TYPE`
+    // statements and nobody has looked. `stash eql migration` / `db install`
+    // treat "sweep failed outright" and "sweep left near-misses" as the same
+    // state for the same reason; unknown is not safe, so the default is NO here
+    // too. The wording differs from the destructive case on purpose: nothing is
+    // known about that directory, so claiming it destroys data would be a guess.
+    const unverifiedDirs = sweep.failedDirs
+    const unverified = unverifiedDirs.length > 0
+    const unverifiedList = unverifiedDirs.map((dir) => `${dir}/`).join(', ')
+    const unverifiedCount = `${unverifiedDirs.length} director${
+      unverifiedDirs.length === 1 ? 'y' : 'ies'
+    }`
+    if (unverified) {
+      p.log.warn(
+        `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${unverifiedList} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+      )
+    }
+
     const shouldMigrate = await p.confirm({
-      message: destructive
+      message: unsafe
         ? `Run the migration now? (${runner} drizzle-kit migrate) — see the warnings above: this migration DESTROYS data on any table that already holds rows`
-        : `Run the migration now? (${runner} drizzle-kit migrate)`,
-      initialValue: !destructive,
+        : unverified
+          ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
+          : `Run the migration now? (${runner} drizzle-kit migrate)`,
+      initialValue: !unsafe && !unverified,
     })
 
     if (!p.isCancel(shouldMigrate) && shouldMigrate) {
@@ -125,19 +148,34 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
 /**
  * Sweep the candidate migration directories, reporting what happened, and
  * return the totals so the caller can decide how dangerous "run it now" is.
+ *
+ * `failedDirs` names the directories that exist but whose sweep threw. It is a
+ * third state, not a variant of "nothing to do": those migrations may still
+ * contain unrepaired `SET DATA TYPE` statements and went unchecked, which the
+ * `rewritten`/`skipped` counts cannot express — both stay 0 for such a
+ * directory, exactly as they do for a clean one.
  */
-async function rewriteEncryptedMigrations(
-  cwd: string,
-): Promise<{ rewritten: number; skipped: number }> {
+async function rewriteEncryptedMigrations(cwd: string): Promise<{
+  rewritten: number
+  skipped: number
+  failedDirs: string[]
+}> {
   const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
-  const totals = { rewritten: 0, skipped: 0 }
+  const totals = { rewritten: 0, skipped: 0, failedDirs: [] as string[] }
 
   for (const { dir, rewritten, skipped, error } of results) {
     totals.rewritten += rewritten.length
     totals.skipped += skipped.length
 
-    if (error) {
-      p.log.warn(`Could not rewrite migrations in ${dir}: ${error}`)
+    // Presence, not truthiness: `error` is `err.message` for a thrown `Error`,
+    // and `new Error()` has an empty message. Testing `if (error)` would put a
+    // blank-message failure back on the fail-open path this whole branch exists
+    // to close.
+    if (error !== undefined) {
+      totals.failedDirs.push(dir)
+      p.log.warn(
+        `Could not rewrite migrations in ${dir}: ${error || 'unknown error'}`,
+      )
       continue
     }
 
