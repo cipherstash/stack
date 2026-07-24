@@ -45,6 +45,9 @@ pub struct MyMapCipher<'c>(&'c MyCipher /* + state */);
 impl<'c> Cipher for &'c MyCipher {
     type Ok = MyCipherText;
     type Error = Unspecified;
+    // The passthrough payload type: Box<dyn Any + Send> for Rust-native use
+    // (callers box in, downcast out), or an owned host-value type for FFI.
+    type Passthrough = Box<dyn Any + Send + 'static>;
     type SeqCipher = MySeqCipher<'c>;
     type MapCipher = MyMapCipher<'c>;
 
@@ -82,10 +85,7 @@ impl<'c> Cipher for &'c MyCipher {
         unimplemented!("produce an authenticated 'absent' marker bound to `aad`")
     }
 
-    fn passthrough<T>(self, _value: T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Any + Send + 'static,
-    {
+    fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
         unimplemented!("store `value` unencrypted inside the cipher's output container")
     }
 }
@@ -93,16 +93,16 @@ impl<'c> Cipher for &'c MyCipher {
 impl<'c> SeqCipher for MySeqCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
+    type Passthrough = Box<dyn Any + Send + 'static>;
 
     fn encrypt_next<T>(self, _data: T) -> Result<Self, Self::Error>
     where
         T: vitaminc_aead::Encrypt,
     { unimplemented!() }
 
-    fn passthrough_next<T>(self, _value: T) -> Result<Self, Self::Error>
-    where
-        T: Any + Send + 'static,
-    { unimplemented!() }
+    fn passthrough_next(self, _value: Self::Passthrough) -> Result<Self, Self::Error> {
+        unimplemented!()
+    }
 
     fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }
 }
@@ -110,6 +110,7 @@ impl<'c> SeqCipher for MySeqCipher<'c> {
 impl<'c> MapCipher for MyMapCipher<'c> {
     type Ok = MyCipherText;
     type Error = Unspecified;
+    type Passthrough = Box<dyn Any + Send + 'static>;
 
     fn encrypt_key<K>(self, _key: K) -> Result<Self, Self::Error>
     where
@@ -124,10 +125,9 @@ impl<'c> MapCipher for MyMapCipher<'c> {
         T: vitaminc_aead::Encrypt,
     { unimplemented!() }
 
-    fn passthrough_entry<K, T>(self, _key: K, _value: T) -> Result<Self, Self::Error>
+    fn passthrough_entry<K>(self, _key: K, _value: Self::Passthrough) -> Result<Self, Self::Error>
     where
         K: Into<std::borrow::Cow<'static, str>>,
-        T: Any + Send + 'static,
     { unimplemented!() }
 
     fn end(self) -> Result<Self::Ok, Self::Error> { unimplemented!() }

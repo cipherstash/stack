@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::borrow::Cow;
 
 use vitaminc_protected::{Controlled, Protected};
@@ -40,10 +39,19 @@ pub trait Cipher: Sized {
     /// The error type returned on cipher failure. Implementations should keep
     /// this opaque — see [`Unspecified`].
     type Error;
+    /// The payload type carried by [`passthrough`](Cipher::passthrough)
+    /// values.
+    ///
+    /// Rust-native ciphers typically use `Box<dyn Any + Send + 'static>`:
+    /// callers box on the way in and downcast on the way out. Ciphers
+    /// targeting an FFI boundary instead use an owned host-value type (e.g. a
+    /// converted JS value), carried value-in/value-out without the cipher ever
+    /// inspecting it.
+    type Passthrough;
     /// The sub-cipher returned by [`encrypt_seq`](Cipher::encrypt_seq).
-    type SeqCipher: SeqCipher<Ok = Self::Ok, Error = Self::Error>;
+    type SeqCipher: SeqCipher<Ok = Self::Ok, Error = Self::Error, Passthrough = Self::Passthrough>;
     /// The sub-cipher returned by [`encrypt_map`](Cipher::encrypt_map).
-    type MapCipher: MapCipher<Ok = Self::Ok, Error = Self::Error>;
+    type MapCipher: MapCipher<Ok = Self::Ok, Error = Self::Error, Passthrough = Self::Passthrough>;
 
     /// Encrypt the given byte vector with the supplied associated data.
     ///
@@ -122,26 +130,25 @@ pub trait Cipher: Sized {
     where
         A: IntoAad<'a>;
 
-    /// Pass a typed value through the cipher's output container **without**
+    /// Pass a value through the cipher's output container **without**
     /// encrypting it. Intended for fields that need to survive the encryption
     /// envelope in the clear (e.g. a schema version tag).
     ///
-    /// The value is typed at the API boundary but stored opaquely by the
-    /// cipher; the corresponding [`Decipher::decrypt_passthrough`] checks the
-    /// type at runtime.
+    /// The value has the cipher's [`Passthrough`](Cipher::Passthrough) type,
+    /// stored opaquely and returned as-is by the corresponding
+    /// [`Decipher::decrypt_passthrough`].
     ///
     /// # ⚠️ Non-sensitive data only
     ///
-    /// Passthrough values travel **in the clear** alongside the ciphertext.
-    /// Do not use this for secret-bearing data such as keys, plaintexts, or
-    /// credentials — there is no encryption, no zeroize discipline applied
-    /// to the boxed value, and no guarantee about when the storage is freed.
-    /// For secrets, use [`encrypt_with_aad`](crate::Encrypt::encrypt_with_aad)
-    /// (via the [`Encrypt`](crate::Encrypt) trait) or wrap in
+    /// Passthrough values travel **in the clear** alongside the ciphertext,
+    /// and — unlike map keys — are not authenticated either. Do not use this
+    /// for secret-bearing data such as keys, plaintexts, or credentials —
+    /// there is no encryption, no zeroize discipline applied to the payload,
+    /// and no guarantee about when the storage is freed. For secrets, use
+    /// [`encrypt_with_aad`](crate::Encrypt::encrypt_with_aad) (via the
+    /// [`Encrypt`](crate::Encrypt) trait) or wrap in
     /// [`vitaminc_protected::Protected`].
-    fn passthrough<T>(self, value: T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Any + Send + 'static;
+    fn passthrough(self, value: Self::Passthrough) -> Result<Self::Ok, Self::Error>;
 }
 
 /// Sub-cipher driving the encryption of a sequence of values.
@@ -155,6 +162,9 @@ pub trait SeqCipher: Sized {
     type Ok;
     /// The error type for sequence operations.
     type Error;
+    /// The passthrough payload type — matches the parent
+    /// [`Cipher::Passthrough`].
+    type Passthrough;
 
     /// Encrypt the next element in the sequence, returning the updated cipher.
     ///
@@ -168,9 +178,7 @@ pub trait SeqCipher: Sized {
     ///
     /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
     /// design and must not carry secret data.
-    fn passthrough_next<T>(self, value: T) -> Result<Self, Self::Error>
-    where
-        T: Any + Send + 'static;
+    fn passthrough_next(self, value: Self::Passthrough) -> Result<Self, Self::Error>;
 
     /// Finalise the sequence and return the produced ciphertext container.
     ///
@@ -216,6 +224,9 @@ pub trait MapCipher: Sized {
     type Ok;
     /// The error type for map operations.
     type Error;
+    /// The passthrough payload type — matches the parent
+    /// [`Cipher::Passthrough`].
+    type Passthrough;
 
     /// Record the next key. Keys are stored in the clear — only values are
     /// encrypted — but each key is bound into its value's AAD (see the
@@ -258,10 +269,9 @@ pub trait MapCipher: Sized {
     /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
     /// design and must not carry secret data. Neither the value nor its key is
     /// authenticated.
-    fn passthrough_entry<K, T>(self, key: K, value: T) -> Result<Self, Self::Error>
+    fn passthrough_entry<K>(self, key: K, value: Self::Passthrough) -> Result<Self, Self::Error>
     where
-        K: Into<Cow<'static, str>>,
-        T: Any + Send + 'static;
+        K: Into<Cow<'static, str>>;
 
     /// Finalise the map and return the produced ciphertext container.
     ///

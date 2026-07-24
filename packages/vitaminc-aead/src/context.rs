@@ -322,7 +322,6 @@ mod tests {
         cipher::{MapCipher, SeqCipher},
         DecipherVisitor, Unspecified,
     };
-    use std::any::Any;
     use std::cell::RefCell;
     use std::rc::Rc;
     use vitaminc_protected::{Controlled, Protected};
@@ -353,6 +352,7 @@ mod tests {
     impl Cipher for &MockCipher {
         type Ok = Vec<u8>;
         type Error = Unspecified;
+        type Passthrough = ();
         type SeqCipher = UnusedSeq;
         type MapCipher = UnusedMap;
 
@@ -390,10 +390,7 @@ mod tests {
             Ok(Vec::new())
         }
 
-        fn passthrough<U>(self, _value: U) -> Result<Self::Ok, Self::Error>
-        where
-            U: Any + Send + 'static,
-        {
+        fn passthrough(self, _value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
             Ok(Vec::new())
         }
     }
@@ -401,6 +398,7 @@ mod tests {
     impl SeqCipher for UnusedSeq {
         type Ok = Vec<u8>;
         type Error = Unspecified;
+        type Passthrough = ();
 
         fn encrypt_next<T>(self, _data: T) -> Result<Self, Self::Error>
         where
@@ -409,10 +407,7 @@ mod tests {
             Ok(self)
         }
 
-        fn passthrough_next<T>(self, _value: T) -> Result<Self, Self::Error>
-        where
-            T: Any + Send + 'static,
-        {
+        fn passthrough_next(self, _value: Self::Passthrough) -> Result<Self, Self::Error> {
             Ok(self)
         }
 
@@ -424,6 +419,7 @@ mod tests {
     impl MapCipher for UnusedMap {
         type Ok = Vec<u8>;
         type Error = Unspecified;
+        type Passthrough = ();
 
         fn encrypt_key<K>(self, _key: K) -> Result<Self, Self::Error>
         where
@@ -439,10 +435,13 @@ mod tests {
             Ok(self)
         }
 
-        fn passthrough_entry<K, T>(self, _key: K, _value: T) -> Result<Self, Self::Error>
+        fn passthrough_entry<K>(
+            self,
+            _key: K,
+            _value: Self::Passthrough,
+        ) -> Result<Self, Self::Error>
         where
             K: Into<std::borrow::Cow<'static, str>>,
-            T: Any + Send + 'static,
         {
             Ok(self)
         }
@@ -633,6 +632,8 @@ mod tests {
         where
             T: Send + 'c;
 
+        type Passthrough = ();
+
         fn map_ok<T, U, F>(ok: Self::Ok<T>, f: F) -> Self::Ok<U>
         where
             T: Send + 'c,
@@ -667,10 +668,7 @@ mod tests {
             None
         }
 
-        fn decrypt_passthrough<T>(self) -> Self::Ok<T>
-        where
-            T: Any + Send + 'static,
-        {
+        fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough> {
             None
         }
 

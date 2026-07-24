@@ -1,7 +1,5 @@
 pub mod impls;
 
-use std::any::Any;
-
 use vitaminc_protected::Protected;
 
 use crate::{Aad, IntoAad, Unspecified};
@@ -30,6 +28,11 @@ pub trait Decipher<'c>: Sized {
     type Ok<T>
     where
         T: Send + 'c;
+
+    /// The payload type returned by
+    /// [`decrypt_passthrough`](Decipher::decrypt_passthrough) — matches the
+    /// encrypt-side [`Cipher::Passthrough`](crate::Cipher::Passthrough).
+    type Passthrough: Send + 'c;
 
     /// Transform the inner value of an [`Ok`](Decipher::Ok) container.
     ///
@@ -78,14 +81,17 @@ pub trait Decipher<'c>: Sized {
         A: IntoAad<'a>;
 
     /// Recover a value stored via [`Cipher::passthrough`](crate::Cipher::passthrough).
-    /// Returns an error if the ciphertext is not a passthrough or the stored
-    /// type does not match `T`.
+    /// Returns an error if the ciphertext is not a passthrough.
+    ///
+    /// The payload comes back as the decipher's
+    /// [`Passthrough`](Decipher::Passthrough) type, exactly as stored —
+    /// value-in/value-out. Where that type is `Box<dyn Any + Send>`, as it is
+    /// for Rust-native ciphers, callers downcast to a concrete type themselves
+    /// (concrete deciphers may offer a typed convenience for this).
     ///
     /// See [`Cipher::passthrough`] — passthrough values are non-sensitive by
     /// design and must not be used to carry secret data.
-    fn decrypt_passthrough<T>(self) -> Self::Ok<T>
-    where
-        T: Any + Send + 'static;
+    fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough>;
 
     /// Decrypt an `Option<T>`, authenticating against `aad`. The decipher inspects the
     /// ciphertext shape: a `None`-marker variant produces `Ok(None)` (after AAD
