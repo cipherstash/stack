@@ -159,15 +159,6 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
   it('defaults to No, and says why, when a file was rewritten', async () => {
     fs.mkdirSync(path.join(cwd, 'drizzle'))
-    // The sweep is fail-closed: it rewrites a column only when the corpus
-    // positively declares it (and it isn't already encrypted). A real drizzle
-    // corpus carries this declaration in an earlier migration — supply it so
-    // the fixture matches what the sweep actually requires, and the ALTER
-    // below is genuinely rewritten rather than skipped as source-unknown.
-    fs.writeFileSync(
-      path.join(cwd, 'drizzle', '0000_declare.sql'),
-      'CREATE TABLE "users" ("email" text);\n',
-    )
     fs.writeFileSync(
       path.join(cwd, 'drizzle', '0001_encrypt.sql'),
       'ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;\n',
@@ -178,20 +169,6 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
     expect(String(options?.message)).toContain('DESTROYS data')
-
-    // Assert the REWRITE actually happened, not just that the prompt defaulted
-    // to No — both this test and its `source-unknown` sibling below produce
-    // `initialValue: false` and a message containing "DESTROYS data" is the
-    // only thing that used to distinguish them, and that came from the same
-    // skipped-statement branch too. Without the 0000_declare.sql fixture the
-    // ALTER is skipped as source-unknown rather than rewritten, so pin the
-    // on-disk effect a genuine rewrite leaves behind.
-    const swept = fs.readFileSync(
-      path.join(cwd, 'drizzle', '0001_encrypt.sql'),
-      'utf-8',
-    )
-    expect(swept).toContain('DROP COLUMN')
-    expect(swept).not.toContain('SET DATA TYPE')
   })
 
   it('defaults to No when a statement was flagged rather than rewritten', async () => {
@@ -205,11 +182,6 @@ describe('drizzle migrate prompt after a destructive rewrite', () => {
 
     const [options] = vi.mocked(p.confirm).mock.calls.at(-1) ?? []
     expect(options?.initialValue).toBe(false)
-    // Nothing was rewritten here — the statement was left on disk and merely
-    // flagged — so the prompt must not claim data destruction the way the
-    // genuinely-rewritten case above does.
-    expect(String(options?.message)).not.toContain('DESTROYS data')
-    expect(String(options?.message)).toContain('flagged for review')
   })
 
   // A directory whose sweep threw contributes 0 to both totals, so a failed

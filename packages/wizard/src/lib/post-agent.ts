@@ -82,17 +82,12 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
     const sweep = await rewriteEncryptedMigrations(cwd)
 
-    // A rewritten file is a DROP+ADD in disguise — the next migrate destroys
-    // data on any table that already holds rows. A flagged statement never got
-    // that treatment: it is left on disk untouched, so nothing is destroyed by
-    // migrating, but a raw ALTER to an encrypted domain has no cast in
-    // Postgres and fails at migrate time until a human resolves it. Both
-    // default the prompt to NO — an `initialValue: true` immediately under
-    // either warning invites exactly the mistake the warning is about — but
-    // they need different words: claiming "DESTROYS data" for a migration
-    // that destroyed nothing is its own kind of wrong guidance.
-    const destructive = sweep.rewritten > 0
-    const flaggedOnly = !destructive && sweep.skipped > 0
+    // A rewritten file is a DROP+ADD in disguise, and a flagged statement is one
+    // the sweep could not make safe at all. Either way the next keystroke can
+    // destroy data, so the prompt says so and defaults to NO — an
+    // `initialValue: true` immediately under a "do NOT run the migration"
+    // warning invites exactly the mistake the warning is about.
+    const unsafe = sweep.rewritten > 0 || sweep.skipped > 0
 
     // A directory whose sweep threw contributes 0 to both totals, so on its own
     // it is indistinguishable from a clean sweep — except that it means the
@@ -115,14 +110,12 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     }
 
     const shouldMigrate = await p.confirm({
-      message: destructive
+      message: unsafe
         ? `Run the migration now? (${runner} drizzle-kit migrate) — see the warnings above: this migration DESTROYS data on any table that already holds rows`
-        : flaggedOnly
-          ? `Run the migration now? (${runner} drizzle-kit migrate) — statement(s) were flagged for review above rather than rewritten; nothing was destroyed, but the raw ALTER will fail at migrate time until they're resolved`
-          : unverified
-            ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
-            : `Run the migration now? (${runner} drizzle-kit migrate)`,
-      initialValue: !destructive && !flaggedOnly && !unverified,
+        : unverified
+          ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
+          : `Run the migration now? (${runner} drizzle-kit migrate)`,
+      initialValue: !unsafe && !unverified,
     })
 
     if (!p.isCancel(shouldMigrate) && shouldMigrate) {
