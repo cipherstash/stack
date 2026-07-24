@@ -125,8 +125,10 @@ function trimStatementPreamble(statement: string): string {
 }
 
 /**
- * True when the character at `index` sits inside a SQL comment — a `--` line
- * comment, or a (nestable) `/* … *\/` block comment.
+ * True when the character at `index` is INERT — it sits inside a SQL comment (a
+ * `--` line comment, or a nestable block comment) or inside a single-quoted
+ * string literal. Either way it is not a statement the database will execute,
+ * so the rewrite must leave it exactly as written.
  *
  * **Why the rewrite needs this:** {@link ALTER_COLUMN_TO_ENCRYPTED_RE} is
  * comment-blind and {@link renderSafeAlter} returns MULTIPLE lines. Rewriting a
@@ -135,12 +137,26 @@ function trimStatementPreamble(statement: string): string {
  * become live executable SQL and destroy the column. Commented SQL is inert by
  * definition, so the only correct move is to leave it exactly as written.
  *
- * Single-quoted literals are skipped so a `'--'` inside a string cannot open a
- * phantom comment. Dollar-quoted bodies are NOT tracked: a `--` inside one
- * reads as a comment here, which can only make us skip a rewrite (the statement
+ * **Why string literals count as inert too:** an ALTER quoted inside an
+ * `INSERT … VALUES ('…')` is DATA. Rewriting it splices `--> statement-breakpoint`
+ * markers INSIDE the literal, so splitting the file the way drizzle's migrator
+ * does yields a bare, live `ALTER TABLE … DROP COLUMN …;` as a chunk of its own.
+ * Escaping the injected text's own apostrophe (`@cipherstash/stack's`) would fix
+ * only the syntax error, not that live DROP COLUMN — so the statement is left
+ * as written, exactly like a commented one.
+ *
+ * Double-quoted identifiers are tokenised BEFORE `'` is considered: an
+ * apostrophe inside `"o'brien_data"` must not open a phantom literal, or the
+ * scan runs to the NEXT apostrophe — typically the same identifier in a
+ * commented-out ALTER further down — decides that ALTER is live, and rewrites
+ * it into a real `DROP COLUMN`. A doubled delimiter (`''` in a literal, `""` in
+ * an identifier) is an escape and does not close the token.
+ *
+ * Dollar-quoted bodies are NOT tracked: a `--` or `'` inside one reads as a
+ * comment/literal here, which can only make us skip a rewrite (the statement
  * then fails loudly at migrate time), never perform a destructive one.
  */
-function isInsideComment(sql: string, index: number): boolean {
+function isInsideCommentOrString(sql: string, index: number): boolean {
   let i = 0
   while (i < index) {
     if (sql.startsWith('--', i)) {
@@ -166,17 +182,41 @@ function isInsideComment(sql: string, index: number): boolean {
       }
       if (j > index) return true
       i = j
+    } else if (sql[i] === '"') {
+      // A quoted identifier is live SQL, but its body is not: consuming it here
+      // — before the `'` branch below — is what stops an apostrophe inside one
+      // from opening a string literal that never really existed.
+      i = endOfQuoted(sql, i, '"')
     } else if (sql[i] === "'") {
-      const close = sql.indexOf("'", i + 1)
+      const end = endOfQuoted(sql, i, "'")
       // Unterminated, or the literal runs past `index`: `index` is inside a
-      // string, which is not a comment.
-      if (close === -1 || close >= index) return false
-      i = close + 1
+      // string literal, which is every bit as inert as a comment.
+      if (end > index) return true
+      i = end
     } else {
       i += 1
     }
   }
   return false
+}
+
+/**
+ * The index just past the `quote`-delimited token that opens at `open`, or
+ * `sql.length` when it is never closed. A doubled delimiter inside the token is
+ * an escaped one (`''`, `""`) and does not end it.
+ */
+function endOfQuoted(sql: string, open: number, quote: "'" | '"'): number {
+  let i = open + 1
+  while (i < sql.length) {
+    if (sql[i] !== quote) {
+      i += 1
+    } else if (sql[i + 1] === quote) {
+      i += 2
+    } else {
+      return i + 1
+    }
+  }
+  return sql.length
 }
 
 /** A table reference, bare (`"users"`) or schema-qualified (`"app"."users"`). */
@@ -246,14 +286,14 @@ function columnKey(table: string, column: string, schema?: string): string {
  * The index is corpus-wide rather than ordered by migration: over-detecting
  * "encrypted" costs a flagged statement the user must handle by hand, while
  * under-detecting costs irrecoverable ciphertext. Only comment-free statements
- * count, for the same reason {@link isInsideComment} exists.
+ * count, for the same reason {@link isInsideCommentOrString} exists.
  */
 function indexEncryptedColumns(contents: readonly string[]): Set<string> {
   const encrypted = new Set<string>()
 
   for (const sql of contents) {
     for (const created of sql.matchAll(CREATE_TABLE_RE)) {
-      if (isInsideComment(sql, created.index)) continue
+      if (isInsideCommentOrString(sql, created.index)) continue
       const { schema, table } = tableOf(created[1], created[2])
       for (const column of created[3].matchAll(
         CREATE_TABLE_ENCRYPTED_COLUMN_RE,
@@ -263,7 +303,7 @@ function indexEncryptedColumns(contents: readonly string[]): Set<string> {
     }
 
     for (const added of sql.matchAll(ADD_ENCRYPTED_COLUMN_RE)) {
-      if (isInsideComment(sql, added.index)) continue
+      if (isInsideCommentOrString(sql, added.index)) continue
       const { schema, table } = tableOf(added[1], added[2])
       encrypted.add(columnKey(table, added[3], schema))
     }
@@ -272,7 +312,7 @@ function indexEncryptedColumns(contents: readonly string[]): Set<string> {
     // renamed onto the real name is exactly what a previous sweep of this very
     // directory emitted. Run after ADD so that tmp column is already indexed.
     for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
-      if (isInsideComment(sql, renamed.index)) continue
+      if (isInsideCommentOrString(sql, renamed.index)) continue
       const { schema, table } = tableOf(renamed[1], renamed[2])
       if (encrypted.has(columnKey(table, renamed[3], schema))) {
         encrypted.add(columnKey(table, renamed[4], schema))
@@ -351,8 +391,9 @@ export interface RewriteResult {
  * a column that is ALREADY encrypted, where the rewrite would drop ciphertext.
  * Both are left untouched on disk and surfaced non-fatally so the caller can
  * tell the user to review them, rather than silently shipping broken SQL or
- * destroying data. Statements sitting inside a SQL comment are inert and are
- * neither rewritten nor reported.
+ * destroying data. Statements sitting inside a SQL comment — or inside a
+ * single-quoted string literal, where they are data rather than SQL — are inert
+ * and are neither rewritten nor reported.
  */
 export async function rewriteEncryptedAlterColumns(
   outDir: string,
@@ -412,7 +453,7 @@ export async function rewriteEncryptedAlterColumns(
       ) => {
         // Commented-out SQL never runs, and a multi-line replacement would only
         // inherit the `-- ` on its first line — leaving the rest live.
-        if (isInsideComment(original, offset)) return match
+        if (isInsideCommentOrString(original, offset)) return match
 
         const { schema, table } = tableOf(first, second)
 
@@ -445,7 +486,9 @@ export async function rewriteEncryptedAlterColumns(
       // Anchor the comment test on the `SET DATA TYPE` itself: the match starts
       // at the previous `;`, so its own offset sits before any preamble.
       const keyword = nearMiss[0].search(/\bSET\s+DATA\s+TYPE\b/i)
-      if (isInsideComment(updated, nearMiss.index + Math.max(keyword, 0))) {
+      if (
+        isInsideCommentOrString(updated, nearMiss.index + Math.max(keyword, 0))
+      ) {
         continue
       }
       skip(filePath, statement, 'unrecognised-form')
