@@ -1,6 +1,6 @@
 ---
 name: stash-drizzle
-description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle (EQL v3). Covers the types.* encrypted column factories (concrete Postgres domains), auto-encrypting query operators (eq, ne, gt/gte/lt/lte, between, inArray, matches, contains, JSON selector, asc/desc), schema extraction, the EncryptionV3 typed client, database setup with stash eql install, and migrating existing plaintext columns to encrypted. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
+description: Integrate CipherStash encryption with Drizzle ORM using @cipherstash/stack-drizzle (EQL v3). Covers the types.* encrypted column factories (concrete Postgres domains), auto-encrypting query operators (eq, ne, gt/gte/lt/lte, between, inArray, matches, contains, JSON selector, asc/desc), schema extraction, the Encryption typed client, database setup with stash eql install, and migrating existing plaintext columns to encrypted. Use when adding encryption to a Drizzle ORM project, defining encrypted Drizzle schemas, or querying encrypted columns with Drizzle.
 ---
 
 # CipherStash Stack - Drizzle ORM Integration
@@ -125,7 +125,7 @@ Value families: `Integer`/`Smallint`/`Numeric`/`Real`/`Double` (`number`), `Bigi
 
 ```typescript
 import { extractEncryptionSchema, createEncryptionOperators } from "@cipherstash/stack-drizzle"
-import { EncryptionV3 } from "@cipherstash/stack/v3"
+import { Encryption } from "@cipherstash/stack/v3"
 
 // Convert the Drizzle table definition to a CipherStash v3 schema
 const usersSchema = extractEncryptionSchema(usersTable)
@@ -134,12 +134,12 @@ const usersSchema = extractEncryptionSchema(usersTable)
 ### 2. Initialize the Encryption Client
 
 ```typescript
-const encryptionClient = await EncryptionV3({
+const encryptionClient = await Encryption({
   schemas: [usersSchema],
 })
 ```
 
-`EncryptionV3` returns a strongly-typed client: plaintext types are pinned to each column's domain, and query methods only accept queryable columns.
+`Encryption` returns a strongly-typed client: plaintext types are pinned to each column's domain, and query methods only accept queryable columns.
 
 ### 3. Create Query Operators
 
@@ -464,13 +464,13 @@ Update the encryption client to harvest the encrypted columns from the table:
 
 ```typescript
 // src/encryption/index.ts
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption } from '@cipherstash/stack/v3'
 import { extractEncryptionSchema } from '@cipherstash/stack-drizzle'
 import { users } from '../db/schema'
 
 const usersEncryptionSchema = extractEncryptionSchema(users)
 
-export const encryptionClient = await EncryptionV3({ schemas: [usersEncryptionSchema] })
+export const encryptionClient = await Encryption({ schemas: [usersEncryptionSchema] })
 ```
 
 Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN email_encrypted public.eql_v3_text_search;`. Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)

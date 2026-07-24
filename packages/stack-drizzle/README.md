@@ -78,7 +78,7 @@ are fixed by the `types.*` factory you choose — no per-column config object:
 
 ```ts
 import { pgTable, integer } from 'drizzle-orm/pg-core'
-import { EncryptionV3 } from '@cipherstash/stack/v3'
+import { Encryption } from '@cipherstash/stack/v3'
 import {
   types,
   extractEncryptionSchema,
@@ -92,7 +92,7 @@ const users = pgTable('users', {
 })
 
 const schema = extractEncryptionSchema(users)
-const client = await EncryptionV3({ schemas: [schema] })
+const client = await Encryption({ schemas: [schema] })
 const ops = createEncryptionOperators(client)
 
 // Insert — encrypt models first (bulk helpers batch key operations
