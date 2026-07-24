@@ -19,6 +19,10 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false
     },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$"]
+    },
     "test:e2e": {
       "dependsOn": ["^build", "build"],
       "inputs": ["$TURBO_DEFAULT$", ".env*"],

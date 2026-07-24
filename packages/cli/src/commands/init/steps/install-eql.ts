@@ -108,8 +108,8 @@ export const installEqlStep: InitStep = {
     // at all. That pin made `stash init --drizzle` the one flow that provisions
     // a v2 database while every other integration (and a bare `stash eql
     // install`) gets v3, and it contradicted the stash-drizzle skill we install
-    // into the very same project — that skill documents the `/v3` surface
-    // (`types.*` domains, `EncryptionV3`) and would have the user's agent
+    // into the very same project — that skill documents the v3 surface
+    // (`types.*` domains, `Encryption`) and would have the user's agent
     // author v3 code against a v2 database.
     //
     // `stash eql migration --drizzle` (added in #691) closes that gap: v3 SQL,
