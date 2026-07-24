@@ -259,6 +259,79 @@ const CREATE_TABLE_ENCRYPTED_COLUMN_RE = new RegExp(
   'gi',
 )
 
+/**
+ * A column name in a DECLARATION position — `"email" text`,
+ * `"email" "public"."eql_v3_text_search"`, `"amount" numeric(10, 2)`.
+ *
+ * The `\s+["a-z]` tail is what separates a declaration from a MENTION. Most
+ * mentions are followed by `)`, `,`, or an operator, which the tail alone
+ * already rejects:
+ *
+ * ```sql
+ * PRIMARY KEY ("id", "name")
+ * FOREIGN KEY ("org_id") REFERENCES "orgs"("id")
+ * ```
+ *
+ * But a mention inside a predicate or a table-level constraint is often
+ * followed by whitespace and a SQL KEYWORD — which has exactly the same
+ * `\s+[a-z]` shape as a real declaration, and drizzle-kit emits both forms
+ * inside a `CREATE TABLE` (a `CONSTRAINT … CHECK (<user sql>)` body is
+ * user-authored, so the predicate form is reachable too):
+ *
+ * ```sql
+ * CHECK ("email" IS NOT NULL)
+ * CONSTRAINT "users_email_unique" UNIQUE ("email")
+ * ```
+ *
+ * The negative lookahead rejects the keywords reachable this way: predicate
+ * keywords (`IS`, `IN`, `NOT`, `LIKE`, `ILIKE`, `BETWEEN`, `AND`, `OR`),
+ * ordering/collation (`COLLATE`, `ASC`, `DESC`, `NULLS`), and every
+ * table/column-constraint keyword (`UNIQUE`, `PRIMARY`, `FOREIGN`, `CHECK`,
+ * `EXCLUDE`, `REFERENCES`, `CONSTRAINT`, `USING`, `WITH`) — the last six also
+ * close the constraint-NAME case above, since Postgres always puts one of
+ * them immediately after a constraint's name.
+ *
+ * A real type token still matches because the lookahead is pinned to a word
+ * boundary (`\b`) right after each keyword, so it only rejects a keyword when
+ * that keyword is the WHOLE next word: `interval` and `inet` both start with
+ * `IN`'s letters, but their third character keeps them inside one word, so
+ * `\bIN\b` never matches there; the same reasoning clears `int`,
+ * `char`/`citext` against `CHECK`, and `eql_v2_encrypted`/`eql_v3_*` against
+ * `EXCLUDE`.
+ *
+ * Deliberately NOT pinned to the encrypted domains. A column the corpus
+ * declares but does not give an encrypted type is, by residue, plaintext — so
+ * the fail-closed rule needs no type classification and no SQL parsing, only
+ * the known encrypted list that {@link ENCRYPTED_TYPE_REF} already provides.
+ *
+ * **Residue, accepted.** The lookahead is a fixed keyword list, not a parser:
+ * a predicate keyword it does not enumerate (`SIMILAR`, `ISNULL`, `NOTNULL`,
+ * `OVERLAPS`, `ON`, …) still lets a bare mention through, e.g.
+ * `CHECK ("email" SIMILAR TO '...')`, or a `REFERENCES "email" ON DELETE
+ * CASCADE` where `"email"` names the referenced TABLE rather than the column
+ * being declared — `"id" integer REFERENCES "email" ON DELETE CASCADE` inside
+ * a `CREATE TABLE` body still registers `email` as declared. That one only
+ * bites when a column shares a referenced table's name, so like the rest of
+ * this residue it is inert unless that mention's name exactly matches a
+ * DIFFERENT column that is both encrypted and genuinely undeclared anywhere
+ * else in the corpus — contrived, and strictly narrower than the gap this
+ * replaces.
+ */
+const DECLARED_COLUMN_RE =
+  /"([^"]+)"\s+(?!(?:IS|IN|NOT|LIKE|ILIKE|BETWEEN|AND|OR|COLLATE|ASC|DESC|NULLS|UNIQUE|PRIMARY|FOREIGN|CHECK|EXCLUDE|REFERENCES|CONSTRAINT|USING|WITH)\b)["a-z]/gi
+
+/**
+ * `ALTER TABLE … ADD COLUMN "col" <any type>` — $1/$2 table, $3 column.
+ *
+ * Needs no {@link DECLARED_COLUMN_RE}-style keyword lookahead: the token
+ * right after an ADD COLUMN's column name is always its type, so no SQL
+ * keyword can occupy that position.
+ */
+const ADD_COLUMN_RE = new RegExp(
+  String.raw`ALTER TABLE\s+${TABLE_REF}\s+ADD COLUMN\s+(?:IF NOT EXISTS\s+)?"([^"]+)"\s+["a-z]`,
+  'gi',
+)
+
 /** Splits a `TABLE_REF` capture pair into its schema and table halves. */
 function tableOf(
   first: string,
@@ -271,41 +344,79 @@ function tableOf(
     : { schema: first, table: second }
 }
 
-/** Identity of a column across the corpus, for {@link indexEncryptedColumns}. */
+/** Identity of a column across the corpus, for {@link indexColumnDeclarations}. */
 function columnKey(table: string, column: string, schema?: string): string {
   return JSON.stringify([schema ?? '', table, column])
 }
 
+/** What the migration corpus says about the columns it mentions. */
+interface ColumnIndex {
+  /** Columns the corpus gives an ENCRYPTED type. Rewriting one drops ciphertext. */
+  encrypted: Set<string>
+  /** Columns the corpus DECLARES at all, whatever type it gives them. */
+  declared: Set<string>
+}
+
 /**
- * Index every column the migration corpus gives an ENCRYPTED type, so the
- * rewrite can tell the change it exists for (plaintext → encrypted) from one it
- * must never touch (encrypted → encrypted).
+ * Index what the migration corpus knows about each column, so the rewrite can
+ * tell the change it exists for (plaintext → encrypted) from the two it must
+ * never make: encrypted → encrypted, and a change to a column it knows nothing
+ * about.
  *
- * **Why (#772 review, W-3):** the strict matcher captures only the TARGET type.
- * A column whose encrypted domain merely changes (`types.TextEq` →
+ * **Why `encrypted` (#772 review, W-3):** the strict matcher captures only the
+ * TARGET type. A column whose encrypted domain merely changes (`types.TextEq` →
  * `types.TextSearch`) matches just as well as a plaintext column, and the
  * ADD+DROP+RENAME then drops a column full of CIPHERTEXT — with no plaintext
  * left anywhere to backfill from, so unlike the plaintext case the data is not
- * recoverable from the application at all. Changing an encrypted column's domain
- * changes its index terms, so the data has to be re-encrypted through the client
- * regardless; the sweep flags the statement and leaves it for the user.
+ * recoverable from the application at all.
+ *
+ * **Why `declared` (A-2):** absence from `encrypted` is not evidence of
+ * plaintext. It is evidence of nothing. The sweep runs per directory, and the
+ * shipped wizard default scans three of them, so a column's `CREATE TABLE` can
+ * simply live somewhere this sweep never reads — the column is then rewritten
+ * on an assumption, and the ADD+DROP+RENAME drops live ciphertext. Requiring a
+ * POSITIVE declaration makes the unknown case a flagged statement instead.
+ *
+ * Because the encrypted side is matched against the known domain list, the
+ * plaintext side needs no type classification: a column the corpus declares but
+ * does not give an encrypted type is plaintext by residue.
  *
  * The index is corpus-wide rather than ordered by migration: over-detecting
- * "encrypted" costs a flagged statement the user must handle by hand, while
- * under-detecting costs irrecoverable ciphertext. Only comment-free statements
- * count, for the same reason {@link isInsideCommentOrString} exists.
+ * "encrypted" costs a flagged statement the user handles by hand, while
+ * under-detecting costs irrecoverable ciphertext. That asymmetry is why the
+ * two per-column scans inside a `CREATE TABLE` body are deliberately
+ * inconsistent about comments (see the comment at the loops themselves) —
+ * do not "fix" that inconsistency, it is the point.
  */
-function indexEncryptedColumns(contents: readonly string[]): Set<string> {
+function indexColumnDeclarations(contents: readonly string[]): ColumnIndex {
   const encrypted = new Set<string>()
+  const declared = new Set<string>()
 
   for (const sql of contents) {
     for (const created of sql.matchAll(CREATE_TABLE_RE)) {
       if (isInsideCommentOrString(sql, created.index)) continue
       const { schema, table } = tableOf(created[1], created[2])
-      for (const column of created[3].matchAll(
-        CREATE_TABLE_ENCRYPTED_COLUMN_RE,
-      )) {
+      const body = created[3]
+
+      // The body is scanned as its own document: a `--` earlier in it comments
+      // out the rest of that line, and a CREATE inside a block comment or a
+      // string literal was already skipped above.
+      //
+      // Asymmetric on purpose. ENCRYPTED does NOT re-check comments here: a
+      // commented-out encrypted column inside an otherwise live CREATE TABLE
+      // still counts, exactly as it did before this sweep learned to declare
+      // anything — over-detecting "encrypted" only costs a flagged statement.
+      // DECLARED DOES re-check: a commented-out plaintext line never ran, so
+      // it must not count as a declaration — over-detecting "declared" is
+      // what would put a truly-undeclared, possibly already-encrypted column
+      // back on the fail-open path.
+      for (const column of body.matchAll(CREATE_TABLE_ENCRYPTED_COLUMN_RE)) {
         encrypted.add(columnKey(table, column[1], schema))
+      }
+
+      for (const column of body.matchAll(DECLARED_COLUMN_RE)) {
+        if (isInsideCommentOrString(body, column.index)) continue
+        declared.add(columnKey(table, column[1], schema))
       }
     }
 
@@ -315,19 +426,26 @@ function indexEncryptedColumns(contents: readonly string[]): Set<string> {
       encrypted.add(columnKey(table, added[3], schema))
     }
 
+    for (const added of sql.matchAll(ADD_COLUMN_RE)) {
+      if (isInsideCommentOrString(sql, added.index)) continue
+      const { schema, table } = tableOf(added[1], added[2])
+      declared.add(columnKey(table, added[3], schema))
+    }
+
     // A rename carries the column's type with it — and `<col>__cipherstash_tmp`
     // renamed onto the real name is exactly what a previous sweep of this very
     // directory emitted. Run after ADD so that tmp column is already indexed.
     for (const renamed of sql.matchAll(RENAME_COLUMN_RE)) {
       if (isInsideCommentOrString(sql, renamed.index)) continue
       const { schema, table } = tableOf(renamed[1], renamed[2])
-      if (encrypted.has(columnKey(table, renamed[3], schema))) {
-        encrypted.add(columnKey(table, renamed[4], schema))
-      }
+      const from = columnKey(table, renamed[3], schema)
+      const to = columnKey(table, renamed[4], schema)
+      if (encrypted.has(from)) encrypted.add(to)
+      if (declared.has(from)) declared.add(to)
     }
   }
 
-  return encrypted
+  return { encrypted, declared }
 }
 
 /** Why a recognised ALTER-to-encrypted statement was left alone. */
@@ -336,6 +454,8 @@ export type SkipReason =
   | 'unrecognised-form'
   /** The column already holds an encrypted domain; rewriting drops ciphertext. */
   | 'already-encrypted'
+  /** The corpus never declares the column, so its current type is unknown. */
+  | 'source-unknown'
 
 /** A statement the sweep recognised as ALTER-to-encrypted but did NOT rewrite. */
 export interface SkippedAlter {
@@ -350,7 +470,7 @@ export interface SkippedAlter {
 /**
  * One-line explanation of a {@link SkipReason}, for the CLI/wizard to print
  * next to the statement. Lives here so every caller says the same thing — the
- * two reasons need very different action from the user, and a single generic
+ * three reasons need very different action from the user, and a single generic
  * "could not rewrite automatically" hides that.
  */
 export function describeSkipReason(reason: SkipReason): string {
@@ -359,6 +479,8 @@ export function describeSkipReason(reason: SkipReason): string {
       return "the column is ALREADY encrypted, so the ADD+DROP+RENAME rewrite would DROP the ciphertext with no plaintext left to backfill from. Changing an encrypted column's domain changes its index terms, so the data must be re-encrypted through the staged `stash encrypt` lifecycle"
     case 'unrecognised-form':
       return 'it falls outside the strict matcher (a hand-authored `SET DATA TYPE ... USING ...`, or a drizzle-kit form the sweep does not recognise) and an in-place cast to an encrypted domain fails at migrate time'
+    case 'source-unknown':
+      return "the sweep could not find where this column was declared in this migration directory, so it cannot tell a plaintext column (safe to rewrite) from one that already holds ciphertext (where the rewrite would DROP it). Usually the column's `CREATE TABLE` / `ADD COLUMN` lives in a different directory, or the migration history was squashed. Check the column's current type in the database: if it is plaintext and the table is empty, apply the ADD/DROP/RENAME by hand; if it already holds ciphertext, use the staged `stash encrypt` lifecycle instead"
   }
 }
 
@@ -394,13 +516,16 @@ export interface RewriteResult {
  *
  * Returns {@link RewriteResult}: the files rewritten, plus `skipped` statements
  * left for a human — ones outside the strict matcher (a hand-authored
- * `SET DATA TYPE … USING …;`, or a future drizzle-kit form), and ones targeting
- * a column that is ALREADY encrypted, where the rewrite would drop ciphertext.
- * Both are left untouched on disk and surfaced non-fatally so the caller can
- * tell the user to review them, rather than silently shipping broken SQL or
- * destroying data. Statements sitting inside a SQL comment — or inside a
- * single-quoted string literal, where they are data rather than SQL — are inert
- * and are neither rewritten nor reported.
+ * `SET DATA TYPE … USING …;`, or a future drizzle-kit form); ones targeting a
+ * column that is ALREADY encrypted, where the rewrite would drop ciphertext;
+ * and ones targeting a column the corpus never DECLARES anywhere, where the
+ * rewrite would be guessing at a type it cannot see (likely the most common
+ * skip on a real corpus, since the sweep only ever reads part of the
+ * migration history). All three are left untouched on disk and surfaced
+ * non-fatally so the caller can tell the user to review them, rather than
+ * silently shipping broken SQL or destroying data. Statements sitting inside a
+ * SQL comment — or inside a single-quoted string literal, where they are data
+ * rather than SQL — are inert and are neither rewritten nor reported.
  */
 export async function rewriteEncryptedAlterColumns(
   outDir: string,
@@ -440,7 +565,8 @@ export async function rewriteEncryptedAlterColumns(
   // Built from the WHOLE corpus, including `options.skip`: a column's current
   // type comes from the migrations that ran before this one, not just the files
   // we are allowed to edit.
-  const encryptedColumns = indexEncryptedColumns([...contents.values()])
+  const { encrypted: encryptedColumns, declared: declaredColumns } =
+    indexColumnDeclarations([...contents.values()])
 
   for (const [filePath, original] of contents) {
     if (options.skip && filePath === options.skip) continue
@@ -468,6 +594,17 @@ export async function rewriteEncryptedAlterColumns(
         // there is no plaintext left to backfill from. Flag, never guess.
         if (encryptedColumns.has(columnKey(table, column, schema))) {
           skip(filePath, match.trim(), 'already-encrypted')
+          return match
+        }
+
+        // Fail closed. Absence from `declaredColumns` does not mean the column
+        // is plaintext — it means the corpus never said. The declaration can
+        // sit in a directory this sweep does not read (the wizard ships with
+        // three candidates and indexes each separately), so rewriting on the
+        // assumption is how a live `DROP COLUMN` reaches a populated — possibly
+        // already-encrypted — column. Flag it and let the user look.
+        if (!declaredColumns.has(columnKey(table, column, schema))) {
+          skip(filePath, match.trim(), 'source-unknown')
           return match
         }
 
