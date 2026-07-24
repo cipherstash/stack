@@ -185,6 +185,14 @@ jobs:
       - name: Typecheck (e2e)
         run: pnpm exec turbo run typecheck --filter @cipherstash/e2e
 
+      # Everything else typechecks against SOURCE. This one reads the emitted
+      # `.d.ts`, which is what customers consume — and where typed `encryptQuery`
+      # sat broken for every column through the whole rc series, because `tsc`
+      # strips private member types and that was the only place the column's
+      # domain parameter appeared bare.
+      - name: Typecheck (stack — emitted declarations, not source)
+        run: pnpm exec turbo run test:types:dist --filter @cipherstash/stack
+
       - name: Lint — no hardcoded package-manager runners
         run: pnpm run lint:runners
 

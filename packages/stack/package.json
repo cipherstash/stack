@@ -198,6 +198,7 @@
 		"db:eql-v3:install": "tsx scripts/install-eql-v3.ts",
 		"test": "vitest run",
 		"test:types": "vitest --run --typecheck.only",
+  "test:types:dist": "tsc --noEmit -p dist-types/tsconfig.json",
 		"release": "tsup",
 		"test:integration": "vitest run --config integration/vitest.config.ts"
 	},

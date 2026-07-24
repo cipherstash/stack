@@ -26,6 +26,12 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    // Typechecks `packages/stack/dist-types` against the BUILT declarations, so
+    // it must run after `build` — unlike `test:types`, which reads source.
+    "test:types:dist": {
+      "dependsOn": ["build"],
+      "inputs": ["$TURBO_DEFAULT$"]
+    },
     "typecheck": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$"]
