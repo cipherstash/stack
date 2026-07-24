@@ -75,8 +75,7 @@ export async function resolveColumnLifecycle(
  * "no pending config", …). Since `classifyEqlDomain` recognises `eql_v3_*`
  * only, that case now also covers the post-cutover v2 state — `<col>` was
  * renamed onto the ciphertext, and its `eql_v2_encrypted` domain is no longer
- * classified, so the column never appears as a candidate. (It used to arrive
- * here as a `version: 2` candidate and needed its own exemption.)
+ * classified, so the column never appears as a candidate.
  *
  * A non-empty candidate list therefore means EQL v3 columns exist but none is
  * identifiable — the caller must fail closed with this message rather than

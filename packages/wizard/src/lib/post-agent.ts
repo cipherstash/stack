@@ -8,7 +8,7 @@
 import { execSync } from 'node:child_process'
 import * as p from '@clack/prompts'
 import type { GatheredContext } from './gather.js'
-import { sweepMigrationDirs } from './rewrite-migrations.js'
+import { describeSkipReason, sweepMigrationDirs } from './rewrite-migrations.js'
 import type { DetectedPackageManager, Integration } from './types.js'
 
 interface PostAgentOptions {
@@ -80,11 +80,42 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
     // drizzle-kit just produced — those fail in Postgres (no cast from
     // text/numeric to an EQL domain). Covers the EQL v3 family the wizard now
     // scaffolds, and legacy eql_v2_encrypted. CIP-2991 + CIP-2994 + #693.
-    await rewriteEncryptedMigrations(cwd)
+    const sweep = await rewriteEncryptedMigrations(cwd)
+
+    // A rewritten file is a DROP+ADD in disguise, and a flagged statement is one
+    // the sweep could not make safe at all. Either way the next keystroke can
+    // destroy data, so the prompt says so and defaults to NO — an
+    // `initialValue: true` immediately under a "do NOT run the migration"
+    // warning invites exactly the mistake the warning is about.
+    const unsafe = sweep.rewritten > 0 || sweep.skipped > 0
+
+    // A directory whose sweep threw contributes 0 to both totals, so on its own
+    // it is indistinguishable from a clean sweep — except that it means the
+    // opposite: those migrations may still hold unrepaired `SET DATA TYPE`
+    // statements and nobody has looked. `stash eql migration` / `db install`
+    // treat "sweep failed outright" and "sweep left near-misses" as the same
+    // state for the same reason; unknown is not safe, so the default is NO here
+    // too. The wording differs from the destructive case on purpose: nothing is
+    // known about that directory, so claiming it destroys data would be a guess.
+    const unverifiedDirs = sweep.failedDirs
+    const unverified = unverifiedDirs.length > 0
+    const unverifiedList = unverifiedDirs.map((dir) => `${dir}/`).join(', ')
+    const unverifiedCount = `${unverifiedDirs.length} director${
+      unverifiedDirs.length === 1 ? 'y' : 'ies'
+    }`
+    if (unverified) {
+      p.log.warn(
+        `The ALTER COLUMN sweep did not fully complete — review the sibling migrations in ${unverifiedList} before running drizzle-kit migrate, or you may apply broken/unsafe SQL.`,
+      )
+    }
 
     const shouldMigrate = await p.confirm({
-      message: `Run the migration now? (${runner} drizzle-kit migrate)`,
-      initialValue: true,
+      message: unsafe
+        ? `Run the migration now? (${runner} drizzle-kit migrate) — see the warnings above: this migration DESTROYS data on any table that already holds rows`
+        : unverified
+          ? `Run the migration now? (${runner} drizzle-kit migrate) — the sweep could not check ${unverifiedCount} (${unverifiedList}); review those migrations before migrating, or you may apply broken/unsafe SQL`
+          : `Run the migration now? (${runner} drizzle-kit migrate)`,
+      initialValue: !unsafe && !unverified,
     })
 
     if (!p.isCancel(shouldMigrate) && shouldMigrate) {
@@ -114,12 +145,37 @@ export async function runPostAgentSteps(opts: PostAgentOptions): Promise<void> {
   }
 }
 
-async function rewriteEncryptedMigrations(cwd: string): Promise<void> {
+/**
+ * Sweep the candidate migration directories, reporting what happened, and
+ * return the totals so the caller can decide how dangerous "run it now" is.
+ *
+ * `failedDirs` names the directories that exist but whose sweep threw. It is a
+ * third state, not a variant of "nothing to do": those migrations may still
+ * contain unrepaired `SET DATA TYPE` statements and went unchecked, which the
+ * `rewritten`/`skipped` counts cannot express — both stay 0 for such a
+ * directory, exactly as they do for a clean one.
+ */
+async function rewriteEncryptedMigrations(cwd: string): Promise<{
+  rewritten: number
+  skipped: number
+  failedDirs: string[]
+}> {
   const results = await sweepMigrationDirs(cwd, DRIZZLE_OUT_DIRS)
+  const totals = { rewritten: 0, skipped: 0, failedDirs: [] as string[] }
 
   for (const { dir, rewritten, skipped, error } of results) {
-    if (error) {
-      p.log.warn(`Could not rewrite migrations in ${dir}: ${error}`)
+    totals.rewritten += rewritten.length
+    totals.skipped += skipped.length
+
+    // Presence, not truthiness: `error` is `err.message` for a thrown `Error`,
+    // and `new Error()` has an empty message. Testing `if (error)` would put a
+    // blank-message failure back on the fail-open path this whole branch exists
+    // to close.
+    if (error !== undefined) {
+      totals.failedDirs.push(dir)
+      p.log.warn(
+        `Could not rewrite migrations in ${dir}: ${error || 'unknown error'}`,
+      )
       continue
     }
 
@@ -135,11 +191,16 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<void> {
 
     if (skipped.length > 0) {
       p.log.warn(
-        `${skipped.length} statement(s) look like an ALTER-to-encrypted the rewrite could not safely repair (e.g. a hand-authored SET DATA TYPE ... USING ...). Review them before migrating:`,
+        `${skipped.length} statement(s) look like an ALTER-to-encrypted that the rewrite left alone. Review them before migrating:`,
       )
-      for (const s of skipped) p.log.step(`  - ${s.file}: ${s.statement}`)
+      for (const s of skipped) {
+        p.log.step(`  - ${s.file}: ${s.statement}`)
+        p.log.step(`      ${describeSkipReason(s.reason)}`)
+      }
     }
   }
+
+  return totals
 }
 
 async function runStep(

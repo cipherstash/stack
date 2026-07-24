@@ -46,7 +46,7 @@ const rows = await db
   .select()
   .from(users)
   .where(await ops.and(
-    ops.contains(users.email, 'alice'), // free-text containment over ciphertext
+    ops.matches(users.email, 'alice'), // free-text token match over ciphertext
     ops.between(users.age, 18, 65),
   ))
   .orderBy(ops.asc(users.age))

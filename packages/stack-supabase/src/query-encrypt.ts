@@ -250,7 +250,6 @@ export async function encryptFilterValues(
       column,
       table: ctx.table,
       queryType,
-      returnType: 'composite-literal',
     })
     termMap.push(mapping)
   }

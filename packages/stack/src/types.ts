@@ -203,6 +203,22 @@ export type ClientConfig = {
   eqlVersion?: 2 | 3
 }
 
+/**
+ * {@link ClientConfig} for a client that authors EQL v3 — the same options
+ * minus the legacy `eqlVersion: 2` escape hatch.
+ *
+ * `Encryption` accepts this (not the full `ClientConfig`) alongside an all-v3
+ * schema set. Forcing v2 wire over v3 schemas returns the NOMINAL client at
+ * runtime, so admitting `2` there typed the call as `TypedEncryptionClient`
+ * while handing back a client that silently ignores the typed client's extra
+ * `decryptModel` arguments. Adapters that are v3-only (`@cipherstash/prisma-next`,
+ * `@cipherstash/stack-drizzle`) should take this type for their pass-through
+ * config for the same reason.
+ */
+export type V3ClientConfig = Omit<ClientConfig, 'eqlVersion'> & {
+  eqlVersion?: 3
+}
+
 type AtLeastOneCsTable<T> = [T, ...T[]]
 
 /** Structural contract for a column builder the client can consume for STORAGE

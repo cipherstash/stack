@@ -182,7 +182,7 @@ The SDK never logs plaintext data.
 
 | Import Path | Provides |
 |---|---|
-| `@cipherstash/stack/v3` | `EncryptionV3` (a deprecated alias of `Encryption`), `typedClient`, `TypedEncryptionClient` — plus re-exports of everything in `@cipherstash/stack/eql/v3`. The one-stop import for v3 schema authoring. |
+| `@cipherstash/stack/v3` | `Encryption` (the client factory), `EncryptionV3` (a deprecated alias of it), `typedClient`, `TypedEncryptionClient`, `EncryptionClientFor` — plus re-exports of everything in `@cipherstash/stack/eql/v3`. The one-stop import for v3 schema authoring. |
 | `@cipherstash/stack/eql/v3` | `encryptedTable`, the `types` namespace, `buildEncryptConfig`, inference types (`InferPlaintext`, `InferEncrypted`, `V3ModelInput`, ...) |
 | `@cipherstash/stack` | `OidcFederationStrategy`, `AccessKeyStrategy`, the `Encryption` function (typed for an all-v3 schema set; nominal for v2/loose schemas), legacy v2 re-exports |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
@@ -807,7 +807,7 @@ try {
 
 ## Rolling Encryption Out to Production
 
-> **EQL version note.** The rollout tooling (`stash encrypt *`, `@cipherstash/migrate`) works with **both EQL versions** and auto-detects the column's version from its Postgres domain type — no flag. The lifecycles differ at the end: **v2** finishes with `stash encrypt cutover` (a rename swap plus a config promotion in `eql_v2_configuration`), then drops `<col>_plaintext`. **v3 has no cut-over and no configuration table** — after backfill you point the application at `<col>_encrypted` *by name*, verify reads, then `stash encrypt drop` generates the drop of the original plaintext `<col>`. Running `encrypt cutover` on a v3 column safely reports "not applicable" with the next step. `stash db push`/`db activate` remain v2-only (they manage `eql_v2_configuration`).
+> **EQL version note.** The rollout tooling (`stash encrypt *`, `@cipherstash/migrate`) works with **both EQL versions** and detects a column's generation from its Postgres domain type — there is no flag. Detection is one-sided: a `public.eql_v3_*` domain classifies as **v3**; anything else — a plaintext column, or a legacy `eql_v2_encrypted` one — classifies as *unknown* and falls through to the **v2** lifecycle, which is the correct default for a v2 column. Only a v3 column has its version recorded in the migration manifest. The lifecycles differ at the end: **v2** finishes with `stash encrypt cutover` (a rename swap plus a config promotion in `eql_v2_configuration`), then drops `<col>_plaintext`. **v3 has no cut-over and no configuration table** — after backfill you point the application at `<col>_encrypted` *by name*, verify reads, then `stash encrypt drop` generates the drop of the original plaintext `<col>`. Running `encrypt cutover` on a v3 column safely reports "not applicable" with the next step. `stash db push`/`db activate` remain v2-only (they manage `eql_v2_configuration`).
 
 Adding a fresh encrypted column to a table you don't yet write to is the easy case — declare it in the schema, run the migration, start writing. The harder case is taking an **existing plaintext column with live data** and turning it into an encrypted one without dropping a write or returning the wrong value mid-cutover.
 
@@ -838,7 +838,7 @@ Everything that lands in the repo and ships in **one** PR:
 | Schema-add | Migration adds `<col>_encrypted` (nullable `jsonb`) alongside the existing plaintext column. Plaintext column unchanged; application still writes only plaintext. |
 | Dual-write code | Application now writes both `<col>` and `<col>_encrypted` on every persistence path that mutates the row, in the same transaction, on every code branch. Reads still come from the plaintext column. |
 
-> **If you use CipherStash Proxy:** After the schema-add, run `stash db push` to register the new column in `eql_v2_configuration`. With no active config yet it writes directly to `active`; with an existing active config it writes `pending` (cutover will promote it). Required for Proxy-based queries.
+> **If you use CipherStash Proxy (the EQL v2 path):** `stash db push` and `stash db activate` manage `eql_v2_configuration`, so they only apply to a database that has EQL v2 installed — on a v3-only database (the default) `db push` reports "Nothing to do." and exits 0, and `db activate` errors out. EQL v3 ships no configuration table, so a v3 rollout has nothing to push. On a v2 + Proxy database, run `stash db push` after the schema-add to register the new column. With no active config yet it writes directly to `active`; with an existing active config it writes `pending`, which `stash db activate` promotes to active (the v2 `stash encrypt cutover` also promotes it as part of its rename). Required for Proxy-based queries.
 
 **The dual-write definition matters.** "Writes both columns" is not enough. The rule is: every persistence path that mutates this row writes both columns, in the same transaction, on every code branch. A single missed branch — a CSV import, an admin action, a background job, a third-party webhook handler — means rows inserted in production after deploy land in plaintext only, and backfill won't catch them. Grep for every site that writes the plaintext column before declaring rollout complete.
 
@@ -857,11 +857,11 @@ Once dual-writes are recorded as live in `cs_migrations`:
 | Action | What changes |
 |---|---|
 | `stash encrypt backfill` | Walks the table in keyset-pagination order, encrypts each chunk, writes a single transactional `UPDATE` per chunk plus a `cs_migrations` checkpoint. SIGINT-safe; idempotent re-runs converge. |
-| Schema rename | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. |
-| `stash encrypt cutover` | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. |
-| Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; the Supabase wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw `eql_v2_encrypted` payloads to end users. |
-| Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
-| `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
+| Schema rename (**v2 only**) | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. **v3:** there is no rename — leave `<col>_encrypted` under its own name and point the schema/queries at that name instead. |
+| `stash encrypt cutover` (**v2 only**) | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes the `eql_v2_configuration` row `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. **v3:** cutover does not apply — on a backfilled v3 column it reports "not applicable" and exits 0 without changing anything; skip this row. |
+| Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; the Supabase wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw EQL payloads to end users (a `public.eql_v3_*` jsonb document on v3; an `eql_v2_encrypted` composite on a legacy v2 column). |
+| Remove dual-write code | The plaintext column is no longer authoritative — **v2:** it is now `<col>_plaintext` (the cutover renamed it); **v3:** it is still the original `<col>`, since nothing was renamed. Either way, delete the dual-write logic once reads are served from the encrypted column. |
+| `stash encrypt drop` | Emits a migration that drops the plaintext column — and *which* column that is depends on the generation. **v2** (precondition: phase `cut-over`): a plain `ALTER TABLE … DROP COLUMN "<col>_plaintext"`. **v3** (precondition: phase `backfilled`): it drops the **original `<col>`** — there is no `<col>_plaintext` — and the generated SQL is a `DO` block that takes `ACCESS EXCLUSIVE` on the table, re-counts rows with `<col>` set and `<col>_encrypted` NULL *at apply time*, and raises instead of dropping if any remain. Apply with the project's normal migration tooling. |
 
 **Create the functional indexes between backfill and the read switch** (EQL v3 columns). After `stash encrypt backfill` completes and before reads move to the encrypted column, create the `eql_v3.*` extractor indexes for every queried capability (and `ANALYZE`) — one bulk build instead of per-row maintenance during backfill, and the switched reads engage an index from the first query. Recipes in the `stash-indexing` skill. (Legacy v2 rollouts have no extractor indexes to create — skip this step.)
 
@@ -870,7 +870,7 @@ Once dual-writes are recorded as live in `cs_migrations`:
 Three sources of truth, kept separate on purpose:
 
 - **`.cipherstash/migrations.json`** (repo) — *intent*. Which columns the developer wants to encrypt and at which phase, code-reviewable.
-- **`eql_v2_configuration`** (DB, EQL-managed) — *EQL intent*. Which columns are encrypted and with which indexes; drives the CipherStash Proxy.
+- **`eql_v2_configuration`** (DB, EQL-managed) — *EQL intent*. **EQL v2 + Proxy only.** Which columns are encrypted and with which indexes; drives the CipherStash Proxy. EQL v3 encodes a column's config in its Postgres domain type and ships no configuration table, so a v3-only database has just the other two.
 - **`cipherstash.cs_migrations`** (DB, CipherStash-managed) — *runtime state*. Append-only event log: phase transitions, backfill cursors, error rows. Latest row per `(table, column)` is the current state.
 
 `stash encrypt status` shows all three side-by-side and flags drift (e.g. EQL says registered, the physical `<col>_encrypted` column is missing). `stash status` (the quest log) rolls them up into the per-column "what's the next move" view used during a rollout.
@@ -878,6 +878,51 @@ Three sources of truth, kept separate on purpose:
 > **Note on internal phase names.** The runtime event log uses machine-readable phase names that depend on the column's EQL version: v3 (the default) runs `schema-added → dual-writing → backfilling → backfilled → dropped` (no cut-over — the app switches to the encrypted column by name), while v2 runs `schema-added → dual-writing → backfilling → backfilled → cut-over → dropped`. They appear in `cs_migrations` rows and `stash encrypt status` output. Treat them as internal mechanism detail — the user-facing story is "encryption rollout, then switch reads to encrypted, with a deploy gate in between."
 
 ### CLI sequence for a single column
+
+#### EQL v3 (the default)
+
+```bash
+# Run this often — it's the canonical "where am I?" command.
+stash status
+
+# ---- ENCRYPTION ROLLOUT (one PR, one deploy) ----
+# 1. Add the encrypted twin column via your normal migration tooling
+#    (drizzle-kit / supabase migrations / etc.).
+# 2. Edit application code so every persistence path writes both
+#    `<col>` and `<col>_encrypted` in the same transaction, on every
+#    code branch.
+# 3. Ship the PR to production.
+
+# ---- ⛔ DEPLOY GATE ----
+# Verify dual-writes are live, then redraft the plan for cutover work:
+stash status
+stash plan
+
+# ---- ENCRYPTION CUTOVER ----
+stash encrypt backfill --table users --column email
+# Prompts to confirm dual-writes are live (or pass
+# --confirm-dual-writes-deployed in CI). Resumable; SIGINT-safe.
+
+# Recovery — if dual-writes weren't actually live when backfill ran,
+# re-run with --force to encrypt every plaintext row regardless.
+stash encrypt backfill --table users --column email --force
+
+# Create the `eql_v3.*` extractor indexes for every queried capability
+# and ANALYZE the table, via your normal migration tooling. Do this
+# after backfill and before reads move over. Recipes: `stash-indexing`.
+
+# Point the application at the encrypted column BY NAME —
+# `email_encrypted`. There is no rename and no `stash encrypt cutover`
+# on v3. Wire the read paths through the encryption client so they
+# decrypt, deploy, and verify reads return plaintext.
+
+# Then remove the dual-write code and drop the plaintext column.
+# The generated migration re-checks coverage under a lock at apply
+# time and refuses to drop if any plaintext-only row remains:
+stash encrypt drop --table users --column email
+```
+
+#### EQL v2 (legacy)
 
 > **Known limitation (v2):** `stash encrypt cutover` requires a pending EQL configuration registered via `stash db push`. SDK-only users may hit a "No pending EQL configuration" error. **Workaround:** Run `stash db push` once before `stash encrypt cutover`, even if you don't use CipherStash Proxy. Decoupling cutover from EQL config for SDK users is tracked separately. (EQL v3 columns never hit this — cutover doesn't apply to them.)
 
@@ -919,9 +964,9 @@ stash encrypt cutover --table users --column email
 stash encrypt drop --table users --column email
 ```
 
-#### If you use CipherStash Proxy
+#### EQL v2 + CipherStash Proxy
 
-Register and promote encryption config at each phase:
+Register and promote encryption config at each phase. This applies only to a database with EQL v2 installed — `eql_v2_configuration` is where `stash db push` writes, and a v3-only database has no such table (`db push` reports "Nothing to do."). A v3 rollout uses the v3 sequence above whether or not Proxy is in front of it.
 
 ```bash
 # Run this often — it's the canonical "where am I?" command.
@@ -933,8 +978,9 @@ stash status
 # 2. Register the new encryption config with EQL:
 stash db push
 #    First push (no active config yet) → writes directly to active.
-#    Subsequent push (active already exists) → writes pending; cutover
-#    will promote it.
+#    Subsequent push (active already exists) → writes pending, which
+#    `stash db activate` promotes — as does the v2 `stash encrypt
+#    cutover` below, as part of its rename.
 # 3. Edit application code so every persistence path writes both
 #    `<col>` and `<col>_encrypted` in the same transaction, on every
 #    code branch.

@@ -6,7 +6,7 @@ Backs the `stash encrypt` CLI command group, but also exported for direct use �
 
 ## Lifecycle
 
-Each column walks through these phases — the ladder depends on the column's EQL version (auto-detected from its Postgres domain type via `detectColumnEqlVersion`):
+Each column walks through these phases — the ladder depends on the column's EQL version, and detection is one-sided: `detectColumnEqlVersion` recognises an `eql_v3_*` Postgres domain as **v3**, and everything else as *unknown* (`null`). The v2 ladder is the fallback for an unknown column, not a detection result:
 
 ```text
 EQL v2: schema-added → dual-writing → backfilling → backfilled → cut-over → dropped
@@ -59,7 +59,7 @@ Thin wrappers around `eql_v2.rename_encrypted_columns()` (the **v2** cut-over pr
 
 ### `detectColumnEqlVersion` / `resolveEncryptedColumn` / `listEncryptedColumns` / `classifyEqlDomain`
 
-The EQL types are self-describing, and these are the domain-type primitives everything version-specific above branches on. `detectColumnEqlVersion(client, table, column)` inspects one column's Postgres domain type and returns `2`, `3`, or `null` (not an EQL column); resolution is case-exact (quoted-identifier semantics, matching the rest of the pipeline) and honours `search_path`. `resolveEncryptedColumn(client, table, plaintextColumn, hint?)` finds a plaintext column's encrypted counterpart from the domain types — an explicit hint (e.g. the manifest's recorded `encryptedColumn`) wins, then the `<col>_encrypted` convention, then the table's sole EQL column; the name is never assumed. `listEncryptedColumns` returns every EQL-domain column on a table, classified.
+The EQL types are self-describing, and these are the domain-type primitives everything version-specific above branches on. `detectColumnEqlVersion(client, table, column)` inspects one column's Postgres domain type and returns `3` (an `eql_v3_*` domain) or `null` — it never returns `2`. `null` means *unknown*: a plaintext column, or a legacy `eql_v2_encrypted` one, is indistinguishable here, and callers fall through to the v2 lifecycle (a v2 column's version is carried by the manifest's recorded `eqlVersion`, if it has one). Resolution is case-exact (quoted-identifier semantics, matching the rest of the pipeline) and honours `search_path`. `resolveEncryptedColumn(client, table, plaintextColumn, hint?)` finds a plaintext column's encrypted counterpart from the domain types — an explicit hint (e.g. the manifest's recorded `encryptedColumn`) wins, then the `<col>_encrypted` convention, then the table's sole EQL column; the name is never assumed. `listEncryptedColumns` returns every EQL-domain column on a table, classified.
 
 ### `countEncrypted` / `countUnencrypted`
 

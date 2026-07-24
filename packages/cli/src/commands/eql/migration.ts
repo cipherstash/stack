@@ -10,7 +10,10 @@ import {
   printNextSteps,
   SAFE_MIGRATION_NAME,
 } from '@/commands/db/install.js'
-import { rewriteEncryptedAlterColumns } from '@/commands/db/rewrite-migrations.js'
+import {
+  describeSkipReason,
+  rewriteEncryptedAlterColumns,
+} from '@/commands/db/rewrite-migrations.js'
 import {
   detectPackageManager,
   execArgv,
@@ -245,10 +248,11 @@ async function generateDrizzleEqlMigration(
     if (skipped.length > 0) {
       sweepIncomplete = true
       p.log.warn(
-        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
+        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
       )
-      for (const { file, statement } of skipped) {
+      for (const { file, statement, reason } of skipped) {
         p.log.step(`  - ${file}: ${statement}`)
+        p.log.step(`      ${describeSkipReason(reason)}`)
       }
     }
   } catch (error) {

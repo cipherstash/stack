@@ -34,7 +34,10 @@ import {
   detectSupabaseProject,
   type SupabaseProjectInfo,
 } from './detect.js'
-import { rewriteEncryptedAlterColumns } from './rewrite-migrations.js'
+import {
+  describeSkipReason,
+  rewriteEncryptedAlterColumns,
+} from './rewrite-migrations.js'
 import {
   SUPABASE_EQL_MIGRATION_FILENAME,
   writeSupabaseEqlMigration,
@@ -657,10 +660,11 @@ export async function generateDrizzleMigration(
     if (skipped.length > 0) {
       sweepIncomplete = true
       p.log.warn(
-        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep could not rewrite automatically. Review and fix them before running your migrations:`,
+        `Found ${skipped.length} ALTER-to-encrypted statement(s) the sweep left alone. Review and fix them before running your migrations:`,
       )
-      for (const { file, statement } of skipped) {
+      for (const { file, statement, reason } of skipped) {
         p.log.step(`  - ${file}: ${statement}`)
+        p.log.step(`      ${describeSkipReason(reason)}`)
       }
     }
   } catch (error) {

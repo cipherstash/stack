@@ -421,9 +421,9 @@ Run `ANALYZE <table>` after the migration applies — an expression index gather
 
 The hard case: a Drizzle table that already exists in production with live data in a plaintext column you want to encrypt. You can't just change the column type — that would drop the data and break NOT NULL constraints.
 
-CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads + drop — under EQL v2 the switch is a rename, under v3 it is an application-side change). (If using CipherStash Proxy, the rollout also includes `stash db push` to register the encryption config with EQL.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
+CipherStash splits this into two named steps with a hard production-deploy gate between them: an **encryption rollout** (schema-add + dual-write code) and a **cutover step** (backfill + switch reads + drop — under EQL v2 the switch is a rename, under v3 it is an application-side change). (On a legacy EQL v2 + CipherStash Proxy database, the rollout also includes `stash db push` to register the encryption config in `eql_v2_configuration`; EQL v3 ships no configuration table, so on the v3-only database the schema below assumes, `db push` reports "Nothing to do." and a v3 rollout never needs it.) The `stash-encryption` skill is the canonical reference for the lifecycle; this section walks the Drizzle-specific shape.
 
-> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and auto-detects a column's version from its Postgres domain type — there is no flag. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
+> **EQL version note.** The CLI rollout tooling (`stash encrypt *`, and the underlying `@cipherstash/migrate`) works with **both EQL versions** and detects a column's generation from its Postgres domain type — there is no flag. Detection is one-sided: a `public.eql_v3_*` domain classifies as **v3**; anything else — a plaintext column, or a legacy `eql_v2_encrypted` one — classifies as *unknown* and falls through to the **v2** lifecycle, which is the correct default for a v2 column. Only a v3 column has its version recorded in the migration manifest. The lifecycles differ at the end: **v3** (the default, and what the schema below uses) is `schema-add → dual-write → deploy gate → backfill → switch the app to the encrypted column by name → drop`, with **no cut-over rename**; **v2** finishes with `stash encrypt cutover` (a rename swap plus an `eql_v2_configuration` promotion) before the drop. Running `stash encrypt cutover` on a **backfilled** v3 column reports "not applicable" and exits 0 (it exits 1 if the backfill hasn't finished).
 
 > **Where am I?** Run `stash status` first (substitute the runner per the note above). It shows you which Drizzle tables/columns are mid-rollout, which are post-deploy, and what the next move is. Re-run after every transition.
 
@@ -473,19 +473,19 @@ const usersEncryptionSchema = extractEncryptionSchema(users)
 export const encryptionClient = await Encryption({ schemas: [usersEncryptionSchema] })
 ```
 
-Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN email_encrypted public.eql_v3_text_search;`. Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)
+Generate the migration with `drizzle-kit generate`. The generated SQL should be a single `ALTER TABLE ... ADD COLUMN "email_encrypted" "eql_v3_text_search";` — drizzle-kit emits the **bare** domain name, which resolves to the `public.eql_v3_text_search` domain via `search_path` (a schema-qualified custom type would be quoted as one identifier and fail, so the bare name is deliberate). Apply with `drizzle-kit migrate`. (This requires the EQL v3 SQL to be installed first — see Database Setup.)
 
 > **Using CipherStash Proxy?**
 >
-> If your app queries encrypted data through CipherStash Proxy, register the new encryption config with EQL:
+> `stash db push` registers the encryption config in `eql_v2_configuration`, which only exists on a database that has EQL v2 installed. The Database Setup above installs EQL v3 only, and `types.TextSearch('email_encrypted')` is a `public.eql_v3_text_search` column — v3 keeps a column's config in its domain type and ships no configuration table, so on that database `stash db push` prints "Nothing to do." and exits 0. There is nothing to push for this schema.
 >
 > ```bash
-> stash db push
+> stash db push   # EQL v2 + Proxy databases only
 > ```
 >
-> If this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected. The pending row will be promoted to active by `stash encrypt cutover` in the cutover step.
+> On a legacy EQL v2 database: if this is the project's first encrypted column, `db push` writes directly to the active EQL config (nothing to rename). If an active config already exists, `db push` writes the new config as `pending` — that's expected, and `stash db activate` promotes the pending row to active.
 >
-> SDK-only users can skip this step.
+> SDK-only users can skip this step on EQL v3 (this section's case) — there is nothing to push. On a legacy EQL v2 column they cannot: `stash encrypt cutover` requires a pending EQL config, so an SDK-only v2 rollout must still run `stash db push` once before cutover (see the SDK-only note under Backfill below).
 
 #### Dual-writing: write to both columns from app code
 
@@ -576,9 +576,14 @@ stash encrypt drop --table users --column email
 ```
 
 The CLI emits a Drizzle migration file with the drop. For a v3 column it drops
-the original plaintext column, `ALTER TABLE users DROP COLUMN email;` — there was
-no rename, so no `email_plaintext` exists. Requires the column to be in the
-`backfilled` phase, plus a live coverage check.
+the original plaintext column, `email` — there was no rename, so no
+`email_plaintext` exists. The generated SQL is not a bare `ALTER TABLE`: it is a
+`DO $stash_drop$` block that takes `LOCK TABLE users IN ACCESS EXCLUSIVE MODE`,
+re-counts rows where `email IS NOT NULL AND email_encrypted IS NULL` *at apply
+time*, `RAISE EXCEPTION`s if any remain, and only then executes the
+`ALTER TABLE ... DROP COLUMN`. So a row written after generation can't be
+silently destroyed. Requires the column to be in the `backfilled` phase, plus a
+live coverage check at generation time.
 
 Review and apply with `drizzle-kit migrate`, then update the schema to its final shape — the encrypted column is the only one left:
 

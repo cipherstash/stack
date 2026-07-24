@@ -87,7 +87,7 @@ const warnedLikeDelegation = new Set<string>()
  * {@link execute} below.
  */
 export class EncryptedQueryBuilderImpl<
-  T extends Record<string, unknown> = Record<string, unknown>,
+  T extends object = Record<string, unknown>,
   /** The shape this builder awaits to. `T[]` normally; narrowed to `T` by
    * {@link single}/{@link maybeSingle}, which return ONE row. Carried as a
    * parameter so the promise cannot keep advertising `T[]` after the runtime
@@ -503,7 +503,7 @@ export class EncryptedQueryBuilderImpl<
 
   /** Re-type the ROW. The awaited SHAPE is preserved: called after
    * `single()`/`maybeSingle()` this still awaits one row, not `U[]`. */
-  returns<U extends Record<string, unknown>>(): EncryptedQueryBuilderImpl<
+  returns<U extends object>(): EncryptedQueryBuilderImpl<
     U,
     TData extends readonly unknown[] ? U[] : U
   > {
