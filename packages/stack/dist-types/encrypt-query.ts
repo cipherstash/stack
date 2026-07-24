@@ -51,13 +51,19 @@ export async function callable() {
     queryType: 'orderAndRange',
   })
 
-  // The narrowing must survive emit too, or the gate above passes vacuously.
-  // @ts-expect-error - `email` is a text domain, not a number
-  client.encryptQuery(123, { table: users, column: users.email })
-  // @ts-expect-error - `searchableJson` is not a capability of a text_search column
+  // The narrowing must survive emit too, or the assertions above pass
+  // vacuously. Each directive sits on the exact line the error is reported at —
+  // `@ts-expect-error` only covers the following line, and the formatter is free
+  // to split these calls across several.
+  client.encryptQuery(
+    // @ts-expect-error - `email` is a text domain, so the plaintext is a string
+    123,
+    { table: users, column: users.email },
+  )
   client.encryptQuery('x', {
     table: users,
     column: users.email,
+    // @ts-expect-error - `searchableJson` is not a capability of text_search
     queryType: 'searchableJson',
   })
 }
