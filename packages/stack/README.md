@@ -751,7 +751,7 @@ type UserEncrypted = InferEncrypted<typeof users>
 |-------|-----|
 | `@cipherstash/stack/v3` | `Encryption` typed client factory (`EncryptionV3` is a `@deprecated` alias), `typedClient`, plus re-exports of the EQL v3 authoring DSL |
 | `@cipherstash/stack/eql/v3` | EQL v3 authoring DSL: `encryptedTable`, the `types` namespace, `buildEncryptConfig`, inference types (`InferPlaintext`, `InferEncrypted`, ...) |
-| `@cipherstash/stack` | `Encryption` client factory, auth strategies |
+| `@cipherstash/stack` | `Encryption` — the single client factory (overloaded: an array of concrete EQL v3 tables yields the typed v3 client) — plus auth strategies |
 | `@cipherstash/stack/schema` | Legacy v2 schema builders (see [Legacy: EQL v2](#legacy-eql-v2)) |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
 | `@cipherstash/stack/client` | Client-safe exports (schema builders and types only - no native FFI) |
@@ -795,16 +795,20 @@ Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/do
 
 ### Migrating from @cipherstash/protect
 
-`@cipherstash/protect` users land on the legacy v2 surface first — the mapping
-below is 1:1, and method signatures on the encryption client (`encrypt`,
-`decrypt`, `encryptModel`, etc.) and the `Result` pattern (`data` / `failure`)
-are unchanged. From there, adopt EQL v3 for new tables:
+Method signatures on the encryption client (`encrypt`, `decrypt`,
+`encryptModel`, ...) and the `Result` pattern (`data` / `failure`) are unchanged.
+**Declare tables with the EQL v3 DSL** — the v2 builders below are `@deprecated`
+and exist to read and migrate data already written as v2, not to author new
+columns. A column's capabilities come from its `types.*` domain rather than
+chained tuners: `csColumn("email").equality().freeTextSearch()` becomes
+`types.TextSearch("email")`.
 
-| `@cipherstash/protect` | `@cipherstash/stack` (legacy v2) | Import Path |
+| `@cipherstash/protect` | `@cipherstash/stack` | Import Path |
 |------------|-----------|-------|
 | `protect(config)` | `Encryption(config)` | `@cipherstash/stack` |
-| `csTable(name, cols)` | `encryptedTable(name, cols)` | `@cipherstash/stack/schema` |
-| `csColumn(name)` | `encryptedColumn(name)` | `@cipherstash/stack/schema` |
+| `csTable(name, cols)` | `encryptedTable(name, cols)` | `@cipherstash/stack/eql/v3` |
+| `csColumn(name)` | `types.<Domain>(name)` (e.g. `types.TextSearch`) | `@cipherstash/stack/eql/v3` |
+| `csTable`/`csColumn` for READING legacy v2 data | `encryptedTable` / `encryptedColumn` (`@deprecated`) | `@cipherstash/stack/schema` |
 | `import { LockContext } from "@cipherstash/protect/identify"` | `import { LockContext } from "@cipherstash/stack/identity"` | `@cipherstash/stack/identity` |
 | N/A | CLI | `npx stash` |
 

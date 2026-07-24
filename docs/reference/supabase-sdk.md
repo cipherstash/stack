@@ -10,6 +10,9 @@ One entry point, EQL v3 only:
 |---|---|---|
 | `encryptedSupabase` | `@cipherstash/stack/eql/v3` (EQL v3) | native `public.eql_v3_*` domains |
 
+Rows already written as EQL v2 still decrypt through `@cipherstash/stack`; what
+is gone is the ability to author new v2 columns here.
+
 `encryptedSupabaseV3` remains as a `@deprecated`, type-identical alias. The old
 EQL v2 authoring wrapper — `encryptedSupabase({ encryptionClient,
 supabaseClient })` — has been removed; the name now binds to the v3 factory
@@ -134,11 +137,11 @@ The domains use SQL-standard type names (`integer`, `smallint`, `real`,
 ### Install EQL
 
 ```bash
-# v2 (default)
+# v3 (the default)
 stash eql install --supabase
 
-# v3
-stash eql install --eql-version 3 --supabase
+# v2 (legacy installs only)
+stash eql install --eql-version 2 --supabase
 ```
 
 For **v2**, `--supabase` selects the opclass-stripped bundle (operator

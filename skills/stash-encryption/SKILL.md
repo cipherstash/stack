@@ -182,7 +182,7 @@ The SDK never logs plaintext data.
 
 | Import Path | Provides |
 |---|---|
-| `@cipherstash/stack/v3` | `EncryptionV3` (a deprecated alias of `Encryption`), `typedClient`, `TypedEncryptionClient` — plus re-exports of everything in `@cipherstash/stack/eql/v3`. The one-stop import for v3 schema authoring. |
+| `@cipherstash/stack/v3` | `Encryption` (the client factory), `EncryptionV3` (a deprecated alias of it), `typedClient`, `TypedEncryptionClient`, `EncryptionClientFor` — plus re-exports of everything in `@cipherstash/stack/eql/v3`. The one-stop import for v3 schema authoring. |
 | `@cipherstash/stack/eql/v3` | `encryptedTable`, the `types` namespace, `buildEncryptConfig`, inference types (`InferPlaintext`, `InferEncrypted`, `V3ModelInput`, ...) |
 | `@cipherstash/stack` | `OidcFederationStrategy`, `AccessKeyStrategy`, the `Encryption` function (typed for an all-v3 schema set; nominal for v2/loose schemas), legacy v2 re-exports |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
@@ -807,7 +807,7 @@ try {
 
 ## Rolling Encryption Out to Production
 
-> **EQL version note.** The rollout tooling (`stash encrypt *`, `@cipherstash/migrate`) works with **both EQL versions** and auto-detects the column's version from its Postgres domain type — no flag. The lifecycles differ at the end: **v2** finishes with `stash encrypt cutover` (a rename swap plus a config promotion in `eql_v2_configuration`), then drops `<col>_plaintext`. **v3 has no cut-over and no configuration table** — after backfill you point the application at `<col>_encrypted` *by name*, verify reads, then `stash encrypt drop` generates the drop of the original plaintext `<col>`. Running `encrypt cutover` on a v3 column safely reports "not applicable" with the next step. `stash db push`/`db activate` remain v2-only (they manage `eql_v2_configuration`).
+> **EQL version note.** The rollout tooling (`stash encrypt *`, `@cipherstash/migrate`) works with **both EQL versions** and detects a column's generation from its Postgres domain type — there is no flag. Detection is one-sided: a `public.eql_v3_*` domain classifies as **v3**; anything else — a plaintext column, or a legacy `eql_v2_encrypted` one — classifies as *unknown* and falls through to the **v2** lifecycle, which is the correct default for a v2 column. Only a v3 column has its version recorded in the migration manifest. The lifecycles differ at the end: **v2** finishes with `stash encrypt cutover` (a rename swap plus a config promotion in `eql_v2_configuration`), then drops `<col>_plaintext`. **v3 has no cut-over and no configuration table** — after backfill you point the application at `<col>_encrypted` *by name*, verify reads, then `stash encrypt drop` generates the drop of the original plaintext `<col>`. Running `encrypt cutover` on a v3 column safely reports "not applicable" with the next step. `stash db push`/`db activate` remain v2-only (they manage `eql_v2_configuration`).
 
 Adding a fresh encrypted column to a table you don't yet write to is the easy case — declare it in the schema, run the migration, start writing. The harder case is taking an **existing plaintext column with live data** and turning it into an encrypted one without dropping a write or returning the wrong value mid-cutover.
 
@@ -859,7 +859,7 @@ Once dual-writes are recorded as live in `cs_migrations`:
 | `stash encrypt backfill` | Walks the table in keyset-pagination order, encrypts each chunk, writes a single transactional `UPDATE` per chunk plus a `cs_migrations` checkpoint. SIGINT-safe; idempotent re-runs converge. |
 | Schema rename | Update the schema file: drop the `_encrypted` suffix; switch the original column declaration onto the encrypted type. |
 | `stash encrypt cutover` | One transaction: renames `<col>` → `<col>_plaintext`, `<col>_encrypted` → `<col>`, and promotes `pending` → `active`. Application reads of `<col>` now return decrypted ciphertext transparently. |
-| Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; the Supabase wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw `eql_v2_encrypted` payloads to end users. |
+| Wire reads through the encryption client | Read paths must decrypt before returning the value to callers (`decryptModel(row, table)` for Drizzle; the Supabase wrapper for Supabase; `decrypt`/`bulkDecryptModels` otherwise). Without this step, reads return raw EQL payloads to end users (a `public.eql_v3_*` jsonb document on v3; an `eql_v2_encrypted` composite on a legacy v2 column). |
 | Remove dual-write code | The plaintext column is now `<col>_plaintext` and is no longer authoritative. Delete the dual-write logic. |
 | `stash encrypt drop` | Emits a migration that removes `<col>_plaintext`. Apply with the project's normal migration tooling. |
 
