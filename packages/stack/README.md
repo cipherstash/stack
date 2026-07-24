@@ -443,12 +443,12 @@ Notes:
 
 ### Supabase Integration
 
-`encryptedSupabaseV3` from the separate `@cipherstash/stack-supabase` package wraps a Supabase client and **introspects the database at connect time** — it detects EQL v3 columns by their Postgres domain and builds the encryption client internally:
+`encryptedSupabase` from the separate `@cipherstash/stack-supabase` package wraps a Supabase client and **introspects the database at connect time** — it detects EQL v3 columns by their Postgres domain and builds the encryption client internally:
 
 ```typescript
-import { encryptedSupabaseV3 } from "@cipherstash/stack-supabase"
+import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
-const es = await encryptedSupabaseV3(supabaseUrl, supabaseKey)
+const es = await encryptedSupabase(supabaseUrl, supabaseKey)
 
 await es.from("users").insert({ email: "a@b.com", age: 30 })
 await es.from("users").select("id, email").eq("email", "a@b.com")

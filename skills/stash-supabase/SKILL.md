@@ -732,10 +732,12 @@ finished).
 > supported.** `@cipherstash/stack-supabase` authors and queries EQL v3 only —
 > the v2 `encryptedSupabase({ encryptionClient, supabaseClient })` wrapper that
 > read the post-cutover `eql_v2_encrypted` column has been removed. The CLI
-> lifecycle commands still auto-detect a v2 column, but the SDK read path for one
-> is gone. If you have an in-flight v2 cutover, either pin the last
-> `@cipherstash/stack-supabase` release that shipped the v2 wrapper to finish it,
-> or (recommended) create an `eql_v3_*` twin and run the v3 rollout above. New
+> lifecycle commands still handle a v2 column — detection is one-sided, so a v2
+> column classifies as *unknown* and falls through to the v2 lifecycle — but the
+> SDK read path for one is gone. If you have an in-flight v2 cutover, either pin
+> the last `@cipherstash/stack-supabase` release that shipped the v2 wrapper to
+> finish it, or (recommended) create an `eql_v3_*` twin and run the v3 rollout
+> above. New
 > encryption should always target an `eql_v3_*` domain.
 
 #### Drop: remove the plaintext column
@@ -746,7 +748,7 @@ Once read paths are routing through the wrapper and you're confident reads are d
 stash encrypt drop --table users --column email
 ```
 
-The CLI emits a Supabase migration file with the drop. **Which column it drops depends on the EQL version**, which the CLI auto-detects:
+The CLI emits a Supabase migration file with the drop. **Which column it drops depends on the EQL version.** Detection is one-sided: a `public.eql_v3_*` domain classifies as **v3**; anything else classifies as *unknown* and falls through to the **v2** path:
 
 - **v3** — drops the original plaintext column, `email`. There was no rename, so no `email_plaintext` exists. The SQL is not a bare `ALTER TABLE`: it's a `DO $stash_drop$` block that takes `LOCK TABLE users IN ACCESS EXCLUSIVE MODE`, re-counts rows where `email IS NOT NULL AND email_encrypted IS NULL` *at apply time*, `RAISE EXCEPTION`s if any remain, and only then executes the `ALTER TABLE ... DROP COLUMN` — so a row written after generation can't be silently destroyed. Requires the `backfilled` phase plus a live coverage check at generation time.
 - **v2** — drops the post-rename leftover, `ALTER TABLE users DROP COLUMN email_plaintext;`. Requires the `cut-over` phase.
@@ -782,7 +784,11 @@ Existing v2 deployments have two options:
   rollout in "Migrating an Existing Column to Encrypted" above.
 - **Stay on v2 for now:** pin the last `@cipherstash/stack-supabase` release that
   shipped the v2 wrapper. The CLI rollout tooling (`stash encrypt backfill` /
-  `cutover` / `drop`) still auto-detects a column's EQL generation.
+  `cutover` / `drop`) still drives a v2 column, but only because detection is
+  one-sided: a v2 column is never detected as v2, it classifies as *unknown* and
+  falls through to the v2 lifecycle. No EQL version is recorded for it in
+  `.cipherstash/migrations.json`, so `stash encrypt status` reports no version
+  for that column.
 
 For the removed v2 wrapper's historical API and semantics, see the docs at
 https://cipherstash.com/docs.
