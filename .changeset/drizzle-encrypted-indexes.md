@@ -2,7 +2,7 @@
 '@cipherstash/stack-drizzle': minor
 ---
 
-New `encryptedIndexes` helper on the `/v3` entry: spread
+New `encryptedIndexes` helper on the package root: spread
 `...encryptedIndexes(t)` in `pgTable`'s third-argument callback and it derives
 the recommended functional indexes for every encrypted column in the table —
 named `<table>_<column>_<capability>`, tracked by `drizzle-kit generate` like

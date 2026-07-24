@@ -33,6 +33,10 @@ export const sharedAlias: Record<string, string> = {
     repoRoot,
     'packages/test-kit/src/catalog.ts',
   ),
+  '@cipherstash/test-kit/install': resolve(
+    repoRoot,
+    'packages/test-kit/src/install.ts',
+  ),
   '@cipherstash/test-kit/integration-clerk': resolve(
     repoRoot,
     'packages/test-kit/src/integration/clerk.ts',
