@@ -20,6 +20,12 @@
       "inputs": ["$TURBO_DEFAULT$", ".env*"],
       "cache": false
     },
+    // `packages/bench`'s "build" is `tsc --noEmit` — a typecheck, not a bundle —
+    // so it emits nothing and the repo-wide `dist/**` would warn on every run.
+    "@cipherstash/bench#build": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
     "typecheck": {
       "dependsOn": ["^build"],
       "inputs": ["$TURBO_DEFAULT$"]
