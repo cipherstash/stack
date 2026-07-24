@@ -3,8 +3,9 @@
 Performance / index-engagement benchmarks for stack integrations.
 
 This package validates that each integration emits SQL that engages the canonical
-EQL functional indexes (`eql_v2.hmac_256`, `eql_v2.bloom_filter`, `eql_v2.ste_vec`)
-on a Supabase-shaped install (no operator classes). It runs in two layers:
+EQL functional indexes (`eql_v3.eq_term`, `eql_v3.match_term`,
+`eql_v3.to_ste_vec_query`) on a Supabase-shaped install (no operator classes).
+It runs in two layers:
 
 1. **EXPLAIN-shape tests** (`__tests__/`) — vitest tests that assert on
    `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` output. Pass/fail. Cheap.
