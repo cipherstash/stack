@@ -22,17 +22,6 @@ case, expect the wrong column to be dropped.
   ship — on a v3-only database `db push` reports "Nothing to do." and exits 0,
   and `db activate` errors. The call-outs are now scoped to the EQL v2 + Proxy
   path.
-- The `stash encrypt cutover` row claimed application reads of the promoted
-  column "return decrypted ciphertext transparently". That holds only through
-  CipherStash Proxy, and it contradicted the next row, which requires the
-  decrypt path — an agent following the table would return raw
-  `eql_v2_encrypted` composites to end users. SDK/ORM reads are now stated to
-  need the explicit decrypt path.
-- `stash init`'s setup prompt told agents to declare an **EQL v2** cutover
-  target with a `types.*` domain. Those are EQL v3 only; a v2 column is an
-  `eql_v2_encrypted` composite. The v2 branch now points at the deprecated
-  `@cipherstash/stack/schema` builders as a read-only path, decrypting through
-  `@cipherstash/stack`.
 
 Skills ship inside the `stash` tarball and are copied into user projects at
 `stash init`, so this guidance was being installed into customer repos.
