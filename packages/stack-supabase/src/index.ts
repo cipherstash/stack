@@ -253,6 +253,7 @@ export type {
   // Deprecated `*V3` aliases (Decision 5 — supabase keeps type-identical aliases).
   EncryptedQueryBuilderV3,
   EncryptedQueryBuilderV3Untyped,
+  EncryptedSingleQueryBuilder,
   EncryptedSupabaseError,
   EncryptedSupabaseInstance,
   EncryptedSupabaseOptions,

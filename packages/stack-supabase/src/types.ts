@@ -1,5 +1,4 @@
 import type { AuditConfig } from '@cipherstash/stack/adapter-kit'
-import type { EncryptionClient } from '@cipherstash/stack/encryption'
 import type {
   AnyV3Table,
   EqlTypeForColumn,
@@ -7,11 +6,7 @@ import type {
   QueryTypesForColumn,
 } from '@cipherstash/stack/eql/v3'
 import type { EncryptionError } from '@cipherstash/stack/errors'
-import type { LockContext, LockContextInput } from '@cipherstash/stack/identity'
-import type {
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
+import type { LockContextInput } from '@cipherstash/stack/identity'
 import type { ClientConfig } from '@cipherstash/stack/types'
 import type { V3Schemas } from './schema-builder'
 
@@ -465,15 +460,26 @@ export interface TypedEncryptedSupabaseInstance<S extends V3Schemas> {
  * The builder returned by `single()`/`maybeSingle()`: awaits to a SINGLE row
  * (`data: T | null`) instead of an array.
  *
- * Only the two post-hoc modifiers supabase-js also allows after `.single()` are
- * carried over. Filters and transforms are deliberately absent — applying one
- * after `single()` would change the query the single-row promise was made
- * about.
+ * FILTERS and TRANSFORMS are deliberately absent — applying one after `single()`
+ * would change the query the single-row promise was made about. Everything that
+ * only re-types or re-configures the pending request is carried over, which is
+ * also what postgrest-js does: its `single()` returns a `PostgrestBuilder`,
+ * carrying `returns`/`overrideTypes`/`throwOnError`/`setHeader` (and NOT
+ * `abortSignal`, which lives on `PostgrestTransformBuilder`). This adapter keeps
+ * `abortSignal` as a deliberate superset — an abort is not a query change — and
+ * adds the two encryption-specific configurators, which the runtime reads at
+ * execute time and so remain valid after `single()`.
  */
 export interface EncryptedSingleQueryBuilder<T>
   extends PromiseLike<EncryptedSupabaseResponse<T>> {
   abortSignal(signal: AbortSignal): EncryptedSingleQueryBuilder<T>
   throwOnError(): EncryptedSingleQueryBuilder<T>
+  /** Re-type the ROW. The single-row awaited shape is preserved — `U`, not `U[]`. */
+  returns<U extends Record<string, unknown>>(): EncryptedSingleQueryBuilder<U>
+  /** Bind identity-aware encryption. Read at execute time, so order-independent. */
+  withLockContext(lockContext: LockContextInput): EncryptedSingleQueryBuilder<T>
+  /** Attach audit metadata. Read at execute time, so order-independent. */
+  audit(config: AuditConfig): EncryptedSingleQueryBuilder<T>
 }
 
 export type EncryptedSupabaseResponse<T> = {
@@ -630,7 +636,7 @@ declare const DbBrand: unique symbol
  */
 export type DbName = string & { readonly [DbBrand]: 'column' }
 
-/** A PostgREST select list, DB-space and `::jsonb`-cast. Minted by `addJsonbCasts`/`addJsonbCastsV3`. */
+/** A PostgREST select list, DB-space and `::jsonb`-cast. Minted by `addJsonbCastsV3`. */
 export type DbSelect = string & { readonly [DbBrand]: 'select' }
 
 /** A PostgREST `or()` filter string in DB-space. Minted by `rebuildOrString`. */

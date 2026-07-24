@@ -245,12 +245,16 @@ export async function encryptFilterValues(
     queryType: QueryTypeName,
     mapping: TermMapping,
   ) => {
+    // No `returnType`: the v3 path encrypts these through `bulkEncrypt` as full
+    // storage envelopes (see `encryptCollectedTerms`), never through
+    // `encryptQuery`, so nothing ever reads it. It used to request the v2
+    // composite-literal formatting that only the removed `encryptQuery` path
+    // applied.
     terms.push({
       value,
       column,
       table: ctx.table,
       queryType,
-      returnType: 'composite-literal',
     })
     termMap.push(mapping)
   }

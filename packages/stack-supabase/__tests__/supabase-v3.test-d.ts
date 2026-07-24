@@ -11,6 +11,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import {
   type EncryptedQueryBuilder,
   type EncryptedQueryBuilderV3,
+  type EncryptedSingleQueryBuilder,
   type EncryptedSupabaseResponse,
   encryptedSupabase,
   encryptedSupabaseV3,
@@ -458,5 +459,62 @@ describe('canonical (unsuffixed) exports', () => {
     expectTypeOf(supabase.from('users')).toEqualTypeOf<
       EncryptedQueryBuilder<typeof users, UserRow>
     >()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// single() / maybeSingle()
+//
+// The single-row builder is a DIFFERENT type from the array builder, so every
+// method it does and does not carry is public API. Filters and transforms are
+// deliberately absent — one applied after `single()` would change the query the
+// single-row promise was made about — but everything that only re-types or
+// re-configures the pending request stays available. `returns<U>()` in
+// particular is documented in the changeset for this change and was unreachable
+// from the public surface until now (#772 review, SB-1).
+// ---------------------------------------------------------------------------
+
+/** A typed builder for the single-row assertions below. */
+type MixedRow = UserRow & {
+  tags: string[]
+  meta: Record<string, unknown>
+  note: string
+}
+
+describe('single-row builder surface', () => {
+  it('is exported so a stored builder can be annotated', () => {
+    expectTypeOf<EncryptedSingleQueryBuilder<UserRow>>().toMatchTypeOf<
+      PromiseLike<EncryptedSupabaseResponse<UserRow>>
+    >()
+  })
+
+  it('awaits to ONE row, not an array', async () => {
+    const { data } = await mixedBuilder.single()
+    expectTypeOf(data).toEqualTypeOf<MixedRow | null>()
+  })
+
+  it('carries returns<U>() with the single-row shape preserved', async () => {
+    const { data } = await mixedBuilder.single().returns<UserRow>()
+    expectTypeOf(data).toEqualTypeOf<UserRow | null>()
+  })
+
+  it('carries the encryption configurators, which are read at execute time', () => {
+    const builder = mixedBuilder.single()
+    expectTypeOf(
+      builder.withLockContext({ identityClaim: ['sub'] }),
+    ).toEqualTypeOf<EncryptedSingleQueryBuilder<MixedRow>>()
+    expectTypeOf(builder.audit({ metadata: { a: 1 } })).toEqualTypeOf<
+      EncryptedSingleQueryBuilder<MixedRow>
+    >()
+  })
+
+  it('does NOT carry filters or transforms', () => {
+    const builder = mixedBuilder.single()
+    // @ts-expect-error - a filter after single() would change the query
+    builder.eq('email', 'a@b.com')
+    // @ts-expect-error - a transform after single() would change the query
+    builder.limit(1)
+    // @ts-expect-error - single() is applied last
+    builder.single()
   })
 })

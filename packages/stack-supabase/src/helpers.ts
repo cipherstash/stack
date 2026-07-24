@@ -1,7 +1,3 @@
-import type {
-  EncryptedTable,
-  EncryptedTableColumn,
-} from '@cipherstash/stack/schema'
 import type { QueryTypeName } from '@cipherstash/stack/types'
 import type {
   DbFilterString,
@@ -12,16 +8,6 @@ import type {
 } from './types'
 
 /**
- * Get the names of all encrypted columns defined in a table schema.
- */
-export function getEncryptedColumnNames(
-  schema: EncryptedTable<EncryptedTableColumn>,
-): string[] {
-  const built = schema.build()
-  return Object.keys(built.columns)
-}
-
-/**
  * Check whether a column name refers to an encrypted column in the schema.
  */
 export function isEncryptedColumn(
@@ -29,53 +15,6 @@ export function isEncryptedColumn(
   encryptedColumnNames: string[],
 ): boolean {
   return encryptedColumnNames.includes(columnName)
-}
-
-/**
- * Parse a Supabase select string and add `::jsonb` casts to encrypted columns.
- *
- * Input:  `'id, email, name'`
- * Output: `'id, email::jsonb, name::jsonb'`  (if email and name are encrypted)
- *
- * Handles whitespace, already-cast columns, and embedded functions.
- */
-export function addJsonbCasts(
-  columns: string,
-  encryptedColumnNames: string[],
-): DbSelect {
-  // The mapping below emits DB-space tokens; the brand is asserted once, here.
-  return columns
-    .split(',')
-    .map((col) => {
-      const trimmed = col.trim()
-
-      // Skip empty segments
-      if (!trimmed) return col
-
-      // If it already has a cast (e.g. `email::jsonb`), skip
-      if (trimmed.includes('::')) return col
-
-      // If it contains parens (function call) or dots (foreign table), skip
-      if (trimmed.includes('(') || trimmed.includes('.')) return col
-
-      // Check if the column name (possibly with alias) is encrypted
-      // Handle `column_name` or `column_name as alias`
-      const parts = trimmed.split(/\s+/)
-      const colName = parts[0]
-
-      if (isEncryptedColumn(colName, encryptedColumnNames)) {
-        // Preserve original whitespace before the column
-        const leadingWhitespace = col.match(/^(\s*)/)?.[1] ?? ''
-        if (parts.length > 1) {
-          // Has alias: `email as e` -> `email::jsonb as e`
-          return `${leadingWhitespace}${colName}::jsonb ${parts.slice(1).join(' ')}`
-        }
-        return `${leadingWhitespace}${colName}::jsonb`
-      }
-
-      return col
-    })
-    .join(',') as DbSelect
 }
 
 /**
