@@ -862,17 +862,35 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * @see {@link ClientConfig.authStrategy} for the auth strategy field.
  * @see {@link EncryptionClient} for available methods after initialization.
  */
+/**
+ * The schema-tuple guard for {@link Encryption}'s v3 overload.
+ *
+ * Resolves to `S` for any non-empty array of v3 tables and to `never` for
+ * `readonly []`, so `Encryption({ schemas: [] })` stays a compile error while
+ * every non-literal form (a shared `AnyV3Table[]`, a `ReadonlyArray`, a
+ * push-built or spread array) still selects this overload.
+ */
+type NonEmptyV3<S extends readonly AnyV3Table[]> = S['length'] extends 0
+  ? never
+  : S
+
 // Overload 1 — v3-typed: an array literal of concrete EQL v3 tables (from
 // `@cipherstash/stack/v3`) yields the strongly-typed {@link TypedEncryptionClient},
 // the collapse of the former `EncryptionV3`. The wire format is forced to v3.
 //
-// The schema tuple is constrained NON-EMPTY: `readonly AnyV3Table[]` admits
-// `readonly []`, so `Encryption({ schemas: [] })` type-checked and then threw at
-// runtime. The nominal overload has always required at least one table.
-export function Encryption<
-  const S extends readonly [AnyV3Table, ...AnyV3Table[]],
->(config: {
-  schemas: S
+// `S` is the ARRAY, not a non-empty tuple. Constraining the type parameter to
+// `readonly [AnyV3Table, ...AnyV3Table[]]` — which is how the `[]` case was
+// first closed — rejected every form that is not an array literal: a shared
+// `export const all: AnyV3Table[]`, the `ReadonlyArray` prisma-next exposes,
+// anything push-built or spread. Non-emptiness is enforced on the PROPERTY via
+// {@link NonEmptyV3} instead, which leaves `Encryption({ schemas: [] })` a
+// compile error without constraining the rest.
+//
+// `NonEmptyV3<S>` must sit on `schemas` and nowhere else: wrapping the whole
+// config in a conditional alias defeats `const` inference, degrading the tuple
+// to an array and erasing per-column plaintext typing on the literal path.
+export function Encryption<const S extends readonly AnyV3Table[]>(config: {
+  schemas: NonEmptyV3<S>
   config?: V3ClientConfig
 }): Promise<TypedEncryptionClient<S>>
 // Overload 2 — nominal: loose/dynamic schemas (introspection-derived, e.g.
