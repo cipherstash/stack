@@ -57,7 +57,7 @@ The wizard will authenticate you, walk you through choosing a database connectio
 Define a table with concrete EQL v3 column types, build the typed client, and encrypt:
 
 ```typescript
-import { EncryptionV3 } from "@cipherstash/stack/v3"
+import { Encryption } from "@cipherstash/stack/v3"
 import { encryptedTable, types } from "@cipherstash/stack/eql/v3"
 
 // Define a schema — the column type fixes its query capabilities
@@ -66,7 +66,7 @@ const users = encryptedTable("users", {
 })
 
 // Create a typed client
-const client = await EncryptionV3({ schemas: [users] })
+const client = await Encryption({ schemas: [users] })
 
 // Encrypt a value
 const encrypted = await client.encrypt("hello@example.com", {
@@ -374,7 +374,7 @@ import {
   createEncryptionOperators,
   extractEncryptionSchema,
 } from "@cipherstash/stack-drizzle"
-import { EncryptionV3 } from "@cipherstash/stack/v3"
+import { Encryption } from "@cipherstash/stack/v3"
 
 // Capabilities come from the concrete type — no flags to configure.
 const users = pgTable("users", {
@@ -390,7 +390,7 @@ Derive the v3 schema from the table, build the typed client, and create the oper
 
 ```ts
 const usersSchema = extractEncryptionSchema(users)
-const client = await EncryptionV3({ schemas: [usersSchema] })
+const client = await Encryption({ schemas: [usersSchema] })
 const ops = createEncryptionOperators(client)
 
 const db = drizzle({ client: sqlClient })
@@ -478,7 +478,7 @@ explicit strategies cover the other cases:
 
 ```typescript
 import { OidcFederationStrategy } from "@cipherstash/stack"
-import { EncryptionV3 } from "@cipherstash/stack/v3"
+import { Encryption } from "@cipherstash/stack/v3"
 
 // The callback is re-invoked on every (re-)federation and must return the
 // CURRENT third-party OIDC JWT.
@@ -488,7 +488,7 @@ const strategy = OidcFederationStrategy.create(
 )
 if (strategy.failure) throw new Error(strategy.failure.error.message)
 
-const client = await EncryptionV3({
+const client = await Encryption({
   schemas: [users],
   config: { authStrategy: strategy.data },
 })
@@ -598,10 +598,10 @@ See the [Going to Production](https://cipherstash.com/docs/stack/deploy/going-to
 Pass config directly when initializing the client:
 
 ```typescript
-import { EncryptionV3 } from "@cipherstash/stack/v3"
+import { Encryption } from "@cipherstash/stack/v3"
 import { users } from "./schema"
 
-const client = await EncryptionV3({
+const client = await Encryption({
   schemas: [users],
   config: {
     workspaceCrn: "crn:ap-southeast-2.aws:your-workspace-id",
@@ -618,7 +618,7 @@ const client = await EncryptionV3({
 Isolate encryption keys per tenant using keysets:
 
 ```typescript
-const client = await EncryptionV3({
+const client = await Encryption({
   schemas: [users],
   config: {
     keyset: { id: "123e4567-e89b-12d3-a456-426614174000" },
@@ -626,7 +626,7 @@ const client = await EncryptionV3({
 })
 
 // or by name
-const client2 = await EncryptionV3({
+const client2 = await Encryption({
   schemas: [users],
   config: {
     keyset: { name: "Company A" },
@@ -683,10 +683,10 @@ if (result.failure) {
 
 ## API Reference
 
-### `EncryptionV3(config)` - Initialize the typed client
+### `Encryption(config)` - Initialize the typed client
 
 ```typescript
-function EncryptionV3(config: {
+function Encryption(config: {
   schemas: AnyV3Table[]
   config?: ClientConfig
 }): Promise<TypedEncryptionClient>
@@ -749,9 +749,9 @@ type UserEncrypted = InferEncrypted<typeof users>
 
 | Import Path | Provides |
 |-------|-----|
-| `@cipherstash/stack/v3` | `EncryptionV3` typed client factory, `typedClient`, plus re-exports of the EQL v3 authoring DSL |
+| `@cipherstash/stack/v3` | `Encryption` typed client factory (`EncryptionV3` is a `@deprecated` alias), `typedClient`, plus re-exports of the EQL v3 authoring DSL |
 | `@cipherstash/stack/eql/v3` | EQL v3 authoring DSL: `encryptedTable`, the `types` namespace, `buildEncryptConfig`, inference types (`InferPlaintext`, `InferEncrypted`, ...) |
-| `@cipherstash/stack` | `Encryption` function (legacy v2 entry point), auth strategies |
+| `@cipherstash/stack` | `Encryption` client factory, auth strategies |
 | `@cipherstash/stack/schema` | Legacy v2 schema builders (see [Legacy: EQL v2](#legacy-eql-v2)) |
 | `@cipherstash/stack/identity` | `LockContext` class and identity types |
 | `@cipherstash/stack/client` | Client-safe exports (schema builders and types only - no native FFI) |
@@ -763,31 +763,33 @@ depend on `@cipherstash/stack` (they are no longer subpaths of it):
 | Package | Provides |
 |-------|-----|
 | `@cipherstash/stack-drizzle` | EQL v3 Drizzle integration (package root, v3 only): `types` column factories, `createEncryptionOperators`, `extractEncryptionSchema`, `makeEqlV3Column`, `EncryptionOperatorError` |
-| `@cipherstash/stack-supabase` | Supabase integration: `encryptedSupabaseV3` (and the legacy v2 `encryptedSupabase`) |
+| `@cipherstash/stack-supabase` | Supabase integration (v3 only): `encryptedSupabase` (`encryptedSupabaseV3` is a `@deprecated` alias) |
 
 ## Legacy: EQL v2
 
 Before the concrete-domain types above, encrypted columns were declared with
 chainable capability builders and stored in a single `eql_v2_encrypted`
-composite column type. The scalar surface remains supported for existing
-deployments, but new work should use EQL v3. Legacy searchable JSON cannot be
-emitted by protect-ffi 0.30 and must migrate to v3 `types.Json`:
+composite column type. **v2 is now a read path, not an authoring surface**:
+`decrypt` / `decryptModel` still read stored v2 payloads, so existing
+deployments keep working, but new work must use EQL v3. Legacy searchable JSON
+cannot be emitted by protect-ffi 0.30 and must migrate to v3 `types.Json`:
 
 - **Client and schema**: `Encryption` from `@cipherstash/stack` with
   `encryptedColumn("email").equality().freeTextSearch().orderAndRange()` and
-  the builders from `@cipherstash/stack/schema`. v2 and v3 tables cannot be
-  mixed in one client.
+  the builders from `@cipherstash/stack/schema`. These are still exported but
+  `@deprecated` — do not author new schemas with them. v2 and v3 tables cannot
+  be mixed in one client.
 - **Query formatting**: v2 query terms can be rendered as strings with
   `returnType: 'composite-literal'` / `'escaped-composite-literal'` for
   string-based APIs.
-- **Integrations**: the v2 Supabase surface is `encryptedSupabase`. There is no
-  v2 Drizzle surface any more — `@cipherstash/stack-drizzle` dropped
-  `encryptedType` and the v2 operators, so existing v2 Drizzle columns are
-  read-only: decrypt them through `@cipherstash/stack` and migrate to a v3
-  domain.
-- **DynamoDB still requires v2**: `encryptedDynamoDB` from
-  `@cipherstash/stack/dynamodb` works with the v2 API only — v3 support is
-  tracked in [#657](https://github.com/cipherstash/stack/issues/657).
+- **Integrations are v3 only.** `encryptedSupabase` is the EQL v3 factory —
+  there is no v2 Supabase wrapper any more. Likewise
+  `@cipherstash/stack-drizzle` dropped `encryptedType` and the v2 operators.
+  Existing v2 columns reached through either adapter are read-only: decrypt
+  them through `@cipherstash/stack` and migrate to a v3 domain.
+- **DynamoDB writes EQL v3 only.** `encryptedDynamoDB` from
+  `@cipherstash/stack/dynamodb` encrypts with `types.*` v3 tables; its decrypt
+  methods still accept a v2 table so previously stored items remain readable.
 
 Full v2 documentation lives at [cipherstash.com/docs](https://cipherstash.com/docs).
 

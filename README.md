@@ -20,11 +20,11 @@
 **Encryption**
 
 ```typescript
-import { Encryption, encryptedTable, encryptedColumn } from "@cipherstash/stack";
+import { Encryption, encryptedTable, types } from "@cipherstash/stack/v3";
 
-// 1. Define your schema
+// 1. Define your schema — the column type fixes its query capabilities
 const users = encryptedTable("users", {
-  email: encryptedColumn("email").equality().freeTextSearch(),
+  email: types.TextSearch("email"), // equality + order/range + free-text search
 });
 
 // 2. Initialize the client
@@ -67,7 +67,7 @@ bun add @cipherstash/stack
 ## Features
 
 - **[Searchable encryption](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption)**: query encrypted data with equality, free text search, range, and [JSONB queries](https://cipherstash.com/docs/stack/cipherstash/encryption/searchable-encryption#jsonb-queries-with-searchablejson).
-- **[Type-safe schema](https://cipherstash.com/docs/stack/cipherstash/encryption/schema)**: define encrypted tables and columns with `encryptedTable` / `encryptedColumn`
+- **[Type-safe schema](https://cipherstash.com/docs/stack/cipherstash/encryption/schema)**: define encrypted tables and columns with `encryptedTable` and the `types.*` concrete-domain factories
 - **[Model & bulk operations](https://cipherstash.com/docs/stack/cipherstash/encryption/encrypt-decrypt#model-operations)**: encrypt and decrypt entire objects or batches with `encryptModel` / `bulkEncryptModels`.
 - **[Identity-aware encryption](https://cipherstash.com/docs/stack/cipherstash/encryption/identity)**: authenticate as the end user with `OidcFederationStrategy` and bind the data key to their identity with `.withLockContext({ identityClaim })` for policy-based access control.
 
