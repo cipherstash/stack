@@ -648,6 +648,32 @@ describe('rewriteEncryptedAlterColumns', () => {
       expect(updated).not.toContain('--> statement-breakpoint')
     })
 
+    // An UNTERMINATED quoted identifier must fail the same way an unterminated
+    // string literal does — by swallowing the rest of the file as inert. If it
+    // instead runs the scan cursor to the end, the loop exits and every
+    // commented-out ALTER below it is reported live and rewritten: the same
+    // destructive outcome as the apostrophe case above, one branch over.
+    it('leaves a commented-out ALTER untouched after an unterminated quoted identifier', async () => {
+      const original = [
+        'CREATE TABLE "users" ("id" serial PRIMARY KEY NOT NULL, "email" text);',
+        '--> statement-breakpoint',
+        'SELECT "unclosed FROM users;',
+        '--> statement-breakpoint',
+        '-- ALTER TABLE "users" ALTER COLUMN "email" SET DATA TYPE eql_v3_text_search;',
+        '',
+      ].join('\n')
+      const filePath = path.join(tmpDir, '0033_unterminated-identifier.sql')
+      fs.writeFileSync(filePath, original)
+
+      const { rewritten, skipped } = await rewriteEncryptedAlterColumns(tmpDir)
+
+      expect(rewritten).toEqual([])
+      expect(skipped).toEqual([])
+      const updated = fs.readFileSync(filePath, 'utf-8')
+      expect(updated).toBe(original)
+      expect(updated).not.toContain('DROP COLUMN')
+    })
+
     // Regression pin, not a bug fix — this already behaves. A commented-out
     // ALTER in a CRLF file must come back byte-identical.
     it('leaves a commented-out ALTER with CRLF line endings byte-identical', async () => {

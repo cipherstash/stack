@@ -178,7 +178,14 @@ function isInsideCommentOrString(sql: string, index: number): boolean {
       // A quoted identifier is live SQL, but its body is not: consuming it here
       // — before the `'` branch below — is what stops an apostrophe inside one
       // from opening a string literal that never really existed.
-      i = endOfQuoted(sql, i, '"')
+      const end = endOfQuoted(sql, i, '"')
+      // An unterminated identifier swallows the rest of the file, so treat it
+      // as inert exactly like the unterminated literal below. Running the
+      // cursor to the end instead would exit the loop and report `false` —
+      // "live" — which is how the apostrophe bug destroyed a column in the
+      // first place, one branch over.
+      if (end > index) return true
+      i = end
     } else if (sql[i] === "'") {
       const end = endOfQuoted(sql, i, "'")
       // Unterminated, or the literal runs past `index`: `index` is inside a
